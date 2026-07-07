@@ -1,0 +1,320 @@
+"""测试 write_coordinator module — connection health, retry, locking."""
+
+from __future__ import annotations
+
+import sqlite3
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import aiosqlite
+import pytest
+
+import core.monitoring.metrics as monitoring_metrics
+from core.managers.write_coordinator import (
+    ConnectionRegistry,
+    check_db_alive,
+    coordinated_transaction,
+    get_write_metrics_snapshot,
+    is_connection_fatal,
+    reset_write_metrics_snapshot,
+    write_transaction,
+    write_with_retry,
+)
+
+
+def _metric_sample_value(sample_name: str, labels: dict[str, str] | None = None) -> float:
+    labels = labels or {}
+    for metric in monitoring_metrics.REGISTRY.collect():
+        for sample in metric.samples:
+            if sample.name != sample_name:
+                continue
+            if all(sample.labels.get(key) == value for key, value in labels.items()):
+                return float(sample.value)
+    return 0.0
+
+
+class TestIsConnectionFatal:
+    """测试 is_connection_fatal."""
+
+    def test_detects_no_active_connection(self) -> None:
+        assert is_connection_fatal(Exception("no active connection")) is True
+
+    def test_detects_database_not_initialized(self) -> None:
+        assert is_connection_fatal(Exception("database is not initialized")) is True
+
+    def test_detects_closed_database(self) -> None:
+        assert is_connection_fatal(Exception("cannot operate on a closed database")) is True
+
+    def test_case_insensitive(self) -> None:
+        assert is_connection_fatal(Exception("No Active Connection")) is True
+
+    def test_normal_error_not_fatal(self) -> None:
+        assert is_connection_fatal(Exception("database is locked")) is False
+        assert is_connection_fatal(Exception("some other error")) is False
+
+    def test_empty_message(self) -> None:
+        assert is_connection_fatal(Exception("")) is False
+
+
+class TestCheckDbAlive:
+    """测试 check_db_alive。"""
+
+    def test_none_is_dead(self) -> None:
+        assert check_db_alive(None) is False
+
+    def test_live_connection(self) -> None:
+        db = MagicMock()
+        db._conn = MagicMock()  # not None
+        assert check_db_alive(db) is True
+
+    def test_closed_connection(self) -> None:
+        db = MagicMock()
+        db._conn = None
+        assert check_db_alive(db) is False
+
+    def test_missing_conn_attr(self) -> None:
+        db = MagicMock(spec=[])  # no _conn attribute
+        assert check_db_alive(db) is False
+
+    def test_value_error_treated_as_dead(self) -> None:
+        db = MagicMock()
+        type(db)._conn = property(lambda self: (_ for _ in ()).throw(ValueError("boom")))
+        assert check_db_alive(db) is False
+
+
+class TestConnectionRegistry:
+    """测试 ConnectionRegistry 类方法。"""
+
+    def test_register_sets_state(self) -> None:
+        mock_conn = MagicMock()
+        mod_a = MagicMock()
+        mod_b = MagicMock()
+        ConnectionRegistry.register("test.db", mock_conn, [mod_a, mod_b])
+        assert ConnectionRegistry._db_path == "test.db"
+        assert ConnectionRegistry._connection is mock_conn
+        assert len(ConnectionRegistry._modules) == 2
+
+    def test_is_alive_delegates_to_check_db_alive(self) -> None:
+        db = MagicMock()
+        db._conn = MagicMock()
+        ConnectionRegistry.register("test.db", db, [])
+        assert ConnectionRegistry.is_alive() is True
+
+    def test_is_alive_detects_none(self) -> None:
+        ConnectionRegistry.register("test.db", None, [])
+        assert ConnectionRegistry.is_alive() is False
+
+    @pytest.mark.asyncio
+    async def test_try_repair_when_alive_returns_true(self) -> None:
+        db = MagicMock()
+        db._conn = MagicMock()
+        ConnectionRegistry.register("test.db", db, [])
+        assert await ConnectionRegistry.try_repair() is True
+
+    @pytest.mark.asyncio
+    async def test_try_repair_reconnects(self, tmp_db_path: str) -> None:
+        # Create an actual database file for the reconnect test
+        async with aiosqlite.connect(tmp_db_path) as db:
+            await db.execute("CREATE TABLE IF NOT EXISTS test (id INTEGER)")
+            await db.commit()
+
+        # Register with a dead mock connection
+        dead_db = MagicMock()
+        dead_db._conn = None
+        mod = MagicMock()
+        ConnectionRegistry.register(tmp_db_path, dead_db, [mod])
+
+        result = await ConnectionRegistry.try_repair()
+        assert result is True
+        assert mod._db is not None
+        assert mod._db is ConnectionRegistry._connection
+
+        # Clean up
+        if ConnectionRegistry._connection is not None:
+            await ConnectionRegistry._connection.close()
+
+    @pytest.mark.asyncio
+    async def test_try_repair_handles_reconnect_failure(self) -> None:
+        old_mock = MagicMock()
+        old_mock._conn = None  # Ensure is_alive() returns False
+        ConnectionRegistry.register("nonexistent.db", old_mock, [])
+
+        # This will fail on connect, but test that old close is attempted
+        with patch("aiosqlite.connect", side_effect=Exception("cannot connect")):
+            result = await ConnectionRegistry.try_repair()
+            assert result is False
+
+
+class TestWriteWithRetry:
+    """测试 write_with_retry。"""
+
+    @pytest.mark.asyncio
+    async def test_success_first_attempt(self) -> None:
+        async def op() -> str:
+            return "ok"
+
+        result = await write_with_retry(op, max_retries=3)
+        assert result == "ok"
+
+    @pytest.mark.asyncio
+    async def test_retry_on_lock_then_succeed(self) -> None:
+        call_count = [0]
+
+        async def op() -> str:
+            call_count[0] += 1
+            if call_count[0] < 2:
+                raise Exception("database is locked")
+            return "ok"
+
+        result = await write_with_retry(op, max_retries=3, base_delay=0.001)
+        assert result == "ok"
+        assert call_count[0] == 2
+
+    @pytest.mark.asyncio
+    async def test_raises_on_connection_fatal(self) -> None:
+        async def op() -> str:
+            raise Exception("cannot operate on a closed database")
+
+        with pytest.raises(Exception, match="cannot operate on a closed database"):
+            await write_with_retry(op, max_retries=3, base_delay=0.001)
+
+    @pytest.mark.asyncio
+    async def test_raises_non_retryable(self) -> None:
+        async def op() -> str:
+            raise ValueError("unexpected error")
+
+        with pytest.raises(ValueError, match="unexpected"):
+            await write_with_retry(op, max_retries=3, base_delay=0.001)
+
+    @pytest.mark.asyncio
+    async def test_exhausts_retries_on_lock(self) -> None:
+        async def op() -> str:
+            raise Exception("database is locked")
+
+        with pytest.raises(Exception, match="database is locked"):
+            await write_with_retry(op, max_retries=2, base_delay=0.001)
+
+    @pytest.mark.asyncio
+    async def test_records_lock_retry_and_final_failure_metrics(self) -> None:
+        reset_write_metrics_snapshot()
+        before_retry = _metric_sample_value("memora_write_lock_retries_total")
+        before_failure = _metric_sample_value(
+            "memora_write_failures_total",
+            {"reason": "retry_exhausted"},
+        )
+        call_count = [0]
+
+        async def eventually_ok() -> str:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise Exception("database is locked")
+            return "ok"
+
+        assert await write_with_retry(eventually_ok, max_retries=3, base_delay=0.001) == "ok"
+
+        async def always_locked() -> str:
+            raise Exception("database is locked")
+
+        with pytest.raises(Exception, match="database is locked"):
+            await write_with_retry(always_locked, max_retries=2, base_delay=0.001)
+
+        snapshot = get_write_metrics_snapshot()
+        assert snapshot["operations_total"] == 2
+        assert snapshot["lock_retries_total"] == 2
+        assert snapshot["failures_total"] == 1
+        assert snapshot["retry_exhausted_total"] == 1
+        assert snapshot["fatal_failures_total"] == 0
+        assert snapshot["last_error"] == "database is locked"
+        if monitoring_metrics.is_prometheus_available():
+            assert (
+                _metric_sample_value("memora_write_lock_retries_total")
+                == before_retry + 2
+            )
+            assert (
+                _metric_sample_value(
+                    "memora_write_failures_total",
+                    {"reason": "retry_exhausted"},
+                )
+                == before_failure + 1
+            )
+
+
+class TestWriteTransaction:
+    """测试 write_transaction。"""
+
+    @pytest.mark.asyncio
+    async def test_success_first_attempt(self) -> None:
+        async def op() -> str:
+            return "txn_ok"
+
+        result = await write_transaction(op, max_retries=3)
+        assert result == "txn_ok"
+
+    @pytest.mark.asyncio
+    async def test_retry_on_lock_then_succeed(self) -> None:
+        call_count = [0]
+
+        async def op() -> str:
+            call_count[0] += 1
+            if call_count[0] < 3:
+                raise Exception("database is locked")
+            return "txn_ok"
+
+        result = await write_transaction(op, max_retries=5, base_delay=0.001)
+        assert result == "txn_ok"
+        assert call_count[0] == 3
+
+    @pytest.mark.asyncio
+    async def test_raises_on_connection_fatal(self) -> None:
+        async def op() -> str:
+            raise Exception("no active connection")
+
+        with pytest.raises(Exception, match="no active"):
+            await write_transaction(op, max_retries=3, base_delay=0.001)
+
+    @pytest.mark.asyncio
+    async def test_exhausts_retries_on_lock(self) -> None:
+        async def op() -> str:
+            raise Exception("database is locked")
+
+        with pytest.raises(Exception, match="database is locked"):
+            await write_transaction(op, max_retries=2, base_delay=0.001)
+
+    @pytest.mark.asyncio
+    async def test_raises_non_retryable(self) -> None:
+        async def op() -> str:
+            raise TypeError("type error")
+
+        with pytest.raises(TypeError, match="type error"):
+            await write_transaction(op, max_retries=3, base_delay=0.001)
+
+
+class TestCoordinatedTransaction:
+    @pytest.mark.asyncio
+    async def test_commits_inside_single_context(self) -> None:
+        db = MagicMock()
+        db.execute = AsyncMock()
+        db.commit = AsyncMock()
+        db.rollback = AsyncMock()
+
+        async with coordinated_transaction(db) as conn:
+            assert conn is db
+            await conn.execute("INSERT INTO t VALUES (1)")
+
+        assert db.execute.await_args_list[0].args == ("BEGIN IMMEDIATE",)
+        assert db.execute.await_args_list[1].args == ("INSERT INTO t VALUES (1)",)
+        db.commit.assert_awaited_once()
+        db.rollback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rolls_back_on_body_error(self) -> None:
+        db = MagicMock()
+        db.execute = AsyncMock()
+        db.commit = AsyncMock()
+        db.rollback = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="boom"):
+            async with coordinated_transaction(db):
+                raise RuntimeError("boom")
+
+        db.commit.assert_not_awaited()
+        db.rollback.assert_awaited_once()

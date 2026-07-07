@@ -1,0 +1,1181 @@
+{
+    "bot_language": {
+        "description": "机器人回复语言",
+        "hint": "设置插件命令和状态回复的语言。zh=中文（默认），en=English，ru=Русский。",
+        "type": "string",
+        "options": [
+            "zh",
+            "en",
+            "ru"
+        ],
+        "default": "zh"
+    },
+    "provider_settings": {
+        "description": "模型提供商",
+        "hint": "配置记忆系统使用的 AI 模型",
+        "type": "object",
+        "items": {
+            "embedding_provider_id": {
+                "description": "Embedding 模型 ID",
+                "hint": "用于生成记忆向量的 Embedding 模型 ID。留空使用 AstrBot 默认。可在 AstrBot 后台「LLM 配置」中查看已有的 Embedding Provider ID（如 openai_embedding）。",
+                "type": "string",
+                "default": ""
+            },
+            "llm_provider_id": {
+                "description": "LLM 模型 ID",
+                "hint": "用于总结对话、评估记忆重要性的大语言模型 ID。留空使用 AstrBot 默认。推荐使用推理能力较强的模型。",
+                "type": "string",
+                "_special": "select_provider",
+                "default": ""
+            }
+        }
+    },
+    "session_manager": {
+        "description": "会话管理",
+        "hint": "管理用户会话状态和对话历史的缓存行为",
+        "type": "object",
+        "items": {
+            "enable_full_group_capture": {
+                "description": "捕获群聊所有消息",
+                "hint": "是否捕获群聊中的所有消息（包括非 @Bot 的消息）。开启后群聊中每条消息都会被记录，有助于构建更完整的群聊上下文。",
+                "type": "bool",
+                "default": true
+            },
+            "max_sessions": {
+                "description": "最大缓存会话数",
+                "hint": "内存中同时保留的最大会话数（LRU 淘汰）。超出后最久未使用的会话从缓存移除，但数据仍保存在数据库中。",
+                "type": "int",
+                "default": 100
+            },
+            "session_ttl": {
+                "description": "会话空闲超时（秒）",
+                "hint": "会话超过此时间无活动后从缓存移除。默认 3600（1 小时）。",
+                "type": "int",
+                "default": 3600
+            },
+            "context_window_size": {
+                "description": "上下文窗口大小（条）",
+                "hint": "传给 LLM 的最大历史消息条数。越大上下文越丰富，但消耗 token 越多。建议 20-100。",
+                "type": "int",
+                "default": 50
+            },
+            "max_messages_per_session": {
+                "description": "单会话最大历史消息数",
+                "hint": "数据库中每个会话保留的历史消息上限。超过后只会删除已经完成总结的最旧消息，避免丢失未总结上下文。",
+                "type": "int",
+                "default": 1000
+            },
+            "cleanup_batch_size": {
+                "description": "历史消息批量清理数量",
+                "hint": "会话历史超过上限后，每次至少尝试删除的旧已总结消息数量。值过小会导致超限后每轮只删少量消息。",
+                "type": "int",
+                "default": 50
+            }
+        }
+    },
+    "recall_engine": {
+        "description": "记忆召回",
+        "hint": "控制记忆检索和注入到对话的行为",
+        "type": "object",
+        "items": {
+            "top_k": {
+                "description": "单次召回数量",
+                "hint": "每次检索返回的最相关记忆条数。设为 0 可跳过自动召回和注入，仅保留历史注入片段清理。建议 3-10。",
+                "type": "int",
+                "default": 5
+            },
+            "max_k": {
+                "description": "主动检索最大数量",
+                "hint": "Agent 主动调用长期记忆检索工具时允许返回的最大记忆条数。用于限制工具单次召回规模，建议 5-10。",
+                "type": "int",
+                "default": 10
+            },
+            "importance_weight": {
+                "description": "重要性权重",
+                "hint": "混合评分中记忆重要性的占比系数。值越大，重要性高的记忆越优先被召回。",
+                "type": "float",
+                "default": 1.0
+            },
+            "fallback_to_vector": {
+                "description": "降级到纯向量检索",
+                "hint": "混合检索失败或结果为空时，自动降级为纯向量检索。建议开启。",
+                "type": "bool",
+                "default": true
+            },
+            "injection_method": {
+                "description": "记忆注入位置",
+                "hint": "记忆注入到 LLM 请求的位置。extra_user_content(推荐)：追加到用户消息末尾，不影响前缀缓存且不污染对话历史。user_message_before：作为用户消息前缀。user_message_after：作为用户消息后缀。fake_tool_call：伪造工具调用消息对注入到对话历史，使 LLM 自然地理解这是检索结果。fake_tool_call_deepseek_v4：DeepSeek V4 thinking 模式专用伪工具转录。Gemini 下若选择 fake_tool_call 会自动降级为 user_message_before。system_prompt：⚠️已废弃，选择后自动回退至 extra_user_content。",
+                "type": "string",
+                "default": "extra_user_content",
+                "options": [
+                    "extra_user_content",
+                    "user_message_before",
+                    "user_message_after",
+                    "fake_tool_call",
+                    "fake_tool_call_deepseek_v4",
+                    "system_prompt"
+                ]
+            },
+            "auto_remove_injected": {
+                "description": "自动清除旧注入片段",
+                "hint": "注入新记忆前自动删除历史中已注入的旧记忆片段，避免重复累积和 token 浪费。建议开启。",
+                "type": "bool",
+                "default": true
+            },
+            "inject_with_recent_context": {
+                "description": "启用跨轮次上下文扩展检索",
+                "hint": "启用后检索记忆时会自动拼接最近 2 轮对话（当前消息 + Bot 上一条回复 + 用户上一条消息）作为扩展查询，提升召回记忆与当前话题的相关性，减少无关记忆干扰。",
+                "type": "bool",
+                "default": false
+            },
+            "search_cache_enabled": {
+                "description": "启用短期检索缓存",
+                "hint": "短时间内相同会话和相同查询会复用检索结果，降低连续追问时的 SQLite/FAISS 开销。",
+                "type": "bool",
+                "default": true
+            },
+            "search_cache_ttl_seconds": {
+                "description": "检索缓存 TTL 秒数",
+                "hint": "缓存保留时间。写入、更新、删除记忆时会自动失效。设为 0 可关闭缓存。",
+                "type": "float",
+                "default": 45.0
+            },
+            "search_cache_max_size": {
+                "description": "检索缓存最大条目数",
+                "hint": "限制内存中保留的检索结果数量。超过上限时自动淘汰最久未使用的结果。",
+                "type": "int",
+                "default": 256
+            },
+            "max_chain_hops": {
+                "description": "链式回忆最大跳数",
+                "hint": "多跳检索时从命中记忆向外扩展的最大跳数。1=仅直接关联，2=包含间接关联。值越大召回越全但耗时越长。建议 1-3。",
+                "type": "int",
+                "default": 3
+            },
+            "chain_hop_decay": {
+                "description": "链式扩展衰减率",
+                "hint": "每跳一跳，关联记忆的评分乘以该衰减率。0.7 表示每跳衰减 30%。值越小远距离关联越弱。",
+                "type": "float",
+                "default": 0.7
+            },
+            "id_cache_size": {
+                "description": "向量 ID 缓存大小",
+                "hint": "FAISS 向量 ID 映射的内存缓存条数。增大可减少 SQLite 查询但增加内存占用。",
+                "type": "int",
+                "default": 1000
+            },
+            "stopwords_path": {
+                "description": "自定义停用词文件路径",
+                "hint": "BM25 分词使用的自定义停用词列表文件路径。留空使用默认中文停用词表。一行一个停用词。",
+                "type": "string",
+                "default": ""
+            },
+            "query_rewrite_enabled": {
+                "description": "启用语义查询改写 (R1)",
+                "hint": "使用 LLM few-shot 将模糊查询（如\"上次那个事\"）展开为多角度检索词。关闭后回退到硬编码关键词匹配。需要 LLM Provider 可用。",
+                "type": "bool",
+                "default": true
+            },
+            "privacy_filter_enabled": {
+                "description": "启用隐私记忆过滤",
+                "hint": "群聊检索时自动过滤来自私聊的机密记忆（privacy_level=confidential），避免私聊秘密在群聊中暴露。",
+                "type": "bool",
+                "default": true
+            },
+            "testing_effect_async": {
+                "description": "测试效应：异步模式",
+                "hint": "每次成功召回后异步强化记忆（reinforcement_count+1 + TTL×1.05）。开启后不阻塞检索热路径。",
+                "type": "bool",
+                "default": true
+            },
+            "testing_effect_top_k": {
+                "description": "测试效应：强化条数上限",
+                "hint": "每次召回最多对前 N 条记忆应用测试效应强化。值越大强化范围越广但写压力也越大。",
+                "type": "int",
+                "default": 5
+            },
+            "serial_position_enabled": {
+                "description": "启用序列位置效应",
+                "hint": "对话开头和结尾的消息获得额外的 importance 加成（首 2 条 +0.15，末 2 条 +0.10），模拟真人首因/近因效应。",
+                "type": "bool",
+                "default": true
+            },
+            "session_cache_enabled": {
+                "description": "启用请求级检索缓存",
+                "hint": "同一 LLM 请求内的重复搜索（Bridge→RecallHandler）复用结果，避免重复检索。TTL 极短（10s），仅在同一请求内生效。",
+                "type": "bool",
+                "default": true
+            },
+            "session_cache_ttl_seconds": {
+                "description": "请求级缓存 TTL 秒数",
+                "hint": "同一请求内检索结果的缓存有效期。建议 5-15 秒。",
+                "type": "float",
+                "default": 10.0
+            },
+            "spontaneous_recall_enabled": {
+                "description": "启用自发回忆",
+                "hint": "以低概率（默认 6%）在非查询驱动下主动浮现关联记忆，模拟真人\"突然想起来\"的体验。",
+                "type": "bool",
+                "default": true
+            },
+            "spontaneous_recall_probability": {
+                "description": "自发回忆触发概率",
+                "hint": "每次 LLM 请求触发自发回忆的概率。建议 0.03-0.10。过高会导致记忆注入过于频繁。",
+                "type": "float",
+                "default": 0.06
+            },
+            "spontaneous_recall_k": {
+                "description": "自发回忆返回条数",
+                "hint": "自发回忆触发时最多返回的记忆条数。建议 1-3 条。",
+                "type": "int",
+                "default": 2
+            },
+            "prospective_recall_enabled": {
+                "description": "启用前瞻记忆",
+                "hint": "每次 LLM 请求前扫描 24h 内到期的 PLANNED 原子，主动注入待办提醒。模拟真人\"今天要做 X\"的记忆浮现。",
+                "type": "bool",
+                "default": true
+            },
+            "prospective_lookahead_hours": {
+                "description": "前瞻记忆扫描窗口",
+                "hint": "扫描未来多少小时内的 PLANNED 原子。默认 24 小时。",
+                "type": "float",
+                "default": 24.0
+            },
+            "prospective_recall_k": {
+                "description": "前瞻记忆返回条数",
+                "hint": "每次扫描最多返回的 PLANNED 原子条数。建议 1-5 条。",
+                "type": "int",
+                "default": 3
+            },
+            "narrative_coherence_enabled": {
+                "description": "启用叙事连贯性",
+                "hint": "检索结果按时间线排序并按主题聚类，标注叙事分组和位置。下游格式化器可据此生成过渡短语提升记忆输出的可读性。",
+                "type": "bool",
+                "default": true
+            },
+            "interest_boost_enabled": {
+                "description": "启用兴趣记忆显著性",
+                "hint": "根据用户画像中的兴趣标签，对匹配话题的记忆给予 importance 加成。依赖用户画像。",
+                "type": "bool",
+                "default": true
+            }
+        }
+    },
+    "importance_decay": {
+        "description": "重要性衰减",
+        "hint": "随时间逐步降低旧记忆的重要性，防止旧信息长期占据高权重",
+        "type": "object",
+        "items": {
+            "decay_rate": {
+                "description": "每日衰减率",
+                "hint": "每天对记忆重要性的衰减比例。0.01 表示每天降低 1%。设为 0 可禁用衰减。",
+                "type": "float",
+                "default": 0.01
+            },
+            "access_decay_window_days": {
+                "description": "访问强化窗口(天)",
+                "hint": "在该窗口内被访问过的记忆，会根据访问次数降低有效衰减率。",
+                "type": "float",
+                "default": 30.0
+            },
+            "access_decay_max_count": {
+                "description": "访问强化次数上限",
+                "hint": "达到该访问次数时获得最大衰减保护；超过后不会继续增强。",
+                "type": "int",
+                "default": 10
+            },
+            "access_count_decay_multiplier": {
+                "description": "访问次数保留比例",
+                "hint": "每次每日衰减后访问次数按该比例回落，避免旧热点记忆永久不衰减。",
+                "type": "float",
+                "default": 0.5
+            }
+        }
+    },
+    "fusion_strategy": {
+        "description": "检索融合策略",
+        "hint": "BM25 和向量检索结果的融合参数（内部使用 RRF 算法）",
+        "type": "object",
+        "items": {
+            "rrf_k": {
+                "description": "RRF 融合参数 k",
+                "hint": "值越小越强调排名靠前的结果，值越大融合越平滑。推荐 30-120，默认 60。",
+                "type": "int",
+                "default": 60
+            }
+        }
+    },
+    "hybrid_scoring": {
+        "description": "混合检索评分权重",
+        "hint": "控制 BM25 + 向量混合检索结果的评分权重分配。修改后即时生效，无需重启。",
+        "type": "object",
+        "items": {
+            "score_alpha": {
+                "description": "检索相关性权重",
+                "hint": "BM25+向量检索相似度在混合评分中的占比。值越大，检索结果越偏向字面和语义匹配。范围 0-1。",
+                "type": "float",
+                "default": 0.5
+            },
+            "score_beta": {
+                "description": "重要性权重",
+                "hint": "记忆自身重要性在混合评分中的占比。值越大，高重要性记忆越容易被召回。范围 0-1。",
+                "type": "float",
+                "default": 0.25
+            },
+            "score_gamma": {
+                "description": "时间新鲜度权重",
+                "hint": "记忆创建/访问时间在混合评分中的占比。值越大，越新的记忆越容易被召回。范围 0-1。",
+                "type": "float",
+                "default": 0.25
+            },
+            "mmr_lambda": {
+                "description": "MMR 多样性权衡",
+                "hint": "Maximal Marginal Relevance 参数。1=纯相关性排序，0=纯多样性排序。0.7 表示偏向相关性但保留一定多样性，避免召回大量相似记忆。",
+                "type": "float",
+                "default": 0.7
+            }
+        }
+    },
+    "filtering_settings": {
+        "description": "记忆隔离设置",
+        "type": "object",
+        "items": {
+            "use_persona_filtering": {
+                "description": "按人格隔离记忆",
+                "hint": "开启后只召回与当前人格相关的记忆，不同人格的记忆互不干扰。",
+                "type": "bool",
+                "default": true
+            },
+            "use_session_filtering": {
+                "description": "按会话隔离记忆",
+                "hint": "开启后每个会话的记忆独立存储，不同会话之间不共享记忆。",
+                "type": "bool",
+                "default": true
+            }
+        }
+    },
+    "reflection_engine": {
+        "description": "记忆生成设置",
+        "hint": "控制何时触发对话总结并生成记忆",
+        "type": "object",
+        "items": {
+            "summary_trigger_rounds": {
+                "description": "总结触发轮次",
+                "hint": "累计对话达到该轮次（一问一答为一轮）后触发总结并写入记忆。",
+                "type": "int",
+                "default": 10
+            }
+        }
+    },
+    "graph_memory": {
+        "description": "图记忆双路检索",
+        "hint": "启用后会同时维护文档路和图路，两边都支持关键词与向量检索，再统一融合召回结果。",
+        "type": "object",
+        "items": {
+            "enabled": {
+                "description": "启用图记忆检索",
+                "hint": "开启后自动构建图节点、边和图向量索引。建议开启。",
+                "type": "bool",
+                "default": true
+            },
+            "document_route_weight": {
+                "description": "文档路权重",
+                "hint": "文档路融合分数在最终双路排序中的占比。",
+                "type": "float",
+                "default": 0.65
+            },
+            "graph_route_weight": {
+                "description": "图路权重",
+                "hint": "图路融合分数在最终双路排序中的占比。",
+                "type": "float",
+                "default": 0.35
+            },
+            "cross_route_bonus": {
+                "description": "双路命中加分",
+                "hint": "同一记忆同时被文档路和图路命中时增加的额外分数。",
+                "type": "float",
+                "default": 0.08
+            },
+            "expansion_limit": {
+                "description": "图邻居扩展上限",
+                "hint": "图关键词检索时从命中节点扩展到邻居条目的最大候选数。",
+                "type": "int",
+                "default": 24
+            },
+            "expansion_hops": {
+                "description": "图扩展跳数",
+                "hint": "图关键词检索从命中节点向外扩展的跳数。默认 1；设为 2 可召回间接关联，但会增加少量查询开销。",
+                "type": "int",
+                "default": 1
+            },
+            "second_hop_weight": {
+                "description": "二跳扩展权重",
+                "hint": "二跳图候选的分数权重。值越高，间接关系越容易进入最终召回。",
+                "type": "float",
+                "default": 0.4
+            },
+            "dynamic_route_weighting": {
+                "description": "动态路由权重",
+                "hint": "根据查询中的关系、时间、定义类意图，自动调整文档路和图路权重。",
+                "type": "bool",
+                "default": true
+            },
+            "max_topics_per_memory": {
+                "description": "单记忆最大主题数",
+                "hint": "从一条记忆中最多提取多少个 topics 节点。",
+                "type": "int",
+                "default": 6
+            },
+            "max_participants_per_memory": {
+                "description": "单记忆最大参与者数",
+                "hint": "从一条记忆中最多提取多少个 participants 节点。",
+                "type": "int",
+                "default": 8
+            },
+            "max_facts_per_memory": {
+                "description": "单记忆最大事实数",
+                "hint": "从一条记忆中最多提取多少条 key_facts 进入图索引。",
+                "type": "int",
+                "default": 8
+            },
+            "atom_enabled": {
+                "description": "启用记忆原子化",
+                "hint": "开启后每条 key_fact 独立为一个记忆原子，拥有自己的存活时间和衰减曲线。关闭则完全回退到原来的粗粒度行为。",
+                "type": "bool",
+                "default": true
+            },
+            "atom_maintenance_interval_hours": {
+                "description": "原子维护间隔(小时)",
+                "hint": "生命周期管理器每隔多少小时执行一次过期/遗忘检查。",
+                "type": "float",
+                "default": 24.0
+            },
+            "atom_forget_delay_days": {
+                "description": "原子遗忘延迟(天)",
+                "hint": "过期原子在多少天后从检索索引中彻底移除。",
+                "type": "float",
+                "default": 7.0
+            },
+            "atom_purge_delay_days": {
+                "description": "遗忘原子物理清理延迟(天)",
+                "hint": "已从检索索引移除的遗忘原子，在多少天后从数据库物理删除以回收存储空间。",
+                "type": "float",
+                "default": 30.0
+            },
+            "score_alpha": {
+                "description": "图检索：向量相似度权重",
+                "hint": "图路向量检索相似度在图检索混合评分中的占比。值越大图向量匹配越重要。范围 0-1。",
+                "type": "float",
+                "default": 0.55
+            },
+            "score_beta": {
+                "description": "图检索：关键词匹配权重",
+                "hint": "图路关键词匹配分数在图检索混合评分中的占比。范围 0-1。",
+                "type": "float",
+                "default": 0.2
+            },
+            "score_gamma": {
+                "description": "图检索：时间新鲜度权重",
+                "hint": "图节点/边的创建时间在图检索混合评分中的占比。范围 0-1。",
+                "type": "float",
+                "default": 0.15
+            },
+            "score_delta": {
+                "description": "图检索：图结构权重",
+                "hint": "图节点度数、边权重等结构特征在图检索混合评分中的占比。范围 0-1。",
+                "type": "float",
+                "default": 0.1
+            },
+            "temporal_edges_enabled": {
+                "description": "启用时序图边",
+                "hint": "从记忆中自动提取事件先后关系（before/after/during），构建时序维度的图边。Phase 3 深度增强功能。",
+                "type": "bool",
+                "default": true
+            },
+            "causal_edges_enabled": {
+                "description": "启用因果图边",
+                "hint": "从记忆中自动提取因果关系（caused_by/results_in/prevents），构建因果推理维度的图边。Phase 3 深度增强功能。",
+                "type": "bool",
+                "default": true
+            }
+        }
+    },
+    "human_like_memory": {
+        "description": "类人记忆增强",
+        "hint": "让记忆检索行为更接近人类记忆的自然浮现过程，包括近因效应、季节性召回、情感加权、类人格式化及类型感知衰减。",
+        "type": "object",
+        "items": {
+            "recency_bump_enabled": {
+                "description": "近因爆发效应",
+                "hint": "0-7天记忆获得1.5倍近因加成，模拟人类近期记忆更鲜明的特点",
+                "type": "bool",
+                "default": true
+            },
+            "seasonal_recall_enabled": {
+                "description": "季节性召回",
+                "hint": "周年/季节性时间点附近的相关记忆获得检索加成",
+                "type": "bool",
+                "default": true
+            },
+            "emotion_scoring_mode": {
+                "description": "情感加权模式",
+                "hint": "enhanced: Jaccard+情绪一致性+强度三维计分; basic: 简单标签重叠; disabled: 关闭情感加权",
+                "type": "string",
+                "options": [
+                    "enhanced",
+                    "basic",
+                    "disabled"
+                ],
+                "default": "enhanced"
+            },
+            "human_like_formatter_mode": {
+                "description": "类人格式化模式",
+                "hint": "rule: 基于规则的自然语言记忆片段; llm: LLM驱动的高质量格式化; disabled: 返回原始结果",
+                "type": "string",
+                "options": [
+                    "rule",
+                    "llm",
+                    "disabled"
+                ],
+                "default": "rule"
+            },
+            "type_aware_decay_enabled": {
+                "description": "类型感知衰减",
+                "hint": "不同记忆类型以不同速度衰减: EPISODIC 1.5倍速/ FACTUAL 0.5倍速/ PREFERENCE 0.7倍速/ RELATIONAL 0.6倍速",
+                "type": "bool",
+                "default": true
+            }
+        }
+    },
+    "migration_settings": {
+        "description": "数据库迁移",
+        "hint": "控制插件启动时的数据库版本升级行为",
+        "type": "object",
+        "items": {
+            "auto_migrate": {
+                "description": "自动迁移",
+                "hint": "插件启动时自动检测并升级旧版本数据库。建议保持开启。",
+                "type": "bool",
+                "default": true
+            },
+            "create_backup": {
+                "description": "迁移前自动备份",
+                "hint": "执行数据库迁移前自动创建备份文件，防止迁移失败导致数据丢失。建议保持开启。",
+                "type": "bool",
+                "default": true
+            }
+        }
+    },
+    "index_rebuild_settings": {
+        "description": "索引重建",
+        "hint": "控制 /memora rebuild-index 的分批大小、Embedding 请求速率和失败容忍度。低配云服务器建议保持较小并发。",
+        "type": "object",
+        "items": {
+            "batch_size": {
+                "description": "读取批量",
+                "hint": "每批从 documents 表读取的记忆条数。越大内存峰值越高、失败时影响的条数越多，建议 25-100。",
+                "type": "int",
+                "default": 50
+            },
+            "embedding_batch_size": {
+                "description": "Embedding 批量",
+                "hint": "单次 Embedding API 请求包含的文本数量。服务商 TPM 限流严格时继续调小。",
+                "type": "int",
+                "default": 8
+            },
+            "tasks_limit": {
+                "description": "Embedding 并发",
+                "hint": "批量 Embedding 内部并发上限。为避免触发 API 限流，默认 1。",
+                "type": "int",
+                "default": 1
+            },
+            "max_retries": {
+                "description": "批次重试次数",
+                "hint": "单个 Embedding 批次失败后的最大重试次数。",
+                "type": "int",
+                "default": 5
+            },
+            "retry_base_delay": {
+                "description": "重试等待秒数",
+                "hint": "批次失败后的指数退避基础等待时间。遇到 429/TPM 限流时会至少等待 30 秒。",
+                "type": "float",
+                "default": 30.0
+            },
+            "batch_delay": {
+                "description": "读取批次间隔秒数",
+                "hint": "每个 documents 读取批次之间的额外等待时间，用于主动降低整体重建速率。",
+                "type": "float",
+                "default": 5.0
+            },
+            "request_delay": {
+                "description": "Embedding 请求间隔秒数",
+                "hint": "每个 Embedding API 子请求之间的等待时间。频繁触发 429/TPM 时优先增大此项。",
+                "type": "float",
+                "default": 5.0
+            },
+            "max_failure_ratio": {
+                "description": "允许失败比例",
+                "hint": "全量向量重建时，失败比例不超过该值才允许切换新索引。0.02 表示最多允许 2% 失败。",
+                "type": "float",
+                "default": 0.02
+            }
+        }
+    },
+    "backup_settings": {
+        "description": "定期备份",
+        "hint": "每日自动备份记忆数据库，防止数据意外丢失",
+        "type": "object",
+        "items": {
+            "enabled": {
+                "description": "启用每日自动备份",
+                "hint": "每日衰减任务执行后自动备份数据库。建议开启。",
+                "type": "bool",
+                "default": true
+            },
+            "keep_days": {
+                "description": "备份保留天数",
+                "hint": "超过该天数的旧备份文件将被自动删除。默认保留 7 天。",
+                "type": "int",
+                "default": 7
+            }
+        }
+    },
+    "write_reliability": {
+        "description": "写入可靠性",
+        "hint": "控制记忆写入操作的自动修复与重试行为，提升数据一致性。",
+        "type": "object",
+        "items": {
+            "repair_enabled": {
+                "description": "启用写入自动修复",
+                "hint": "写入记忆后自动校验索引完整性，发现不一致时自动修复。建议开启。",
+                "type": "bool",
+                "default": true
+            },
+            "max_retries": {
+                "description": "写入最大重试次数",
+                "hint": "单次写入操作失败后的最大重试次数。超过后记录错误并放弃本次写入。建议 3-5。",
+                "type": "int",
+                "default": 3
+            }
+        }
+    },
+    "prompt_templates": {
+        "description": "自定义提示词模板",
+        "hint": "自定义记忆总结的提示词模板。留空则使用内置默认模板（位于 core/prompts/ 目录）。模板支持 {current_date}（当前日期时间）和 {conversation}（对话历史）两个占位符，LLM 将收到完整的 JSON 输出格式说明。",
+        "type": "object",
+        "items": {
+            "group_chat_template": {
+                "description": "群聊记忆总结提示词",
+                "hint": "自定义群聊对话生成记忆的提示词模板。留空则使用内置 group_chat_prompt.txt。修改后即时生效，无需重启插件。",
+                "type": "text",
+                "default": ""
+            },
+            "private_chat_template": {
+                "description": "私聊记忆总结提示词",
+                "hint": "自定义私聊对话生成记忆的提示词模板。留空则使用内置 private_chat_prompt.txt。修改后即时生效，无需重启插件。",
+                "type": "text",
+                "default": ""
+            }
+        }
+    },
+    "user_profile": {
+        "description": "用户画像",
+        "hint": "为每个用户构建动态画像（标签+偏好），驱动个性化记忆检索",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用用户画像", "hint": "开启后自动从对话中提取用户标签与偏好，并用于个性化记忆排序。", "type": "bool", "default": true},
+            "boost_strength": {"description": "个性化加权强度", "hint": "用户标签匹配时的检索得分加成比例。建议 0.1-0.2。", "type": "float", "default": 0.15},
+            "tag_decay_rate": {"description": "标签衰减率", "hint": "每日标签置信度的指数衰减系数。0.98 表示每天降低 2%。值越小标签遗忘越快。", "type": "float", "default": 0.98},
+            "min_tag_confidence": {"description": "标签最低置信度", "hint": "置信度低于此值的标签将被自动清理。0.1 表示只保留有足够证据的标签。", "type": "float", "default": 0.1}
+        }
+    },
+    "reranker": {
+        "description": "重排序模型",
+        "hint": "检索后对候选记忆进行精细重排序，提升 Top-K 精度",
+        "type": "object",
+        "items": {
+            "strategy": {"description": "重排序策略", "hint": "mmr: 最大边际相关性; cross_encoder: Embedding打分; llm: LLM打分; hybrid: 两级排序", "type": "string", "options": ["mmr", "cross_encoder", "llm", "hybrid"], "default": "mmr"},
+            "mmr_lambda": {"description": "MMR 相关性权重", "hint": "值越高越偏向相关性。范围 0-1。", "type": "float", "default": 0.7},
+            "cross_encoder_lambda": {"description": "Cross-Encoder 融合权重", "hint": "query-doc 相似度与原始得分的融合比例。", "type": "float", "default": 0.7},
+            "llm_batch_size": {"description": "LLM 重排序批量大小", "hint": "每次处理的候选记忆数量上限。", "type": "int", "default": 10}
+        }
+    },
+    "auto_learning": {
+        "description": "自主学习",
+        "hint": "从对话反馈中自动调整检索权重、记忆重要性、TTL 等参数",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用自主学习", "hint": "开启后插件会根据记忆复用率和对话质量自动优化参数。", "type": "bool", "default": true},
+            "learning_rate": {"description": "学习率", "hint": "参数更新的步长。建议 0.01-0.05。", "type": "float", "default": 0.01},
+            "target_hit_rate_low": {"description": "目标命中率下限", "hint": "记忆召回命中率低于此值时自动降低 importance 阈值、提高 top_k。", "type": "float", "default": 0.3},
+            "target_hit_rate_high": {"description": "目标命中率上限", "hint": "记忆召回命中率高于此值时自动提高 importance 阈值、降低 top_k。", "type": "float", "default": 0.7},
+            "quality_ema_alpha": {"description": "质量评分 EMA 系数", "hint": "对话质量评分的指数移动平均平滑系数。0.2 表示新评分权重 20%。", "type": "float", "default": 0.2}
+        }
+    },
+    "knowledge_base": {
+        "description": "知识库",
+        "hint": "结构化知识存储与查询，从记忆原子中提炼长期知识",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用知识库", "hint": "开启后自动从重要记忆中提取结构化知识条目。", "type": "bool", "default": true},
+            "dedup_threshold": {"description": "去重 Jaccard 阈值", "hint": "新知识与已有知识的文本相似度超过该值时触发合并。建议 0.75-0.90。", "type": "float", "default": 0.85},
+            "expire_days": {"description": "知识过期天数", "hint": "超过该天数的知识条目将被自动清理。0 表示永不过期。", "type": "int", "default": 365}
+        }
+    },
+    "notes": {
+        "description": "自主笔记",
+        "hint": "支持自主创建、修改、读取和索引笔记，提供 Agent 工具接口",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用笔记系统", "hint": "开启后插件可自主管理笔记，支持全文搜索和版本历史。", "type": "bool", "default": true},
+            "auto_create_min_length": {"description": "自动创建最低长度", "hint": "对话文本达到该字符数时才触发自动笔记生成。建议 50-200。", "type": "int", "default": 50},
+            "max_tags": {"description": "笔记最大标签数", "hint": "自动生成笔记标签的数量上限。", "type": "int", "default": 10},
+            "max_versions": {"description": "笔记版本上限", "type": "int", "default": 20}
+        }
+    },
+    "anomaly_detection": {
+        "description": "异常检测",
+        "hint": "监控记忆创建速率的异常波动，3-sigma 阈值告警",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用异常检测", "hint": "开启后每日统计记忆创建量，与 7 日滚动窗口对比，超 3-sigma 时记录告警。", "type": "bool", "default": true},
+            "window_days": {"description": "滚动窗口天数", "hint": "计算基线均值与标准差所用的历史天数。", "type": "int", "default": 7},
+            "sigma_threshold": {"description": "Sigma 告警阈值", "hint": "当日创建量偏离均值超过 sigma 倍标准差时触发告警。3.0 为标准 3-sigma。", "type": "float", "default": 3.0}
+        }
+    },
+    "relationship_tracking": {
+        "description": "关系阶段追踪",
+        "hint": "追踪用户与 Bot 的亲密度变化，从陌生人到密友",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用关系追踪", "hint": "开启后根据互动频率和情感极性累积用户亲密度 warmth score。", "type": "bool", "default": true},
+            "warmth_decay_per_day": {"description": "温暖度日衰减率", "hint": "每天自然的亲密度衰减。0.005 表示每天降低 0.5%（极慢）。设为 0 可停用。", "type": "float", "default": 0.005}
+        }
+    },
+    "continuity_tracking": {
+        "description": "对话连续性追踪",
+        "hint": "追踪未完成话题，下次对话时优先恢复上下文",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用连续性追踪", "hint": "开启后标记未完成话题并在下次对话时优先注入上下文。", "type": "bool", "default": true},
+            "topic_ttl_days": {"description": "话题存活天数", "hint": "未完成话题的最大保留时间。超过后自动清理不再注入。", "type": "int", "default": 7},
+            "max_pending_topics": {"description": "最大待处理话题数", "hint": "同时追踪的未完成话题数量上限。超出后最旧的将被移除。", "type": "int", "default": 10}
+        }
+    },
+    "semantic_compression": {
+        "description": "语义压缩",
+        "hint": "将 60 天以上旧记忆按主题相似度合并为抽象摘要，控制记忆库规模",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用语义压缩", "hint": "开启后定期扫描旧记忆，将 topic 高度重叠的记忆合并为精简摘要。", "type": "bool", "default": true},
+            "age_days": {"description": "压缩年龄阈值", "hint": "记忆创建超过此天数后才进入压缩候选。建议 45-90 天。", "type": "float", "default": 60.0},
+            "similarity_threshold": {"description": "合并相似度阈值", "hint": "两条记忆 topic Jaccard 重叠超过该值才合并。建议 0.75-0.92。", "type": "float", "default": 0.85}
+        }
+    },
+    "episode_clustering": {
+        "description": "情景聚类",
+        "hint": "按时间窗口和主题重叠将碎片化记忆聚合为 episode",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用情景聚类", "hint": "开启后同一事件的多条记忆会在后台自动聚合为 episode。", "type": "bool", "default": true},
+            "time_window_hours": {"description": "时间窗口（小时）", "hint": "该时间窗口内的记忆可能属于同一 episode。建议 12-48 小时。", "type": "float", "default": 24},
+            "topic_overlap_threshold": {"description": "主题重叠阈值", "hint": "两条记忆 topic Jaccard 重叠超过该值才归为同一 episode。", "type": "float", "default": 0.50}
+        }
+    },
+    "index_management": {
+        "description": "索引管理",
+        "hint": "控制 FAISS 向量索引的增量更新和 IVF 自动切换策略",
+        "type": "object",
+        "items": {
+            "ivf_switch_threshold": {"description": "IVF 切换阈值", "hint": "向量总数超过该值后建议切换至 IVF 索引以提升大规模检索性能。建议 8000-50000。", "type": "int", "default": 10000},
+            "incremental_rebuild_threshold": {"description": "增量重建阈值", "hint": "自上次全量重建以来新增向量超过该值后触发自动重建。", "type": "int", "default": 500}
+        }
+    },
+    "agent_tools": {
+        "description": "Agent 工具",
+        "hint": "控制注册到 AstrBot Agent 的 LLM 工具",
+        "type": "object",
+        "items": {
+            "enable_recall_tool": {"description": "启用记忆召回工具", "hint": "向 Agent 注册 memory_search 工具。", "type": "bool", "default": true},
+            "enable_memorize_tool": {"description": "启用记忆写入工具", "hint": "向 Agent 注册 memory_memorize 工具。谨慎开启。", "type": "bool", "default": false},
+            "enable_note_tools": {"description": "启用笔记工具（旧版兼容）", "hint": "旧版总开关；新配置请使用 enable_note_read_tools 与 enable_note_write_tool。", "type": "bool", "default": null},
+            "enable_note_read_tools": {"description": "启用笔记读取工具", "hint": "向 Agent 注册 note_search 与 note_read 工具。", "type": "bool", "default": true},
+            "enable_note_write_tool": {"description": "启用笔记写入工具", "hint": "向 Agent 注册 note_write 工具。默认关闭，建议仅在可信场景下开启。", "type": "bool", "default": false},
+            "enable_knowledge_tools": {"description": "启用知识库工具", "hint": "向 Agent 注册 knowledge_search/read 工具。", "type": "bool", "default": true},
+            "enable_profile_tools": {"description": "启用用户画像工具", "hint": "向 Agent 注册 profile_lookup 工具。", "type": "bool", "default": true},
+            "enable_jargon_tools": {"description": "启用黑话查询工具", "hint": "向 Agent 注册 jargon_explain/list 工具。self_learning 伴侣插件活跃时可能委托并跳过本地注册。", "type": "bool", "default": true},
+            "enable_affection_tools": {"description": "启用好感度工具", "hint": "向 Agent 注册 affection_check/bot_mood 工具。self_learning 伴侣插件活跃时可能委托并跳过本地注册。", "type": "bool", "default": true},
+            "enable_social_tools": {"description": "启用社交关系工具", "hint": "向 Agent 注册 relation_lookup/graph 工具。self_learning 伴侣插件活跃时可能委托并跳过本地注册。", "type": "bool", "default": true},
+            "enable_expression_tools": {"description": "启用表达模式工具", "hint": "向 Agent 注册 expression_recall 工具。self_learning 伴侣插件活跃时可能委托并跳过本地注册。", "type": "bool", "default": true}
+        }
+    },
+    "dashboard": {
+        "description": "Dashboard 运行时构建",
+        "hint": "控制是否允许通过 Web API 在运行时执行 dashboard 依赖安装和构建。",
+        "type": "object",
+        "items": {
+            "allow_runtime_build": {
+                "description": "允许运行时安装/构建 Dashboard",
+                "hint": "默认关闭。开启后管理员可通过页面 API 触发 npm ci 和 npm run build。",
+                "type": "bool",
+                "default": false
+            },
+            "build_timeout_seconds": {
+                "description": "运行时构建超时（秒）",
+                "hint": "运行时 dashboard install/build 的最大执行时间。超时后会终止子进程并返回错误。",
+                "type": "int",
+                "default": 120
+            },
+            "max_output_chars": {
+                "description": "构建输出最大字符数",
+                "hint": "运行时 install/build 返回给前端的 stdout/stderr 最大长度，超出部分会被截断。",
+                "type": "int",
+                "default": 20000
+            }
+        }
+    },
+    "security": {
+        "description": "安全防护",
+        "hint": "控制记忆注入提示词保护、LLM 回复清洗和结构化输出护栏。",
+        "type": "object",
+        "items": {
+            "prompt_protection_enabled": {
+                "description": "启用提示词保护",
+                "hint": "对注入的记忆上下文添加内部保护包装，降低提示词泄露和指令注入风险。",
+                "type": "bool",
+                "default": true
+            },
+            "sanitize_llm_response": {
+                "description": "清洗 LLM 回复",
+                "hint": "助手回复落库前移除泄露的内部提示词片段，避免污染长期记忆。",
+                "type": "bool",
+                "default": true
+            },
+            "guardrails_enabled": {
+                "description": "启用输出护栏",
+                "hint": "对 LLM 记忆抽取输出执行结构化校验和安全过滤。",
+                "type": "bool",
+                "default": true
+            },
+            "double_check_enabled": {
+                "description": "启用二次校验",
+                "hint": "提示词保护和回复清洗后执行额外校验，提升安全边界可靠性。",
+                "type": "bool",
+                "default": true
+            },
+            "wrapper_template_index": {
+                "description": "保护模板索引",
+                "hint": "选择提示词保护包装模板。默认 0。",
+                "type": "int",
+                "default": 0
+            },
+            "strict_mode": {
+                "description": "严格安全模式",
+                "hint": "开启后安全组件失败会跳过记忆注入或回复落库；关闭时记录告警并按兼容模式降级。",
+                "type": "bool",
+                "default": false
+            }
+        }
+    },
+    "persona_decay": {
+        "description": "人格调制遗忘率",
+        "hint": "不同人格的遗忘速度不同。decay_modifier > 1 健忘，< 1 记忆深刻。",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用人格调制遗忘率", "hint": "开启后根据 decay_modifier 调整 TTL 计算。", "type": "bool", "default": true},
+            "default_modifier": {"description": "默认遗忘倍率", "hint": "1.0=标准。2.0=两倍速遗忘。0.5=半速遗忘。建议 0.3-3.0。", "type": "float", "default": 1.0}
+        }
+    },
+    "weight_learning": {
+        "description": "MAB 权重学习",
+        "hint": "Epsilon-Greedy MAB 在线学习文档路/图路融合权重",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用 MAB 权重学习", "type": "bool", "default": false},
+            "epsilon": {"description": "探索率 0-1", "type": "float", "default": 0.1},
+            "group_by_persona": {"description": "按人格分组学习", "type": "bool", "default": true}
+        }
+    },
+    "reconsolidation": {
+        "description": "记忆再巩固",
+        "hint": "召回时可选 LLM 微调记忆内容，保留原始版本",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用记忆再巩固", "type": "bool", "default": false},
+            "min_recall_count": {"description": "最低召回次数阈值", "type": "int", "default": 5}
+        }
+    },
+    "export": {
+        "description": "记忆导入导出",
+        "hint": "JSONL/Markdown 格式记忆导出和去重合并导入",
+        "type": "object",
+        "items": {
+            "enabled": {"description": "启用导入导出", "type": "bool", "default": true}
+        }
+    },
+    "semantic_compressor": {
+        "description": "语义压缩设置",
+        "hint": "控制旧记忆语义压缩的种子词语言",
+        "type": "object",
+        "items": {
+            "seed_language": {
+                "description": "种子词语言",
+                "hint": "压缩扫描时使用的种子词语言。auto=自动跟随 bot_language，zh=中文，en=English，ru=Русский。",
+                "type": "string",
+                "options": ["auto", "zh", "en", "ru"],
+                "default": "auto"
+            }
+        }
+    },
+    "topic_segmentation": {
+        "description": "话题分割",
+        "hint": "将 LLM 返回的混合多话题记忆自动拆分为独立记忆原子。支持四种策略：Prompt Engineering(A)、Embedding Clustering(B)、Topic-aware Pre-chunking(C)、Two-stage LLM(D)。",
+        "type": "object",
+        "items": {
+            "enabled": {
+                "description": "启用话题分割",
+                "hint": "开启后自动将 LLM 输出的混合记忆按话题拆分为独立 MemoryAtom。建议开启。",
+                "type": "bool",
+                "default": true
+            },
+            "strategy": {
+                "description": "话题分割策略",
+                "hint": "a_b_hybrid(推荐): A做主分割+B做安全网回退; strategy_a: 仅Prompt Engineering; strategy_b: 仅Embedding Clustering; strategy_c: 仅Topic-aware Pre-chunking; strategy_d: 仅Two-stage LLM",
+                "type": "string",
+                "options": ["a_b_hybrid", "strategy_a", "strategy_b", "strategy_c", "strategy_d"],
+                "default": "a_b_hybrid"
+            },
+            "strategy_b": {
+                "description": "策略B：Embedding Clustering 参数",
+                "hint": "后置聚类参数——按 embedding 相似度将 key_fact 聚类为独立话题",
+                "type": "object",
+                "items": {
+                    "similarity_threshold": {
+                        "description": "相似度阈值",
+                        "hint": "两条 key_fact 的 cosine 相似度超过此值时归为同一话题。值越高话题越细粒度。",
+                        "type": "float",
+                        "default": 0.5
+                    },
+                    "min_cluster_size": {
+                        "description": "最小簇大小",
+                        "hint": "每个话题至少包含的 key_fact 数量。低于此值的簇将被合并或丢弃。",
+                        "type": "int",
+                        "default": 1
+                    },
+                    "max_clusters": {
+                        "description": "最大簇数量",
+                        "hint": "单次分割最多产生的话题数量上限。超出后合并最相似的簇。",
+                        "type": "int",
+                        "default": 5
+                    }
+                }
+            },
+            "strategy_c": {
+                "description": "策略C：Topic-aware Pre-chunking 参数",
+                "hint": "前置分块参数——在 LLM 调用前检测话题边界",
+                "type": "object",
+                "items": {
+                    "topic_shift_threshold": {
+                        "description": "话题切换阈值",
+                        "hint": "相邻消息的语义相似度低于此值时判定为话题边界。值越低切换越频繁。",
+                        "type": "float",
+                        "default": 0.3
+                    },
+                    "min_chunk_size": {
+                        "description": "最小分块消息数",
+                        "hint": "每个话题块至少包含的消息条数。低于此值的块与相邻块合并。",
+                        "type": "int",
+                        "default": 2
+                    }
+                }
+            },
+            "strategy_d": {
+                "description": "策略D：Two-stage LLM 参数",
+                "hint": "两阶段LLM参数——第一阶段识别话题，第二阶段分别抽取记忆",
+                "type": "object",
+                "items": {
+                    "stage1_max_topics": {
+                        "description": "第一阶段最大话题数",
+                        "hint": "Stage 1 LLM 最多识别的话题数量。超出后按相关性截断。",
+                        "type": "int",
+                        "default": 5
+                    },
+                    "enable_parallel_stage2": {
+                        "description": "启用并行 Stage 2",
+                        "hint": "开启后多个话题的 Stage 2 LLM 调用并行执行，加速处理但增加 API 并发压力。",
+                        "type": "bool",
+                        "default": true
+                    }
+                }
+            },
+            "hybrid_fallback_fact_threshold": {
+                "description": "混合策略回退阈值",
+                "hint": "A+B Hybrid 模式下，当单条记忆的 key_fact 数量达到此阈值时触发策略B二次分割。值越小越容易触发回退。",
+                "type": "int",
+                "default": 3
+            },
+            "legacy_backfill": {
+                "description": "存量回填",
+                "hint": "对 v1.0.0 之前的旧版记忆使用 Embedding Clustering 重新分割",
+                "type": "object",
+                "items": {
+                    "enabled": {
+                        "description": "启用存量回填",
+                        "hint": "开启后可通过 API 手动触发后台回填任务，对旧版记忆重新话题分割。",
+                        "type": "bool",
+                        "default": true
+                    },
+                    "batch_size": {
+                        "description": "回填批量大小",
+                        "hint": "每批处理的旧版记忆条数。值越大回填越快但内存峰值越高。",
+                        "type": "int",
+                        "default": 50
+                    },
+                    "max_backfill_per_run": {
+                        "description": "单次回填上限",
+                        "hint": "每次回填任务最多处理的记忆总数。超出后下次任务继续。",
+                        "type": "int",
+                        "default": 500
+                    }
+                }
+            }
+        }
+    },
+    "atom_classifier": {
+        "description": "原子分类器设置",
+        "hint": "控制记忆原子分类器的行为",
+        "type": "object",
+        "items": {
+            "negation_detection_enabled": {
+                "description": "启用否定检测",
+                "hint": "开启后，原子分类器会检测否定句式（如\"我不喜欢\"），防止将否定陈述误分类为 PREFERENCE 等类型。",
+                "type": "bool",
+                "default": true
+            }
+        }
+    },
+    "flashbulb": {
+        "description": "闪光灯记忆设置",
+        "hint": "高情感强度记忆永久保留，不受衰减影响",
+        "type": "object",
+        "items": {
+            "enabled": {
+                "description": "启用闪光灯记忆保护",
+                "hint": "开启后，emotional_intensity >= 阈值的记忆将永不过期。",
+                "type": "bool",
+                "default": true
+            },
+            "intensity_threshold": {
+                "description": "闪光灯记忆强度阈值",
+                "hint": "emotional_intensity 达到此值的记忆将完全跳过衰减。0.90 表示极高情感强度的记忆。",
+                "type": "float",
+                "default": 0.90
+            }
+        }
+    },
+    "forgetting_agent": {
+        "description": "自动清理设置",
+        "hint": "定期清理时间久远且重要性低的旧记忆，控制记忆库规模",
+        "type": "object",
+        "items": {
+            "auto_cleanup_enabled": {
+                "description": "启用每日自动清理",
+                "hint": "每日重要性衰减后自动清理符合条件的旧记忆。",
+                "type": "bool",
+                "default": true
+            },
+            "cleanup_days_threshold": {
+                "description": "清理天数阈值（天）",
+                "hint": "记忆创建超过该天数后进入清理候选。需同时满足重要性低于阈值才会被删除。",
+                "type": "int",
+                "default": 30
+            },
+            "cleanup_importance_threshold": {
+                "description": "清理重要性阈值",
+                "hint": "重要性低于该值的旧记忆才会被清理。0.3 表示重要性低于 30% 的记忆。",
+                "type": "float",
+                "default": 0.3
+            }
+        }
+    },
+    "atom_quality_filter": {
+        "description": "原子质量过滤 (v2.6)",
+        "hint": "控制记忆原子创建时的质量门槛，减少无关联短期聊天记录的存储。六层防线：置信度/长度/重要性阈值 + 信息量预检 + 试用期 TTL + 同批去重 + 冷存储",
+        "type": "object",
+        "items": {
+            "atom_quality_filter_enabled": {
+                "description": "启用质量过滤",
+                "hint": "质量过滤总开关。关闭后所有过滤逻辑跳过，等同于 v2.5 行为。",
+                "type": "bool",
+                "default": true
+            },
+            "atom_min_confidence": {
+                "description": "最小置信度阈值",
+                "hint": "低于此置信度的原子不保存。UNKNOWN 类型默认置信度 0.60，设为 0.65 可拦截大部分无关联聊天原子。",
+                "type": "float",
+                "default": 0.65
+            },
+            "atom_min_importance": {
+                "description": "最小重要性阈值",
+                "hint": "低于此重要性的原子不保存。LLM 评分为 0.0-0.2 的对话通常无需记忆。",
+                "type": "float",
+                "default": 0.3
+            },
+            "atom_min_content_length": {
+                "description": "最小内容长度（字符）",
+                "hint": "过短的内容（如单个词/表情）不保存为原子。",
+                "type": "int",
+                "default": 5
+            },
+            "atom_info_check_enabled": {
+                "description": "启用信息量预检",
+                "hint": "过滤寒暄/纯应答/纯表情等无信息量内容。",
+                "type": "bool",
+                "default": true
+            },
+            "atom_probationary_enabled": {
+                "description": "启用试用期机制",
+                "hint": "新创建且未被访问的 UNKNOWN/EPISODIC 低重要性原子使用缩短的 TTL（默认 3 天），被检索访问后自动恢复标准 TTL。",
+                "type": "bool",
+                "default": true
+            },
+            "atom_probationary_ttl_days": {
+                "description": "试用期 TTL（天）",
+                "hint": "试用期内原子在此天数后过期。",
+                "type": "float",
+                "default": 3.0
+            },
+            "atom_dedup_enabled": {
+                "description": "启用同批次去重",
+                "hint": "同一批次内 Jaccard 相似度 >= 阈值的原子合并为一条（保留置信度更高的）。",
+                "type": "bool",
+                "default": true
+            },
+            "atom_dedup_threshold": {
+                "description": "去重相似度阈值",
+                "hint": "Jaccard 相似度达到此阈值时视为重复。",
+                "type": "float",
+                "default": 0.7
+            },
+            "atom_cold_storage_enabled": {
+                "description": "启用冷存储分层",
+                "hint": "长期未被访问的低重要性原子迁移到 COLD 状态，不参与常规检索。",
+                "type": "bool",
+                "default": true
+            },
+            "atom_cold_days_threshold": {
+                "description": "冷存储迁移天数阈值",
+                "hint": "原子最后一次被访问距今超过此天数且重要性低于冷存储最大重要性时，自动标记为 COLD。",
+                "type": "float",
+                "default": 14.0
+            },
+            "atom_cold_max_importance": {
+                "description": "冷存储最大重要性",
+                "hint": "仅重要性低于此值的原子参与冷存储迁移。",
+                "type": "float",
+                "default": 0.4
+            }
+        }
+    }
+}

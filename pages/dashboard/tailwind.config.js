@@ -1,0 +1,109 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  darkMode: ["class", '[data-theme="dark"]'],
+  theme: {
+    extend: {
+      colors: {
+        surface: {
+          DEFAULT: "var(--color-surface)",
+          secondary: "var(--color-surface-secondary)",
+          elevated: "var(--color-surface-elevated)",
+        },
+        border: {
+          DEFAULT: "var(--color-border)",
+          light: "var(--color-border-light)",
+        },
+        text: {
+          primary: "var(--text-primary)",
+          secondary: "var(--text-secondary)",
+          tertiary: "var(--text-tertiary)",
+        },
+        accent: {
+          DEFAULT: "var(--color-accent)",
+          secondary: "var(--color-accent-secondary)",
+          success: "var(--color-success)",
+          warning: "var(--color-warning)",
+          danger: "var(--color-danger)",
+        },
+      },
+      fontFamily: {
+        sans: [
+          "-apple-system",
+          "BlinkMacSystemFont",
+          '"Segoe UI"',
+          "Roboto",
+          '"Helvetica Neue"',
+          "Arial",
+          '"Noto Sans SC"',
+          "sans-serif",
+        ],
+        mono: [
+          '"SF Mono"',
+          "Menlo",
+          "Monaco",
+          '"Cascadia Code"',
+          "monospace",
+        ],
+      },
+      fontSize: {
+        "2xs": ["0.625rem", { lineHeight: "0.875rem" }],
+      },
+      borderRadius: {
+        xl: "0.75rem",
+        "2xl": "1rem",
+        "3xl": "1.5rem",
+      },
+      boxShadow: {
+        surface: "var(--shadow-surface)",
+        elevated: "var(--shadow-elevated)",
+        modal: "var(--shadow-modal)",
+      },
+      animation: {
+        "fade-in": "fadeIn 150ms ease-out",
+        "slide-up": "slideUp 200ms ease-out",
+        "slide-in-right": "slideInRight 250ms ease-out",
+        "scale-in": "scaleIn 150ms ease-out",
+        "page-enter": "pageEnter 300ms ease-out",
+        "pop-in": "popIn 200ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "slide-down": "slideDown 200ms ease-out",
+        "pulse-soft": "pulseSoft 2s ease-in-out infinite",
+      },
+      keyframes: {
+        fadeIn: {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
+        slideUp: {
+          "0%": { opacity: "0", transform: "translateY(8px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        slideInRight: {
+          "0%": { transform: "translateX(100%)" },
+          "100%": { transform: "translateX(0)" },
+        },
+        scaleIn: {
+          "0%": { opacity: "0", transform: "scale(0.95)" },
+          "100%": { opacity: "1", transform: "scale(1)" },
+        },
+        pageEnter: {
+          "0%": { opacity: "0", transform: "translateY(12px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        popIn: {
+          "0%": { opacity: "0", transform: "scale(0.92)" },
+          "100%": { opacity: "1", transform: "scale(1)" },
+        },
+        slideDown: {
+          "0%": { opacity: "0", transform: "translateY(-6px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        pulseSoft: {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.7" },
+        },
+      },
+    },
+  },
+  plugins: [],
+};

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "shadcn": {
+      "source": "shadcn/ui",
+      "sourceType": "github",
+      "skillPath": "skills/shadcn/SKILL.md",
+      "computedHash": "0dc0edeeaec2ae491ae506806517866a3f9bd48d04e0458feb37e0252862891f"
+    },
+    "skill-astrbot-dev": {
+      "source": "xunxiing/AstrBot-Skill",
+      "sourceType": "github",
+      "skillPath": "skill-astrbot-dev/SKILL.md",
+      "computedHash": "924e506520d4958a070f293e2b677bc618ecb5e185fa1377d0fdd81726508911"
+    }
+  }
+}

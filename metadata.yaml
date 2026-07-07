@@ -1,0 +1,5 @@
+name: astrbot_plugin_memora
+author: INSide-734
+version: 1.0.0
+description: 为 AstrBot 打造的、拥有完整记忆生命周期的智能长期记忆插件。
+repo: https://github.com/INSide-734/astrbot_plugin_memora

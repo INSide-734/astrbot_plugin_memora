@@ -1,0 +1,646 @@
+"""测试 core/social — Social Relationship Typing.
+
+Covers:
+- Models: SocialRelation, RelationChange, helpers
+- RelationStore: CRUD, multi-group isolation
+- RelationManager: difficulty-gated updates, defaults, tag management
+"""
+
+from __future__ import annotations
+
+import json
+import time
+
+import pytest
+
+from core.social.models import (
+    RELATION_CATEGORIES,
+    RELATION_DIFFICULTY,
+    RelationChange,
+    SocialRelation,
+    get_difficulty,
+    get_relation_category,
+)
+from core.social.relation_store import RelationStore
+from core.social.relation_manager import RelationManager
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+
+async def _create_store(tmp_db_path: str) -> RelationStore:
+    s = RelationStore(db_path=tmp_db_path)
+    await s.initialize()
+    return s
+
+
+async def _create_manager(tmp_db_path: str) -> RelationManager:
+    return RelationManager(await _create_store(tmp_db_path))
+
+
+# ============================================================================
+# Models & helpers
+# ============================================================================
+
+
+class TestRelationCategories:
+    """验证 the 6-category taxonomy."""
+
+    def test_six_categories_exist(self):
+        assert set(RELATION_CATEGORIES) == {
+            "blood", "geographic", "career", "emotional", "interest", "intimacy",
+        }
+
+    def test_blood_contains_kinship(self):
+        assert "parent_child" in RELATION_CATEGORIES["blood"]
+        assert "siblings" in RELATION_CATEGORIES["blood"]
+        assert "relatives" in RELATION_CATEGORIES["blood"]
+
+    def test_emotional_contains_bonds(self):
+        assert "lover" in RELATION_CATEGORIES["emotional"]
+        assert "best_friend" in RELATION_CATEGORIES["emotional"]
+        assert "rival" in RELATION_CATEGORIES["emotional"]
+
+    def test_intimacy_contains_tiers(self):
+        assert "core_intimate" in RELATION_CATEGORIES["intimacy"]
+        assert "daily_normal" in RELATION_CATEGORIES["intimacy"]
+        assert "stranger" in RELATION_CATEGORIES["intimacy"]
+
+    def test_get_relation_category_known(self):
+        assert get_relation_category("parent_child") == "blood"
+        assert get_relation_category("colleague") == "career"
+        assert get_relation_category("lover") == "emotional"
+
+    def test_get_relation_category_unknown(self):
+        assert get_relation_category("nonexistent") is None
+
+
+class TestRelationDifficulty:
+    """Cover every listed difficulty entry."""
+
+    def test_blood_is_high(self):
+        assert RELATION_DIFFICULTY["parent_child"] >= 0.98
+        assert RELATION_DIFFICULTY["siblings"] >= 0.95
+        assert RELATION_DIFFICULTY["relatives"] >= 0.90
+
+    def test_fellow_passenger_is_low(self):
+        assert RELATION_DIFFICULTY["fellow_passenger"] <= 0.10
+
+    def test_stranger_is_low(self):
+        assert RELATION_DIFFICULTY["stranger"] <= 0.15
+
+    def test_core_intimate_is_high(self):
+        assert RELATION_DIFFICULTY["core_intimate"] >= 0.85
+
+    def test_get_difficulty_known(self):
+        assert get_difficulty("colleague") == 0.60
+        assert get_difficulty("best_friend") == 0.80
+
+    def test_get_difficulty_fallback(self):
+        assert get_difficulty("invented_type") == 0.40
+
+    def test_all_listed_types_have_difficulty(self):
+        """Every type name across all categories must have a difficulty entry."""
+        for cat, members in RELATION_CATEGORIES.items():
+            for rel_type in members:
+                assert rel_type in RELATION_DIFFICULTY, (
+                    f"{rel_type} (from {cat}) missing from "
+                    "RELATION_DIFFICULTY"
+                )
+
+
+class TestSocialRelationModel:
+    """SocialRelation dataclass tests."""
+
+    def test_create_default(self):
+        rel = SocialRelation(
+            from_user="u1",
+            to_user="u2",
+            relation_type="stranger",
+            strength=0.1,
+            frequency=0,
+            last_interaction=time.time(),
+            group_id="g1",
+        )
+        assert rel.tags == []
+
+    def test_to_dict_roundtrip(self):
+        rel = SocialRelation(
+            from_user="alice",
+            to_user="bob",
+            relation_type="colleague",
+            strength=0.55,
+            frequency=12,
+            last_interaction=1234567890.0,
+            group_id="group_42",
+            tags=["work", "project_x"],
+        )
+        d = rel.to_dict()
+        assert d["from_user"] == "alice"
+        assert d["tags"] == ["work", "project_x"]
+
+    def test_from_row_with_json_tags(self):
+        row = {
+            "from_user": "x",
+            "to_user": "y",
+            "relation_type": "classmate",
+            "strength": 0.3,
+            "frequency": 5,
+            "last_interaction": 100.0,
+            "group_id": "g",
+            "tags": json.dumps(["tag1", "tag2"], ensure_ascii=False),
+        }
+        rel = SocialRelation.from_row(row)
+        assert rel.tags == ["tag1", "tag2"]
+
+    def test_from_row_with_invalid_tags_json(self):
+        row = {
+            "from_user": "x",
+            "to_user": "y",
+            "relation_type": "classmate",
+            "strength": 0.3,
+            "frequency": 5,
+            "last_interaction": 100.0,
+            "group_id": "g",
+            "tags": "not-valid-json",
+        }
+        rel = SocialRelation.from_row(row)
+        assert rel.tags == []
+
+    def test_from_row_with_list_tags(self):
+        row = {
+            "from_user": "x",
+            "to_user": "y",
+            "relation_type": "classmate",
+            "strength": 0.3,
+            "frequency": 5,
+            "last_interaction": 100.0,
+            "group_id": "g",
+            "tags": ["a", "b"],
+        }
+        rel = SocialRelation.from_row(row)
+        assert rel.tags == ["a", "b"]
+
+
+class TestRelationChangeModel:
+    """RelationChange is a simple dataclass."""
+
+    def test_create(self):
+        rc = RelationChange(
+            from_user="a",
+            to_user="b",
+            relation_type="colleague",
+            delta=0.05,
+            new_strength=0.35,
+            reason="chat",
+        )
+        assert rc.delta == 0.05
+        assert rc.reason == "chat"
+
+
+# ============================================================================
+# RelationStore
+# ============================================================================
+
+
+class TestRelationStoreCRUD:
+    """Storage-layer tests."""
+
+    @pytest.mark.asyncio
+    async def test_upsert_and_get(self, tmp_db_path):
+        store = await _create_store(tmp_db_path)
+        rel = SocialRelation(
+            from_user="u1", to_user="u2", relation_type="colleague",
+            strength=0.4, frequency=3, last_interaction=time.time(),
+            group_id="g1",
+        )
+        await store.upsert_relation(rel)
+
+        got = await store.get_relation("u1", "u2", "colleague", "g1")
+        assert got is not None
+        assert got.from_user == "u1"
+        assert got.strength == 0.4
+
+    @pytest.mark.asyncio
+    async def test_get_nonexistent(self, tmp_db_path):
+        store = await _create_store(tmp_db_path)
+        got = await store.get_relation("u1", "u2", "stranger", "g1")
+        assert got is None
+
+    @pytest.mark.asyncio
+    async def test_upsert_overwrites(self, tmp_db_path):
+        store = await _create_store(tmp_db_path)
+        rel = SocialRelation(
+            from_user="u1", to_user="u2", relation_type="colleague",
+            strength=0.4, frequency=1, last_interaction=time.time(),
+            group_id="g1",
+        )
+        await store.upsert_relation(rel)
+        rel.strength = 0.7
+        rel.frequency = 5
+        await store.upsert_relation(rel)
+
+        got = await store.get_relation("u1", "u2", "colleague", "g1")
+        assert got.strength == 0.7
+        assert got.frequency == 5
+
+    @pytest.mark.asyncio
+    async def test_group_isolation(self, tmp_db_path):
+        """相同 user pair in two groups should yield two distinct records."""
+        store = await _create_store(tmp_db_path)
+        rel_g1 = SocialRelation(
+            from_user="a", to_user="b", relation_type="classmate",
+            strength=0.3, frequency=2, last_interaction=time.time(),
+            group_id="group_1",
+        )
+        rel_g2 = SocialRelation(
+            from_user="a", to_user="b", relation_type="classmate",
+            strength=0.8, frequency=10, last_interaction=time.time(),
+            group_id="group_2",
+        )
+        await store.upsert_relation(rel_g1)
+        await store.upsert_relation(rel_g2)
+
+        got1 = await store.get_relation("a", "b", "classmate", "group_1")
+        got2 = await store.get_relation("a", "b", "classmate", "group_2")
+        assert got1.strength == 0.3
+        assert got2.strength == 0.8
+
+    @pytest.mark.asyncio
+    async def test_get_group_relations(self, tmp_db_path):
+        store = await _create_store(tmp_db_path)
+        for i in range(3):
+            await store.upsert_relation(SocialRelation(
+                from_user=f"u{i}", to_user=f"v{i}",
+                relation_type="colleague", strength=0.1 * (i + 1),
+                frequency=i, last_interaction=time.time(),
+                group_id="mygroup",
+            ))
+        results = await store.get_group_relations("mygroup")
+        assert len(results) == 3
+        # Sorted strongest first
+        assert results[0].strength >= results[-1].strength
+
+    @pytest.mark.asyncio
+    async def test_get_user_network(self, tmp_db_path):
+        store = await _create_store(tmp_db_path)
+        await store.upsert_relation(SocialRelation(
+            from_user="center", to_user="a", relation_type="friend",
+            strength=0.5, frequency=1, last_interaction=time.time(),
+            group_id="g",
+        ))
+        await store.upsert_relation(SocialRelation(
+            from_user="b", to_user="center", relation_type="colleague",
+            strength=0.3, frequency=1, last_interaction=time.time(),
+            group_id="g2",
+        ))
+        network = await store.get_user_network("center")
+        assert len(network) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_user_relations_in_group(self, tmp_db_path):
+        store = await _create_store(tmp_db_path)
+        await store.upsert_relation(SocialRelation(
+            from_user="me", to_user="other", relation_type="friend",
+            strength=0.5, frequency=1, last_interaction=time.time(),
+            group_id="alpha",
+        ))
+        await store.upsert_relation(SocialRelation(
+            from_user="me", to_user="someone", relation_type="colleague",
+            strength=0.3, frequency=1, last_interaction=time.time(),
+            group_id="beta",
+        ))
+        results = await store.get_user_relations_in_group("me", "alpha")
+        assert len(results) == 1
+        assert results[0].to_user == "other"
+
+    @pytest.mark.asyncio
+    async def test_delete_relation(self, tmp_db_path):
+        store = await _create_store(tmp_db_path)
+        rel = SocialRelation(
+            from_user="d1", to_user="d2", relation_type="rival",
+            strength=0.2, frequency=1, last_interaction=time.time(),
+            group_id="g",
+        )
+        await store.upsert_relation(rel)
+        assert await store.delete_relation("d1", "d2", "rival", "g") is True
+        assert await store.get_relation("d1", "d2", "rival", "g") is None
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent(self, tmp_db_path):
+        store = await _create_store(tmp_db_path)
+        assert await store.delete_relation("x", "y", "z", "g") is False
+
+    @pytest.mark.asyncio
+    async def test_delete_user_relations(self, tmp_db_path):
+        store = await _create_store(tmp_db_path)
+        for i in range(3):
+            await store.upsert_relation(SocialRelation(
+                from_user="target", to_user=f"peer_{i}",
+                relation_type="colleague", strength=0.2,
+                frequency=1, last_interaction=time.time(),
+                group_id="del_group",
+            ))
+        removed = await store.delete_user_relations("target", "del_group")
+        assert removed == 3
+        assert await store.count() == 0
+
+    @pytest.mark.asyncio
+    async def test_list_all_and_count(self, tmp_db_path):
+        store = await _create_store(tmp_db_path)
+        assert await store.count() == 0
+        await store.upsert_relation(SocialRelation(
+            from_user="a", to_user="b", relation_type="neighbor",
+            strength=0.5, frequency=1, last_interaction=time.time(),
+            group_id="g",
+        ))
+        assert await store.count() == 1
+        assert len(await store.list_all()) == 1
+
+    def test_rejects_unapproved_table_identifier(self):
+        store = RelationStore(db_path="social.db")
+        store._TABLE = 'social_relations; DROP TABLE social_relations;--'
+        with pytest.raises(ValueError, match="Unsupported relation table"):
+            _ = store._table_sql
+
+
+# ============================================================================
+# RelationManager
+# ============================================================================
+
+
+class TestRelationManagerDefaults:
+    """默认 creation and initial state."""
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_new(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        rel = await manager.get_or_create("u1", "u2", "g1")
+        assert rel.from_user == "u1"
+        assert rel.to_user == "u2"
+        assert rel.relation_type == "stranger"
+        assert rel.strength == 0.1
+        assert rel.frequency == 0
+        assert rel.group_id == "g1"
+
+        # Verify it was persisted
+        stored = await manager._store.get_relation("u1", "u2", "stranger", "g1")
+        assert stored is not None
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_existing(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        rel1 = await manager.get_or_create("a", "b", "g", relation_type="colleague")
+        rel2 = await manager.get_or_create("a", "b", "g", relation_type="colleague")
+        assert rel2.strength == rel1.strength
+        assert rel2.frequency == rel1.frequency
+
+
+class TestRelationManagerDifficultyGate:
+    """验证 that the difficulty gate dampens strength changes correctly."""
+
+    @pytest.mark.asyncio
+    async def test_parent_child_nearly_immutable(self, tmp_db_path):
+        """parent_child difficulty 0.98 → only 2% of delta passes through."""
+        manager = await _create_manager(tmp_db_path)
+        rel = await manager.get_or_create("mom", "child", "home",
+                                          relation_type="parent_child")
+        change = RelationChange(
+            from_user="mom", to_user="child",
+            relation_type="parent_child",
+            delta=0.50, new_strength=0.0, reason="test",
+        )
+        rel = await manager.update_relation(change)
+        # actual = 0.50 * (1 - 0.98) = 0.01
+        assert rel.strength == pytest.approx(0.1 + 0.01, abs=0.005)
+
+    @pytest.mark.asyncio
+    async def test_fellow_passenger_highly_mutable(self, tmp_db_path):
+        """fellow_passenger difficulty 0.05 → 95% of delta passes through."""
+        manager = await _create_manager(tmp_db_path)
+        rel = await manager.get_or_create("p1", "p2", "train",
+                                          relation_type="fellow_passenger")
+        change = RelationChange(
+            from_user="p1", to_user="p2",
+            relation_type="fellow_passenger",
+            delta=0.30, new_strength=0.0, reason="chat",
+        )
+        rel = await manager.update_relation(change)
+        # actual = 0.30 * (1 - 0.05) = 0.285
+        assert rel.strength == pytest.approx(0.1 + 0.285, abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_colleague_mid_difficulty(self, tmp_db_path):
+        """colleague difficulty 0.60 → 40% of delta passes."""
+        manager = await _create_manager(tmp_db_path)
+        rel = await manager.get_or_create("a", "b", "office",
+                                          relation_type="colleague")
+        change = RelationChange(
+            from_user="a", to_user="b",
+            relation_type="colleague",
+            delta=0.20, new_strength=0.0, reason="meeting",
+        )
+        rel = await manager.update_relation(change)
+        # actual = 0.20 * (1 - 0.60) = 0.08
+        assert rel.strength == pytest.approx(0.1 + 0.08, abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_strength_clamps_to_one(self, tmp_db_path):
+        """Strength must never exceed 1.0."""
+        manager = await _create_manager(tmp_db_path)
+        rel = await manager.get_or_create("a", "b", "g",
+                                          relation_type="stranger")
+        change = RelationChange(
+            from_user="a", to_user="b",
+            relation_type="stranger",
+            delta=100.0, new_strength=0.0, reason="overflow_test",
+        )
+        rel = await manager.update_relation(change)
+        assert rel.strength == 1.0
+
+    @pytest.mark.asyncio
+    async def test_negative_delta_decreases(self, tmp_db_path):
+        """负 deltas should decrease strength through the gate."""
+        manager = await _create_manager(tmp_db_path)
+        # Start with higher base
+        store_ = manager._store
+        rel = SocialRelation(
+            from_user="a", to_user="b", relation_type="colleague",
+            strength=0.8, frequency=5, last_interaction=time.time(),
+            group_id="",
+        )
+        await store_.upsert_relation(rel)
+
+        change = RelationChange(
+            from_user="a", to_user="b",
+            relation_type="colleague",
+            delta=-0.30, new_strength=0.0, reason="argument",
+        )
+        rel = await manager.update_relation(change)
+        # actual = -0.30 * 0.40 = -0.12
+        assert rel.strength == pytest.approx(0.68, abs=0.01)
+        assert rel.strength > 0.0
+
+    @pytest.mark.asyncio
+    async def test_strength_clamps_to_zero(self, tmp_db_path):
+        """Strength must never go below 0.0."""
+        manager = await _create_manager(tmp_db_path)
+        rel = await manager.get_or_create("a", "b", "g",
+                                          relation_type="stranger")
+        change = RelationChange(
+            from_user="a", to_user="b",
+            relation_type="stranger",
+            delta=-100.0, new_strength=0.0, reason="underflow_test",
+        )
+        rel = await manager.update_relation(change)
+        assert rel.strength == 0.0
+
+
+class TestRelationManagerHighFrequency:
+    """Simulate repeated interactions driving strength upward."""
+
+    @pytest.mark.asyncio
+    async def test_frequent_interactions_raise_strength(self, tmp_db_path):
+        """之后 50 small positive deltas, strength should grow noticeably."""
+        manager = await _create_manager(tmp_db_path)
+        rel = await manager.get_or_create("u1", "u2", "g",
+                                          relation_type="fellow_passenger")
+        for _ in range(50):
+            change = RelationChange(
+                from_user="u1", to_user="u2",
+                relation_type="fellow_passenger",
+                delta=0.02, new_strength=0.0, reason="chat",
+            )
+            rel = await manager.update_relation(change)
+
+        # total raw = 50 * 0.02 = 1.0
+        # actual per step = 0.02 * 0.95 = 0.019
+        # total = 0.95, clamped at 1.0
+        assert rel.strength > 0.8
+        assert rel.frequency == 50
+
+
+class TestRelationManagerTags:
+    """Tag management tests."""
+
+    @pytest.mark.asyncio
+    async def test_update_tags(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        rel = await manager.get_or_create("u1", "u2", "g",
+                                          relation_type="colleague")
+        updated = await manager.update_tags(
+            "u1", "u2", "colleague", "g",
+            tags=["office", "lunch_buddy"],
+        )
+        assert updated is not None
+        assert updated.tags == ["office", "lunch_buddy"]
+
+        # Verify persistence
+        stored = await manager._store.get_relation("u1", "u2", "colleague", "g")
+        assert stored.tags == ["office", "lunch_buddy"]
+
+    @pytest.mark.asyncio
+    async def test_update_tags_nonexistent(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        result = await manager.update_tags(
+            "no", "one", "stranger", "g", tags=["test"],
+        )
+        assert result is None
+
+
+class TestRelationManagerMultiGroup:
+    """Relations should be scoped per group_id."""
+
+    @pytest.mark.asyncio
+    async def test_same_users_different_groups(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        _ = await manager.get_or_create("alice", "bob", "group_a",
+                                        relation_type="colleague")
+        _ = await manager.get_or_create("alice", "bob", "group_b",
+                                        relation_type="gaming_teammate")
+
+        # Apply a delta only in group_a
+        change = RelationChange(
+            from_user="alice", to_user="bob",
+            relation_type="colleague", delta=0.5,
+            new_strength=0.0, reason="meeting",
+        )
+        await manager.update_relation(change)
+
+        # group_b should still be at default 0.1
+        rel_b = await manager._store.get_relation(
+            "alice", "bob", "gaming_teammate", "group_b",
+        )
+        assert rel_b.strength == 0.1
+
+    @pytest.mark.asyncio
+    async def test_get_relations_by_group_scope(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        await manager.get_or_create("x", "y", "g1", relation_type="classmate")
+        await manager.get_or_create("x", "z", "g1", relation_type="colleague")
+        await manager.get_or_create("w", "v", "g2", relation_type="rival")
+
+        g1 = await manager.get_relations_by_group("g1")
+        assert len(g1) == 2
+        g2 = await manager.get_relations_by_group("g2")
+        assert len(g2) == 1
+
+
+class TestRelationManagerDelete:
+    """Deletion tests."""
+
+    @pytest.mark.asyncio
+    async def test_delete_existing(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        await manager.get_or_create("a", "b", "g", relation_type="friend")
+        assert await manager.delete_relation("a", "b", "friend", "g") is True
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        assert await manager.delete_relation("x", "y", "z", "g") is False
+
+
+class TestRelationManagerEdgeCases:
+    """Edge-case and boundary tests."""
+
+    @pytest.mark.asyncio
+    async def test_apply_delta_auto_provisions(self, tmp_db_path):
+        """Calling apply_delta on a non-existent relation creates it first."""
+        manager = await _create_manager(tmp_db_path)
+        rel = await manager.apply_delta(
+            "new_u1", "new_u2", "any_group",
+            delta=0.2, reason="hello",
+            relation_type="classmate",
+        )
+        assert rel is not None
+        assert rel.from_user == "new_u1"
+        # strength should be 0.1 + 0.2*(1-0.50) = 0.1 + 0.10 = 0.20
+        assert rel.strength == pytest.approx(0.20, abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_all_relation_types_gate(self, tmp_db_path):
+        """Smoke-test: every relation type can be created and updated."""
+        manager = await _create_manager(tmp_db_path)
+        for cat, members in RELATION_CATEGORIES.items():
+            for rt in members:
+                rel = await manager.get_or_create("from", "to", "test_g",
+                                                  relation_type=rt)
+                change = RelationChange(
+                    from_user="from", to_user="to",
+                    relation_type=rt, delta=0.1,
+                    new_strength=0.0, reason="smoke_test",
+                )
+                rel = await manager.update_relation(change)
+                assert 0.0 <= rel.strength <= 1.0, (
+                    f"{rt} strength {rel.strength} out of range"
+                )
+
+    @pytest.mark.asyncio
+    async def test_list_all_integration(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        await manager.get_or_create("a", "b", "g1")
+        await manager.get_or_create("c", "d", "g1")
+        assert len(await manager.list_all()) == 2

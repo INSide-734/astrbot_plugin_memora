@@ -1,0 +1,337 @@
+"""注入清理器 — 从 LLM 上下文中删除历史记忆注入片段和伪造工具调用"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from typing import TYPE_CHECKING
+
+from astrbot.api import logger
+
+from ..base.constants import (
+    FAKE_TOOL_CALL_ID_PREFIX,
+    MEMORY_INJECTION_FOOTER,
+    MEMORY_INJECTION_HEADER,
+)
+
+if TYPE_CHECKING:
+    from astrbot.api.provider import ProviderRequest
+
+_INJECTION_CLEANUP_PATTERN = re.compile(
+    re.escape(MEMORY_INJECTION_HEADER) + r".*?" + re.escape(MEMORY_INJECTION_FOOTER),
+    flags=re.DOTALL,
+)
+
+
+class InjectionCleaner:
+    """清理 LLM 请求上下文中的历史记忆注入和伪造工具调用"""
+
+    @staticmethod
+    def remove_injected_memories_from_context(
+        req: ProviderRequest,
+        session_id: str,
+    ) -> int:
+        """从对话历史、system_prompt和prompt中删除之前注入的记忆片段"""
+        removed_count = 0
+        pattern = _INJECTION_CLEANUP_PATTERN
+
+        try:
+            if (
+                hasattr(req, "system_prompt")
+                and req.system_prompt
+                and isinstance(req.system_prompt, str)
+            ):
+                original_prompt = req.system_prompt
+                if (
+                    MEMORY_INJECTION_HEADER in original_prompt
+                    and MEMORY_INJECTION_FOOTER in original_prompt
+                ):
+                    cleaned_prompt = pattern.sub("", original_prompt)
+                    cleaned_prompt = re.sub(
+                        r"\n{3,}", "\n\n", cleaned_prompt
+                    ).strip()
+                    req.system_prompt = cleaned_prompt
+                    if cleaned_prompt != original_prompt:
+                        removed_count += 1
+                        logger.debug(
+                            f"[{session_id}] 从system_prompt中清理记忆片段 "
+                            f"(原长度={len(original_prompt)}, 新长度={len(cleaned_prompt)})"
+                        )
+
+            if (
+                hasattr(req, "extra_user_content_parts")
+                and req.extra_user_content_parts
+            ):
+                kept_parts = []
+                for part in req.extra_user_content_parts:
+                    text = getattr(part, "text", "")
+                    if isinstance(text, str) and (
+                        MEMORY_INJECTION_HEADER in text
+                        and MEMORY_INJECTION_FOOTER in text
+                    ):
+                        removed_count += 1
+                        logger.debug(
+                            f"[{session_id}] 从extra_user_content_parts中清理记忆片段"
+                        )
+                        continue
+                    kept_parts.append(part)
+                req.extra_user_content_parts = kept_parts
+
+            if (
+                hasattr(req, "prompt")
+                and req.prompt
+                and isinstance(req.prompt, str)
+            ):
+                original_prompt = req.prompt
+                if (
+                    MEMORY_INJECTION_HEADER in original_prompt
+                    and MEMORY_INJECTION_FOOTER in original_prompt
+                ):
+                    cleaned_prompt = pattern.sub("", original_prompt)
+                    cleaned_prompt = re.sub(
+                        r"\n{3,}", "\n\n", cleaned_prompt
+                    ).strip()
+                    req.prompt = cleaned_prompt
+                    if cleaned_prompt != original_prompt:
+                        removed_count += 1
+                        logger.debug(
+                            f"[{session_id}] 从req.prompt中清理记忆片段 "
+                            f"(原长度={len(original_prompt)}, 新长度={len(cleaned_prompt)})"
+                        )
+
+            if hasattr(req, "contexts") and req.contexts:
+                filtered_contexts = []
+
+                for msg in req.contexts:
+                    if isinstance(msg, str):
+                        content = msg
+                    elif isinstance(msg, dict):
+                        content = msg.get("content", "")
+                        if not isinstance(content, (str, list)):
+                            filtered_contexts.append(msg)
+                            continue
+                    else:
+                        filtered_contexts.append(msg)
+                        continue
+
+                    if isinstance(content, str):
+                        has_header = MEMORY_INJECTION_HEADER in content
+                        has_footer = MEMORY_INJECTION_FOOTER in content
+                        if has_header and has_footer:
+                            cleaned_content = pattern.sub("", content).strip()
+                            cleaned_content = re.sub(r"\n{3,}", "\n\n", cleaned_content)
+                            if not cleaned_content:
+                                removed_count += 1
+                                continue
+                            if cleaned_content != content:
+                                removed_count += 1
+                                if isinstance(msg, str):
+                                    filtered_contexts.append(cleaned_content)
+                                else:
+                                    msg_copy = msg.copy()
+                                    msg_copy["content"] = cleaned_content
+                                    filtered_contexts.append(msg_copy)
+                                continue
+
+                    elif isinstance(content, list):
+                        cleaned_parts = []
+                        has_changes = False
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                text = part.get("text", "")
+                                if isinstance(text, str):
+                                    has_header = MEMORY_INJECTION_HEADER in text
+                                    has_footer = MEMORY_INJECTION_FOOTER in text
+                                    if has_header and has_footer:
+                                        cleaned_text = pattern.sub("", text).strip()
+                                        cleaned_text = re.sub(
+                                            r"\n{3,}", "\n\n", cleaned_text
+                                        )
+                                        if not cleaned_text:
+                                            has_changes = True
+                                            continue
+                                        if cleaned_text != text:
+                                            has_changes = True
+                                            removed_count += 1
+                                            part_copy = part.copy()
+                                            part_copy["text"] = cleaned_text
+                                            cleaned_parts.append(part_copy)
+                                            continue
+                            cleaned_parts.append(part)
+                        if not cleaned_parts:
+                            removed_count += 1
+                            continue
+                        if has_changes:
+                            msg_copy = msg.copy()
+                            msg_copy["content"] = cleaned_parts
+                            filtered_contexts.append(msg_copy)
+                            continue
+
+                    filtered_contexts.append(msg)
+
+                req.contexts = filtered_contexts
+
+            if removed_count > 0:
+                logger.info(
+                    f"[{session_id}] 成功清理旧记忆片段，共删除 {removed_count} 处注入内容"
+                )
+
+        except Exception as e:
+            logger.error(f"[{session_id}] 删除注入记忆时发生错误: {e}", exc_info=True)
+
+        return removed_count
+
+    @staticmethod
+    async def cleanup_injected_memories_from_db(
+        connection,
+        write_lock: asyncio.Lock,
+        session_id: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, int | str]:
+        """批量清理数据库中消息内容里的记忆注入片段。
+
+        Args:
+            connection: aiosqlite 数据库连接
+            write_lock: asyncio.Lock 写锁
+            session_id: 指定会话ID，为None则清理所有会话
+            dry_run: 是否为预演模式（只统计不修改）
+
+        Returns:
+            dict: 清理统计信息
+        """
+        if connection is None:
+            return {"error": 1, "message": "数据库连接未初始化"}  # type: ignore[return-value]
+
+        stats: dict[str, int | str] = {
+            "scanned": 0,
+            "matched": 0,
+            "cleaned": 0,
+            "deleted": 0,
+            "errors": 0,
+        }
+
+        try:
+            async with write_lock:
+                query = """
+                    SELECT id, session_id, content
+                    FROM messages
+                    WHERE content LIKE ?
+                """
+                params: list[str | int] = [f"%{MEMORY_INJECTION_HEADER}%"]
+
+                if session_id:
+                    query += " AND session_id = ?"
+                    params.append(session_id)
+
+                async with connection.execute(query, params) as cursor:
+                    rows = await cursor.fetchall()
+
+                rows_list = list(rows)
+                stats["scanned"] = len(rows_list)
+
+                for row in rows_list:
+                    msg_id = row["id"]
+                    msg_session = row["session_id"]
+                    original_content = row["content"]
+
+                    if (
+                        MEMORY_INJECTION_HEADER not in original_content
+                        or MEMORY_INJECTION_FOOTER not in original_content
+                    ):
+                        continue
+
+                    stats["matched"] += 1  # type: ignore[operator]
+
+                    cleaned_content = _INJECTION_CLEANUP_PATTERN.sub(
+                        "", original_content
+                    )
+                    cleaned_content = re.sub(r"\n{3,}", "\n\n", cleaned_content).strip()
+
+                    if not cleaned_content:
+                        if not dry_run:
+                            await connection.execute(
+                                "DELETE FROM messages WHERE id = ?", (msg_id,)
+                            )
+                        stats["deleted"] += 1  # type: ignore[operator]
+                        logger.debug(
+                            f"[cleanup_injected_memories] {'[DRY-RUN] ' if dry_run else ''}"
+                            f"删除纯记忆消息: id={msg_id}, session={msg_session}"
+                        )
+                        continue
+
+                    if cleaned_content != original_content:
+                        if not dry_run:
+                            await connection.execute(
+                                "UPDATE messages SET content = ? WHERE id = ?",
+                                (cleaned_content, msg_id),
+                            )
+                        stats["cleaned"] += 1  # type: ignore[operator]
+                        logger.debug(
+                            f"[cleanup_injected_memories] {'[DRY-RUN] ' if dry_run else ''}"
+                            f"清理消息: id={msg_id}, "
+                            f"原长度={len(original_content)}, "
+                            f"新长度={len(cleaned_content)}"
+                        )
+
+                if not dry_run:
+                    await connection.commit()
+
+            logger.info(
+                f"[cleanup_injected_memories] {'[DRY-RUN] ' if dry_run else ''}"
+                f"清理完成: 扫描={stats['scanned']}, 匹配={stats['matched']}, "
+                f"清理={stats['cleaned']}, 删除={stats['deleted']}"
+            )
+
+        except Exception as e:
+            stats["errors"] = 1
+            logger.error(f"批量清理记忆注入失败: {e}", exc_info=True)
+
+        return stats  # type: ignore[return-value]
+
+    @staticmethod
+    def remove_fake_tool_call_from_context(
+        req: ProviderRequest,
+        session_id: str,
+    ) -> int:
+        """从对话历史中删除伪造的工具调用消息对。"""
+        if not hasattr(req, "contexts") or not req.contexts:
+            return 0
+
+        removed = 0
+        indices_to_remove: set[int] = set()
+        fake_call_ids: set[str] = set()
+
+        try:
+            for i, msg in enumerate(req.contexts):
+                if not isinstance(msg, dict):
+                    continue
+                role = msg.get("role")
+                if role == "assistant" and msg.get("tool_calls"):
+                    for tc in msg["tool_calls"]:
+                        tc_id = (
+                            tc.get("id", "")
+                            if isinstance(tc, dict)
+                            else getattr(tc, "id", "")
+                        )
+                        if tc_id.startswith(FAKE_TOOL_CALL_ID_PREFIX):
+                            fake_call_ids.add(tc_id)
+                            indices_to_remove.add(i)
+                elif role == "tool":
+                    tc_id = msg.get("tool_call_id", "")
+                    if tc_id in fake_call_ids:
+                        indices_to_remove.add(i)
+
+            for i in sorted(indices_to_remove, reverse=True):
+                req.contexts.pop(i)
+                removed += 1
+
+            if removed > 0:
+                logger.info(f"[{session_id}] 清理了 {removed} 条伪造工具调用消息")
+
+        except Exception as e:
+            logger.error(
+                f"[{session_id}] 清理伪造工具调用时发生错误: {e}",
+                exc_info=True,
+            )
+
+        return removed

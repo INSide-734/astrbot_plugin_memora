@@ -1,0 +1,605 @@
+"""测试插件初始化与版本检查 modules.
+
+Covers:
+- core/plugin_initializer.py — PluginInitializer
+- core/version_check.py — version parsing and comparison
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import sys
+import types
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+
+def _load_memora_plugin_class():
+    root = Path(__file__).resolve().parents[1]
+    package_name = "memora_testpkg"
+    package = types.ModuleType(package_name)
+    package.__path__ = [str(root)]
+    sys.modules[package_name] = package
+    star_mod = sys.modules["astrbot.api.star"]
+    star_mod.Star = type(
+        "TestStar",
+        (object,),
+        {"__init__": lambda self, context=None: None},
+    )  # type: ignore[attr-defined]
+    temp_data_dir = root / ".pytest_memora_data"
+    temp_data_dir.mkdir(exist_ok=True)
+    star_mod.StarTools = types.SimpleNamespace(
+        get_data_dir=lambda: temp_data_dir
+    )  # type: ignore[attr-defined]
+    star_mod.register = lambda *args, **kwargs: (lambda cls: cls)  # type: ignore[attr-defined]
+    event_mod = sys.modules["astrbot.api.event"]
+    event_mod.filter.platform_adapter_type.side_effect = lambda *args, **kwargs: (lambda fn: fn)  # type: ignore[attr-defined]
+    event_mod.filter.on_llm_request.side_effect = lambda *args, **kwargs: (lambda fn: fn)  # type: ignore[attr-defined]
+    event_mod.filter.on_llm_response.side_effect = lambda *args, **kwargs: (lambda fn: fn)  # type: ignore[attr-defined]
+    event_mod.filter.after_message_sent.side_effect = lambda *args, **kwargs: (lambda fn: fn)  # type: ignore[attr-defined]
+
+    class _CommandGroup:
+        def __call__(self, fn):
+            return self
+
+        def command(self, *args, **kwargs):
+            return lambda fn: fn
+
+    event_mod.filter.command_group.side_effect = lambda *args, **kwargs: _CommandGroup()  # type: ignore[attr-defined]
+
+    filter_submodule = types.ModuleType("astrbot.api.event.filter")
+    filter_submodule.PermissionType = types.SimpleNamespace(ADMIN="admin")
+    filter_submodule.permission_type = lambda *args, **kwargs: (lambda fn: fn)
+    sys.modules["astrbot.api.event.filter"] = filter_submodule
+
+    spec = importlib.util.spec_from_file_location(
+        f"{package_name}.main",
+        root / "main.py",
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module.MemoraPlugin
+
+
+# ============================================================================
+# core/version_check.py
+# ============================================================================
+
+
+class TestParseVersion:
+    """测试 _parse_version()."""
+
+    def test_standard_version(self) -> None:
+        from core.version_check import _parse_version
+
+        assert _parse_version("4.24.2") == (4, 24, 2)
+
+    def test_version_with_v_prefix(self) -> None:
+        from core.version_check import _parse_version
+
+        assert _parse_version("v4.24.2") == (4, 24, 2)
+
+    def test_version_with_whitespace(self) -> None:
+        from core.version_check import _parse_version
+
+        assert _parse_version("  4.24.2  ") == (4, 24, 2)
+
+    def test_empty_string_returns_empty_tuple(self) -> None:
+        from core.version_check import _parse_version
+
+        assert _parse_version("") == ()
+
+    def test_nonsense_string_returns_empty_tuple(self) -> None:
+        from core.version_check import _parse_version
+
+        assert _parse_version("not-a-version") == ()
+
+    def test_single_component(self) -> None:
+        from core.version_check import _parse_version
+
+        assert _parse_version("1") == (1,)
+
+    def test_two_component_version(self) -> None:
+        from core.version_check import _parse_version
+
+        assert _parse_version("2.4") == (2, 4)
+
+    def test_multi_digit_components(self) -> None:
+        from core.version_check import _parse_version
+
+        assert _parse_version("10.100.1000") == (10, 100, 1000)
+
+
+class TestVersionLt:
+    """测试 _version_lt()."""
+
+    def test_lower_version_is_less(self) -> None:
+        from core.version_check import _version_lt
+
+        assert _version_lt("4.0.0", "4.24.2") is True
+
+    def test_equal_version_is_not_less(self) -> None:
+        from core.version_check import _version_lt
+
+        assert _version_lt("4.24.2", "4.24.2") is False
+
+    def test_higher_version_is_not_less(self) -> None:
+        from core.version_check import _version_lt
+
+        assert _version_lt("5.0.0", "4.24.2") is False
+
+    def test_invalid_current_returns_false(self) -> None:
+        from core.version_check import _version_lt
+
+        assert _version_lt("invalid", "4.24.2") is False
+
+    def test_invalid_minimum_returns_false(self) -> None:
+        from core.version_check import _version_lt
+
+        assert _version_lt("4.24.2", "invalid") is False
+
+    def test_different_width_versions(self) -> None:
+        from core.version_check import _version_lt
+
+        # "4" should be treated as (4,0,0) vs (4,0,1)
+        assert _version_lt("4", "4.0.1") is True
+        assert _version_lt("4.0.1", "4") is False
+
+    def test_with_v_prefix(self) -> None:
+        from core.version_check import _version_lt
+
+        assert _version_lt("v4.0.0", "v4.24.2") is True
+
+    def test_minor_version_comparison(self) -> None:
+        from core.version_check import _version_lt
+
+        assert _version_lt("4.23.0", "4.24.0") is True
+        assert _version_lt("4.25.0", "4.24.0") is False
+
+    def test_patch_version_comparison(self) -> None:
+        from core.version_check import _version_lt
+
+        assert _version_lt("4.24.0", "4.24.2") is True
+        assert _version_lt("4.24.5", "4.24.2") is False
+
+
+class TestDetectAstrbotVersion:
+    """测试 _detect_astrbot_version()."""
+
+    def test_returns_none_when_package_not_found(self) -> None:
+        """当 importlib_metadata can't find the package."""
+        import importlib.metadata
+
+        with patch.object(
+            importlib.metadata,
+            "version",
+            side_effect=importlib.metadata.PackageNotFoundError,
+        ):
+            # Reload the module to re-run _detect_astrbot_version()
+            import importlib
+            import core.version_check
+
+            importlib.reload(core.version_check)
+            assert core.version_check._detect_astrbot_version() is None
+
+    def test_returns_version_when_package_found(self) -> None:
+        """当 importlib_metadata finds the package."""
+        import importlib.metadata
+
+        with patch.object(
+            importlib.metadata,
+            "version",
+            return_value="4.24.2",
+        ):
+            import importlib
+            import core.version_check
+
+            importlib.reload(core.version_check)
+            assert core.version_check._detect_astrbot_version() == "4.24.2"
+
+
+class TestModuleConstants:
+    """测试 module-level constants."""
+
+    def test_min_version_is_defined(self) -> None:
+        from core.version_check import _MIN_ASTRBOT_VERSION
+
+        assert isinstance(_MIN_ASTRBOT_VERSION, str)
+        assert _parse_version_safe(_MIN_ASTRBOT_VERSION) != ()
+
+    def test_current_version_is_str_or_none(self) -> None:
+        from core.version_check import _CURRENT_ASTRBOT_VERSION
+
+        assert _CURRENT_ASTRBOT_VERSION is None or isinstance(
+            _CURRENT_ASTRBOT_VERSION, str
+        )
+
+
+def _parse_version_safe(v: str) -> tuple:
+    from core.version_check import _parse_version
+
+    return _parse_version(v)
+
+
+# ============================================================================
+# core/plugin_initializer.py
+# ============================================================================
+
+
+class TestPluginInitializerConstruction:
+    """测试 PluginInitializer.__init__ 与属性默认值。"""
+
+    def test_initial_state_not_initialized(self) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        init = PluginInitializer(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            data_dir="/tmp/test",
+        )
+        assert init.is_initialized is False
+        assert init.is_failed is False
+        assert init.error_message is None
+
+    def test_all_components_initially_none(self) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        init = PluginInitializer(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            data_dir="/tmp/test",
+        )
+        assert init.embedding_provider is None
+        assert init.llm_provider is None
+        assert init.db is None
+        assert init.graph_db is None
+        assert init.memory_engine is None
+        assert init.memory_processor is None
+        assert init.conversation_manager is None
+        assert init.index_validator is None
+        assert init.decay_scheduler is None
+        assert init.backfill_scheduler is None
+
+    def test_sub_modules_created_on_init(self) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        init = PluginInitializer(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            data_dir="/tmp/test",
+        )
+        assert init._provider_loader is not None
+        assert init._provider_waiter is not None
+        assert init._faiss_checker is not None
+        assert init._db_setup is not None
+        assert init._component_factory is not None
+
+    def test_ensure_initialized_returns_false_when_not_initialized(self) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        init = PluginInitializer(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            data_dir="/tmp/test",
+        )
+        import asyncio
+
+        result = asyncio.run(init.ensure_initialized(timeout=0.5))
+        assert result is False
+
+    def test_ensure_initialized_returns_false_when_failed(self) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        init = PluginInitializer(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            data_dir="/tmp/test",
+        )
+        init._initialization_failed = True
+        import asyncio
+
+        result = asyncio.run(init.ensure_initialized(timeout=0.5))
+        assert result is False
+
+    def test_stop_scheduler_with_none_scheduler(self) -> None:
+        """stop_scheduler should be a no-op when decay_scheduler is None."""
+        from core.plugin_initializer import PluginInitializer
+
+        init = PluginInitializer(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            data_dir="/tmp/test",
+        )
+        import asyncio
+
+        # Should not raise
+        asyncio.run(init.stop_scheduler())
+
+    def test_stop_scheduler_with_active_scheduler(self) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        init = PluginInitializer(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            data_dir="/tmp/test",
+        )
+        mock_scheduler = AsyncMock()
+        init.decay_scheduler = mock_scheduler
+        import asyncio
+
+        asyncio.run(init.stop_scheduler())
+        mock_scheduler.stop.assert_awaited_once()
+        assert init.decay_scheduler is None
+
+    def test_stop_background_tasks(self) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        init = PluginInitializer(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            data_dir="/tmp/test",
+        )
+        init._provider_waiter = MagicMock()
+        init._provider_waiter.cancel = AsyncMock()
+        import asyncio
+
+        asyncio.run(init.stop_background_tasks())
+        init._provider_waiter.cancel.assert_awaited_once()
+
+
+class TestComponentFactoryConfig:
+    """测试 ComponentFactory 引擎配置构建。"""
+
+    def test_engine_config_includes_data_dir(self, tmp_path) -> None:
+        from core.initializer.component_factory import ComponentFactory
+
+        config = MagicMock()
+        config.get.side_effect = lambda _key, default=None: default
+        factory = ComponentFactory(
+            context=MagicMock(),
+            config_manager=config,
+            data_dir=str(tmp_path),
+        )
+
+        engine_config = factory._build_engine_config(
+            stopwords_dir=tmp_path / "stopwords",
+            graph_memory_enabled=True,
+        )
+
+        assert engine_config["data_dir"] == str(tmp_path)
+
+
+class TestMemoraPluginTerminate:
+    """测试 MemoraPlugin.terminate 生命周期清理。"""
+
+    @pytest.mark.asyncio
+    async def test_terminate_cancels_tracked_background_tasks(self) -> None:
+        MemoraPlugin = _load_memora_plugin_class()
+
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ):
+            plugin = MemoraPlugin(MagicMock(), {})
+
+        plugin.initializer.stop_background_tasks = AsyncMock()
+        plugin.initializer.stop_scheduler = AsyncMock()
+        plugin.initializer.close_extension_components = AsyncMock()
+        plugin.initializer.conversation_manager = None
+        plugin.initializer.memory_engine = None
+        plugin.initializer.db = None
+        plugin._perf_tracker = MagicMock()
+        plugin._perf_tracker.get_perf_data.return_value = {}
+        plugin._backfill_scheduler = None
+
+        async def _blocked() -> None:
+            await asyncio.Future()
+
+        task = asyncio.create_task(_blocked())
+        plugin._background_tasks = {task}
+
+        await plugin.terminate()
+
+        assert task.cancelled() is True
+        assert plugin._background_tasks == set()
+
+    @pytest.mark.asyncio
+    async def test_terminate_stops_backfill_scheduler(self) -> None:
+        MemoraPlugin = _load_memora_plugin_class()
+
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ):
+            plugin = MemoraPlugin(MagicMock(), {})
+
+        plugin.initializer.stop_background_tasks = AsyncMock()
+        plugin.initializer.stop_scheduler = AsyncMock()
+        plugin.initializer.close_extension_components = AsyncMock()
+        plugin.initializer.conversation_manager = None
+        plugin.initializer.memory_engine = None
+        plugin.initializer.db = None
+        plugin._perf_tracker = MagicMock()
+        plugin._perf_tracker.get_perf_data.return_value = {}
+        plugin._backfill_scheduler = MagicMock()
+        plugin._backfill_scheduler.stop = AsyncMock()
+
+        await plugin.terminate()
+
+        plugin._backfill_scheduler.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_terminate_closes_event_handler_and_core_components(self) -> None:
+        MemoraPlugin = _load_memora_plugin_class()
+
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ):
+            plugin = MemoraPlugin(MagicMock(), {})
+
+        plugin.initializer.stop_background_tasks = AsyncMock()
+        plugin.initializer.stop_scheduler = AsyncMock()
+        plugin.initializer.close_extension_components = AsyncMock()
+        plugin.event_handler = MagicMock()
+        plugin.event_handler.shutdown = AsyncMock()
+        plugin.initializer.conversation_manager = MagicMock()
+        plugin.initializer.conversation_manager.store = MagicMock()
+        plugin.initializer.conversation_manager.store.close = AsyncMock()
+        plugin.initializer.memory_engine = MagicMock()
+        plugin.initializer.memory_engine.close = AsyncMock()
+        plugin.initializer.db = MagicMock()
+        plugin.initializer.db.close = AsyncMock()
+        plugin._perf_tracker = MagicMock()
+        plugin._perf_tracker.get_perf_data.return_value = {}
+        plugin._backfill_scheduler = None
+
+        await plugin.terminate()
+
+        plugin.event_handler.shutdown.assert_awaited_once()
+        plugin.initializer.conversation_manager.store.close.assert_awaited_once()
+        plugin.initializer.memory_engine.close.assert_awaited_once()
+        plugin.initializer.db.close.assert_awaited_once()
+
+
+class TestMemoraPluginReady:
+    """测试 MemoraPlugin._ensure_plugin_ready 生命周期行为。"""
+
+    @pytest.mark.asyncio
+    async def test_ensure_plugin_ready_initializes_runtime_components_on_first_call(
+        self,
+    ) -> None:
+        MemoraPlugin = _load_memora_plugin_class()
+
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ):
+            plugin = MemoraPlugin(MagicMock(), {})
+
+        plugin.feature_delegation = MagicMock()
+        plugin.feature_delegation.should_delegate_jargon.return_value = False
+        plugin.feature_delegation.should_delegate_affection.return_value = False
+        plugin.feature_delegation.should_skip_persona_processing.return_value = False
+        plugin.feature_delegation.should_delegate_expression.return_value = False
+        plugin.context = MagicMock()
+        plugin.context.add_llm_tools = MagicMock()
+
+        config_values = {
+            "agent_tools.enable_recall_tool": False,
+            "agent_tools.enable_memorize_tool": False,
+            "agent_tools.enable_note_tools": False,
+            "agent_tools.enable_knowledge_tools": False,
+            "agent_tools.enable_profile_tools": False,
+            "agent_tools.enable_jargon_tools": False,
+            "agent_tools.enable_affection_tools": False,
+            "agent_tools.enable_social_tools": False,
+            "agent_tools.enable_expression_tools": False,
+        }
+        plugin.config_manager = MagicMock()
+        plugin.config_manager.get.side_effect = lambda key, default=None: config_values.get(
+            key, default
+        )
+
+        plugin.initializer.ensure_initialized = AsyncMock(return_value=True)
+        plugin.initializer._initialization_complete = True
+        plugin.initializer.memory_engine = MagicMock()
+        plugin.initializer.memory_processor = MagicMock()
+        plugin.initializer.conversation_manager = MagicMock()
+        plugin.initializer.index_validator = MagicMock()
+        plugin.initializer.backfill_scheduler = MagicMock()
+        plugin.initializer.jargon_filter = None
+        plugin.initializer.jargon_miner = None
+        plugin.initializer.jargon_query_service = None
+        plugin.initializer.affection_manager = None
+        plugin.initializer.expression_learner = None
+        plugin.initializer.relation_manager = None
+        plugin.initializer.prompt_protection = None
+
+        ready, message = await plugin._ensure_plugin_ready()
+
+        assert ready is True
+        assert message == ""
+        assert plugin.event_handler is not None
+        assert plugin.command_handler is not None
+        assert plugin._backfill_scheduler is plugin.initializer.backfill_scheduler
+
+    @pytest.mark.asyncio
+    async def test_ensure_plugin_ready_registers_agent_tools_on_first_call(self) -> None:
+        MemoraPlugin = _load_memora_plugin_class()
+
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ):
+            plugin = MemoraPlugin(MagicMock(), {})
+
+        plugin.feature_delegation = MagicMock()
+        plugin.feature_delegation.should_delegate_jargon.return_value = False
+        plugin.feature_delegation.should_delegate_affection.return_value = False
+        plugin.feature_delegation.should_skip_persona_processing.return_value = False
+        plugin.feature_delegation.should_delegate_expression.return_value = False
+        plugin.context = MagicMock()
+        plugin.context.add_llm_tools = MagicMock()
+
+        config_values = {
+            "agent_tools.enable_recall_tool": True,
+            "agent_tools.enable_memorize_tool": False,
+            "agent_tools.enable_note_tools": False,
+            "agent_tools.enable_knowledge_tools": False,
+            "agent_tools.enable_profile_tools": False,
+            "agent_tools.enable_jargon_tools": False,
+            "agent_tools.enable_affection_tools": False,
+            "agent_tools.enable_social_tools": False,
+            "agent_tools.enable_expression_tools": False,
+        }
+        plugin.config_manager = MagicMock()
+        plugin.config_manager.get.side_effect = lambda key, default=None: config_values.get(
+            key, default
+        )
+
+        plugin.initializer.ensure_initialized = AsyncMock(return_value=True)
+        plugin.initializer._initialization_complete = True
+        plugin.initializer.memory_engine = MagicMock()
+        plugin.initializer.memory_processor = MagicMock()
+        plugin.initializer.conversation_manager = MagicMock()
+        plugin.initializer.index_validator = MagicMock()
+        plugin.initializer.backfill_scheduler = None
+        plugin.initializer.jargon_filter = None
+        plugin.initializer.jargon_miner = None
+        plugin.initializer.jargon_query_service = None
+        plugin.initializer.affection_manager = None
+        plugin.initializer.expression_learner = None
+        plugin.initializer.relation_manager = None
+        plugin.initializer.prompt_protection = None
+
+        fake_tool = MagicMock(name="memory-search-tool")
+        module = sys.modules[MemoraPlugin.__module__]
+
+        with patch.object(module, "MemorySearchTool", return_value=fake_tool):
+            ready, message = await plugin._ensure_plugin_ready()
+
+        assert ready is True
+        assert message == ""
+        plugin.context.add_llm_tools.assert_called_once_with(fake_tool)
+        assert plugin._llm_tools_registered is True

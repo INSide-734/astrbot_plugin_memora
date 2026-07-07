@@ -1,0 +1,455 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from core.evaluation.evaluation_service import EvaluationService
+from core.evaluation.report_store import EvaluationReportStore
+from core.evaluation.retrieval_quality import (
+    EvaluationReport,
+    EvaluationResult,
+)
+
+
+def test_evaluation_package_imports_without_astrbot_mocks():
+    code = """
+import importlib
+import importlib.abc
+import sys
+
+for name in list(sys.modules):
+    if name == "astrbot" or name.startswith("astrbot."):
+        del sys.modules[name]
+
+class BlockAstrBot(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "astrbot" or fullname.startswith("astrbot."):
+            raise ImportError(f"blocked unexpected AstrBot import: {fullname}")
+        return None
+
+sys.meta_path.insert(0, BlockAstrBot())
+
+importlib.import_module("core.evaluation")
+importlib.import_module("core.evaluation.retrieval_quality")
+"""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.getcwd()
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=os.getcwd(),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.asyncio
+async def test_report_store_saves_and_loads_report(tmp_path):
+    store = EvaluationReportStore(tmp_path / "evaluation_reports.db")
+    await store.initialize()
+
+    report_id = await store.save_report(
+        {
+            "created_at": 1783150200.0,
+            "baseline": "baseline",
+            "summary": {"total_cases": 2, "k": 5, "recall_at_k": 0.5},
+            "datasets": ["private_basic"],
+            "variants": [],
+            "cases": [
+                {
+                    "case_id": "coffee",
+                    "query": "用户喜欢喝什么咖啡",
+                    "ranked_doc_ids": ["mem-coffee"],
+                    "recall_at_k": 1.0,
+                    "reciprocal_rank": 1.0,
+                    "ndcg_at_k": 1.0,
+                    "latency_ms": 12.5,
+                }
+            ],
+        }
+    )
+
+    loaded = await store.get_report(report_id)
+    assert loaded is not None
+    assert loaded["report_id"] == report_id
+    assert loaded["summary"]["total_cases"] == 2
+
+    reports = await store.list_reports(limit=10)
+    assert reports[0]["report_id"] == report_id
+
+
+@pytest.mark.asyncio
+async def test_report_store_saves_native_evaluation_report_with_relevant_sets(tmp_path):
+    store = EvaluationReportStore(tmp_path / "evaluation_reports.db")
+    await store.initialize()
+
+    report = EvaluationReport(
+        total_cases=1,
+        k=5,
+        recall_at_k=1.0,
+        mrr=1.0,
+        ndcg_at_k=1.0,
+        p95_latency_ms=8.5,
+        cases=[
+            EvaluationResult(
+                case_id="coffee",
+                query="用户喜欢喝什么咖啡",
+                ranked_doc_ids=["mem-coffee"],
+                relevant_doc_ids={"mem-zebra", "mem-coffee"},
+                recall_at_k=1.0,
+                reciprocal_rank=1.0,
+                ndcg_at_k=1.0,
+                latency_ms=8.5,
+                metadata={"dataset": "private_basic"},
+            )
+        ],
+        dataset_breakdown={
+            "private_basic": {
+                "case_count": 1,
+                "recall_at_k": 1.0,
+                "mrr": 1.0,
+                "ndcg_at_k": 1.0,
+                "p95_latency_ms": 8.5,
+            }
+        },
+    )
+
+    report_id = await store.save_report(report)
+
+    loaded = await store.get_report(report_id)
+    assert loaded is not None
+    assert loaded["summary"]["total_cases"] == 1
+    assert loaded["summary"]["recall_at_k"] == 1.0
+    assert loaded["cases"][0]["case_id"] == "coffee"
+    assert loaded["cases"][0]["relevant_doc_ids"] == ["mem-coffee", "mem-zebra"]
+
+
+class FakeEngine:
+    async def search_memories(self, **kwargs):
+        query = kwargs["query"]
+        if "咖啡" in query:
+            return [{"doc_id": "mem-coffee", "score": 1.0}]
+        return []
+
+
+def _write_single_case_fixture(root: Path, relevant_doc_ids: list[str]) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "case_id": "ablation-case",
+        "query": "ablation query",
+        "relevant_doc_ids": relevant_doc_ids,
+        "metadata": {"dataset": "ablation"},
+    }
+    import json
+
+    (root / "ablation.jsonl").write_text(
+        json.dumps(payload, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.asyncio
+async def test_evaluation_service_runs_selected_dataset(tmp_path):
+    service = EvaluationService(
+        engine=FakeEngine(),
+        fixture_dir="tests/fixtures/retrieval",
+        db_path=tmp_path / "reports.db",
+    )
+    await service.initialize()
+
+    result = await service.run_evaluation(
+        datasets=["private_basic"],
+        k=5,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=True,
+    )
+
+    assert result["report_id"]
+    assert result["summary"]["total_cases"] >= 10
+    assert result["baseline"] == "baseline"
+
+
+@pytest.mark.asyncio
+async def test_evaluation_service_unknown_dataset_selection_runs_no_cases(tmp_path):
+    service = EvaluationService(
+        engine=FakeEngine(),
+        fixture_dir="tests/fixtures/retrieval",
+        db_path=tmp_path / "reports.db",
+    )
+    await service.initialize()
+
+    result = await service.run_evaluation(
+        datasets=["missing_fixture"],
+        k=5,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=False,
+    )
+
+    assert result["summary"]["total_cases"] == 0
+    assert result["datasets"] == []
+
+
+def test_evaluation_service_lists_fixture_metadata() -> None:
+    service = EvaluationService(
+        engine=FakeEngine(),
+        fixture_dir="tests/fixtures/retrieval",
+    )
+
+    result = service.list_datasets()
+
+    private = next(item for item in result["datasets"] if item["name"] == "private_basic")
+    assert private["case_count"] >= 10
+    assert private["path"].endswith("private_basic.jsonl")
+    assert "preference" in private["intents"]
+    assert "private" in private["chat_types"]
+
+
+@pytest.mark.asyncio
+async def test_evaluation_service_marks_unavailable_ablation_variants_skipped(tmp_path):
+    service = EvaluationService(
+        engine=FakeEngine(),
+        fixture_dir="tests/fixtures/retrieval",
+        db_path=tmp_path / "reports.db",
+    )
+    await service.initialize()
+
+    result = await service.run_evaluation(
+        datasets=["private_basic"],
+        k=99,
+        variants=["baseline", "graph_expansion_off", "topic_expansion_off"],
+        baseline="baseline",
+        save_report=False,
+    )
+
+    assert result["summary"]["k"] == 20
+    assert result["saved"] is False
+    assert result["variants"]["baseline"]["status"] == "completed"
+    assert result["variants"]["graph_expansion_off"] == {
+        "name": "graph_expansion_off",
+        "status": "skipped",
+        "reason": "engine_config_unavailable",
+    }
+    assert result["variants"]["topic_expansion_off"] == {
+        "name": "topic_expansion_off",
+        "status": "skipped",
+        "reason": "engine_config_unavailable",
+    }
+
+
+@pytest.mark.asyncio
+async def test_evaluation_service_ablation_variants_use_real_config_keys(tmp_path):
+    fixture_dir = tmp_path / "fixtures"
+    _write_single_case_fixture(
+        fixture_dir,
+        ["mem-baseline", "mem-graph-off", "mem-topic-off"],
+    )
+
+    class ConfigDictEngine:
+        def __init__(self) -> None:
+            self.config = {"recall_engine.chain_graph_expansion_enabled": True}
+            self.observed_configs: list[dict[str, object]] = []
+
+        async def search_memories(self, **_kwargs):
+            self.observed_configs.append(dict(self.config))
+            if self.config.get("recall_engine.chain_graph_expansion_enabled") is False:
+                return [{"doc_id": "mem-graph-off", "score": 1.0}]
+            if self.config.get("recall_engine.chain_topic_expansion_enabled") is False:
+                return [{"doc_id": "mem-topic-off", "score": 1.0}]
+            return [{"doc_id": "mem-baseline", "score": 1.0}]
+
+    engine = ConfigDictEngine()
+    service = EvaluationService(engine=engine, fixture_dir=fixture_dir)
+
+    result = await service.run_evaluation(
+        datasets=["ablation"],
+        k=1,
+        variants=["baseline", "graph_expansion_off", "topic_expansion_off"],
+        baseline="baseline",
+        save_report=False,
+    )
+
+    assert result["variants"]["graph_expansion_off"]["status"] == "completed"
+    assert result["variants"]["topic_expansion_off"]["status"] == "completed"
+    assert result["variants"]["graph_expansion_off"]["summary"]["recall_at_k"] == 1.0
+    assert result["variants"]["topic_expansion_off"]["summary"]["recall_at_k"] == 1.0
+    assert {
+        snapshot.get("recall_engine.chain_graph_expansion_enabled")
+        for snapshot in engine.observed_configs
+    } >= {False, True}
+    assert {
+        snapshot.get("recall_engine.chain_topic_expansion_enabled")
+        for snapshot in engine.observed_configs
+    } >= {False}
+    assert engine.config == {"recall_engine.chain_graph_expansion_enabled": True}
+    assert "recall_engine.chain_topic_expansion_enabled" not in engine.config
+
+
+@pytest.mark.asyncio
+async def test_evaluation_service_clears_caches_between_variants(tmp_path):
+    fixture_dir = tmp_path / "fixtures"
+    _write_single_case_fixture(fixture_dir, ["mem-graph-off"])
+
+    class CountingCache(dict):
+        def __init__(self) -> None:
+            super().__init__()
+            self.clear_count = 0
+
+        def clear(self) -> None:
+            self.clear_count += 1
+            super().clear()
+
+    class CachedEngine:
+        def __init__(self) -> None:
+            self.config = {"recall_engine.chain_graph_expansion_enabled": True}
+            self.cache = CountingCache()
+
+        async def search_memories(self, **_kwargs):
+            if "result" in self.cache:
+                return self.cache["result"]
+            if self.config["recall_engine.chain_graph_expansion_enabled"] is False:
+                result = [{"doc_id": "mem-graph-off", "score": 1.0}]
+            else:
+                result = [{"doc_id": "mem-baseline", "score": 1.0}]
+            self.cache["result"] = result
+            return result
+
+    engine = CachedEngine()
+    service = EvaluationService(engine=engine, fixture_dir=fixture_dir)
+
+    result = await service.run_evaluation(
+        datasets=["ablation"],
+        k=1,
+        variants=["baseline", "graph_expansion_off"],
+        baseline="baseline",
+        save_report=False,
+    )
+
+    assert engine.cache.clear_count >= 2
+    assert result["summary"]["recall_at_k"] == 0.0
+    assert result["variants"]["graph_expansion_off"]["summary"]["recall_at_k"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_evaluation_service_invalidates_production_retrieval_cache_between_variants(
+    tmp_path,
+):
+    fixture_dir = tmp_path / "fixtures"
+    _write_single_case_fixture(fixture_dir, ["mem-graph-off"])
+
+    class FakeRetrievalOptimizer:
+        def __init__(self) -> None:
+            self.cached_result = None
+            self.invalidate_count = 0
+
+        def invalidate_cache(self) -> None:
+            self.invalidate_count += 1
+            self.cached_result = None
+
+    class ProductionLikeCachedEngine:
+        def __init__(self) -> None:
+            self.config = {"recall_engine.chain_graph_expansion_enabled": True}
+            self._retrieval = FakeRetrievalOptimizer()
+
+        async def search_memories(self, **_kwargs):
+            if self._retrieval.cached_result is not None:
+                return self._retrieval.cached_result
+            if self.config["recall_engine.chain_graph_expansion_enabled"] is False:
+                result = [{"doc_id": "mem-graph-off", "score": 1.0}]
+            else:
+                result = [{"doc_id": "mem-baseline", "score": 1.0}]
+            self._retrieval.cached_result = result
+            return result
+
+    engine = ProductionLikeCachedEngine()
+    service = EvaluationService(engine=engine, fixture_dir=fixture_dir)
+
+    result = await service.run_evaluation(
+        datasets=["ablation"],
+        k=1,
+        variants=["baseline", "graph_expansion_off"],
+        baseline="baseline",
+        save_report=False,
+    )
+
+    assert engine._retrieval.invalidate_count >= 2
+    assert result["summary"]["recall_at_k"] == 0.0
+    assert result["variants"]["graph_expansion_off"]["summary"]["recall_at_k"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_evaluation_service_requested_unavailable_baseline_errors_without_saving(
+    tmp_path,
+):
+    service = EvaluationService(
+        engine=FakeEngine(),
+        fixture_dir="tests/fixtures/retrieval",
+        db_path=tmp_path / "reports.db",
+    )
+    await service.initialize()
+
+    result = await service.run_evaluation(
+        datasets=["private_basic"],
+        k=5,
+        variants=["graph_expansion_off"],
+        baseline="graph_expansion_off",
+        save_report=True,
+    )
+
+    assert result["status"] == "error"
+    assert result["message"] == "Baseline variant unavailable"
+    assert result["baseline"] == "graph_expansion_off"
+    assert result["variants"]["graph_expansion_off"]["status"] == "skipped"
+    assert result["saved"] is False
+    assert result["report_id"] is None
+    assert await service.list_reports(limit=10) == []
+
+
+@pytest.mark.asyncio
+async def test_evaluation_service_lists_gets_and_compares_saved_reports(tmp_path):
+    service = EvaluationService(
+        engine=FakeEngine(),
+        fixture_dir="tests/fixtures/retrieval",
+        db_path=tmp_path / "reports.db",
+    )
+    await service.initialize()
+    first = await service.run_evaluation(
+        datasets=["private_basic"],
+        k=1,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=True,
+    )
+    second = await service.run_evaluation(
+        datasets=["private_basic"],
+        k=5,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=True,
+    )
+
+    reports = await service.list_reports(limit=5)
+    detail = await service.get_report(first["report_id"])
+    comparison = await service.compare_reports(first["report_id"], second["report_id"])
+
+    assert {item["report_id"] for item in reports} >= {
+        first["report_id"],
+        second["report_id"],
+    }
+    assert detail["report_id"] == first["report_id"]
+    assert comparison["report_id_a"] == first["report_id"]
+    assert comparison["report_id_b"] == second["report_id"]
+    assert set(comparison["deltas"]) == {
+        "recall_at_k",
+        "mrr",
+        "ndcg_at_k",
+        "p95_latency_ms",
+    }
