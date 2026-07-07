@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+*.pyc
+
+# Virtualenv
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Plugin runtime
+.plugin_version
+storage/*.db
+storage/*.db-journal
+storage/*.index
+storage/*.bin
+pages/dashboard/assets/
+.context/
+.ccg/
+.claude/
+.codegraph/
+openspec/
+data/
+AGENTS.md
+.agents/

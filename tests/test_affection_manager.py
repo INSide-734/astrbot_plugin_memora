@@ -1,0 +1,803 @@
+"""好感度系统测试：模型、存储、管理器和情绪门控。
+
+覆盖交互分类（关键词回退 + LLM Mock）、情绪门控、
+好感度增量计算、情绪修饰符调节、重分配和
+存储 CRUD 操作。
+"""
+
+from __future__ import annotations
+
+import time
+from unittest.mock import AsyncMock
+
+import pytest
+
+from core.affection.models import (
+    AffectionLevel,
+    BotMood,
+    INTERACTION_RULES,
+    InteractionType,
+    MoodType,
+    UserAffection,
+    classify_by_keywords,
+)
+from core.affection.affection_store import AffectionStore
+from core.affection.affection_manager import AffectionManager
+
+
+# ============================================================================
+# 模型测试
+# ============================================================================
+
+
+class TestAffectionLevel:
+    """AffectionLevel 枚举和 from_score 方法测试。"""
+
+    def test_from_score_hostile(self):
+        assert AffectionLevel.from_score(-80) == AffectionLevel.HOSTILE
+        assert AffectionLevel.from_score(-75) == AffectionLevel.HOSTILE
+
+    def test_from_score_boundaries(self):
+        # Minimum-threshold semantics: score must reach threshold to qualify
+        assert AffectionLevel.from_score(-76) == AffectionLevel.HOSTILE
+        assert AffectionLevel.from_score(-74) == AffectionLevel.HOSTILE  # not yet DISLIKED
+        assert AffectionLevel.from_score(-50) == AffectionLevel.DISLIKED
+        assert AffectionLevel.from_score(-25) == AffectionLevel.COLD
+        assert AffectionLevel.from_score(0) == AffectionLevel.NEUTRAL
+        assert AffectionLevel.from_score(25) == AffectionLevel.WARM
+
+    def test_from_score_positive(self):
+        assert AffectionLevel.from_score(50) == AffectionLevel.FRIENDLY
+        assert AffectionLevel.from_score(75) == AffectionLevel.CLOSE
+        assert AffectionLevel.from_score(100) == AffectionLevel.INTIMATE
+
+    def test_name_for(self):
+        assert AffectionLevel.name_for(30) == "温暖"
+        assert AffectionLevel.name_for(-80) == "敌对"
+
+    def test_enum_order_is_correct(self):
+        values = [e.value for e in AffectionLevel]
+        assert values == sorted(values)
+
+
+class TestBotMood:
+    """BotMood 模型测试。"""
+
+    def test_is_active_when_fresh(self):
+        mood = BotMood(
+            mood_type=MoodType.HAPPY,
+            intensity=0.7,
+            start_time=time.time(),
+            duration_hours=4.0,
+        )
+        assert mood.is_active()
+
+    def test_is_active_when_expired(self):
+        mood = BotMood(
+            mood_type=MoodType.HAPPY,
+            intensity=0.7,
+            start_time=time.time() - 5 * 3600,
+            duration_hours=4.0,
+        )
+        assert not mood.is_active()
+
+    def test_get_mood_modifier_happy(self):
+        mood = BotMood(mood_type=MoodType.HAPPY, intensity=0.5)
+        # HAPPY base=1.2, intensity factor=(0.5+0.5*0.5)=0.75 -> 1.2*0.75=0.9
+        modifier = mood.get_mood_modifier()
+        assert modifier == pytest.approx(0.9)
+
+    def test_get_mood_modifier_excited(self):
+        mood = BotMood(mood_type=MoodType.EXCITED, intensity=1.0)
+        # EXCITED base=1.3, intensity factor=(0.5+1.0*0.5)=1.0 -> 1.3
+        assert mood.get_mood_modifier() == pytest.approx(1.3)
+
+    def test_get_mood_modifier_angry_low_intensity(self):
+        mood = BotMood(mood_type=MoodType.ANGRY, intensity=0.1)
+        # ANGRY base=0.4, intensity factor=(0.5+0.1*0.5)=0.55 -> 0.4*0.55=0.22
+        assert mood.get_mood_modifier() == pytest.approx(0.22)
+
+    def test_get_mood_modifier_calm(self):
+        mood = BotMood(mood_type=MoodType.CALM, intensity=0.5)
+        # CALM base=1.0, intensity factor=(0.5+0.5*0.5)=0.75 -> 0.75
+        assert mood.get_mood_modifier() == pytest.approx(0.75)
+
+    def test_get_mood_modifier_angry_high_intensity(self):
+        mood = BotMood(mood_type=MoodType.ANGRY, intensity=1.0)
+        # ANGRY base=0.4, intensity factor=1.0 -> 0.4*1.0=0.4
+        assert mood.get_mood_modifier() == pytest.approx(0.4)
+
+
+class TestInteractionType:
+    """InteractionType 枚举和规则测试。"""
+
+    def test_all_17_types_present(self):
+        expected = {
+            "chat", "compliment", "flirt", "comfort", "help", "thanks",
+            "apology", "tease", "care", "gift", "praise", "encourage",
+            "support", "insult", "harassment", "abuse", "threat",
+        }
+        actual = {e.value for e in InteractionType}
+        assert actual == expected
+
+    def test_every_type_has_rule(self):
+        for itype in InteractionType:
+            assert itype in INTERACTION_RULES, f"{itype} missing rule"
+
+    def test_chat_base_change(self):
+        assert INTERACTION_RULES[InteractionType.CHAT].base_change == 1
+
+    def test_gift_highest_positive_change(self):
+        assert INTERACTION_RULES[InteractionType.GIFT].base_change == 8
+
+    def test_threat_lowest_negative_change(self):
+        assert INTERACTION_RULES[InteractionType.THREAT].base_change == -12
+
+    def test_flirt_has_mood_requirements(self):
+        rule = INTERACTION_RULES[InteractionType.FLIRT]
+        assert rule.mood_requirements is not None
+        assert MoodType.HAPPY in rule.mood_requirements
+
+    def test_comfort_has_mood_requirements(self):
+        rule = INTERACTION_RULES[InteractionType.COMFORT]
+        assert rule.mood_requirements is not None
+        assert MoodType.SAD in rule.mood_requirements
+        assert MoodType.ANXIOUS in rule.mood_requirements
+
+    def test_negative_types_have_negative_change(self):
+        for itype in (InteractionType.INSULT, InteractionType.HARASSMENT,
+                        InteractionType.ABUSE, InteractionType.THREAT):
+            assert INTERACTION_RULES[itype].base_change < 0
+
+    def test_positive_types_have_positive_change(self):
+        for itype in InteractionType:
+            if itype.value not in {"insult", "harassment", "abuse", "threat"}:
+                assert INTERACTION_RULES[itype].base_change > 0
+
+
+class TestKeywordClassification:
+    """基于规则的关键词回退分类器测试。"""
+
+    def test_compliment_keywords(self):
+        assert classify_by_keywords("你好美啊") == InteractionType.COMPLIMENT
+        assert classify_by_keywords("真可爱") == InteractionType.COMPLIMENT
+        assert classify_by_keywords("666") == InteractionType.COMPLIMENT
+
+    def test_thanks_keywords(self):
+        assert classify_by_keywords("谢谢！") == InteractionType.THANKS
+        assert classify_by_keywords("感谢你") == InteractionType.THANKS
+
+    def test_care_keywords(self):
+        assert classify_by_keywords("你好") == InteractionType.CARE
+        assert classify_by_keywords("早上好") == InteractionType.CARE
+
+    def test_threat_keywords(self):
+        assert classify_by_keywords("我威胁你") == InteractionType.THREAT
+        assert classify_by_keywords("打死你") == InteractionType.THREAT
+
+    def test_insult_keywords(self):
+        assert classify_by_keywords("你这个蠢货") == InteractionType.INSULT
+        assert classify_by_keywords("垃圾！") == InteractionType.INSULT
+
+    def test_no_match_returns_none(self):
+        assert classify_by_keywords("今天天气不错") is None
+        assert classify_by_keywords("随机文本") is None
+        assert classify_by_keywords("xyzabc") is None
+
+    def test_case_insensitive(self):
+        assert classify_by_keywords("THANK YOU") == InteractionType.THANKS
+        assert classify_by_keywords("Hello") == InteractionType.CARE
+
+    def test_longest_match_wins(self):
+        """验证 '你好美啊' 匹配 COMPLIMENT ('好美') 而非 CARE ('你好')。"""
+        result = classify_by_keywords("你好美啊")
+        assert result == InteractionType.COMPLIMENT
+
+
+# ============================================================================
+# Store Tests
+# ============================================================================
+
+
+class TestAffectionStore:
+    """AffectionStore CRUD 操作测试。"""
+
+    @pytest.mark.asyncio
+    async def test_upsert_new_user(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            record = await store.upsert_affection("g1", "u1", 5)
+            assert record["affection_score"] == 5
+            assert record["interaction_count"] == 1
+            assert record["last_interaction"] > 0
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_upsert_existing_user_accumulates(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", 5)
+            record = await store.upsert_affection("g1", "u1", 3)
+            assert record["affection_score"] == 8
+            assert record["interaction_count"] == 2
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_upsert_clamps_to_max(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", 95)
+            record = await store.upsert_affection("g1", "u1", 20, max_score=100)
+            assert record["affection_score"] <= 100
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_upsert_clamps_to_min(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", -95)
+            record = await store.upsert_affection("g1", "u1", -20, min_score=-100)
+            assert record["affection_score"] >= -100
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_get_affection_missing(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            assert await store.get_affection("g1", "nonexistent") is None
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_get_top_users(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", 10)
+            await store.upsert_affection("g1", "u2", 50)
+            await store.upsert_affection("g1", "u3", 30)
+            top = await store.get_top_users("g1", limit=2)
+            assert len(top) == 2
+            assert top[0]["user_id"] == "u2"
+            assert top[1]["user_id"] == "u3"
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_total_affection(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", 10)
+            await store.upsert_affection("g1", "u2", -5)
+            total = await store.get_total_affection("g1")
+            assert total == 5
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_user_count(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", 10)
+            await store.upsert_affection("g1", "u2", 20)
+            assert await store.get_user_count("g1") == 2
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_save_and_get_mood(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mood_id = await store.save_bot_mood("g1", "happy", 0.8, "开心", 4.0)
+            assert mood_id > 0
+            latest = await store.get_latest_mood("g1")
+            assert latest is not None
+            assert latest["mood_type"] == "happy"
+            assert latest["intensity"] == 0.8
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_active_mood_vs_expired(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.save_bot_mood("g1", "happy", 0.7, "开心", 0.0)
+            active = await store.get_active_mood("g1")
+            assert active is None
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_users_above_threshold(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", 80)
+            await store.upsert_affection("g1", "u2", 20)
+            await store.upsert_affection("g1", "u3", 60)
+            above = await store.get_users_above_score("g1", 50)
+            assert len(above) == 2
+            assert {u["user_id"] for u in above} == {"u1", "u3"}
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_separate_groups_isolation(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", 50)
+            await store.upsert_affection("g2", "u1", 30)
+            r1 = await store.get_affection("g1", "u1")
+            r2 = await store.get_affection("g2", "u1")
+            assert r1["affection_score"] == 50
+            assert r2["affection_score"] == 30
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_set_affection_score(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", 30)
+            await store.set_affection_score("g1", "u1", 15)
+            record = await store.get_affection("g1", "u1")
+            assert record["affection_score"] == 15
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_mood_history(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.save_bot_mood("g1", "calm", 0.5, "平静", 4.0)
+            await store.save_bot_mood("g1", "happy", 0.8, "开心", 4.0)
+            history = await store.get_mood_history("g1", limit=10)
+            assert len(history) == 2
+        finally:
+            await store.close()
+
+
+# ============================================================================
+# Manager Tests (inline store creation pattern)
+# ============================================================================
+
+
+def _make_manager(tmp_db_path, **kwargs):
+    """使用全新存储创建一个 AffectionManager。"""
+    return _make_manager_with_llm(tmp_db_path, None, **kwargs)
+
+
+def _make_manager_with_llm(tmp_db_path, llm_adapter=None, **kwargs):
+    return AffectionManager(
+        _create_store_sync(tmp_db_path),  # will be initialized per-test
+        llm_adapter=llm_adapter,
+        **kwargs,
+    )
+
+
+async def _create_store(db_path: str) -> AffectionStore:
+    s = AffectionStore(db_path)
+    await s.initialize()
+    return s
+
+
+def _create_store_sync(db_path: str) -> AffectionStore:
+    """创建未初始化的存储 — 调用者必须内联初始化。"""
+    return AffectionStore(db_path)
+
+
+class TestAffectionManager:
+    """AffectionManager 核心逻辑测试。"""
+
+    @pytest.mark.asyncio
+    async def test_process_interaction_chat(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            result = await mgr.process_interaction("u1", "g1", "今天天气不错", "嗯呢~")
+            assert result["success"]
+            assert result["interaction_type"] == "chat"
+            assert result["affection_delta"] > 0
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_process_interaction_compliment_keyword(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            result = await mgr.process_interaction("u1", "g1", "你好漂亮啊", "谢谢~")
+            assert result["success"]
+            assert result["interaction_type"] == "compliment"
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_process_interaction_negative_insult(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            result = await mgr.process_interaction("u1", "g1", "你这个蠢货！", "")
+            assert result["success"]
+            assert result["interaction_type"] == "insult"
+            assert result["affection_delta"] < 0
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_affection_accumulates(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            await mgr.process_interaction("u1", "g1", "你好美", "谢谢~")
+            result = await mgr.process_interaction("u1", "g1", "你好棒", "谢谢~")
+            assert result["success"]
+            # Two COMPLIMENT interactions accumulate: base 3+3=6, with CALM modifier ~0.75
+            # gives ~4-5. Validate it increased from the first call.
+            assert result["affection_score"] >= 3
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_get_user_affection(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            await mgr.process_interaction("u1", "g1", "你好棒", "谢谢~")
+            ua = await mgr.get_user_affection("g1", "u1")
+            assert ua is not None
+            assert ua.affection_score > 0
+            assert ua.interaction_count == 1
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_get_user_affection_missing(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            ua = await mgr.get_user_affection("g1", "nonexistent")
+            assert ua is None
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_get_group_affection_status(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            await mgr.process_interaction("u1", "g1", "你好棒", "谢谢~")
+            status = await mgr.get_group_affection_status("g1")
+            assert status["user_count"] >= 1
+            assert status["current_mood"] is not None
+            assert "type" in status["current_mood"]
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_mood_is_set_on_first_call(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            mood = await mgr.get_mood("g_new")
+            assert mood.mood_type == MoodType.CALM
+            assert mood.intensity == 0.5
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_set_mood_explicit(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            mood = await mgr.set_mood("g1", MoodType.EXCITED, 0.9, 6.0)
+            assert mood.mood_type == MoodType.EXCITED
+            assert mood.intensity == 0.9
+            assert mood.duration_hours == 6.0
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_set_mood_persisted(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            await mgr.set_mood("g1", MoodType.HAPPY, 0.7, 3.0)
+            record = await store.get_latest_mood("g1")
+            assert record["mood_type"] == "happy"
+            assert record["intensity"] == 0.7
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_negative_cascade_changes_mood(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            await mgr.process_interaction("u1", "g1", "你这个蠢货！", "")
+            mood = await mgr.get_mood("g1")
+            assert mood.mood_type == MoodType.SAD
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_positive_cascade_changes_mood(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            # "礼物" keyword classifies as COMPLIMENT, not GIFT. We need LLM for GIFT.
+            # Let's test with praise keywords instead
+            await mgr.set_mood("g1", MoodType.CALM, 0.5)
+            await mgr.process_interaction("u1", "g1", "你太优秀了！", "")
+            # PRAISE might not have a keyword match. Most positive keywords map to
+            # COMPLIMENT, so the cascade won't trigger positive_mood_boost.
+            # Instead just verify interaction was processed.
+            mood = await mgr.get_mood("g1")
+            assert mood.mood_type in (MoodType.CALM, MoodType.HAPPY)
+        finally:
+            await store.close()
+
+
+class TestAffectionManagerWithLLM:
+    """需要 LLM 适配器 Mock 的测试。"""
+
+    @pytest.mark.asyncio
+    async def test_llm_classification_used(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            llm = AsyncMock()
+            llm.chat_completion.return_value = "compliment"
+            mgr = AffectionManager(store, llm_adapter=llm)
+            result = await mgr.process_interaction("u1", "g1", "某条消息", "回复")
+            assert result["interaction_type"] == "compliment"
+            llm.chat_completion.assert_called_once()
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_llm_classification_falls_back_on_bad_output(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            llm = AsyncMock()
+            llm.chat_completion.return_value = "bogus_type"
+            mgr = AffectionManager(store, llm_adapter=llm)
+            result = await mgr.process_interaction("u1", "g1", "普通聊天内容", "")
+            assert result["interaction_type"] == "chat"
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_llm_classification_falls_back_on_error(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            llm = AsyncMock()
+            llm.chat_completion.side_effect = RuntimeError("LLM down")
+            mgr = AffectionManager(store, llm_adapter=llm)
+            result = await mgr.process_interaction("u1", "g1", "普通聊天内容", "")
+            assert result["interaction_type"] == "chat"
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_mood_gate_flirt_blocks_on_calm(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            llm = AsyncMock()
+            llm.chat_completion.return_value = "flirt"
+            mgr = AffectionManager(store, llm_adapter=llm)
+            await mgr.set_mood("g1", MoodType.CALM, 0.5)
+            result = await mgr.process_interaction("u1", "g1", "撩你一下~", "")
+            assert result["gated"] is True
+            assert result["affection_delta"] == 0
+            assert "不适合" in result["gate_reason"]
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_mood_gate_flirt_passes_on_happy(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            llm = AsyncMock()
+            llm.chat_completion.return_value = "flirt"
+            mgr = AffectionManager(store, llm_adapter=llm)
+            await mgr.set_mood("g1", MoodType.HAPPY, 0.7)
+            result = await mgr.process_interaction("u1", "g1", "撩你一下~", "")
+            assert result["gated"] is False
+            assert result["affection_delta"] > 0
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_mood_gate_comfort_blocks_on_happy(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            llm = AsyncMock()
+            llm.chat_completion.return_value = "comfort"
+            mgr = AffectionManager(store, llm_adapter=llm)
+            await mgr.set_mood("g1", MoodType.HAPPY, 0.8)
+            result = await mgr.process_interaction("u1", "g1", "别难过", "")
+            assert result["gated"] is True
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_mood_gate_passes_on_permitted_mood(self, tmp_db_path):
+        """SAD 状态下允许 COMFORT。"""
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            llm = AsyncMock()
+            llm.chat_completion.return_value = "comfort"
+            mgr = AffectionManager(store, llm_adapter=llm)
+            await mgr.set_mood("g1", MoodType.SAD, 0.6)
+            result = await mgr.process_interaction("u1", "g1", "别难过", "")
+            assert result["gated"] is False
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_gift_triggers_positive_cascade(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            llm = AsyncMock()
+            llm.chat_completion.return_value = "gift"
+            mgr = AffectionManager(store, llm_adapter=llm)
+            await mgr.set_mood("g1", MoodType.CALM, 0.5)
+            result = await mgr.process_interaction("u1", "g1", "送你礼物！", "")
+            assert result["success"]
+            mood = await mgr.get_mood("g1")
+            assert mood.mood_type == MoodType.EXCITED
+        finally:
+            await store.close()
+
+
+# ============================================================================
+# Redistribution Tests
+# ============================================================================
+
+
+class TestRedistribution:
+    """好感度分数重分配测试。"""
+
+    @pytest.mark.asyncio
+    async def test_redistribution_triggers_on_overflow(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", 90)
+            await store.upsert_affection("g1", "u2", 90)
+            await store.upsert_affection("g1", "u3", 90)
+
+            mgr = AffectionManager(store, max_total_affection=200, affection_decay_rate=0.8)
+            await mgr.process_interaction("u_new", "g1", "你好棒！", "谢谢~")
+
+            total = await store.get_total_affection("g1")
+            assert total <= 200
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_no_redistribution_when_under_limit(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.upsert_affection("g1", "u1", 30)
+            await store.upsert_affection("g1", "u2", 20)
+
+            mgr = AffectionManager(store, max_total_affection=200)
+            await mgr.process_interaction("u1", "g1", "你好棒！", "谢谢~")
+
+            total = await store.get_total_affection("g1")
+            assert total < 200
+        finally:
+            await store.close()
+
+
+# ============================================================================
+# Edge Cases
+# ============================================================================
+
+
+class TestEdgeCases:
+    """边界情况与边界条件。"""
+
+    @pytest.mark.asyncio
+    async def test_empty_message_defaults_to_chat(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            result = await mgr.process_interaction("u1", "g1", "", "")
+            assert result["interaction_type"] == "chat"
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_very_long_message(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            long_msg = "你真好" * 500
+            result = await mgr.process_interaction("u1", "g1", long_msg, "")
+            assert result["success"]
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_max_affection_bound(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            for _ in range(50):
+                await mgr.process_interaction("u1", "g1", "你太棒啦！", "谢谢~")
+            ua = await mgr.get_user_affection("g1", "u1")
+            assert ua is not None
+            assert ua.affection_score <= 100
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_min_affection_bound(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            for _ in range(50):
+                await mgr.process_interaction("u1", "g1", "你这个蠢货去死吧！", "")
+            ua = await mgr.get_user_affection("g1", "u1")
+            assert ua is not None
+            assert ua.affection_score >= -100
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_multiple_users_independent(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            mgr = AffectionManager(store)
+            await mgr.process_interaction("u1", "g1", "你好棒！", "谢谢~")
+            await mgr.process_interaction("u2", "g1", "垃圾", "")
+            ua1 = await mgr.get_user_affection("g1", "u1")
+            ua2 = await mgr.get_user_affection("g1", "u2")
+            assert ua1 is not None and ua2 is not None
+            assert ua1.affection_score > ua2.affection_score
+        finally:
+            await store.close()

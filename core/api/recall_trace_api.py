@@ -1,0 +1,161 @@
+"""Explainable recall trace API."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from quart import request
+
+from astrbot.api import logger
+
+from ..models.recall_strategy import RecallStrategy
+from ..retrieval.explainable_recall import capture_explainable_recall
+from ..retrieval.trace_store import RecallTraceStore
+
+
+class RecallTraceApiMixin:
+    """Mixin for recall trace capture and lookup endpoints."""
+
+    async def test_recall_with_trace(self):
+        payload = await request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return self._error("请求体必须为 JSON 对象")
+        return await self.test_recall_with_trace_payload(payload)
+
+    async def test_recall_with_trace_payload(self, payload: dict[str, Any]):
+        engine = self._get_trace_memory_engine()
+        if engine is None:
+            return self._error("MemoryEngine unavailable")
+
+        query = str(payload.get("query", "") or "").strip()
+        if not query:
+            return self._error("查询内容不能为空")
+
+        params = self._build_trace_request_params(payload, query)
+        try:
+            store = await self._get_recall_trace_store()
+            trace = await capture_explainable_recall(engine, params, store=store)
+        except Exception as exc:
+            logger.error("[RecallTraceApi] traced recall failed: %s", exc, exc_info=True)
+            return self._error(str(exc))
+        return self._ok(trace)
+
+    async def get_recall_trace_detail(self):
+        return await self.get_recall_trace_detail_payload(dict(request.args or {}))
+
+    async def get_recall_trace_detail_payload(self, payload: dict[str, Any]):
+        trace_id = str(payload.get("trace_id", "") or "").strip()
+        if not trace_id:
+            return self._error("trace_id is required")
+        try:
+            store = await self._get_recall_trace_store()
+            trace = await store.get_trace(trace_id)
+        except Exception as exc:
+            logger.error("[RecallTraceApi] get trace detail failed: %s", exc, exc_info=True)
+            return self._error(str(exc))
+        if trace is None:
+            return self._error("Recall trace not found")
+        return self._ok(trace)
+
+    def _get_trace_memory_engine(self):
+        try:
+            initializer = getattr(self.plugin, "initializer", None)
+            return getattr(initializer, "memory_engine", None)
+        except Exception:
+            return None
+
+    def _build_trace_request_params(
+        self,
+        payload: dict[str, Any],
+        query: str,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "query": query,
+            "k": self._coerce_trace_k(payload.get("k", 5)),
+            "session_id": payload.get("session_id"),
+            "persona_id": payload.get("persona_id"),
+            "user_id": payload.get("user_id"),
+            "chat_type": str(payload.get("chat_type") or "private"),
+            "memory_types": self._coerce_optional_list(payload.get("memory_types")),
+            "emotion_context": self._coerce_optional_list(
+                payload.get("emotion_context")
+            ),
+            "recall_type": payload.get("recall_type") or "manual_trace",
+            "chain_depth": self._coerce_nonnegative_int(
+                payload.get("chain_depth", 0), 0
+            ),
+            "query_intent": payload.get("query_intent"),
+            "recall_strategy": self._coerce_recall_strategy(
+                payload.get("recall_strategy")
+            ),
+        }
+        return params
+
+    @staticmethod
+    def _coerce_trace_k(value: Any) -> int:
+        if isinstance(value, bool):
+            return 5
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 5
+        return min(20, max(1, parsed))
+
+    @staticmethod
+    def _coerce_nonnegative_int(value: Any, default: int) -> int:
+        if isinstance(value, bool):
+            return default
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(0, parsed)
+
+    @staticmethod
+    def _coerce_optional_list(value: Any) -> list[Any] | None:
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return value
+        if isinstance(value, tuple | set):
+            return list(value)
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return None
+
+    @staticmethod
+    def _coerce_recall_strategy(value: Any) -> RecallStrategy | None:
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, RecallStrategy):
+            return value
+        try:
+            return RecallStrategy(str(value).strip())
+        except ValueError:
+            return None
+
+    async def _get_recall_trace_store(self) -> RecallTraceStore:
+        store = getattr(self, "_recall_trace_store", None)
+        if store is not None:
+            return store
+
+        db_path = self._recall_trace_db_path()
+        store = (
+            RecallTraceStore(db_path=db_path)
+            if db_path is not None
+            else RecallTraceStore()
+        )
+        await store.initialize()
+        self._recall_trace_store = store
+        return store
+
+    def _recall_trace_db_path(self) -> Path | None:
+        initializer = getattr(self.plugin, "initializer", None)
+        data_dir = getattr(initializer, "data_dir", None)
+        if data_dir:
+            return Path(data_dir) / "recall_traces.db"
+        return None
+
+
+__all__ = ["RecallTraceApiMixin"]

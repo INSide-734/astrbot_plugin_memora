@@ -1,0 +1,250 @@
+"""
+混合检索器 - 结合BM25和向量检索的混合检索
+实现并行检索、RRF融合和智能加权策略
+"""
+
+import asyncio
+import time
+from typing import Any
+
+from astrbot.api import logger
+
+from .bm25_retriever import BM25Retriever
+from .memory_lifecycle import MemoryLifecycleManager
+from .mmr_reranker import apply_mmr
+from .rrf_fusion import BM25Result, HybridResult, RRFFusion, VectorResult
+from .score_weighting import ScoreWeighting
+from .vector_retriever import VectorRetriever
+
+
+class HybridRetriever:
+    """
+    混合检索器
+
+    结合BM25稀疏检索和向量密集检索,通过RRF融合结果,
+    并应用重要性和时间衰减加权策略。
+
+    主要特性:
+    1. 并行执行BM25和向量检索(使用asyncio.gather)
+    2. 使用RRF算法融合两路结果
+    3. 应用重要性加权和时间衰减
+    4. 支持退化机制(某一路失败时使用另一路)
+    5. 确保两个索引中doc_id的一致性
+    """
+
+    def __init__(
+        self,
+        bm25_retriever: BM25Retriever,
+        vector_retriever: VectorRetriever,
+        rrf_fusion: RRFFusion,
+        config: dict[str, Any] | None = None,
+    ):
+        """
+        初始化混合检索器
+
+        Args:
+            bm25_retriever: BM25检索器实例
+            vector_retriever: 向量检索器实例
+            rrf_fusion: RRF融合器实例
+            config: 配置字典,支持以下参数:
+                - decay_rate: 时间衰减率,默认0.01
+                - importance_weight: 重要性权重,默认1.0
+                - fallback_enabled: 启用退化机制,默认True
+        """
+        self.bm25_retriever = bm25_retriever
+        self.vector_retriever = vector_retriever
+        self.rrf_fusion = rrf_fusion
+        self.config = config or {}
+
+        # 配置参数
+        self.decay_rate = self.config.get("decay_rate", 0.01)
+        self.importance_weight = self.config.get("importance_weight", 1.0)
+        self.fallback_enabled = self.config.get("fallback_enabled", True)
+
+        # 加权求和各维度权重（可通过配置覆盖）
+        self.score_alpha = self.config.get(
+            "hybrid_scoring.score_alpha", 0.5
+        )  # 检索相关性
+        self.score_beta = self.config.get("hybrid_scoring.score_beta", 0.25)  # 重要性
+        self.score_gamma = self.config.get(
+            "hybrid_scoring.score_gamma", 0.25
+        )  # 时间新鲜度
+
+        # MMR 多样性参数
+        self.mmr_lambda = self.config.get(
+            "hybrid_scoring.mmr_lambda", 0.7
+        )  # 相关性 vs 多样性权衡
+
+        # 内部子模块
+        self.memory_lifecycle = MemoryLifecycleManager(bm25_retriever, vector_retriever)
+        self.score_weighting = ScoreWeighting(
+            decay_rate=self.decay_rate,
+            importance_weight=self.importance_weight,
+            score_alpha=self.score_alpha,
+            score_beta=self.score_beta,
+            score_gamma=self.score_gamma,
+        )
+
+    @staticmethod
+    async def _search_route(
+            route_name: str, search_coro
+    ) -> tuple[list, Exception | None]:
+        """Run one retrieval route and convert ordinary failures into route errors."""
+        try:
+            return await search_coro, None
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"{route_name}检索异常: {e}", exc_info=True)
+            return [], e
+
+    async def add_memory(
+        self, content: str, metadata: dict[str, Any] | None = None
+    ) -> int:
+        """添加记忆到两个索引（委托给 MemoryLifecycleManager）"""
+        return await self.memory_lifecycle.add_memory(content, metadata)
+
+    async def search(
+        self,
+        query: str,
+        k: int = 10,
+        session_id: str | None = None,
+        persona_id: str | None = None,
+        memory_types: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[HybridResult]:
+        """
+        执行混合检索
+
+        Args:
+            query: 查询字符串
+            k: 返回的结果数量
+            session_id: 会话ID过滤(可选)
+            persona_id: 人格ID过滤(可选)
+
+        Returns:
+            List[HybridResult]: 混合检索结果,按最终分数降序排列
+        """
+        if not query or not query.strip():
+            return []
+
+        # 1. 并行执行两路检索
+        (
+            (bm25_results, bm25_error),
+            (vector_results, vector_error),
+        ) = await asyncio.gather(
+            self._search_route(
+                "BM25",
+                self.bm25_retriever.search(query, k, session_id, persona_id),
+            ),
+            self._search_route(
+                "向量",
+                self.vector_retriever.search(query, k, session_id, persona_id),
+            ),
+        )
+
+        # 2. 处理退化情况
+        if bm25_error and vector_error:
+            return []
+
+        if bm25_error:
+            if self.fallback_enabled and vector_results:
+                return self._fallback_vector_only(vector_results, k)
+            return []
+
+        if vector_error:
+            if self.fallback_enabled and bm25_results:
+                return self._fallback_bm25_only(bm25_results, k)
+            return []
+
+        # 3. RRF融合
+        # 转换结果类型以匹配RRF融合器期望的类型
+        rrf_bm25_results = [
+            BM25Result(
+                doc_id=r.doc_id, score=r.score, content=r.content, metadata=r.metadata
+            )
+            for r in bm25_results
+        ]
+
+        rrf_vector_results = [
+            VectorResult(
+                doc_id=r.doc_id, score=r.score, content=r.content, metadata=r.metadata
+            )
+            for r in vector_results
+        ]
+
+        fused_results = self.rrf_fusion.fuse(
+            rrf_bm25_results, rrf_vector_results, top_k=k
+        )
+
+        if not fused_results:
+            return []
+
+        # 4. 应用加权（通过线程池卸载 CPU 密集型 json.loads + 循环）
+        current_time = time.time()
+        weighted_results = await asyncio.to_thread(
+            self.score_weighting.apply_weighting, fused_results, current_time
+        )
+
+        # 5. MMR 去重（通过线程池卸载 O(k*n) Jaccard 集合运算）
+        if len(weighted_results) > 1:
+            weighted_results = await asyncio.to_thread(
+                apply_mmr, weighted_results, k, self.mmr_lambda
+            )
+
+        # 6. 记忆类型后处理过滤
+        if memory_types:
+            memory_types_lower = {mt.lower() for mt in memory_types}
+            for result in weighted_results:
+                atom_type = result.metadata.get("memory_type") or result.metadata.get(
+                    "atom_type", ""
+                )
+                if atom_type.lower() not in memory_types_lower:
+                    result.final_score *= 0.1
+            weighted_results.sort(key=lambda r: r.final_score, reverse=True)
+
+        return weighted_results
+
+    def _fallback_bm25_only(self, bm25_results: list, k: int) -> list[HybridResult]:
+        """
+        BM25退化:仅使用BM25结果
+
+        Args:
+            bm25_results: BM25检索结果
+            k: 返回的结果数量
+
+        Returns:
+            List[HybridResult]: 退化后的结果
+        """
+        # 将BM25结果转换为FusedResult
+        fused_results = self.rrf_fusion._convert_bm25_only(bm25_results, k)
+
+        # 应用加权
+        current_time = time.time()
+        return self.score_weighting.apply_weighting(fused_results, current_time)
+
+    def _fallback_vector_only(self, vector_results: list, k: int) -> list[HybridResult]:
+        """
+        向量退化:仅使用向量结果
+
+        Args:
+            vector_results: 向量检索结果
+            k: 返回的结果数量
+
+        Returns:
+            List[HybridResult]: 退化后的结果
+        """
+        # 将向量结果转换为FusedResult
+        fused_results = self.rrf_fusion._convert_vector_only(vector_results, k)
+
+        # 应用加权
+        current_time = time.time()
+        return self.score_weighting.apply_weighting(fused_results, current_time)
+
+    async def update_metadata(self, doc_id: int, metadata: dict[str, Any]) -> bool:
+        """同步更新所有存储层的元数据（委托给 MemoryLifecycleManager）"""
+        return await self.memory_lifecycle.update_metadata(doc_id, metadata)
+
+    async def delete_memory(self, doc_id: int) -> bool:
+        """从多个存储层中删除记忆（委托给 MemoryLifecycleManager）"""
+        return await self.memory_lifecycle.delete_memory(doc_id)
