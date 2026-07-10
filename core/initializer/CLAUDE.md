@@ -18,7 +18,6 @@ ProviderWaiter.wait_non_blocking()  → 非阻塞等待 Provider 就绪（最多
   └─ ProviderLoader.initialize_providers()  → 加载 Embedding + LLM Provider
 ProviderWaiter.start_retry_if_needed()  → 未就绪时后台指数退避重试（最多 60 次）
 ComponentFactory.build_all()  → 组装所有核心组件
-  ├─ 旧文件 v1→v2 迁移（livingmemory → memora）
   ├─ FaissChecker.check_and_fix_dimension_mismatch()  → 维度检查
   ├─ FaissVecDB.initialize()  → 主 DB + 图 DB 并行初始化
   ├─ MemoryEngine  → 搜索引擎构建（含 BM25 / 向量 / 图）

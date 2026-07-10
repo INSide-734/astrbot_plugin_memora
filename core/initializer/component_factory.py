@@ -24,17 +24,6 @@ class ComponentFactory:
         self.config_manager = config_manager
         self.data_dir = data_dir
 
-    @staticmethod
-    def _migrate_legacy_file(data_dir_path: Path, old_name: str, new_name: str) -> None:
-        """如果旧文件存在且新文件不存在，则将旧文件重命名为新文件名。"""
-        old_path = data_dir_path / old_name
-        new_path = data_dir_path / new_name
-        if old_path.exists() and not new_path.exists():
-            old_path.rename(new_path)
-            logger.info(
-                "[ComponentFactory] migrated legacy file: %s → %s", old_name, new_name
-            )
-
     async def build_all(
         self,
         embedding_provider,
@@ -45,16 +34,6 @@ class ComponentFactory:
     ) -> dict:
         """返回初始化的组件字典"""
         data_dir_path = Path(self.data_dir)
-
-        # ---- 旧文件 → 新文件名迁移（v1.0.0 → v2.0.0） ----
-        _LEGACY_TO_NEW = [  # noqa: N806
-            ("livingmemory.db", "memora.db"),
-            ("livingmemory.index", "memora.index"),
-            ("livingmemory_graph_documents.db", "memora_graph_documents.db"),
-            ("livingmemory_graph.index", "memora_graph.index"),
-        ]
-        for old_name, new_name in _LEGACY_TO_NEW:
-            self._migrate_legacy_file(data_dir_path, old_name, new_name)
 
         db_path = data_dir_path / "memora.db"
         index_path = data_dir_path / "memora.index"
@@ -257,5 +236,60 @@ class ComponentFactory:
             ),
             "index_rebuild_max_failure_ratio": cm.get(
                 "index_rebuild_settings.max_failure_ratio", 0.02
+            ),
+            # === 请求级会话缓存（消除 Bridge→RecallHandler 重复检索） ===
+            "session_cache_enabled": cm.get(
+                "recall_engine.session_cache_enabled", True
+            ),
+            "session_cache_ttl_seconds": cm.get(
+                "recall_engine.session_cache_ttl_seconds", 10.0
+            ),
+            # === 链式扩展（R2 多跳图/话题扩展） ===
+            "recall_engine.max_chain_hops": cm.get(
+                "recall_engine.max_chain_hops", 1
+            ),
+            "recall_engine.chain_hop_decay": cm.get(
+                "recall_engine.chain_hop_decay", 0.65
+            ),
+            "recall_engine.chain_graph_expansion_enabled": cm.get(
+                "recall_engine.chain_graph_expansion_enabled", True
+            ),
+            "recall_engine.chain_topic_expansion_enabled": cm.get(
+                "recall_engine.chain_topic_expansion_enabled", True
+            ),
+            # === 测试效应（召回成功后的访问时间强化） ===
+            "testing_effect_async": cm.get(
+                "recall_engine.testing_effect_async", True
+            ),
+            "testing_effect_top_k": cm.get(
+                "recall_engine.testing_effect_top_k", 5
+            ),
+            # === 重排序器 ===
+            "reranker.enabled": cm.get("reranker.enabled", True),
+            "reranker.strategy": cm.get("reranker.strategy", "mmr"),
+            "reranker.llm_batch_size": cm.get("reranker.llm_batch_size", 10),
+            "reranker.cross_encoder_lambda": cm.get(
+                "reranker.cross_encoder_lambda", 0.7
+            ),
+            "reranker.mmr_lambda": cm.get("reranker.mmr_lambda", 0.7),
+            # === 成本控制 ===
+            "cost_control.mode": cm.get("cost_control.mode", "balanced"),
+            "cost_control.max_extra_llm_calls_per_turn": cm.get(
+                "cost_control.max_extra_llm_calls_per_turn", 0
+            ),
+            "cost_control.allow_llm_reranker_in_passive_recall": cm.get(
+                "cost_control.allow_llm_reranker_in_passive_recall", False
+            ),
+            "cost_control.allow_llm_topic_strategy_d": cm.get(
+                "cost_control.allow_llm_topic_strategy_d", False
+            ),
+            "cost_control.max_reflection_parallel_llm_calls": cm.get(
+                "cost_control.max_reflection_parallel_llm_calls", 2
+            ),
+            "cost_control.llm_reranker_min_candidates": cm.get(
+                "cost_control.llm_reranker_min_candidates", 12
+            ),
+            "cost_control.llm_reranker_prompt_chars": cm.get(
+                "cost_control.llm_reranker_prompt_chars", 3000
             ),
         }

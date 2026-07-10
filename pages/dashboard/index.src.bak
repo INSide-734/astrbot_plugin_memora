@@ -148,10 +148,8 @@
         var pluginName = String((ctx && ctx.pluginName) || '').toLowerCase();
         var displayName = String((ctx && ctx.displayName) || '').toLowerCase();
         return pluginName.indexOf('memora') !== -1
-          || pluginName.indexOf('livingmemory') !== -1
           || pluginName.indexOf('astrbot_plugin_memora') !== -1
-          || displayName.indexOf('memora') !== -1
-          || displayName.indexOf('livingmemory') !== -1;
+          || displayName.indexOf('memora') !== -1;
       }
 
       function bsDetectWrongPluginResponse(response) {

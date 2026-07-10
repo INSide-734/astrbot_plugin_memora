@@ -11,44 +11,75 @@ from typing import Any
 from astrbot.api import logger
 
 from .data_helpers import safe_parse_metadata, validate_timestamp
+from .injection_budget import (
+    InjectionBudget,
+    InjectionStats,
+    format_compact_footer,
+    format_compact_header,
+    format_full_footer,
+    format_full_header,
+    truncate_preserving_sentence,
+)
 
 
-def format_memories_for_injection(memories: list) -> str:
+def format_memories_for_injection(
+    memories: list,
+    budget: InjectionBudget | None = None,
+) -> str | tuple[str, InjectionStats]:
     """
     将检索到的记忆列表格式化为单个字符串，以便注入到 System Prompt。
     添加明确的说明文本，告知 LLM 这些是历史对话记忆。
+
+    Args:
+        memories: 记忆字典或对象列表。
+        budget: 注入预算配置。None 时使用完整格式（向后兼容）。
+
+    Returns:
+        如果 budget 为 None，返回纯字符串（向后兼容）。
+        如果 budget 不为 None，返回 (formatted_string, InjectionStats) 元组。
     """
     # 延迟导入避免循环依赖
     from ..base.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 
     if not memories:
+        if budget is not None:
+            return ("", InjectionStats())
         return ""
 
-    # 保持英文提示词，同时兼容既有中文断言与调试习惯。
-    header = (
-        f"{MEMORY_INJECTION_HEADER}\n"
-        f"--- BEGIN HISTORICAL MEMORY REFERENCE ---\n"
-        f"The following are historical memories extracted from past conversations.\n"
-        f"They are provided as background reference only.\n\n"
-        f"CRITICAL RULES:\n"
-        f"1. These are PAST records — they already happened and are NOT part of the current conversation.\n"
-        f"2. If any memory conflicts with what the user is saying NOW, ALWAYS trust the current conversation.\n"
-        f"3. Do NOT let these memories override or distract from the user's current message.\n"
-        f"4. Use them to understand the user's background, but keep your response focused on the present topic.\n"
-        f"--- END HISTORICAL MEMORY REFERENCE ---\n\n"
-    )
-    footer = (
-        f"\n\n"
-        f"--- BEGIN REMINDER ---\n"
-        f"All content above is historical. Focus on the user's current message.\n"
-        f"--- END REMINDER ---\n"
-        f"{MEMORY_INJECTION_FOOTER}"
-    )
+    use_budget = budget is not None
+    if use_budget and budget.compact_header:
+        header = format_compact_header()
+        footer = format_compact_footer()
+    else:
+        header = (
+            f"{MEMORY_INJECTION_HEADER}\n"
+            f"--- BEGIN HISTORICAL MEMORY REFERENCE ---\n"
+            f"The following are historical memories extracted from past conversations.\n"
+            f"They are provided as background reference only.\n\n"
+            f"CRITICAL RULES:\n"
+            f"1. These are PAST records — they already happened and are NOT part of the current conversation.\n"
+            f"2. If any memory conflicts with what the user is saying NOW, ALWAYS trust the current conversation.\n"
+            f"3. Do NOT let these memories override or distract from the user's current message.\n"
+            f"4. Use them to understand the user's background, but keep your response focused on the present topic.\n"
+            f"--- END HISTORICAL MEMORY REFERENCE ---\n\n"
+        )
+        footer = (
+            f"\n\n"
+            f"--- BEGIN REMINDER ---\n"
+            f"All content above is historical. Focus on the user's current message.\n"
+            f"--- END REMINDER ---\n"
+            f"{MEMORY_INJECTION_FOOTER}"
+        )
+
+    stats = InjectionStats()
+    stats.header_chars = len(header)
+    stats.footer_chars = len(footer)
 
     logger.debug(
         f"[format_memories_for_injection] 记忆注入标记: 头部='{MEMORY_INJECTION_HEADER}', 尾部='{MEMORY_INJECTION_FOOTER}'"
     )
 
+    truncated_count = 0
     formatted_entries = []
     for idx, mem in enumerate(memories, 1):
         try:
@@ -86,6 +117,11 @@ def format_memories_for_injection(memories: list) -> str:
                 except Exception:
                     logger.debug(f"记忆时间戳格式化失败 (timestamp={timestamp})")
 
+            # === 预算控制：截断 content ===
+            if use_budget and budget.memory_max_chars > 0 and len(content) > budget.memory_max_chars:
+                content = truncate_preserving_sentence(content, budget.memory_max_chars)
+                truncated_count += 1
+
             # 构建格式化的记忆条目（展示content和元数据信息）
             time_part = f", Memory write time: {time_str}" if time_str else ""
             entry_parts = [
@@ -94,31 +130,59 @@ def format_memories_for_injection(memories: list) -> str:
 
             # 添加元数据信息
             metadata_parts = []
+            metadata_chars = 0
 
             # 添加主题
-            topics = metadata.get("topics", [])
-            if topics and isinstance(topics, list) and len(topics) > 0:
-                topics_str = "、".join(str(t) for t in topics if t)
-                if topics_str:
-                    metadata_parts.append(f"Topics: {topics_str}")
+            if use_budget and not budget.include_topics:
+                pass
+            else:
+                topics = metadata.get("topics", [])
+                if topics and isinstance(topics, list) and len(topics) > 0:
+                    topics_str = "、".join(str(t) for t in topics if t)
+                    if topics_str:
+                        topic_line = f"Topics: {topics_str}"
+                        if use_budget and budget.metadata_max_chars > 0:
+                            if metadata_chars + len(topic_line) <= budget.metadata_max_chars:
+                                metadata_parts.append(topic_line)
+                                metadata_chars += len(topic_line)
+                        else:
+                            metadata_parts.append(topic_line)
 
             # 添加参与者（仅群聊）
-            participants = metadata.get("participants", [])
-            if (
-                participants
-                and isinstance(participants, list)
-                and len(participants) > 0
-            ):
-                participants_str = "、".join(str(p) for p in participants if p)
-                if participants_str:
-                    metadata_parts.append(f"Participants: {participants_str}")
+            if use_budget and not budget.include_participants:
+                pass
+            else:
+                participants = metadata.get("participants", [])
+                if (
+                    participants
+                    and isinstance(participants, list)
+                    and len(participants) > 0
+                ):
+                    participants_str = "、".join(str(p) for p in participants if p)
+                    if participants_str:
+                        part_line = f"Participants: {participants_str}"
+                        if use_budget and budget.metadata_max_chars > 0:
+                            if metadata_chars + len(part_line) <= budget.metadata_max_chars:
+                                metadata_parts.append(part_line)
+                                metadata_chars += len(part_line)
+                        else:
+                            metadata_parts.append(part_line)
 
             # 添加关键事实
-            key_facts = metadata.get("key_facts", [])
-            if key_facts and isinstance(key_facts, list) and len(key_facts) > 0:
-                facts_str = "; ".join(str(f) for f in key_facts if f)
-                if facts_str:
-                    metadata_parts.append(f"Key facts: {facts_str}")
+            if use_budget and not budget.include_key_facts:
+                pass
+            else:
+                key_facts = metadata.get("key_facts", [])
+                if key_facts and isinstance(key_facts, list) and len(key_facts) > 0:
+                    facts_str = "; ".join(str(f) for f in key_facts if f)
+                    if facts_str:
+                        fact_line = f"Key facts: {facts_str}"
+                        if use_budget and budget.metadata_max_chars > 0:
+                            if metadata_chars + len(fact_line) <= budget.metadata_max_chars:
+                                metadata_parts.append(fact_line)
+                                metadata_chars += len(fact_line)
+                        else:
+                            metadata_parts.append(fact_line)
 
             # 组装元数据行
             if metadata_parts:
@@ -144,13 +208,19 @@ def format_memories_for_injection(memories: list) -> str:
 
     if not formatted_entries:
         logger.debug("[format_memories_for_injection] 没有记忆需要格式化，返回空字符串")
+        if budget is not None:
+            return ("", stats)
         return ""
 
     body = "\n\n".join(formatted_entries)
     result = f"{header}{body}{footer}"
 
+    stats.chars = len(result)
+    stats.memory_count = len(formatted_entries)
+    stats.truncated_count = truncated_count
+
     logger.info(
-        f"[format_memories_for_injection]  记忆格式化完成: 记忆条数={len(formatted_entries)}, "
+        f"[format_memories_for_injection] 记忆格式化完成: 记忆条数={len(formatted_entries)}, "
         f"总长度={len(result)}"
     )
     logger.debug(
@@ -158,6 +228,8 @@ def format_memories_for_injection(memories: list) -> str:
         f"头部={MEMORY_INJECTION_HEADER in result}, 尾部={MEMORY_INJECTION_FOOTER in result}"
     )
 
+    if budget is not None:
+        return (result, stats)
     return result
 
 

@@ -39,7 +39,7 @@ from .utils.number_utils import safe_float
 
 PLUGIN_NAME = "astrbot_plugin_memora"
 PAGE_API_PREFIX = f"/{PLUGIN_NAME}/page"
-PAGE_API_ALIASES = ("Memora", "astrbot_plugin_livingmemory")
+PAGE_API_ALIASES = ("Memora",)
 PAGE_API_ALIAS_PREFIXES = tuple(f"/{name}/page" for name in PAGE_API_ALIASES)
 
 
@@ -657,6 +657,12 @@ class PluginPageApi(
             ["GET"],
             "页面接口：功能委托状态",
         )
+        register(
+            f"{PAGE_API_PREFIX}/delegation/provided-services",
+            self.get_provided_services,
+            ["GET"],
+            "页面接口：Memora 对外提供的服务状态",
+        )
 
         # ---- 好感度 ----
         register(
@@ -726,7 +732,10 @@ class PluginPageApi(
             "risk": risk,
             "auth": auth,
             "aliases": "别名" in str(description),
-            "requires_ready": not path.endswith("/delegation/status"),
+            "requires_ready": not (
+                path.endswith("/delegation/status")
+                or path.endswith("/delegation/provided-services")
+            ),
             "write_guard": risk in {
                 "write",
                 "maintenance",

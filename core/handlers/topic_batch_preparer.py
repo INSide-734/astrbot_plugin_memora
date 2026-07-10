@@ -67,6 +67,17 @@ class TopicBatchPreparer:
             return await self._prepare_strategy_c(history_messages, topic_cfg)
 
         if strategy_key == "d":
+            # 成本控制：balanced/low_cost 下 strategy D 自动降级为单批次
+            cost_mode = self._config_manager.get("cost_control.mode", "balanced")
+            allow_d = self._config_manager.get(
+                "cost_control.allow_llm_topic_strategy_d", False
+            )
+            if cost_mode != "quality" and not allow_d:
+                logger.info(
+                    f"[CostControl] topic strategy=d 降级为单批次: "
+                    f"mode={cost_mode}, allow_llm_topic_strategy_d={allow_d}"
+                )
+                return [list(history_messages)]
             return await self._prepare_strategy_d(history_messages, topic_cfg)
 
         return [list(history_messages)]

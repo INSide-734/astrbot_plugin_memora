@@ -1,16 +1,22 @@
 """
-功能融合模块 — 检测伴侣插件存在，跳过重复处理。
+功能融合模块 — 检测伴侣插件存在，跳过重复处理，并提供逆向服务委托。
 
-对等委托逻辑：
+对等委托逻辑 (出站 — Memora 委托给伴侣插件)：
 - 检测到 self_learning 激活 → 跳过本地 expression/jargon/persona 处理
 - 检测到 GroupChatPlus 激活 → 跳过本地 reply/response 影响
 - 双方都加载时，Memora 专注于长期记忆存储和召回
+
+逆向委托逻辑 (入站 — 伴侣插件委托给 Memora)：
+- self_learning 可通过 MEMORA_SERVICE_ALIASES 检测 Memora
+- Memora 提供记忆召回 (recall_memory) 和知识检索 (search_knowledge) 服务
+- 通过 setter 注入 MemoryEngine / KnowledgeManager 依赖
 
 双重门控: config switch + plugin active check
 """
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Iterable
 
 from astrbot.api import logger
@@ -37,13 +43,30 @@ class FeatureDelegation:
         "groupchatplus",
     )
 
-    def __init__(self, context: Any) -> None:
+    # Memora 服务别名 — 供 self_learning 等外部插件检测 Memora 是否可用
+    MEMORA_SERVICE_ALIASES = (
+        "astrbot_plugin_memora",
+        "Memora",
+        "memora",
+        "memora_plugin",
+    )
+
+    def __init__(
+        self,
+        context: Any,
+        memory_engine: Any = None,
+        knowledge_manager: Any = None,
+    ) -> None:
         """初始化功能融合检测器。
 
         参数：
             context: AstrBot Context 对象，用于查询已注册的插件。
+            memory_engine: 可选的 MemoryEngine 引用，用于提供记忆召回服务。
+            knowledge_manager: 可选的 KnowledgeManager 引用，用于提供知识检索服务。
         """
         self._context = context
+        self._memory_engine = memory_engine
+        self._knowledge_manager = knowledge_manager
         # 防抖：仅状态变更时输出日志
         self._last_status: dict[str, bool] | None = None
 
@@ -116,6 +139,129 @@ class FeatureDelegation:
         return self.chatplus_plugin() is not None
 
     # ------------------------------------------------------------------
+    # 服务提供方法（逆向委托 — 伴侣插件委托给 Memora）
+    # ------------------------------------------------------------------
+
+    def set_memory_engine(self, engine: Any) -> None:
+        """注入 MemoryEngine 引用，使能记忆召回服务。
+
+        应在插件初始化完成后调用。若未注入，服务方法返回空结果。
+
+        参数：
+            engine: MemoryEngine 实例。
+        """
+        self._memory_engine = engine
+
+    def set_knowledge_manager(self, manager: Any) -> None:
+        """注入 KnowledgeManager 引用，使能知识检索服务。
+
+        应在插件初始化完成后调用。若未注入，服务方法返回空结果。
+
+        参数：
+            manager: KnowledgeManager 实例。
+        """
+        self._knowledge_manager = manager
+
+    def can_provide_memory_service(self) -> bool:
+        """Memora 是否可以对外提供记忆召回服务。
+
+        双重门控：
+        1. MemoryEngine 已注入且可用
+        2. self_learning 伴侣插件已激活（有意义的使用场景）
+
+        返回：
+            True 表示外部插件可调用 recall_memory()。
+        """
+        return (
+            self._memory_engine is not None
+            and self.self_learning_plugin() is not None
+        )
+
+    def can_provide_knowledge_service(self) -> bool:
+        """Memora 是否可以对外提供知识检索服务。
+
+        双重门控：
+        1. KnowledgeManager 已注入且可用
+        2. self_learning 伴侣插件已激活（有意义的使用场景）
+
+        返回：
+            True 表示外部插件可调用 search_knowledge()。
+        """
+        return (
+            self._knowledge_manager is not None
+            and self.self_learning_plugin() is not None
+        )
+
+    async def recall_memory(
+        self,
+        query: str,
+        session_id: str | None = None,
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """对外提供的记忆召回服务。
+
+        封装 MemoryEngine 的召回接口，供 self_learning 等伴侣插件调用。
+        若 MemoryEngine 未注入或未就绪，返回空列表。
+
+        参数：
+            query: 搜索查询文本。
+            session_id: 可选的会话 ID，用于会话范围过滤。
+            top_k: 返回结果数量上限。
+
+        返回：
+            记忆原子字典列表，包含 content, score, metadata 等字段。
+        """
+        if not self._memory_engine:
+            return []
+        try:
+            raw = self._memory_engine.recall(
+                query=query,
+                session_id=session_id,
+                top_k=top_k,
+            )
+            if inspect.isawaitable(raw):
+                raw = await raw
+            return raw if isinstance(raw, list) else []
+        except Exception:
+            logger.warning(
+                "[功能融合] recall_memory 调用失败", exc_info=True
+            )
+            return []
+
+    async def search_knowledge(
+        self,
+        query: str,
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """对外提供的知识检索服务。
+
+        封装 KnowledgeManager 的搜索接口，供 self_learning 等伴侣插件调用。
+        若 KnowledgeManager 未注入或未就绪，返回空列表。
+
+        参数：
+            query: 搜索查询文本。
+            top_k: 返回结果数量上限。
+
+        返回：
+            知识条目字典列表，包含 content, source, score 等字段。
+        """
+        if not self._knowledge_manager:
+            return []
+        try:
+            raw = self._knowledge_manager.search(
+                query=query,
+                top_k=top_k,
+            )
+            if inspect.isawaitable(raw):
+                raw = await raw
+            return raw if isinstance(raw, list) else []
+        except Exception:
+            logger.warning(
+                "[功能融合] search_knowledge 调用失败", exc_info=True
+            )
+            return []
+
+    # ------------------------------------------------------------------
     # 结构化状态查询（控制台展示）
     # ------------------------------------------------------------------
 
@@ -133,6 +279,8 @@ class FeatureDelegation:
                 "delegated_expression": bool,
                 "delegated_affection": bool,
                 "delegated_reply": bool,
+                "provided_memory_service": bool,
+                "provided_knowledge_service": bool,
             }
         """
         sl_plugin = self.self_learning_plugin()
@@ -146,6 +294,47 @@ class FeatureDelegation:
             "delegated_expression": self.should_delegate_expression(),
             "delegated_affection": self.should_delegate_affection(),
             "delegated_reply": self.should_delegate_reply(),
+            "provided_memory_service": self.can_provide_memory_service(),
+            "provided_knowledge_service": self.can_provide_knowledge_service(),
+        }
+
+    def get_provided_services_status(self) -> dict[str, Any]:
+        """返回 Memora 对外提供的服务状态快照。
+
+        供 self_learning 等伴侣插件查询 Memora 提供哪些后端能力。
+
+        返回：
+            结构化字典:
+            {
+                "memora_available": bool,
+                "memora_aliases": list[str],
+                "memory_service": bool,
+                "knowledge_service": bool,
+                "service_details": {
+                    "memory_recall": str | None,
+                    "knowledge_search": str | None,
+                },
+            }
+        """
+        memory_ready = self._memory_engine is not None
+        knowledge_ready = self._knowledge_manager is not None
+        return {
+            "memora_available": True,
+            "memora_aliases": list(self.MEMORA_SERVICE_ALIASES),
+            "memory_service": self.can_provide_memory_service(),
+            "knowledge_service": self.can_provide_knowledge_service(),
+            "service_details": {
+                "memory_recall": (
+                    "可用 — recall_memory(query, session_id, top_k)"
+                    if memory_ready
+                    else "不可用 — MemoryEngine 未注入"
+                ),
+                "knowledge_search": (
+                    "可用 — search_knowledge(query, top_k)"
+                    if knowledge_ready
+                    else "不可用 — KnowledgeManager 未注入"
+                ),
+            },
         }
 
     # ------------------------------------------------------------------

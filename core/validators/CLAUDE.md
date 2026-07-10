@@ -133,7 +133,7 @@
 ## 测试与质量
 
 - 对应测试文件: `tests/test_validator*.py`
-- FTS 表名白名单: 只允许 `memora_memories_fts` 和 `livingmemory_memories_fts`
+- FTS 表名白名单: 只允许 `memora_memories_fts`
 - SQL 注入防护: FTS 表名通过 `_validate_fts_table_name()` 白名单校验
 - 数据库锁重试: `database is locked` 时自动重试（线性递增 0.2s/次）
 - 索引文件隔离: 不可读索引文件移到 `*.corrupt_{timestamp}` 备用

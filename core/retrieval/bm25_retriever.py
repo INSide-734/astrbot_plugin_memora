@@ -37,7 +37,7 @@ class BM25Retriever:
     3. BM25分数自动归一化到[0,1]区间
     """
 
-    _ALLOWED_FTS_TABLES = frozenset({"memora_memories_fts", "livingmemory_memories_fts"})
+    _ALLOWED_FTS_TABLES = frozenset({"memora_memories_fts"})
     _ALLOWED_DOC_TABLES = frozenset({"documents"})
 
     def __init__(
@@ -119,50 +119,6 @@ class BM25Retriever:
                 )
             """)
             await db.commit()
-            # 旧 FTS 表 → 新 FTS 表数据迁移
-            await self._migrate_legacy_fts_table(db)
-
-    async def _migrate_legacy_fts_table(self, db: aiosqlite.Connection) -> None:
-        """将数据从旧版 livingmemory_memories_fts 迁移到 memora_memories_fts。"""
-        _LEGACY_FTS = "livingmemory_memories_fts"  # noqa: N806
-        if self.fts_table == _LEGACY_FTS:
-            return
-        fts_table_sql = self._fts_table_sql
-        legacy_fts_sql = self._quote_identifier(
-            _LEGACY_FTS,
-            allowed=self._ALLOWED_FTS_TABLES,
-            label="legacy FTS table",
-        )
-        cursor = await db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            (_LEGACY_FTS,),
-        )
-        if not await cursor.fetchone():
-            return
-        # Check new table is empty to prevent duplicate migration
-        cursor = await db.execute(f"SELECT COUNT(*) FROM {fts_table_sql}")
-        new_count = (await cursor.fetchone())[0]
-        if new_count > 0:
-            return
-        cursor = await db.execute(f"SELECT COUNT(*) FROM {legacy_fts_sql}")
-        legacy_count = (await cursor.fetchone())[0]
-        if legacy_count == 0:
-            return
-        logger.info(
-            "[BM25] migrating %d rows from legacy FTS table %s → %s",
-            legacy_count,
-            _LEGACY_FTS,
-            self.fts_table,
-        )
-        await db.execute(
-            f"INSERT INTO {fts_table_sql}(content, doc_id) "
-            f"SELECT content, doc_id FROM {legacy_fts_sql}"
-        )
-        await db.execute(f"DROP TABLE IF EXISTS {legacy_fts_sql}")
-        await db.commit()
-        logger.info(
-            "[BM25] FTS table migration complete; %d rows transferred", legacy_count
-        )
 
     async def _warn_if_legacy_documents_fts_exists(self, db: aiosqlite.Connection):
         cursor = await db.execute("""

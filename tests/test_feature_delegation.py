@@ -132,6 +132,8 @@ class TestNoCompanionPlugin:
             "delegated_expression": False,
             "delegated_affection": False,
             "delegated_reply": False,
+            "provided_memory_service": False,
+            "provided_knowledge_service": False,
         }
 
 
@@ -539,3 +541,208 @@ class TestEdgeCases:
 
     def test_star_label_none_for_none_star(self) -> None:
         assert FeatureDelegation._star_label(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Memora service aliases
+# ---------------------------------------------------------------------------
+
+
+class TestMemoraServiceAliases:
+    """验证 MEMORA_SERVICE_ALIASES 常量正确导出。"""
+
+    def test_aliases_contain_expected_names(self) -> None:
+        aliases = FeatureDelegation.MEMORA_SERVICE_ALIASES
+        assert "astrbot_plugin_memora" in aliases
+        assert "Memora" in aliases
+        assert "memora" in aliases
+
+    def test_aliases_is_tuple(self) -> None:
+        assert isinstance(FeatureDelegation.MEMORA_SERVICE_ALIASES, tuple)
+
+
+# ---------------------------------------------------------------------------
+# Provided services — engine not injected (graceful degradation)
+# ---------------------------------------------------------------------------
+
+
+class TestProvidedServicesWithoutEngine:
+    """未注入 MemoryEngine / KnowledgeManager 时，服务方法优雅降级。"""
+
+    def test_cannot_provide_memory_without_engine(self) -> None:
+        ctx = _make_context(registered_stars={}, all_stars=[])
+        fd = FeatureDelegation(ctx)
+        assert fd.can_provide_memory_service() is False
+
+    def test_cannot_provide_knowledge_without_manager(self) -> None:
+        ctx = _make_context(registered_stars={}, all_stars=[])
+        fd = FeatureDelegation(ctx)
+        assert fd.can_provide_knowledge_service() is False
+
+    @pytest.mark.asyncio
+    async def test_recall_memory_returns_empty_without_engine(self) -> None:
+        ctx = _make_context(registered_stars={}, all_stars=[])
+        fd = FeatureDelegation(ctx)
+        results = await fd.recall_memory("test query")
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_returns_empty_without_manager(self) -> None:
+        ctx = _make_context(registered_stars={}, all_stars=[])
+        fd = FeatureDelegation(ctx)
+        results = await fd.search_knowledge("test query")
+        assert results == []
+
+    def test_get_delegation_status_includes_provided_false(self) -> None:
+        ctx = _make_context(registered_stars={}, all_stars=[])
+        fd = FeatureDelegation(ctx)
+        status = fd.get_delegation_status()
+        assert status["provided_memory_service"] is False
+        assert status["provided_knowledge_service"] is False
+
+    def test_get_provided_services_status_reports_unavailable(self) -> None:
+        ctx = _make_context(registered_stars={}, all_stars=[])
+        fd = FeatureDelegation(ctx)
+        svc = fd.get_provided_services_status()
+        assert svc["memora_available"] is True
+        assert svc["memory_service"] is False
+        assert svc["knowledge_service"] is False
+        assert "不可用" in svc["service_details"]["memory_recall"]
+        assert "不可用" in svc["service_details"]["knowledge_search"]
+
+
+# ---------------------------------------------------------------------------
+# Provided services — engine injected
+# ---------------------------------------------------------------------------
+
+
+class TestProvidedServicesWithEngine:
+    """注入 MemoryEngine / KnowledgeManager 后，服务方法可用。"""
+
+    def _make_fd_with_engines(
+        self,
+        has_self_learning: bool = True,
+        mock_recall_result: list | None = None,
+        mock_search_result: list | None = None,
+    ) -> FeatureDelegation:
+        """创建带有 mock engine/manager 的 FeatureDelegation。"""
+        mock_engine = MagicMock()
+        mock_engine.recall = MagicMock()
+        mock_engine.recall.return_value = mock_recall_result or [
+            {"content": "memory 1", "score": 0.9},
+        ]
+
+        mock_knowledge = MagicMock()
+        mock_knowledge.search = MagicMock()
+        mock_knowledge.search.return_value = mock_search_result or [
+            {"content": "knowledge 1", "source": "doc"},
+        ]
+
+        # 构建 context
+        if has_self_learning:
+            sl_star = _make_star(
+                name="self_learning",
+                display_name="Self Learning",
+                root_dir_name="astrbot_plugin_self_learning",
+                module_path="astrbot_plugin_self_learning",
+            )
+            ctx = _make_context(
+                registered_stars={"self_learning": sl_star},
+                all_stars=[],
+            )
+        else:
+            ctx = _make_context(registered_stars={}, all_stars=[])
+
+        return FeatureDelegation(
+            ctx,
+            memory_engine=mock_engine,
+            knowledge_manager=mock_knowledge,
+        )
+
+    def test_can_provide_memory_with_engine_and_self_learning(self) -> None:
+        fd = self._make_fd_with_engines(has_self_learning=True)
+        assert fd.can_provide_memory_service() is True
+
+    def test_can_provide_knowledge_with_manager_and_self_learning(self) -> None:
+        fd = self._make_fd_with_engines(has_self_learning=True)
+        assert fd.can_provide_knowledge_service() is True
+
+    def test_cannot_provide_memory_without_self_learning(self) -> None:
+        """engine 已注入但 self_learning 未激活 → 不应提供服务（无使用场景）。"""
+        fd = self._make_fd_with_engines(has_self_learning=False)
+        assert fd.can_provide_memory_service() is False
+
+    def test_cannot_provide_knowledge_without_self_learning(self) -> None:
+        fd = self._make_fd_with_engines(has_self_learning=False)
+        assert fd.can_provide_knowledge_service() is False
+
+    @pytest.mark.asyncio
+    async def test_recall_memory_delegates_to_engine(self) -> None:
+        fd = self._make_fd_with_engines(has_self_learning=True)
+        results = await fd.recall_memory("hello", session_id="s1", top_k=3)
+        fd._memory_engine.recall.assert_called_once_with(
+            query="hello", session_id="s1", top_k=3,
+        )
+        assert results == [{"content": "memory 1", "score": 0.9}]
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_delegates_to_manager(self) -> None:
+        fd = self._make_fd_with_engines(has_self_learning=True)
+        results = await fd.search_knowledge("hello", top_k=3)
+        fd._knowledge_manager.search.assert_called_once_with(
+            query="hello", top_k=3,
+        )
+        assert results == [{"content": "knowledge 1", "source": "doc"}]
+
+    @pytest.mark.asyncio
+    async def test_recall_memory_handles_exception(self) -> None:
+        fd = self._make_fd_with_engines(has_self_learning=True)
+        fd._memory_engine.recall.side_effect = RuntimeError("engine down")
+        results = await fd.recall_memory("test")
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_handles_exception(self) -> None:
+        fd = self._make_fd_with_engines(has_self_learning=True)
+        fd._knowledge_manager.search.side_effect = RuntimeError("manager down")
+        results = await fd.search_knowledge("test")
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_recall_memory_non_list_result(self) -> None:
+        fd = self._make_fd_with_engines(has_self_learning=True)
+        fd._memory_engine.recall.return_value = None
+        results = await fd.recall_memory("test")
+        assert results == []
+
+    def test_get_delegation_status_includes_provided_true(self) -> None:
+        fd = self._make_fd_with_engines(has_self_learning=True)
+        status = fd.get_delegation_status()
+        assert status["provided_memory_service"] is True
+        assert status["provided_knowledge_service"] is True
+
+    def test_get_provided_services_status_reports_available(self) -> None:
+        fd = self._make_fd_with_engines(has_self_learning=True)
+        svc = fd.get_provided_services_status()
+        assert svc["memora_available"] is True
+        assert svc["memory_service"] is True
+        assert svc["knowledge_service"] is True
+        assert "可用" in svc["service_details"]["memory_recall"]
+        assert "可用" in svc["service_details"]["knowledge_search"]
+        assert "memora_aliases" in svc
+        assert "astrbot_plugin_memora" in svc["memora_aliases"]
+
+    def test_setter_methods_update_engines(self) -> None:
+        """setter 方法应更新内部引用。"""
+        ctx = _make_context(registered_stars={}, all_stars=[])
+        fd = FeatureDelegation(ctx)
+        assert fd._memory_engine is None
+        assert fd._knowledge_manager is None
+
+        mock_engine = MagicMock()
+        mock_knowledge = MagicMock()
+        fd.set_memory_engine(mock_engine)
+        fd.set_knowledge_manager(mock_knowledge)
+
+        assert fd._memory_engine is mock_engine
+        assert fd._knowledge_manager is mock_knowledge

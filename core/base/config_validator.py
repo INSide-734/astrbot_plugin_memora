@@ -80,6 +80,66 @@ class RecallEngineConfig(BaseModel):
     search_cache_max_size: int = Field(
         default=256, ge=0, le=10000, description="检索缓存最大条目数"
     )
+    # 请求级会话缓存 — 消除同一请求内 Bridge→RecallHandler 重复检索
+    session_cache_enabled: bool = Field(
+        default=True, description="是否启用请求级会话缓存（消除重复检索）"
+    )
+    session_cache_ttl_seconds: float = Field(
+        default=10.0, ge=0.0, le=120.0, description="请求级会话缓存 TTL 秒数"
+    )
+    # 链式扩展 — R2 多跳图扩展
+    max_chain_hops: int = Field(
+        default=1, ge=0, le=3, description="链式扩展最大跳数。0 禁用"
+    )
+    chain_hop_decay: float = Field(
+        default=0.65, ge=0.0, le=1.0, description="逐跳衰减系数"
+    )
+    chain_graph_expansion_enabled: bool = Field(
+        default=True, description="是否启用图边多跳扩展"
+    )
+    chain_topic_expansion_enabled: bool = Field(
+        default=True, description="是否启用话题关联多跳扩展"
+    )
+    # 测试效应 — 召回成功后强化记忆访问时间
+    testing_effect_async: bool = Field(
+        default=True, description="测试效应是否异步执行（不阻塞检索热路径）"
+    )
+    testing_effect_top_k: int = Field(
+        default=5, ge=1, le=50, description="测试效应处理的 Top-K 记忆数"
+    )
+    # === 注入预算 — 控制每轮请求中注入的记忆上下文总量 ===
+    injection_budget_chars: int = Field(
+        default=1200, ge=0, le=10000,
+        description="总注入预算（字符数）。0 表示不限制"
+    )
+    injection_memory_max_chars: int = Field(
+        default=220, ge=0, le=2000,
+        description="单条记忆 content 最大字符数，超出截断"
+    )
+    injection_metadata_max_chars: int = Field(
+        default=180, ge=0, le=500,
+        description="单条记忆 metadata 最大字符数"
+    )
+    injection_include_key_facts: bool = Field(
+        default=True, description="是否在注入中显示 key_facts"
+    )
+    injection_include_topics: bool = Field(
+        default=True, description="是否在注入中显示 topics"
+    )
+    injection_include_participants: bool = Field(
+        default=False, description="是否在注入中显示 participants"
+    )
+    injection_compact_header: bool = Field(
+        default=True, description="是否使用紧凑版注入 header/footer（省略英文安全规则）"
+    )
+    cognitive_context_budget_chars: int = Field(
+        default=300, ge=0, le=2000,
+        description="认知上下文（黑话/表达/好感度）预算字符数"
+    )
+    proactive_plan_budget_chars: int = Field(
+        default=240, ge=0, le=1000,
+        description="前瞻提醒预算字符数"
+    )
 
 
 class FusionStrategyConfig(BaseModel):
@@ -93,6 +153,34 @@ class ReflectionEngineConfig(BaseModel):
 
     summary_trigger_rounds: int = Field(
         default=10, ge=1, le=100, description="触发反思的对话轮次"
+    )
+
+
+class CostControlConfig(BaseModel):
+    """成本控制配置 — 统一管理高成本 LLM 功能的启用/降级策略。"""
+
+    mode: str = Field(
+        default="balanced",
+        description="成本模式: balanced(默认，禁止额外LLM调用), low_cost(最小化token), quality(允许高成本路径)",
+    )
+    max_extra_llm_calls_per_turn: int = Field(
+        default=0, ge=0, le=10,
+        description="每轮额外 LLM 调用上限。balanced/low_cost 下默认 0"
+    )
+    allow_llm_reranker_in_passive_recall: bool = Field(
+        default=False, description="是否允许被动召回中触发 LLM reranker"
+    )
+    allow_llm_topic_strategy_d: bool = Field(
+        default=False, description="是否允许两阶段 LLM 话题分割（strategy D）"
+    )
+    max_reflection_parallel_llm_calls: int = Field(
+        default=2, ge=1, le=8, description="反思时并行 LLM 调用上限"
+    )
+    llm_reranker_min_candidates: int = Field(
+        default=12, ge=1, le=50, description="触发 LLM reranker 的最小候选数"
+    )
+    llm_reranker_prompt_chars: int = Field(
+        default=3000, ge=500, le=10000, description="LLM reranker prompt 最大字符数"
     )
 
 
@@ -306,6 +394,27 @@ class GraphMemoryConfig(BaseModel):
         return self
 
 
+class RerankerConfig(BaseModel):
+    """重排序器配置 — 检索后对候选记忆进行精细重排序。"""
+
+    enabled: bool = Field(
+        default=True, description="是否启用重排序器。关闭后跳过所有重排序步骤"
+    )
+    strategy: str = Field(
+        default="mmr",
+        description="重排序策略: mmr(最大边际相关性), cross_encoder(Embedding打分), llm(LLM打分—高成本), hybrid(两级排序)",
+    )
+    mmr_lambda: float = Field(
+        default=0.7, ge=0.0, le=1.0, description="MMR 相关性权重。值越高越偏相关性"
+    )
+    cross_encoder_lambda: float = Field(
+        default=0.7, ge=0.0, le=1.0, description="Cross-Encoder query-doc 相似度融合权重"
+    )
+    llm_batch_size: int = Field(
+        default=10, ge=1, le=50, description="LLM 重排序每批候选记忆数上限"
+    )
+
+
 class StrategyBConfig(BaseModel):
     """策略B：Embedding Clustering 参数"""
 
@@ -401,6 +510,12 @@ class MemoraConfig(BaseModel):
     )
     topic_segmentation: TopicSegmentationConfig = Field(
         default_factory=TopicSegmentationConfig, description="话题分割配置"
+    )
+    reranker: RerankerConfig = Field(
+        default_factory=RerankerConfig, description="重排序器配置"
+    )
+    cost_control: CostControlConfig = Field(
+        default_factory=CostControlConfig, description="成本控制配置"
     )
 
     model_config = {"extra": "allow"}  # 允许额外字段，向前兼容

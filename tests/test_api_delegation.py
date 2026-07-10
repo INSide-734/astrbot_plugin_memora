@@ -1,6 +1,6 @@
 """core/api/delegation_api.py — DelegationApiMixin 测试。
 
-验证端点响应和错误处理。
+验证端点响应和错误处理，包括新增的 provided-services 端点。
 委托端点不需要请求参数/正文，因此无需 patch quart.request。
 """
 
@@ -32,6 +32,8 @@ def _make_stub(*, has_delegation=True, delegation_status=None):
             "delegated_expression": True,
             "delegated_affection": True,
             "delegated_reply": False,
+            "provided_memory_service": True,
+            "provided_knowledge_service": True,
         }
         fd.get_delegation_status.return_value = delegation_status or default_status
         stub.plugin = MagicMock()
@@ -139,4 +141,99 @@ class TestDelegationStatus:
         stub.plugin.feature_delegation = fd
 
         result = await stub.get_delegation_status()
+        assert result["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Provided services endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestProvidedServices:
+    """GET /delegation/provided-services 端点测试。"""
+
+    def _make_stub_with_services(
+        self,
+        has_delegation: bool = True,
+        services_status: dict | None = None,
+    ):
+        """创建带有 Mock FeatureDelegation 的 DelegationApiMixin 存根。"""
+
+        class Stub:
+            get_provided_services = DelegationApiMixin.get_provided_services
+            _get_feature_delegation = DelegationApiMixin._get_feature_delegation
+
+        stub = Stub()
+        if has_delegation:
+            fd = MagicMock()
+            default_svc = {
+                "memora_available": True,
+                "memora_aliases": ["astrbot_plugin_memora", "Memora"],
+                "memory_service": True,
+                "knowledge_service": True,
+                "service_details": {
+                    "memory_recall": "可用 — recall_memory(query, session_id, top_k)",
+                    "knowledge_search": "可用 — search_knowledge(query, top_k)",
+                },
+            }
+            fd.get_provided_services_status.return_value = (
+                services_status or default_svc
+            )
+            stub.plugin = MagicMock()
+            stub.plugin.feature_delegation = fd
+
+        return stub
+
+    @pytest.mark.asyncio
+    async def test_returns_provided_services(self) -> None:
+        stub = self._make_stub_with_services()
+        result = await stub.get_provided_services()
+        assert result["status"] == "ok"
+        assert result["data"]["memora_available"] is True
+        assert result["data"]["memory_service"] is True
+        assert result["data"]["knowledge_service"] is True
+        assert "astrbot_plugin_memora" in result["data"]["memora_aliases"]
+
+    @pytest.mark.asyncio
+    async def test_services_unavailable(self) -> None:
+        svc_status = {
+            "memora_available": True,
+            "memora_aliases": ["astrbot_plugin_memora"],
+            "memory_service": False,
+            "knowledge_service": False,
+            "service_details": {
+                "memory_recall": "不可用 — MemoryEngine 未注入",
+                "knowledge_search": "不可用 — KnowledgeManager 未注入",
+            },
+        }
+        stub = self._make_stub_with_services(services_status=svc_status)
+        result = await stub.get_provided_services()
+        assert result["status"] == "ok"
+        assert result["data"]["memory_service"] is False
+        assert result["data"]["knowledge_service"] is False
+
+    @pytest.mark.asyncio
+    async def test_no_feature_delegation_returns_error(self) -> None:
+        class Stub:
+            get_provided_services = DelegationApiMixin.get_provided_services
+            _get_feature_delegation = DelegationApiMixin._get_feature_delegation
+
+        stub = Stub()
+        result = await stub.get_provided_services()
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_error(self) -> None:
+        fd = MagicMock()
+        fd.get_provided_services_status.side_effect = RuntimeError("service down")
+
+        class Stub:
+            get_provided_services = DelegationApiMixin.get_provided_services
+            _get_feature_delegation = DelegationApiMixin._get_feature_delegation
+
+        stub = Stub()
+        stub.plugin = MagicMock()
+        stub.plugin.feature_delegation = fd
+
+        result = await stub.get_provided_services()
         assert result["status"] == "error"

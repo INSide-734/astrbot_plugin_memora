@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -49,6 +50,8 @@ class DualRouteRetriever:
         # v2.5: 可插拔重排序器（MMR / Cross-Encoder / LLM / Hybrid）
         self.reranker = reranker
         self._reranker_strategy = self.config.get("reranker.strategy", "mmr")
+        # 阶段计时存储（每次 search() 后更新）
+        self.last_search_timing: dict[str, float] = {}
 
     async def search(
         self,
@@ -69,23 +72,30 @@ class DualRouteRetriever:
             query_intent: R1 查询改写结果，优先使用 LLM 意图做权重调整。
             user_id: v2.5 用户 ID，用于个性化排序。
         """
-        doc_results, graph_results = await asyncio.gather(
-            self.document_retriever.search(
-                query,
-                max(k * 2, k),
-                session_id,
-                persona_id,
-                memory_types=memory_types,
-            ),
-            self.graph_retriever.search(
-                query,
-                max(k * 2, k),
-                session_id,
-                persona_id,
-                memory_types=memory_types,
-            ),
+        _t_route_start = time.perf_counter()
+        doc_task = self.document_retriever.search(
+            query,
+            max(k * 2, k),
+            session_id,
+            persona_id,
+            memory_types=memory_types,
         )
+        graph_task = self.graph_retriever.search(
+            query,
+            max(k * 2, k),
+            session_id,
+            persona_id,
+            memory_types=memory_types,
+        )
+        _t_doc_start = time.perf_counter()
+        doc_results = await doc_task
+        _t_doc_end = time.perf_counter()
+        graph_results = await graph_task
+        _t_graph_end = time.perf_counter()
+        document_route_ms = (_t_doc_end - _t_doc_start) * 1000.0
+        graph_route_ms = (_t_graph_end - _t_doc_end) * 1000.0
 
+        _t_merge_start = time.perf_counter()
         if not graph_results:
             merged = list(doc_results)
         else:
@@ -96,6 +106,7 @@ class DualRouteRetriever:
                 strategy=strategy,
                 query_intent=query_intent,
             )
+        merge_ms = (time.perf_counter() - _t_merge_start) * 1000.0
 
         # 人格感知记忆解读 — 当前 persona 匹配的记忆获得加权
         if persona_id and merged:
@@ -111,10 +122,20 @@ class DualRouteRetriever:
                 pass  # 个性化排序失败不影响主流程
 
         # v2.5 可插拔重排序 — MMR / Cross-Encoder / LLM / Hybrid
+        _t_rerank_start = time.perf_counter()
         if self.reranker and len(merged) > 1:
             merged = await self._apply_reranker(merged, k, query=query)
         else:
             merged.sort(key=lambda item: item.final_score, reverse=True)
+        rerank_ms = (time.perf_counter() - _t_rerank_start) * 1000.0
+
+        # 存储阶段计时
+        self.last_search_timing = {
+            "document_route_ms": document_route_ms,
+            "graph_route_ms": graph_route_ms,
+            "merge_ms": merge_ms,
+            "rerank_ms": rerank_ms,
+        }
 
         return self._filter_by_privacy(merged[:k], chat_type)
 

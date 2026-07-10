@@ -55,7 +55,7 @@ class IndexValidator(IndexRebuilderMixin):
     DEFAULT_REQUEST_DELAY = 5.0
     RATE_LIMIT_RETRY_MIN_DELAY = 30.0
     DEFAULT_MAX_FAILURE_RATIO = 0.02
-    _ALLOWED_FTS_TABLES = frozenset({"memora_memories_fts", "livingmemory_memories_fts"})
+    _ALLOWED_FTS_TABLES = frozenset({"memora_memories_fts"})
 
     @classmethod
     def _validate_fts_table_name(cls, table_name: str) -> str:
