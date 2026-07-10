@@ -43,6 +43,60 @@ class ConversationFormatter:
             return f"[Bot: {display_name} | ID: {msg.sender_id} | {time_str}]"
         return f"[{display_name} | ID: {msg.sender_id} | {time_str}]"
 
+    def format_conversation_compact(
+        self,
+        messages: list[Message],
+        message_max_chars: int = 500,
+        omit_sender_id: bool = True,
+    ) -> str:
+        """紧凑格式：省略 sender ID、合并连续同角色、秒级时间降为分钟。
+
+        Args:
+            messages: 消息列表。
+            message_max_chars: 单条消息最大字符数，超出截断。
+            omit_sender_id: 私聊下省略 sender ID 以减少 token。
+        """
+        formatted_lines = []
+        prev_role = None
+        msg_index = 0
+
+        for i, msg in enumerate(messages):
+            content_text = self._message_content_to_text(msg.content)
+            if not content_text.strip():
+                continue
+
+            # 截断过长消息
+            if message_max_chars > 0 and len(content_text) > message_max_chars:
+                content_text = content_text[:message_max_chars] + "…"
+
+            is_bot = msg.metadata.get("is_bot_message", False) or msg.role == "assistant"
+            current_role = "bot" if is_bot else "user"
+            display_name = msg.sender_name or msg.sender_id or "未知"
+            is_group = bool(msg.group_id)
+
+            # 时间压缩为分钟级
+            time_str = datetime.fromtimestamp(msg.timestamp).strftime("%H:%M")
+
+            # 合并连续同角色消息
+            if current_role == prev_role and not is_group:
+                formatted_lines.append(content_text)
+                prev_role = current_role
+                continue
+
+            # 构建紧凑行
+            if is_bot:
+                header = f"[Bot {time_str}]"
+            elif is_group:
+                header = f"[{display_name} {time_str}]"
+            else:
+                header = f"[{time_str}]"
+
+            formatted_lines.append(f"{header} {content_text}")
+            prev_role = current_role
+            msg_index += 1
+
+        return "\n".join(formatted_lines)
+
     @classmethod
     def _message_content_to_text(cls, content: Any) -> str:
         return Message.content_to_text(content)

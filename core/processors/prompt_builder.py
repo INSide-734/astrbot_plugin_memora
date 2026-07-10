@@ -90,18 +90,22 @@ class PromptBuilder:
         if topic_segmentation_enabled and topic_segmentation_guidance:
             base_prompt += f"\n\n{topic_segmentation_guidance}"
 
-        # 注入对话连续性上下文
+        # 注入对话连续性上下文（预算：300 字符）
         if continuity_context:
+            ctx_text = continuity_context
+            if len(ctx_text) > 300:
+                ctx_text = ctx_text[:297] + "..."
             base_prompt += (
                 f"\n\n## 对话连续性提醒\n"
-                f"{continuity_context}\n"
+                f"{ctx_text}\n"
                 f"如果当前对话与上述未完成话题相关，请在记忆中体现这种关联性，"
                 f"并将延续性话题的 importance 提高 0.1-0.2。"
             )
 
-        # 注入兴趣画像
+        # 注入兴趣画像（限制 top 5）
         if interest_profile:
-            interests_str = "、".join(interest_profile[:8])
+            top_interests = interest_profile[:5]
+            interests_str = "、".join(top_interests)
             base_prompt += (
                 f"\n\n## 对方兴趣参考\n"
                 f"已知对方关注/感兴趣的话题: {interests_str}\n"
@@ -144,6 +148,11 @@ class PromptBuilder:
                     f"[MemoryProcessor] 人格 '{persona_id}' 的 system_prompt 为空，使用基础提示词"
                 )
                 return base_prompt
+
+            # 人格提示词预算控制（默认 800 字符）
+            persona_budget = 800
+            if len(persona_prompt) > persona_budget:
+                persona_prompt = persona_prompt[:persona_budget - 3] + "..."
 
             logger.info(
                 f"[MemoryProcessor] 成功加载人格 '{persona_id}' 的提示词 "

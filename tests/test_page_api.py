@@ -1057,7 +1057,7 @@ class TestRegisterRoutes:
         paths = [c[0][0] for c in plugin.context.register_web_api.call_args_list]
         assert f"{PAGE_API_PREFIX}/stats" in paths
         assert "/Memora/page/stats" in paths
-        assert "/astrbot_plugin_livingmemory/page/stats" in paths
+        assert "/Memora/page/stats" in paths
 
     def test_registered_aliases_match_astrbot_dashboard_bridge_paths(self) -> None:
         """AstrBot dashboard forwards `{pluginName}/page/...` into registered APIs."""
@@ -1073,7 +1073,6 @@ class TestRegisterRoutes:
         ]
         for forwarded_path in (
             "/Memora/page/stats",
-            "/astrbot_plugin_livingmemory/page/stats",
             f"{PAGE_API_PREFIX}/stats",
         ):
             assert any(

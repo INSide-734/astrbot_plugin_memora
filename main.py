@@ -137,6 +137,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
 
             if success:
                 await self._ensure_runtime_components()
+                self._inject_delegation_services()
                 self.feature_delegation.log_status()  # 完整初始化后再次检查委托状态
 
         except Exception as e:
@@ -203,6 +204,19 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             self._register_agent_tools_if_needed()
 
         return True
+
+    def _inject_delegation_services(self) -> None:
+        """将 MemoryEngine / KnowledgeManager 注入 FeatureDelegation。
+
+        使得 self_learning 等伴侣插件可通过 Memora 的 FeatureDelegation
+        实例调用记忆召回和知识检索服务。
+        """
+        engine = self.initializer.memory_engine
+        if engine is not None:
+            self.feature_delegation.set_memory_engine(engine)
+            knowledge_mgr = getattr(engine, "knowledge_manager", None)
+            if knowledge_mgr is not None:
+                self.feature_delegation.set_knowledge_manager(knowledge_mgr)
 
     def _register_agent_tools_if_needed(self) -> None:
         """在核心组件就绪后注册智能体工具（召回/写入）。"""

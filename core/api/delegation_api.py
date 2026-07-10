@@ -59,5 +59,28 @@ class DelegationApiMixin:
             )
             return error_response(f"获取委托状态失败: {e}")
 
+    # ------------------------------------------------------------------
+    # GET /provided-services
+    # ------------------------------------------------------------------
+
+    async def get_provided_services(self):
+        """返回 Memora 对外提供的服务状态。
+
+        供 self_learning 等伴侣插件查询 Memora 当前可提供哪些后端能力
+        （记忆召回、知识检索），以及服务的可用性详情。
+        """
+        fd = self._get_feature_delegation()
+        if fd is None:
+            return error_response("功能委托不可用")
+
+        try:
+            services_status = fd.get_provided_services_status()
+            return ok_response(services_status)
+        except Exception as e:
+            logger.error(
+                f"[DelegationApi] get_provided_services failed: {e}", exc_info=True
+            )
+            return error_response(f"获取服务状态失败: {e}")
+
 
 __all__ = ["DelegationApiMixin"]

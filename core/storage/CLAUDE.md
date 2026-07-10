@@ -219,8 +219,7 @@ graph TD
 ## 数据迁移策略
 
 1. **Schema 迁移**: 各 Store 的 `initialize()` 使用 `CREATE TABLE IF NOT EXISTS`, 无破坏性变更
-2. **图 FTS 迁移**: `GraphStore._migrate_legacy_graph_fts()` -- 自动将旧版 `livingmemory_graph_entries_fts` 数据迁移到 `memora_graph_entries_fts`
-3. **原子生命周期迁移**: `migrate_to_cold()` 是 v2.6 新增, 将低重要性+长期未访问原子迁移到 COLD 状态
+2. **原子生命周期迁移**: `migrate_to_cold()` 是 v2.6 新增, 将低重要性+长期未访问原子迁移到 COLD 状态
 4. **版本控制**: NoteStore 使用乐观锁(`WHERE version=?`)进行并发安全更新
 
 ## 测试与质量

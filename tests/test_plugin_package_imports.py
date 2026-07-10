@@ -22,11 +22,11 @@ def test_recall_trace_api_imports_under_astrbot_package_name(monkeypatch):
     for module_name in list(sys.modules):
         if module_name == "core" or module_name.startswith("core."):
             monkeypatch.delitem(sys.modules, module_name, raising=False)
-        if module_name.startswith("data.plugins.astrbot_plugin_livingmemory."):
+        if module_name.startswith("data.plugins.astrbot_plugin_memora."):
             monkeypatch.delitem(sys.modules, module_name, raising=False)
 
     module = importlib.import_module(
-        "data.plugins.astrbot_plugin_livingmemory.core.api.recall_trace_api"
+        "data.plugins.astrbot_plugin_memora.core.api.recall_trace_api"
     )
 
     assert module.RecallTraceApiMixin.__name__ == "RecallTraceApiMixin"

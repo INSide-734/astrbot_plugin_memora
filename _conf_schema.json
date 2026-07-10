@@ -158,6 +158,18 @@
                 "type": "float",
                 "default": 0.7
             },
+            "chain_graph_expansion_enabled": {
+                "description": "启用图边多跳扩展",
+                "hint": "沿知识图谱边扩展到间接关联的实体。关闭可减少检索计算开销。",
+                "type": "bool",
+                "default": true
+            },
+            "chain_topic_expansion_enabled": {
+                "description": "启用话题关联多跳扩展",
+                "hint": "沿话题相似度扩展到间接关联的记忆。关闭可减少检索计算开销。",
+                "type": "bool",
+                "default": true
+            },
             "id_cache_size": {
                 "description": "向量 ID 缓存大小",
                 "hint": "FAISS 向量 ID 映射的内存缓存条数。增大可减少 SQLite 查询但增加内存占用。",
@@ -193,6 +205,60 @@
                 "hint": "每次召回最多对前 N 条记忆应用测试效应强化。值越大强化范围越广但写压力也越大。",
                 "type": "int",
                 "default": 5
+            },
+            "injection_budget_chars": {
+                "description": "注入预算：总字符数上限",
+                "hint": "每轮 LLM 请求注入的记忆上下文总字符数上限。0 表示不限制。默认 1200 约 900 tokens。",
+                "type": "int",
+                "default": 1200
+            },
+            "injection_memory_max_chars": {
+                "description": "注入预算：单条记忆最大字符数",
+                "hint": "单条记忆 content 超过此值会被截断。0 表示不限制。",
+                "type": "int",
+                "default": 220
+            },
+            "injection_metadata_max_chars": {
+                "description": "注入预算：单条记忆元数据最大字符数",
+                "hint": "单条记忆的 topics/key_facts/participants 等元数据总字符数上限。",
+                "type": "int",
+                "default": 180
+            },
+            "injection_include_key_facts": {
+                "description": "注入：包含 key_facts",
+                "hint": "关闭可减少注入内容长度。",
+                "type": "bool",
+                "default": true
+            },
+            "injection_include_topics": {
+                "description": "注入：包含 topics",
+                "hint": "关闭可减少注入内容长度。",
+                "type": "bool",
+                "default": true
+            },
+            "injection_include_participants": {
+                "description": "注入：包含 participants",
+                "hint": "群聊场景可开启以提供参与者上下文。默认关闭以节省 token。",
+                "type": "bool",
+                "default": false
+            },
+            "injection_compact_header": {
+                "description": "注入：紧凑版头部",
+                "hint": "使用精简中文 header/footer 替代英文安全规则，显著减少 token 开销。",
+                "type": "bool",
+                "default": true
+            },
+            "cognitive_context_budget_chars": {
+                "description": "认知上下文预算",
+                "hint": "黑话解释/表达模式/好感度状态的注入字符上限。",
+                "type": "int",
+                "default": 300
+            },
+            "proactive_plan_budget_chars": {
+                "description": "前瞻提醒预算",
+                "hint": "即将触发的 PLANNED 原子提醒的注入字符上限。",
+                "type": "int",
+                "default": 240
             },
             "serial_position_enabled": {
                 "description": "启用序列位置效应",
@@ -690,15 +756,64 @@
             "min_tag_confidence": {"description": "标签最低置信度", "hint": "置信度低于此值的标签将被自动清理。0.1 表示只保留有足够证据的标签。", "type": "float", "default": 0.1}
         }
     },
+    "cost_control": {
+        "description": "成本控制",
+        "hint": "统一管理高成本 LLM 功能的启用与降级策略。balanced 模式默认禁止额外 LLM 调用。",
+        "type": "object",
+        "items": {
+            "mode": {
+                "description": "成本模式",
+                "hint": "balanced: 默认禁止额外LLM调用; low_cost: 最小化所有成本; quality: 允许高成本路径(LLM reranker/strategyD等)",
+                "type": "string",
+                "options": ["balanced", "low_cost", "quality"],
+                "default": "balanced"
+            },
+            "max_extra_llm_calls_per_turn": {
+                "description": "每轮额外 LLM 调用上限",
+                "hint": "被动召回 + 反思总共允许的额外 LLM 调用次数。balanced/low_cost 下默认 0。",
+                "type": "int",
+                "default": 0
+            },
+            "allow_llm_reranker_in_passive_recall": {
+                "description": "允许被动召回触发 LLM reranker",
+                "hint": "WARNING: 开启会显著增加 token 消耗和延迟。仅 quality 模式建议开启。",
+                "type": "bool",
+                "default": false
+            },
+            "allow_llm_topic_strategy_d": {
+                "description": "允许 strategy D（两阶段 LLM 话题分割）",
+                "hint": "WARNING: strategy D 需要多次 LLM 调用。仅 quality 模式或手动批处理建议开启。",
+                "type": "bool",
+                "default": false
+            },
+            "max_reflection_parallel_llm_calls": {
+                "description": "反思并行 LLM 调用上限",
+                "type": "int",
+                "default": 2
+            },
+            "llm_reranker_min_candidates": {
+                "description": "LLM reranker 最小候选数",
+                "hint": "候选数低于此值时不触发 LLM reranker（使用 MMR 替代）。",
+                "type": "int",
+                "default": 12
+            },
+            "llm_reranker_prompt_chars": {
+                "description": "LLM reranker prompt 最大字符数",
+                "type": "int",
+                "default": 3000
+            }
+        }
+    },
     "reranker": {
         "description": "重排序模型",
         "hint": "检索后对候选记忆进行精细重排序，提升 Top-K 精度",
         "type": "object",
         "items": {
-            "strategy": {"description": "重排序策略", "hint": "mmr: 最大边际相关性; cross_encoder: Embedding打分; llm: LLM打分; hybrid: 两级排序", "type": "string", "options": ["mmr", "cross_encoder", "llm", "hybrid"], "default": "mmr"},
+            "enabled": {"description": "启用重排序器", "hint": "关闭后跳过所有重排序步骤，减少计算开销。", "type": "bool", "default": true},
+            "strategy": {"description": "重排序策略", "hint": "mmr: 最大边际相关性(推荐，无额外LLM调用); cross_encoder: Embedding打分; llm: LLM打分(高成本); hybrid: 两级排序", "type": "string", "options": ["mmr", "cross_encoder", "llm", "hybrid"], "default": "mmr"},
             "mmr_lambda": {"description": "MMR 相关性权重", "hint": "值越高越偏向相关性。范围 0-1。", "type": "float", "default": 0.7},
             "cross_encoder_lambda": {"description": "Cross-Encoder 融合权重", "hint": "query-doc 相似度与原始得分的融合比例。", "type": "float", "default": 0.7},
-            "llm_batch_size": {"description": "LLM 重排序批量大小", "hint": "每次处理的候选记忆数量上限。", "type": "int", "default": 10}
+            "llm_batch_size": {"description": "LLM 重排序批量大小", "hint": "每次处理的候选记忆数量上限。LLM 策略会增加 token 消耗。", "type": "int", "default": 10}
         }
     },
     "auto_learning": {

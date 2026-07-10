@@ -1,4 +1,4 @@
-"""LivingMemory 插件的 Prometheus 指标收集模块。
+"""Memora 插件的 Prometheus 指标收集模块。
 
 所有指标注册在独立的 CollectorRegistry 上，确保插件不会污染
 进程级别的默认注册表。当未安装 prometheus_client 时每个类均降级
@@ -137,6 +137,48 @@ WRITE_FAILURES_TOTAL = Counter(
     "memora_write_failures_total",
     "Total number of coordinated write failures by reason.",
     labelnames=["reason"],
+    registry=REGISTRY,
+)
+
+# ---------------------------------------------------------------------------
+# 注入预算与 token 消耗指标
+# ---------------------------------------------------------------------------
+
+INJECTION_CHARS = Histogram(
+    "memora_injection_chars",
+    "Number of characters injected per recall request.",
+    buckets=(200, 400, 600, 800, 1000, 1500, 2000, 3000, 5000),
+    registry=REGISTRY,
+)
+
+INJECTION_DROPPED_BY_BUDGET = Counter(
+    "memora_injection_dropped_by_budget_total",
+    "Total number of memories dropped due to injection budget constraints.",
+    registry=REGISTRY,
+)
+
+INJECTION_TRUNCATED = Counter(
+    "memora_injection_truncated_total",
+    "Total number of memory contents truncated due to per-memory char limits.",
+    registry=REGISTRY,
+)
+
+RERANKER_LLM_CALLS = Counter(
+    "memora_reranker_llm_calls_total",
+    "Total number of LLM reranker invocations.",
+    registry=REGISTRY,
+)
+
+REFLECTION_LLM_CALLS = Counter(
+    "memora_reflection_llm_calls_total",
+    "Total number of LLM calls triggered by memory reflection/summarization.",
+    registry=REGISTRY,
+)
+
+SUMMARY_BATCH_COUNT = Histogram(
+    "memora_summary_batch_count",
+    "Number of summary batches per reflection trigger.",
+    buckets=(1, 2, 3, 5, 8, 12),
     registry=REGISTRY,
 )
 

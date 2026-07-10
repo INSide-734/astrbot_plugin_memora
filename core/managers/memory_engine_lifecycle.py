@@ -200,13 +200,24 @@ class MemoryEngineLifecycleMixin:
             self.trait_tracker = TraitEvolutionTracker(data_dir=data_dir)
             await self.trait_tracker.load_state()
 
-        # v2.5 重排序器初始化
+        # v2.5 重排序器初始化（成本控制门）
         reranker = None
         if bool(self.config.get("reranker.enabled", True)):
             try:
+                from ..base.cost_control import build_cost_control_from_config
                 from ..retrieval.reranker_factory import create_reranker
 
                 strategy = self.config.get("reranker.strategy", "mmr")
+                cost_control = build_cost_control_from_config(self.config)
+
+                # 高成本策略（llm/hybrid）在 balanced/low_cost 下自动降级为 MMR
+                if strategy in ("llm", "hybrid") and not cost_control.allow("llm_reranker"):
+                    logger.info(
+                        f"[CostControl] reranker strategy={strategy} 降级为 mmr: "
+                        f"{cost_control.deny_reason('llm_reranker')}"
+                    )
+                    strategy = "mmr"
+
                 reranker = await create_reranker(
                     strategy,
                     self.config,

@@ -99,7 +99,7 @@ graph TD
 
 ## 完整端点路由表
 
-路由前缀: `/astrbot_plugin_memora/page` (别名: `/Memora/page`, `/astrbot_plugin_livingmemory/page`)
+路由前缀: `/astrbot_plugin_memora/page` (别名: `/Memora/page`)
 
 ### 记忆 (Memory) -- MemoryReadApiMixin / MemoryWriteApiMixin / MemoryBatchApiMixin / MemoryStatsRecallApiMixin
 

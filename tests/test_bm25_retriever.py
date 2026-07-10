@@ -510,45 +510,6 @@ class TestBM25Retriever:
         finally:
             retriever._connect = original_connect
 
-    @pytest.mark.asyncio
-    async def test_initialize_migrates_legacy_table(self, retriever: Any) -> None:
-        """initialize() migrates data from livingmemory_memories_fts."""
-        import aiosqlite
-        from contextlib import asynccontextmanager
-
-        @asynccontextmanager
-        async def _fake_connect():
-            conn = await aiosqlite.connect(":memory:")
-            await apply_perf_pragmas(conn)
-            # Create the NEW table empty
-            await conn.execute("""
-                CREATE VIRTUAL TABLE memora_memories_fts USING fts5(
-                    content, doc_id UNINDEXED, tokenize='unicode61'
-                )
-            """)
-            # Create the LEGACY table with data
-            await conn.execute("""
-                CREATE VIRTUAL TABLE livingmemory_memories_fts USING fts5(
-                    content, doc_id UNINDEXED, tokenize='unicode61'
-                )
-            """)
-            await conn.execute(
-                "INSERT INTO livingmemory_memories_fts(content, doc_id) VALUES (?, ?)",
-                ("legacy content", 99),
-            )
-            await conn.commit()
-            try:
-                yield conn
-            finally:
-                await conn.close()
-
-        original_connect = retriever._connect
-        retriever._connect = _fake_connect
-        try:
-            await retriever.initialize()
-        finally:
-            retriever._connect = original_connect
-
     def test_rejects_unapproved_fts_table_identifier(self, retriever: Any) -> None:
         """Unsafe FTS table overrides should be rejected before SQL is built."""
         retriever.fts_table = 'memora_memories_fts; DROP TABLE documents;--'

@@ -259,6 +259,10 @@ class MemoryEngineCRUDMixin:
             self._last_debug_trace = active_debug_trace
         if not query or not query.strip():
             return []
+
+        # 阶段计时：追踪每次检索的各阶段耗时
+        _t_start = time.perf_counter()
+        _t_cache = _t_start
         cache_key = self._retrieval.cache_key(
             query,
             k,
@@ -285,6 +289,10 @@ class MemoryEngineCRUDMixin:
                 self._create_tracked_task(
                     self._maintenance.update_access_times_batch(ids, recall_type)
                 )
+            self._last_search_timing = {
+                "cache_hit": True,
+                "cache_lookup_ms": (time.perf_counter() - _t_cache) * 1000.0,
+            }
             return cached_results
 
         # 请求级会话缓存：消除 Bridge→RecallHandler 同一请求的重复搜索
@@ -303,6 +311,7 @@ class MemoryEngineCRUDMixin:
                 emotion_context=emotion_context,
                 recall_strategy=recall_strategy,
             )
+        _t_cache_end = time.perf_counter()
         if session_cached is not None:
             # 会话缓存可能用不同 k 检索，截断到请求的 k 值
             truncated = session_cached[:k]
@@ -315,12 +324,28 @@ class MemoryEngineCRUDMixin:
                     self._maintenance.update_access_times_batch(ids, recall_type)
                 )
             self._retrieval.set_cached(cache_key, truncated)
+            self._last_search_timing = {
+                "cache_hit": True,
+                "cache_lookup_ms": (_t_cache_end - _t_cache) * 1000.0,
+            }
             return truncated
         if session_id and ":" in session_id:
             self._create_tracked_task(
                 self._maintenance.migrate_session_if_needed(session_id)
             )
-        fetch_k = max(k * 2, 10)
+        # 自适应候选规模：根据查询意图调整 fetch_k
+        intent_str = getattr(query_intent, "intent", "default") if query_intent else "default"
+        if intent_str in ("factual", "preference"):
+            fetch_k = max(k * 2, 8)
+        elif intent_str in ("relationship", "temporal"):
+            fetch_k = max(k * 3, 12)
+        else:
+            fetch_k = max(k * 2, 10)
+        _t_search_start = time.perf_counter()
+        _t_doc_route = 0.0
+        _t_graph_route = 0.0
+        _t_merge = 0.0
+        _t_rerank = 0.0
         if self.dual_route_retriever is not None:
             results = await self.dual_route_retriever.search(
                 query,
@@ -333,6 +358,13 @@ class MemoryEngineCRUDMixin:
                 query_intent=query_intent,
                 user_id=user_id,
             )
+            # 读取双路检索的阶段计时
+            dr_timing = getattr(self.dual_route_retriever, "last_search_timing", None)
+            if dr_timing:
+                _t_doc_route = dr_timing.get("document_route_ms", 0.0)
+                _t_graph_route = dr_timing.get("graph_route_ms", 0.0)
+                _t_merge = dr_timing.get("merge_ms", 0.0)
+                _t_rerank = dr_timing.get("rerank_ms", 0.0)
         else:
             if self.hybrid_retriever is None:
                 raise RuntimeError("混合检索器未初始化")
@@ -351,7 +383,10 @@ class MemoryEngineCRUDMixin:
                     if (r.metadata or {}).get("privacy_level", "shared")
                     != "confidential"
                 ]
+        _t_search_end = time.perf_counter()
+        _t_boost = 0.0
         if results:
+            _t_boost_start = time.perf_counter()
             results = await self._retrieval.apply_trigger_boost(query, results)
             if active_debug_trace is not None:
                 results = await self._retrieval.apply_boosts(
@@ -363,20 +398,31 @@ class MemoryEngineCRUDMixin:
             else:
                 results = await self._retrieval.apply_boosts(results, emotion_context)
             results = results[:k]
+            _t_boost = (time.perf_counter() - _t_boost_start) * 1000.0
+        _t_chain = 0.0
         if chain_depth > 0 and results:
-            # R2: 多跳检索 — 使用 chain_expand_multi_hop 替代单跳
-            max_hops = self.config.get("recall_engine.max_chain_hops", chain_depth)
-            hop_decay = self.config.get("recall_engine.chain_hop_decay", None)
-            chained = await self._retrieval.chain_expand_multi_hop(
-                results,
-                k,
-                session_id,
-                persona_id,
-                max_hops=max_hops,
-                hop_decay=hop_decay,
+            # R2: 多跳检索 — 仅对关系/时间查询或显式 trace 启用
+            # factual/preference 查询跳过链式扩展以节省计算
+            _should_expand = (
+                intent_str in ("relationship", "temporal")
+                or trace_requested
+                or chain_depth > 1  # 显式要求深度 > 1
             )
-            if chained:
-                results = chained[:k]
+            if _should_expand:
+                _t_chain_start = time.perf_counter()
+                max_hops = self.config.get("recall_engine.max_chain_hops", chain_depth)
+                hop_decay = self.config.get("recall_engine.chain_hop_decay", None)
+                chained = await self._retrieval.chain_expand_multi_hop(
+                    results,
+                    k,
+                    session_id,
+                    persona_id,
+                    max_hops=max_hops,
+                    hop_decay=hop_decay,
+                )
+                _t_chain = (time.perf_counter() - _t_chain_start) * 1000.0
+                if chained:
+                    results = chained[:k]
         ids = [r.doc_id for r in results if getattr(r, "doc_id", None) is not None]
         if ids:
             self._create_tracked_task(
@@ -398,6 +444,19 @@ class MemoryEngineCRUDMixin:
                 emotion_context=emotion_context,
                 recall_strategy=recall_strategy,
             )
+        # === 存储阶段计时供 RecallHandler 读取 ===
+        self._last_search_timing = {
+            "cache_hit": False,
+            "cache_lookup_ms": (_t_cache_end - _t_cache) * 1000.0,
+            "total_search_ms": (_t_search_end - _t_search_start) * 1000.0,
+            "bm25_ms": _t_doc_route,  # 文档路含 BM25+Vector
+            "vector_ms": 0.0,          # 包含在 document_route_ms 中
+            "graph_ms": _t_graph_route,
+            "rerank_ms": _t_rerank,
+            "merge_ms": _t_merge,
+            "boost_ms": _t_boost,
+            "chain_expand_ms": _t_chain,
+        }
         return results
 
     async def get_memory(self, memory_id: int) -> dict[str, Any] | None:

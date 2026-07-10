@@ -27,6 +27,12 @@ from ..utils import (
     get_persona_id,
 )
 from ..utils.injection_adapter import InjectionAdapter
+from ..utils.injection_budget import (
+    InjectionBudget,
+    InjectionStats,
+    select_memories_with_budget,
+    truncate_preserving_sentence,
+)
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -295,16 +301,42 @@ class RecallHandler:
                             f"{injection_method}: {fallback_reason}"
                         )
 
-                    memory_str = format_memories_for_injection(memory_list)
+                    # === 注入预算控制 ===
+                    injection_budget = self._build_injection_budget()
+                    memory_list, dropped = select_memories_with_budget(
+                        memory_list, injection_budget
+                    )
+                    if dropped:
+                        logger.info(
+                            f"[{session_id}] 预算筛选: {len(dropped)} 条记忆因预算不足丢弃 "
+                            f"(budget={injection_budget.total_chars}chars)"
+                        )
+
+                    memory_str, fmt_stats = format_memories_for_injection(
+                        memory_list,
+                        budget=injection_budget,
+                    )
+                    fmt_stats.dropped_by_budget = len(dropped)
+
+                    # 认知上下文 — 受独立预算控制
                     cognitive_context = await self._build_cognitive_context(
                         text=actual_query,
                         group_id=session_id or "default",
                         persona_id=persona_id or "default",
                     )
                     if cognitive_context:
+                        if (
+                            injection_budget.cognitive_context_chars > 0
+                            and len(cognitive_context) > injection_budget.cognitive_context_chars
+                        ):
+                            cognitive_context = truncate_preserving_sentence(
+                                cognitive_context,
+                                injection_budget.cognitive_context_chars,
+                            )
                         memory_str = memory_str + "\n\n" + cognitive_context
+                        fmt_stats.cognitive_chars = len(cognitive_context)
 
-                    # 主动提醒：注入即将触发的 PLANNED 原子
+                    # 主动提醒：注入即将触发的 PLANNED 原子（受预算控制）
                     proactive = getattr(self._memory_engine, "_pending_proactive", None)
                     if proactive and self._prospective_recall_enabled():
                         injected_doc_ids = {
@@ -313,6 +345,7 @@ class RecallHandler:
                             if getattr(mem, "doc_id", None) is not None
                         }
                         lines = ["[Upcoming Plans]"]
+                        running_chars = len(lines[0])
                         for atom in proactive[:5]:
                             parent_id = getattr(atom, "parent_memory_id", None)
                             if parent_id in injected_doc_ids:
@@ -320,10 +353,32 @@ class RecallHandler:
                             content = getattr(atom, "content", str(atom))
                             event_time = getattr(atom, "event_time", None)
                             ts = f" (at {event_time})" if event_time else ""
-                            lines.append(f"- {content}{ts}")
+                            line = f"- {content}{ts}"
+                            if (
+                                injection_budget.proactive_plan_chars > 0
+                                and running_chars + len(line) > injection_budget.proactive_plan_chars
+                            ):
+                                logger.debug(
+                                    f"[{session_id}] 前瞻提醒截断: "
+                                    f"超出预算 {injection_budget.proactive_plan_chars}chars"
+                                )
+                                break
+                            lines.append(line)
+                            running_chars += len(line)
                         if len(lines) > 1:
-                            memory_str = "\n".join(lines) + "\n\n" + memory_str
+                            proactive_str = "\n".join(lines)
+                            memory_str = proactive_str + "\n\n" + memory_str
+                            fmt_stats.proactive_chars = len(proactive_str)
                             logger.info(f"[{session_id}] 前瞻: {len(lines) - 1} 条")
+
+                    logger.info(
+                        f"[{session_id}] 注入统计: chars={fmt_stats.chars}, "
+                        f"记忆={fmt_stats.memory_count}条, "
+                        f"截断={fmt_stats.truncated_count}, "
+                        f"丢弃={fmt_stats.dropped_by_budget}, "
+                        f"认知={fmt_stats.cognitive_chars}chars, "
+                        f"前瞻={fmt_stats.proactive_chars}chars"
+                    )
 
                     if injection_method == "user_message_before":
                         memory_str = self._wrap_injected_context(
@@ -426,13 +481,20 @@ class RecallHandler:
 
         if self._perf_tracker is None:
             return
+        # 从 MemoryEngine 读取实际阶段耗时
+        timing = getattr(self._memory_engine, "_last_search_timing", None) or {}
         try:
             self._perf_tracker.record({
                 "total_ms": max(0.0, total_ms),
-                "bm25_ms": 0.0,
-                "vector_ms": 0.0,
-                "graph_ms": 0.0,
-                "rerank_ms": 0.0,
+                "cache_hit": timing.get("cache_hit", False),
+                "cache_lookup_ms": timing.get("cache_lookup_ms", 0.0),
+                "bm25_ms": timing.get("bm25_ms", 0.0),
+                "vector_ms": timing.get("vector_ms", 0.0),
+                "graph_ms": timing.get("graph_ms", 0.0),
+                "rerank_ms": timing.get("rerank_ms", 0.0),
+                "merge_ms": timing.get("merge_ms", 0.0),
+                "boost_ms": timing.get("boost_ms", 0.0),
+                "chain_expand_ms": timing.get("chain_expand_ms", 0.0),
                 "injected_count": float(injected_count),
                 "filtered_count": float(filtered_count),
             })
@@ -452,6 +514,27 @@ class RecallHandler:
             return None
         sender_id = str(sender_id).strip()
         return sender_id or None
+
+    def _build_injection_budget(self) -> InjectionBudget:
+        """从配置构建注入预算对象。"""
+        cm = self._config_manager
+        return InjectionBudget(
+            total_chars=cm.get("recall_engine.injection_budget_chars", 1200),
+            memory_max_chars=cm.get("recall_engine.injection_memory_max_chars", 220),
+            metadata_max_chars=cm.get("recall_engine.injection_metadata_max_chars", 180),
+            include_key_facts=cm.get("recall_engine.injection_include_key_facts", True),
+            include_topics=cm.get("recall_engine.injection_include_topics", True),
+            include_participants=cm.get(
+                "recall_engine.injection_include_participants", False
+            ),
+            compact_header=cm.get("recall_engine.injection_compact_header", True),
+            cognitive_context_chars=cm.get(
+                "recall_engine.cognitive_context_budget_chars", 300
+            ),
+            proactive_plan_chars=cm.get(
+                "recall_engine.proactive_plan_budget_chars", 240
+            ),
+        )
 
     @staticmethod
     def _finalize_recall_candidates(

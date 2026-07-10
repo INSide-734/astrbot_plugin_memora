@@ -99,8 +99,6 @@ class GraphStore(
                 """
             )
             await db.commit()
-            # Migrate legacy graph FTS table data
-            await self._migrate_legacy_graph_fts(db)
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_graph_nodes_canonical ON graph_nodes(canonical_value)"
             )
@@ -132,41 +130,6 @@ class GraphStore(
                 "CREATE INDEX IF NOT EXISTS idx_graph_entry_nodes_node ON graph_entry_nodes(node_id)"
             )
             await db.commit()
-
-    @staticmethod
-    async def _migrate_legacy_graph_fts(db: aiosqlite.Connection) -> None:
-        """将数据从旧版 livingmemory_graph_entries_fts 迁移到 memora_graph_entries_fts。"""
-        _LEGACY_GRAPH_FTS = "livingmemory_graph_entries_fts"  # noqa: N806
-        cursor = await db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            (_LEGACY_GRAPH_FTS,),
-        )
-        if not await cursor.fetchone():
-            return
-        cursor = await db.execute("SELECT COUNT(*) FROM memora_graph_entries_fts")
-        row = await cursor.fetchone()
-        new_count = int(row[0]) if row else 0
-        if new_count > 0:
-            return
-        cursor = await db.execute(f"SELECT COUNT(*) FROM {_LEGACY_GRAPH_FTS}")
-        row = await cursor.fetchone()
-        legacy_count = int(row[0]) if row else 0
-        if legacy_count == 0:
-            return
-        logger.info(
-            "[GraphStore] migrating %d rows from legacy graph FTS %s → memora_graph_entries_fts",
-            legacy_count,
-            _LEGACY_GRAPH_FTS,
-        )
-        await db.execute(
-            f"INSERT INTO memora_graph_entries_fts(content, entry_id) SELECT content, entry_id FROM {_LEGACY_GRAPH_FTS}"
-        )
-        await db.execute(f"DROP TABLE IF EXISTS {_LEGACY_GRAPH_FTS}")
-        await db.commit()
-        logger.info(
-            "[GraphStore] graph FTS migration complete; %d rows transferred",
-            legacy_count,
-        )
 
     @staticmethod
     def _chunked(items: list[int], size: int) -> list[list[int]]:
