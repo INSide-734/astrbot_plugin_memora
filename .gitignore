@@ -36,3 +36,4 @@ openspec/
 data/
 AGENTS.md
 .agents/
+.worktrees/
