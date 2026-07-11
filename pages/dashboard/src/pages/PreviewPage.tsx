@@ -6,6 +6,8 @@ import {
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { Button } from "@/components/ui/Button";
+import { Card, CardContent } from "@/components/ui/card";
+import { PageContent, PageFrame, PageHeader, MetricGrid } from "@/components/layout/PageLayout";
 import { cn } from "@/lib/utils";
 
 interface PreviewPageProps {
@@ -67,11 +69,11 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const loadingSkeleton = (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+    <MetricGrid>
       {Array.from({ length: 8 }).map((_, i) => (
-        <div key={i} className="h-28 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] skeleton-pulse" />
+        <div key={i} className="h-28 rounded-lg border bg-muted skeleton-pulse" />
       ))}
-    </div>
+    </MetricGrid>
   );
 
   const statCards = stats ? [
@@ -86,49 +88,46 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
   ] : [];
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-3">
-        <h1 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
-          <LayoutDashboard size={18} />
-          {t("nav.preview")}
-        </h1>
-        <Button variant="secondary" size="sm" onClick={fetchAll} disabled={loading}>
+    <PageFrame variant="standard">
+      <PageHeader
+        title={t("nav.preview")}
+        icon={<LayoutDashboard size={18} />}
+        actions={<Button variant="secondary" size="sm" onClick={fetchAll} disabled={loading}>
           <RefreshCw size={14} className={cn(loading && "animate-spin")} />
           {t("common.refresh")}
-        </Button>
-      </header>
+        </Button>}
+      />
 
-      <div className="flex-1 overflow-auto p-6 page-enter">
+      <PageContent className="page-enter">
         {loading && !stats ? loadingSkeleton : (
           <>
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 stagger-children">
+            <MetricGrid className="stagger-children">
               {statCards.map((card, i) => (
-                <div
+                <Card
                   key={i}
-                  className="card-hover rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5"
+                  className="card-hover"
                 >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="flex h-10 w-10 items-center justify-center rounded-xl"
-                      style={{ background: `${card.color}18`, color: card.color }}
-                    >
-                      {card.icon}
+                  <CardContent>
+                    <div className="flex items-center gap-3">
+                      <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-primary">
+                        {card.icon}
+                      </div>
                     </div>
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-2xl font-bold tabular-nums text-[var(--text-primary)]">
+                    <div className="mt-3">
+                    <div className="text-2xl font-bold tabular-nums text-foreground">
                       {card.value ?? "--"}
                     </div>
-                    <div className="text-xs text-[var(--text-tertiary)] mt-0.5">
+                    <div className="mt-0.5 text-xs text-muted-foreground">
                       {card.label}
                     </div>
                   </div>
-                </div>
+                  </CardContent>
+                </Card>
               ))}
-            </div>
+            </MetricGrid>
 
             <div className="mt-8">
-              <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-4">
+              <h2 className="mb-4 text-sm font-semibold text-foreground">
                 {t("preview.quickActions")}
               </h2>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -141,7 +140,7 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
                   <a
                     key={link.page}
                     href={`#/${link.page}`}
-                    className="flex items-center gap-2.5 rounded-xl border border-[var(--color-border)] px-4 py-3 text-sm font-medium text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--color-accent)]/30 hover:bg-[var(--color-accent)]/5 hover:text-[var(--color-accent)]"
+                    className="flex items-center gap-2.5 rounded-lg border px-4 py-3 text-sm font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
                   >
                     {link.icon}
                     {link.label}
@@ -151,8 +150,9 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
             </div>
 
             {stats && (
-              <div className="mt-8 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-                <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-3">
+              <Card className="mt-8">
+                <CardContent>
+                <h2 className="mb-3 text-sm font-semibold text-foreground">
                   {t("preview.storageSummary")}
                 </h2>
                 <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
@@ -164,18 +164,19 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
                     { label: t("preview.graphEdges"), value: stats.graph?.edges },
                   ].map((item, i) => (
                     <div key={i} className="text-center">
-                      <div className="text-lg font-bold tabular-nums text-[var(--text-primary)]">
+                      <div className="text-lg font-bold tabular-nums text-foreground">
                         {item.value ?? "--"}
                       </div>
-                      <div className="text-2xs text-[var(--text-tertiary)]">{item.label}</div>
+                      <div className="text-2xs text-muted-foreground">{item.label}</div>
                     </div>
                   ))}
                 </div>
-              </div>
+                </CardContent>
+              </Card>
             )}
           </>
         )}
-      </div>
-    </div>
+      </PageContent>
+    </PageFrame>
   );
 }

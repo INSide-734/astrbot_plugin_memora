@@ -49,7 +49,9 @@ describe("SearchBar", () => {
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
 
+    expect(screen.getByRole("dialog", { name: "Global search" })).toBeTruthy();
     expect(screen.getByPlaceholderText("Search memories, knowledge, notes...")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close search" })).toBeTruthy();
 
     fireEvent.keyDown(window, { key: "Escape" });
 

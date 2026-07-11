@@ -5,6 +5,7 @@ import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { useI18n } from "@/hooks/useI18n";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import type { GraphNode } from "@/types";
 
 interface GraphPageProps {
@@ -432,45 +433,52 @@ export function GraphPage({ showToast }: GraphPageProps) {
   }, []);
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-3">
-        <h1 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
-          <GitGraph size={18} /> {t("nav.graph")}
-        </h1>
-      </header>
+    <PageFrame variant="workspace">
+      <PageHeader title={t("nav.graph")} icon={<GitGraph size={18} />} />
+      <PageContent
+        width="full"
+        data-workspace-grid="stable"
+        className="grid grid-rows-[auto_minmax(320px,1fr)_auto_auto_auto] overflow-hidden p-0 sm:p-0 lg:p-0"
+      >
 
       {/* Stats */}
-      <div className="flex gap-4 border-b border-[var(--color-border-light)] px-6 py-3">
-        {[
-          { label: t("stats.total"), value: totalMemories },
-          { label: t("graph.nodes"), value: nodeCount },
-          { label: t("graph.edges"), value: edgeCount },
-          { label: t("stats.sessions"), value: sessionCount },
-        ].map((s) => (
-          <div key={s.label} className="text-center">
-            <div className="text-lg font-bold tabular-nums text-[var(--text-primary)]">{s.value}</div>
-            <div className="text-2xs text-[var(--text-tertiary)]">{s.label}</div>
-          </div>
-        ))}
+      <div data-slot="graph-stats-scroll" className="w-full overflow-x-auto border-b bg-muted/20">
+        <MetricGrid
+          minItemWidth="8rem"
+          className="min-w-[32rem] gap-0 px-4 sm:px-5 lg:px-6"
+          style={{ gridTemplateColumns: "repeat(4, minmax(8rem, 1fr))" }}
+        >
+          {[
+            { label: t("stats.total"), value: totalMemories },
+            { label: t("graph.nodes"), value: nodeCount },
+            { label: t("graph.edges"), value: edgeCount },
+            { label: t("stats.sessions"), value: sessionCount },
+          ].map((s) => (
+            <div key={s.label} className="border-r px-4 py-2 text-center last:border-r-0">
+              <div className="text-lg font-bold tabular-nums text-foreground">{s.value}</div>
+              <div className="text-2xs text-muted-foreground">{s.label}</div>
+            </div>
+          ))}
+        </MetricGrid>
       </div>
 
       {/* G6 canvas */}
-      <div ref={fullscreenRef} className={`relative flex-1 bg-[var(--color-surface-secondary)] ${isFullscreen ? "fixed inset-0 z-50" : ""}`}>
+      <div data-slot="graph-canvas" ref={fullscreenRef} className={`relative min-h-[320px] bg-muted/30 ${isFullscreen ? "fixed inset-0 z-50" : ""}`}>
         <div ref={containerRef} className="h-full w-full" />
 
         {graphState === "loading" && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-surface-secondary)]/80 z-10">
-            <div className="flex items-center gap-2 text-sm text-[var(--text-tertiary)]">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-accent)] border-t-transparent" />
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-muted/80">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
               {t("table.loading")}
             </div>
           </div>
         )}
         {graphState === "error" && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-surface-secondary)]/80 z-10">
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-muted/80">
             <div className="text-center">
-              <p className="text-sm text-[var(--text-tertiary)]">{t("error.graphSearch")}</p>
-              <button onClick={() => {
+              <p className="text-sm text-muted-foreground">{t("error.graphSearch")}</p>
+              <Button variant="link" size="xs" onClick={() => {
                 setGraphState("loading");
                 // 重试：重新加载图谱数据
                 const retry = async () => {
@@ -488,33 +496,36 @@ export function GraphPage({ showToast }: GraphPageProps) {
                 };
                 retry();
               }}
-                className="mt-2 text-xs text-[var(--color-accent)] hover:underline">{t("common.retry")}</button>
+                className="mt-2">{t("common.retry")}</Button>
             </div>
           </div>
         )}
 
         {hoveredNode && (
-          <div className="pointer-events-none absolute left-3 top-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-3 py-1.5 text-xs shadow-elevated z-10">
+          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-lg border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md">
             {hoveredNode.label || hoveredNode.id}
           </div>
         )}
 
         <div className="absolute bottom-3 right-3 flex items-center gap-2 z-10">
-          <button
+          <Button
+            variant="outline"
+            size="icon-sm"
             onClick={toggleFullscreen}
-            className="rounded-md bg-[var(--color-surface-elevated)]/80 p-1.5 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--color-surface-elevated)]"
+            className="bg-background/80"
+            aria-label={isFullscreen ? "退出全屏" : "全屏"}
             title={isFullscreen ? "退出全屏" : "全屏"}
           >
-            {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </button>
-          <span className="rounded-md bg-[var(--color-surface-elevated)]/80 px-2 py-0.5 text-2xs text-[var(--text-tertiary)]">
+            {isFullscreen ? <Minimize2 /> : <Maximize2 />}
+          </Button>
+          <span className="rounded-md bg-background/80 px-2 py-0.5 text-2xs text-muted-foreground">
             {Math.round(scale * 100)}%
           </span>
         </div>
       </div>
 
       {/* Search bar */}
-      <div className="flex items-center gap-3 border-t border-[var(--color-border)] px-6 py-2.5">
+      <PageToolbar className="flex-nowrap overflow-x-auto border-b-0 border-t bg-background">
         <Input
           placeholder={t("graph.queryPh")}
           value={query}
@@ -533,30 +544,30 @@ export function GraphPage({ showToast }: GraphPageProps) {
         <Button variant="secondary" size="sm" onClick={fetchOverview}>
           <Maximize2 size={14} /> {t("graph.overviewBtn")}
         </Button>
-      </div>
+      </PageToolbar>
 
       {/* Legend: nodes + edge types */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--color-border-light)] px-6 py-2">
-        <span className="text-2xs text-[var(--text-tertiary)] mr-1">{t("graph.legendNodes")}</span>
+      <div className="flex flex-nowrap items-center gap-x-4 overflow-x-auto whitespace-nowrap border-t px-6 py-2 text-muted-foreground">
+        <span className="mr-1 text-2xs">{t("graph.legendNodes")}</span>
         {Object.entries(NODE_COLORS).map(([type, color]) => (
-          <div key={type} className="flex items-center gap-1.5 text-2xs text-[var(--text-tertiary)]">
+          <div key={type} className="flex items-center gap-1.5 text-2xs">
             <span className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />
             {t(nodeTypeLabel(type))}
           </div>
         ))}
-        <span className="mx-2 h-3 w-px bg-[var(--color-border)]" />
-        <span className="text-2xs text-[var(--text-tertiary)] mr-1">时序边:</span>
+        <span className="mx-2 h-3 w-px bg-border" />
+        <span className="mr-1 text-2xs">时序边:</span>
         {Object.entries(EDGE_STYLES).filter(([type]) => TEMPORAL_EDGES.has(type)).map(([type, style]) => (
-          <div key={type} className="flex items-center gap-1.5 text-2xs text-[var(--text-tertiary)]">
+          <div key={type} className="flex items-center gap-1.5 text-2xs">
             <svg width="14" height="8" className="shrink-0">
               <line x1="0" y1="4" x2="14" y2="4" stroke={style.color} strokeWidth={1} strokeDasharray="4,3" />
             </svg>
             {t(style.label)}
           </div>
         ))}
-        <span className="text-2xs text-[var(--text-tertiary)] mr-1 ml-1">因果边:</span>
+        <span className="ml-1 mr-1 text-2xs">因果边:</span>
         {Object.entries(EDGE_STYLES).filter(([type]) => CAUSAL_EDGES.has(type)).map(([type, style]) => (
-          <div key={type} className="flex items-center gap-1.5 text-2xs text-[var(--text-tertiary)]">
+          <div key={type} className="flex items-center gap-1.5 text-2xs">
             <svg width="14" height="8" className="shrink-0">
               <line x1="0" y1="4" x2="14" y2="4" stroke={style.color} strokeWidth={2} />
             </svg>
@@ -566,8 +577,8 @@ export function GraphPage({ showToast }: GraphPageProps) {
       </div>
 
       {/* Dual range time filter */}
-      <div className="flex items-center gap-3 border-t border-[var(--color-border-light)] px-6 py-2">
-        <span className="text-2xs text-[var(--text-tertiary)] shrink-0">时间范围:</span>
+      <div className="flex flex-nowrap items-center gap-3 overflow-x-auto whitespace-nowrap border-t px-6 py-2">
+        <span className="shrink-0 text-2xs text-muted-foreground">时间范围:</span>
         <div className="relative flex-1 max-w-[240px] h-6 flex items-center">
           <input
             type="range"
@@ -591,23 +602,25 @@ export function GraphPage({ showToast }: GraphPageProps) {
             className="absolute inset-x-0 h-1 appearance-none bg-transparent pointer-events-none [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[var(--color-accent-secondary)] [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white"
             style={{ accentColor: "var(--color-accent-secondary)" }}
           />
-          <div className="absolute inset-x-0 h-1 rounded bg-[var(--color-border)] pointer-events-none" />
+          <div className="pointer-events-none absolute inset-x-0 h-1 rounded bg-border" />
         </div>
-        <button
+        <Button
+          variant="link"
+          size="xs"
           onClick={() => { setTimeRangeStart(0); setTimeRangeEnd(720); }}
-          className="text-2xs text-[var(--color-accent)] hover:underline shrink-0"
+          className="shrink-0"
         >
           重置
-        </button>
-        <span className="text-2xs text-[var(--text-tertiary)] shrink-0 w-28 text-right tabular-nums">
+        </Button>
+        <span className="w-28 shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
           {timeRangeStart === 0 && timeRangeEnd >= 720 ? "全部" : `${formatHours(timeRangeStart)} – ${formatHours(timeRangeEnd)}`}
         </span>
       </div>
 
       {/* Detail pane */}
       {selectedNode && (
-        <div className="fixed inset-y-0 right-0 z-40 w-[380px] overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-surface-elevated)] shadow-modal animate-slide-in-right">
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-3">
+        <div className="fixed inset-y-0 right-0 z-40 w-[380px] overflow-y-auto border-l bg-popover text-popover-foreground shadow-lg animate-slide-in-right">
+          <div className="flex items-center justify-between border-b px-5 py-3">
             <div className="flex items-center gap-2">
               <span
                 className="h-3 w-3 rounded-full"
@@ -617,35 +630,38 @@ export function GraphPage({ showToast }: GraphPageProps) {
                 {selectedNode.label || t("graph.unnamedNode")}
               </h3>
             </div>
-            <button
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={() => setSelectedNode(null)}
-              className="rounded-lg p-1 text-[var(--text-tertiary)] hover:bg-[var(--color-surface-secondary)]"
+              aria-label={t("common.close")}
+              title={t("common.close")}
             >
-              <X size={16} />
-            </button>
+              <X />
+            </Button>
           </div>
           <div className="p-5 space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-[var(--text-tertiary)]">
+                <label className="text-xs font-medium text-muted-foreground">
                   {t("detail.nodeMemories")}
                 </label>
                 <p className="text-sm font-semibold">{selectedNode.memory_count ?? 0}</p>
               </div>
               <div>
-                <label className="text-xs font-medium text-[var(--text-tertiary)]">
+                <label className="text-xs font-medium text-muted-foreground">
                   {t("detail.nodeDegree")}
                 </label>
                 <p className="text-sm font-semibold">{selectedNode.degree ?? 0}</p>
               </div>
               <div>
-                <label className="text-xs font-medium text-[var(--text-tertiary)]">
+                <label className="text-xs font-medium text-muted-foreground">
                   {t("detail.nodeEntries")}
                 </label>
                 <p className="text-sm font-semibold">{selectedNode.entry_count ?? 0}</p>
               </div>
               <div>
-                <label className="text-xs font-medium text-[var(--text-tertiary)]">
+                <label className="text-xs font-medium text-muted-foreground">
                   {t("detail.nodeWeight")}
                 </label>
                 <p className="text-sm font-semibold">
@@ -654,7 +670,7 @@ export function GraphPage({ showToast }: GraphPageProps) {
               </div>
             </div>
             <div>
-              <label className="text-xs font-medium text-[var(--text-tertiary)]">
+              <label className="text-xs font-medium text-muted-foreground">
                 {t("table.type")}
               </label>
               <p className="text-sm">{t(nodeTypeLabel(selectedNode.type ?? "other"))}</p>
@@ -662,6 +678,7 @@ export function GraphPage({ showToast }: GraphPageProps) {
           </div>
         </div>
       )}
-    </div>
+      </PageContent>
+    </PageFrame>
   );
 }

@@ -3,7 +3,13 @@ import { useI18n } from "@/hooks/useI18n";
 import { useGroups } from "@/hooks/useGroups";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { UsersRound, RefreshCw, ArrowRightLeft, Tag } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
+import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/card";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RELATION_CATEGORIES } from "@/lib/constants";
 import type { SocialRelationEntry } from "@/types";
 
@@ -39,115 +45,91 @@ export function SocialPage({ showToast }: SocialPageProps) {
     return translated !== key ? translated : type;
   };
 
+  const categories = [
+    { value: "all", label: t("social.allCategories") },
+    ...Object.entries(RELATION_CATEGORIES).map(([value, meta]) => ({ value, label: meta.label })),
+  ];
+
+  const relationTable = loading ? (
+    <p className="py-12 text-center text-sm text-muted-foreground">{t("table.loading")}</p>
+  ) : relations.length === 0 ? (
+    <p className="py-12 text-center text-sm text-muted-foreground">{t("social.noData")}</p>
+  ) : (
+    <Card className="gap-0 py-0">
+      <Table>
+        <TableHeader className="sticky top-0 bg-background"><TableRow>
+          <TableHead>{t("social.relations")}</TableHead>
+          <TableHead>{t("social.category")}</TableHead>
+          <TableHead>{t("social.strength")}</TableHead>
+          <TableHead>{t("social.frequency")}</TableHead>
+          <TableHead>{t("table.tags")}</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>
+          {relations.map((r) => (
+            <TableRow key={`${r.from_user}-${r.to_user}-${r.relation_type}`}>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium">{r.from_user}</span>
+                  <ArrowRightLeft />
+                  <span className="text-xs font-medium">{r.to_user}</span>
+                </div>
+                <div className="mt-0.5 text-xs text-muted-foreground">{relationLabel(r.relation_type)}</div>
+              </TableCell>
+              <TableCell><Badge variant="secondary">{RELATION_CATEGORIES[r.category]?.label ?? r.category}</Badge></TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  <div role="progressbar" aria-label={`${r.from_user} to ${r.to_user} ${relationLabel(r.relation_type)} ${t("social.strength")}`} aria-valuemin={0} aria-valuemax={1} aria-valuenow={r.strength} className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-primary" style={{ width: `${r.strength * 100}%` }} />
+                  </div>
+                  <span className="text-xs tabular-nums text-muted-foreground">{(r.strength * 100).toFixed(0)}%</span>
+                </div>
+              </TableCell>
+              <TableCell className="text-xs tabular-nums text-muted-foreground">{r.frequency}</TableCell>
+              <TableCell>
+                <div className="flex flex-wrap items-center gap-1">
+                  {r.tags.map((tag) => <Badge key={tag} variant="outline"><Tag data-icon="inline-start" />{tag}</Badge>)}
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Card>
+  );
+
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-6 py-3 shrink-0">
-        <div className="flex items-center gap-3">
-          <UsersRound size={18} className="text-[var(--color-accent)]" />
-          <h2 className="text-sm font-semibold text-[var(--text-primary)]">{t("social.title")}</h2>
-        </div>
-        <div className="flex items-center gap-2">
+    <PageFrame variant="standard" aria-label={t("social.title")}>
+      <PageHeader
+        title={t("social.title")}
+        icon={<UsersRound />}
+        actions={<>
           <Select value={groupId} onValueChange={(v) => v && setGroupId(v)} disabled={groups.length === 0}>
-            <SelectTrigger className="w-36 h-8 text-xs"><span>{groupId || t("jargon.allGroups")}</span></SelectTrigger>
+            <SelectTrigger className="w-36 text-xs"><span>{groupId || t("jargon.allGroups")}</span></SelectTrigger>
             <SelectContent>
+              <SelectGroup>
               {groups.length > 0 ? groups.map((g) => (
                 <SelectItem key={g.group_id} value={g.group_id}>{g.group_id}{g.message_count ? ` (${g.message_count})` : ""}</SelectItem>
               )) : (
                 <SelectItem value="loading">—</SelectItem>
               )}
+              </SelectGroup>
             </SelectContent>
           </Select>
-          <button onClick={fetchRelations} className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
-            <RefreshCw size={13} /> {t("common.refresh")}
-          </button>
-        </div>
-      </header>
-
-      {/* Category filter */}
-      <div className="flex items-center gap-1.5 border-b border-[var(--color-border)] px-6 py-2 shrink-0 overflow-x-auto">
-        <button
-          onClick={() => setCategory("all")}
-          className={`shrink-0 rounded-full px-3 py-1 text-2xs font-medium transition-colors ${
-            category === "all" ? "bg-[var(--color-accent)]/10 text-[var(--color-accent)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-          }`}
-        >
-          {t("social.allCategories")}
-        </button>
-        {Object.entries(RELATION_CATEGORIES).map(([key, val]) => (
-          <button
-            key={key}
-            onClick={() => setCategory(key)}
-            className={`shrink-0 rounded-full px-3 py-1 text-2xs font-medium transition-colors ${
-              category === key ? "bg-[var(--color-accent)]/10 text-[var(--color-accent)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-            }`}
-          >
-            {val.label}
-          </button>
+          <Button variant="outline" onClick={fetchRelations}><RefreshCw data-icon="inline-start" />{t("common.refresh")}</Button>
+        </>}
+      />
+      <Tabs value={category} onValueChange={setCategory} className="min-h-0 flex-1 gap-0">
+        <PageToolbar className="flex-nowrap overflow-x-auto bg-background">
+          <TabsList variant="line" aria-label={t("social.category")} className="h-9 min-w-max">
+            {categories.map((item) => <TabsTrigger key={item.value} value={item.value} className="px-3 text-xs">{item.label}</TabsTrigger>)}
+          </TabsList>
+        </PageToolbar>
+        {categories.map((item) => (
+          <TabsContent key={item.value} value={item.value} className="min-h-0 overflow-auto">
+            <PageContent>{relationTable}</PageContent>
+          </TabsContent>
         ))}
-      </div>
-
-      {/* Relations table */}
-      <div className="flex-1 overflow-auto">
-        {loading ? (
-          <p className="px-6 py-12 text-center text-sm text-[var(--text-tertiary)]">{t("table.loading")}</p>
-        ) : relations.length === 0 ? (
-          <p className="px-6 py-12 text-center text-sm text-[var(--text-tertiary)]">{t("social.noData")}</p>
-        ) : (
-          <table className="w-full">
-            <thead className="sticky top-0 bg-[var(--color-surface)]">
-              <tr className="text-xs text-[var(--text-tertiary)]">
-                <th className="py-3 px-4 text-left font-medium">{t("social.relations")}</th>
-                <th className="py-3 px-4 text-left font-medium">{t("social.category")}</th>
-                <th className="py-3 px-4 text-left font-medium">{t("social.strength")}</th>
-                <th className="py-3 px-4 text-left font-medium">{t("social.frequency")}</th>
-                <th className="py-3 px-4 text-left font-medium">{t("table.tags")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {relations.map((r) => (
-                <tr key={`${r.from_user}-${r.to_user}-${r.relation_type}`} className="border-t border-[var(--color-border-light)] hover:bg-[var(--color-surface-secondary)] transition-colors">
-                  <td className="py-2.5 px-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-[var(--text-primary)]">{r.from_user}</span>
-                      <ArrowRightLeft size={12} className="text-[var(--text-tertiary)]" />
-                      <span className="text-xs font-medium text-[var(--text-primary)]">{r.to_user}</span>
-                    </div>
-                    <div className="text-2xs text-[var(--text-tertiary)] mt-0.5">
-                      {relationLabel(r.relation_type)}
-                    </div>
-                  </td>
-                  <td className="py-2.5 px-4">
-                    <span className="inline-flex items-center rounded-full bg-[var(--color-accent)]/10 px-2 py-0.5 text-2xs font-medium text-[var(--color-accent)]">
-                      {RELATION_CATEGORIES[r.category]?.label ?? r.category}
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-4">
-                    <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-20 rounded-full bg-[var(--color-border-light)] overflow-hidden">
-                        <div
-                          className="h-full rounded-full"
-                          style={{ width: `${r.strength * 100}%`, background: r.strength >= 0.7 ? "var(--color-success)" : r.strength >= 0.4 ? "var(--color-accent)" : "var(--text-tertiary)" }}
-                        />
-                      </div>
-                      <span className="text-xs tabular-nums text-[var(--text-secondary)]">{(r.strength * 100).toFixed(0)}%</span>
-                    </div>
-                  </td>
-                  <td className="py-2.5 px-4 text-xs tabular-nums text-[var(--text-secondary)]">{r.frequency}</td>
-                  <td className="py-2.5 px-4">
-                    <div className="flex items-center gap-1 flex-wrap">
-                      {r.tags.map((tag) => (
-                        <span key={tag} className="inline-flex items-center gap-0.5 rounded-full bg-[var(--color-border-light)] px-1.5 py-0.5 text-2xs text-[var(--text-tertiary)]">
-                          <Tag size={8} />{tag}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
+      </Tabs>
+    </PageFrame>
   );
 }

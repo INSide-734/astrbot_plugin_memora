@@ -74,7 +74,10 @@ describe("TimelinePage", () => {
       ],
     }));
 
-    render(<TimelinePage showToast={showToast} />);
+    const { container } = render(<TimelinePage showToast={showToast} />);
+
+    expect(container.querySelector('[data-slot="page-frame"]')?.getAttribute("data-layout")).toBe("standard");
+    expect(screen.getByRole("heading", { level: 1, name: "Timeline" })).toBeTruthy();
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/memories", { page_size: "200" });

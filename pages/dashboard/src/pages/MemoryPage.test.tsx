@@ -74,7 +74,10 @@ describe("MemoryPage", () => {
       }));
     });
 
-    render(<MemoryPage showToast={showToast} />);
+    const { container } = render(<MemoryPage showToast={showToast} />);
+
+    expect(container.querySelector('[data-slot="page-frame"]')?.getAttribute("data-layout")).toBe("dense");
+    expect(screen.getByRole("heading", { level: 1, name: "Memories" })).toBeTruthy();
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/memories", {

@@ -144,7 +144,12 @@ describe("SystemPage", () => {
       return Promise.resolve(ok({}));
     });
 
-    render(<SystemPage showToast={showToast} />);
+    const { container } = render(<SystemPage showToast={showToast} />);
+
+    expect(container.querySelector('[data-layout="standard"]')).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "System" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Quality Monitor" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Companion Plugins" })).toBeTruthy();
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/stats", {});
@@ -372,7 +377,7 @@ describe("SystemPage", () => {
 
     render(<SystemPage showToast={showToast} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /quality monitor/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /quality monitor/i }));
 
     expect(await screen.findByText("Quality scoring paused: manual pause")).toBeTruthy();
     expect(screen.getByText("Accuracy drift")).toBeTruthy();
@@ -385,7 +390,7 @@ describe("SystemPage", () => {
     });
     expect(showToast).toHaveBeenCalledWith("Quality monitor reset");
 
-    fireEvent.click(screen.getByRole("button", { name: /companion plugins/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /companion plugins/i }));
 
     expect(await screen.findByText("Self Learning plugin")).toBeTruthy();
     expect(screen.getByText("Feature Delegation")).toBeTruthy();

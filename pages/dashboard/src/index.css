@@ -5,48 +5,36 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ================================================================
-   Design Tokens — compatible with existing CSS variable system
-   ================================================================ */
+/* Legacy aliases remain during the staged page migration. New code uses the
+   shadcn semantic tokens below directly. */
 
 :root {
   color-scheme: light;
-  --color-surface: oklch(100% 0 0);
-  --color-surface-secondary: oklch(96% 0 0);
-  --color-surface-elevated: oklch(100% 0 0);
-  --color-border: oklch(88% 0 0);
-  --color-border-light: oklch(93% 0 0);
-  --text-primary: oklch(15% 0 0);
-  --text-secondary: oklch(40% 0 0);
-  --text-tertiary: oklch(55% 0 0);
-  --color-accent: oklch(55% 0.21 250);
-  --color-accent-secondary: oklch(68% 0.18 250);
-  --color-success: oklch(52% 0.18 145);
-  --color-warning: oklch(68% 0.16 70);
-  --color-danger: oklch(48% 0.2 20);
-  --shadow-surface: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.08);
-  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.15);
+  --color-surface: var(--background);
+  --color-surface-secondary: var(--muted);
+  --color-surface-elevated: var(--popover);
+  --color-border: var(--border);
+  --color-border-light: color-mix(in oklch, var(--border), transparent 45%);
+  --text-primary: var(--foreground);
+  --text-secondary: color-mix(in oklch, var(--foreground), transparent 28%);
+  --text-tertiary: var(--muted-foreground);
+  --color-accent: var(--primary);
+  --color-accent-secondary: color-mix(in oklch, var(--primary), var(--background) 25%);
+  --color-success: oklch(0.56 0.15 150);
+  --color-warning: oklch(0.68 0.16 75);
+  --color-danger: var(--destructive);
+  --shadow-surface: 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow-elevated: 0 8px 24px rgb(0 0 0 / 0.1);
+  --shadow-modal: 0 20px 48px rgb(0 0 0 / 0.18);
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --color-surface: oklch(13% 0 0);
-  --color-surface-secondary: oklch(18% 0 0);
-  --color-surface-elevated: oklch(22% 0 0);
-  --color-border: oklch(28% 0 0);
-  --color-border-light: oklch(22% 0 0);
-  --text-primary: oklch(92% 0 0);
-  --text-secondary: oklch(70% 0 0);
-  --text-tertiary: oklch(50% 0 0);
-  --color-accent: oklch(65% 0.18 250);
-  --color-accent-secondary: oklch(55% 0.15 250);
-  --color-success: oklch(58% 0.16 145);
-  --color-warning: oklch(70% 0.14 70);
-  --color-danger: oklch(55% 0.18 20);
-  --shadow-surface: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.3);
-  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.4);
+  --color-success: oklch(0.68 0.14 150);
+  --color-warning: oklch(0.76 0.14 75);
+  --shadow-surface: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-elevated: 0 8px 24px rgb(0 0 0 / 0.32);
+  --shadow-modal: 0 20px 48px rgb(0 0 0 / 0.48);
 }
 
 @layer base {
@@ -57,10 +45,10 @@
   }
   body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+    font-family: "Geist Variable", "Noto Sans SC", sans-serif;
     font-size: 0.875rem;
     line-height: 1.5;
-    background: var(--color-surface);
+    background: var(--background);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -97,7 +85,7 @@
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
+    --radius: 0.5rem;
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.145 0 0);
     --sidebar-primary: oklch(0.205 0 0);
@@ -134,8 +122,8 @@
     --chart-5: oklch(0.269 0 0);
     --sidebar: oklch(0.205 0 0);
     --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.922 0 0);
+    --sidebar-primary-foreground: oklch(0.205 0 0);
     --sidebar-accent: oklch(0.269 0 0);
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);

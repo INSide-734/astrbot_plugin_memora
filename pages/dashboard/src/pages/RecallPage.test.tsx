@@ -41,7 +41,10 @@ describe("RecallPage", () => {
   });
 
   it("does not send a recall request for blank queries", async () => {
-    render(<RecallPage showToast={showToast} />);
+    const { container } = render(<RecallPage showToast={showToast} />);
+
+    expect(container.querySelector('[data-slot="page-frame"]')?.getAttribute("data-layout")).toBe("standard");
+    expect(screen.getByRole("heading", { level: 1, name: "Recall Test" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /run recall/i }));
 

@@ -25,6 +25,7 @@ const SCREENSHOT_BASELINES = {
   "mobile-system.png": { width: 390, height: 844, minBytes: 10_000 },
   "mobile-jargon.png": { width: 390, height: 844, minBytes: 10_000 },
   "system-confirmation.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "dark-system.png": { width: 1366, height: 900, minBytes: 10_000 },
 };
 
 const launchCandidates = [
@@ -348,17 +349,28 @@ function assertText(text, expected, route) {
 
 async function waitForRootText(page, expected, route) {
   const values = Array.isArray(expected) ? expected : [expected];
-  await page.waitForFunction(
-    ({ items, loadingText }) => {
-      const text = document.querySelector("#root")?.innerText ?? "";
-      return (
-        items.every((item) => text.includes(item))
-        && loadingText.every((item) => !text.includes(item))
-      );
-    },
-    { items: values, loadingText: ROUTE_LOADING_TEXT },
-    { timeout: 5_000 }
-  );
+  try {
+    await page.waitForFunction(
+      ({ items, loadingText }) => {
+        const text = document.querySelector("#root")?.innerText ?? "";
+        return (
+          items.every((item) => text.includes(item))
+          && loadingText.every((item) => !text.includes(item))
+        );
+      },
+      { items: values, loadingText: ROUTE_LOADING_TEXT },
+      { timeout: 5_000 }
+    );
+  } catch (error) {
+    const rootText = await page.locator("#root").innerText();
+    const missing = values.filter((item) => !rootText.includes(item));
+    const lingeringLoading = ROUTE_LOADING_TEXT.filter((item) => rootText.includes(item));
+    throw new Error(
+      `Dashboard route ${route} did not become ready. Missing: ${missing.join(", ") || "none"}; `
+        + `loading text: ${lingeringLoading.join(", ") || "none"}; root text: ${rootText}`,
+      { cause: error }
+    );
+  }
   assertText(await page.locator("#root").innerText(), values, route);
 }
 
@@ -401,7 +413,72 @@ function assertScreenshotMatchesBaseline(buffer, filename, label) {
   return { filename, label, bytes: buffer.length, ...dimensions, minBytes: baseline.minBytes };
 }
 
+async function waitForVisualStability(page) {
+  await page.waitForFunction(() => {
+    const root = document.querySelector("#root");
+    let element = document.querySelector('[data-slot="page-frame"]');
+    if (!root || !element) return false;
+    while (element && element !== root) {
+      if (Number.parseFloat(getComputedStyle(element).opacity) < 0.99) return false;
+      element = element.parentElement;
+    }
+    return true;
+  }, undefined, { timeout: 3_000 });
+  await page.evaluate(async () => {
+    const finiteAnimations = document.getAnimations().filter((animation) => {
+      const duration = animation.effect?.getTiming().duration;
+      return animation.playState === "running"
+        && typeof duration === "number"
+        && Number.isFinite(duration)
+        && duration <= 2_000;
+    });
+    await Promise.all(finiteAnimations.map((animation) => animation.finished.catch(() => undefined)));
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+  });
+}
+
 async function captureBaselineScreenshot(page, screenshotPath, label) {
+  await waitForVisualStability(page);
+  const pageContent = page.locator('[data-slot="page-content"]').last();
+  if (await pageContent.count()) {
+    const box = await pageContent.boundingBox();
+    const viewport = page.viewportSize();
+    if (
+      !box
+      || !viewport
+      || box.width <= 0
+      || box.height <= 0
+      || box.x >= viewport.width
+      || box.x + box.width <= 0
+      || box.y >= viewport.height
+      || box.y + box.height <= 0
+    ) {
+      throw new Error(
+        `Dashboard page content is outside the viewport for ${label}: `
+          + `box=${JSON.stringify(box)}, viewport=${JSON.stringify(viewport)}`
+      );
+    }
+    const firstChild = pageContent.locator(":scope > *").first();
+    if (await firstChild.count()) {
+      const childBox = await firstChild.boundingBox();
+      if (
+        !childBox
+        || childBox.width <= 0
+        || childBox.height <= 0
+        || childBox.x >= box.x + box.width
+        || childBox.x + childBox.width <= box.x
+        || childBox.y >= box.y + box.height
+        || childBox.y + childBox.height <= box.y
+      ) {
+        throw new Error(
+          `Dashboard page content has no visible first child for ${label}: `
+            + `contentBox=${JSON.stringify(box)}, childBox=${JSON.stringify(childBox)}`
+        );
+      }
+    }
+  }
   const screenshot = await page.screenshot({ path: screenshotPath, fullPage: false });
   return assertScreenshotMatchesBaseline(screenshot, path.basename(screenshotPath), label);
 }
@@ -442,10 +519,10 @@ async function runRecallTraceSmoke(page, screenshotPath) {
     page,
     "召回链路",
     "recallTrace",
-    ["召回链路", "Recall trace", "Query", "Run a trace to inspect"]
+    ["召回链路", "查询", "运行一次链路追踪，查看阶段耗时、排序证据、贡献项与过滤候选。"]
   );
-  await page.getByPlaceholder("Trace query...").fill("用户喜欢喝什么咖啡");
-  await page.getByRole("button", { name: "Trace", exact: true }).click();
+  await page.getByPlaceholder("输入要追踪的查询...").fill("用户喜欢喝什么咖啡");
+  await page.getByRole("button", { name: "追踪", exact: true }).click();
   await waitForRootText(
     page,
     ["trace-smoke-coffee", "mem-coffee", "bm25", "mock_embedding"],
@@ -695,7 +772,7 @@ try {
       page,
       "智能控制",
       "#/intelligence",
-      ["智能控制台", "页面壳已就绪", "Evaluation Workbench", "private_basic", "group_context", "eval-smoke-latest"],
+      ["智能控制台", "页面壳已就绪", "评测工作台", "private_basic", "group_context", "eval-smoke-latest"],
       path.join(screenshotsDir, "intelligence-evaluation.png")
     )
   );
@@ -770,6 +847,23 @@ try {
   );
   await assertBackupDestructiveConfirmations(page);
   await assertHighImpactConfirmation(page);
+
+  await page.getByRole("button", { name: "切换主题" }).click();
+  await page.waitForFunction(
+    () => document.documentElement.getAttribute("data-theme") === "dark",
+    undefined,
+    { timeout: 5_000 }
+  );
+  await page.locator('[data-slot="page-content"]').last().evaluate((element) => {
+    element.scrollTo({ top: 0, left: 0 });
+  });
+  baselineResults.push(
+    await captureBaselineScreenshot(
+      page,
+      path.join(screenshotsDir, "dark-system.png"),
+      "dark-system"
+    )
+  );
 
   await writeFile(
     path.join(screenshotsDir, "screenshot-baseline-manifest.json"),

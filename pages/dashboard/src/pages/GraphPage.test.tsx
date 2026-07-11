@@ -146,7 +146,23 @@ describe("GraphPage", () => {
       return Promise.resolve(ok({}));
     });
 
-    render(<GraphPage showToast={showToast} />);
+    const { container } = render(<GraphPage showToast={showToast} />);
+
+    expect(container.querySelector('[data-slot="page-frame"]')?.getAttribute("data-layout")).toBe("workspace");
+    expect(screen.getByRole("heading", { level: 1, name: "Knowledge Graph" })).toBeTruthy();
+    const workspace = container.querySelector('[data-workspace-grid="stable"]');
+    const canvas = container.querySelector('[data-slot="graph-canvas"]');
+    const statsScroll = container.querySelector('[data-slot="graph-stats-scroll"]');
+    const statsGrid = statsScroll?.querySelector('[data-slot="metric-grid"]');
+    const toolbar = screen.getByRole("toolbar");
+    expect(workspace?.classList.contains("grid-rows-[auto_minmax(320px,1fr)_auto_auto_auto]")).toBe(true);
+    expect(canvas?.classList.contains("min-h-[320px]")).toBe(true);
+    expect(statsScroll?.classList.contains("w-full")).toBe(true);
+    expect(statsScroll?.classList.contains("overflow-x-auto")).toBe(true);
+    expect(statsGrid?.classList.contains("min-w-[32rem]")).toBe(true);
+    expect(statsGrid?.classList.contains("overflow-x-auto")).toBe(false);
+    expect(toolbar.classList.contains("flex-nowrap")).toBe(true);
+    expect(toolbar.classList.contains("overflow-x-auto")).toBe(true);
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/stats", {});

@@ -6,22 +6,22 @@ export default {
     extend: {
       colors: {
         surface: {
-          DEFAULT: "var(--color-surface)",
-          secondary: "var(--color-surface-secondary)",
-          elevated: "var(--color-surface-elevated)",
+          DEFAULT: "var(--background)",
+          secondary: "var(--muted)",
+          elevated: "var(--popover)",
         },
         border: {
-          DEFAULT: "var(--color-border)",
-          light: "var(--color-border-light)",
+          DEFAULT: "var(--border)",
+          light: "color-mix(in oklch, var(--border), transparent 45%)",
         },
         text: {
-          primary: "var(--text-primary)",
-          secondary: "var(--text-secondary)",
-          tertiary: "var(--text-tertiary)",
+          primary: "var(--foreground)",
+          secondary: "color-mix(in oklch, var(--foreground), transparent 28%)",
+          tertiary: "var(--muted-foreground)",
         },
         accent: {
-          DEFAULT: "var(--color-accent)",
-          secondary: "var(--color-accent-secondary)",
+          DEFAULT: "var(--primary)",
+          secondary: "color-mix(in oklch, var(--primary), var(--background) 25%)",
           success: "var(--color-success)",
           warning: "var(--color-warning)",
           danger: "var(--color-danger)",

@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { Badge } from "@/components/ui/Badge";
+import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import type { MemoryItem } from "@/types";
 
 interface MemoryPageProps {
@@ -147,11 +150,11 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
 
   const TableHeader = () => (
     <div
-      className="sticky top-0 z-10 grid items-center border-b border-[var(--color-border)] bg-[var(--color-surface)] text-2xs font-medium uppercase tracking-wider text-[var(--text-tertiary)]"
+      className="sticky top-0 z-10 grid items-center border-b bg-background text-2xs font-medium uppercase tracking-wider text-muted-foreground"
       style={{ gridTemplateColumns: GRID_COLS }}
     >
       <div className="px-4 py-2.5">
-        <input type="checkbox" checked={selected.size === items.length && items.length > 0} onChange={toggleSelectAll} />
+        <Checkbox aria-label="Select all memories" checked={selected.size === items.length && items.length > 0} onCheckedChange={toggleSelectAll} />
       </div>
       <div className="px-3 py-2.5">{t("table.id")}</div>
       <div className="px-3 py-2.5">{t("table.summary")}</div>
@@ -169,43 +172,39 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
         style={{ position: "absolute", top: 0, left: 0, width: "100%", height: size, transform: `translateY(${start}px)` }}
       >
         <div
-          className="grid items-center border-b border-[var(--color-border-light)] text-sm transition-colors hover:bg-[var(--color-surface-secondary)] cursor-pointer"
+          className="grid cursor-pointer items-center border-b text-sm transition-colors hover:bg-muted/50"
           style={{ gridTemplateColumns: GRID_COLS }}
           onClick={() => fetchDetail(m.id)}
         >
           <div className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
-            <input type="checkbox" checked={selected.has(m.id)} onChange={() => toggleSelect(m.id)} />
+            <Checkbox aria-label={`Select memory ${m.id}`} checked={selected.has(m.id)} onCheckedChange={() => toggleSelect(m.id)} />
           </div>
-          <div className="px-3 py-2.5 font-mono text-xs text-[var(--text-tertiary)] truncate">{String(m.id).slice(0, 8)}</div>
+          <div className="truncate px-3 py-2.5 font-mono text-xs text-muted-foreground">{String(m.id).slice(0, 8)}</div>
           <div className="truncate px-3 py-2.5">{String(m.summary ?? m.content ?? m.text ?? "")}</div>
           <div className="px-3 py-2.5"><Badge variant="secondary">{String(m.type ?? "other").toUpperCase()}</Badge></div>
           <div className="px-3 py-2.5">
             <div className="flex items-center gap-2">
-              <div className="h-1.5 flex-1 rounded-full bg-[var(--color-border)]">
-                <div className="h-1.5 rounded-full bg-[var(--color-accent)] transition-all"
+              <div className="h-1.5 flex-1 rounded-full bg-muted">
+                <div className="h-1.5 rounded-full bg-primary transition-all"
                   style={{ width: `${normalizeImportance(m.importance ?? 0) * 10}%` }} />
               </div>
-              <span className="text-xs tabular-nums text-[var(--text-tertiary)]">{normalizeImportance(m.importance ?? 0).toFixed(1)}</span>
+              <span className="text-xs tabular-nums text-muted-foreground">{normalizeImportance(m.importance ?? 0).toFixed(1)}</span>
             </div>
           </div>
           <div className="px-3 py-2.5"><Badge variant={statusVariant(String(m.status ?? "active"))}>{m.status ?? "active"}</Badge></div>
-          <div className="px-3 py-2.5 text-xs text-[var(--text-tertiary)]">{String(m.created_at ?? "").slice(0, 10)}</div>
+          <div className="px-3 py-2.5 text-xs text-muted-foreground">{String(m.created_at ?? "").slice(0, 10)}</div>
         </div>
       </div>
     );
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <PageFrame variant="dense">
       {/* Header */}
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-3">
-        <h1 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
-          <ScrollText size={18} /> {t("nav.memory")}
-        </h1>
-      </header>
+      <PageHeader title={t("nav.memory")} icon={<ScrollText size={18} />} />
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--color-border-light)] px-6 py-3">
+      <PageToolbar>
         <Input
           placeholder={t("filter.keyword")}
           value={keyword}
@@ -235,14 +234,16 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
             <SelectItem value="100">{t("common.perPage100")}</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+      </PageToolbar>
+
+      <PageContent width="full" className="flex flex-col overflow-hidden p-0 sm:p-0 lg:p-0">
 
       {/* Table with virtual scroll */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
         {loading && items.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-sm text-[var(--text-tertiary)]">{t("table.loading")}</div>
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t("table.loading")}</div>
         ) : !loading && items.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-sm text-[var(--text-tertiary)]">{t("table.noData")}</div>
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t("table.noData")}</div>
         ) : (
           <div className="flex flex-col">
             <TableHeader />
@@ -256,18 +257,19 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between border-t border-[var(--color-border)] px-6 py-2.5">
-        <span className="text-xs text-[var(--text-tertiary)]">{t("detail.pageInfo").replace("{page}", String(page)).replace("{total}", String(totalPages)).replace("{totalItems}", String(total))}</span>
+      <div className="flex items-center justify-between border-t px-6 py-2.5">
+        <span className="text-xs text-muted-foreground">{t("detail.pageInfo").replace("{page}", String(page)).replace("{total}", String(totalPages)).replace("{totalItems}", String(total))}</span>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>{t("pagination.prev")}</Button>
           <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>{t("pagination.next")}</Button>
         </div>
       </div>
+      </PageContent>
 
       {/* Batch Bar */}
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-6 py-2.5 animate-slide-up">
-          <span className="text-sm font-medium text-[var(--text-primary)]">{selected.size} selected</span>
+        <div className="flex items-center gap-3 border-t bg-muted/50 px-6 py-2.5 animate-slide-up">
+          <span className="text-sm font-medium text-foreground">{selected.size} selected</span>
           <Button variant="secondary" size="sm" onClick={() => batchAction("archive")}><Archive size={14} />{t("edit.statusArchived")}</Button>
           <Button variant="destructive" size="sm" onClick={() => batchAction("delete")}><Trash2 size={14} />{t("filter.deleteSelected")}</Button>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X size={14} />{t("common.clear")}</Button>
@@ -276,29 +278,29 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
 
       {/* Detail Panel */}
       {detail && (
-        <div className="fixed inset-y-0 right-0 z-40 w-[420px] border-l border-[var(--color-border)] bg-[var(--color-surface-elevated)] shadow-modal animate-slide-in-right overflow-y-auto">
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-3">
+        <div className="fixed inset-y-0 right-0 z-40 w-[420px] overflow-y-auto border-l bg-popover text-popover-foreground shadow-lg animate-slide-in-right">
+          <div className="flex items-center justify-between border-b px-5 py-3">
             <h3 className="text-sm font-semibold">{t("detail.title")}</h3>
             <Button variant="ghost" size="sm" onClick={() => setDetail(null)}><X size={16} /></Button>
           </div>
           <div className="p-5 space-y-4">
             <div>
-              <label className="text-xs font-medium text-[var(--text-tertiary)]">{t("table.id")}</label>
+              <label className="text-xs font-medium text-muted-foreground">{t("table.id")}</label>
               <p className="font-mono text-sm">{detail.id}</p>
             </div>
             <div>
-              <label className="text-xs font-medium text-[var(--text-tertiary)]">Content</label>
+              <label className="text-xs font-medium text-muted-foreground">Content</label>
               <p className="text-sm whitespace-pre-wrap">{String(detail.content ?? detail.summary ?? detail.text ?? "")}</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium text-[var(--text-tertiary)]">{t("table.type")}</label><p className="text-sm">{String(detail.type ?? "")}</p></div>
-              <div><label className="text-xs font-medium text-[var(--text-tertiary)]">{t("table.importance")}</label><p className="text-sm">{normalizeImportance(Number(detail.importance ?? 0)).toFixed(1)}</p></div>
-              <div><label className="text-xs font-medium text-[var(--text-tertiary)]">{t("table.status")}</label><p className="text-sm">{String(detail.status ?? "")}</p></div>
-              <div><label className="text-xs font-medium text-[var(--text-tertiary)]">{t("table.created")}</label><p className="text-sm">{String(detail.created_at ?? "")}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.type")}</label><p className="text-sm">{String(detail.type ?? "")}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.importance")}</label><p className="text-sm">{normalizeImportance(Number(detail.importance ?? 0)).toFixed(1)}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.status")}</label><p className="text-sm">{String(detail.status ?? "")}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.created")}</label><p className="text-sm">{String(detail.created_at ?? "")}</p></div>
             </div>
 
             {/* Edit Form */}
-            <div className="border-t border-[var(--color-border-light)] pt-4 space-y-3">
+            <div className="space-y-3 border-t pt-4">
               <h4 className="text-sm font-semibold">{t("detail.edit")}</h4>
               <Select value={editField} onValueChange={(v) => v && setEditField(v)}>
                 <SelectTrigger><span>{EDIT_FIELD_LABELS[editField] ?? editField}</span></SelectTrigger>
@@ -310,8 +312,7 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
                 </SelectContent>
               </Select>
               {editField === "content" && (
-                <textarea
-                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm text-[var(--text-primary)] focus:border-[var(--color-accent)] focus:outline-none"
+                <Textarea
                   rows={4}
                   placeholder={t("edit.newContentPh")}
                   value={editData.content ?? ""}
@@ -345,6 +346,6 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
           </div>
         </div>
       )}
-    </div>
+    </PageFrame>
   );
 }
