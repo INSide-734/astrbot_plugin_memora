@@ -3,6 +3,8 @@ import { Search, X, ScrollText, BookOpen, StickyNote } from "lucide-react";
 import { apiGet, unwrapApiData } from "@/lib/bridge";
 import { useI18n } from "@/hooks/useI18n";
 import type { PageId } from "@/types";
+import { Button } from "@/components/ui/Button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 interface SearchBarProps {
   onNavigate: (page: PageId, state?: unknown) => void;
@@ -112,67 +114,76 @@ export function SearchBar({ onNavigate }: SearchBarProps) {
 
   return (
     <>
-      <button
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
         onClick={() => setOpen(true)}
-        className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-3 py-1.5 text-xs text-[var(--text-tertiary)] hover:border-[var(--color-border-light)] hover:text-[var(--text-secondary)] transition-colors"
+        aria-label={t("search.placeholder")}
+        className="text-muted-foreground"
       >
-        <Search size={14} />
+        <Search />
         <span className="hidden sm:inline">{t("search.placeholder")}</span>
-        <kbd className="hidden sm:inline ml-1 rounded bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)] border border-[var(--color-border)]">Ctrl+K</kbd>
-      </button>
+        <kbd className="ml-1 hidden rounded-md border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">Ctrl+K</kbd>
+      </Button>
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
-          <div className="fixed inset-0 bg-black/40 animate-fade-in" onClick={() => setOpen(false)} />
-          <div className="relative w-full max-w-xl max-h-[60vh] flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-elevated)] shadow-modal animate-scale-in mx-4">
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)]">
-              <Search size={18} className="text-[var(--text-tertiary)] shrink-0" />
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent
+          aria-label="Global search"
+          showCloseButton={false}
+          className="top-[15vh] max-h-[70vh] max-w-xl -translate-y-0 gap-0 overflow-hidden p-0"
+        >
+          <DialogTitle className="sr-only">Global search</DialogTitle>
+          <div className="flex items-center gap-3 border-b px-4 py-3">
+              <Search className="size-4 shrink-0 text-muted-foreground" />
               <input
                 ref={inputRef} type="text" value={query}
                 onChange={(e) => handleInput(e.target.value)}
                 placeholder={t("search.inputPlaceholder")}
-                className="flex-1 bg-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none"
+                className="h-8 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
-              {loading && <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-accent)] border-t-transparent shrink-0" />}
-              <button onClick={() => setOpen(false)} className="p-1 rounded hover:bg-[var(--color-surface-secondary)] shrink-0">
-                <X size={16} className="text-[var(--text-tertiary)]" />
-              </button>
-            </div>
+              {loading ? <div className="size-4 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent" /> : null}
+              <Button type="button" variant="ghost" size="icon-sm" aria-label="Close search" onClick={() => setOpen(false)}>
+                <X />
+              </Button>
+          </div>
 
-            <div className="flex-1 overflow-auto">
+          <div className="min-h-0 flex-1 overflow-auto">
               {query.length < 2 ? (
-                <div className="p-8 text-center text-sm text-[var(--text-tertiary)]">{t("search.minChars")}</div>
+                <div className="p-8 text-center text-sm text-muted-foreground">{t("search.minChars")}</div>
               ) : totalResults === 0 ? (
-                <div className="p-8 text-center text-sm text-[var(--text-tertiary)]">{t("search.noResults")}</div>
+                <div className="p-8 text-center text-sm text-muted-foreground">{t("search.noResults")}</div>
               ) : (
                 <div className="py-2">
                   {groups.filter((g) => g.results.length > 0).map((group) => (
                     <div key={group.type} className="mb-1">
-                      <div className="flex items-center gap-2 px-4 py-1.5 text-xs font-medium text-[var(--text-tertiary)]">
-                        {group.icon} {group.label} <span className="text-[var(--text-tertiary)]/60">({group.results.length})</span>
+                      <div className="flex items-center gap-2 px-4 py-1.5 text-xs font-medium text-muted-foreground">
+                        {group.icon} {group.label} <span className="opacity-60">({group.results.length})</span>
                       </div>
                       {group.results.map((item) => (
                         <button
+                          type="button"
                           key={`${group.type}-${item.id}`}
                           onClick={() => handleClick(group.type, item.id)}
-                          className="w-full text-left px-8 py-2 hover:bg-[var(--color-surface-secondary)] transition-colors"
+                          className="w-full px-8 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                         >
-                          <p className="text-sm text-[var(--text-primary)] line-clamp-1">{item.title}</p>
-                          {item.subtitle && <p className="text-xs text-[var(--text-tertiary)] mt-0.5">{item.subtitle}</p>}
+                          <p className="line-clamp-1 text-sm text-foreground">{item.title}</p>
+                          {item.subtitle ? <p className="mt-0.5 text-xs text-muted-foreground">{item.subtitle}</p> : null}
                         </button>
                       ))}
                     </div>
                   ))}
                 </div>
               )}
-            </div>
-
-            <div className="flex items-center gap-4 px-4 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--text-tertiary)]">
-              <span>{t("search.hintNav")}</span> <span>{t("search.hintOpen")}</span> <span>{t("search.hintClose")}</span>
-            </div>
           </div>
-        </div>
-      )}
+
+          <div className="flex items-center gap-4 border-t bg-muted/40 px-4 py-2 text-[10px] text-muted-foreground">
+            <span>{t("search.hintNav")}</span>
+            <span>{t("search.hintOpen")}</span>
+            <span>{t("search.hintClose")}</span>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

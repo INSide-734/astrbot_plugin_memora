@@ -73,7 +73,7 @@ export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
           { label: t("quality.dim.accuracy"), value: stats.avg_accuracy },
           { label: t("quality.overall"), value: stats.avg_overall, primary: true },
         ].map((dim) => (
-          <div key={dim.label} className={`rounded-xl border p-4 ${dim.primary ? "border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+          <div key={dim.label} className={`rounded-lg border p-4 ${dim.primary ? "border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
             <div className={`text-2xl font-bold tabular-nums ${(dim.value ?? 0) >= 0.7 ? "text-[var(--color-success)]" : (dim.value ?? 0) >= 0.5 ? "text-[var(--color-accent)]" : "text-[var(--color-danger)]"}`}>
               {dim.value != null ? (dim.value * 100).toFixed(0) + "%" : "—"}
             </div>
@@ -84,7 +84,7 @@ export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
 
       {/* Alerts */}
       {alerts.length > 0 && (
-        <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+      <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
           <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-5 py-3">
             <Activity size={16} className="text-[var(--color-accent)]" />
             <span className="text-xs font-semibold text-[var(--text-primary)]">{t("quality.alerts")}</span>
@@ -119,7 +119,7 @@ export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
 
       {/* Recent scores table */}
       {scores.length > 0 && (
-        <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+      <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
           <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-5 py-3">
             <span className="text-xs font-semibold text-[var(--text-primary)]">{t("quality.recent")}</span>
             <Button variant="secondary" size="sm" onClick={resetQuality}>

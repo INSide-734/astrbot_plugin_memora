@@ -82,7 +82,10 @@ describe("PreviewPage", () => {
       return Promise.resolve(ok({}));
     });
 
-    render(<PreviewPage showToast={showToast} />);
+    const { container } = render(<PreviewPage showToast={showToast} />);
+
+    expect(container.querySelector('[data-slot="page-frame"]')?.getAttribute("data-layout")).toBe("standard");
+    expect(screen.getByRole("heading", { level: 1, name: "Preview" })).toBeTruthy();
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/stats", {});

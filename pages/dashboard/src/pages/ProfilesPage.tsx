@@ -4,6 +4,10 @@ import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/Table";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface ProfilesPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -20,6 +24,8 @@ interface Profile {
   message_count?: number;
 }
 
+const PAGE_SIZE = 100;
+
 export function ProfilesPage({ showToast }: ProfilesPageProps) {
   const { t } = useI18n();
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -27,15 +33,24 @@ export function ProfilesPage({ showToast }: ProfilesPageProps) {
   const [detail, setDetail] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(0);
 
   const fetchProfiles = useCallback(async () => {
     setLoading(true);
     try {
-      const res = unwrapApiData(await apiRequest("profiles?limit=100"));
-      setProfiles((res.profiles ?? res.items ?? []) as Profile[]);
-      setTotal(Number(res.total ?? 0));
+      const res = unwrapApiData(await apiRequest(`profiles?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`));
+      const nextProfiles = (res.profiles ?? res.items ?? []) as Profile[];
+      const nextTotal = Number(res.total ?? nextProfiles.length);
+      if (page > 0 && nextProfiles.length === 0 && nextTotal <= page * PAGE_SIZE) {
+        setSelected(new Set());
+        setTotal(nextTotal);
+        setPage(Math.max(0, Math.ceil(nextTotal / PAGE_SIZE) - 1));
+        return;
+      }
+      setProfiles(nextProfiles);
+      setTotal(nextTotal);
     } catch (e) { showToast(String(e), true); } finally { setLoading(false); }
-  }, [showToast]);
+  }, [page, showToast]);
 
   useEffect(() => { fetchProfiles(); }, [fetchProfiles]);
 
@@ -73,91 +88,105 @@ export function ProfilesPage({ showToast }: ProfilesPageProps) {
     } catch (e) { showToast(String(e), true); }
   };
 
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const changePage = (nextPage: number) => {
+    setSelected(new Set());
+    setPage(nextPage);
+  };
+
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center border-b border-[var(--color-border)] px-6 py-3">
-        <h1 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]"><UserRound size={18} /> {t("nav.profiles")}</h1>
-      </header>
+    <PageFrame variant="dense" aria-label={t("nav.profiles")}>
+      <PageHeader title={t("nav.profiles")} icon={<UserRound />} />
 
-      <div className="flex gap-4 border-b border-[var(--color-border-light)] px-6 py-3">
-        <div className="text-center"><div className="text-lg font-bold tabular-nums">{total}</div><div className="text-2xs text-[var(--text-tertiary)]">{t("stats.profiles")}</div></div>
-        <div className="text-center"><div className="text-lg font-bold tabular-nums">{profiles.reduce((s, p) => s + (p.tag_count ?? p.tags?.length ?? 0), 0)}</div><div className="text-2xs text-[var(--text-tertiary)]">{t("table.tags")}</div></div>
+      <div className="flex min-h-12 shrink-0 items-center border-b bg-muted/30 px-4 py-2 sm:px-5 lg:px-6">
+        <MetricGrid minItemWidth="8rem" className="w-full max-w-md gap-3">
+          <div><div className="text-lg font-bold tabular-nums">{total}</div><div className="text-xs text-muted-foreground">{t("stats.profiles")}</div></div>
+          <div><div className="text-lg font-bold tabular-nums">{profiles.reduce((s, p) => s + (p.tag_count ?? p.tags?.length ?? 0), 0)}</div><div className="text-xs text-muted-foreground">{t("table.tags")}</div></div>
+        </MetricGrid>
       </div>
 
-      <div className="flex-1 overflow-auto">
-        {loading ? <p className="px-6 py-12 text-center text-sm text-[var(--text-tertiary)]">{t("common.loading")}</p>
-         : profiles.length === 0 ? <p className="px-6 py-12 text-center text-sm text-[var(--text-tertiary)]">{t("table.noData")}</p>
+      <PageContent width="full" className="p-0">
+        {loading ? <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("common.loading")}</p>
+         : profiles.length === 0 ? <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("table.noData")}</p>
          : (
-          <table className="w-full">
-            <thead className="sticky top-0 bg-[var(--color-surface)]">
-              <tr className="border-b border-[var(--color-border)] text-left text-2xs font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
-                <th className="w-10 px-4 py-2.5"><input type="checkbox" checked={selected.size === profiles.length && profiles.length > 0} onChange={toggleSelectAll} /></th>
-                <th className="px-4 py-2.5">{t("table.userId")}</th>
-                <th className="px-3 py-2.5">{t("table.name")}</th>
-                <th className="px-3 py-2.5">{t("table.tags")}</th>
-                <th className="px-3 py-2.5">Interests</th>
-                <th className="px-3 py-2.5">Last Seen</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader className="sticky top-0 bg-background">
+              <TableRow className="text-left text-xs font-medium uppercase text-muted-foreground">
+                <TableHead className="w-10 px-4"><Checkbox aria-label="Select all profiles" checked={selected.size === profiles.length && profiles.length > 0} onCheckedChange={toggleSelectAll} /></TableHead>
+                <TableHead className="px-4">{t("table.userId")}</TableHead>
+                <TableHead>{t("table.name")}</TableHead>
+                <TableHead>{t("table.tags")}</TableHead>
+                <TableHead>Interests</TableHead>
+                <TableHead>Last Seen</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {profiles.map((p) => (
-                <tr key={p.user_id} className="border-b border-[var(--color-border-light)] text-sm hover:bg-[var(--color-surface-secondary)] cursor-pointer"
+                <TableRow key={p.user_id} className="cursor-pointer text-sm"
                   onClick={() => fetchDetail(p.user_id)}>
-                  <td className="px-4 py-2.5" onClick={(ev) => ev.stopPropagation()}>
-                    <input type="checkbox" checked={selected.has(p.user_id)} onChange={() => toggleSelect(p.user_id)} />
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-[var(--text-secondary)]">{p.user_id}</td>
-                  <td className="px-3 py-2.5 font-medium">{p.display_name ?? "--"}</td>
-                  <td className="px-3 py-2.5"><Badge>{p.tag_count ?? p.tags?.length ?? 0}</Badge></td>
-                  <td className="max-w-xs px-3 py-2.5"><div className="flex flex-wrap gap-1">{(p.top_interests ?? []).slice(0, 3).map((t) => <Badge key={t} variant="secondary">{t}</Badge>)}</div></td>
-                  <td className="px-3 py-2.5 text-xs text-[var(--text-tertiary)]">{String(p.last_seen ?? "").slice(0, 10)}</td>
-                </tr>
+                  <TableCell className="px-4" onClick={(ev) => ev.stopPropagation()}>
+                    <Checkbox aria-label={`Select profile ${p.display_name ?? p.user_id}`} checked={selected.has(p.user_id)} onCheckedChange={() => toggleSelect(p.user_id)} />
+                  </TableCell>
+                  <TableCell className="px-4 font-mono text-xs text-muted-foreground">{p.user_id}</TableCell>
+                  <TableCell className="font-medium"><Button variant="link" className="h-auto p-0 font-medium" aria-label={`Open profile ${p.display_name ?? p.user_id}`} onClick={(event) => { event.stopPropagation(); fetchDetail(p.user_id); }}>{p.display_name ?? "--"}</Button></TableCell>
+                  <TableCell><Badge>{p.tag_count ?? p.tags?.length ?? 0}</Badge></TableCell>
+                  <TableCell className="max-w-xs"><div className="flex flex-wrap gap-1">{(p.top_interests ?? []).slice(0, 3).map((t) => <Badge key={t} variant="secondary">{t}</Badge>)}</div></TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{String(p.last_seen ?? "").slice(0, 10)}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
-      </div>
+      </PageContent>
+
+      <nav className="flex min-h-12 shrink-0 items-center justify-between border-t bg-background px-4 py-2 sm:px-5 lg:px-6" aria-label="Profiles pagination">
+        <Button variant="outline" size="sm" aria-label="Previous page" disabled={page === 0} onClick={() => changePage(Math.max(0, page - 1))}>Previous</Button>
+        <span className="text-sm text-muted-foreground">Page {page + 1} of {totalPages}</span>
+        <Button variant="outline" size="sm" aria-label="Next page" disabled={page + 1 >= totalPages} onClick={() => changePage(page + 1)}>Next</Button>
+      </nav>
 
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-6 py-2.5 animate-slide-up">
+        <PageToolbar className="border-b-0 border-t bg-muted/40 animate-slide-up">
           <span className="text-sm font-medium">{selected.size} selected</span>
-          <Button variant="destructive" size="sm" onClick={batchDelete}><Trash2 size={14} />Delete</Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X size={14} />{t("common.clear")}</Button>
-        </div>
+          <Button variant="destructive" size="sm" onClick={batchDelete}><Trash2 data-icon="inline-start" />Delete</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X data-icon="inline-start" />{t("common.clear")}</Button>
+        </PageToolbar>
       )}
 
-      {detail && (
-        <div className="fixed inset-y-0 right-0 z-40 w-[420px] overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-surface-elevated)] shadow-modal animate-slide-in-right">
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-3">
-            <h3 className="text-sm font-semibold">Profile: {detail.display_name ?? detail.user_id}</h3>
-            <button onClick={() => setDetail(null)} className="rounded-lg p-1 text-[var(--text-tertiary)] hover:bg-[var(--color-surface-secondary)]">{<X size={16} />}</button>
-          </div>
-          <div className="p-5 space-y-4">
+      <Sheet open={detail !== null} onOpenChange={(open) => { if (!open) setDetail(null); }}>
+        {detail && (
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>Profile: {detail.display_name ?? detail.user_id}</SheetTitle>
+            <SheetDescription>User profile details</SheetDescription>
+          </SheetHeader>
+          <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium text-[var(--text-tertiary)]">User ID</label><p className="font-mono text-sm">{detail.user_id}</p></div>
-              <div><label className="text-xs font-medium text-[var(--text-tertiary)]">Messages</label><p className="text-sm">{detail.message_count ?? "--"}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">User ID</label><p className="font-mono text-sm">{detail.user_id}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">Messages</label><p className="text-sm">{detail.message_count ?? "--"}</p></div>
             </div>
             {detail.tags && detail.tags.length > 0 && (
               <div><h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5"><Tag size={12} /> Tags</h4>
-                <div className="space-y-1.5">
+                <div className="flex flex-col gap-1.5">
                   {detail.tags.map((t, i) => (
-                    <div key={i} className="flex items-center justify-between rounded-lg bg-[var(--color-surface-secondary)] px-3 py-1.5 text-sm">
+                    <div key={i} className="flex items-center justify-between rounded-lg bg-muted px-3 py-1.5 text-sm">
                       <span>{t.name}</span>
                       <div className="flex items-center gap-2">
-                        <div className="h-1 w-16 rounded-full bg-[var(--color-border)]"><div className="h-1 rounded-full bg-[var(--color-accent)]" style={{ width: `${(t.confidence ?? 0) * 100}%` }} /></div>
-                        <span className="text-xs tabular-nums text-[var(--text-tertiary)]">{((t.confidence ?? 0) * 100).toFixed(0)}%</span>
+                        <div className="h-1 w-16 rounded-full bg-border"><div className="h-1 rounded-full bg-primary" style={{ width: `${(t.confidence ?? 0) * 100}%` }} /></div>
+                        <span className="text-xs tabular-nums text-muted-foreground">{((t.confidence ?? 0) * 100).toFixed(0)}%</span>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
             )}
-            <div className="border-t border-[var(--color-border-light)] pt-4">
-              <Button variant="destructive" size="sm" onClick={() => deleteProfile(detail.user_id)}><Trash2 size={14} />{t("detail.deleteProfile")}</Button>
-            </div>
           </div>
-        </div>
-      )}
-    </div>
+          <SheetFooter>
+            <Button variant="destructive" size="sm" onClick={() => deleteProfile(detail.user_id)}><Trash2 data-icon="inline-start" />{t("detail.deleteProfile")}</Button>
+          </SheetFooter>
+        </SheetContent>
+        )}
+      </Sheet>
+    </PageFrame>
   );
 }

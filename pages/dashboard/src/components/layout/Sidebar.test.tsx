@@ -88,7 +88,7 @@ describe("Sidebar", () => {
     const { props, container } = renderSidebar();
 
     fireEvent.click(container.querySelector(".bg-black\\/30") as HTMLElement);
-    fireEvent.click(screen.getByRole("button", { name: "" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close navigation" }));
 
     expect(props.onCloseMobile).toHaveBeenCalledTimes(2);
   });
@@ -98,5 +98,29 @@ describe("Sidebar", () => {
 
     expect(screen.getByText(/memory_created:/)).toBeTruthy();
     expect(screen.getByText(/hello world from stream/)).toBeTruthy();
+  });
+
+  it("organizes routes into five collapsible navigation groups", () => {
+    renderSidebar();
+
+    expect(screen.getByRole("button", { name: "Overview", expanded: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Memory", expanded: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Insights", expanded: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Relationships", expanded: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "System", expanded: true })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Relationships", expanded: true }));
+    expect(screen.queryByRole("button", { name: "User Profiles" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Affection" })).toBeNull();
+  });
+
+  it("collapses the desktop sidebar to labelled icon navigation", () => {
+    const { container } = renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse navigation" }));
+
+    expect(container.querySelector("aside")?.getAttribute("data-collapsed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Expand navigation" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Knowledge Graph" })).toBeTruthy();
   });
 });

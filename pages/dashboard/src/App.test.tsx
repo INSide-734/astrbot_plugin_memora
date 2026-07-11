@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/pages/GraphPage", () => ({
@@ -89,6 +89,16 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("Knowledge Page")).toBeTruthy();
+  });
+
+  it("renders a shared application header with global search and connection state", async () => {
+    const { container } = render(<App />);
+
+    expect(await screen.findByText("Graph Page")).toBeTruthy();
+    const header = container.querySelector('[data-slot="app-header"]') as HTMLElement;
+    expect(header).toBeTruthy();
+    expect(screen.getByRole("button", { name: /search/i })).toBeTruthy();
+    expect(within(header).getByText(/live|实时|offline|离线/i)).toBeTruthy();
   });
 
   it("updates the rendered page after a hashchange event", async () => {

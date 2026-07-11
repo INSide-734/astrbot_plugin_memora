@@ -81,13 +81,20 @@ describe("NotesPage", () => {
 
     render(<NotesPage showToast={showToast} />);
 
+    expect(screen.getByRole("region").getAttribute("data-layout")).toBe("standard");
+
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/notes", { limit: "100" });
     });
 
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select note List all" }));
+    expect(screen.getByText("1 selected")).toBeTruthy();
+
     fireEvent.change(screen.getByPlaceholderText("Search notes..."), {
       target: { value: "python" },
     });
+
+    expect(screen.queryByText("1 selected")).toBeNull();
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/notes/search", { query: "python" });
@@ -133,7 +140,7 @@ describe("NotesPage", () => {
     expect(await screen.findByText("Alpha note")).toBeTruthy();
     expect(screen.getByText("Beta note")).toBeTruthy();
 
-    fireEvent.click(screen.getByText("Select all"));
+    fireEvent.click(screen.getByRole("button", { name: "Select all notes" }));
 
     await waitFor(() => {
       expect(screen.getByText((content) => content.includes("2 selected"))).toBeTruthy();
@@ -186,15 +193,13 @@ describe("NotesPage", () => {
 
     render(<NotesPage showToast={showToast} />);
 
-    fireEvent.click(await screen.findByText("Gamma note"));
+    fireEvent.keyDown(await screen.findByRole("button", { name: "Open note Gamma note" }), { key: " " });
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/notes/detail", { note_id: "note-9" });
     });
 
-    const titleInput = await screen.findByPlaceholderText("New title");
-    const drawer = titleInput.closest("div")?.parentElement;
-    if (!drawer) throw new Error("expected note detail drawer");
+    const drawer = await screen.findByRole("dialog", { name: "Gamma note" });
 
     fireEvent.change(within(drawer).getByPlaceholderText("New title"), {
       target: { value: "Updated gamma note" },

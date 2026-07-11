@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { Button } from "@/components/ui/Button";
 import { Toast } from "@/components/ui/Toast";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
@@ -8,7 +9,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useToast } from "@/hooks/useToast";
 import { useI18n, toggleLanguage } from "@/hooks/useI18n";
 import { useRealtimeStream } from "@/hooks/useRealtimeStream";
-import { Menu, Radio, Loader2 } from "lucide-react";
+import { Menu, Loader2 } from "lucide-react";
 import type { PageId } from "@/types";
 
 // Lazy-load each page so its dependencies (e.g. @antv/g6 for GraphPage,
@@ -61,6 +62,7 @@ function getPageFromHash(): PageId {
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
+  const { t } = useI18n();
   const { toast, showToast } = useToast();
   const [currentPage, setCurrentPage] = useState<PageId>(getPageFromHash);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -82,7 +84,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <Sidebar
         currentPage={currentPage}
         onNavigate={navigate}
@@ -97,34 +99,43 @@ export default function App() {
         onMarkSeen={markSeen}
       />
 
-      <main className="flex-1 overflow-hidden bg-[var(--color-surface)] flex flex-col">
-        {/* Mobile header bar */}
-        <div className="md:hidden flex h-12 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-4 shrink-0">
-          <button
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        <header
+          data-slot="app-header"
+          className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-3 sm:px-4 lg:px-5"
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
             onClick={() => setMobileMenuOpen(true)}
-            className="p-1.5 rounded-lg hover:bg-[var(--color-surface)] relative"
             aria-label="Open menu"
+            className="relative md:hidden"
           >
-            <Menu size={20} />
+            <Menu />
             {unreadCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--color-danger)] text-2xs font-bold text-white animate-pop-in">
+              <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[10px] font-bold text-white animate-pop-in">
                 {unreadCount > 9 ? "9+" : unreadCount}
               </span>
             )}
-          </button>
-          <div className="flex items-center gap-1.5 ml-1">
-            <div className={`h-1.5 w-1.5 rounded-full ${sseConnected ? "bg-[var(--color-success)]" : "bg-[var(--text-tertiary)]"}`} />
-            <span className="text-2xs text-[var(--text-tertiary)]">
-              {sseConnected ? "实时" : "离线"}
+          </Button>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-foreground">{t(`nav.${currentPage}`)}</p>
+            <p className="hidden text-xs text-muted-foreground sm:block">Memora Dashboard</p>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className={`size-2 rounded-full ${sseConnected ? "bg-emerald-500" : "bg-muted-foreground"}`} />
+            <span className="hidden sm:inline">
+              {sseConnected ? t("status.realtime") : t("status.offline")}
             </span>
           </div>
           <SearchBar onNavigate={(page) => navigate(page)} />
-        </div>
+        </header>
 
-        <div className="flex-1 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-hidden">
           <ErrorBoundary>
             <AnimatePresence mode="wait">
-              <motion.div key={currentPage} {...pageTransition} className="h-full">
+              <motion.div key={currentPage} {...pageTransition} className="h-full min-h-0">
                 <Suspense fallback={<PageLoader />}>
                 {currentPage === "preview" && <PreviewPage showToast={showToast} />}
                 {currentPage === "graph" && <GraphPage showToast={showToast} />}

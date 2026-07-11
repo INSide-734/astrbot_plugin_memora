@@ -38,7 +38,7 @@ export function DelegationTab({ showToast: _showToast }: DelegationTabProps) {
     <>
       {/* Plugin status cards */}
       <div className="grid grid-cols-2 gap-4">
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <div className="flex items-center gap-2 mb-3">
             <ShieldCheck size={16} className="text-[var(--color-accent)]" />
             <span className="text-sm font-semibold text-[var(--text-primary)]">Self Learning</span>
@@ -53,7 +53,7 @@ export function DelegationTab({ showToast: _showToast }: DelegationTabProps) {
             <div className="text-xs text-[var(--text-tertiary)] mt-2">{delegation.self_learning_label}</div>
           )}
         </div>
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <div className="flex items-center gap-2 mb-3">
             <ShieldCheck size={16} className="text-[var(--color-accent)]" />
             <span className="text-sm font-semibold text-[var(--text-primary)]">Group Chat Plus</span>
@@ -71,7 +71,7 @@ export function DelegationTab({ showToast: _showToast }: DelegationTabProps) {
       </div>
 
       {/* Delegation matrix */}
-      <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+      <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
         <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-5 py-3">
           <Activity size={16} className="text-[var(--color-accent)]" />
           <span className="text-xs font-semibold text-[var(--text-primary)]">{t("delegation.matrix")}</span>

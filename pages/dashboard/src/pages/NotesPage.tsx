@@ -7,6 +7,11 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { Badge } from "@/components/ui/Badge";
+import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 
 interface NotesPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -139,26 +144,27 @@ export function NotesPage({ showToast }: NotesPageProps) {
   const getNoteId = (n: Note) => n.note_id ?? n.id ?? "";
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-3">
-        <h1 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]"><StickyNote size={18} />{t("nav.notes")}</h1>
-        <div className="flex items-center gap-2">
+    <PageFrame variant="standard" aria-label={t("nav.notes")}>
+      <PageHeader
+        title={t("nav.notes")}
+        icon={<StickyNote />}
+        actions={<div className="flex items-center gap-2">
           {notes.length > 0 && (
-            <button onClick={toggleSelectAll} className="text-xs text-[var(--text-tertiary)] hover:text-[var(--color-accent)]">
+            <Button variant="ghost" size="sm" aria-label={selected.size === notes.length ? "Deselect all notes" : "Select all notes"} onClick={toggleSelectAll}>
               {selected.size === notes.length ? t("select.deselectAll") : t("select.selectAll")}
-            </button>
+            </Button>
           )}
-          <Button size="sm" onClick={() => setShowCreate(true)}><Plus size={14} />{t("notes.newNote")}</Button>
-        </div>
-      </header>
+          <Button size="sm" onClick={() => setShowCreate(true)}><Plus data-icon="inline-start" />{t("notes.newNote")}</Button>
+        </div>}
+      />
 
-      <div className="flex items-center gap-3 border-b border-[var(--color-border-light)] px-6 py-3">
-        <div className="relative max-w-sm flex-1">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]" />
+      <PageToolbar>
+        <div className="relative min-w-0 max-w-sm flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder={t("notes.searchPh")} value={search}
-            onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+            onChange={(e) => { setSelected(new Set()); setSearch(e.target.value); }} className="pl-9" />
         </div>
-        <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "")}>
+        <Select value={statusFilter} onValueChange={(v) => { setSelected(new Set()); setStatusFilter(v ?? ""); }}>
           <SelectTrigger className="w-36"><span>{NOTE_STATUS_LABELS[statusFilter] || statusFilter || t("filter.statusAll")}</span></SelectTrigger>
           <SelectContent>
             <SelectItem value="">{t("filter.statusAll")}</SelectItem>
@@ -166,64 +172,76 @@ export function NotesPage({ showToast }: NotesPageProps) {
             <SelectItem value="archived">{t("status.archived")}</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+      </PageToolbar>
 
-      <div className="flex-1 overflow-auto">
-        {loading ? <p className="px-6 py-12 text-center text-sm text-[var(--text-tertiary)]">Loading...</p> :
-         notes.length === 0 ? <p className="px-6 py-12 text-center text-sm text-[var(--text-tertiary)]">{t("table.noData")}</p> : (
-          <div className="grid grid-cols-1 gap-4 p-6 sm:grid-cols-2 lg:grid-cols-3">
+      <PageContent>
+        {loading ? <p className="py-12 text-center text-sm text-muted-foreground">Loading...</p> :
+         notes.length === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">{t("table.noData")}</p> : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {notes.map((n) => (
               <div key={getNoteId(n)} className={cn(
-                "cursor-pointer rounded-xl border p-4 transition-shadow hover:shadow-elevated",
-                selected.has(getNoteId(n)) ? "border-[var(--color-accent)] bg-[var(--color-accent)]/5" : "border-[var(--color-border)] bg-[var(--color-surface)]"
+                "cursor-pointer rounded-lg border bg-card p-4 text-card-foreground transition-colors hover:bg-muted/30",
+                selected.has(getNoteId(n)) && "border-primary bg-primary/5"
               )}>
                 <div className="flex items-start gap-3">
-                  <input type="checkbox" className="mt-1"
+                  <Checkbox className="mt-1" aria-label={`Select note ${n.title}`}
                     checked={selected.has(getNoteId(n))}
-                    onChange={() => toggleSelect(getNoteId(n))}
+                    onCheckedChange={() => toggleSelect(getNoteId(n))}
                     onClick={(e) => e.stopPropagation()} />
-                  <div className="flex-1 min-w-0" onClick={() => fetchDetail(getNoteId(n))}>
+                  <div
+                    className="min-w-0 flex-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open note ${n.title}`}
+                    onClick={() => fetchDetail(getNoteId(n))}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      fetchDetail(getNoteId(n));
+                    }}
+                  >
                     <h3 className="text-sm font-semibold truncate">{n.title}</h3>
-                    <p className="mt-2 line-clamp-3 text-xs text-[var(--text-secondary)]">{n.content?.slice(0, 150) ?? ""}</p>
+                    <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{n.content?.slice(0, 150) ?? ""}</p>
                     <div className="mt-3 flex items-center justify-between">
                       <div className="flex flex-wrap gap-1">
                         {(n.tags ?? []).slice(0, 2).map((t) => <Badge key={t}>{t}</Badge>)}
                       </div>
-                      <div className="flex items-center gap-2 text-2xs text-[var(--text-tertiary)]">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <span>v{n.version ?? 1}</span>
                         <Badge variant={n.status === "active" ? "default" : "secondary"}>{n.status ?? "active"}</Badge>
                       </div>
                     </div>
-                    {n.updated_at && <div className="mt-2 text-2xs text-[var(--text-tertiary)]">{String(n.updated_at).slice(0, 10)}</div>}
+                    {n.updated_at && <div className="mt-2 text-xs text-muted-foreground">{String(n.updated_at).slice(0, 10)}</div>}
                   </div>
                 </div>
               </div>
             ))}
           </div>
         )}
-      </div>
+      </PageContent>
 
       {/* Batch bar */}
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-6 py-2.5 animate-slide-up">
+        <PageToolbar className="border-b-0 border-t bg-muted/40 animate-slide-up">
           <span className="text-sm font-medium">{t("batch.selected", String(selected.size))}</span>
-          <Button variant="secondary" size="sm" onClick={() => batchAction("archive")}><Archive size={14} />{t("common.archive")}</Button>
-          <Button variant="destructive" size="sm" onClick={() => batchAction("delete")}><Trash2 size={14} />{t("common.delete")}</Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X size={14} />{t("common.clear")}</Button>
-        </div>
+          <Button variant="secondary" size="sm" onClick={() => batchAction("archive")}><Archive data-icon="inline-start" />{t("common.archive")}</Button>
+          <Button variant="destructive" size="sm" onClick={() => batchAction("delete")}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X data-icon="inline-start" />{t("common.clear")}</Button>
+        </PageToolbar>
       )}
 
       {/* Detail panel */}
-      {detail && (
-        <div className="fixed inset-y-0 right-0 z-40 w-[420px] overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-surface-elevated)] shadow-modal animate-slide-in-right">
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-3">
-            <h3 className="text-sm font-semibold">{detail.title}</h3>
-            <button onClick={() => setDetail(null)} className="rounded-lg p-1 text-[var(--text-tertiary)] hover:bg-[var(--color-surface-secondary)]">{<X size={16} />}</button>
-          </div>
-          <div className="p-5 space-y-4">
+      <Sheet open={detail !== null} onOpenChange={(open) => { if (!open) setDetail(null); }}>
+        {detail && (
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>{detail.title}</SheetTitle>
+            <SheetDescription>{t("detail.updated")}: {String(detail.updated_at ?? detail.created_at ?? "")}</SheetDescription>
+          </SheetHeader>
+          <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
             <div className="flex items-center gap-2">
               <Badge variant={detail.status === "active" ? "default" : "secondary"}>{detail.status ?? "active"}</Badge>
-              <span className="text-xs text-[var(--text-tertiary)]">v{detail.version ?? 1}</span>
+              <span className="text-xs text-muted-foreground">v{detail.version ?? 1}</span>
             </div>
             {detail.tags && detail.tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
@@ -231,20 +249,11 @@ export function NotesPage({ showToast }: NotesPageProps) {
               </div>
             )}
             {detail.content && (
-              <div><label className="text-xs font-medium text-[var(--text-tertiary)]">{t("detail.content")}</label><p className="mt-1 whitespace-pre-wrap text-sm">{detail.content}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("detail.content")}</label><p className="mt-1 whitespace-pre-wrap text-sm">{detail.content}</p></div>
             )}
-            <div className="text-xs text-[var(--text-tertiary)]">{t("detail.updated")}: {String(detail.updated_at ?? detail.created_at ?? "")}</div>
-
-            {/* Action buttons */}
-            <div className="flex gap-2 border-t border-[var(--color-border-light)] pt-4">
-              {detail.status !== "archived" && (
-                <Button variant="secondary" size="sm" onClick={() => archiveNote(detail.note_id ?? detail.id ?? "")}><Archive size={14} />Archive</Button>
-              )}
-              <Button variant="destructive" size="sm" onClick={() => deleteNote(detail.note_id ?? detail.id ?? "")}><Trash2 size={14} />Delete</Button>
-            </div>
 
             {/* Edit form */}
-            <div className="border-t border-[var(--color-border-light)] pt-4 space-y-3">
+            <div className="flex flex-col gap-3 border-t pt-4">
               <h4 className="text-sm font-semibold">{t("detail.edit")}</h4>
               <Select value={editField} onValueChange={(v) => v && setEditField(v)}>
                 <SelectTrigger><span>{EDIT_NOTE_LABELS[editField] ?? editField}</span></SelectTrigger>
@@ -259,7 +268,7 @@ export function NotesPage({ showToast }: NotesPageProps) {
                   onChange={(e) => setEditData({ ...editData, title: e.target.value })} />
               )}
               {editField === "content" && (
-                <textarea className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm focus:border-[var(--color-accent)] focus:outline-none"
+                <Textarea
                   rows={6} placeholder={t("placeholder.newContent")} value={editData.content ?? ""}
                   onChange={(e) => setEditData({ ...editData, content: e.target.value })} />
               )}
@@ -267,37 +276,35 @@ export function NotesPage({ showToast }: NotesPageProps) {
                 <Input placeholder={t("placeholder.tagsComma")} value={editData.tags ?? (detail.tags ?? []).join(", ")}
                   onChange={(e) => setEditData({ ...editData, tags: e.target.value })} />
               )}
-              <div className="flex gap-2">
-                <Button size="sm" onClick={saveEdit}><Pencil size={14} />{t("common.save")}</Button>
-                <Button variant="secondary" size="sm" onClick={() => setDetail(null)}>{t("common.cancel")}</Button>
-              </div>
             </div>
           </div>
-        </div>
-      )}
+          <SheetFooter>
+            <Button variant="destructive" size="sm" onClick={() => deleteNote(detail.note_id ?? detail.id ?? "")}><Trash2 data-icon="inline-start" />Delete</Button>
+            {detail.status !== "archived" && (
+              <Button variant="secondary" size="sm" onClick={() => archiveNote(detail.note_id ?? detail.id ?? "")}><Archive data-icon="inline-start" />Archive</Button>
+            )}
+            <Button size="sm" onClick={saveEdit}><Pencil data-icon="inline-start" />{t("common.save")}</Button>
+          </SheetFooter>
+        </SheetContent>
+        )}
+      </Sheet>
 
       {/* Create modal */}
-      {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setShowCreate(false)} />
-          <div className="relative z-10 w-full max-w-lg rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-elevated)] shadow-modal animate-scale-in">
-            <div className="flex items-center justify-between border-b border-[var(--color-border-light)] px-6 py-3">
-              <h2 className="text-sm font-semibold">{t("detail.newNote")}</h2>
-              <button onClick={() => setShowCreate(false)} className="rounded-lg p-1 text-[var(--text-tertiary)] hover:bg-[var(--color-surface-secondary)]">{<X size={16} />}</button>
-            </div>
-            <div className="space-y-4 p-6">
+      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+        <DialogContent className="sm:max-w-lg" showCloseButton={false}>
+          <DialogHeader><DialogTitle>{t("detail.newNote")}</DialogTitle></DialogHeader>
+            <div className="flex flex-col gap-4">
               <Input placeholder={t("placeholder.title")} value={newNote.title} onChange={(e) => setNewNote({ ...newNote, title: e.target.value })} />
-              <textarea className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm focus:border-[var(--color-accent)] focus:outline-none resize-none" rows={6}
+              <Textarea className="resize-none" rows={6}
                 placeholder={t("placeholder.contentHint")} value={newNote.content} onChange={(e) => setNewNote({ ...newNote, content: e.target.value })} />
               <Input placeholder={t("placeholder.tagsComma")} value={newNote.tags} onChange={(e) => setNewNote({ ...newNote, tags: e.target.value })} />
-              <div className="flex justify-end gap-2">
+            </div>
+              <DialogFooter>
                 <Button variant="secondary" size="sm" onClick={() => setShowCreate(false)}>{t("common.cancel")}</Button>
                 <Button size="sm" onClick={createNote}>{t("detail.create")}</Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+              </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </PageFrame>
   );
 }

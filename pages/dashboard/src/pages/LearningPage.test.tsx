@@ -95,6 +95,11 @@ describe("LearningPage", () => {
 
     render(<LearningPage showToast={showToast} />);
 
+    const page = screen.getByRole("region", { name: /Learning|学习/ });
+    expect(page.getAttribute("data-layout")).toBe("standard");
+    expect(page.querySelector('[data-slot="page-header"]')).toBeTruthy();
+    expect(page.querySelector('[data-slot="metric-grid"]')).toBeTruthy();
+
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/groups", {});
       expect(bridge.apiGet).toHaveBeenCalledWith("page/learning/status", {});
@@ -106,15 +111,19 @@ describe("LearningPage", () => {
     expect(screen.getByText("18")).toBeTruthy();
     expect(screen.getByText("4")).toBeTruthy();
     expect(screen.getByText("Learned Parameters")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Learned Parameters" })).toBeTruthy();
     expect(screen.getByText("retrieval_weight")).toBeTruthy();
     expect(screen.getByText("0.80")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "retrieval_weight" })).toBeTruthy();
     expect(screen.getByText("Learning History")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Learning History" })).toBeTruthy();
     expect(screen.getByText("adjusted")).toBeTruthy();
     expect(screen.getByText("Raised retrieval weight")).toBeTruthy();
     expect(screen.getByText("Expression Patterns")).toBeTruthy();
     expect(screen.getByText("Greeting")).toBeTruthy();
     expect(screen.getByText("Formal greeting")).toBeTruthy();
     expect(screen.getByText("80%")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: /Greeting.*weight/i })).toBeTruthy();
     expect(screen.getByText("6")).toBeTruthy();
   });
 

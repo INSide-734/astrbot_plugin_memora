@@ -87,10 +87,15 @@ describe("JargonPage", () => {
 
     render(<JargonPage showToast={showToast} />);
 
+    expect(screen.getByRole("region").getAttribute("data-layout")).toBe("dense");
+
     expect(await screen.findByText("黑话A")).toBeTruthy();
     expect(screen.getByText("82%")).toBeTruthy();
     expect(screen.getByText("黑话A means a deployment shortcut")).toBeTruthy();
     expect(screen.getAllByText("3").length).toBeGreaterThanOrEqual(1);
+    const tabs = screen.getByRole("tablist", { name: "Jargon views" });
+    expect(tabs).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Candidates" }).getAttribute("aria-selected")).toBe("true");
 
     fireEvent.click(screen.getByTitle("Confirm"));
 
@@ -144,7 +149,27 @@ describe("JargonPage", () => {
     render(<JargonPage showToast={showToast} />);
 
     expect(await screen.findByText("No candidates found")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Confirmed" }));
+    const candidatesTab = screen.getByRole("tab", { name: "Candidates" });
+    const meaningsTab = screen.getByRole("tab", { name: "Confirmed" });
+    const candidatesPanel = screen.getByRole("tabpanel", { name: "Candidates" });
+    const meaningsPanel = document.getElementById("jargon-meanings-panel") as HTMLElement;
+
+    expect(candidatesTab.id).toBe("jargon-candidates-tab");
+    expect(meaningsTab.id).toBe("jargon-meanings-tab");
+    expect(candidatesTab.getAttribute("aria-controls")).toBe(candidatesPanel.id);
+    expect(candidatesPanel.getAttribute("aria-labelledby")).toBe(candidatesTab.id);
+    expect(meaningsPanel.getAttribute("aria-labelledby")).toBe(meaningsTab.id);
+    expect(candidatesTab.tabIndex).toBe(0);
+    expect(meaningsTab.tabIndex).toBe(-1);
+    expect(meaningsPanel.hidden).toBe(true);
+
+    candidatesTab.focus();
+    fireEvent.keyDown(candidatesTab, { key: "ArrowRight" });
+
+    expect(document.activeElement).toBe(meaningsTab);
+    expect(meaningsTab.getAttribute("aria-selected")).toBe("true");
+    expect(candidatesPanel.hidden).toBe(true);
+    expect(meaningsPanel.hidden).toBe(false);
 
     expect(await screen.findByText("灰度")).toBeTruthy();
     expect(screen.getByText("Gradual rollout")).toBeTruthy();

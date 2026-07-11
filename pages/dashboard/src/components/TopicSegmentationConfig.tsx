@@ -58,7 +58,7 @@ export function TopicSegmentationConfig({ showToast }: TopicSegmentationConfigPr
   };
 
   return (
-    <div className="rounded-xl border bg-card p-6 space-y-4">
+    <div className="flex flex-col gap-4 rounded-lg border bg-card p-6">
       {/* Header */}
       <div className="flex items-center gap-2">
         <GitBranch className="w-5 h-5 text-primary" />

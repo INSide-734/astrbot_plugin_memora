@@ -91,13 +91,20 @@ describe("AffectionPage", () => {
 
     render(<AffectionPage showToast={showToast} />);
 
+    const page = screen.getByRole("region", { name: /Affection|好感/ });
+    expect(page.getAttribute("data-layout")).toBe("standard");
+    expect(page.querySelector('[data-slot="page-header"]')).toBeTruthy();
+
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/groups", {});
       expect(bridge.apiGet).toHaveBeenCalledWith("page/affection/status", { group_id: "group-1" });
     });
 
     expect(await screen.findByText("Group has been upbeat today.")).toBeTruthy();
+    expect(page.querySelector('[data-slot="metric-grid"]')).toBeTruthy();
     expect(screen.getByText("72%")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: /intensity/i })).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: /alice.*score/i })).toBeTruthy();
     expect(screen.getByText("alice")).toBeTruthy();
     expect(screen.getByText("Friendly")).toBeTruthy();
     expect(screen.getByText("bob")).toBeTruthy();

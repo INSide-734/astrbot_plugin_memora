@@ -7,6 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { TopicSegmentationConfig } from "@/components/TopicSegmentationConfig";
 import { QualityMonitorTab } from "@/components/system/QualityMonitorTab";
 import { DelegationTab } from "@/components/system/DelegationTab";
+import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface SystemPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -355,38 +358,40 @@ export function SystemPage({ showToast }: SystemPageProps) {
   ].filter(Boolean) as Array<{ name: string; error?: string | null; message?: string; suggestion: string }>;
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-3">
-        <h1 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
-          <BarChart3 size={18} /> {t("nav.system")}
-        </h1>
-        <div className="flex gap-2">
+    <PageFrame variant="standard" aria-label={t("nav.system")}>
+      <PageHeader
+        title={t("nav.system")}
+        description={t("system.subtitle")}
+        icon={<BarChart3 className="size-4" />}
+        actions={<div className="flex flex-wrap justify-end gap-2">
           <Button variant="secondary" size="sm" onClick={() => action("system/rebuild", "Rebuild")}><Wrench size={14} />{t("system.rebuildIndex")}</Button>
           <Button variant="secondary" size="sm" onClick={() => action("system/purge", "Purge")}><Trash2 size={14} />{t("system.purgeDeleted")}</Button>
           <Button variant="secondary" size="sm" onClick={() => action("system/compact", "Compact")}><HardDrive size={14} />{t("system.compactDB")}</Button>
           <Button variant="secondary" size="sm" onClick={doCreateBackup}><Download size={14} />{t("system.createBackup")}</Button>
-          <span className="w-px bg-[var(--color-border)]" />
+          <span className="w-px bg-border" />
           <Button variant="secondary" size="sm" onClick={() => exportData("jsonl")}><FileJson size={14} />JSONL</Button>
           <Button variant="secondary" size="sm" onClick={() => exportData("markdown")}><FileText size={14} />Markdown</Button>
-        </div>
-      </header>
+        </div>}
+      />
 
-      {/* Tab bar */}
-      <div className="flex items-center gap-1 border-b border-[var(--color-border)] px-6 shrink-0">
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setActiveTab(value as typeof activeTab)}
+        className="min-h-0 flex-1 gap-0 overflow-hidden"
+      >
+      <TabsList variant="line" className="h-11 w-full shrink-0 justify-start overflow-x-auto border-b px-4 sm:px-5 lg:px-6">
         {([["overview", t("nav.system")], ["quality", t("quality.title")], ["delegation", t("delegation.title")]] as [typeof activeTab, string][]).map(([tabKey, label]) => (
-          <button
+          <TabsTrigger
             key={tabKey}
-            onClick={() => setActiveTab(tabKey)}
-            className={`px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${
-              activeTab === tabKey ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-            }`}
+            value={tabKey}
+            className="h-10 flex-none px-3 text-xs"
           >
             {label}
-          </button>
+          </TabsTrigger>
         ))}
-      </div>
+      </TabsList>
 
-      <div className="flex-1 overflow-auto p-6 space-y-6">
+      <PageContent width="full" role="tabpanel" className="space-y-6">
         {activeTab === "overview" && (<>
         {loading && !stats && <p className="text-center text-sm text-[var(--text-tertiary)]">{t("table.loading")}</p>}
 
@@ -395,7 +400,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
           {[{ label: t("system.chartTotal"), value: s.total_memories }, { label: t("system.chartActive"), value: s.active_count },
             { label: t("system.chartArchived"), value: s.archived_count }, { label: t("system.chartDeleted"), value: s.deleted_count },
             { label: t("system.chartGraphNodes"), value: s.graph_nodes }, { label: t("system.chartAtoms"), value: s.atom_count }].map((item) => (
-            <div key={item.label} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <div key={item.label} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="text-2xl font-bold tabular-nums text-[var(--text-primary)]">{item.value ?? "--"}</div>
               <div className="text-xs text-[var(--text-tertiary)] mt-1">{item.label}</div>
             </div>
@@ -403,7 +408,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
         </div>
 
         {/* Runtime observability */}
-        <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+          <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-sm font-semibold">{t("system.runtimeObservability")}</h3>
             {writeCoordinator.last_error && (
@@ -476,7 +481,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
         {/* Charts */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* Importance Distribution */}
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <h3 className="text-sm font-semibold mb-4">{t("system.importanceDist")}</h3>
             <div className="space-y-2">
               {(s.importance_distribution
@@ -498,7 +503,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
           </div>
 
           {/* Atom Types */}
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <h3 className="text-sm font-semibold mb-4">{t("system.atomTypes")}</h3>
             <div className="space-y-2">
               {(s.atom_types ? Object.entries(s.atom_types) : []).map(([key, value]) => (
@@ -519,7 +524,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
 
         {/* Sessions */}
         {s.sessions && Object.keys(s.sessions).length > 0 && (
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <h3 className="text-sm font-semibold mb-3">{t("system.activeSessions")} ({Object.keys(s.sessions).length})</h3>
             <div className="space-y-1.5">
               {Object.entries(s.sessions).slice(0, 20).map(([id, info]) => (
@@ -536,7 +541,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
         <TopicSegmentationConfig showToast={showToast} />
 
         {/* Backups */}
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           {/* Inline confirmation bar (replaces window.confirm in AstrBot webview) */}
           {confirmTarget && (
             <div className="mb-3 flex items-center justify-between rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 px-4 py-2.5">
@@ -569,12 +574,13 @@ export function SystemPage({ showToast }: SystemPageProps) {
             <div className="flex items-center gap-3">
               <span>{t("system.versionBackups")} {backups.length > 0 && `(${backups.length})`}</span>
               {backups.length > 0 && (
-                <button
+                <Button
+                  variant="link"
+                  size="xs"
                   onClick={toggleSelectAll}
-                  className="text-xs text-[var(--color-accent)] hover:underline"
                 >
                   {selectedBackups.size === backups.length ? t("select.deselectAll") : t("select.selectAll")}
-                </button>
+                </Button>
               )}
               {selectedBackups.size > 0 && (
                 <span className="text-xs text-[var(--text-tertiary)]">{t("select.selected", String(selectedBackups.size))}</span>
@@ -612,11 +618,10 @@ export function SystemPage({ showToast }: SystemPageProps) {
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <input
-                      type="checkbox"
+                    <Checkbox
+                      aria-label={`${t("select.selectAll")} ${b.name}`}
                       checked={isSelected}
-                      onChange={() => toggleSelectBackup(b.name)}
-                      className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-accent)] cursor-pointer shrink-0"
+                      onCheckedChange={() => toggleSelectBackup(b.name)}
                     />
                     <Database size={14} className="text-[var(--text-tertiary)] shrink-0" />
                     <div className="min-w-0">
@@ -658,7 +663,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
         </div>
 
         {/* Export */}
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <h3 className="text-sm font-semibold mb-4 flex items-center gap-2"><FileJson size={16} />{t("system.exportMemories")}</h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Select value={exportFormat} onValueChange={(v) => v && setExportFormat(v as "jsonl" | "markdown")}>
@@ -687,7 +692,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
         </div>
 
         {/* Dashboard 管理 (npm install / build) */}
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <h3 className="text-sm font-semibold mb-4 flex items-center gap-2"><Wrench size={16} />{t("system.dashboardManagement")}</h3>
           {npmConfirmAction && (
             <div className="mb-3 flex items-center justify-between rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 px-4 py-2.5">
@@ -763,7 +768,8 @@ export function SystemPage({ showToast }: SystemPageProps) {
 
         {/* Delegation Tab */}
         {activeTab === "delegation" && <DelegationTab showToast={showToast} />}
-      </div>
-    </div>
+      </PageContent>
+      </Tabs>
+    </PageFrame>
   );
 }

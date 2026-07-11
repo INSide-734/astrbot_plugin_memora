@@ -61,6 +61,7 @@ describe("KnowledgePage", () => {
       }
       if (path === "page/knowledge/search") {
         return Promise.resolve(ok({
+          total: 250,
           entries: [
             {
               entry_id: "kb-search",
@@ -77,8 +78,24 @@ describe("KnowledgePage", () => {
 
     render(<KnowledgePage showToast={showToast} />);
 
+    expect(screen.getByRole("region").getAttribute("data-layout")).toBe("dense");
+
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", { limit: "100" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", { limit: "100", offset: "0" });
+    });
+
+    fireEvent.click(screen.getByRole("combobox"));
+    const conceptOption = await screen.findByRole("option", { name: "Concept" });
+    fireEvent.pointerDown(conceptOption, { button: 0, pointerType: "mouse" });
+    fireEvent.pointerUp(conceptOption, { button: 0, pointerType: "mouse" });
+    fireEvent.click(conceptOption);
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", {
+        limit: "100",
+        offset: "0",
+        category: "concept",
+      });
     });
 
     fireEvent.change(screen.getByPlaceholderText("Search knowledge base..."), {
@@ -86,17 +103,101 @@ describe("KnowledgePage", () => {
     });
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge/search", { query: "python" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge/search", {
+        query: "python",
+        limit: "100",
+        category: "concept",
+      });
     });
     expect(await screen.findByText("Search python")).toBeTruthy();
+    expect(screen.getByText("Showing 1 of 250 search results")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Next page" })).toBeNull();
 
     fireEvent.change(screen.getByPlaceholderText("Search knowledge base..."), {
       target: { value: "" },
     });
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", { limit: "100" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", {
+        limit: "100",
+        offset: "0",
+        category: "concept",
+      });
     });
+  });
+
+  it("paginates list results and resets the offset when the category changes", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/knowledge") {
+        return Promise.resolve(ok({
+          total: 201,
+          entries: [{
+            entry_id: `kb-${params.offset}`,
+            title: `Page offset ${params.offset}`,
+            category: params.category || "fact",
+            confidence: 0.8,
+          }],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<KnowledgePage showToast={showToast} />);
+
+    expect(await screen.findByText("Page offset 0")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select knowledge entry Page offset 0" }));
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+
+    expect(screen.queryByText("1 selected")).toBeNull();
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", { limit: "100", offset: "100" });
+    });
+
+    fireEvent.click(screen.getByRole("combobox"));
+    const conceptOption = await screen.findByRole("option", { name: "Concept" });
+    fireEvent.pointerDown(conceptOption, { button: 0, pointerType: "mouse" });
+    fireEvent.pointerUp(conceptOption, { button: 0, pointerType: "mouse" });
+    fireEvent.click(conceptOption);
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", {
+        limit: "100",
+        offset: "0",
+        category: "concept",
+      });
+    });
+    expect(screen.getByText("Page 1 of 3")).toBeTruthy();
+  });
+
+  it("returns to the previous valid page when deletion empties the current page", async () => {
+    let offsetPageReads = 0;
+    let deleted = false;
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path !== "page/knowledge") return Promise.resolve(ok({}));
+      if (params.offset === "100") {
+        offsetPageReads += 1;
+        return Promise.resolve(ok(offsetPageReads === 1
+          ? { total: 101, entries: [{ entry_id: "kb-last", title: "Last entry", category: "fact", confidence: 0.8 }] }
+          : { total: 100, entries: [] }));
+      }
+      return Promise.resolve(ok({ total: deleted ? 100 : 101, entries: [{ entry_id: "kb-first", title: "First entry", category: "fact", confidence: 0.8 }] }));
+    });
+    bridge.apiPost.mockImplementation(() => { deleted = true; return Promise.resolve(ok({})); });
+
+    render(<KnowledgePage showToast={showToast} />);
+    expect(await screen.findByText("First entry")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Last entry")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select knowledge entry Last entry" }));
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Page 1 of 1")).toBeTruthy();
+      expect(screen.getByText("First entry")).toBeTruthy();
+    });
+    expect(screen.queryByText("1 selected")).toBeNull();
   });
 
   it("shows the batch bar and deletes selected knowledge entries", async () => {
@@ -125,13 +226,13 @@ describe("KnowledgePage", () => {
     expect(await screen.findByText("Alpha entry")).toBeTruthy();
     expect(screen.getByText("Beta entry")).toBeTruthy();
 
-    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select knowledge entry Alpha entry" }));
 
     await waitFor(() => {
       expect(screen.getByText("1 selected")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getAllByRole("checkbox")[2]);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select knowledge entry Beta entry" }));
 
     await waitFor(() => {
       expect(screen.getByText("2 selected")).toBeTruthy();
@@ -182,15 +283,13 @@ describe("KnowledgePage", () => {
 
     render(<KnowledgePage showToast={showToast} />);
 
-    fireEvent.click(await screen.findByText("Gamma entry"));
+    fireEvent.click(await screen.findByRole("button", { name: "Open knowledge entry Gamma entry" }));
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge/detail", { entry_id: "kb-9" });
     });
 
-    const titleInput = await screen.findByPlaceholderText("New title");
-    const drawer = titleInput.closest("div")?.parentElement;
-    if (!drawer) throw new Error("expected knowledge detail drawer");
+    const drawer = await screen.findByRole("dialog", { name: "Gamma entry" });
 
     fireEvent.change(within(drawer).getByPlaceholderText("New title"), {
       target: { value: "Renamed entry" },
@@ -207,9 +306,7 @@ describe("KnowledgePage", () => {
     expect(showToast).toHaveBeenCalledWith("Entry updated");
 
     fireEvent.click(await screen.findByText("Gamma entry"));
-    const reopenedTitleInput = await screen.findByPlaceholderText("New title");
-    const reopenedDrawer = reopenedTitleInput.closest("div")?.parentElement;
-    if (!reopenedDrawer) throw new Error("expected reopened knowledge detail drawer");
+    const reopenedDrawer = await screen.findByRole("dialog", { name: "Gamma entry" });
 
     fireEvent.click(within(reopenedDrawer).getByRole("button", { name: /^delete$/i }));
 

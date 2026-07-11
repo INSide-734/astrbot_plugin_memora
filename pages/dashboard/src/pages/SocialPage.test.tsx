@@ -74,6 +74,12 @@ describe("SocialPage", () => {
 
     render(<SocialPage showToast={showToast} />);
 
+    const page = screen.getByRole("region", { name: /Social|社交/ });
+    expect(page.getAttribute("data-layout")).toBe("standard");
+    expect(page.querySelector('[data-slot="page-header"]')).toBeTruthy();
+    expect(screen.getByRole("tablist", { name: /categor/i })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /all/i }).getAttribute("aria-selected")).toBe("true");
+
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", { group_id: "group-1" });
     });
@@ -83,6 +89,7 @@ describe("SocialPage", () => {
     expect(screen.getByText("friend")).toBeTruthy();
     expect(screen.getAllByText("情感").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("76%")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: /alice to bob.*strength/i })).toBeTruthy();
     expect(screen.getByText("pair")).toBeTruthy();
     expect(screen.getByText("project")).toBeTruthy();
   });
@@ -120,7 +127,9 @@ describe("SocialPage", () => {
     render(<SocialPage showToast={showToast} />);
 
     expect(await screen.findByText("No relations found")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "职业" }));
+    fireEvent.click(screen.getByRole("tab", { name: "职业" }));
+
+    expect(screen.getByRole("tab", { name: "职业" }).getAttribute("aria-selected")).toBe("true");
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {

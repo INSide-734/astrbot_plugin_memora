@@ -3,10 +3,12 @@ import { Brain, RotateCw, MessageSquareText, ArrowRightLeft } from "lucide-react
 import { useI18n } from "@/hooks/useI18n";
 import { useGroups } from "@/hooks/useGroups";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
+import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
-import { cn } from "@/lib/utils";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 interface LearningPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -61,122 +63,120 @@ export function LearningPage({ showToast }: LearningPageProps) {
   const s = stats ?? {};
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-3">
-        <h1 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]"><Brain size={18} />{t("nav.learning")}</h1>
-        <Button variant="secondary" size="sm" onClick={resetLearning}><RotateCw size={14} />{t("learning.reset")}</Button>
-      </header>
+    <PageFrame variant="standard" aria-label={t("nav.learning")}>
+      <PageHeader
+        title={t("nav.learning")}
+        icon={<Brain />}
+        actions={<Button variant="secondary" size="sm" onClick={resetLearning}><RotateCw data-icon="inline-start" />{t("learning.reset")}</Button>}
+      />
+      <PageContent className="flex flex-col gap-6">
+        {loading && !stats && <p className="text-center text-sm text-muted-foreground">Loading...</p>}
 
-      <div className="flex-1 overflow-auto p-6 space-y-6">
-        {loading && !stats && <p className="text-center text-sm text-[var(--text-tertiary)]">Loading...</p>}
-
-        {/* Stat cards */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <MetricGrid minItemWidth="10rem">
           {[{ label: t("learning.hitRate"), value: s.hit_rate, fmt: (v: number) => `${(v * 100).toFixed(1)}%` },
             { label: t("learning.avgQuality"), value: s.avg_quality, fmt: (v: number) => v.toFixed(3) },
             { label: t("learning.trials"), value: s.total_trials, fmt: (v: number) => String(v) },
             { label: t("learning.corrections"), value: s.total_corrections, fmt: (v: number) => String(v) }].map((item) => (
-            <div key={item.label} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-              <div className="text-2xl font-bold tabular-nums text-[var(--text-primary)]">
+            <Card key={item.label} size="sm">
+              <CardContent>
+              <div className="text-2xl font-bold tabular-nums text-foreground">
                 {item.value !== undefined && item.value !== null ? item.fmt(item.value) : "--"}
               </div>
-              <div className="text-xs text-[var(--text-tertiary)] mt-1">{item.label}</div>
-            </div>
+              <div className="mt-1 text-xs text-muted-foreground">{item.label}</div>
+              </CardContent>
+            </Card>
           ))}
-        </div>
+        </MetricGrid>
 
-        {/* Parameters */}
         {s.parameters && Object.keys(s.parameters).length > 0 && (
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-            <h3 className="text-sm font-semibold mb-4">{t("learning.params")}</h3>
-            <div className="space-y-2">
+          <Card>
+            <CardHeader><CardTitle><h2>{t("learning.params")}</h2></CardTitle></CardHeader>
+            <CardContent className="flex flex-col gap-3">
               {Object.entries(s.parameters).map(([key, value]) => (
-                <div key={key} className="flex items-center gap-3">
-                  <span className="w-40 text-xs text-[var(--text-secondary)] truncate">{key}</span>
-                  <div className="h-5 flex-1 rounded-md bg-[var(--color-surface-secondary)]">
-                    <div className={cn("h-5 rounded-md transition-all duration-500", Number(value) > 0.7 ? "bg-[var(--color-success)]" : Number(value) > 0.4 ? "bg-[var(--color-accent)]" : "bg-[var(--color-border)]")}
+                <div key={key} className="grid min-w-0 grid-cols-[minmax(6rem,10rem)_minmax(4rem,1fr)_3.5rem] items-center gap-3">
+                  <span className="truncate text-xs text-muted-foreground">{key}</span>
+                  <div role="progressbar" aria-label={key} aria-valuemin={0} aria-valuemax={1} aria-valuenow={Number(value)} className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-primary transition-all duration-500"
                       style={{ width: `${Math.min(100, Number(value) * 100)}%` }} />
                   </div>
-                  <span className="w-14 text-xs tabular-nums text-right text-[var(--text-tertiary)]">{Number(value).toFixed(2)}</span>
+                  <span className="text-right text-xs tabular-nums text-muted-foreground">{Number(value).toFixed(2)}</span>
                 </div>
               ))}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         )}
 
-        {/* History */}
         {s.history && s.history.length > 0 && (
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-            <h3 className="text-sm font-semibold mb-3">{t("learning.history")}</h3>
-            <div className="space-y-1">
+          <Card>
+            <CardHeader><CardTitle><h2>{t("learning.history")}</h2></CardTitle></CardHeader>
+            <CardContent className="flex flex-col gap-1">
               {s.history.map((h, i) => (
-                <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-[var(--color-surface-secondary)]">
-                  <span className="text-xs text-[var(--text-tertiary)] w-24 shrink-0">{String(h.timestamp ?? "").slice(0, 16)}</span>
+                <div key={i} className="flex min-w-0 items-center gap-3 rounded-md px-3 py-2 text-sm hover:bg-muted/50">
+                  <span className="w-24 shrink-0 text-xs text-muted-foreground">{String(h.timestamp ?? "").slice(0, 16)}</span>
                   <Badge variant="secondary">{h.action}</Badge>
-                  <span className="text-xs text-[var(--text-secondary)] truncate">{h.detail}</span>
+                  <span className="truncate text-xs text-foreground">{h.detail}</span>
                 </div>
               ))}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         )}
 
-        {/* Expression Patterns (v1.0.0+) */}
-        <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-5 py-3">
+        <Card className="gap-0 py-0">
+          <PageToolbar className="justify-between rounded-t-lg border-b bg-muted/30">
             <div className="flex items-center gap-2">
-              <MessageSquareText size={16} className="text-[var(--color-accent)]" />
-              <span className="text-xs font-semibold text-[var(--text-primary)]">{t("expression.title")}</span>
-              <span className="text-xs text-[var(--text-tertiary)]">({expressionPatterns.length} {t("expression.patterns").toLowerCase()})</span>
+              <MessageSquareText />
+              <span className="text-sm font-semibold text-foreground">{t("expression.title")}</span>
+              <span className="text-xs text-muted-foreground">({expressionPatterns.length} {t("expression.patterns").toLowerCase()})</span>
             </div>
             <Select value={groupId} onValueChange={(v) => v && setGroupId(v)} disabled={groups.length === 0}>
-              <SelectTrigger className="w-36 h-7 text-2xs"><span>{groupId || t("jargon.allGroups")}</span></SelectTrigger>
+              <SelectTrigger size="sm" className="w-36 text-xs"><span>{groupId || t("jargon.allGroups")}</span></SelectTrigger>
               <SelectContent>
+                <SelectGroup>
                 {groups.length > 0 ? groups.map((g) => (
                   <SelectItem key={g.group_id} value={g.group_id}>{g.group_id}</SelectItem>
                 )) : (
                   <SelectItem value="loading">—</SelectItem>
                 )}
+                </SelectGroup>
               </SelectContent>
             </Select>
-          </div>
+          </PageToolbar>
           {exprLoading ? (
-            <p className="px-5 py-8 text-center text-xs text-[var(--text-tertiary)]">{t("table.loading")}</p>
+            <p className="px-5 py-8 text-center text-xs text-muted-foreground">{t("table.loading")}</p>
           ) : expressionPatterns.length === 0 ? (
-            <p className="px-5 py-8 text-center text-xs text-[var(--text-tertiary)]">{t("expression.noData")}</p>
+            <p className="px-5 py-8 text-center text-xs text-muted-foreground">{t("expression.noData")}</p>
           ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="text-xs text-[var(--text-tertiary)] border-b border-[var(--color-border-light)]">
-                  <th className="py-2.5 px-5 text-left font-medium">{t("expression.situation")}</th>
-                  <th className="py-2.5 px-5 text-left font-medium">{t("expression.expression")}</th>
-                  <th className="py-2.5 px-5 text-left font-medium">{t("expression.weight")}</th>
-                  <th className="py-2.5 px-5 text-right font-medium">{t("expression.usage")}</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader><TableRow>
+                  <TableHead>{t("expression.situation")}</TableHead>
+                  <TableHead>{t("expression.expression")}</TableHead>
+                  <TableHead>{t("expression.weight")}</TableHead>
+                  <TableHead className="text-right">{t("expression.usage")}</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
                 {expressionPatterns.map((p) => (
-                  <tr key={p.pattern_id} className="border-t border-[var(--color-border-light)] hover:bg-[var(--color-surface-secondary)] transition-colors">
-                    <td className="py-2.5 px-5 text-xs font-medium text-[var(--text-primary)]">{p.situation}</td>
-                    <td className="py-2.5 px-5 text-xs text-[var(--text-secondary)] max-w-[320px] truncate">
-                      <ArrowRightLeft size={10} className="inline mr-1 text-[var(--text-tertiary)]" />
+                  <TableRow key={p.pattern_id}>
+                    <TableCell className="text-xs font-medium">{p.situation}</TableCell>
+                    <TableCell className="max-w-[20rem] truncate text-xs text-muted-foreground">
+                      <ArrowRightLeft className="mr-1 inline" />
                       {p.expression}
-                    </td>
-                    <td className="py-2.5 px-5">
+                    </TableCell>
+                    <TableCell>
                       <div className="flex items-center gap-2">
-                        <div className="h-1.5 w-16 rounded-full bg-[var(--color-border-light)] overflow-hidden">
-                          <div className="h-full rounded-full bg-[var(--color-accent)]" style={{ width: `${p.weight * 100}%` }} />
+                        <div role="progressbar" aria-label={`${p.situation} ${p.expression} ${t("expression.weight")} ${p.pattern_id}`} aria-valuemin={0} aria-valuemax={1} aria-valuenow={p.weight} className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-primary" style={{ width: `${p.weight * 100}%` }} />
                         </div>
-                        <span className="text-xs tabular-nums text-[var(--text-secondary)]">{(p.weight * 100).toFixed(0)}%</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">{(p.weight * 100).toFixed(0)}%</span>
                       </div>
-                    </td>
-                    <td className="py-2.5 px-5 text-xs tabular-nums text-right text-[var(--text-secondary)]">{p.usage_count}</td>
-                  </tr>
+                    </TableCell>
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{p.usage_count}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           )}
-        </div>
-      </div>
-    </div>
+        </Card>
+      </PageContent>
+    </PageFrame>
   );
 }

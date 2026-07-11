@@ -70,8 +70,10 @@ describe("ProfilesPage", () => {
 
     render(<ProfilesPage showToast={showToast} />);
 
+    expect(screen.getByRole("region").getAttribute("data-layout")).toBe("dense");
+
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles", { limit: "100" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles", { limit: "100", offset: "0" });
     });
 
     expect(await screen.findByText("Alice")).toBeTruthy();
@@ -84,6 +86,62 @@ describe("ProfilesPage", () => {
     expect(screen.getByText((content) => content.trim() === "5")).toBeTruthy();
     expect(screen.getByText("testing")).toBeTruthy();
     expect(screen.getByText("2026-06-28")).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "Profiles pagination" })).toBeTruthy();
+    expect(screen.queryByRole("toolbar")).toBeNull();
+  });
+
+  it("pages through profile results using backend offsets", async () => {
+    bridge.apiGet.mockImplementation((_path: string, params: Record<string, string>) => Promise.resolve(ok({
+      total: 201,
+      profiles: [{
+        user_id: `user-${params.offset}`,
+        display_name: `Offset ${params.offset}`,
+      }],
+    })));
+
+    render(<ProfilesPage showToast={showToast} />);
+
+    expect(await screen.findByText("Offset 0")).toBeTruthy();
+    expect(screen.getByText("Page 1 of 3")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select profile Offset 0" }));
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+
+    expect(screen.queryByText("1 selected")).toBeNull();
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles", { limit: "100", offset: "100" });
+    });
+    expect(await screen.findByText("Offset 100")).toBeTruthy();
+    expect(screen.getByText("Page 2 of 3")).toBeTruthy();
+  });
+
+  it("returns to the previous valid page when deletion empties the current page", async () => {
+    let offsetPageReads = 0;
+    let deleted = false;
+    bridge.apiGet.mockImplementation((_path: string, params: Record<string, string>) => {
+      if (params.offset === "100") {
+        offsetPageReads += 1;
+        return Promise.resolve(ok(offsetPageReads === 1
+          ? { total: 101, profiles: [{ user_id: "user-last", display_name: "Last profile" }] }
+          : { total: 100, profiles: [] }));
+      }
+      return Promise.resolve(ok({ total: deleted ? 100 : 101, profiles: [{ user_id: "user-first", display_name: "First profile" }] }));
+    });
+    bridge.apiPost.mockImplementation(() => { deleted = true; return Promise.resolve(ok({})); });
+
+    render(<ProfilesPage showToast={showToast} />);
+    expect(await screen.findByText("First profile")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Last profile")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select profile Last profile" }));
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Page 1 of 1")).toBeTruthy();
+      expect(screen.getByText("First profile")).toBeTruthy();
+    });
+    expect(screen.queryByText("1 selected")).toBeNull();
   });
 
   it("shows the batch bar and deletes selected profiles", async () => {
@@ -113,13 +171,13 @@ describe("ProfilesPage", () => {
     expect(await screen.findByText("Alice")).toBeTruthy();
     expect(screen.getByText("Bob")).toBeTruthy();
 
-    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select profile Alice" }));
 
     await waitFor(() => {
       expect(screen.getByText("1 selected")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getAllByRole("checkbox")[2]);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select profile Bob" }));
 
     await waitFor(() => {
       expect(screen.getByText("2 selected")).toBeTruthy();
@@ -171,16 +229,13 @@ describe("ProfilesPage", () => {
 
     render(<ProfilesPage showToast={showToast} />);
 
-    fireEvent.click(await screen.findByText("Gamma"));
+    fireEvent.click(await screen.findByRole("button", { name: "Open profile Gamma" }));
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles/detail", { user_id: "user-9" });
     });
 
-    expect(await screen.findByText("Profile: Gamma")).toBeTruthy();
-    const deleteButton = screen.getByRole("button", { name: /delete profile/i });
-    const drawer = deleteButton.closest("div")?.parentElement;
-    if (!drawer) throw new Error("expected profile detail drawer");
+    const drawer = await screen.findByRole("dialog", { name: "Profile: Gamma" });
 
     expect(within(drawer).getByText("user-9")).toBeTruthy();
     expect(within(drawer).getByText("12")).toBeTruthy();

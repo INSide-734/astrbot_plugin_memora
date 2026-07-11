@@ -3,6 +3,8 @@ import { apiGet, unwrapApiData } from "@/lib/bridge";
 import { useI18n } from "@/hooks/useI18n";
 import type { MemoryItem } from "@/types";
 import { Clock, Calendar } from "lucide-react";
+import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
+import { Button } from "@/components/ui/Button";
 
 interface TimelinePageProps {
   showToast: (message: string, isError?: boolean) => void;
@@ -80,40 +82,36 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
   ];
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)] shrink-0">
-        <div className="flex items-center gap-3">
-          <Clock size={20} className="text-[var(--color-accent)]" />
-          <h1 className="text-lg font-semibold text-[var(--text-primary)]">{t("nav.timeline")}</h1>
-        </div>
-        <div className="flex items-center gap-1 bg-[var(--color-surface-secondary)] rounded-lg p-1">
+    <PageFrame variant="standard">
+      <PageHeader title={t("nav.timeline")} icon={<Clock size={20} />} actions={
+        <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
           {zoomLabels.map(([z, label]) => (
-            <button
+            <Button
               key={z}
+              variant={zoom === z ? "default" : "ghost"}
+              size="sm"
               onClick={() => setZoom(z)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                zoom === z ? "bg-[var(--color-accent)] text-white" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-              }`}
             >
               {label}
-            </button>
+            </Button>
           ))}
-        </div>
-      </div>
+        </div>}
+      />
+      <PageContent className="flex flex-col overflow-hidden p-0 sm:p-0 lg:p-0">
 
       <div className="flex-1 overflow-auto">
         {loading ? (
-          <div className="flex items-center justify-center h-full text-[var(--text-tertiary)] animate-pulse-soft">
+          <div className="flex h-full items-center justify-center text-muted-foreground animate-pulse-soft">
             {t("timeline.loading")}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-[var(--text-tertiary)]">
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
             <Calendar size={48} />
             <p className="text-sm">{t("timeline.empty")}</p>
           </div>
         ) : (
           <div className="relative pl-8 pr-6 py-6">
-            <div className="absolute left-[23px] top-0 bottom-0 w-px bg-[var(--color-border)]" />
+            <div className="absolute bottom-0 left-[23px] top-0 w-px bg-border" />
             <div className="space-y-6">
               {filtered.map((mem) => (
                 <div key={mem.id} className="relative">
@@ -123,29 +121,29 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
                   />
                   <div
                     onClick={() => setSelectedId(selectedId === mem.id ? null : mem.id)}
-                    className={`p-4 rounded-xl border transition-all cursor-pointer ${
+                    className={`cursor-pointer rounded-lg border p-4 transition-all ${
                       selectedId === mem.id
-                        ? "border-[var(--color-accent)] bg-[var(--color-accent)]/5"
-                        : "border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:border-[var(--color-border-light)] card-hover"
+                        ? "border-primary bg-primary/5"
+                        : "border-border bg-card hover:border-foreground/20 card-hover"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[var(--text-primary)] line-clamp-2">
+                        <p className="line-clamp-2 text-sm font-medium text-foreground">
                           {getMemoryText(mem)}
                         </p>
                         {selectedId === mem.id && (
-                          <div className="mt-3 pt-3 border-t border-[var(--color-border)] space-y-2">
+                          <div className="mt-3 space-y-2 border-t pt-3">
                             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                              <span className="text-[var(--text-tertiary)]">{t("table.importance")}</span>
-                              <span className="text-[var(--text-primary)]">{(mem.importance ?? 0).toFixed(2)}</span>
-                              <span className="text-[var(--text-tertiary)]">{t("table.type")}</span>
-                              <span className="text-[var(--text-primary)]">{mem.type ?? "—"}</span>
+                              <span className="text-muted-foreground">{t("table.importance")}</span>
+                              <span className="text-foreground">{(mem.importance ?? 0).toFixed(2)}</span>
+                              <span className="text-muted-foreground">{t("table.type")}</span>
+                              <span className="text-foreground">{mem.type ?? "—"}</span>
                             </div>
                           </div>
                         )}
                       </div>
-                      <span className="text-xs text-[var(--text-tertiary)] shrink-0">
+                      <span className="shrink-0 text-xs text-muted-foreground">
                         {formatDate(parseTimestamp(mem))}
                       </span>
                     </div>
@@ -157,10 +155,11 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
         )}
       </div>
 
-      <div className="flex items-center justify-between px-6 py-2 border-t border-[var(--color-border)] text-xs text-[var(--text-tertiary)] shrink-0">
+      <div className="flex shrink-0 items-center justify-between border-t px-6 py-2 text-xs text-muted-foreground">
         <span>{t("timeline.count", String(filtered.length))}</span>
         <span>{t(`timeline.zoom${zoom.charAt(0).toUpperCase() + zoom.slice(1)}`)}</span>
       </div>
-    </div>
+      </PageContent>
+    </PageFrame>
   );
 }
