@@ -7,6 +7,7 @@ import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/la
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/card";
+import { Progress } from "@/components/ui/Progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -78,9 +79,7 @@ export function SocialPage({ showToast }: SocialPageProps) {
               <TableCell><Badge variant="secondary">{RELATION_CATEGORIES[r.category]?.label ?? r.category}</Badge></TableCell>
               <TableCell>
                 <div className="flex items-center gap-2">
-                  <div role="progressbar" aria-label={`${r.from_user} to ${r.to_user} ${relationLabel(r.relation_type)} ${t("social.strength")}`} aria-valuemin={0} aria-valuemax={1} aria-valuenow={r.strength} className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-primary" style={{ width: `${r.strength * 100}%` }} />
-                  </div>
+                  <Progress aria-label={`${r.from_user} to ${r.to_user} ${relationLabel(r.relation_type)} ${t("social.strength")}`} value={r.strength} className="h-1.5 w-20" />
                   <span className="text-xs tabular-nums text-muted-foreground">{(r.strength * 100).toFixed(0)}%</span>
                 </div>
               </TableCell>

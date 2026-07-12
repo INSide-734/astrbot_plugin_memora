@@ -5,6 +5,28 @@ export default {
   theme: {
     extend: {
       colors: {
+        background: "var(--background)",
+        foreground: "var(--foreground)",
+        card: {
+          DEFAULT: "var(--card)",
+          foreground: "var(--card-foreground)",
+        },
+        popover: {
+          DEFAULT: "var(--popover)",
+          foreground: "var(--popover-foreground)",
+        },
+        primary: {
+          DEFAULT: "var(--primary)",
+          foreground: "var(--primary-foreground)",
+        },
+        secondary: {
+          DEFAULT: "var(--secondary)",
+          foreground: "var(--secondary-foreground)",
+        },
+        muted: {
+          DEFAULT: "var(--muted)",
+          foreground: "var(--muted-foreground)",
+        },
         surface: {
           DEFAULT: "var(--background)",
           secondary: "var(--muted)",
@@ -20,11 +42,28 @@ export default {
           tertiary: "var(--muted-foreground)",
         },
         accent: {
-          DEFAULT: "var(--primary)",
+          DEFAULT: "var(--accent)",
+          foreground: "var(--accent-foreground)",
           secondary: "color-mix(in oklch, var(--primary), var(--background) 25%)",
           success: "var(--color-success)",
           warning: "var(--color-warning)",
           danger: "var(--color-danger)",
+        },
+        destructive: {
+          DEFAULT: "var(--destructive)",
+          foreground: "var(--destructive-foreground)",
+        },
+        input: "var(--input)",
+        ring: "var(--ring)",
+        sidebar: {
+          DEFAULT: "var(--sidebar)",
+          foreground: "var(--sidebar-foreground)",
+          primary: "var(--sidebar-primary)",
+          "primary-foreground": "var(--sidebar-primary-foreground)",
+          accent: "var(--sidebar-accent)",
+          "accent-foreground": "var(--sidebar-accent-foreground)",
+          border: "var(--sidebar-border)",
+          ring: "var(--sidebar-ring)",
         },
       },
       fontFamily: {

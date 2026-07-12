@@ -96,6 +96,8 @@ describe("PreviewPage", () => {
 
     expect(await screen.findByText("Quick Actions")).toBeTruthy();
     expect(screen.getByText("Storage Summary")).toBeTruthy();
+    const metrics = container.querySelector('[data-slot="preview-metrics"]');
+    expect(metrics?.className).toContain("xl:grid-cols-4");
 
     const storageCard = screen.getByText("Storage Summary").closest("div");
     if (!storageCard) throw new Error("expected storage summary card");

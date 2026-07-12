@@ -26,6 +26,10 @@ const SCREENSHOT_BASELINES = {
   "mobile-jargon.png": { width: 390, height: 844, minBytes: 10_000 },
   "system-confirmation.png": { width: 1366, height: 900, minBytes: 10_000 },
   "dark-system.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "wide-preview.png": { width: 2048, height: 1152, minBytes: 10_000 },
+  "wide-learning.png": { width: 2048, height: 1152, minBytes: 10_000 },
+  "wide-affection.png": { width: 2048, height: 1152, minBytes: 10_000 },
+  "wide-social.png": { width: 2048, height: 1152, minBytes: 10_000 },
 };
 
 const launchCandidates = [
@@ -122,6 +126,70 @@ function bridgePayload(endpoint) {
   }
   if (pathOnly === "jargon/meanings") return { meanings: [] };
   if (pathOnly === "groups") return { groups: [{ group_id: "group-smoke" }] };
+  if (pathOnly === "profiles") return { profiles: [{ user_id: "user-smoke" }], total: 1 };
+  if (pathOnly === "knowledge") return { items: [{ id: 1, title: "Smoke knowledge" }], total: 1 };
+  if (pathOnly === "notes") return { notes: [{ id: 1, title: "Smoke note" }], total: 1, active_count: 1 };
+  if (pathOnly === "learning/status") {
+    return {
+      hit_rate: 0.83,
+      avg_quality: 0.812,
+      total_trials: 18,
+      total_corrections: 4,
+      parameters: { retrieval_weight: 0.8, style_bias: 0.35 },
+      history: [
+        { timestamp: "2026-07-12T08:30:00Z", action: "adjusted", detail: "Raised retrieval weight" },
+        { timestamp: "2026-07-12T08:00:00Z", action: "reviewed", detail: "Validated style preference" },
+      ],
+    };
+  }
+  if (pathOnly === "expression/patterns") {
+    return {
+      patterns: [
+        {
+          pattern_id: 1,
+          group_id: "group-smoke",
+          situation: "Greeting",
+          expression: "Formal greeting",
+          weight: 0.8,
+          usage_count: 6,
+        },
+      ],
+    };
+  }
+  if (pathOnly === "affection/status") {
+    return {
+      group_id: "group-smoke",
+      total_affection: 48,
+      max_total_affection: 100,
+      user_count: 2,
+      current_mood: {
+        mood_type: "HAPPY",
+        intensity: 0.72,
+        description: "群聊今天的氛围很积极。",
+        is_active: true,
+      },
+      top_users: [
+        { user_id: "alice", affection_score: 42, level_name: "友好", interaction_count: 8 },
+        { user_id: "bob", affection_score: 6, level_name: "中立", interaction_count: 3 },
+      ],
+    };
+  }
+  if (pathOnly === "social/relations") {
+    return {
+      relations: [
+        {
+          from_user: "alice",
+          to_user: "bob",
+          relation_type: "friend",
+          strength: 0.76,
+          frequency: 9,
+          group_id: "group-smoke",
+          tags: ["pair", "project"],
+          category: "emotional",
+        },
+      ],
+    };
+  }
   if (pathOnly === "evaluation/datasets") {
     return {
       datasets: [
@@ -494,6 +562,19 @@ async function clickSidebarNav(page, label, expectedHash, expectedText, screensh
   return await captureBaselineScreenshot(page, screenshotPath, label);
 }
 
+async function captureRoute(page, hash, expectedText, screenshotPath, label) {
+  await page.evaluate((nextHash) => {
+    window.location.hash = nextHash;
+  }, hash);
+  await page.waitForFunction(
+    (nextHash) => window.location.hash === nextHash,
+    hash,
+    { timeout: 5_000 }
+  );
+  await waitForRootText(page, expectedText, hash);
+  return await captureBaselineScreenshot(page, screenshotPath, label);
+}
+
 async function selectIntelligenceTab(page, label, tabId, expectedText) {
   await page.getByRole("tab", { name: label }).click();
   await page.waitForFunction(
@@ -835,6 +916,33 @@ try {
   }
 
   await mobilePage.close();
+
+  const widePage = await browser.newPage({ viewport: { width: 2048, height: 1152 } });
+  collectPageErrors(widePage, errors);
+  await installBridge(widePage);
+  await widePage.goto(pathToFileURL(htmlPath).href, { waitUntil: "load" });
+  await widePage.waitForSelector("#root > *", { timeout: 10_000 });
+
+  const wideRoutes = [
+    ["#/preview", ["数据预览", "12", "快捷操作"], "wide-preview.png", "wide-preview"],
+    ["#/learning", ["自主学习", "83.0%", "retrieval_weight", "Formal greeting"], "wide-learning.png", "wide-learning"],
+    ["#/affection", ["好感度与情绪", "群聊今天的氛围很积极。", "alice"], "wide-affection.png", "wide-affection"],
+    ["#/social", ["社交关系", "alice", "bob", "pair", "project"], "wide-social.png", "wide-social"],
+  ];
+
+  for (const [hash, expectedText, filename, routeLabel] of wideRoutes) {
+    baselineResults.push(
+      await captureRoute(
+        widePage,
+        hash,
+        expectedText,
+        path.join(screenshotsDir, filename),
+        routeLabel
+      )
+    );
+  }
+
+  await widePage.close();
 
   baselineResults.push(
     await clickSidebarNav(

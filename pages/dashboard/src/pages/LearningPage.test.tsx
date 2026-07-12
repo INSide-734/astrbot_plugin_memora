@@ -124,6 +124,8 @@ describe("LearningPage", () => {
     expect(screen.getByText("Formal greeting")).toBeTruthy();
     expect(screen.getByText("80%")).toBeTruthy();
     expect(screen.getByRole("progressbar", { name: /Greeting.*weight/i })).toBeTruthy();
+    expect(document.querySelector('[data-slot="learning-details"]')?.className).toContain("xl:grid-cols-2");
+    expect(screen.getAllByRole("progressbar").every((meter) => meter.getAttribute("data-slot") === "progress")).toBe(true);
     expect(screen.getByText("6")).toBeTruthy();
   });
 

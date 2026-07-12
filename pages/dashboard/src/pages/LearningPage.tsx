@@ -7,6 +7,7 @@ import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/c
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/Progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -88,28 +89,26 @@ export function LearningPage({ showToast }: LearningPageProps) {
           ))}
         </MetricGrid>
 
-        {s.parameters && Object.keys(s.parameters).length > 0 && (
+        <div data-slot="learning-details" className="grid gap-6 xl:grid-cols-2">
+          {s.parameters && Object.keys(s.parameters).length > 0 && (
           <Card>
             <CardHeader><CardTitle><h2>{t("learning.params")}</h2></CardTitle></CardHeader>
             <CardContent className="flex flex-col gap-3">
               {Object.entries(s.parameters).map(([key, value]) => (
                 <div key={key} className="grid min-w-0 grid-cols-[minmax(6rem,10rem)_minmax(4rem,1fr)_3.5rem] items-center gap-3">
                   <span className="truncate text-xs text-muted-foreground">{key}</span>
-                  <div role="progressbar" aria-label={key} aria-valuemin={0} aria-valuemax={1} aria-valuenow={Number(value)} className="h-2 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-primary transition-all duration-500"
-                      style={{ width: `${Math.min(100, Number(value) * 100)}%` }} />
-                  </div>
+                  <Progress aria-label={key} value={Number(value)} className="h-2" />
                   <span className="text-right text-xs tabular-nums text-muted-foreground">{Number(value).toFixed(2)}</span>
                 </div>
               ))}
             </CardContent>
           </Card>
-        )}
+          )}
 
-        {s.history && s.history.length > 0 && (
+          {s.history && s.history.length > 0 && (
           <Card>
             <CardHeader><CardTitle><h2>{t("learning.history")}</h2></CardTitle></CardHeader>
-            <CardContent className="flex flex-col gap-1">
+            <CardContent className="flex max-h-80 flex-col gap-1 overflow-auto">
               {s.history.map((h, i) => (
                 <div key={i} className="flex min-w-0 items-center gap-3 rounded-md px-3 py-2 text-sm hover:bg-muted/50">
                   <span className="w-24 shrink-0 text-xs text-muted-foreground">{String(h.timestamp ?? "").slice(0, 16)}</span>
@@ -119,7 +118,8 @@ export function LearningPage({ showToast }: LearningPageProps) {
               ))}
             </CardContent>
           </Card>
-        )}
+          )}
+        </div>
 
         <Card className="gap-0 py-0">
           <PageToolbar className="justify-between rounded-t-lg border-b bg-muted/30">
@@ -163,9 +163,7 @@ export function LearningPage({ showToast }: LearningPageProps) {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <div role="progressbar" aria-label={`${p.situation} ${p.expression} ${t("expression.weight")} ${p.pattern_id}`} aria-valuemin={0} aria-valuemax={1} aria-valuenow={p.weight} className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-                          <div className="h-full rounded-full bg-primary" style={{ width: `${p.weight * 100}%` }} />
-                        </div>
+                        <Progress aria-label={`${p.situation} ${p.expression} ${t("expression.weight")} ${p.pattern_id}`} value={p.weight} className="h-1.5 w-16" />
                         <span className="text-xs tabular-nums text-muted-foreground">{(p.weight * 100).toFixed(0)}%</span>
                       </div>
                     </TableCell>
