@@ -131,6 +131,7 @@ export interface ConfigSyncError {
   kind: "transport" | "protocol";
   message: string;
   code?: ConfigErrorCode;
+  data?: ConfigErrorData;
 }
 
 export interface ConfigRemoteSnapshot {

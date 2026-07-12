@@ -25,6 +25,16 @@ interface BridgeMock {
 
 type BridgeReply<T> = ConfigApiResponse<T> | Error;
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
 const BASE_CONFIG: ConfigObject = {
   bot_language: "zh",
   recall_engine: { top_k: 8, mode: "hybrid" },
@@ -264,6 +274,45 @@ describe("useConfigSync", () => {
     expect(stateCalls()).toHaveLength(2);
   });
 
+  it("ignores an older refresh response that resolves after a newer one", async () => {
+    const olderResponse = deferred<ApiResponse>();
+    const newerResponse = deferred<ApiResponse>();
+    const olderConfig = { ...BASE_CONFIG, bot_language: "en" };
+    const newerConfig = { ...BASE_CONFIG, bot_language: "ru" };
+    let requestCount = 0;
+    stateHandler = () => {
+      requestCount += 1;
+      if (requestCount === 1) return resolveReply(stateSuccess(BASE_CONFIG));
+      if (requestCount === 2) return olderResponse.promise;
+      return newerResponse.promise;
+    };
+    const hook = renderSync();
+    await waitForLoaded(hook);
+
+    let olderRefresh!: Promise<void>;
+    let newerRefresh!: Promise<void>;
+    act(() => {
+      olderRefresh = hook.result.current.refresh();
+      newerRefresh = hook.result.current.refresh();
+    });
+    expect(stateCalls()).toHaveLength(3);
+
+    newerResponse.resolve(
+      await resolveReply(stateSuccess(newerConfig, "rev-3"))
+    );
+    await act(async () => newerRefresh);
+    expect(hook.result.current.revision).toBe("rev-3");
+
+    olderResponse.resolve(
+      await resolveReply(stateSuccess(olderConfig, "rev-2"))
+    );
+    await act(async () => olderRefresh);
+
+    expect(hook.result.current.revision).toBe("rev-3");
+    expect(hook.result.current.baseConfig).toEqual(newerConfig);
+    expect(hook.result.current.draft).toEqual(newerConfig);
+  });
+
   it("automatically accepts a new remote snapshot when the local draft is clean", async () => {
     const remote = {
       ...BASE_CONFIG,
@@ -368,6 +417,66 @@ describe("useConfigSync", () => {
     expect(hook.result.current.dirtyPaths).toEqual([]);
   });
 
+  it("suppresses repeated apply and refreshes while apply is pending", async () => {
+    vi.useFakeTimers();
+    const pendingPost = deferred<ApiResponse>();
+    queueStates(stateSuccess(BASE_CONFIG), stateUnchanged());
+    postHandler = () => pendingPost.promise;
+    const hook = renderSync({ pollIntervalMs: 50 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    let applyPromise!: Promise<void>;
+    let repeatedApplyPromise!: Promise<void>;
+    act(() => {
+      applyPromise = hook.result.current.apply();
+      repeatedApplyPromise = hook.result.current.apply();
+    });
+    await flushMicrotasks();
+    expect(hook.result.current.status).toBe("applying");
+
+    await act(async () => hook.result.current.refresh());
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+
+    expect(stateCalls()).toHaveLength(1);
+    expect(hook.result.current.status).toBe("applying");
+
+    pendingPost.resolve(await resolveReply(applySuccess()));
+    await act(async () => Promise.all([applyPromise, repeatedApplyPromise]));
+    expect(bridge.apiPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves edits made while a successful apply is pending", async () => {
+    const pendingPost = deferred<ApiResponse>();
+    postHandler = () => pendingPost.promise;
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    let applyPromise!: Promise<void>;
+    act(() => {
+      applyPromise = hook.result.current.apply();
+    });
+    await waitFor(() => expect(hook.result.current.status).toBe("applying"));
+    act(() => hook.result.current.changeField("bot_language", "en"));
+    expect(hook.result.current.status).toBe("applying");
+
+    pendingPost.resolve(await resolveReply(applySuccess()));
+    await act(async () => applyPromise);
+
+    expect(hook.result.current.baseConfig).toEqual({
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 12, mode: "hybrid" },
+    });
+    expect(hook.result.current.draft).toEqual({
+      ...BASE_CONFIG,
+      bot_language: "en",
+      recall_engine: { top_k: 12, mode: "hybrid" },
+    });
+    expect(hook.result.current.status).toBe("dirty");
+    expect(hook.result.current.dirtyPaths).toEqual(["bot_language"]);
+  });
+
   it("loads the latest full snapshot after a stale apply conflict", async () => {
     const remote = {
       ...BASE_CONFIG,
@@ -391,6 +500,7 @@ describe("useConfigSync", () => {
       kind: "protocol",
       code: "config_conflict",
       message: "stale revision",
+      data: { current_revision: "rev-2" },
     });
     expect(hook.result.current.revision).toBe("rev-1");
     expect(hook.result.current.remoteRevision).toBe("rev-2");
@@ -417,6 +527,14 @@ describe("useConfigSync", () => {
     expect(hook.result.current.status).toBe("error");
     expect(hook.result.current.fieldErrors).toEqual({
       "recall_engine.top_k": "Must be positive",
+    });
+    expect(hook.result.current.error).toEqual({
+      kind: "protocol",
+      code: "validation_failed",
+      message: "invalid config",
+      data: {
+        field_errors: { "recall_engine.top_k": "Must be positive" },
+      },
     });
     expect(hook.result.current.draft).toEqual({
       ...BASE_CONFIG,
@@ -464,6 +582,38 @@ describe("useConfigSync", () => {
     expect(hook.result.current.revision).toBe("rev-2");
     expect(hook.result.current.baseConfig).toEqual(persisted);
     expect(hook.result.current.draft).toEqual(persisted);
+  });
+
+  it("preserves pending edits after lost-response reconciliation", async () => {
+    const pendingPost = deferred<ApiResponse>();
+    const persisted = {
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 12, mode: "hybrid" },
+    };
+    queueStates(stateSuccess(BASE_CONFIG), stateSuccess(persisted, "rev-2"));
+    postHandler = () => pendingPost.promise;
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    let applyPromise!: Promise<void>;
+    act(() => {
+      applyPromise = hook.result.current.apply();
+    });
+    await waitFor(() => expect(hook.result.current.status).toBe("applying"));
+    act(() => hook.result.current.changeField("bot_language", "en"));
+    expect(hook.result.current.status).toBe("applying");
+
+    pendingPost.reject(new Error("connection reset"));
+    await act(async () => applyPromise);
+
+    expect(hook.result.current.baseConfig).toEqual(persisted);
+    expect(hook.result.current.draft).toEqual({
+      ...persisted,
+      bot_language: "en",
+    });
+    expect(hook.result.current.status).toBe("dirty");
+    expect(hook.result.current.dirtyPaths).toEqual(["bot_language"]);
   });
 
   it("does not retry a lost POST and keeps an unconfirmed draft retryable", async () => {
@@ -516,6 +666,217 @@ describe("useConfigSync", () => {
     expect(hook.result.current.status).toBe("synced");
     expect(hook.result.current.instanceId).toBe("instance-2");
     expect(hook.result.current.revision).toBe("rev-2");
+  });
+
+  it("keeps pending edits through reload and returns to dirty on confirmation", async () => {
+    vi.useFakeTimers();
+    const pendingPost = deferred<ApiResponse>();
+    queueStates(
+      stateSuccess(BASE_CONFIG),
+      stateUnchanged("rev-2", "instance-2")
+    );
+    postHandler = () => pendingPost.promise;
+    const hook = renderSync({ pollIntervalMs: 50, reloadTimeoutMs: 500 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    let applyPromise!: Promise<void>;
+    act(() => {
+      applyPromise = hook.result.current.apply();
+    });
+    await flushMicrotasks();
+    expect(hook.result.current.status).toBe("applying");
+    act(() => hook.result.current.changeField("bot_language", "en"));
+    expect(hook.result.current.status).toBe("applying");
+
+    pendingPost.resolve(
+      await resolveReply(applySuccess({ reload_scheduled: true }))
+    );
+    await act(async () => applyPromise);
+    expect(hook.result.current.status).toBe("reloading");
+    expect(hook.result.current.draft).toEqual({
+      ...BASE_CONFIG,
+      bot_language: "en",
+      recall_engine: { top_k: 12, mode: "hybrid" },
+    });
+
+    await act(async () => vi.advanceTimersByTimeAsync(50));
+
+    expect(hook.result.current.status).toBe("dirty");
+    expect(hook.result.current.instanceId).toBe("instance-2");
+    expect(hook.result.current.dirtyPaths).toEqual(["bot_language"]);
+  });
+
+  it("suppresses reload GETs while hidden and checks immediately when visible", async () => {
+    vi.useFakeTimers();
+    queueStates(
+      stateSuccess(BASE_CONFIG),
+      stateUnchanged("rev-2", "instance-2")
+    );
+    postHandler = () =>
+      resolveReply(applySuccess({ reload_scheduled: true }));
+    const hook = renderSync({ pollIntervalMs: 50, reloadTimeoutMs: 500 });
+    await flushMicrotasks();
+
+    visibility = "hidden";
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.apply());
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+
+    expect(hook.result.current.status).toBe("reloading");
+    expect(stateCalls()).toHaveLength(1);
+
+    visibility = "visible";
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await flushMicrotasks();
+
+    expect(stateCalls()).toHaveLength(2);
+    expect(hook.result.current.status).toBe("synced");
+    expect(hook.result.current.instanceId).toBe("instance-2");
+  });
+
+  it("checks the reload instance immediately on window focus", async () => {
+    vi.useFakeTimers();
+    queueStates(
+      stateSuccess(BASE_CONFIG),
+      stateUnchanged("rev-2", "instance-2")
+    );
+    postHandler = () =>
+      resolveReply(applySuccess({ reload_scheduled: true }));
+    const hook = renderSync({ pollIntervalMs: 500, reloadTimeoutMs: 1_000 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.apply());
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    await flushMicrotasks();
+
+    expect(stateCalls()).toHaveLength(2);
+    expect(hook.result.current.status).toBe("synced");
+    expect(hook.result.current.instanceId).toBe("instance-2");
+  });
+
+  it("keeps a single reload polling chain after an immediate focus check", async () => {
+    vi.useFakeTimers();
+    queueStates(stateSuccess(BASE_CONFIG), stateUnchanged("rev-2", "instance-1"));
+    postHandler = () =>
+      resolveReply(applySuccess({ reload_scheduled: true }));
+    const hook = renderSync({ pollIntervalMs: 50, reloadTimeoutMs: 500 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.apply());
+
+    await act(async () => vi.advanceTimersByTimeAsync(10));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await flushMicrotasks();
+    expect(stateCalls()).toHaveLength(2);
+
+    await act(async () => vi.advanceTimersByTimeAsync(90));
+
+    expect(hook.result.current.status).toBe("reloading");
+    expect(stateCalls()).toHaveLength(3);
+  });
+
+  it("enforces the reload deadline while a state request never settles", async () => {
+    vi.useFakeTimers();
+    let requestCount = 0;
+    stateHandler = () => {
+      requestCount += 1;
+      if (requestCount === 1) return resolveReply(stateSuccess(BASE_CONFIG));
+      return new Promise<ApiResponse>(() => undefined);
+    };
+    postHandler = () =>
+      resolveReply(applySuccess({ reload_scheduled: true }));
+    const hook = renderSync({ pollIntervalMs: 20, reloadTimeoutMs: 50 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.apply());
+
+    await act(async () => vi.advanceTimersByTimeAsync(20));
+    expect(stateCalls()).toHaveLength(2);
+    await act(async () => vi.advanceTimersByTimeAsync(30));
+
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.error?.message).toMatch(/reload.*timed out/i);
+  });
+
+  it("ignores a reload response that arrives after the hard deadline", async () => {
+    vi.useFakeTimers();
+    const lateState = deferred<ApiResponse>();
+    let requestCount = 0;
+    stateHandler = () => {
+      requestCount += 1;
+      return requestCount === 1
+        ? resolveReply(stateSuccess(BASE_CONFIG))
+        : lateState.promise;
+    };
+    postHandler = () =>
+      resolveReply(applySuccess({ reload_scheduled: true }));
+    const hook = renderSync({ pollIntervalMs: 20, reloadTimeoutMs: 50 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.apply());
+
+    await act(async () => vi.advanceTimersByTimeAsync(50));
+    expect(hook.result.current.status).toBe("error");
+
+    lateState.resolve(
+      await resolveReply(stateUnchanged("rev-2", "instance-2"))
+    );
+    await flushMicrotasks();
+
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.instanceId).toBe("instance-1");
+  });
+
+  it("rejects a reload response when wall time passes a delayed deadline timer", async () => {
+    vi.useFakeTimers();
+    const lateState = deferred<ApiResponse>();
+    let requestCount = 0;
+    stateHandler = () => {
+      requestCount += 1;
+      return requestCount === 1
+        ? resolveReply(stateSuccess(BASE_CONFIG))
+        : lateState.promise;
+    };
+    postHandler = () =>
+      resolveReply(applySuccess({ reload_scheduled: true }));
+    const hook = renderSync({ pollIntervalMs: 20, reloadTimeoutMs: 50 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.apply());
+
+    await act(async () => vi.advanceTimersByTimeAsync(20));
+    expect(stateCalls()).toHaveLength(2);
+    vi.setSystemTime(Date.now() + 100);
+
+    lateState.resolve(
+      await resolveReply(stateUnchanged("rev-2", "instance-2"))
+    );
+    await flushMicrotasks();
+
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.error?.message).toMatch(/reload.*timed out/i);
+    expect(hook.result.current.instanceId).toBe("instance-1");
+  });
+
+  it("keeps the hard reload deadline while the document is hidden", async () => {
+    vi.useFakeTimers();
+    postHandler = () =>
+      resolveReply(applySuccess({ reload_scheduled: true }));
+    const hook = renderSync({ pollIntervalMs: 100, reloadTimeoutMs: 50 });
+    await flushMicrotasks();
+
+    visibility = "hidden";
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.apply());
+    await act(async () => vi.advanceTimersByTimeAsync(50));
+
+    expect(stateCalls()).toHaveLength(1);
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.error?.message).toMatch(/reload.*timed out/i);
   });
 
   it("stops reload polling at the configured timeout", async () => {

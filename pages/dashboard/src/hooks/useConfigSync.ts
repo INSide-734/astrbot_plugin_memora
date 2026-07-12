@@ -100,11 +100,31 @@ function syncError(error: unknown): ConfigSyncError {
       kind: "protocol",
       code: error.response.code,
       message: error.response.message,
+      ...(error.response.data ? { data: error.response.data } : {}),
     };
   }
   return {
     kind: "transport",
     message: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function acknowledgeDraft(
+  persistedConfig: ConfigObject,
+  submittedDraft: ConfigObject,
+  latestDraft: ConfigObject | null
+) {
+  const baseConfig = cloneConfig(persistedConfig);
+  const pendingPaths = latestDraft
+    ? diffConfigLeafPaths(submittedDraft, latestDraft)
+    : [];
+  const draft = latestDraft
+    ? rebaseConfig(baseConfig, latestDraft, pendingPaths)
+    : cloneConfig(baseConfig);
+  return {
+    baseConfig,
+    draft,
+    hasPendingChanges: diffConfigLeafPaths(baseConfig, draft).length > 0,
   };
 }
 
@@ -114,6 +134,9 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
   const [state, setState] = useState<SyncState>(INITIAL_STATE);
   const stateRef = useRef(state);
   const mountedRef = useRef(true);
+  const reloadCheckRef = useRef<(() => void) | null>(null);
+  const applyInFlightRef = useRef(false);
+  const refreshGenerationRef = useRef(0);
   stateRef.current = state;
 
   useEffect(() => {
@@ -169,11 +192,14 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
       return {
         ...previous,
         draft,
-        status: previous.remote
-          ? "conflict"
-          : dirtyPaths.length > 0
-            ? "dirty"
-            : "synced",
+        status:
+          previous.status === "applying" || previous.status === "reloading"
+            ? previous.status
+            : previous.remote
+              ? "conflict"
+              : dirtyPaths.length > 0
+                ? "dirty"
+                : "synced",
         error: null,
         fieldErrors,
       };
@@ -190,7 +216,15 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
 
   const refresh = useCallback(async () => {
     const current = stateRef.current;
-    if (!current.revision) return;
+    if (
+      !current.revision ||
+      applyInFlightRef.current ||
+      current.status === "applying" ||
+      current.status === "reloading"
+    ) {
+      return;
+    }
+    const generation = ++refreshGenerationRef.current;
 
     try {
       const response = await apiRequest(
@@ -198,7 +232,12 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         { retries: 0 }
       );
       const stateData = successData<ConfigStateData>(response);
-      if (!mountedRef.current) return;
+      if (
+        !mountedRef.current ||
+        generation !== refreshGenerationRef.current
+      ) {
+        return;
+      }
 
       setState((previous) => {
         const localPaths =
@@ -244,7 +283,12 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         };
       });
     } catch (error) {
-      if (!mountedRef.current) return;
+      if (
+        !mountedRef.current ||
+        generation !== refreshGenerationRef.current
+      ) {
+        return;
+      }
       setState((previous) => ({
         ...previous,
         status: error instanceof ConfigProtocolError ? "error" : "offline",
@@ -300,11 +344,22 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
 
   const apply = useCallback(async () => {
     const current = stateRef.current;
-    if (!current.baseConfig || !current.draft || !current.revision) return;
+    if (
+      applyInFlightRef.current ||
+      current.status === "applying" ||
+      current.status === "reloading" ||
+      !current.baseConfig ||
+      !current.draft ||
+      !current.revision
+    ) {
+      return;
+    }
     const paths = diffConfigLeafPaths(current.baseConfig, current.draft);
     if (paths.length === 0) return;
 
     const savedDraft = cloneConfig(current.draft);
+    applyInFlightRef.current = true;
+    refreshGenerationRef.current += 1;
     setState((previous) => ({
       ...previous,
       status: "applying",
@@ -324,18 +379,29 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
       const applyData = successData<ConfigApplyData>(response);
       if (!mountedRef.current) return;
 
-      setState((previous) => ({
-        ...previous,
-        baseConfig: cloneConfig(savedDraft),
-        draft: cloneConfig(savedDraft),
-        revision: applyData.revision,
-        instanceId: applyData.instance_id,
-        remote: null,
-        remoteRevisionHint: null,
-        fieldErrors: {},
-        status: applyData.reload_scheduled ? "reloading" : "synced",
-        error: null,
-      }));
+      setState((previous) => {
+        const acknowledged = acknowledgeDraft(
+          savedDraft,
+          savedDraft,
+          previous.draft
+        );
+        return {
+          ...previous,
+          baseConfig: acknowledged.baseConfig,
+          draft: acknowledged.draft,
+          revision: applyData.revision,
+          instanceId: applyData.instance_id,
+          remote: null,
+          remoteRevisionHint: null,
+          fieldErrors: {},
+          status: applyData.reload_scheduled
+            ? "reloading"
+            : acknowledged.hasPendingChanges
+              ? "dirty"
+              : "synced",
+          error: null,
+        };
+      });
     } catch (error) {
       if (!mountedRef.current) return;
 
@@ -400,18 +466,25 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
             )
           );
           if (persisted) {
-            setState((previous) => ({
-              ...previous,
-              baseConfig: cloneConfig(stateData.config),
-              draft: cloneConfig(stateData.config),
-              revision: stateData.revision,
-              instanceId: stateData.instance_id,
-              remote: null,
-              remoteRevisionHint: null,
-              fieldErrors: {},
-              status: "synced",
-              error: null,
-            }));
+            setState((previous) => {
+              const acknowledged = acknowledgeDraft(
+                stateData.config,
+                savedDraft,
+                previous.draft
+              );
+              return {
+                ...previous,
+                baseConfig: acknowledged.baseConfig,
+                draft: acknowledged.draft,
+                revision: stateData.revision,
+                instanceId: stateData.instance_id,
+                remote: null,
+                remoteRevisionHint: null,
+                fieldErrors: {},
+                status: acknowledged.hasPendingChanges ? "dirty" : "synced",
+                error: null,
+              };
+            });
             return;
           }
 
@@ -437,26 +510,31 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         status: "offline",
         error: syncError(error),
       }));
+    } finally {
+      applyInFlightRef.current = false;
     }
   }, []);
 
   useEffect(() => {
-    const refreshIfVisible = () => {
+    const refreshIfVisible = (includeReload: boolean) => {
       const current = stateRef.current;
-      if (
-        document.visibilityState === "visible" &&
-        current.revision &&
-        current.status !== "loading" &&
-        current.status !== "reloading"
-      ) {
+      if (document.visibilityState !== "visible" || !current.revision) return;
+      if (current.status === "reloading") {
+        if (includeReload) reloadCheckRef.current?.();
+        return;
+      }
+      if (current.status !== "loading" && current.status !== "applying") {
         void refresh();
       }
     };
-    const onFocus = () => refreshIfVisible();
+    const onFocus = () => refreshIfVisible(true);
     const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") refreshIfVisible();
+      if (document.visibilityState === "visible") refreshIfVisible(true);
     };
-    const interval = window.setInterval(refreshIfVisible, pollIntervalMs);
+    const interval = window.setInterval(
+      () => refreshIfVisible(false),
+      pollIntervalMs
+    );
 
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -477,64 +555,113 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
     }
 
     let active = true;
+    let expired = false;
+    let checking = false;
     let timer: number | null = null;
+    let deadlineTimer: number | null = null;
     const revision = state.revision;
     const previousInstanceId = state.instanceId;
     const startedAt = Date.now();
 
     const failOnTimeout = () => {
-      if (!active || !mountedRef.current) return;
+      if (!active || expired || !mountedRef.current) return;
+      expired = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
       setState((previous) => ({
-        ...previous,
-        status: "error",
-        error: {
-          kind: "protocol",
-          message: "Configuration reload timed out",
-        },
+        ...(previous.status === "reloading"
+          ? {
+              ...previous,
+              status: "error" as const,
+              error: {
+                kind: "protocol" as const,
+                message: "Configuration reload timed out",
+              },
+            }
+          : previous),
       }));
     };
 
     const scheduleNext = () => {
-      if (!active) return;
-      timer = window.setTimeout(checkInstance, pollIntervalMs);
+      if (!active || expired) return;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        void checkInstance();
+      }, pollIntervalMs);
     };
 
     const checkInstance = async () => {
-      if (!active) return;
+      if (!active || expired || checking) return;
       if (Date.now() - startedAt >= reloadTimeoutMs) {
         failOnTimeout();
         return;
       }
+      if (document.visibilityState !== "visible") {
+        scheduleNext();
+        return;
+      }
 
+      checking = true;
+      let terminal = false;
       try {
         const response = await apiRequest(
           `config/state?revision=${encodeURIComponent(revision)}`,
           { retries: 0 }
         );
+        if (!active || expired || !mountedRef.current) return;
+        if (Date.now() - startedAt >= reloadTimeoutMs) {
+          failOnTimeout();
+          return;
+        }
         const stateData = successData<ConfigStateData>(response);
-        if (!active || !mountedRef.current) return;
 
         if (stateData.instance_id !== previousInstanceId) {
-          setState((previous) => ({
-            ...previous,
-            baseConfig: stateData.changed
-              ? cloneConfig(stateData.config)
-              : previous.baseConfig,
-            draft: stateData.changed
-              ? cloneConfig(stateData.config)
-              : previous.draft,
-            revision: stateData.revision,
-            instanceId: stateData.instance_id,
-            remote: null,
-            remoteRevisionHint: null,
-            fieldErrors: {},
-            status: "synced",
-            error: null,
-          }));
+          terminal = true;
+          setState((previous) => {
+            const acknowledged =
+              stateData.changed && previous.baseConfig
+                ? acknowledgeDraft(
+                    stateData.config,
+                    previous.baseConfig,
+                    previous.draft
+                  )
+                : {
+                    baseConfig: previous.baseConfig,
+                    draft: previous.draft,
+                    hasPendingChanges:
+                      previous.baseConfig && previous.draft
+                        ? diffConfigLeafPaths(
+                            previous.baseConfig,
+                            previous.draft
+                          ).length > 0
+                        : false,
+                  };
+            return {
+              ...previous,
+              baseConfig: acknowledged.baseConfig,
+              draft: acknowledged.draft,
+              revision: stateData.revision,
+              instanceId: stateData.instance_id,
+              remote: null,
+              remoteRevisionHint: null,
+              fieldErrors: {},
+              status: acknowledged.hasPendingChanges ? "dirty" : "synced",
+              error: null,
+            };
+          });
           return;
         }
       } catch (error) {
+        if (!active || expired || !mountedRef.current) return;
+        if (Date.now() - startedAt >= reloadTimeoutMs) {
+          failOnTimeout();
+          return;
+        }
         if (error instanceof ConfigProtocolError) {
+          terminal = true;
           setState((previous) => ({
             ...previous,
             status: "error",
@@ -543,8 +670,11 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
           return;
         }
         // A plugin process can briefly disappear while AstrBot reloads it.
+      } finally {
+        checking = false;
       }
 
+      if (terminal || !active || expired) return;
       if (Date.now() - startedAt >= reloadTimeoutMs) {
         failOnTimeout();
       } else {
@@ -552,10 +682,17 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
       }
     };
 
+    const requestCheck = () => {
+      void checkInstance();
+    };
+    reloadCheckRef.current = requestCheck;
+    deadlineTimer = window.setTimeout(failOnTimeout, reloadTimeoutMs);
     scheduleNext();
     return () => {
       active = false;
       if (timer !== null) window.clearTimeout(timer);
+      if (deadlineTimer !== null) window.clearTimeout(deadlineTimer);
+      if (reloadCheckRef.current === requestCheck) reloadCheckRef.current = null;
     };
   }, [
     pollIntervalMs,
