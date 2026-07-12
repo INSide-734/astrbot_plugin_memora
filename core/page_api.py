@@ -12,6 +12,7 @@ from astrbot.api import logger
 
 from .api.affection_api import AffectionApiMixin
 from .api.backup_api import BackupApiMixin
+from .api.config_api import ConfigApiMixin
 from .api.delegation_api import DelegationApiMixin
 from .api.diagnostics_api import DiagnosticsApiMixin
 from .api.evaluation_api import EvaluationApiMixin
@@ -57,6 +58,7 @@ class PluginPageApi(
     NoteApiMixin,
     LearningApiMixin,
     MaintenanceApiMixin,
+    ConfigApiMixin,
     TopicSegmentationApiMixin,
     QualityApiMixin,
     RecallTraceApiMixin,
@@ -533,6 +535,26 @@ class PluginPageApi(
             "页面接口：批量删除备份",
         )
 
+        # ---- 通用配置 ----
+        register(
+            f"{PAGE_API_PREFIX}/config/schema",
+            self.get_config_schema,
+            ["GET"],
+            "页面接口：配置 Schema",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/config/state",
+            self.get_config_state,
+            ["GET"],
+            "页面接口：配置状态",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/config/apply",
+            self.apply_config,
+            ["POST"],
+            "页面接口：应用配置",
+        )
+
         # ---- 话题分割配置 ----
         register(
             f"{PAGE_API_PREFIX}/config/topic-segmentation",
@@ -735,6 +757,9 @@ class PluginPageApi(
             "requires_ready": not (
                 path.endswith("/delegation/status")
                 or path.endswith("/delegation/provided-services")
+                or path.endswith("/config/schema")
+                or path.endswith("/config/state")
+                or path.endswith("/config/apply")
             ),
             "write_guard": risk in {
                 "write",

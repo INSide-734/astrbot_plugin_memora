@@ -6,6 +6,7 @@
 import asyncio
 import os
 import secrets
+import uuid
 from typing import Any
 
 from astrbot.api import logger
@@ -45,6 +46,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     def __init__(self, context: Context, config: dict[str, Any]):
         super().__init__(context)
         self.context = context
+        self.instance_id = uuid.uuid4().hex
 
         # 获取插件数据目录
         data_dir = str(StarTools.get_data_dir())
@@ -122,6 +124,44 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task
+
+    def supports_plugin_reload(self) -> bool:
+        """Return whether this AstrBot runtime exposes plugin reload support."""
+        star_manager = getattr(self.context, "_star_manager", None)
+        return callable(getattr(star_manager, "reload", None))
+
+    def schedule_plugin_reload(self) -> bool:
+        """Schedule a delayed untracked reload so the HTTP response can finish."""
+        star_manager = getattr(self.context, "_star_manager", None)
+        reload_plugin = getattr(star_manager, "reload", None)
+        if not callable(reload_plugin):
+            return False
+
+        async def _delayed_reload() -> None:
+            await asyncio.sleep(0.5)
+            result = await reload_plugin("astrbot_plugin_memora")
+            failed = result is False
+            if isinstance(result, tuple):
+                failed = not result or not bool(result[0])
+            if failed:
+                logger.warning("配置已保存，但插件重载返回失败: %s", result)
+
+        task = asyncio.create_task(_delayed_reload())
+        task.add_done_callback(self._consume_reload_task_result)
+        return True
+
+    @staticmethod
+    def _consume_reload_task_result(task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.debug("延迟插件重载任务已取消")
+        except Exception as exc:
+            logger.error(
+                "延迟插件重载失败: %s",
+                exc,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
 
     async def _initialize_plugin(self):
         """初始化插件"""
