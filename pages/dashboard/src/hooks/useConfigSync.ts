@@ -139,50 +139,67 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
   const reloadCheckRef = useRef<(() => void) | null>(null);
   const applyInFlightRef = useRef(false);
   const refreshGenerationRef = useRef(0);
+  const initialLoadGenerationRef = useRef(0);
   stateRef.current = state;
 
-  useEffect(() => {
-    let active = true;
-    mountedRef.current = true;
+  const loadInitial = useCallback(async () => {
+    const generation = ++initialLoadGenerationRef.current;
+    setState((previous) => ({
+      ...previous,
+      status: "loading",
+      error: null,
+    }));
 
-    const load = async () => {
-      try {
-        const [schemaResponse, stateResponse] = await Promise.all([
-          apiRequest("config/schema", { retries: 0 }),
-          apiRequest("config/state", { retries: 0 }),
-        ]);
-        const schemaData = successData<ConfigSchemaData>(schemaResponse);
-        const stateData = successData<ConfigStateData>(stateResponse);
-        if (!stateData.changed || !active) return;
-
-        setState({
-          schemaData,
-          baseConfig: cloneConfig(stateData.config),
-          draft: cloneConfig(stateData.config),
-          revision: stateData.revision,
-          instanceId: stateData.instance_id,
-          remote: null,
-          remoteRevisionHint: null,
-          fieldErrors: {},
-          status: "synced",
-          error: null,
-        });
-      } catch (error) {
-        if (!active) return;
-        setState((previous) => ({
-          ...previous,
-          status: error instanceof ConfigProtocolError ? "error" : "offline",
-          error: syncError(error),
-        }));
+    try {
+      const [schemaResponse, stateResponse] = await Promise.all([
+        apiRequest("config/schema", { retries: 0 }),
+        apiRequest("config/state", { retries: 0 }),
+      ]);
+      const schemaData = successData<ConfigSchemaData>(schemaResponse);
+      const stateData = successData<ConfigStateData>(stateResponse);
+      if (
+        !stateData.changed ||
+        !mountedRef.current ||
+        generation !== initialLoadGenerationRef.current
+      ) {
+        return;
       }
-    };
 
-    void load();
-    return () => {
-      active = false;
-      mountedRef.current = false;
-    };
+      setState({
+        schemaData,
+        baseConfig: cloneConfig(stateData.config),
+        draft: cloneConfig(stateData.config),
+        revision: stateData.revision,
+        instanceId: stateData.instance_id,
+        remote: null,
+        remoteRevisionHint: null,
+        fieldErrors: {},
+        status: "synced",
+        error: null,
+      });
+    } catch (error) {
+      if (
+        !mountedRef.current ||
+        generation !== initialLoadGenerationRef.current
+      ) {
+        return;
+      }
+      setState((previous) => ({
+        ...previous,
+        status: error instanceof ConfigProtocolError ? "error" : "offline",
+        error: syncError(error),
+      }));
+    }
   }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void loadInitial();
+    return () => {
+      mountedRef.current = false;
+      initialLoadGenerationRef.current += 1;
+    };
+  }, [loadInitial]);
 
   const changeField = useCallback((path: string, value: ConfigValue) => {
     setState((previous) => {
@@ -218,8 +235,18 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
 
   const refresh = useCallback(async () => {
     const current = stateRef.current;
+    if (!current.revision) {
+      if (
+        applyInFlightRef.current ||
+        current.status === "applying" ||
+        current.status === "reloading"
+      ) {
+        return;
+      }
+      await loadInitial();
+      return;
+    }
     if (
-      !current.revision ||
       applyInFlightRef.current ||
       current.status === "applying" ||
       current.status === "reloading"
@@ -297,7 +324,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         error: syncError(error),
       }));
     }
-  }, []);
+  }, [loadInitial]);
 
   const acceptRemote = useCallback(() => {
     setState((previous) => {

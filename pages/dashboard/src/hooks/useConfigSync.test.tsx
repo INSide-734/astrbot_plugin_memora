@@ -986,4 +986,27 @@ describe("useConfigSync", () => {
       message: "bridge disconnected",
     });
   });
+
+  it("retries the full schema and state load after an initial transport failure", async () => {
+    let schemaAttempts = 0;
+    schemaHandler = () => {
+      schemaAttempts += 1;
+      return schemaAttempts === 1
+        ? Promise.reject(new Error("bridge disconnected"))
+        : resolveReply(schemaSuccess());
+    };
+    const hook = renderSync();
+    await waitForLoaded(hook, "offline");
+
+    expect(hook.result.current.schemaData).toBeNull();
+    expect(hook.result.current.revision).toBeNull();
+
+    await act(async () => hook.result.current.refresh());
+
+    expect(hook.result.current.status).toBe("synced");
+    expect(hook.result.current.schemaData).toEqual(schemaSuccess().data);
+    expect(hook.result.current.draft).toEqual(BASE_CONFIG);
+    expect(bridge.apiGet).toHaveBeenCalledWith("page/config/schema", {});
+    expect(stateCalls()).toHaveLength(2);
+  });
 });
