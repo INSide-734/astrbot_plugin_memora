@@ -1,74 +1,87 @@
-"""
-配置管理器
-集中管理插件配置的加载、验证和访问
+"""集中管理 AstrBot 注入配置的验证、访问与原子更新。"""
 
-三层配置加载：AstrBot 配置 → 持久化 JSON → Pydantic 默认值
-"""
+from __future__ import annotations
 
+import asyncio
+import copy
+import hashlib
 import json
-import os
+from collections.abc import Mapping, MutableMapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
+from pydantic import ValidationError as PydanticValidationError
 
 from .config_validator import (
     MemoraConfig,
     get_default_config,
     merge_config_with_defaults,
-    validate_runtime_config_changes,
-    validate_config,
 )
 from .exceptions import ConfigurationError
 
 _SENTINEL = object()
 
 
-class ConfigManager:
-    """配置管理器
+@dataclass(frozen=True, slots=True)
+class ConfigApplyResult:
+    """成功应用配置后的稳定结果。"""
 
-    实现三层配置合并：
-    - 第 1 层：合并 AstrBot 用户配置与 Pydantic 默认值
-    - 第 2 层：加载持久化 JSON 覆盖（由 Dashboard 写入）
-    - 第 3 层：使用 Pydantic 校验最终合并结果
-    """
+    revision: str
+    changed_paths: tuple[str, ...]
+
+
+class ConfigConflictError(ConfigurationError):
+    """更新所基于的配置版本已过期。"""
+
+    def __init__(self, expected_revision: str, current_revision: str):
+        self.expected_revision = expected_revision
+        self.current_revision = current_revision
+        super().__init__("配置已被其他请求更新，请刷新后重试")
+
+
+class ConfigValidationError(ConfigurationError):
+    """配置字段或候选配置未通过验证。"""
+
+    def __init__(self, field_errors: Mapping[str, str]):
+        self.field_errors = dict(field_errors)
+        super().__init__("配置验证失败")
+
+
+class ConfigPersistenceError(ConfigurationError):
+    """AstrBotConfig 原子保存失败。"""
+
+    def __init__(self, message: str = "配置持久化失败"):
+        super().__init__(message)
+
+
+class ConfigManager:
+    """以 AstrBot 注入的可变映射作为唯一配置来源。"""
 
     def __init__(
         self,
-        user_config: dict[str, Any] | None = None,
-        persisted_config_path: str | None = None,
-    ):
-        """
-        初始化配置管理器
-
-        参数：
-            user_config: 用户提供的配置字典（AstrBot 侧）。
-            persisted_config_path: 持久化配置 JSON 文件路径（Dashboard 覆盖）。
-        """
-        self._raw_config = user_config or {}
-        self._persisted_config_path = persisted_config_path
+        user_config: MutableMapping[str, Any] | None = None,
+    ) -> None:
+        self._source_config = user_config if user_config is not None else {}
         self._config: dict[str, Any] = {}
-        self._config_obj = None
+        self._config_obj: MemoraConfig | None = None
+        self._revision = ""
         self._validation_errors: list[dict[str, Any]] = []
+        self._apply_lock = asyncio.Lock()
+        self._schema_leaf_paths = self._load_schema_leaf_paths()
         self._load_config()
 
     def _load_config(self) -> None:
-        """加载并验证配置（三层合并）"""
+        """合并模型默认值并校验 AstrBot 当前配置。"""
         try:
-            # 第 1 层：合并 AstrBot 用户配置和默认值
-            merged_config = merge_config_with_defaults(self._raw_config)
-
-            # 第 2 层：加载持久化 JSON 覆盖（Dashboard 写入）
-            if self._persisted_config_path:
-                persisted = self._load_persisted_config()
-                if persisted:
-                    merged_config = self._deep_merge(merged_config, persisted)
-                    logger.info(f"已加载持久化配置: {self._persisted_config_path}")
-
-            # 第 3 层：校验最终合并配置
+            source_snapshot = copy.deepcopy(dict(self._source_config))
+            merged_config = merge_config_with_defaults(source_snapshot)
             self._config_obj = self._validate_with_branch_fallback(merged_config)
             self._config = self._config_obj.model_dump()
-        except Exception as e:
-            raise ConfigurationError(f"配置加载失败: {e}") from e
+            self._revision = self._compute_revision(self._config)
+        except Exception as exc:
+            raise ConfigurationError(f"配置加载失败: {exc}") from exc
 
     def _validate_with_branch_fallback(
         self,
@@ -80,21 +93,17 @@ class ConfigManager:
             return MemoraConfig(**merged_config)
         except Exception as first_error:
             validation_error = first_error
-            logger.warning(
-                "配置验证失败，尝试按分支降级",
-                exc_info=True,
-            )
+            logger.warning("配置验证失败，尝试按分支降级", exc_info=True)
 
         defaults = get_default_config()
-        candidate = dict(merged_config)
+        candidate = copy.deepcopy(merged_config)
         invalid_sections = self._extract_invalid_sections(validation_error)
-
         if not invalid_sections:
             invalid_sections = self._probe_invalid_sections(candidate, defaults)
 
         for section in sorted(invalid_sections):
             if section in defaults:
-                candidate[section] = defaults[section]
+                candidate[section] = copy.deepcopy(defaults[section])
                 self._validation_errors.append(
                     {
                         "section": section,
@@ -120,7 +129,9 @@ class ConfigManager:
             try:
                 return MemoraConfig(**defaults)
             except Exception as default_error:
-                raise ConfigurationError(f"加载默认配置失败: {default_error}") from default_error
+                raise ConfigurationError(
+                    f"加载默认配置失败: {default_error}"
+                ) from default_error
 
     @staticmethod
     def _extract_invalid_sections(error: Exception) -> set[str]:
@@ -146,8 +157,8 @@ class ConfigManager:
         for section in defaults:
             if section not in merged_config:
                 continue
-            candidate = dict(merged_config)
-            candidate[section] = defaults[section]
+            candidate = copy.deepcopy(merged_config)
+            candidate[section] = copy.deepcopy(defaults[section])
             try:
                 MemoraConfig(**candidate)
                 invalid.add(section)
@@ -155,63 +166,163 @@ class ConfigManager:
                 continue
         return invalid
 
-    def _load_persisted_config(self) -> dict[str, Any] | None:
-        """加载持久化的 Dashboard 配置 JSON（若存在）。
+    @staticmethod
+    def _compute_revision(config: Mapping[str, Any]) -> str:
+        canonical = json.dumps(
+            config,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
 
-        只返回非空 dict；读取失败时记录 warning 并返回 None。
-        注：此方法在 __init__ 中同步调用，同步 I/O 在此处是可接受的。
-        """
+    @classmethod
+    def _load_schema_leaf_paths(cls) -> frozenset[str] | None:
+        schema_path = Path(__file__).resolve().parents[2] / "_conf_schema.json"
         try:
-            if os.path.exists(self._persisted_config_path):
-                data = self._read_json_file(self._persisted_config_path)
-                if isinstance(data, dict) and data:
-                    return data
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning(f"读取持久化配置失败: {e}")
-        return None
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            logger.warning(f"无法加载 AstrBot 配置 schema，跳过未知字段检查: {exc}")
+            return None
+
+        if not isinstance(schema, Mapping):
+            logger.warning("AstrBot 配置 schema 不是对象，跳过未知字段检查")
+            return None
+
+        paths: set[str] = set()
+        cls._collect_schema_leaf_paths(schema, (), paths)
+        return frozenset(paths)
+
+    @classmethod
+    def _collect_schema_leaf_paths(
+        cls,
+        schema: Mapping[str, Any],
+        prefix: tuple[str, ...],
+        result: set[str],
+    ) -> None:
+        for key, field_schema in schema.items():
+            if not isinstance(field_schema, Mapping):
+                continue
+            path = (*prefix, str(key))
+            items = field_schema.get("items")
+            if field_schema.get("type") == "object" and isinstance(items, Mapping):
+                cls._collect_schema_leaf_paths(items, path, result)
+            else:
+                result.add(".".join(path))
+
+    def get_config_snapshot(self) -> tuple[dict[str, Any], str]:
+        """返回与内部状态隔离的配置副本及其 SHA-256 修订号。"""
+        return copy.deepcopy(self._config), self._revision
+
+    async def apply_config_changes(
+        self,
+        changes: Mapping[str, Any],
+        *,
+        expected_revision: str | None = None,
+        persist: bool = True,
+    ) -> ConfigApplyResult:
+        """串行校验并应用点号路径配置变更。"""
+        async with self._apply_lock:
+            if (
+                expected_revision is not None
+                and expected_revision != self._revision
+            ):
+                raise ConfigConflictError(expected_revision, self._revision)
+
+            normalized_changes = dict(changes)
+            if not normalized_changes:
+                return ConfigApplyResult(self._revision, ())
+
+            field_errors = self._validate_change_paths(normalized_changes)
+            if field_errors:
+                raise ConfigValidationError(field_errors)
+
+            candidate = copy.deepcopy(self._config)
+            for path, value in normalized_changes.items():
+                self._set_dotted_value(candidate, path, copy.deepcopy(value))
+
+            try:
+                candidate_obj = MemoraConfig(**candidate)
+            except PydanticValidationError as exc:
+                raise ConfigValidationError(
+                    self._pydantic_field_errors(exc)
+                ) from exc
+            except Exception as exc:
+                raise ConfigValidationError({"*": str(exc)}) from exc
+
+            candidate_snapshot = candidate_obj.model_dump()
+            candidate_revision = self._compute_revision(candidate_snapshot)
+            changed_paths = tuple(sorted(normalized_changes))
+
+            if persist:
+                await self._persist_source(candidate_snapshot)
+
+            self._config_obj = candidate_obj
+            self._config = candidate_snapshot
+            self._revision = candidate_revision
+            return ConfigApplyResult(candidate_revision, changed_paths)
+
+    def _validate_change_paths(
+        self,
+        changes: Mapping[str, Any],
+    ) -> dict[str, str]:
+        field_errors: dict[str, str] = {}
+        for raw_path in changes:
+            if not isinstance(raw_path, str):
+                field_errors[str(raw_path)] = "配置路径必须是字符串"
+                continue
+            parts = raw_path.split(".")
+            if not raw_path or any(not part for part in parts):
+                field_errors[raw_path] = "配置路径格式无效"
+            elif (
+                self._schema_leaf_paths is not None
+                and raw_path not in self._schema_leaf_paths
+            ):
+                field_errors[raw_path] = "配置路径不在 AstrBot schema 中"
+        return field_errors
 
     @staticmethod
-    def _deep_merge(base: dict, override: dict) -> dict:
-        """深度合并 override 到 base，override 中的值优先。
+    def _set_dotted_value(
+        target: dict[str, Any],
+        path: str,
+        value: Any,
+    ) -> None:
+        current = target
+        parts = path.split(".")
+        for part in parts[:-1]:
+            next_value = current.get(part)
+            if not isinstance(next_value, dict):
+                next_value = {}
+                current[part] = next_value
+            current = next_value
+        current[parts[-1]] = value
 
-        嵌套 dict 递归合并；非 dict 类型按 key 覆盖。
-        """
-        result = base.copy()
-        for key, value in override.items():
-            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                result[key] = ConfigManager._deep_merge(result[key], value)
-            else:
-                result[key] = value
-        return result
+    @staticmethod
+    def _pydantic_field_errors(exc: PydanticValidationError) -> dict[str, str]:
+        errors: dict[str, str] = {}
+        for item in exc.errors():
+            path = ".".join(str(part) for part in item.get("loc", ())) or "*"
+            errors[path] = str(item.get("msg", "配置值无效"))
+        return errors or {"*": str(exc)}
 
-    async def save_persisted_config(self, updates: dict[str, Any]) -> bool:
-        """持久化配置变更到 JSON 文件（由 Dashboard API 调用）。
-
-        将 ``updates```` 合并到现有持久化配置中并写入磁盘。
-        若未配置持久化路径则返回 False。
-        """
-        if not self._persisted_config_path:
-            logger.warning("未配置持久化路径，跳过保存")
-            return False
-
-        import asyncio as _asyncio
-
+    async def _persist_source(self, candidate: dict[str, Any]) -> None:
+        source_before = copy.deepcopy(dict(self._source_config))
         try:
-            existing: dict[str, Any] = {}
-            if os.path.exists(self._persisted_config_path):
-                existing = await _asyncio.to_thread(
-                    self._read_json_file, self._persisted_config_path
-                )
-            merged = self._deep_merge(existing, updates)
-            os.makedirs(os.path.dirname(self._persisted_config_path), exist_ok=True)
-            await _asyncio.to_thread(
-                self._write_json_file, self._persisted_config_path, merged
-            )
-            logger.info(f"持久化配置已更新 ({len(updates)} 项)")
-            return True
-        except Exception as e:
-            logger.error(f"保存持久化配置失败: {e}")
-            return False
+            self._replace_source(candidate)
+            save_config = getattr(self._source_config, "save_config", None)
+            if callable(save_config):
+                await asyncio.to_thread(save_config)
+        except Exception as exc:
+            try:
+                self._replace_source(source_before)
+            except Exception as rollback_exc:
+                logger.error(f"恢复 AstrBot 配置映射失败: {rollback_exc}")
+            raise ConfigPersistenceError(f"配置持久化失败: {exc}") from exc
+
+    def _replace_source(self, config: Mapping[str, Any]) -> None:
+        self._source_config.clear()
+        self._source_config.update(copy.deepcopy(dict(config)))
 
     async def update_runtime_config(
         self,
@@ -219,96 +330,44 @@ class ConfigManager:
         *,
         persist: bool = True,
     ) -> bool:
-        """应用已校验的运行时配置更新。
-
-        ``updates`` 支持诸如 ``topic_segmentation.strategy`` 的点号键，
-        并会写入 :meth:`get` 所使用的嵌套配置结构中。
-        """
-        if not updates:
+        """兼容旧调用方，将新配置事务结果转换为布尔值。"""
+        try:
+            await self.apply_config_changes(updates, persist=persist)
             return True
-        if self._config_obj is None:
-            self._config_obj = validate_config(self._config)
-        if not validate_runtime_config_changes(self._config_obj, updates):
+        except (
+            ConfigConflictError,
+            ConfigValidationError,
+            ConfigPersistenceError,
+        ) as exc:
+            logger.error(f"运行时配置更新失败: {exc}")
             return False
 
-        updated = self._deep_merge(self._config, self._expand_dotted_updates(updates))
-        self._config_obj = MemoraConfig(**updated)
-        self._config = self._config_obj.model_dump()
-
-        if persist:
-            return await self.save_persisted_config(self._expand_dotted_updates(updates))
-        return True
-
-    @staticmethod
-    def _expand_dotted_updates(updates: dict[str, Any]) -> dict[str, Any]:
-        """将点号键形式的更新展开为嵌套字典。"""
-        expanded: dict[str, Any] = {}
-        for key, value in updates.items():
-            current = expanded
-            parts = key.split(".")
-            for part in parts[:-1]:
-                next_value = current.get(part)
-                if not isinstance(next_value, dict):
-                    next_value = {}
-                    current[part] = next_value
-                current = next_value
-            current[parts[-1]] = value
-        return expanded
-
-    @staticmethod
-    def _read_json_file(path: str) -> dict[str, Any]:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    @staticmethod
-    def _write_json_file(path: str, data: dict[str, Any]) -> None:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
     def get(self, key: str, default: Any = None) -> Any:
-        """
-        获取配置项
-
-        参数：
-            key: 配置键，支持点号分隔的嵌套键（如 "provider_settings.llm_provider_id"）。
-            default: 默认值，仅在配置键不存在时返回，不影响值为 None 的情况。
-
-        返回：
-            配置值（可能是 None、0、False、空字符串等假值）。
-        """
+        """获取配置项，支持点号分隔的嵌套键。"""
         keys = key.split(".")
         value: Any = self._config
-
-        for k in keys:
+        for part in keys:
             if isinstance(value, dict):
-                value = value.get(k, _SENTINEL)
+                value = value.get(part, _SENTINEL)
                 if value is _SENTINEL:
                     return default
             else:
                 return default
-
         return value
 
     def get_section(self, section: str) -> dict[str, Any]:
-        """
-        获取配置节
-
-        参数：
-            section: 配置节名称。
-
-        返回：
-            配置节字典。
-        """
-        return self._config.get(section, {})
+        """获取与内部状态隔离的配置节。"""
+        value = self._config.get(section, {})
+        return copy.deepcopy(value) if isinstance(value, dict) else {}
 
     def get_all(self) -> dict[str, Any]:
-        """获取所有配置"""
-        return self._config.copy()
+        """获取与内部状态隔离的完整配置。"""
+        return copy.deepcopy(self._config)
 
     @property
     def validation_errors(self) -> list[dict[str, Any]]:
         """返回加载过程中被降级处理的配置分支。"""
-        return list(self._validation_errors)
+        return copy.deepcopy(self._validation_errors)
 
     @property
     def provider_settings(self) -> dict[str, Any]:
@@ -317,22 +376,22 @@ class ConfigManager:
 
     @property
     def session_manager(self) -> dict[str, Any]:
-        """会话管理器配置"""
+        """会话管理器配置。"""
         return self.get_section("session_manager")
 
     @property
     def recall_engine(self) -> dict[str, Any]:
-        """召回引擎配置"""
+        """召回引擎配置。"""
         return self.get_section("recall_engine")
 
     @property
     def reflection_engine(self) -> dict[str, Any]:
-        """反思引擎配置"""
+        """反思引擎配置。"""
         return self.get_section("reflection_engine")
 
     @property
     def filtering_settings(self) -> dict[str, Any]:
-        """过滤设置"""
+        """过滤设置。"""
         return self.get_section("filtering_settings")
 
     @property

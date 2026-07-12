@@ -87,12 +87,20 @@ class RecallEngineConfig(BaseModel):
     session_cache_ttl_seconds: float = Field(
         default=10.0, ge=0.0, le=120.0, description="请求级会话缓存 TTL 秒数"
     )
+    id_cache_size: int = Field(default=1000, description="向量 ID 缓存大小")
+    stopwords_path: str = Field(default="", description="自定义停用词文件路径")
+    query_rewrite_enabled: bool = Field(
+        default=True, description="是否启用语义查询改写"
+    )
+    privacy_filter_enabled: bool = Field(
+        default=True, description="是否启用隐私记忆过滤"
+    )
     # 链式扩展 — R2 多跳图扩展
     max_chain_hops: int = Field(
-        default=1, ge=0, le=3, description="链式扩展最大跳数。0 禁用"
+        default=3, ge=0, le=3, description="链式扩展最大跳数。0 禁用"
     )
     chain_hop_decay: float = Field(
-        default=0.65, ge=0.0, le=1.0, description="逐跳衰减系数"
+        default=0.7, ge=0.0, le=1.0, description="逐跳衰减系数"
     )
     chain_graph_expansion_enabled: bool = Field(
         default=True, description="是否启用图边多跳扩展"
@@ -139,6 +147,29 @@ class RecallEngineConfig(BaseModel):
     proactive_plan_budget_chars: int = Field(
         default=240, ge=0, le=1000,
         description="前瞻提醒预算字符数"
+    )
+    serial_position_enabled: bool = Field(
+        default=True, description="是否启用序列位置效应"
+    )
+    spontaneous_recall_enabled: bool = Field(
+        default=True, description="是否启用自发回忆"
+    )
+    spontaneous_recall_probability: float = Field(
+        default=0.06, ge=0.0, le=1.0, description="自发回忆触发概率"
+    )
+    spontaneous_recall_k: int = Field(default=2, description="自发回忆返回条数")
+    prospective_recall_enabled: bool = Field(
+        default=True, description="是否启用前瞻记忆"
+    )
+    prospective_lookahead_hours: float = Field(
+        default=24.0, description="前瞻记忆扫描窗口"
+    )
+    prospective_recall_k: int = Field(default=3, description="前瞻记忆返回条数")
+    narrative_coherence_enabled: bool = Field(
+        default=True, description="是否启用叙事连贯性"
+    )
+    interest_boost_enabled: bool = Field(
+        default=True, description="是否启用兴趣记忆显著性"
     )
 
 
@@ -283,9 +314,9 @@ class ProviderConfig(BaseModel):
     """Provider 配置"""
 
     embedding_provider_id: str | None = Field(
-        default=None, description="嵌入模型 Provider ID"
+        default="", description="嵌入模型 Provider ID"
     )
-    llm_provider_id: str | None = Field(default=None, description="语言模型 Provider ID")
+    llm_provider_id: str | None = Field(default="", description="语言模型 Provider ID")
 
 
 class ImportanceDecayConfig(BaseModel):
@@ -379,6 +410,24 @@ class GraphMemoryConfig(BaseModel):
     )
     atom_purge_delay_days: float = Field(
         default=30.0, ge=1.0, le=365.0, description="遗忘原子物理清理延迟天数"
+    )
+    score_alpha: float = Field(
+        default=0.55, ge=0.0, le=1.0, description="图向量相似度权重"
+    )
+    score_beta: float = Field(
+        default=0.2, ge=0.0, le=1.0, description="图关键词匹配权重"
+    )
+    score_gamma: float = Field(
+        default=0.15, ge=0.0, le=1.0, description="图时间新鲜度权重"
+    )
+    score_delta: float = Field(
+        default=0.1, ge=0.0, le=1.0, description="图结构特征权重"
+    )
+    temporal_edges_enabled: bool = Field(
+        default=True, description="是否启用时序图边"
+    )
+    causal_edges_enabled: bool = Field(
+        default=True, description="是否启用因果图边"
     )
 
     @model_validator(mode="after")

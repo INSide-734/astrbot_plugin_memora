@@ -374,6 +374,26 @@ class TestComponentFactoryConfig:
         assert engine_config["data_dir"] == str(tmp_path)
 
 
+class TestMemoraPluginConfig:
+    """测试 MemoraPlugin 对 AstrBot 注入配置的持有关系。"""
+
+    def test_keeps_injected_astrbot_config_as_manager_source(self) -> None:
+        MemoraPlugin = _load_memora_plugin_class()
+        astrbot_config = {"bot_language": "zh"}
+
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ):
+            plugin = MemoraPlugin(MagicMock(), astrbot_config)
+
+        assert plugin.astrbot_config is astrbot_config
+        assert plugin.config_manager._source_config is astrbot_config
+
+
 class TestMemoraPluginTerminate:
     """测试 MemoraPlugin.terminate 生命周期清理。"""
 
