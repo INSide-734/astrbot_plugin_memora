@@ -90,6 +90,7 @@ describe("SocialPage", () => {
     expect(screen.getAllByText("情感").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("76%")).toBeTruthy();
     expect(screen.getByRole("progressbar", { name: /alice to bob.*strength/i })).toBeTruthy();
+    expect(screen.getAllByRole("progressbar").every((meter) => meter.getAttribute("data-slot") === "progress")).toBe(true);
     expect(screen.getByText("pair")).toBeTruthy();
     expect(screen.getByText("project")).toBeTruthy();
   });

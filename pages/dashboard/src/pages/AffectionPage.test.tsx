@@ -105,6 +105,7 @@ describe("AffectionPage", () => {
     expect(screen.getByText("72%")).toBeTruthy();
     expect(screen.getByRole("progressbar", { name: /intensity/i })).toBeTruthy();
     expect(screen.getByRole("progressbar", { name: /alice.*score/i })).toBeTruthy();
+    expect(screen.getAllByRole("progressbar").every((meter) => meter.getAttribute("data-slot") === "progress")).toBe(true);
     expect(screen.getByText("alice")).toBeTruthy();
     expect(screen.getByText("Friendly")).toBeTruthy();
     expect(screen.getByText("bob")).toBeTruthy();

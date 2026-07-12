@@ -7,6 +7,7 @@ import { MetricGrid, PageContent, PageFrame, PageHeader } from "@/components/lay
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/Progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AffectionStatus, AffectionUserEntry } from "@/types";
@@ -82,12 +83,7 @@ export function AffectionPage({ showToast }: AffectionPageProps) {
                   <span>{t("affection.moodIntensity")}</span>
                   <span>{mood?.intensity != null ? `${Math.round(mood.intensity * 100)}%` : "—"}</span>
                 </div>
-                <div role="progressbar" aria-label={t("affection.moodIntensity")} aria-valuemin={0} aria-valuemax={1} aria-valuenow={mood?.intensity ?? 0} className="h-2 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-primary transition-all duration-500"
-                    style={{ width: `${(mood?.intensity ?? 0) * 100}%` }}
-                  />
-                </div>
+                <Progress aria-label={t("affection.moodIntensity")} value={mood?.intensity ?? 0} className="h-2" />
               </div>
               </CardContent>
             </Card>
@@ -135,12 +131,7 @@ export function AffectionPage({ showToast }: AffectionPageProps) {
                     <TableCell className="text-xs font-medium">{u.user_id}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-3">
-                        <div role="progressbar" aria-label={`${u.user_id} ${t("affection.score")}`} aria-valuemin={-100} aria-valuemax={100} aria-valuenow={u.affection_score} className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
-                          <div
-                            className="h-full rounded-full bg-primary transition-all"
-                            style={{ width: `${Math.max(0, Math.min(100, ((u.affection_score + 100) / 200) * 100))}%` }}
-                          />
-                        </div>
+                        <Progress aria-label={`${u.user_id} ${t("affection.score")}`} value={u.affection_score} min={-100} max={100} className="h-1.5 w-24" />
                         <span className="text-xs font-medium tabular-nums">{u.affection_score}</span>
                       </div>
                     </TableCell>

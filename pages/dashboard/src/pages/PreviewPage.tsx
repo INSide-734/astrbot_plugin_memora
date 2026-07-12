@@ -7,7 +7,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent } from "@/components/ui/card";
-import { PageContent, PageFrame, PageHeader, MetricGrid } from "@/components/layout/PageLayout";
+import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { cn } from "@/lib/utils";
 
 interface PreviewPageProps {
@@ -69,11 +69,11 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const loadingSkeleton = (
-    <MetricGrid>
+    <div data-slot="preview-metrics" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {Array.from({ length: 8 }).map((_, i) => (
         <div key={i} className="h-28 rounded-lg border bg-muted skeleton-pulse" />
       ))}
-    </MetricGrid>
+    </div>
   );
 
   const statCards = stats ? [
@@ -101,13 +101,13 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
       <PageContent className="page-enter">
         {loading && !stats ? loadingSkeleton : (
           <>
-            <MetricGrid className="stagger-children">
+            <div data-slot="preview-metrics" className="stagger-children grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {statCards.map((card, i) => (
                 <Card
                   key={i}
                   className="card-hover"
                 >
-                  <CardContent>
+                  <CardContent className="flex min-h-24 flex-col justify-between">
                     <div className="flex items-center gap-3">
                       <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-primary">
                         {card.icon}
@@ -124,7 +124,7 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
                   </CardContent>
                 </Card>
               ))}
-            </MetricGrid>
+            </div>
 
             <div className="mt-8">
               <h2 className="mb-4 text-sm font-semibold text-foreground">
