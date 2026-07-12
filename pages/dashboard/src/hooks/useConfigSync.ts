@@ -9,11 +9,13 @@ import {
   getConfigValue,
   rebaseConfig,
   setConfigValue,
+  toJsonConfigChanges,
 } from "@/lib/config";
 import type {
   ConfigApiResponse,
   ConfigApiError,
   ConfigApplyData,
+  ConfigApplyRequest,
   ConfigObject,
   ConfigRemoteSnapshot,
   ConfigSchemaData,
@@ -358,6 +360,28 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
     if (paths.length === 0) return;
 
     const savedDraft = cloneConfig(current.draft);
+    let applyRequest: ConfigApplyRequest;
+    try {
+      applyRequest = {
+        base_revision: current.revision,
+        changes: toJsonConfigChanges(buildConfigChanges(savedDraft, paths)),
+      };
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        status: "error",
+        error: {
+          kind: "protocol",
+          code: "invalid_request",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Configuration changes are not JSON-compatible",
+        },
+        fieldErrors: {},
+      }));
+      return;
+    }
     applyInFlightRef.current = true;
     refreshGenerationRef.current += 1;
     setState((previous) => ({
@@ -370,10 +394,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
     try {
       const response = await apiRequest("config/apply", {
         method: "POST",
-        body: {
-          base_revision: current.revision,
-          changes: buildConfigChanges(savedDraft, paths),
-        },
+        body: applyRequest,
         retries: 0,
       });
       const applyData = successData<ConfigApplyData>(response);
