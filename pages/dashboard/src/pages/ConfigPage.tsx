@@ -1,0 +1,430 @@
+import { LoaderCircle, RefreshCw, Save, Settings2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { ConfigConflictDialog } from "@/components/config/ConfigConflictDialog";
+import { ConfigField } from "@/components/config/ConfigField";
+import {
+  PageContent,
+  PageFrame,
+  PageHeader,
+  PageToolbar,
+} from "@/components/layout/PageLayout";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { StatePanel } from "@/components/ui/StatePanel";
+import { Switch } from "@/components/ui/switch";
+import { useConfigSync } from "@/hooks/useConfigSync";
+import { useI18n } from "@/hooks/useI18n";
+import { getConfigValue } from "@/lib/config";
+import { filterConfigSections } from "@/lib/configSections";
+import type { Translate } from "@/lib/i18n";
+import type { ConfigSyncStatus } from "@/types/config";
+
+export interface ConfigPageProps {
+  showToast?: (
+    message: string,
+    type?: "success" | "error" | "info",
+  ) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+function syncStatusLabel(t: Translate, status: ConfigSyncStatus): string {
+  switch (status) {
+    case "loading":
+      return t("config.status.loading");
+    case "synced":
+      return t("config.status.synced");
+    case "dirty":
+      return t("config.status.dirty");
+    case "applying":
+      return t("config.status.applying");
+    case "reloading":
+      return t("config.status.reloading");
+    case "conflict":
+      return t("config.status.conflict");
+    case "offline":
+      return t("config.status.offline");
+    case "error":
+      return t("config.status.error");
+  }
+}
+
+function statusVariant(status: ConfigSyncStatus) {
+  if (status === "conflict" || status === "error") return "destructive";
+  if (status === "dirty") return "secondary";
+  if (status === "offline") return "outline";
+  return "default";
+}
+
+export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
+  const { t } = useI18n();
+  const sync = useConfigSync();
+  const [query, setQuery] = useState("");
+  const [modifiedOnly, setModifiedOnly] = useState(false);
+  const [activePath, setActivePath] = useState("");
+  const dirtyRef = useRef(false);
+  const dirtyCallbackRef = useRef(onDirtyChange);
+  const previousStatusRef = useRef(sync.status);
+  dirtyCallbackRef.current = onDirtyChange;
+  const dirty = sync.dirtyPaths.length > 0;
+
+  const sections = useMemo(
+    () =>
+      filterConfigSections(sync.schemaData?.schema ?? {}, {
+        query,
+        modifiedOnly,
+        dirtyPaths: sync.dirtyPaths,
+      }),
+    [modifiedOnly, query, sync.dirtyPaths, sync.schemaData?.schema],
+  );
+
+  useEffect(() => {
+    if (!sections.some((section) => section.path === activePath)) {
+      setActivePath(sections[0]?.path ?? "");
+    }
+  }, [activePath, sections]);
+
+  useEffect(() => {
+    if (dirtyRef.current === dirty) return;
+    dirtyRef.current = dirty;
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = sync.status;
+    if (
+      previousStatus === "applying" &&
+      (sync.status === "synced" ||
+        sync.status === "dirty" ||
+        sync.status === "reloading")
+    ) {
+      showToast?.(t("config.appliedToast"), "success");
+    }
+  }, [showToast, sync.status, t]);
+
+  useEffect(
+    () => () => {
+      if (!dirtyRef.current) return;
+      dirtyRef.current = false;
+      dirtyCallbackRef.current?.(false);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!dirty) return;
+    const preventUnsavedClose = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventUnsavedClose);
+    return () => {
+      window.removeEventListener("beforeunload", preventUnsavedClose);
+    };
+  }, [dirty]);
+
+  const goToSection = useCallback((id: string, path: string) => {
+    const section = document.getElementById(id);
+    if (!section) return;
+    setActivePath(path);
+    section.scrollIntoView({ behavior: "smooth", block: "start" });
+    const focusTarget =
+      section.querySelector<HTMLElement>("[data-slot='config-group']") ??
+      section;
+    focusTarget.setAttribute("tabindex", "-1");
+    focusTarget.focus({ preventScroll: true });
+  }, []);
+
+  const loaded = Boolean(sync.schemaData && sync.draft && sync.baseConfig);
+  const controlsDisabled =
+    sync.status === "applying" ||
+    sync.status === "reloading" ||
+    sync.status === "conflict";
+  const applyDisabled =
+    sync.dirtyPaths.length === 0 ||
+    sync.status === "loading" ||
+    sync.status === "applying" ||
+    sync.status === "reloading" ||
+    sync.status === "conflict";
+  const providerOptions = sync.schemaData?.provider_options ?? {
+    llm: [],
+    embedding: [],
+  };
+  const sectionItems = sections.map(({ label, path }) => ({
+    label,
+    value: path,
+  }));
+
+  return (
+    <PageFrame variant="dense" aria-label={t("config.title")}>
+      <PageHeader
+        title={t("config.title")}
+        description={t("config.subtitle")}
+        icon={<Settings2 aria-hidden="true" />}
+        status={
+          <Badge variant={statusVariant(sync.status)}>
+            {sync.status === "applying" ? (
+              <LoaderCircle aria-hidden="true" className="animate-spin" />
+            ) : sync.status === "reloading" ? (
+              <RefreshCw aria-hidden="true" className="animate-spin" />
+            ) : null}
+            {syncStatusLabel(t, sync.status)}
+          </Badge>
+        }
+        actions={
+          loaded ? (
+            <dl className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <div className="flex min-w-0 items-center gap-1">
+                <dt>{t("config.revision")}</dt>
+                <dd>
+                  <code className="break-all text-foreground">
+                    {sync.revision}
+                  </code>
+                </dd>
+              </div>
+              <div className="flex min-w-0 items-center gap-1">
+                <dt>{t("config.instance")}</dt>
+                <dd>
+                  <code className="break-all text-foreground">
+                    {sync.instanceId}
+                  </code>
+                </dd>
+              </div>
+            </dl>
+          ) : undefined
+        }
+      />
+
+      <PageToolbar aria-label={t("config.title")}>
+        <Input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          aria-label={t("config.search")}
+          placeholder={t("config.searchPlaceholder")}
+          className="min-w-44 flex-1 sm:max-w-md"
+          disabled={!loaded}
+        />
+        <div className="flex min-h-8 items-center gap-2 px-1">
+          <Switch
+            id="config-modified-only"
+            size="sm"
+            checked={modifiedOnly}
+            onCheckedChange={setModifiedOnly}
+            disabled={!loaded}
+          />
+          <Label htmlFor="config-modified-only">
+            {t("config.modifiedOnly")}
+          </Label>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          aria-label={t("config.refresh")}
+          title={t("config.refresh")}
+          disabled={!loaded || sync.status === "applying" || sync.status === "reloading"}
+          onClick={() => void sync.refresh()}
+        >
+          <RefreshCw
+            aria-hidden="true"
+            className={sync.status === "reloading" ? "animate-spin" : undefined}
+          />
+        </Button>
+        <Button
+          type="button"
+          disabled={applyDisabled}
+          onClick={() => void sync.apply()}
+        >
+          {sync.status === "applying" ? (
+            <LoaderCircle data-icon="inline-start" className="animate-spin" />
+          ) : sync.status === "reloading" ? (
+            <RefreshCw data-icon="inline-start" className="animate-spin" />
+          ) : (
+            <Save data-icon="inline-start" />
+          )}
+          {sync.status === "applying"
+            ? t("config.applying")
+            : sync.status === "reloading"
+              ? t("config.reloading")
+              : t("config.apply")}
+        </Button>
+      </PageToolbar>
+
+      <PageContent width="full" className="min-w-0">
+        {!loaded && sync.status === "loading" ? (
+          <StatePanel
+            state="loading"
+            title={t("config.loading")}
+            className="min-h-64"
+          />
+        ) : !loaded ? (
+          <StatePanel
+            state="error"
+            title={
+              sync.status === "offline"
+                ? t("config.loadOfflineTitle")
+                : t("config.loadErrorTitle")
+            }
+            description={
+              sync.status === "offline"
+                ? t("config.loadOfflineDescription")
+                : t("config.loadErrorDescription")
+            }
+            actionLabel={t("config.retry")}
+            onAction={() => void sync.refresh()}
+          />
+        ) : (
+          <div className="flex min-w-0 flex-col gap-4">
+            {sync.status === "offline" || sync.status === "error" ? (
+              <>
+                <div
+                  role={sync.status === "error" ? "alert" : "status"}
+                  className="flex min-w-0 flex-wrap items-center justify-between gap-2"
+                >
+                  <p className="min-w-0 text-sm text-muted-foreground">
+                    {sync.status === "offline"
+                      ? t("config.loadedOffline")
+                      : t("config.loadedError")}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void sync.refresh()}
+                  >
+                    <RefreshCw data-icon="inline-start" />
+                    {t("config.retry")}
+                  </Button>
+                </div>
+                <Separator />
+              </>
+            ) : null}
+            <div className="lg:hidden">
+              <Label htmlFor="config-group-select" className="sr-only">
+                {t("config.groupSelect")}
+              </Label>
+              <Select
+                items={sectionItems}
+                value={activePath || sectionItems[0]?.value || null}
+                onValueChange={(path) => {
+                  const section = sections.find((item) => item.path === path);
+                  if (section) {
+                    window.setTimeout(
+                      () => goToSection(section.id, section.path),
+                      0,
+                    );
+                  }
+                }}
+              >
+                <SelectTrigger
+                  id="config-group-select"
+                  aria-label={t("config.groupSelect")}
+                  className="w-full"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
+                  <SelectGroup>
+                    {sectionItems.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)]">
+              <nav
+                aria-label={t("config.groupNavigation")}
+                className="sticky top-0 hidden max-h-[calc(100vh-12rem)] min-w-0 self-start overflow-y-auto lg:block"
+              >
+                <div className="flex min-w-0 flex-col gap-1 pr-2">
+                  {sections.map((section) => (
+                    <Button
+                      key={section.path}
+                      type="button"
+                      variant={activePath === section.path ? "secondary" : "ghost"}
+                      className="h-auto min-h-8 min-w-0 justify-start whitespace-normal text-left"
+                      onClick={() => goToSection(section.id, section.path)}
+                    >
+                      {section.label}
+                    </Button>
+                  ))}
+                </div>
+              </nav>
+
+              <div className="flex min-w-0 flex-col gap-5">
+                {sections.length === 0 ? (
+                  <p className="py-10 text-center text-sm text-muted-foreground">
+                    {t("config.noResults")}
+                  </p>
+                ) : (
+                  sections.map((section, index) => (
+                    <div key={section.path} className="flex min-w-0 flex-col gap-5">
+                      <div
+                        id={section.id}
+                        role="group"
+                        aria-label={section.label}
+                        tabIndex={-1}
+                        data-config-section={section.path}
+                        className="min-w-0 scroll-mt-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <ConfigField
+                          path={section.path}
+                          node={section.node}
+                          value={getConfigValue(sync.draft, section.path)}
+                          onChange={sync.changeField}
+                          providerOptions={providerOptions}
+                          disabled={controlsDisabled}
+                          fieldErrors={sync.fieldErrors}
+                          defaultProviderLabel={t("config.defaultProvider")}
+                        />
+                      </div>
+                      {index < sections.length - 1 ? <Separator /> : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </PageContent>
+
+      <ConfigConflictDialog
+        open={sync.status === "conflict"}
+        localPaths={sync.localPaths}
+        remotePaths={sync.remotePaths}
+        overlapPaths={sync.overlapPaths}
+        remoteReady={Boolean(sync.remoteConfig)}
+        labels={{
+          title: t("config.conflict.title"),
+          description: t("config.conflict.description"),
+          localChanges: t("config.conflict.local"),
+          remoteChanges: t("config.conflict.remote"),
+          overlapChanges: t("config.conflict.overlap"),
+          loadRemote: t("config.conflict.loadRemote"),
+          reapplyLocal: t("config.conflict.reapplyLocal"),
+          waitingRemote: t("config.conflict.waitingRemote"),
+          refreshRemote: t("config.conflict.refreshRemote"),
+        }}
+        onAcceptRemote={sync.acceptRemote}
+        onRebaseRemote={sync.rebaseRemote}
+        onRefresh={() => void sync.refresh()}
+      />
+    </PageFrame>
+  );
+}
