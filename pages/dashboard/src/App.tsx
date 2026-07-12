@@ -109,7 +109,7 @@ export default function App() {
             variant="ghost"
             size="icon"
             onClick={() => setMobileMenuOpen(true)}
-            aria-label="Open menu"
+            aria-label={t("header.openMenu")}
             className="relative md:hidden"
           >
             <Menu />
@@ -121,7 +121,7 @@ export default function App() {
           </Button>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-foreground">{t(`nav.${currentPage}`)}</p>
-            <p className="hidden text-xs text-muted-foreground sm:block">Memora Dashboard</p>
+            <p className="hidden text-xs text-muted-foreground sm:block">{t("header.dashboardTitle")}</p>
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className={`size-2 rounded-full ${sseConnected ? "bg-emerald-500" : "bg-muted-foreground"}`} />

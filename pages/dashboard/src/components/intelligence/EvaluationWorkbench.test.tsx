@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EvaluationWorkbench } from "./EvaluationWorkbench";
+import { RU_MAP } from "@/mock";
 
 interface BridgeMock {
   apiGet: ReturnType<typeof vi.fn>;
@@ -100,7 +101,7 @@ describe("EvaluationWorkbench", () => {
               recall_at_k: -0.05,
               mrr: -0.02,
               ndcg_at_k: -0.03,
-              p95_latency_ms: -8.4,
+              p95_latency_ms: null,
             },
           },
           cases: [
@@ -152,7 +153,7 @@ describe("EvaluationWorkbench", () => {
     expect(await screen.findByText(/Recall@K/)).toBeTruthy();
     expect(screen.getByText(/MRR/)).toBeTruthy();
     expect(screen.getByText(/nDCG/)).toBeTruthy();
-    expect(screen.getByText("graph_expansion_off")).toBeTruthy();
+    expect(screen.getAllByText("Graph off").length).toBeGreaterThan(0);
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/evaluation/run", {
         datasets: ["private_basic"],
@@ -177,9 +178,43 @@ describe("EvaluationWorkbench", () => {
     expect(screen.getByText("报告历史")).toBeTruthy();
     expect(screen.getByText("暂无保存的报告")).toBeTruthy();
     expect(screen.queryByText("Evaluation Workbench")).toBe(null);
+    expect(bridge.apiGet).toHaveBeenCalledTimes(2);
+
+    bridge.getLocale.mockReturnValue("ru-RU");
+    await act(async () => {
+      window.dispatchEvent(new Event("languagechange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(RU_MAP["intelligence.evaluation.datasets"])).toBeTruthy();
+    expect(bridge.apiGet).toHaveBeenCalledTimes(2);
+  });
+
+  it("localizes evaluation metrics, chat types, variant names, and unavailable deltas", async () => {
+    bridge.getLocale.mockReturnValue("zh-CN");
+    bridge.t.mockImplementation((key: string) => ({
+      "dashboard.intelligence.evaluation.metric.cases": "用例数",
+      "dashboard.common.notAvailableShort": "不适用",
+    })[key] ?? key);
+
+    render(<EvaluationWorkbench showToast={() => undefined} />);
+
+    expect(await screen.findByText("private_basic")).toBeTruthy();
+    expect(screen.getByText("私聊")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /运行/ }));
+
+    expect(await screen.findByText("用例数")).toBeTruthy();
+    expect(screen.getAllByText("关闭图扩展").length).toBeGreaterThan(0);
+    expect(screen.getByText("不适用")).toBeTruthy();
+    expect(screen.queryByText("Cases")).toBe(null);
+    expect(screen.queryByText("private")).toBe(null);
+    expect(screen.queryByText("graph_expansion_off")).toBe(null);
+    expect(screen.queryByText("n/a")).toBe(null);
   });
 
   it("loads full report detail when opening history", async () => {
+    const localeSpy = vi.spyOn(Date.prototype, "toLocaleString");
     bridge.apiGet.mockImplementation((path: string, params?: Record<string, string>) => {
       if (path === "page/evaluation/datasets") {
         return Promise.resolve(ok({
@@ -267,8 +302,9 @@ describe("EvaluationWorkbench", () => {
 
     fireEvent.click(await screen.findByText("saved-report"));
 
-    expect(await screen.findByText("graph_expansion_off")).toBeTruthy();
+    expect((await screen.findAllByText("Graph off")).length).toBeGreaterThan(0);
     expect(screen.getByText("missed")).toBeTruthy();
+    expect(localeSpy).toHaveBeenCalledWith("en-US");
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/evaluation/reports/detail", {
         report_id: "saved-report",

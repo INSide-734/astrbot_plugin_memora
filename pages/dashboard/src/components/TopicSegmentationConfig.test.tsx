@@ -57,10 +57,26 @@ describe("TopicSegmentationConfig", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/backfill/status", {});
     });
 
-    expect(await screen.findByText("Processing")).toBeTruthy();
+    expect(await screen.findByText("Running")).toBeTruthy();
     expect(screen.getByText("3 / 5")).toBeTruthy();
     expect(screen.getByText("Errors: 1")).toBeTruthy();
     expect(screen.getByRole("button")).toHaveProperty("disabled", true);
+  });
+
+  it.each([
+    ["stopping", "Stopping"],
+    ["cancelled", "Cancelled"],
+    ["completed_with_errors", "Completed with errors"],
+  ])("renders the real %s backfill status", async (status, label) => {
+    bridge.apiGet.mockResolvedValue({
+      status: "ok",
+      data: { status, processed: 3, total: 5, errors: 0 },
+    });
+
+    render(<TopicSegmentationConfig showToast={showToast} />);
+
+    expect(await screen.findByText(label)).toBeTruthy();
+    expect(screen.queryByText("Failed")).toBeNull();
   });
 
   it("starts backfill, shows success toast, and refreshes status", async () => {

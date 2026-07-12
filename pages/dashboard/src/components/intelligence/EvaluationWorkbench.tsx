@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClipboardList, Loader2, Play, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
+import { dashboardLocale, formatDashboardNumber, formatDashboardPercent, translateEnum } from "@/lib/i18n";
 import type {
   EvaluationDataset,
   EvaluationReport,
@@ -24,18 +25,21 @@ const variantOptions: Array<{ value: VariantName; label: string }> = [
   { value: "topic_expansion_off", label: "topic off" },
 ];
 
-function formatPercent(value: number): string {
-  return `${Math.round(value * 100)}%`;
+function formatPercent(value: number, locale: string): string {
+  return formatDashboardPercent(value, locale, { maximumFractionDigits: 0 });
 }
 
-function formatMs(value: number): string {
-  return `${value.toFixed(1)}ms`;
+function formatMs(value: number, locale: string): string {
+  return `${formatDashboardNumber(value, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}ms`;
 }
 
-function formatDelta(value: number | null, suffix = ""): string {
-  if (value === null) return "n/a";
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(2)}${suffix}`;
+function formatDelta(value: number | null, locale: string, notAvailable: string, suffix = ""): string {
+  if (value === null) return notAvailable;
+  return `${formatDashboardNumber(value, locale, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    signDisplay: "exceptZero",
+  })}${suffix}`;
 }
 
 function clampK(value: number): number {
@@ -44,19 +48,28 @@ function clampK(value: number): number {
 }
 
 function VariantDeltaRow({ name, delta }: { name: string; delta: EvaluationVariantDelta }) {
+  const { t, currentLang } = useI18n();
+  const notAvailable = t("common.notAvailableShort");
+  const locale = dashboardLocale(currentLang());
+
   return (
     <tr className="border-t border-[var(--color-border-light)]">
-      <td className="px-4 py-2 font-medium text-[var(--text-primary)]">{name}</td>
-      <td className="px-4 py-2 tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.recall_at_k)}</td>
-      <td className="px-4 py-2 tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.mrr)}</td>
-      <td className="px-4 py-2 tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.ndcg_at_k)}</td>
-      <td className="px-4 py-2 text-right tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.p95_latency_ms, "ms")}</td>
+      <td className="px-4 py-2 font-medium text-[var(--text-primary)]">
+        {translateEnum(t, "intelligence.evaluation.variant", name, name)}
+      </td>
+      <td className="px-4 py-2 tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.recall_at_k, locale, notAvailable)}</td>
+      <td className="px-4 py-2 tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.mrr, locale, notAvailable)}</td>
+      <td className="px-4 py-2 tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.ndcg_at_k, locale, notAvailable)}</td>
+      <td className="px-4 py-2 text-right tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.p95_latency_ms, locale, notAvailable, "ms")}</td>
     </tr>
   );
 }
 
 export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+  const locale = dashboardLocale(currentLang());
   const [datasets, setDatasets] = useState<EvaluationDataset[]>([]);
   const [selectedDatasets, setSelectedDatasets] = useState<string[]>([]);
   const [selectedVariants, setSelectedVariants] = useState<VariantName[]>([
@@ -97,7 +110,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
       });
       setHistory(reportData.reports ?? []);
     } catch (error) {
-      showToast(`Error: ${error instanceof Error ? error.message : String(error)}`, true);
+      showToast(tRef.current("common.errorPrefix", error instanceof Error ? error.message : String(error)), true);
     } finally {
       setLoading(false);
     }
@@ -149,7 +162,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
       setHistory((current) => [nextReport, ...current.filter((item) => item.report_id !== nextReport.report_id)].slice(0, 10));
       showToast(t("intelligence.evaluation.reportReady", nextReport.report_id));
     } catch (error) {
-      showToast(`Error: ${error instanceof Error ? error.message : String(error)}`, true);
+      showToast(t("common.errorPrefix", error instanceof Error ? error.message : String(error)), true);
     } finally {
       setRunning(false);
     }
@@ -161,7 +174,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
       const data = unwrapApiData<{ report?: EvaluationReport }>(response);
       setReport(data.report ?? item);
     } catch (error) {
-      showToast(`Error: ${error instanceof Error ? error.message : String(error)}`, true);
+      showToast(t("common.errorPrefix", error instanceof Error ? error.message : String(error)), true);
     }
   };
 
@@ -210,7 +223,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
                         ))}
                         {dataset.chat_types.map((chatType) => (
                           <span key={chatType} className="rounded bg-[var(--color-border-light)] px-1.5 py-0.5 text-2xs text-[var(--text-secondary)]">
-                            {chatType}
+                            {translateEnum(t, "intelligence.trace.chatType", chatType, chatType)}
                           </span>
                         ))}
                       </span>
@@ -243,7 +256,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
                         checked={selectedVariants.includes(variant.value)}
                         onChange={() => toggleVariant(variant.value)}
                       />
-                      {t(`intelligence.evaluation.variant.${variant.value}`, variant.label)}
+                      {translateEnum(t, "intelligence.evaluation.variant", variant.value, variant.label)}
                     </label>
                   ))}
                 </div>
@@ -274,7 +287,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
               >
                 <span className="block text-xs font-medium text-[var(--text-primary)]">{item.report_id}</span>
                 <span className="mt-1 block text-2xs text-[var(--text-tertiary)]">
-                  {item.datasets.join(", ")} / {formatPercent(item.summary.recall_at_k)} / {new Date(item.created_at * 1000).toLocaleString()}
+                  {item.datasets.join(", ")} / {formatPercent(item.summary.recall_at_k, locale)} / {new Date(item.created_at * 1000).toLocaleString(locale)}
                 </span>
               </button>
             ))}
@@ -287,11 +300,11 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
           <>
             <div className="grid gap-3 md:grid-cols-5">
               {[
-                ["Cases", String(report.summary.total_cases)],
-                ["Recall@K", formatPercent(report.summary.recall_at_k)],
-                ["MRR", formatPercent(report.summary.mrr)],
-                ["nDCG@K", formatPercent(report.summary.ndcg_at_k)],
-                ["p95", formatMs(report.summary.p95_latency_ms)],
+                [t("intelligence.evaluation.metric.cases"), String(report.summary.total_cases)],
+                ["Recall@K", formatPercent(report.summary.recall_at_k, locale)],
+                ["MRR", formatPercent(report.summary.mrr, locale)],
+                ["nDCG@K", formatPercent(report.summary.ndcg_at_k, locale)],
+                ["p95", formatMs(report.summary.p95_latency_ms, locale)],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)] p-3">
                   <p className="text-2xs uppercase text-[var(--text-tertiary)]">{label}</p>

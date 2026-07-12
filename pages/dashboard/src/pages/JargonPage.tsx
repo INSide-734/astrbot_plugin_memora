@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/Table";
+import { dashboardLocale, formatDashboardPercent } from "@/lib/i18n";
 import type { JargonCandidate, JargonMeaning } from "@/types";
 
 interface JargonPageProps {
@@ -16,7 +17,7 @@ interface JargonPageProps {
 }
 
 /** Pure score-bar renderer — no component closure dependencies. */
-function ScoreBar({ score }: { score: number }) {
+function ScoreBar({ score, locale }: { score: number; locale: string }) {
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
@@ -25,13 +26,14 @@ function ScoreBar({ score }: { score: number }) {
           style={{ width: `${Math.round(score * 100)}%` }}
         />
       </div>
-      <span className="text-xs tabular-nums text-muted-foreground">{(score * 100).toFixed(0)}%</span>
+      <span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(score, locale, { maximumFractionDigits: 0 })}</span>
     </div>
   );
 }
 
 export function JargonPage({ showToast }: JargonPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
   const { groups, groupId, setGroupId } = useGroups();
   const [tab, setTab] = useState<"candidates" | "meanings">("candidates");
   const [candidates, setCandidates] = useState<JargonCandidate[]>([]);
@@ -88,7 +90,7 @@ export function JargonPage({ showToast }: JargonPageProps) {
   const handleConfirm = useCallback(async (term: string, confirmed: boolean) => {
     try {
       await apiRequest("jargon/confirm", { method: "POST", body: { term, group_id: groupId, confirmed } });
-      showToast(t(confirmed ? "toast.jargonConfirmed" : "toast.jargonRejected").replace("{0}", term));
+      showToast(t(confirmed ? "toast.jargonConfirmed" : "toast.jargonRejected", term));
       fetchCandidates();
       fetchMeanings();
       fetchStats();
@@ -151,7 +153,7 @@ export function JargonPage({ showToast }: JargonPageProps) {
 
       {/* Tab bar */}
       <PageToolbar className="justify-between bg-background">
-        <div className="flex gap-1" role="tablist" aria-label="Jargon views">
+        <div className="flex gap-1" role="tablist" aria-label={t("jargon.views")}>
           {(["candidates", "meanings"] as const).map((tKey) => (
             <Button
               key={tKey}
@@ -204,7 +206,7 @@ export function JargonPage({ showToast }: JargonPageProps) {
                     <TableCell className="px-4">
                       <span className="text-sm font-medium text-foreground">{c.term}</span>
                     </TableCell>
-                    <TableCell><ScoreBar score={c.score} /></TableCell>
+                    <TableCell><ScoreBar score={c.score} locale={locale} /></TableCell>
                     <TableCell className="text-xs tabular-nums text-muted-foreground">{c.frequency}</TableCell>
                     <TableCell className="text-xs tabular-nums text-muted-foreground">{c.unique_users}</TableCell>
                     <TableCell className="max-w-[300px] truncate text-xs text-muted-foreground">
@@ -245,7 +247,7 @@ export function JargonPage({ showToast }: JargonPageProps) {
                       <span className="text-sm font-medium text-foreground">{m.term}</span>
                     </TableCell>
                     <TableCell className="max-w-[320px] text-xs text-muted-foreground">{m.meaning || "—"}</TableCell>
-                    <TableCell><ScoreBar score={m.confidence} /></TableCell>
+                    <TableCell><ScoreBar score={m.confidence} locale={locale} /></TableCell>
                     <TableCell>
                       {m.is_global ? <Globe className="text-primary" /> : <span className="text-xs text-muted-foreground">—</span>}
                     </TableCell>

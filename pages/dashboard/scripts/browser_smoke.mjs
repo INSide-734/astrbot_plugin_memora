@@ -37,6 +37,10 @@ const SCREENSHOT_BASELINES = {
   "wide-learning.png": { width: 2048, height: 1152, minBytes: 10_000 },
   "wide-affection.png": { width: 2048, height: 1152, minBytes: 10_000 },
   "wide-social.png": { width: 2048, height: 1152, minBytes: 10_000 },
+  "i18n-en-preview.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "i18n-en-memory.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "i18n-ru-preview.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "i18n-ru-memory.png": { width: 1366, height: 900, minBytes: 10_000 },
 };
 
 async function launchBrowser() {
@@ -185,7 +189,7 @@ function bridgePayload(endpoint) {
       max_total_affection: 100,
       user_count: 2,
       current_mood: {
-        mood_type: "HAPPY",
+        mood_type: "happy",
         intensity: 0.72,
         description: "群聊今天的氛围很积极。",
         is_active: true,
@@ -314,6 +318,7 @@ function bridgePayload(endpoint) {
       query: "用户喜欢喝什么咖啡",
       total_ms: 84.2,
       stages: [
+        { name: "search_memories", duration_ms: 4.1, candidate_count: 0, metadata: { tokens: 6 } },
         { name: "bm25", duration_ms: 12.5, candidate_count: 7, metadata: { index: "atom_bm25" } },
         { name: "vector", duration_ms: 24.8, candidate_count: 8, metadata: { provider: "mock_embedding" } },
       ],
@@ -464,6 +469,70 @@ async function waitForRootText(page, expected, route) {
   assertText(await page.locator("#root").innerText(), values, route);
 }
 
+async function switchDashboardLanguage(page, language, expectedDocumentLang) {
+  const languageOrder = ["zh", "en", "ru"];
+  const languageButtonNames = { zh: "语言", en: "Language", ru: "Язык" };
+  let currentLanguage = await page.evaluate(() => {
+    const stored = window.localStorage.getItem("lmem_lang");
+    if (stored === "zh" || stored === "en" || stored === "ru") return stored;
+    const documentLanguage = document.documentElement.lang.slice(0, 2).toLowerCase();
+    return documentLanguage === "en" || documentLanguage === "ru" ? documentLanguage : "zh";
+  });
+
+  for (let step = 0; currentLanguage !== language && step < languageOrder.length; step += 1) {
+    await page.getByRole("button", {
+      name: languageButtonNames[currentLanguage],
+      exact: true,
+    }).click();
+    currentLanguage = languageOrder[(languageOrder.indexOf(currentLanguage) + 1) % languageOrder.length];
+    await page.waitForFunction(
+      (nextLanguage) => window.localStorage.getItem("lmem_lang") === nextLanguage,
+      currentLanguage,
+      { timeout: 5_000 }
+    );
+  }
+
+  if (currentLanguage !== language) {
+    throw new Error(`Unable to switch Dashboard language to ${language}`);
+  }
+  await page.waitForFunction(
+    (nextDocumentLang) => document.documentElement.lang === nextDocumentLang,
+    expectedDocumentLang,
+    { timeout: 5_000 }
+  );
+}
+
+async function assertNoHorizontalOverflow(page, label) {
+  const measurements = await page.evaluate(() => {
+    const pageContents = document.querySelectorAll('[data-slot="page-content"]');
+    const pageContent = pageContents.length > 0 ? pageContents[pageContents.length - 1] : null;
+    const targets = [
+      ["documentElement", document.documentElement],
+      ["body", document.body],
+      ["#root", document.querySelector("#root")],
+      ['[data-slot="page-content"]', pageContent],
+    ];
+    return targets.map(([target, element]) => ({
+      target,
+      present: Boolean(element),
+      clientWidth: element?.clientWidth ?? 0,
+      scrollWidth: element?.scrollWidth ?? 0,
+      overflow: element ? element.scrollWidth - element.clientWidth : Number.NaN,
+    }));
+  });
+  const invalid = measurements.filter((item) => (
+    !item.present
+    || item.clientWidth <= 0
+    || !Number.isFinite(item.overflow)
+    || item.overflow > 1
+  ));
+  if (invalid.length > 0) {
+    throw new Error(
+      `Dashboard route ${label} has horizontal overflow: ${JSON.stringify(invalid)}`
+    );
+  }
+}
+
 function assertScreenshotLooksNonEmpty(buffer, label) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 10_000) {
     throw new Error(`Dashboard browser smoke screenshot is unexpectedly small for ${label}`);
@@ -573,7 +642,7 @@ async function captureBaselineScreenshot(page, screenshotPath, label) {
   return assertScreenshotMatchesBaseline(screenshot, path.basename(screenshotPath), label);
 }
 
-async function clickSidebarNav(page, label, expectedHash, expectedText, screenshotPath) {
+async function navigateSidebar(page, label, expectedHash, expectedText) {
   await page.getByRole("button", { name: label }).click();
   await page.waitForFunction(
     (nextHash) => window.location.hash === nextHash,
@@ -581,6 +650,10 @@ async function clickSidebarNav(page, label, expectedHash, expectedText, screensh
     { timeout: 5_000 }
   );
   await waitForRootText(page, expectedText, expectedHash);
+}
+
+async function clickSidebarNav(page, label, expectedHash, expectedText, screenshotPath) {
+  await navigateSidebar(page, label, expectedHash, expectedText);
   return await captureBaselineScreenshot(page, screenshotPath, label);
 }
 
@@ -594,6 +667,33 @@ async function captureRoute(page, hash, expectedText, screenshotPath, label) {
     { timeout: 5_000 }
   );
   await waitForRootText(page, expectedText, hash);
+  return await captureBaselineScreenshot(page, screenshotPath, label);
+}
+
+async function captureLocalizedRoute(
+  page,
+  hash,
+  expectedText,
+  expectedDocumentLang,
+  screenshotPath,
+  label,
+) {
+  await page.evaluate((nextHash) => {
+    window.location.hash = nextHash;
+  }, hash);
+  await page.waitForFunction(
+    (nextHash) => window.location.hash === nextHash,
+    hash,
+    { timeout: 5_000 }
+  );
+  await waitForRootText(page, expectedText, `${hash}:${expectedDocumentLang}`);
+  const documentLang = await page.evaluate(() => document.documentElement.lang);
+  if (documentLang !== expectedDocumentLang) {
+    throw new Error(
+      `Dashboard route ${hash} has document language ${documentLang}, expected ${expectedDocumentLang}`
+    );
+  }
+  await assertNoHorizontalOverflow(page, `${hash}:${expectedDocumentLang}`);
   return await captureBaselineScreenshot(page, screenshotPath, label);
 }
 
@@ -628,14 +728,17 @@ async function runRecallTraceSmoke(page, screenshotPath) {
   await page.getByRole("button", { name: "追踪", exact: true }).click();
   await waitForRootText(
     page,
-    ["trace-smoke-coffee", "mem-coffee", "bm25", "mock_embedding"],
+    ["trace-smoke-coffee", "mem-coffee", "记忆检索", "bm25", "mock_embedding"],
     "#/intelligence:recallTrace"
   );
   return await captureBaselineScreenshot(page, screenshotPath, "Intelligence 召回链路");
 }
 
 async function clickMobileNav(page, label, expectedHash, expectedText, screenshotPath) {
-  await page.getByRole("button", { name: "Open menu" }).click();
+  await page.getByRole("button", { name: "打开菜单" })
+    .or(page.getByRole("button", { name: "Open menu" }))
+    .or(page.getByRole("button", { name: "Открыть меню" }))
+    .click();
   await page.getByRole("button", { name: label }).click();
   await page.waitForFunction(
     (nextHash) => window.location.hash === nextHash,
@@ -720,23 +823,58 @@ function confirmationBar(page, confirmText) {
     .locator("xpath=ancestor::div[contains(@class, 'justify-between')][1]");
 }
 
-async function assertConfirmationCancelsWithoutPost(page, trigger, confirmTexts, endpoint) {
+async function assertConfirmationCancelsWithoutPost(
+  page,
+  trigger,
+  confirmTexts,
+  endpoint,
+  screenshotPath = null,
+) {
   await trigger();
   const confirmText = await waitForTextByAny(page, confirmTexts, { timeout: 5_000 });
+  const bar = confirmationBar(page, confirmText);
+  let screenshotResult = null;
+
+  if (screenshotPath) {
+    await bar.scrollIntoViewIfNeeded();
+    const confirmationIsInViewport = await page.getByText(confirmText).first().evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return (
+        rect.width > 0
+        && rect.height > 0
+        && rect.top < window.innerHeight
+        && rect.bottom > 0
+        && rect.left < window.innerWidth
+        && rect.right > 0
+      );
+    });
+    if (!confirmationIsInViewport) {
+      throw new Error(`Confirmation is outside the viewport: ${confirmText}`);
+    }
+    await waitForVisualStability(page);
+    const screenshot = await page.screenshot({ path: screenshotPath, fullPage: false });
+    screenshotResult = assertScreenshotMatchesBaseline(
+      screenshot,
+      path.basename(screenshotPath),
+      "system-confirmation",
+    );
+  }
+
   assertNoPostCall(await getPostCalls(page), endpoint);
-  await clickButtonByAnyName(confirmationBar(page, confirmText), ["Cancel", "取消", "Отмена"]);
+  await clickButtonByAnyName(bar, ["Cancel", "取消", "Отмена"]);
   await page.getByText(confirmText).first().waitFor({
     state: "detached",
     timeout: 5_000,
   });
   assertNoPostCall(await getPostCalls(page), endpoint);
+  return screenshotResult;
 }
 
-async function assertBackupDestructiveConfirmations(page) {
+async function assertBackupDestructiveConfirmations(page, screenshotPath) {
   await page.getByText("backup-smoke-a").waitFor({ timeout: 5_000 });
   await page.getByText("backup-smoke-b").waitFor({ timeout: 5_000 });
 
-  await assertConfirmationCancelsWithoutPost(
+  const screenshotResult = await assertConfirmationCancelsWithoutPost(
     page,
     async () => {
       await clickButtonByAnyName(backupRow(page, "backup-smoke-a"), [
@@ -750,7 +888,8 @@ async function assertBackupDestructiveConfirmations(page) {
       "确定要从 backup-smoke-a 恢复数据吗？这将覆盖当前数据。",
       "Восстановить данные из backup-smoke-a? Текущие данные будут перезаписаны.",
     ],
-    "backup/restore"
+    "backup/restore",
+    screenshotPath,
   );
 
   await assertConfirmationCancelsWithoutPost(
@@ -779,6 +918,11 @@ async function assertBackupDestructiveConfirmations(page) {
     ],
     "backup/batch-delete"
   );
+
+  if (!screenshotResult) {
+    throw new Error("System confirmation screenshot was not captured");
+  }
+  return screenshotResult;
 }
 
 async function assertHighImpactConfirmation(page) {
@@ -982,7 +1126,7 @@ try {
   const wideRoutes = [
     ["#/preview", ["数据预览", "记忆增长", "记忆构成", "模块资产", "group-smoke-primary"], "wide-preview.png", "wide-preview"],
     ["#/learning", ["自主学习", "83.0%", "retrieval_weight", "Formal greeting"], "wide-learning.png", "wide-learning"],
-    ["#/affection", ["好感度与情绪", "群聊今天的氛围很积极。", "alice"], "wide-affection.png", "wide-affection"],
+    ["#/affection", ["好感度与情绪", "开心", "群聊今天的氛围很积极。", "alice"], "wide-affection.png", "wide-affection"],
     ["#/social", ["社交关系", "alice", "bob", "pair", "project"], "wide-social.png", "wide-social"],
   ];
 
@@ -1001,16 +1145,18 @@ try {
   await widePage.close();
   await page.bringToFront();
 
-  baselineResults.push(
-    await clickSidebarNav(
-      page,
-      "系统概览",
-      "#/system",
-      ["系统概览", "运行观测", "Provider 状态"],
-      path.join(screenshotsDir, "system-confirmation.png")
-    )
+  await navigateSidebar(
+    page,
+    "系统概览",
+    "#/system",
+    ["系统概览", "运行观测", "Provider 状态"],
   );
-  await assertBackupDestructiveConfirmations(page);
+  baselineResults.push(
+    await assertBackupDestructiveConfirmations(
+      page,
+      path.join(screenshotsDir, "system-confirmation.png"),
+    ),
+  );
   await assertHighImpactConfirmation(page);
 
   await page.getByRole("button", { name: "切换主题" }).click();
@@ -1039,6 +1185,53 @@ try {
       "dark-preview"
     )
   );
+
+  const i18nContext = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  try {
+    const i18nPage = await i18nContext.newPage();
+    collectPageErrors(i18nPage, errors);
+    await installBridge(i18nPage);
+    await i18nPage.goto(pathToFileURL(htmlPath).href, { waitUntil: "load" });
+    await i18nPage.bringToFront();
+    await i18nPage.waitForSelector("#root > *", { timeout: 10_000 });
+
+    const i18nRoutes = [
+      {
+        language: "en",
+        documentLang: "en-US",
+        routes: [
+          ["#/preview", ["Preview", "Memory growth", "Memory composition", "Module assets", "Active sessions"], "i18n-en-preview.png"],
+          ["#/memory", ["Memories", "All Status", "SUMMARY", "IMPORTANCE", "Active", "Page 1/1 · 1 total"], "i18n-en-memory.png"],
+        ],
+      },
+      {
+        language: "ru",
+        documentLang: "ru-RU",
+        routes: [
+          ["#/preview", ["Обзор", "Рост памяти", "Состав памяти", "Активы модулей", "Активные сессии"], "i18n-ru-preview.png"],
+          ["#/memory", ["Память", "Все", "СВОДКА", "ВАЖНОСТЬ", "Активные", "Стр. 1/1 · 1 всего"], "i18n-ru-memory.png"],
+        ],
+      },
+    ];
+
+    for (const { language, documentLang, routes: localizedRoutes } of i18nRoutes) {
+      await switchDashboardLanguage(i18nPage, language, documentLang);
+      for (const [hash, expectedText, filename] of localizedRoutes) {
+        baselineResults.push(
+          await captureLocalizedRoute(
+            i18nPage,
+            hash,
+            expectedText,
+            documentLang,
+            path.join(screenshotsDir, filename),
+            `${language}-${hash.slice(2)}`,
+          )
+        );
+      }
+    }
+  } finally {
+    await i18nContext.close();
+  }
 
   await writeFile(
     path.join(screenshotsDir, "screenshot-baseline-manifest.json"),

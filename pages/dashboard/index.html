@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Memora</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🧠</text></svg>" />
+
     <style>
       /* === Memora Bootstrap Fallback UI === */
       #memora-bootstrap {
@@ -63,7 +64,7 @@
       .bs-footer a { color: #2563eb; }
       .bs-error-text { color: #fca5a5; font-size: 12px; margin-top: 8px; }
     </style>
-    <script defer src="./assets/index-CWw9rAL6.js"></script>
+    <script defer src="./assets/index-Df76JyzV.js"></script>
     <link rel="stylesheet" href="./assets/style-SUC9h9z-.css">
   </head>
   <body>
@@ -72,32 +73,30 @@
     <div id="memora-bootstrap">
       <div class="bs-card">
         <span class="bs-icon">🧠</span>
-        <h1 class="bs-title">Memora Dashboard</h1>
-        <p class="bs-subtitle">
-          The dashboard frontend needs to be built before first use.<br />
-          Click below to install dependencies and build the page.
-        </p>
+        <h1 class="bs-title" data-bs-i18n="title">Memora 管理面板</h1>
+        <p class="bs-subtitle" data-bs-i18n="subtitle">管理面板前端在首次使用前需要构建。请在下方安装依赖并构建页面。</p>
         <div class="bs-actions">
           <button class="bs-btn primary" id="bs-btn-install" onclick="doBootstrap('install')">
-            📦 Install Dependencies
+            <span aria-hidden="true">📦</span><span data-bs-i18n="installDeps">安装依赖</span>
           </button>
           <button class="bs-btn primary" id="bs-btn-build" onclick="doBootstrap('build')">
-            🔨 Build Page
+            <span aria-hidden="true">🔨</span><span data-bs-i18n="buildPage">构建页面</span>
           </button>
         </div>
         <div id="bs-status" hidden></div>
         <div id="bs-refresh" hidden style="text-align:center;margin-top:16px;">
           <button class="bs-btn primary" onclick="location.reload()">
-            🔄 Refresh Page
+            <span aria-hidden="true">🔄</span><span data-bs-i18n="refreshPage">刷新页面</span>
           </button>
         </div>
         <details class="bs-log">
-          <summary>Output Log</summary>
-          <pre id="bs-log-content">Waiting for action...</pre>
+          <summary data-bs-i18n="outputLog">输出日志</summary>
+          <pre id="bs-log-content">等待操作...</pre>
         </details>
         <div id="bs-error" class="bs-error-text" hidden></div>
         <p class="bs-footer">
-          Or run manually: <code style="background:#27272a;padding:2px 6px;border-radius:4px;">cd pages/dashboard && npm install && npm run build</code>
+          <span data-bs-i18n="manualPrefix">或手动运行：</span>
+          <code style="background:#27272a;padding:2px 6px;border-radius:4px;">cd pages/dashboard && npm install && npm run build</code>
         </p>
       </div>
     </div>
@@ -106,6 +105,153 @@
       // Uses the AstrBot plugin page bridge to call backend API endpoints.
       // Requires no external dependencies.
 
+      var BS_MESSAGES = {
+        zh: {
+          title: 'Memora 管理面板',
+          subtitle: '管理面板前端在首次使用前需要构建。请在下方安装依赖并构建页面。',
+          installDeps: '安装依赖',
+          buildPage: '构建页面',
+          refreshPage: '刷新页面',
+          outputLog: '输出日志',
+          waiting: '等待操作...',
+          manualPrefix: '或手动运行：',
+          installing: '正在安装依赖...',
+          building: '正在构建页面...',
+          endpointLog: '接口',
+          responseLog: '响应',
+          bridgeUnavailable: 'AstrBot bridge 不可用。请确认当前页面运行在 AstrBot WebView 中。',
+          unknownPlugin: '未知插件',
+          wrongPlugin: '<b>插件面板错误：</b>当前页面运行在 <b>{0}</b>（{1}）中，而不是 <b>Memora</b>。请在 AstrBot 中打开 Memora 插件页面后重试。',
+          wrongPluginLog: '检测到错误的插件上下文：{0}',
+          successTitle: '成功！',
+          installSuccess: '依赖安装成功。',
+          buildSuccess: '页面构建成功。',
+          exitCode: '退出码',
+          commandFailed: '命令执行失败，退出码为 {0}',
+          checkOutput: '请查看输出日志了解详情。',
+          unknownError: '未知错误',
+          apiError: 'API 错误：',
+          apiErrorLog: 'API 返回错误：{0}',
+          error: '错误：',
+          bridgeHint: 'Bridge 错误——请确认通过 AstrBot 插件面板访问此页面。',
+          exceptionLog: '异常：{0}',
+        },
+        en: {
+          title: 'Memora Dashboard',
+          subtitle: 'The dashboard frontend needs to be built before first use. Click below to install dependencies and build the page.',
+          installDeps: 'Install Dependencies',
+          buildPage: 'Build Page',
+          refreshPage: 'Refresh Page',
+          outputLog: 'Output Log',
+          waiting: 'Waiting for action...',
+          manualPrefix: 'Or run manually:',
+          installing: 'Installing dependencies...',
+          building: 'Building page...',
+          endpointLog: 'Endpoint',
+          responseLog: 'Response',
+          bridgeUnavailable: 'AstrBot bridge not available. Are you running inside AstrBot webview?',
+          unknownPlugin: 'Unknown plugin',
+          wrongPlugin: '<b>Wrong plugin panel:</b> this page is running inside <b>{0}</b> ({1}) instead of <b>Memora</b>. Open the Memora plugin page in AstrBot and retry.',
+          wrongPluginLog: 'Wrong plugin context detected: {0}',
+          successTitle: 'Success!',
+          installSuccess: 'Dependencies installed.',
+          buildSuccess: 'Page built successfully.',
+          exitCode: 'Exit code',
+          commandFailed: 'Command failed with exit code {0}',
+          checkOutput: 'Check the output log for details.',
+          unknownError: 'Unknown error',
+          apiError: 'API Error:',
+          apiErrorLog: 'API returned error: {0}',
+          error: 'Error:',
+          bridgeHint: 'Bridge error — make sure you are accessing this page through the AstrBot plugin panel.',
+          exceptionLog: 'Exception: {0}',
+        },
+        ru: {
+          title: 'Панель Memora',
+          subtitle: 'Перед первым использованием необходимо собрать интерфейс панели. Установите зависимости и соберите страницу с помощью кнопок ниже.',
+          installDeps: 'Установить зависимости',
+          buildPage: 'Собрать страницу',
+          refreshPage: 'Обновить страницу',
+          outputLog: 'Лог вывода',
+          waiting: 'Ожидание действия...',
+          manualPrefix: 'Или выполните вручную:',
+          installing: 'Установка зависимостей...',
+          building: 'Сборка страницы...',
+          endpointLog: 'Эндпоинт',
+          responseLog: 'Ответ',
+          bridgeUnavailable: 'Мост AstrBot недоступен. Откройте страницу внутри AstrBot WebView.',
+          unknownPlugin: 'Неизвестный плагин',
+          wrongPlugin: '<b>Ошибка панели плагина:</b> эта страница открыта в <b>{0}</b> ({1}), а не в <b>Memora</b>. Откройте страницу плагина Memora в AstrBot и повторите попытку.',
+          wrongPluginLog: 'Обнаружен неверный контекст плагина: {0}',
+          successTitle: 'Готово!',
+          installSuccess: 'Зависимости установлены.',
+          buildSuccess: 'Страница собрана.',
+          exitCode: 'Код завершения',
+          commandFailed: 'Команда завершилась ошибкой с кодом {0}',
+          checkOutput: 'Подробности приведены в логе вывода.',
+          unknownError: 'Неизвестная ошибка',
+          apiError: 'Ошибка API:',
+          apiErrorLog: 'API вернул ошибку: {0}',
+          error: 'Ошибка:',
+          bridgeHint: 'Ошибка моста — откройте эту страницу через панель плагина AstrBot.',
+          exceptionLog: 'Исключение: {0}',
+        },
+      };
+
+      function bsNormalizeLanguage(value) {
+        var language = String(value || '').trim().toLowerCase().replace('_', '-').slice(0, 2);
+        return Object.prototype.hasOwnProperty.call(BS_MESSAGES, language) ? language : null;
+      }
+
+      function bsResolveLanguage() {
+        try {
+          var storedLanguage = bsNormalizeLanguage(window.localStorage.getItem('lmem_lang'));
+          if (storedLanguage) return storedLanguage;
+        } catch (_) {}
+
+        var bridge = window.AstrBotPluginPage;
+        try {
+          if (bridge && typeof bridge.getLocale === 'function') {
+            var bridgeLanguage = bsNormalizeLanguage(bridge.getLocale());
+            if (bridgeLanguage) return bridgeLanguage;
+          }
+        } catch (_) {}
+
+        try {
+          if (bridge && typeof bridge.getContext === 'function') {
+            var context = bridge.getContext();
+            var contextLanguage = bsNormalizeLanguage(context && context.locale);
+            if (contextLanguage) return contextLanguage;
+          }
+        } catch (_) {}
+
+        return 'zh';
+      }
+
+      var bsLanguage = 'zh';
+
+      function bsT(key) {
+        var messages = BS_MESSAGES[bsLanguage] || BS_MESSAGES.zh;
+        return messages[key] || BS_MESSAGES.zh[key] || key;
+      }
+
+      function bsFormat(key) {
+        var text = bsT(key);
+        for (var i = 1; i < arguments.length; i += 1) {
+          text = text.split('{' + (i - 1) + '}').join(String(arguments[i]));
+        }
+        return text;
+      }
+
+      function bsEscapeHtml(value) {
+        return String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
       var bsRunning = false;
       var bsLog = document.getElementById('bs-log-content');
       var bsStatus = document.getElementById('bs-status');
@@ -113,6 +259,23 @@
       var bsRefresh = document.getElementById('bs-refresh');
       var btnInstall = document.getElementById('bs-btn-install');
       var btnBuild = document.getElementById('bs-btn-build');
+      var bsLogPristine = true;
+
+      function bsApplyLanguage() {
+        bsLanguage = bsResolveLanguage();
+        document.documentElement.setAttribute(
+          'lang',
+          bsLanguage === 'en' ? 'en-US' : bsLanguage === 'ru' ? 'ru-RU' : 'zh-CN'
+        );
+        var elements = document.querySelectorAll('[data-bs-i18n]');
+        for (var i = 0; i < elements.length; i += 1) {
+          var key = elements[i].getAttribute('data-bs-i18n');
+          elements[i].textContent = bsT(key);
+        }
+        if (bsLogPristine) bsLog.textContent = bsT('waiting');
+      }
+
+      bsApplyLanguage();
 
       function bsSetRunning(running) {
         bsRunning = running;
@@ -132,7 +295,8 @@
       }
 
       function bsAppendLog(text) {
-        bsLog.textContent = (bsLog.textContent === 'Waiting for action...' ? '' : bsLog.textContent + '\n') + text;
+        bsLog.textContent = (bsLogPristine ? '' : bsLog.textContent + '\n') + text;
+        bsLogPristine = false;
       }
 
       function bsGetBridgeContext() {
@@ -168,7 +332,7 @@
 
         return {
           pluginName: pluginName || 'unknown-plugin',
-          displayName: displayName || pluginName || 'Unknown plugin',
+          displayName: displayName || pluginName || bsT('unknownPlugin'),
         };
       }
 
@@ -191,35 +355,38 @@
 
       async function doBootstrap(action) {
         if (bsRunning) return;
+        bsApplyLanguage();
         bsSetRunning(true);
 
-        var label = action === 'install' ? 'Installing dependencies...' : 'Building page...';
+        var label = action === 'install' ? bsT('installing') : bsT('building');
         var endpoint = 'page/dashboard/' + (action === 'install' ? 'install' : 'build');
 
         bsShowStatus('info', '<span class="spinner" style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#93c5fd;border-radius:50%;animation:bs-spin 0.6s linear infinite;margin-right:8px;vertical-align:middle;"></span> ' + label);
         bsAppendLog('>>> ' + label);
-        bsAppendLog('>>> Endpoint: ' + endpoint);
+        bsAppendLog('>>> ' + bsT('endpointLog') + ': ' + endpoint);
 
         try {
           var bridge = window.AstrBotPluginPage;
           if (!bridge || typeof bridge.apiPost !== 'function') {
-            throw new Error('AstrBot bridge not available. Are you running inside AstrBot webview?');
+            var bridgeError = new Error(bsT('bridgeUnavailable'));
+            bridgeError.code = 'BRIDGE_UNAVAILABLE';
+            throw bridgeError;
           }
 
           var response = await bridge.apiPost(endpoint, {});
-          bsAppendLog('<<< Response: ' + JSON.stringify(response, null, 2));
+          bsAppendLog('<<< ' + bsT('responseLog') + ': ' + JSON.stringify(response, null, 2));
 
           var wrongPlugin = bsDetectWrongPluginResponse(response);
           if (wrongPlugin) {
             bsShowStatus(
               'error',
-              '❌ <b>Wrong plugin panel:</b> this page is running inside <b>'
-                + wrongPlugin.displayName
-                + '</b> ('
-                + wrongPlugin.pluginName
-                + ') instead of <b>Memora</b>. Open the Memora plugin page in AstrBot and retry.'
+              '❌ ' + bsFormat(
+                'wrongPlugin',
+                bsEscapeHtml(wrongPlugin.displayName),
+                bsEscapeHtml(wrongPlugin.pluginName)
+              )
             );
-            bsAppendLog('!!! Wrong plugin context detected: ' + wrongPlugin.pluginName);
+            bsAppendLog('!!! ' + bsFormat('wrongPluginLog', wrongPlugin.pluginName));
             return;
           }
 
@@ -234,28 +401,37 @@
             if (stderr) bsAppendLog('--- stderr ---\n' + stderr);
 
             if (success) {
-              bsShowStatus('success', '✅ <b>Success!</b> ' + (action === 'install' ? 'Dependencies installed.' : 'Page built successfully.') + '<br><small>Exit code: ' + exitCode + '</small>');
+              bsShowStatus(
+                'success',
+                '✅ <b>' + bsT('successTitle') + '</b> '
+                  + (action === 'install' ? bsT('installSuccess') : bsT('buildSuccess'))
+                  + '<br><small>' + bsT('exitCode') + ': ' + bsEscapeHtml(exitCode) + '</small>'
+              );
               bsRefresh.hidden = false;
             } else {
-              bsShowStatus('error', '❌ <b>Command failed</b> with exit code ' + exitCode + '<br><small>Check the output log for details.</small>');
+              bsShowStatus(
+                'error',
+                '❌ <b>' + bsFormat('commandFailed', bsEscapeHtml(exitCode)) + '</b>'
+                  + '<br><small>' + bsT('checkOutput') + '</small>'
+              );
             }
           } else {
-            var msg = (response && response.message) || 'Unknown error';
-            bsShowStatus('error', '❌ <b>API Error:</b> ' + msg);
-            bsAppendLog('!!! API returned error: ' + msg);
+            var msg = (response && response.message) || bsT('unknownError');
+            bsShowStatus('error', '❌ <b>' + bsT('apiError') + '</b> ' + bsEscapeHtml(msg));
+            bsAppendLog('!!! ' + bsFormat('apiErrorLog', msg));
           }
         } catch (e) {
           var message = (e && e.message) ? e.message : String(e);
-          var bridgeUnavailable = !window.AstrBotPluginPage || message.indexOf('AstrBot bridge not available') !== -1;
-          bsShowStatus('error', '❌ <b>Error:</b> ' + message);
+          var bridgeUnavailable = !window.AstrBotPluginPage || (e && e.code === 'BRIDGE_UNAVAILABLE');
+          bsShowStatus('error', '❌ <b>' + bsT('error') + '</b> ' + bsEscapeHtml(message));
           if (bridgeUnavailable) {
-            bsError.textContent = 'Bridge error — make sure you are accessing this page through the AstrBot plugin panel.';
+            bsError.textContent = bsT('bridgeHint');
             bsError.hidden = false;
           } else {
             bsError.hidden = true;
             bsError.textContent = '';
           }
-          bsAppendLog('!!! Exception: ' + message);
+          bsAppendLog('!!! ' + bsFormat('exceptionLog', message));
         } finally {
           bsSetRunning(false);
         }

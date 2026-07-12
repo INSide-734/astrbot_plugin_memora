@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EN_MAP } from "../mock";
 import { KnowledgePage } from "./KnowledgePage";
 
 interface BridgeMock {
@@ -45,6 +46,7 @@ describe("KnowledgePage", () => {
   });
 
   it("switches between list and search requests and keeps category filters on list fetches", async () => {
+    const localeSpy = vi.spyOn(Date.prototype, "toLocaleDateString");
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/knowledge") {
         return Promise.resolve(ok({
@@ -83,6 +85,7 @@ describe("KnowledgePage", () => {
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", { limit: "100", offset: "0" });
     });
+    expect(localeSpy).toHaveBeenCalledWith("en-US");
 
     fireEvent.click(screen.getByRole("combobox"));
     const conceptOption = await screen.findByRole("option", { name: "Concept" });
@@ -246,7 +249,7 @@ describe("KnowledgePage", () => {
         action: "delete",
       });
     });
-    expect(showToast).toHaveBeenCalledWith("Deleted 2 entries");
+    expect(showToast).toHaveBeenCalledWith(EN_MAP["toast.batchDeleted"].replace("{0}", "2"));
   });
 
   it("opens detail, updates an entry, and supports deleting it from the detail panel", async () => {

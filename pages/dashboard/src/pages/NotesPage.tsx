@@ -11,6 +11,7 @@ import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/la
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Checkbox } from "@/components/ui/checkbox";
+import { dashboardLocale, formatDashboardDate } from "@/lib/i18n";
 import { Textarea } from "@/components/ui/textarea";
 
 interface NotesPageProps {
@@ -33,10 +34,12 @@ const NOTE_STATUS_LABELS: Record<string, string> = {};
 const EDIT_NOTE_LABELS: Record<string, string> = {};
 
 export function NotesPage({ showToast }: NotesPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
 
   NOTE_STATUS_LABELS.active = t("status.active");
   NOTE_STATUS_LABELS.archived = t("status.archived");
+  NOTE_STATUS_LABELS.deleted = t("status.deleted");
   EDIT_NOTE_LABELS.title = t("field.title");
   EDIT_NOTE_LABELS.content = t("field.content");
   EDIT_NOTE_LABELS.tags = t("field.tags");
@@ -135,7 +138,7 @@ export function NotesPage({ showToast }: NotesPageProps) {
     if (!selected.size) return;
     try {
       await apiRequest("notes/batch", { method: "POST", body: { note_ids: Array.from(selected), action } });
-      showToast(`${action}d ${selected.size} notes`);
+      showToast(t(action === "archive" ? "toast.batchArchived" : "toast.batchDeleted", String(selected.size)));
       setSelected(new Set());
       fetchNotes();
     } catch (e) { showToast(String(e), true); }
@@ -150,7 +153,7 @@ export function NotesPage({ showToast }: NotesPageProps) {
         icon={<StickyNote />}
         actions={<div className="flex items-center gap-2">
           {notes.length > 0 && (
-            <Button variant="ghost" size="sm" aria-label={selected.size === notes.length ? "Deselect all notes" : "Select all notes"} onClick={toggleSelectAll}>
+            <Button variant="ghost" size="sm" aria-label={selected.size === notes.length ? t("notes.deselectAll") : t("notes.selectAll")} onClick={toggleSelectAll}>
               {selected.size === notes.length ? t("select.deselectAll") : t("select.selectAll")}
             </Button>
           )}
@@ -175,7 +178,7 @@ export function NotesPage({ showToast }: NotesPageProps) {
       </PageToolbar>
 
       <PageContent>
-        {loading ? <p className="py-12 text-center text-sm text-muted-foreground">Loading...</p> :
+        {loading ? <p className="py-12 text-center text-sm text-muted-foreground">{t("common.loading")}</p> :
          notes.length === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">{t("table.noData")}</p> : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {notes.map((n) => (
@@ -184,7 +187,7 @@ export function NotesPage({ showToast }: NotesPageProps) {
                 selected.has(getNoteId(n)) && "border-primary bg-primary/5"
               )}>
                 <div className="flex items-start gap-3">
-                  <Checkbox className="mt-1" aria-label={`Select note ${n.title}`}
+                  <Checkbox className="mt-1" aria-label={t("notes.selectNote", n.title)}
                     checked={selected.has(getNoteId(n))}
                     onCheckedChange={() => toggleSelect(getNoteId(n))}
                     onClick={(e) => e.stopPropagation()} />
@@ -192,7 +195,7 @@ export function NotesPage({ showToast }: NotesPageProps) {
                     className="min-w-0 flex-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     role="button"
                     tabIndex={0}
-                    aria-label={`Open note ${n.title}`}
+                    aria-label={t("notes.openNote", n.title)}
                     onClick={() => fetchDetail(getNoteId(n))}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") return;
@@ -208,10 +211,10 @@ export function NotesPage({ showToast }: NotesPageProps) {
                       </div>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <span>v{n.version ?? 1}</span>
-                        <Badge variant={n.status === "active" ? "default" : "secondary"}>{n.status ?? "active"}</Badge>
+                        <Badge variant={n.status === "active" ? "default" : "secondary"}>{NOTE_STATUS_LABELS[n.status ?? "active"] ?? n.status ?? t("status.active")}</Badge>
                       </div>
                     </div>
-                    {n.updated_at && <div className="mt-2 text-xs text-muted-foreground">{String(n.updated_at).slice(0, 10)}</div>}
+                    {n.updated_at && <div className="mt-2 text-xs text-muted-foreground">{formatDashboardDate(n.updated_at, locale)}</div>}
                   </div>
                 </div>
               </div>
@@ -236,11 +239,11 @@ export function NotesPage({ showToast }: NotesPageProps) {
         <SheetContent>
           <SheetHeader>
             <SheetTitle>{detail.title}</SheetTitle>
-            <SheetDescription>{t("detail.updated")}: {String(detail.updated_at ?? detail.created_at ?? "")}</SheetDescription>
+            <SheetDescription>{t("detail.updated")}: {formatDashboardDate(detail.updated_at ?? detail.created_at, locale)}</SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
             <div className="flex items-center gap-2">
-              <Badge variant={detail.status === "active" ? "default" : "secondary"}>{detail.status ?? "active"}</Badge>
+              <Badge variant={detail.status === "active" ? "default" : "secondary"}>{NOTE_STATUS_LABELS[detail.status ?? "active"] ?? detail.status ?? t("status.active")}</Badge>
               <span className="text-xs text-muted-foreground">v{detail.version ?? 1}</span>
             </div>
             {detail.tags && detail.tags.length > 0 && (
@@ -279,9 +282,9 @@ export function NotesPage({ showToast }: NotesPageProps) {
             </div>
           </div>
           <SheetFooter>
-            <Button variant="destructive" size="sm" onClick={() => deleteNote(detail.note_id ?? detail.id ?? "")}><Trash2 data-icon="inline-start" />Delete</Button>
+            <Button variant="destructive" size="sm" onClick={() => deleteNote(detail.note_id ?? detail.id ?? "")}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button>
             {detail.status !== "archived" && (
-              <Button variant="secondary" size="sm" onClick={() => archiveNote(detail.note_id ?? detail.id ?? "")}><Archive data-icon="inline-start" />Archive</Button>
+              <Button variant="secondary" size="sm" onClick={() => archiveNote(detail.note_id ?? detail.id ?? "")}><Archive data-icon="inline-start" />{t("common.archive")}</Button>
             )}
             <Button size="sm" onClick={saveEdit}><Pencil data-icon="inline-start" />{t("common.save")}</Button>
           </SheetFooter>

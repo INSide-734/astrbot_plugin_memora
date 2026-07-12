@@ -3,6 +3,7 @@ import { Search, X, ScrollText, BookOpen, StickyNote } from "lucide-react";
 import { apiGet, unwrapApiData } from "@/lib/bridge";
 import { useI18n } from "@/hooks/useI18n";
 import type { PageId } from "@/types";
+import { dashboardLocale, formatDashboardNumber, translateEnum } from "@/lib/i18n";
 import { Button } from "@/components/ui/Button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
@@ -21,6 +22,12 @@ interface SearchGroup {
   label: string;
   icon: React.ReactNode;
   results: SearchResultItem[];
+}
+
+interface SearchData {
+  memories: ApiMemoryItem[];
+  knowledge: ApiKnowledgeItem[];
+  notes: ApiNoteItem[];
 }
 
 interface ApiMemoryItem {
@@ -46,16 +53,23 @@ interface ApiNoteItem {
   status?: string;
 }
 
+const EMPTY_SEARCH_DATA: SearchData = {
+  memories: [],
+  knowledge: [],
+  notes: [],
+};
+
 function toStr(v: unknown): string {
   return String(v ?? "");
 }
 
 export function SearchBar({ onNavigate }: SearchBarProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [groups, setGroups] = useState<SearchGroup[]>([]);
+  const [searchData, setSearchData] = useState<SearchData>(EMPTY_SEARCH_DATA);
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -74,7 +88,7 @@ export function SearchBar({ onNavigate }: SearchBarProps) {
   useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
 
   const doSearch = useCallback(async (q: string) => {
-    if (q.trim().length < 2) { setGroups([]); return; }
+    if (q.trim().length < 2) { setSearchData(EMPTY_SEARCH_DATA); return; }
     setLoading(true);
     try {
       const [memRes, kwRes, noteRes] = await Promise.allSettled([
@@ -86,17 +100,10 @@ export function SearchBar({ onNavigate }: SearchBarProps) {
       const kwList: ApiKnowledgeItem[] = kwRes.status    === "fulfilled" ? (unwrapApiData(kwRes.value)   ?? []) : [];
       const noteList: ApiNoteItem[]    = noteRes.status  === "fulfilled" ? (unwrapApiData(noteRes.value)  ?? []) : [];
 
-      setGroups([
-        { type: "memories", label: t("nav.memory"), icon: <ScrollText size={14} />,
-          results: memList.map((m) => ({ id: toStr(m.id ?? ""), title: m.content ?? m.summary ?? "—", subtitle: `importance: ${(m.importance ?? 0).toFixed(1)}` })) },
-        { type: "knowledge", label: t("nav.knowledge"), icon: <BookOpen size={14} />,
-          results: kwList.map((k) => ({ id: toStr(k.entry_id ?? k.id ?? ""), title: k.title ?? k.content ?? "—", subtitle: k.category ?? "" })) },
-        { type: "notes", label: t("nav.notes"), icon: <StickyNote size={14} />,
-          results: noteList.map((n) => ({ id: toStr(n.note_id ?? n.id ?? ""), title: n.title ?? n.content ?? "—", subtitle: n.status ?? "" })) },
-      ]);
-    } catch { setGroups([]); }
+      setSearchData({ memories: memList, knowledge: kwList, notes: noteList });
+    } catch { setSearchData(EMPTY_SEARCH_DATA); }
     finally { setLoading(false); }
-  }, [t]);
+  }, []);
 
   const handleInput = (value: string) => {
     setQuery(value);
@@ -109,6 +116,39 @@ export function SearchBar({ onNavigate }: SearchBarProps) {
     const page = type === "memories" ? "memory" : type === "knowledge" ? "knowledge" : "notes";
     onNavigate(page as PageId, { highlightId: id });
   };
+
+  const groups: SearchGroup[] = [
+    {
+      type: "memories",
+      label: t("nav.memory"),
+      icon: <ScrollText size={14} />,
+      results: searchData.memories.map((item) => ({
+        id: toStr(item.id ?? ""),
+        title: item.content ?? item.summary ?? "—",
+        subtitle: `${t("table.importance")}: ${formatDashboardNumber(item.importance ?? 0, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`,
+      })),
+    },
+    {
+      type: "knowledge",
+      label: t("nav.knowledge"),
+      icon: <BookOpen size={14} />,
+      results: searchData.knowledge.map((item) => ({
+        id: toStr(item.entry_id ?? item.id ?? ""),
+        title: item.title ?? item.content ?? "—",
+        subtitle: translateEnum(t, "category", item.category),
+      })),
+    },
+    {
+      type: "notes",
+      label: t("nav.notes"),
+      icon: <StickyNote size={14} />,
+      results: searchData.notes.map((item) => ({
+        id: toStr(item.note_id ?? item.id ?? ""),
+        title: item.title ?? item.content ?? "—",
+        subtitle: translateEnum(t, "status", item.status),
+      })),
+    },
+  ];
 
   const totalResults = groups.reduce((s, g) => s + g.results.length, 0);
 
@@ -129,11 +169,11 @@ export function SearchBar({ onNavigate }: SearchBarProps) {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          aria-label="Global search"
+          aria-label={t("search.title")}
           showCloseButton={false}
           className="top-[15vh] max-h-[70vh] max-w-xl -translate-y-0 gap-0 overflow-hidden p-0"
         >
-          <DialogTitle className="sr-only">Global search</DialogTitle>
+          <DialogTitle className="sr-only">{t("search.title")}</DialogTitle>
           <div className="flex items-center gap-3 border-b px-4 py-3">
               <Search className="size-4 shrink-0 text-muted-foreground" />
               <input
@@ -143,7 +183,7 @@ export function SearchBar({ onNavigate }: SearchBarProps) {
                 className="h-8 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
               {loading ? <div className="size-4 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent" /> : null}
-              <Button type="button" variant="ghost" size="icon-sm" aria-label="Close search" onClick={() => setOpen(false)}>
+              <Button type="button" variant="ghost" size="icon-sm" aria-label={t("search.close")} onClick={() => setOpen(false)}>
                 <X />
               </Button>
           </div>

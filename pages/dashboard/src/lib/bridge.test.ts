@@ -17,6 +17,18 @@ describe("bridge", () => {
   let bridge: BridgeMock;
 
   beforeEach(() => {
+    window.t = vi.fn((key: string, ...args: string[]) => {
+      const translations: Record<string, string> = {
+        "error.bridgeUnavailable": "桥接不可用",
+        "error.requestFailed": "请求失败",
+        "error.unexpectedResponseType": "响应类型异常：{0}",
+      };
+      let value = translations[key] ?? key;
+      args.forEach((arg, index) => {
+        value = value.replace(`{${index}}`, arg);
+      });
+      return value;
+    });
     bridge = {
       apiGet: vi.fn(),
       apiPost: vi.fn(),
@@ -34,6 +46,16 @@ describe("bridge", () => {
       configurable: true,
       value: undefined,
     });
+    Reflect.deleteProperty(window, "t");
+  });
+
+  it("localizes the bridge-unavailable fallback", async () => {
+    Object.defineProperty(window, "AstrBotPluginPage", {
+      configurable: true,
+      value: undefined,
+    });
+
+    await expect(apiGet("stats")).rejects.toThrow("桥接不可用");
   });
 
   it("prefixes page/ for GET requests", async () => {
@@ -96,7 +118,7 @@ describe("bridge", () => {
 
   it("throws on non-object responses", () => {
     expect(() => unwrapApiData("bad" as unknown as ApiResponse)).toThrow(
-      "[bridge] Unexpected API response type: string"
+      "响应类型异常：string"
     );
   });
 

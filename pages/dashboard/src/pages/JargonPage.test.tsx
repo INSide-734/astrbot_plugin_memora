@@ -64,7 +64,7 @@ describe("JargonPage", () => {
         return Promise.resolve(ok({
           candidates: [
             {
-              term: "黑话A",
+              term: "$& $$",
               group_id: "group-1",
               score: 0.82,
               frequency: 7,
@@ -73,7 +73,7 @@ describe("JargonPage", () => {
               burst_score: 0.2,
               concentration_score: 0.3,
               first_seen: 1,
-              context_examples: ["黑话A means a deployment shortcut"],
+              context_examples: ["$& $$ means a deployment shortcut"],
             },
           ],
         }));
@@ -89,9 +89,9 @@ describe("JargonPage", () => {
 
     expect(screen.getByRole("region").getAttribute("data-layout")).toBe("dense");
 
-    expect(await screen.findByText("黑话A")).toBeTruthy();
+    expect(await screen.findByText("$& $$")).toBeTruthy();
     expect(screen.getByText("82%")).toBeTruthy();
-    expect(screen.getByText("黑话A means a deployment shortcut")).toBeTruthy();
+    expect(screen.getByText("$& $$ means a deployment shortcut")).toBeTruthy();
     expect(screen.getAllByText("3").length).toBeGreaterThanOrEqual(1);
     const tabs = screen.getByRole("tablist", { name: "Jargon views" });
     expect(tabs).toBeTruthy();
@@ -101,12 +101,12 @@ describe("JargonPage", () => {
 
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/jargon/confirm", {
-        term: "黑话A",
+        term: "$& $$",
         group_id: "group-1",
         confirmed: true,
       });
     });
-    expect(showToast).toHaveBeenCalledWith("Confirmed '黑话A' as jargon");
+    expect(showToast).toHaveBeenCalledWith("Confirmed '$& $$' as jargon");
   });
 
   it("switches to meanings and renders confirmed meaning rows", async () => {

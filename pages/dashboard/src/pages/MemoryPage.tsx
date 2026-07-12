@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/Badge";
 import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { dashboardLocale, formatDashboardDate, formatDashboardNumber, translateEnum } from "@/lib/i18n";
 import type { MemoryItem } from "@/types";
 
 interface MemoryPageProps {
@@ -24,7 +25,8 @@ const STATUS_LABELS: Record<string, string> = {};
 const EDIT_FIELD_LABELS: Record<string, string> = {};
 
 export function MemoryPage({ showToast }: MemoryPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
 
   // Init label maps with i18n
   STATUS_LABELS.all = t("filter.statusAll");
@@ -101,7 +103,7 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
     try {
       const body = { memory_ids: Array.from(selected), action };
       await apiRequest("memories/batch", { method: "POST", body });
-      showToast(`${action}d ${selected.size} memories`);
+      showToast(t(action === "archive" ? "toast.batchArchived" : "toast.batchDeleted", String(selected.size)));
       setSelected(new Set());
       fetchMemories();
     } catch (e) {
@@ -154,7 +156,7 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
       style={{ gridTemplateColumns: GRID_COLS }}
     >
       <div className="px-4 py-2.5">
-        <Checkbox aria-label="Select all memories" checked={selected.size === items.length && items.length > 0} onCheckedChange={toggleSelectAll} />
+        <Checkbox aria-label={selected.size === items.length && items.length > 0 ? t("memory.deselectAll") : t("memory.selectAll")} checked={selected.size === items.length && items.length > 0} onCheckedChange={toggleSelectAll} />
       </div>
       <div className="px-3 py-2.5">{t("table.id")}</div>
       <div className="px-3 py-2.5">{t("table.summary")}</div>
@@ -177,29 +179,29 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
           onClick={() => fetchDetail(m.id)}
         >
           <div className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
-            <Checkbox aria-label={`Select memory ${m.id}`} checked={selected.has(m.id)} onCheckedChange={() => toggleSelect(m.id)} />
+            <Checkbox aria-label={t("memory.selectItem", String(m.id))} checked={selected.has(m.id)} onCheckedChange={() => toggleSelect(m.id)} />
           </div>
           <div className="truncate px-3 py-2.5 font-mono text-xs text-muted-foreground">{String(m.id).slice(0, 8)}</div>
           <div className="truncate px-3 py-2.5">{String(m.summary ?? m.content ?? m.text ?? "")}</div>
-          <div className="px-3 py-2.5"><Badge variant="secondary">{String(m.type ?? "other").toUpperCase()}</Badge></div>
+          <div className="px-3 py-2.5"><Badge variant="secondary">{m.type ? translateEnum(t, "memory.type", m.type) : "--"}</Badge></div>
           <div className="px-3 py-2.5">
             <div className="flex items-center gap-2">
               <div className="h-1.5 flex-1 rounded-full bg-muted">
                 <div className="h-1.5 rounded-full bg-primary transition-all"
                   style={{ width: `${normalizeImportance(m.importance ?? 0) * 10}%` }} />
               </div>
-              <span className="text-xs tabular-nums text-muted-foreground">{normalizeImportance(m.importance ?? 0).toFixed(1)}</span>
+              <span className="text-xs tabular-nums text-muted-foreground">{formatDashboardNumber(normalizeImportance(m.importance ?? 0), locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>
             </div>
           </div>
-          <div className="px-3 py-2.5"><Badge variant={statusVariant(String(m.status ?? "active"))}>{m.status ?? "active"}</Badge></div>
-          <div className="px-3 py-2.5 text-xs text-muted-foreground">{String(m.created_at ?? "").slice(0, 10)}</div>
+          <div className="px-3 py-2.5"><Badge variant={statusVariant(String(m.status ?? "active"))}>{STATUS_LABELS[String(m.status ?? "active")] ?? m.status ?? t("filter.statusActive")}</Badge></div>
+          <div className="px-3 py-2.5 text-xs text-muted-foreground">{formatDashboardDate(m.created_at, locale)}</div>
         </div>
       </div>
     );
   };
 
   return (
-    <PageFrame variant="dense">
+    <PageFrame variant="dense" aria-label={t("nav.memory")}>
       {/* Header */}
       <PageHeader title={t("nav.memory")} icon={<ScrollText size={18} />} />
 
@@ -269,7 +271,7 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
       {/* Batch Bar */}
       {selected.size > 0 && (
         <div className="flex items-center gap-3 border-t bg-muted/50 px-6 py-2.5 animate-slide-up">
-          <span className="text-sm font-medium text-foreground">{selected.size} selected</span>
+          <span className="text-sm font-medium text-foreground">{t("select.selected", String(selected.size))}</span>
           <Button variant="secondary" size="sm" onClick={() => batchAction("archive")}><Archive size={14} />{t("edit.statusArchived")}</Button>
           <Button variant="destructive" size="sm" onClick={() => batchAction("delete")}><Trash2 size={14} />{t("filter.deleteSelected")}</Button>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X size={14} />{t("common.clear")}</Button>
@@ -281,7 +283,7 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
         <div className="fixed inset-y-0 right-0 z-40 w-[420px] overflow-y-auto border-l bg-popover text-popover-foreground shadow-lg animate-slide-in-right">
           <div className="flex items-center justify-between border-b px-5 py-3">
             <h3 className="text-sm font-semibold">{t("detail.title")}</h3>
-            <Button variant="ghost" size="sm" onClick={() => setDetail(null)}><X size={16} /></Button>
+            <Button variant="ghost" size="sm" aria-label={t("common.close")} title={t("common.close")} onClick={() => setDetail(null)}><X size={16} /></Button>
           </div>
           <div className="p-5 space-y-4">
             <div>
@@ -289,14 +291,14 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
               <p className="font-mono text-sm">{detail.id}</p>
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground">Content</label>
+              <label className="text-xs font-medium text-muted-foreground">{t("detail.content")}</label>
               <p className="text-sm whitespace-pre-wrap">{String(detail.content ?? detail.summary ?? detail.text ?? "")}</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.type")}</label><p className="text-sm">{String(detail.type ?? "")}</p></div>
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.importance")}</label><p className="text-sm">{normalizeImportance(Number(detail.importance ?? 0)).toFixed(1)}</p></div>
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.status")}</label><p className="text-sm">{String(detail.status ?? "")}</p></div>
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.created")}</label><p className="text-sm">{String(detail.created_at ?? "")}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.type")}</label><p className="text-sm">{detail.type ? translateEnum(t, "memory.type", detail.type) : "--"}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.importance")}</label><p className="text-sm">{formatDashboardNumber(normalizeImportance(Number(detail.importance ?? 0)), locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.status")}</label><p className="text-sm">{STATUS_LABELS[String(detail.status ?? "active")] ?? String(detail.status ?? "")}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.created")}</label><p className="text-sm">{formatDashboardDate(detail.created_at, locale)}</p></div>
             </div>
 
             {/* Edit Form */}

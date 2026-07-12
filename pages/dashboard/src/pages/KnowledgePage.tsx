@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/Table";
 import { Checkbox } from "@/components/ui/checkbox";
+import { dashboardLocale, formatDashboardDate, formatDashboardNumber } from "@/lib/i18n";
 import { Textarea } from "@/components/ui/textarea";
 
 interface KnowledgePageProps {
@@ -34,7 +35,8 @@ const EDIT_KB_LABELS: Record<string, string> = {};
 const PAGE_SIZE = 100;
 
 export function KnowledgePage({ showToast }: KnowledgePageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
 
   CAT_LABELS.fact = t("category.fact");
   CAT_LABELS.concept = t("category.concept");
@@ -147,7 +149,7 @@ export function KnowledgePage({ showToast }: KnowledgePageProps) {
     if (!selected.size) return;
     try {
       await apiRequest("knowledge/batch", { method: "POST", body: { entry_ids: Array.from(selected), action: "delete" } });
-      showToast(`Deleted ${selected.size} entries`);
+      showToast(t("toast.batchDeleted", String(selected.size)));
       setSelected(new Set());
       fetchEntries();
     } catch (e) { showToast(String(e), true); }
@@ -190,13 +192,13 @@ export function KnowledgePage({ showToast }: KnowledgePageProps) {
       </PageToolbar>
 
       <PageContent width="full" className="p-0">
-        {search ? <div className="border-b px-6 py-2 text-sm text-muted-foreground">Showing {entries.length} of {total} search results</div> : null}
-        {loading ? <p className="px-6 py-12 text-center text-sm text-muted-foreground">Loading...</p> :
+        {search ? <div className="border-b px-6 py-2 text-sm text-muted-foreground">{t("kb.searchResults", String(entries.length), String(total))}</div> : null}
+        {loading ? <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("common.loading")}</p> :
          entries.length === 0 ? <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("table.noData")}</p> : (
           <Table>
             <TableHeader className="sticky top-0 bg-background">
               <TableRow className="text-left text-xs font-medium uppercase text-muted-foreground">
-                <TableHead className="w-10 px-4"><Checkbox aria-label="Select all knowledge entries" checked={selected.size === entries.length && entries.length > 0} onCheckedChange={toggleSelectAll} /></TableHead>
+                <TableHead className="w-10 px-4"><Checkbox aria-label={selected.size === entries.length && entries.length > 0 ? t("kb.deselectAll") : t("kb.selectAll")} checked={selected.size === entries.length && entries.length > 0} onCheckedChange={toggleSelectAll} /></TableHead>
                 <TableHead className="px-4">{t("table.title")}</TableHead><TableHead>{t("table.category")}</TableHead>
                 <TableHead>{t("table.confidence")}</TableHead><TableHead>{t("table.updated")}</TableHead>
               </TableRow>
@@ -206,14 +208,14 @@ export function KnowledgePage({ showToast }: KnowledgePageProps) {
                 <TableRow key={getEntryId(e)} className="cursor-pointer text-sm"
                   onClick={() => fetchDetail(getEntryId(e))}>
                   <TableCell className="px-4" onClick={(ev) => ev.stopPropagation()}>
-                    <Checkbox aria-label={`Select knowledge entry ${e.title}`} checked={selected.has(getEntryId(e))} onCheckedChange={() => toggleSelect(getEntryId(e))} />
+                    <Checkbox aria-label={t("kb.selectEntry", e.title)} checked={selected.has(getEntryId(e))} onCheckedChange={() => toggleSelect(getEntryId(e))} />
                   </TableCell>
                   <TableCell className="px-4 font-medium">
-                    <Button variant="link" className="h-auto p-0 font-medium" aria-label={`Open knowledge entry ${e.title}`} onClick={(event) => { event.stopPropagation(); fetchDetail(getEntryId(e)); }}>{e.title}</Button>
+                    <Button variant="link" className="h-auto p-0 font-medium" aria-label={t("kb.openEntry", e.title)} onClick={(event) => { event.stopPropagation(); fetchDetail(getEntryId(e)); }}>{e.title}</Button>
                   </TableCell>
-                  <TableCell><Badge variant="secondary">{e.category ?? "fact"}</Badge></TableCell>
-                  <TableCell className="text-xs tabular-nums">{Number(e.confidence ?? 0).toFixed(2)}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{String(e.updated_at ?? e.created_at ?? "").slice(0, 10)}</TableCell>
+                  <TableCell><Badge variant="secondary">{CAT_LABELS[e.category ?? "fact"] ?? e.category ?? t("category.fact")}</Badge></TableCell>
+                  <TableCell className="text-xs tabular-nums">{formatDashboardNumber(e.confidence ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{formatDashboardDate(e.updated_at ?? e.created_at, locale)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -221,17 +223,17 @@ export function KnowledgePage({ showToast }: KnowledgePageProps) {
         )}
       </PageContent>
 
-      {!search && <nav className="flex min-h-12 shrink-0 items-center justify-between border-t bg-background px-4 py-2 sm:px-5 lg:px-6" aria-label="Knowledge pagination">
-        <Button variant="outline" size="sm" aria-label="Previous page" disabled={Boolean(search) || page === 0} onClick={() => changePage(Math.max(0, page - 1))}>Previous</Button>
-        <span className="text-sm text-muted-foreground">Page {page + 1} of {totalPages}</span>
-        <Button variant="outline" size="sm" aria-label="Next page" disabled={Boolean(search) || page + 1 >= totalPages} onClick={() => changePage(page + 1)}>Next</Button>
+      {!search && <nav className="flex min-h-12 shrink-0 items-center justify-between border-t bg-background px-4 py-2 sm:px-5 lg:px-6" aria-label={t("kb.pagination")}>
+        <Button variant="outline" size="sm" aria-label={t("pagination.previousPage")} disabled={Boolean(search) || page === 0} onClick={() => changePage(Math.max(0, page - 1))}>{t("pagination.prev")}</Button>
+        <span className="text-sm text-muted-foreground">{t("pagination.pageOf", String(page + 1), String(totalPages))}</span>
+        <Button variant="outline" size="sm" aria-label={t("pagination.nextPage")} disabled={Boolean(search) || page + 1 >= totalPages} onClick={() => changePage(page + 1)}>{t("pagination.next")}</Button>
       </nav>}
 
       {/* Batch bar */}
       {selected.size > 0 && (
         <PageToolbar className="border-b-0 border-t bg-muted/40 animate-slide-up">
-          <span className="text-sm font-medium">{selected.size} selected</span>
-          <Button variant="destructive" size="sm" onClick={batchDelete}><Trash2 data-icon="inline-start" />Delete</Button>
+          <span className="text-sm font-medium">{t("select.selected", String(selected.size))}</span>
+          <Button variant="destructive" size="sm" onClick={batchDelete}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X data-icon="inline-start" />{t("common.clear")}</Button>
         </PageToolbar>
       )}
@@ -242,16 +244,16 @@ export function KnowledgePage({ showToast }: KnowledgePageProps) {
         <SheetContent>
           <SheetHeader>
             <SheetTitle>{detail.title}</SheetTitle>
-            <SheetDescription>{detail.category ?? "fact"}</SheetDescription>
+            <SheetDescription>{CAT_LABELS[detail.category ?? "fact"] ?? detail.category ?? t("category.fact")}</SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.category")}</label><p className="text-sm">{detail.category ?? "fact"}</p></div>
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.confidence")}</label><p className="text-sm">{Number(detail.confidence ?? 0).toFixed(2)}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.category")}</label><p className="text-sm">{CAT_LABELS[detail.category ?? "fact"] ?? detail.category ?? t("category.fact")}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.confidence")}</label><p className="text-sm">{formatDashboardNumber(detail.confidence ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
               <div><label className="text-xs font-medium text-muted-foreground">{t("table.accessCount")}</label><p className="text-sm">{detail.access_count ?? 0}</p></div>
             </div>
             {detail.content && (
-              <div><label className="text-xs font-medium text-muted-foreground">Content</label><p className="mt-1 whitespace-pre-wrap text-sm">{detail.content}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("detail.content")}</label><p className="mt-1 whitespace-pre-wrap text-sm">{detail.content}</p></div>
             )}
 
             {/* Edit form */}
@@ -296,7 +298,7 @@ export function KnowledgePage({ showToast }: KnowledgePageProps) {
           </div>
           <SheetFooter>
             <Button variant="secondary" size="sm" onClick={() => setDetail(null)}>{t("common.cancel")}</Button>
-            <Button variant="destructive" size="sm" onClick={() => deleteEntry(detail.entry_id ?? detail.id ?? "")}><Trash2 data-icon="inline-start" />Delete</Button>
+            <Button variant="destructive" size="sm" onClick={() => deleteEntry(detail.entry_id ?? detail.id ?? "")}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button>
             <Button size="sm" onClick={saveEdit}><Pencil data-icon="inline-start" />{t("common.save")}</Button>
           </SheetFooter>
         </SheetContent>

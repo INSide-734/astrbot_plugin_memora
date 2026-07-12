@@ -53,6 +53,10 @@ describe("RecallPage", () => {
   });
 
   it("submits recall requests and renders returned results", async () => {
+    vi.spyOn(Date.prototype, "toLocaleDateString").mockImplementation((_locales, options) => (
+      options?.timeZone === "UTC" ? "stable-date" : "shifted-date"
+    ));
+    bridge.t?.mockImplementation((key: string) => key === "dashboard.memory.type.fact" ? "Fact memory" : key);
     bridge.apiPost.mockResolvedValue({
       status: "ok",
       data: {
@@ -63,7 +67,7 @@ describe("RecallPage", () => {
             type: "fact",
             importance: 0.8,
             score: 0.9123,
-            created_at: "2026-06-28T12:00:00Z",
+            created_at: "2026-06-28",
             doc_kw_score: 0.7,
             doc_vec_score: 0.8,
           },
@@ -92,6 +96,8 @@ describe("RecallPage", () => {
     expect(await screen.findByText("Remember the Python async discussion")).toBeTruthy();
     expect(screen.getByText(/1 results/)).toBeTruthy();
     expect(screen.getByText(/Importance:/)).toBeTruthy();
+    expect(screen.getByText("Fact memory")).toBeTruthy();
+    expect(screen.getByText("stable-date")).toBeTruthy();
     expect(screen.getByText("0.912")).toBeTruthy();
     expect(screen.getByText("Doc-KW: 0.700")).toBeTruthy();
     expect(screen.getByText("Doc-Vec: 0.800")).toBeTruthy();

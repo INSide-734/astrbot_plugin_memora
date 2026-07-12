@@ -49,6 +49,10 @@ describe("SystemPage", () => {
   });
 
   it("loads stats and backups on mount and renders overview data", async () => {
+    const localeSpy = vi.spyOn(Date.prototype, "toLocaleString");
+    const localeDateSpy = vi.spyOn(Date.prototype, "toLocaleDateString").mockImplementation(
+      (_locales, options) => options?.timeZone === "UTC" ? "July 4, 2026" : "July 3, 2026",
+    );
     bridge.apiGet.mockImplementation((path: string) => {
       if (path === "page/stats") {
         return Promise.resolve(ok({
@@ -59,7 +63,7 @@ describe("SystemPage", () => {
           graph_nodes: 7,
           atom_count: 10,
           importance_distribution: { "1": 2, "2": 5 },
-          atom_types: { fact: 4, note: 6 },
+          atom_types: { FACTUAL: 4, vendor_type: 6 },
           sessions: { "session-a": { turns: 2 } },
         }));
       }
@@ -164,19 +168,19 @@ describe("SystemPage", () => {
     expect(screen.getByText("Background Active")).toBeTruthy();
     expect(screen.getByText("Background Failures")).toBeTruthy();
     expect(screen.getByText("Backfill Status")).toBeTruthy();
-    expect(screen.getByText("failed")).toBeTruthy();
+    expect(screen.getByText("Failed")).toBeTruthy();
     expect(screen.getByText("Backfill Retries")).toBeTruthy();
     expect(screen.getByText("Decay Next Run")).toBeTruthy();
-    expect(screen.getByText("7200.3 s")).toBeTruthy();
+    expect(screen.getByText("7,200.3 s")).toBeTruthy();
     expect(screen.getByText("Decay Last Date")).toBeTruthy();
-    expect(screen.getByText("2026-07-04")).toBeTruthy();
+    expect(screen.getByText("July 4, 2026")).toBeTruthy();
     expect(screen.getByText("Decay Retries")).toBeTruthy();
     expect(screen.getByText("provider-retry")).toBeTruthy();
     expect(screen.getByText("TimeoutError")).toBeTruthy();
     expect(screen.getByText("检查 LLM/Embedding provider 配置与网络状态，然后等待重试或重启插件初始化。")).toBeTruthy();
     expect(screen.getByText("检查话题分割配置和最近的错误详情；修复后可重新启动存量回填。")).toBeTruthy();
     expect(screen.getByText("Provider Status")).toBeTruthy();
-    expect(screen.getByText("waiting")).toBeTruthy();
+    expect(screen.getByText("Waiting")).toBeTruthy();
     expect(screen.getByText("Provider Attempts")).toBeTruthy();
     expect(screen.getByText("4 / 60")).toBeTruthy();
     expect(screen.getByText("Index Rebuild Errors")).toBeTruthy();
@@ -187,9 +191,34 @@ describe("SystemPage", () => {
     expect(screen.getByText("Lock Retries")).toBeTruthy();
     expect(screen.getByText("Prometheus Collectors")).toBeTruthy();
     expect(screen.getByText("Importance Distribution")).toBeTruthy();
+    expect(screen.getByText("Factual")).toBeTruthy();
+    expect(screen.getByText("vendor_type")).toBeTruthy();
     expect(screen.getByText("backup-2026-06-28")).toBeTruthy();
+    expect(localeSpy).toHaveBeenCalledWith("en-US");
+    expect(localeDateSpy).toHaveBeenCalledWith("en-US", { timeZone: "UTC" });
     expect(screen.getByText("session-a")).toBeTruthy();
     expect(screen.getByText("Topic Segmentation Config")).toBeTruthy();
+  });
+
+  it("preserves unknown runtime statuses instead of hiding them as unavailable", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ total_memories: 1 }));
+      if (path === "page/backup/list") return Promise.resolve(ok({ backups: [] }));
+      if (path === "page/metrics/summary") {
+        return Promise.resolve(ok({
+          background_tasks: {
+            schedulers: { backfill: { status: "vendor_backfill" } },
+          },
+          provider: { status: "vendor_provider" },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<SystemPage showToast={showToast} />);
+
+    expect(await screen.findByText("vendor_backfill")).toBeTruthy();
+    expect(screen.getByText("vendor_provider")).toBeTruthy();
   });
 
   it("confirms restore actions before posting the backup restore request", async () => {

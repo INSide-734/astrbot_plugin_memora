@@ -5,6 +5,7 @@ import type { MemoryItem } from "@/types";
 import { Clock, Calendar } from "lucide-react";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { Button } from "@/components/ui/Button";
+import { dashboardLocale, formatDashboardNumber, translateEnum } from "@/lib/i18n";
 
 interface TimelinePageProps {
   showToast: (message: string, isError?: boolean) => void;
@@ -12,11 +13,6 @@ interface TimelinePageProps {
 
 type ZoomLevel = "day" | "week" | "month";
 const ZOOM_HOURS: Record<ZoomLevel, number> = { day: 24, week: 168, month: 720 };
-
-function localeForLang(lang: string): string {
-  const map: Record<string, string> = { zh: "zh-CN", en: "en-US", ru: "ru-RU" };
-  return map[lang] ?? "zh-CN";
-}
 
 function parseTimestamp(item: MemoryItem): number {
   const raw = item.created_at;
@@ -30,6 +26,7 @@ function parseTimestamp(item: MemoryItem): number {
 
 export function TimelinePage({ showToast }: TimelinePageProps) {
   const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState<ZoomLevel>("week");
@@ -58,7 +55,6 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
     .sort((a, b) => parseTimestamp(b) - parseTimestamp(a));
 
   function formatDate(ts: number): string {
-    const locale = localeForLang(currentLang());
     const d = new Date(ts * 1000);
     if (zoom === "day") return d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
     if (zoom === "week") return d.toLocaleDateString(locale, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -136,9 +132,9 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
                           <div className="mt-3 space-y-2 border-t pt-3">
                             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                               <span className="text-muted-foreground">{t("table.importance")}</span>
-                              <span className="text-foreground">{(mem.importance ?? 0).toFixed(2)}</span>
+                              <span className="text-foreground">{formatDashboardNumber(mem.importance ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                               <span className="text-muted-foreground">{t("table.type")}</span>
-                              <span className="text-foreground">{mem.type ?? "—"}</span>
+                              <span className="text-foreground">{mem.type ? translateEnum(t, "memory.type", mem.type) : "—"}</span>
                             </div>
                           </div>
                         )}

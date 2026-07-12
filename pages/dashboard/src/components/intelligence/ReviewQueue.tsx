@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
+import { dashboardLocale, translateEnum } from "@/lib/i18n";
 import type {
   ReviewAction,
   ReviewActionValue,
@@ -64,12 +65,12 @@ function normalizeItem(item: ReviewItem): ReviewItem {
   };
 }
 
-function formatTime(value: number): string {
+function formatTime(value: number, locale: string): string {
   if (!value) return "--";
   const ms = value < 10_000_000_000 ? value * 1000 : value;
   const date = new Date(ms);
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
+  return date.toLocaleString(locale);
 }
 
 function badgeClass(value: string): string {
@@ -95,12 +96,14 @@ function FilterSelect({
   value,
   allLabel,
   options,
+  optionLabel,
   onChange,
 }: {
   label: string;
   value: string;
   allLabel: string;
   options: string[];
+  optionLabel: (value: string) => string;
   onChange: (value: string) => void;
 }) {
   return (
@@ -108,12 +111,12 @@ function FilterSelect({
       <span className="text-2xs font-semibold uppercase tracking-normal text-[var(--text-tertiary)]">{label}</span>
       <Select value={value} onValueChange={(nextValue) => { if (nextValue) onChange(nextValue); }}>
         <SelectTrigger aria-label={label} className="mt-1 h-9 w-full">
-          <span>{value === "all" ? allLabel : value}</span>
+          <span>{value === "all" ? allLabel : optionLabel(value)}</span>
         </SelectTrigger>
         <SelectContent>
           <SelectGroup>
             <SelectItem value="all">{allLabel}</SelectItem>
-            {options.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+            {options.map((option) => <SelectItem key={option} value={option}>{optionLabel(option)}</SelectItem>)}
           </SelectGroup>
         </SelectContent>
       </Select>
@@ -122,7 +125,7 @@ function FilterSelect({
 }
 
 export function ReviewQueue({ showToast }: ReviewQueueProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [total, setTotal] = useState(0);
   const [selectedId, setSelectedId] = useState("");
@@ -132,6 +135,11 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const locale = dashboardLocale(currentLang());
+  const statusLabel = (value: string) => translateEnum(t, "intelligence.review.status", value, value);
+  const reasonLabel = (value: string) => translateEnum(t, "intelligence.review.reason", value, value);
+  const severityLabel = (value: string) => translateEnum(t, "severity", value, value);
+  const actionLabel = (value: string) => translateEnum(t, "intelligence.review.action", value, value);
 
   const loadItems = useCallback(async () => {
     setLoadingList(true);
@@ -235,7 +243,7 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
       if (confirmed === true) body.confirmed = true;
       unwrapApiData(await apiRequest("review/action", { method: "POST", body }));
       await Promise.all([loadItems(), loadDetail(selectedId)]);
-      showToast(t("intelligence.review.toastActionSubmitted", action));
+      showToast(t("intelligence.review.toastActionSubmitted", actionLabel(action)));
     } catch (e) {
       showToast(String(e), true);
       throw e;
@@ -273,6 +281,7 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
             value={filters.status}
             allLabel={t("intelligence.review.allStatus")}
             options={statusOptions}
+            optionLabel={statusLabel}
             onChange={(value) => updateFilter("status", value)}
           />
 
@@ -281,6 +290,7 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
             value={filters.reason}
             allLabel={t("intelligence.review.allReasons")}
             options={reasonOptions}
+            optionLabel={reasonLabel}
             onChange={(value) => updateFilter("reason", value)}
           />
 
@@ -289,6 +299,7 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
             value={filters.severity}
             allLabel={t("intelligence.review.allSeverity")}
             options={severityOptions}
+            optionLabel={severityLabel}
             onChange={(value) => updateFilter("severity", value)}
           />
 
@@ -336,19 +347,19 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
                         <p className="mt-1 line-clamp-2 text-sm leading-5 text-[var(--text-secondary)]">{item.content_preview}</p>
                       </div>
                       <span className={`shrink-0 rounded-full border px-2 py-1 text-2xs font-semibold uppercase ${badgeClass(item.severity)}`}>
-                        {item.severity}
+                        {severityLabel(item.severity)}
                       </span>
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <span className={`rounded-full border px-2 py-1 text-2xs font-semibold uppercase ${badgeClass(item.status)}`}>
-                        {item.status}
+                        {statusLabel(item.status)}
                       </span>
                       {item.reasons.map((reason) => (
                         <span key={reason} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-2xs text-[var(--text-secondary)]">
-                          {reason}
+                          {reasonLabel(reason)}
                         </span>
                       ))}
-                      <span className="ml-auto text-2xs text-[var(--text-tertiary)]">{formatTime(item.updated_at)}</span>
+                      <span className="ml-auto text-2xs text-[var(--text-tertiary)]">{formatTime(item.updated_at, locale)}</span>
                     </div>
                   </button>
                 );

@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import fs from "fs";
 
+import { normalizeHtmlLineEndings } from "./buildUtils";
+
 const ROOT_DIR = __dirname;
 const TEMP_BUILD_DIR = path.resolve(ROOT_DIR, ".vite-build");
 const ROOT_ASSETS_DIR = path.resolve(ROOT_DIR, "assets");
@@ -40,7 +42,8 @@ function syncBuiltDashboard(): void {
     }
   }
 
-  fs.copyFileSync(builtIndexPath, targetIndexPath);
+  const builtIndex = fs.readFileSync(builtIndexPath, "utf8");
+  fs.writeFileSync(targetIndexPath, normalizeHtmlLineEndings(builtIndex), "utf8");
   fs.rmSync(TEMP_BUILD_DIR, { recursive: true, force: true });
 }
 

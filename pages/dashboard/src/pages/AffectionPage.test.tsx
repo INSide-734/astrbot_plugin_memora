@@ -57,9 +57,9 @@ describe("AffectionPage", () => {
           group_id: "group-1",
           total_affection: 48,
           max_total_affection: 100,
-          user_count: 2,
+          user_count: 3,
           current_mood: {
-            mood_type: "HAPPY",
+            mood_type: "happy",
             intensity: 0.72,
             description: "Group has been upbeat today.",
             is_active: true,
@@ -70,7 +70,7 @@ describe("AffectionPage", () => {
               group_id: "group-1",
               affection_score: 42,
               affection_level: "FRIENDLY",
-              level_name: "Friendly",
+              level_name: "友好",
               interaction_count: 8,
               last_interaction: 1,
             },
@@ -82,6 +82,15 @@ describe("AffectionPage", () => {
               level_name: "Neutral",
               interaction_count: 3,
               last_interaction: 2,
+            },
+            {
+              user_id: "carol",
+              group_id: "group-1",
+              affection_score: 88,
+              affection_level: "VIP",
+              level_name: "贵宾",
+              interaction_count: 12,
+              last_interaction: 3,
             },
           ],
         }));
@@ -110,6 +119,10 @@ describe("AffectionPage", () => {
     expect(screen.getByText("Friendly")).toBeTruthy();
     expect(screen.getByText("bob")).toBeTruthy();
     expect(screen.getByText("Neutral")).toBeTruthy();
+    expect(screen.getByText("carol")).toBeTruthy();
+    expect(screen.getByText("VIP")).toBeTruthy();
+    expect(screen.queryByText("贵宾")).toBeNull();
+    expect(screen.getByText("Active")).toBeTruthy();
     expect(showToast).not.toHaveBeenCalled();
   });
 

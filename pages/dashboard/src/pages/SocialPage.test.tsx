@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EN_MAP } from "../mock";
 import { SocialPage } from "./SocialPage";
 
 interface BridgeMock {
@@ -86,10 +87,12 @@ describe("SocialPage", () => {
 
     expect(await screen.findByText("alice")).toBeTruthy();
     expect(screen.getByText("bob")).toBeTruthy();
-    expect(screen.getByText("friend")).toBeTruthy();
-    expect(screen.getAllByText("情感").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(EN_MAP["relation.friend"])).toBeTruthy();
+    expect(screen.getAllByText(EN_MAP["social.category.emotional"]).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("76%")).toBeTruthy();
-    expect(screen.getByRole("progressbar", { name: /alice to bob.*strength/i })).toBeTruthy();
+    expect(screen.getByRole("progressbar", {
+      name: `alice → bob ${EN_MAP["relation.friend"]} ${EN_MAP["social.strength"]}`,
+    })).toBeTruthy();
     expect(screen.getAllByRole("progressbar").every((meter) => meter.getAttribute("data-slot") === "progress")).toBe(true);
     expect(screen.getByText("pair")).toBeTruthy();
     expect(screen.getByText("project")).toBeTruthy();
@@ -128,9 +131,9 @@ describe("SocialPage", () => {
     render(<SocialPage showToast={showToast} />);
 
     expect(await screen.findByText("No relations found")).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "职业" }));
+    fireEvent.click(screen.getByRole("tab", { name: EN_MAP["social.category.career"] }));
 
-    expect(screen.getByRole("tab", { name: "职业" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: EN_MAP["social.category.career"] }).getAttribute("aria-selected")).toBe("true");
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {

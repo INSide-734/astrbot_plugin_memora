@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { BarChart3, Database, HardDrive, RotateCw, Trash2, Download, Wrench, FileJson, FileText, Undo2, CheckSquare } from "lucide-react";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
+import { dashboardLocale, formatDashboardDate, formatDashboardNumber, translateEnum } from "@/lib/i18n";
 import { Button } from "@/components/ui/Button";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { TopicSegmentationConfig } from "@/components/TopicSegmentationConfig";
@@ -108,17 +109,21 @@ interface MetricsSummary {
   };
 }
 
-function formatMs(value: number | null | undefined): string {
-  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)} ms` : "--";
+function formatMs(value: number | null | undefined, locale: string): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${formatDashboardNumber(value, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ms`
+    : "--";
 }
 
-function formatSeconds(value: number | null | undefined): string {
-  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)} s` : "--";
+function formatSeconds(value: number | null | undefined, locale: string): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${formatDashboardNumber(value, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`
+    : "--";
 }
 
-function formatUnixSeconds(value: number | null | undefined): string {
+function formatUnixSeconds(value: number | null | undefined, locale: string): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "--";
-  return new Date(value * 1000).toISOString().slice(0, 19).replace("T", " ");
+  return new Date(value * 1000).toLocaleString(locale);
 }
 
 function formatRatio(value: number | undefined, total: number | undefined): string {
@@ -128,7 +133,12 @@ function formatRatio(value: number | undefined, total: number | undefined): stri
 }
 
 export function SystemPage({ showToast }: SystemPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
+  const formatRuntimeStatus = (value: unknown): string => {
+    const rawValue = String(value ?? "").trim();
+    return rawValue ? translateEnum(t, "runtime.status", rawValue) : "--";
+  };
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
   const [backups, setBackups] = useState<BackupItem[]>([]);
@@ -185,10 +195,10 @@ export function SystemPage({ showToast }: SystemPageProps) {
     fetchMetrics();
   }, [fetchStats, fetchBackups, fetchMetrics]);
 
-  const action = async (endpoint: string, label: string) => {
+  const action = async (endpoint: string, labelKey: string) => {
     try {
       await apiRequest(endpoint, { method: "POST" });
-      showToast(t("system.actionCompleted", label));
+      showToast(t("system.actionCompleted", t(labelKey)));
       fetchStats();
     } catch (e) {
       showToast(String(e), true);
@@ -198,7 +208,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
   const doCreateBackup = async () => {
     try {
       const data = unwrapApiData(await apiRequest("backup/create", { method: "POST" }));
-      showToast(String((data as Record<string, unknown>)?.message ?? t("system.actionCompleted", "Backup")));
+      showToast(String((data as Record<string, unknown>)?.message ?? t("system.actionCompleted", t("system.createBackup"))));
       fetchBackups();
     } catch (e) {
       showToast(String(e), true);
@@ -217,7 +227,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
         method: "POST",
         body: { name: backupName },
       }));
-      showToast(String((data as Record<string, unknown>)?.message ?? "Restored"));
+      showToast(String((data as Record<string, unknown>)?.message ?? t("system.restoreSuccess")));
     } catch (e) {
       showToast(String(e), true);
     } finally {
@@ -249,7 +259,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
     setConfirmTarget(null);
     try {
       await apiRequest("backup/delete", { method: "POST", body: { name: backupName } });
-      showToast(t("system.actionCompleted", "Delete"));
+      showToast(t("system.actionCompleted", t("common.delete")));
       setSelectedBackups((prev) => { const n = new Set(prev); n.delete(backupName); return n; });
       fetchBackups();
     } catch (e) { showToast(String(e), true); }
@@ -269,7 +279,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
         method: "POST",
         body: { names },
       }));
-      showToast(String((data as Record<string, unknown>)?.message ?? t("system.actionCompleted", "Batch delete")));
+      showToast(String((data as Record<string, unknown>)?.message ?? t("system.actionCompleted", t("filter.deleteSelected"))));
       setSelectedBackups(new Set());
       fetchBackups();
     } catch (e) { showToast(String(e), true); }
@@ -294,7 +304,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
       a.click();
       URL.revokeObjectURL(url);
       setExportProgress("done");
-      showToast(t("system.actionCompleted", `Export (${format.toUpperCase()})`));
+      showToast(t("system.exportCompleted", format.toUpperCase()));
     } catch (e) {
       setExportProgress("error");
       showToast(String(e), true);
@@ -342,14 +352,14 @@ export function SystemPage({ showToast }: SystemPageProps) {
   const schedulerSuggestions = [
     backgroundTasks.schedulers?.backfill?.suggestion
       ? {
-          name: "Backfill",
+          name: t("system.taskBackfill"),
           error: backgroundTasks.schedulers.backfill.last_error ?? backgroundTasks.schedulers.backfill.status,
           suggestion: backgroundTasks.schedulers.backfill.suggestion,
         }
       : null,
     backgroundTasks.schedulers?.decay?.suggestion
       ? {
-          name: "Decay",
+          name: t("system.taskDecay"),
           error: backgroundTasks.schedulers.decay.startup_error,
           message: backgroundTasks.schedulers.decay.startup_message,
           suggestion: backgroundTasks.schedulers.decay.suggestion,
@@ -364,9 +374,9 @@ export function SystemPage({ showToast }: SystemPageProps) {
         description={t("system.subtitle")}
         icon={<BarChart3 className="size-4" />}
         actions={<div className="flex flex-wrap justify-end gap-2">
-          <Button variant="secondary" size="sm" onClick={() => action("system/rebuild", "Rebuild")}><Wrench size={14} />{t("system.rebuildIndex")}</Button>
-          <Button variant="secondary" size="sm" onClick={() => action("system/purge", "Purge")}><Trash2 size={14} />{t("system.purgeDeleted")}</Button>
-          <Button variant="secondary" size="sm" onClick={() => action("system/compact", "Compact")}><HardDrive size={14} />{t("system.compactDB")}</Button>
+          <Button variant="secondary" size="sm" onClick={() => action("system/rebuild", "system.rebuildIndex")}><Wrench size={14} />{t("system.rebuildIndex")}</Button>
+          <Button variant="secondary" size="sm" onClick={() => action("system/purge", "system.purgeDeleted")}><Trash2 size={14} />{t("system.purgeDeleted")}</Button>
+          <Button variant="secondary" size="sm" onClick={() => action("system/compact", "system.compactDB")}><HardDrive size={14} />{t("system.compactDB")}</Button>
           <Button variant="secondary" size="sm" onClick={doCreateBackup}><Download size={14} />{t("system.createBackup")}</Button>
           <span className="w-px bg-border" />
           <Button variant="secondary" size="sm" onClick={() => exportData("jsonl")}><FileJson size={14} />JSONL</Button>
@@ -419,21 +429,26 @@ export function SystemPage({ showToast }: SystemPageProps) {
           </div>
           <div className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-4">
             {[
-              { label: t("system.recallP95"), value: formatMs(recall.p95_total_ms) },
-              { label: t("system.recallP50"), value: formatMs(recall.p50_total_ms) },
+              { label: t("system.recallP95"), value: formatMs(recall.p95_total_ms, locale) },
+              { label: t("system.recallP50"), value: formatMs(recall.p50_total_ms, locale) },
               { label: t("system.recallSamples"), value: recall.sample_count ?? "--" },
               { label: t("system.backgroundActive"), value: backgroundTasks.active ?? "--" },
               { label: t("system.backgroundFailures"), value: backgroundTasks.failed ?? "--" },
-              { label: t("system.backfillStatus"), value: backfillScheduler.status ?? "--" },
+              { label: t("system.backfillStatus"), value: formatRuntimeStatus(backfillScheduler.status) },
               { label: t("system.backfillRetries"), value: backfillScheduler.retry_count ?? "--" },
-              { label: t("system.backfillFinished"), value: formatUnixSeconds(backfillScheduler.last_finished_at) },
-              { label: t("system.decayNextRun"), value: formatSeconds(decayScheduler.next_run_in_seconds) },
-              { label: t("system.decayLastDate"), value: decayScheduler.last_decay_date ?? "--" },
+              { label: t("system.backfillFinished"), value: formatUnixSeconds(backfillScheduler.last_finished_at, locale) },
+              { label: t("system.decayNextRun"), value: formatSeconds(decayScheduler.next_run_in_seconds, locale) },
+              {
+                label: t("system.decayLastDate"),
+                value: decayScheduler.last_decay_date
+                  ? formatDashboardDate(decayScheduler.last_decay_date, locale)
+                  : "--",
+              },
               { label: t("system.decayRetries"), value: decayScheduler.retry_count ?? "--" },
-              { label: t("system.providerStatus"), value: provider.status ?? "--" },
+              { label: t("system.providerStatus"), value: formatRuntimeStatus(provider.status) },
               { label: t("system.providerAttempts"), value: formatRatio(provider.attempts, provider.max_attempts) },
               { label: t("system.indexRebuildErrors"), value: formatRatio(index.last_rebuild_errors, index.last_rebuild_total) },
-              { label: t("system.indexRebuildDuration"), value: formatSeconds(index.last_rebuild_duration_seconds) },
+              { label: t("system.indexRebuildDuration"), value: formatSeconds(index.last_rebuild_duration_seconds, locale) },
               { label: t("system.writeFailures"), value: writeCoordinator.failures_total ?? "--" },
               { label: t("system.lockRetries"), value: writeCoordinator.lock_retries_total ?? "--" },
               { label: t("system.writeOperations"), value: writeCoordinator.operations_total ?? "--" },
@@ -454,7 +469,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
                 {failedTasks.map((task, index) => (
                   <div key={`${task.name ?? "task"}-${index}`} className="text-xs">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-[var(--text-primary)]">{task.name ?? "task"}</span>
+                      <span className="font-medium text-[var(--text-primary)]">{task.name ?? t("system.backgroundTask")}</span>
                       {task.error && <span className="text-[var(--color-danger)]">{task.error}</span>}
                       {task.message && <span className="text-[var(--text-tertiary)]">{task.message}</span>}
                     </div>
@@ -508,7 +523,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
             <div className="space-y-2">
               {(s.atom_types ? Object.entries(s.atom_types) : []).map(([key, value]) => (
                 <div key={key} className="flex items-center gap-3">
-                  <span className="w-24 text-xs text-[var(--text-secondary)] truncate">{key}</span>
+                  <span className="w-24 text-xs text-[var(--text-secondary)] truncate">{translateEnum(t, "memory.type", key)}</span>
                   <div className="h-5 flex-1 rounded-md bg-[var(--color-surface-secondary)]">
                     <div
                       className="h-5 rounded-md bg-[var(--color-accent-secondary)] transition-all duration-500"
@@ -628,13 +643,13 @@ export function SystemPage({ showToast }: SystemPageProps) {
                       <span className="font-medium text-[var(--text-primary)]">{b.name}</span>
                       {b.backup_timestamp && (
                         <span className="ml-2 text-xs text-[var(--text-tertiary)]">
-                          {new Date(b.backup_timestamp).toLocaleString()}
+                          {new Date(b.backup_timestamp).toLocaleString(locale)}
                         </span>
                       )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-[var(--text-tertiary)]">{b.file_count ?? (b.files?.length ?? 0)} files</span>
+                    <span className="text-xs text-[var(--text-tertiary)]">{t("system.filesCount", String(b.file_count ?? (b.files?.length ?? 0)))}</span>
                     <Button
                       variant="secondary"
                       size="sm"
@@ -679,13 +694,13 @@ export function SystemPage({ showToast }: SystemPageProps) {
               disabled={exportProgress === "loading"}
             >
               {exportProgress === "loading" ? (
-                <><RotateCw size={14} className="animate-spin mr-1" />Exporting...</>
+                <><RotateCw size={14} className="animate-spin mr-1" />{t("system.exporting")}</>
               ) : exportProgress === "done" ? (
-                "Exported ✓"
+                `${t("system.exported")} ✓`
               ) : exportProgress === "error" ? (
-                "Retry"
+                t("common.retry")
               ) : (
-                <><Download size={14} className="mr-1" />Export</>
+                <><Download size={14} className="mr-1" />{t("system.export")}</>
               )}
             </Button>
           </div>

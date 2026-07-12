@@ -35,6 +35,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { StatePanel } from "@/components/ui/StatePanel";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
+import { dashboardLocale, formatDashboardNumber, formatDashboardPercent, translateEnum, type Translate } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 interface PreviewPageProps {
@@ -111,9 +112,9 @@ function normalizeStats(raw: Record<string, unknown>): PreviewStats {
   };
 }
 
-function topAtomTypes(values: Record<string, number>, otherLabel: string): NamedCount[] {
+function topAtomTypes(values: Record<string, number>, otherLabel: string, t: Translate): NamedCount[] {
   const sorted = Object.entries(values)
-    .map(([name, count]) => ({ name, count }))
+    .map(([name, count]) => ({ name: translateEnum(t, "memory.type", name), count }))
     .filter((item) => item.count > 0)
     .sort((left, right) => right.count - left.count);
   const head = sorted.slice(0, 5);
@@ -121,9 +122,14 @@ function topAtomTypes(values: Record<string, number>, otherLabel: string): Named
   return remaining > 0 ? [...head, { name: otherLabel, count: remaining }] : head;
 }
 
-function OverviewSkeleton() {
+function formatUtcDate(value: string, locale: string): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(locale, { timeZone: "UTC" });
+}
+
+function OverviewSkeleton({ ariaLabel }: { ariaLabel: string }) {
   return (
-    <div className="space-y-4" aria-label="Loading overview">
+    <div className="space-y-4" aria-label={ariaLabel}>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         {Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-28" />)}
       </div>
@@ -140,7 +146,7 @@ function OverviewSkeleton() {
 }
 
 export function PreviewPage({ showToast }: PreviewPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
   const [stats, setStats] = useState<PreviewStats | null>(null);
   const [modules, setModules] = useState<ModuleCounts>(EMPTY_MODULES);
   const [loading, setLoading] = useState(false);
@@ -219,12 +225,14 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
   const trendTotal = trendData.reduce((sum, item) => sum + item.count, 0);
   const trendAverage = trendData.length > 0 ? trendTotal / trendData.length : 0;
   const peak = trendData.reduce<DailyMemoryCount | null>((best, item) => (!best || item.count > best.count ? item : best), null);
-  const activeRate = stats && stats.total_memories > 0 ? Math.round((stats.active_count / stats.total_memories) * 100) : 0;
+  const activeRate = stats && stats.total_memories > 0 ? stats.active_count / stats.total_memories : 0;
   const importanceScore = Math.max(0, Math.min(10, (stats?.avg_importance ?? 0) * 10));
   const knowledgeTotal = modules.profiles == null || modules.knowledge == null || modules.notes == null
     ? null
     : modules.profiles + modules.knowledge + modules.notes;
-  const atomTypes = topAtomTypes(stats?.atom_breakdown ?? {}, t("preview.other"));
+  const locale = dashboardLocale(currentLang());
+  const formatNumber = (value: number): string => value.toLocaleString(locale);
+  const atomTypes = topAtomTypes(stats?.atom_breakdown ?? {}, t("preview.other"), t);
   const importanceItems = Array.from({ length: 10 }, (_, index) => ({
     name: `${index}-${index + 1}`,
     count: stats?.importance_distribution[`${index}-${index + 1}`] ?? 0,
@@ -248,12 +256,12 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
     : t("preview.minutesAgo").replace("{0}", String(updatedMinutes));
 
   const kpis = stats ? [
-    { label: t("preview.totalMemories"), value: stats.total_memories.toLocaleString(), detail: t("preview.allStoredMemories"), icon: ScrollText },
-    { label: t("preview.rangeAdded"), value: trendTotal.toLocaleString(), detail: t("preview.rangeDays").replace("{0}", String(range)), icon: Activity },
-    { label: t("preview.activeRate"), value: `${activeRate}%`, detail: `${stats.active_count.toLocaleString()} / ${stats.total_memories.toLocaleString()}`, icon: Database },
-    { label: t("preview.averageImportance"), value: importanceScore.toFixed(1), detail: `${importanceScore.toFixed(1)} / 10`, icon: Brain },
-    { label: t("preview.graphScale"), value: stats.graph_nodes.toLocaleString(), detail: `${stats.graph_edges.toLocaleString()} ${t("preview.edges")}`, icon: GitGraph },
-    { label: t("preview.knowledgeAssets"), value: knowledgeTotal == null ? "--" : knowledgeTotal.toLocaleString(), detail: knowledgeTotal == null ? t("preview.unavailable") : `${modules.profiles} / ${modules.knowledge} / ${modules.notes}`, icon: BookOpen },
+    { label: t("preview.totalMemories"), value: formatNumber(stats.total_memories), detail: t("preview.allStoredMemories"), icon: ScrollText },
+    { label: t("preview.rangeAdded"), value: formatNumber(trendTotal), detail: t("preview.rangeDays").replace("{0}", String(range)), icon: Activity },
+    { label: t("preview.activeRate"), value: formatDashboardPercent(activeRate, locale, { maximumFractionDigits: 0 }), detail: `${formatNumber(stats.active_count)} / ${formatNumber(stats.total_memories)}`, icon: Database },
+    { label: t("preview.averageImportance"), value: formatDashboardNumber(importanceScore, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), detail: `${formatDashboardNumber(importanceScore, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} / 10`, icon: Brain },
+    { label: t("preview.graphScale"), value: formatNumber(stats.graph_nodes), detail: `${formatNumber(stats.graph_edges)} ${t("preview.edges")}`, icon: GitGraph },
+    { label: t("preview.knowledgeAssets"), value: knowledgeTotal == null ? "--" : formatNumber(knowledgeTotal), detail: knowledgeTotal == null ? t("preview.unavailable") : `${formatNumber(modules.profiles ?? 0)} / ${formatNumber(modules.knowledge ?? 0)} / ${formatNumber(modules.notes ?? 0)}`, icon: BookOpen },
   ] : [];
 
   return (
@@ -283,7 +291,7 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
       />
 
       <PageContent className="page-enter">
-        {!stats && loading ? <OverviewSkeleton /> : null}
+        {!stats && loading ? <OverviewSkeleton ariaLabel={t("preview.loadingOverview")} /> : null}
         {!stats && !loading && statsError ? (
           <StatePanel
             state="error"
@@ -333,11 +341,16 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
                 </CardHeader>
                 <CardContent>
                   <div className="mb-3 grid grid-cols-3 gap-3 border-b pb-3">
-                    <div><div className="text-xs text-muted-foreground">{t("preview.periodTotal")}</div><div className="mt-0.5 font-semibold tabular-nums">{trendTotal}</div></div>
-                    <div><div className="text-xs text-muted-foreground">{t("preview.dailyAverage")}</div><div className="mt-0.5 font-semibold tabular-nums">{trendAverage.toFixed(1)}</div></div>
-                    <div><div className="text-xs text-muted-foreground">{t("preview.peakDate")}</div><div className="mt-0.5 truncate font-semibold tabular-nums">{peak && peak.count > 0 ? peak.date : "--"}</div></div>
+                    <div><div className="text-xs text-muted-foreground">{t("preview.periodTotal")}</div><div className="mt-0.5 font-semibold tabular-nums">{formatNumber(trendTotal)}</div></div>
+                    <div><div className="text-xs text-muted-foreground">{t("preview.dailyAverage")}</div><div className="mt-0.5 font-semibold tabular-nums">{formatDashboardNumber(trendAverage, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div></div>
+                    <div><div className="text-xs text-muted-foreground">{t("preview.peakDate")}</div><div className="mt-0.5 truncate font-semibold tabular-nums">{peak && peak.count > 0 ? formatUtcDate(peak.date, locale) : "--"}</div></div>
                   </div>
-                  <GrowthTrendChart data={trendData} ariaLabel={t("preview.growthChartLabel")} valueLabel={t("preview.memories")} />
+                  <GrowthTrendChart
+                    data={trendData}
+                    ariaLabel={t("preview.growthChartLabel")}
+                    valueLabel={t("preview.memories")}
+                    locale={locale}
+                  />
                   {trendTotal === 0 ? <p className="text-center text-xs text-muted-foreground">{t("preview.noGrowth")}</p> : null}
                 </CardContent>
               </Card>
@@ -345,13 +358,13 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
               <Card data-slot="composition-panel" className="min-w-0">
                 <CardHeader><CardTitle><h2>{t("preview.composition")}</h2></CardTitle></CardHeader>
                 <CardContent className="space-y-5">
-                  <section className="space-y-2"><h3 className="text-xs font-medium text-muted-foreground">{t("preview.statusComposition")}</h3><StatusComposition ariaLabel={t("preview.statusChartLabel")} items={[
+                  <section className="space-y-2"><h3 className="text-xs font-medium text-muted-foreground">{t("preview.statusComposition")}</h3><StatusComposition ariaLabel={t("preview.statusChartLabel")} locale={locale} items={[
                     { name: t("preview.active"), count: stats.active_count, colorClass: "bg-primary" },
                     { name: t("preview.archived"), count: stats.archived_count, colorClass: "bg-accent-success" },
                     { name: t("preview.deleted"), count: stats.deleted_count, colorClass: "bg-accent-danger" },
                   ]} /></section>
-                  <section className="space-y-2 border-t pt-4"><h3 className="text-xs font-medium text-muted-foreground">{t("preview.atomTypes")}</h3>{atomTypes.length > 0 ? <RankedBars items={atomTypes} ariaLabel={t("preview.atomChartLabel")} /> : <p className="text-xs text-muted-foreground">{t("preview.noAtomData")}</p>}</section>
-                  <section className="space-y-2 border-t pt-4"><h3 className="text-xs font-medium text-muted-foreground">{t("preview.importanceDistribution")}</h3><ImportanceDistribution items={importanceItems} ariaLabel={t("preview.importanceChartLabel")} /></section>
+                  <section className="space-y-2 border-t pt-4"><h3 className="text-xs font-medium text-muted-foreground">{t("preview.atomTypes")}</h3>{atomTypes.length > 0 ? <RankedBars items={atomTypes} ariaLabel={t("preview.atomChartLabel")} locale={locale} /> : <p className="text-xs text-muted-foreground">{t("preview.noAtomData")}</p>}</section>
+                  <section className="space-y-2 border-t pt-4"><h3 className="text-xs font-medium text-muted-foreground">{t("preview.importanceDistribution")}</h3><ImportanceDistribution items={importanceItems} ariaLabel={t("preview.importanceChartLabel")} valueLabel={t("preview.memories")} /></section>
                 </CardContent>
               </Card>
             </div>
@@ -363,7 +376,7 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
                   {moduleAssets.map(([label, value, Icon]) => (
                     <div key={String(label)} className="flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2.5">
                       <div className="flex min-w-0 items-center gap-2"><Icon className="size-4 shrink-0 text-muted-foreground" /><span className="truncate text-sm">{label}</span></div>
-                      <div className="text-right"><span className="font-semibold tabular-nums">{value == null ? "--" : Number(value).toLocaleString()}</span>{value == null ? <div className="text-2xs text-muted-foreground">{t("preview.unavailable")}</div> : null}</div>
+                      <div className="text-right"><span className="font-semibold tabular-nums">{value == null ? "--" : formatNumber(Number(value))}</span>{value == null ? <div className="text-2xs text-muted-foreground">{t("preview.unavailable")}</div> : null}</div>
                     </div>
                   ))}
                 </CardContent>
@@ -373,7 +386,7 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
                 <CardHeader><CardTitle><h2>{t("preview.activeSessions")}</h2></CardTitle></CardHeader>
                 <CardContent>
                   {stats.recent_sessions.length > 0 ? (
-                    <RankedBars items={stats.recent_sessions.map((item) => ({ name: item.session_id, count: item.message_count }))} ariaLabel={t("preview.sessionsChartLabel")} />
+                    <RankedBars items={stats.recent_sessions.map((item) => ({ name: item.session_id, count: item.message_count }))} ariaLabel={t("preview.sessionsChartLabel")} locale={locale} />
                   ) : (
                     <StatePanel state="empty" title={t("preview.noSessions")} className="min-h-36 p-4" />
                   )}

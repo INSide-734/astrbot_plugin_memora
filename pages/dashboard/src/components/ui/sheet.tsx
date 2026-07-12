@@ -2,6 +2,7 @@ import type { ComponentProps } from "react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { X } from "lucide-react";
 
+import { useI18n } from "@/hooks/useI18n";
 import { cn } from "@/lib/utils";
 
 export function Sheet(props: DialogPrimitive.Root.Props) {
@@ -30,6 +31,8 @@ export function SheetContent({
   side = "right",
   ...props
 }: SheetContentProps) {
+  const { t } = useI18n();
+
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Backdrop
@@ -52,7 +55,7 @@ export function SheetContent({
         {children}
         {showCloseButton ? (
           <DialogPrimitive.Close
-            aria-label="Close panel"
+            aria-label={t("common.close")}
             className="absolute right-3 top-3 inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <X className="size-4" />

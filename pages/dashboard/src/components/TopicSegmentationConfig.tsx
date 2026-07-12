@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Play, RefreshCw, GitBranch } from "lucide-react";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
+import { translateEnum } from "@/lib/i18n";
 import { Button } from "@/components/ui/Button";
 
 interface TopicSegmentationConfigProps {
@@ -47,14 +48,8 @@ export function TopicSegmentationConfig({ showToast }: TopicSegmentationConfigPr
       : 0;
 
   const statusLabel = (status: string): string => {
-    switch (status) {
-      case "running":
-        return t("backfill.status.processing");
-      case "completed":
-        return t("backfill.status.completed");
-      default:
-        return t("backfill.status.failed");
-    }
+    const rawStatus = String(status ?? "").trim();
+    return rawStatus ? translateEnum(t, "runtime.status", rawStatus) : "--";
   };
 
   return (

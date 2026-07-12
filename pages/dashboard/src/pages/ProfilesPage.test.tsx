@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EN_MAP } from "../mock";
 import { ProfilesPage } from "./ProfilesPage";
 
 interface BridgeMock {
@@ -45,6 +46,7 @@ describe("ProfilesPage", () => {
   });
 
   it("loads profile statistics and renders aggregated tag totals", async () => {
+    const localeSpy = vi.spyOn(Date.prototype, "toLocaleDateString");
     bridge.apiGet.mockResolvedValue(ok({
       total: 2,
       profiles: [
@@ -85,7 +87,8 @@ describe("ProfilesPage", () => {
     expect(screen.getAllByText("2").length).toBeGreaterThan(0);
     expect(screen.getByText((content) => content.trim() === "5")).toBeTruthy();
     expect(screen.getByText("testing")).toBeTruthy();
-    expect(screen.getByText("2026-06-28")).toBeTruthy();
+    expect(screen.getByText(new Date("2026-06-28T12:00:00Z").toLocaleDateString("en-US"))).toBeTruthy();
+    expect(localeSpy).toHaveBeenCalledWith("en-US");
     expect(screen.getByRole("navigation", { name: "Profiles pagination" })).toBeTruthy();
     expect(screen.queryByRole("toolbar")).toBeNull();
   });
@@ -191,7 +194,7 @@ describe("ProfilesPage", () => {
         action: "delete",
       });
     });
-    expect(showToast).toHaveBeenCalledWith("Deleted 2 profiles");
+    expect(showToast).toHaveBeenCalledWith(EN_MAP["toast.batchDeleted"].replace("{0}", "2"));
   });
 
   it("opens profile detail and deletes the profile from the side panel", async () => {
@@ -202,7 +205,7 @@ describe("ProfilesPage", () => {
           profiles: [
             {
               user_id: "user-9",
-              display_name: "Gamma",
+              display_name: "$& $$ Gamma",
               tag_count: 2,
               top_interests: ["graphs"],
               last_seen: "2026-06-28T12:00:00Z",
@@ -214,7 +217,7 @@ describe("ProfilesPage", () => {
         return Promise.resolve(ok({
           profile: {
             user_id: params.user_id,
-            display_name: "Gamma",
+            display_name: "$& $$ Gamma",
             message_count: 12,
             tags: [
               { name: "graphs", confidence: 0.92 },
@@ -229,13 +232,13 @@ describe("ProfilesPage", () => {
 
     render(<ProfilesPage showToast={showToast} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open profile Gamma" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open profile $& $$ Gamma" }));
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles/detail", { user_id: "user-9" });
     });
 
-    const drawer = await screen.findByRole("dialog", { name: "Profile: Gamma" });
+    const drawer = await screen.findByRole("dialog", { name: "Profile: $& $$ Gamma" });
 
     expect(within(drawer).getByText("user-9")).toBeTruthy();
     expect(within(drawer).getByText("12")).toBeTruthy();

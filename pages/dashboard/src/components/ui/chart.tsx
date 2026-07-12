@@ -2,6 +2,8 @@ import * as React from "react";
 import * as RechartsPrimitive from "recharts";
 import type { TooltipValueType } from "recharts";
 
+import { useI18n } from "@/hooks/useI18n";
+import { dashboardLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 const THEMES = { light: "", dark: ".dark" } as const;
@@ -74,20 +76,24 @@ function ChartTooltipContent({
   label,
   className,
   valueLabel,
+  formatLabel,
 }: React.ComponentProps<"div"> &
   RechartsPrimitive.DefaultTooltipContentProps<TooltipValueType, string> & {
     active?: boolean;
     valueLabel?: React.ReactNode;
+    formatLabel?: (label: string) => React.ReactNode;
   }) {
+  const { currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
   if (!active || !payload?.length) return null;
   const value = payload[0]?.value;
 
   return (
     <div className={cn("grid min-w-32 gap-1 rounded-lg border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md", className)}>
-      <span className="font-medium">{label}</span>
+      <span className="font-medium">{formatLabel ? formatLabel(String(label ?? "")) : label}</span>
       <span className="flex items-center justify-between gap-4 text-muted-foreground">
         {valueLabel}
-        <strong className="font-mono text-foreground">{typeof value === "number" ? value.toLocaleString() : String(value ?? "--")}</strong>
+        <strong className="font-mono text-foreground">{typeof value === "number" ? value.toLocaleString(locale) : String(value ?? "--")}</strong>
       </span>
     </div>
   );

@@ -9,13 +9,14 @@ import { cn } from "@/lib/utils";
 import type { RecallResult } from "@/types";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { Textarea } from "@/components/ui/textarea";
+import { dashboardLocale, formatDashboardDate, formatDashboardNumber, translateEnum } from "@/lib/i18n";
 
 interface RecallPageProps {
   showToast: (msg: string, isError?: boolean) => void;
 }
 
 export function RecallPage({ showToast }: RecallPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
   const [query, setQuery] = useState("");
   const [k, setK] = useState(5);
   const [sessionId, setSessionId] = useState("");
@@ -25,6 +26,7 @@ export function RecallPage({ showToast }: RecallPageProps) {
   const resultsLabel = results === null
     ? ""
     : t("recall.results", String(results.length)).replace("{count}", String(results.length));
+  const locale = dashboardLocale(currentLang());
 
   const runRecall = async () => {
     if (!query.trim()) return;
@@ -97,11 +99,11 @@ export function RecallPage({ showToast }: RecallPageProps) {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm whitespace-pre-wrap">{String(r.content ?? r.summary ?? r.text ?? "")}</p>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <Badge variant="secondary">{String(r.type ?? "").toUpperCase()}</Badge>
+                        <Badge variant="secondary">{r.type ? translateEnum(t, "memory.type", r.type) : "--"}</Badge>
                         <span className="text-xs text-muted-foreground">
-                          {t("recall.importanceLabel")} {normalizeImportance(Number(r.importance ?? 0)).toFixed(1)}
+                          {t("recall.importanceLabel")} {formatDashboardNumber(normalizeImportance(Number(r.importance ?? 0)), locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
                         </span>
-                        {r.created_at && <span className="text-xs text-muted-foreground">{String(r.created_at).slice(0, 10)}</span>}
+                        {r.created_at && <span className="text-xs text-muted-foreground">{formatDashboardDate(r.created_at, locale)}</span>}
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
@@ -110,17 +112,17 @@ export function RecallPage({ showToast }: RecallPageProps) {
                         Number(r.score ?? 0) > 0.7 ? "text-[var(--color-success)]" :
                         Number(r.score ?? 0) > 0.4 ? "text-[var(--color-warning)]" : "text-[var(--text-tertiary)]"
                       )}>
-                        {Number(r.score ?? 0).toFixed(3)}
+                        {formatDashboardNumber(r.score ?? 0, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
                       </div>
                     </div>
                   </div>
                   {/* Score breakdown */}
                   {(r.doc_kw_score !== undefined || r.doc_vec_score !== undefined || r.graph_kw_score !== undefined || r.graph_vec_score !== undefined) && (
                     <div className="mt-3 flex gap-2 text-2xs text-muted-foreground">
-                      {r.doc_kw_score !== undefined && <span>Doc-KW: {Number(r.doc_kw_score).toFixed(3)}</span>}
-                      {r.doc_vec_score !== undefined && <span>Doc-Vec: {Number(r.doc_vec_score).toFixed(3)}</span>}
-                      {r.graph_kw_score !== undefined && <span>Graph-KW: {Number(r.graph_kw_score).toFixed(3)}</span>}
-                      {r.graph_vec_score !== undefined && <span>Graph-Vec: {Number(r.graph_vec_score).toFixed(3)}</span>}
+                      {r.doc_kw_score !== undefined && <span>Doc-KW: {formatDashboardNumber(r.doc_kw_score, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</span>}
+                      {r.doc_vec_score !== undefined && <span>Doc-Vec: {formatDashboardNumber(r.doc_vec_score, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</span>}
+                      {r.graph_kw_score !== undefined && <span>Graph-KW: {formatDashboardNumber(r.graph_kw_score, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</span>}
+                      {r.graph_vec_score !== undefined && <span>Graph-Vec: {formatDashboardNumber(r.graph_vec_score, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</span>}
                     </div>
                   )}
                 </div>
