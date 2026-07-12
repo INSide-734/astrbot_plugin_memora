@@ -51,6 +51,11 @@ function staticTranslationKeys(filePath: string): string[] {
 const REQUIRED_KEYS = [
   "common.close",
   "header.openMenu",
+  "nav.config",
+  "config.unsaved.title",
+  "config.unsaved.description",
+  "config.unsaved.keepEditing",
+  "config.unsaved.discard",
   "common.loading",
   "graph.exitFullscreen",
   "graph.temporalEdges",

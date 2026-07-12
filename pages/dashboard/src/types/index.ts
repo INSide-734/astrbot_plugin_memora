@@ -1,5 +1,5 @@
 export type PageId =
-  | "graph" | "memory" | "recall" | "system"
+  | "graph" | "memory" | "recall" | "system" | "config"
   | "profiles" | "knowledge" | "notes" | "learning"
   | "preview" | "timeline"
   | "jargon" | "affection" | "social" | "intelligence";

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Sidebar } from "./Sidebar";
@@ -103,6 +103,7 @@ describe("Sidebar", () => {
   it("organizes routes into five collapsible navigation groups", () => {
     renderSidebar();
 
+    expect(screen.getAllByRole("button", { expanded: true })).toHaveLength(5);
     expect(screen.getByRole("button", { name: "Overview", expanded: true })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Memory", expanded: true })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Insights", expanded: true })).toBeTruthy();
@@ -112,6 +113,39 @@ describe("Sidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Relationships", expanded: true }));
     expect(screen.queryByRole("button", { name: "User Profiles" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Affection" })).toBeNull();
+  });
+
+  it("keeps System and localized Configuration entries in order", () => {
+    Object.defineProperty(window, "AstrBotPluginPage", {
+      configurable: true,
+      value: {
+        getLocale: vi.fn().mockReturnValue("ru-RU"),
+        getI18n: vi.fn().mockReturnValue({}),
+        t: vi.fn((key: string) => key),
+      },
+    });
+    renderSidebar();
+
+    const systemGroup = screen.getByRole("button", {
+      name: "Система",
+      expanded: true,
+    });
+    const groupId = systemGroup.getAttribute("aria-controls");
+    const group = document.getElementById(groupId ?? "");
+    expect(group).not.toBeNull();
+    expect(
+      within(group as HTMLElement)
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["Система", "Конфигурация"]);
+  });
+
+  it("navigates to config through the shared onNavigate contract", () => {
+    const { props } = renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Configuration" }));
+
+    expect(props.onNavigate).toHaveBeenCalledWith("config");
   });
 
   it("collapses the desktop sidebar to labelled icon navigation", () => {

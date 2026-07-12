@@ -11,6 +11,7 @@ const I18N_MAP: Record<string, string> = {
   "nav.timeline": "记忆时间线",
   "nav.recall": "召回测试",
   "nav.system": "系统概览",
+  "nav.config": "配置",
   "nav.profiles": "用户画像",
   "nav.knowledge": "知识库",
   "nav.notes": "笔记",
@@ -726,12 +727,17 @@ const I18N_MAP: Record<string, string> = {
   "config.conflict.reapplyLocal": "在最新版本上重新应用我的更改",
   "config.conflict.waitingRemote": "正在等待完整的 AstrBot 最新配置。",
   "config.conflict.refreshRemote": "刷新最新版本",
+  "config.unsaved.title": "要离开配置页吗？",
+  "config.unsaved.description": "如果离开此页面，未保存的配置更改将会丢失。",
+  "config.unsaved.keepEditing": "继续编辑",
+  "config.unsaved.discard": "放弃更改并离开",
 };
 
 // 英文 i18n 映射
 const EN_MAP: Record<string, string> = {
   "nav.preview": "Preview", "nav.graph": "Knowledge Graph", "nav.memory": "Memories",
   "nav.timeline": "Timeline", "nav.recall": "Recall Test", "nav.system": "System",
+  "nav.config": "Configuration",
   "nav.profiles": "User Profiles", "nav.knowledge": "Knowledge Base", "nav.notes": "Notes",
   "nav.learning": "Auto Learning",
   "nav.intelligence": "Intelligence",
@@ -1328,11 +1334,16 @@ const EN_MAP: Record<string, string> = {
   "config.conflict.reapplyLocal": "Reapply my changes on latest version",
   "config.conflict.waitingRemote": "Waiting for the full latest AstrBot configuration.",
   "config.conflict.refreshRemote": "Refresh latest version",
+  "config.unsaved.title": "Leave configuration without saving?",
+  "config.unsaved.description": "Your unsaved configuration changes will be lost if you leave this page.",
+  "config.unsaved.keepEditing": "Keep editing",
+  "config.unsaved.discard": "Discard changes and leave",
 };
 
 const RU_MAP: Record<string, string> = {
   "nav.preview": "Обзор", "nav.graph": "Граф знаний", "nav.memory": "Память",
   "nav.timeline": "Хронология", "nav.recall": "Тест поиска", "nav.system": "Система",
+  "nav.config": "Конфигурация",
   "nav.profiles": "Профили", "nav.knowledge": "База знаний", "nav.notes": "Заметки",
   "nav.learning": "Обучение",
   "nav.intelligence": "Интеллект",
@@ -1928,6 +1939,10 @@ const RU_MAP: Record<string, string> = {
   "config.conflict.reapplyLocal": "Повторно применить мои изменения к последней версии",
   "config.conflict.waitingRemote": "Ожидание полной последней конфигурации AstrBot.",
   "config.conflict.refreshRemote": "Обновить последнюю версию",
+  "config.unsaved.title": "Покинуть конфигурацию без сохранения?",
+  "config.unsaved.description": "Если вы покинете эту страницу, несохраненные изменения конфигурации будут потеряны.",
+  "config.unsaved.keepEditing": "Продолжить редактирование",
+  "config.unsaved.discard": "Отменить изменения и покинуть страницу",
 };
 
 const LANG_MAPS: Record<string, Record<string, string>> = { zh: I18N_MAP, en: EN_MAP, ru: RU_MAP };
