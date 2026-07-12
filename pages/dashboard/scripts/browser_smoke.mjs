@@ -875,6 +875,7 @@ await installBridge(page);
 
 try {
   await page.goto(pathToFileURL(htmlPath).href, { waitUntil: "load" });
+  await page.bringToFront();
   await page.waitForSelector("#root > *", { timeout: 10_000 });
   const screenshotsDir = path.join(os.tmpdir(), "memora-dashboard-browser-smoke-screenshots");
   await mkdir(screenshotsDir, { recursive: true });
@@ -948,6 +949,7 @@ try {
   collectPageErrors(mobilePage, errors);
   await installBridge(mobilePage);
   await mobilePage.goto(pathToFileURL(htmlPath).href, { waitUntil: "load" });
+  await mobilePage.bringToFront();
   await mobilePage.waitForSelector("#root > *", { timeout: 10_000 });
 
   const mobileRoutes = [
@@ -974,6 +976,7 @@ try {
   collectPageErrors(widePage, errors);
   await installBridge(widePage);
   await widePage.goto(pathToFileURL(htmlPath).href, { waitUntil: "load" });
+  await widePage.bringToFront();
   await widePage.waitForSelector("#root > *", { timeout: 10_000 });
 
   const wideRoutes = [
@@ -996,6 +999,7 @@ try {
   }
 
   await widePage.close();
+  await page.bringToFront();
 
   baselineResults.push(
     await clickSidebarNav(
