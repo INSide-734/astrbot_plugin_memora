@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EN_MAP } from "../mock";
+
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => ({
     getTotalSize: () => count * estimateSize(),
@@ -57,6 +59,7 @@ describe("MemoryPage", () => {
   });
 
   it("refetches memories when filters and pagination change", async () => {
+    const localeSpy = vi.spyOn(Date.prototype, "toLocaleDateString");
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path !== "page/memories") return Promise.resolve(ok({}));
       return Promise.resolve(ok({
@@ -85,6 +88,7 @@ describe("MemoryPage", () => {
         page_size: "20",
       });
     });
+    expect(localeSpy).toHaveBeenCalledWith("en-US");
 
     fireEvent.change(screen.getByPlaceholderText("Keyword (ID or content search)"), {
       target: { value: "python" },
@@ -115,6 +119,22 @@ describe("MemoryPage", () => {
 
     expect(await screen.findByText("Memory page 2")).toBeTruthy();
     expect(screen.getByText("Page 2/2 · 25 total")).toBeTruthy();
+  });
+
+  it("translates known memory types and preserves unknown backend types", async () => {
+    bridge.t?.mockImplementation((key: string) => key === "dashboard.memory.type.fact" ? "Fact memory" : key);
+    bridge.apiGet.mockResolvedValue(ok({
+      items: [
+        { id: "known", summary: "Known type", type: "FACT", status: "active" },
+        { id: "unknown", summary: "Unknown type", type: "vendor_type", status: "active" },
+      ],
+      total: 2,
+    }));
+
+    render(<MemoryPage showToast={showToast} />);
+
+    expect(await screen.findByText("Fact memory")).toBeTruthy();
+    expect(screen.getByText("vendor_type")).toBeTruthy();
   });
 
   it("shows the batch bar, archives selected memories, and refreshes the list", async () => {
@@ -166,7 +186,7 @@ describe("MemoryPage", () => {
         action: "archive",
       });
     });
-    expect(showToast).toHaveBeenCalledWith("archived 2 memories");
+    expect(showToast).toHaveBeenCalledWith(EN_MAP["toast.batchArchived"].replace("{0}", "2"));
   });
 
   it("opens memory detail, saves edits, closes the drawer, and refreshes memories", async () => {
@@ -214,6 +234,7 @@ describe("MemoryPage", () => {
     const detailTitle = await screen.findByText("Memory Detail");
     const drawer = detailTitle.closest("div")?.parentElement;
     if (!drawer) throw new Error("expected detail drawer");
+    expect(within(drawer).getByText(new Date("2026-06-28T12:00:00Z").toLocaleDateString("en-US"))).toBeTruthy();
 
     fireEvent.change(within(drawer).getByPlaceholderText("New content..."), {
       target: { value: "Rewritten content" },

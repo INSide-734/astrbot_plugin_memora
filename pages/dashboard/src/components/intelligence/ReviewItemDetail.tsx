@@ -10,6 +10,7 @@ import {
 
 import { Button } from "@/components/ui/Button";
 import { useI18n } from "@/hooks/useI18n";
+import { dashboardLocale, translateEnum } from "@/lib/i18n";
 import type { ReviewAction, ReviewActionValue, ReviewItem } from "@/types/intelligence";
 
 interface ReviewItemDetailProps {
@@ -26,12 +27,12 @@ interface ReviewItemDetailProps {
 
 type ConfirmAction = "merge" | "archive" | "delete" | null;
 
-function formatTime(value: number): string {
+function formatTime(value: number, locale: string): string {
   if (!value) return "--";
   const ms = value < 10_000_000_000 ? value * 1000 : value;
   const date = new Date(ms);
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
+  return date.toLocaleString(locale);
 }
 
 function chipClass(value: string): string {
@@ -55,11 +56,16 @@ function metadataEntries(metadata: Record<string, unknown>) {
 }
 
 export function ReviewItemDetail({ item, actions, loading, submitting, onAction }: ReviewItemDetailProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
   const [editContent, setEditContent] = useState("");
   const [mergeTarget, setMergeTarget] = useState("");
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const [confirming, setConfirming] = useState(false);
+  const locale = dashboardLocale(currentLang());
+  const statusLabel = (value: string) => translateEnum(t, "intelligence.review.status", value, value);
+  const reasonLabel = (value: string) => translateEnum(t, "intelligence.review.reason", value, value);
+  const severityLabel = (value: string) => translateEnum(t, "severity", value, value);
+  const actionLabel = (value: string) => translateEnum(t, "intelligence.review.action", value, value);
 
   useEffect(() => {
     setEditContent(item?.content_preview ?? "");
@@ -118,10 +124,10 @@ export function ReviewItemDetail({ item, actions, loading, submitting, onAction 
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-full border px-2 py-1 text-2xs font-semibold uppercase ${chipClass(item.severity)}`}>
-              {item.severity}
+              {severityLabel(item.severity)}
             </span>
             <span className={`rounded-full border px-2 py-1 text-2xs font-semibold uppercase ${chipClass(item.status)}`}>
-              {item.status}
+              {statusLabel(item.status)}
             </span>
           </div>
         </div>
@@ -140,7 +146,7 @@ export function ReviewItemDetail({ item, actions, loading, submitting, onAction 
               <div className="mt-2 flex flex-wrap gap-2">
                 {item.reasons.map((reason) => (
                   <span key={reason} className={`rounded-full border px-2 py-1 text-2xs font-semibold ${chipClass(reason)}`}>
-                    {reason}
+                    {reasonLabel(reason)}
                   </span>
                 ))}
               </div>
@@ -246,9 +252,9 @@ export function ReviewItemDetail({ item, actions, loading, submitting, onAction 
           ) : (
             actions.map((action) => (
               <article key={action.action_id} className="grid gap-3 px-4 py-3 text-xs md:grid-cols-[150px_120px_120px_1fr]">
-                <span className="font-mono text-[var(--text-tertiary)]">{formatTime(action.created_at)}</span>
+                <span className="font-mono text-[var(--text-tertiary)]">{formatTime(action.created_at, locale)}</span>
                 <span className={`w-fit rounded-full border px-2 py-1 font-semibold uppercase ${chipClass(action.action)}`}>
-                  {action.action}
+                  {actionLabel(action.action)}
                 </span>
                 <span className="text-[var(--text-secondary)]">{action.actor_id || "--"}</span>
                 <span className="font-mono text-[var(--text-tertiary)]">{JSON.stringify(action.payload ?? {})}</span>

@@ -34,7 +34,7 @@ describe("RecallTracePanel", () => {
       query: "用户喜欢喝什么咖啡",
       total_ms: 84.2,
       stages: [
-        { name: "query_parse", duration_ms: 4.1, candidate_count: 0, metadata: { tokens: 6 } },
+        { name: "search_memories", duration_ms: 4.1, candidate_count: 0, metadata: { tokens: 6 } },
         { name: "bm25", duration_ms: 12.5, candidate_count: 7, metadata: { index: "atom_bm25" } },
       ],
       results: [
@@ -55,6 +55,7 @@ describe("RecallTracePanel", () => {
       ],
       filtered: [
         { doc_id: "mem-stale", reason: "low_score", stage: "rerank", score: 0.12, metadata: { threshold: 0.2 } },
+        { doc_id: "mem-empty", reason: "missing_fields", metadata: {} },
       ],
       created_at: 1783150200,
       metadata: { provider: "mock" },
@@ -84,7 +85,7 @@ describe("RecallTracePanel", () => {
     fireEvent.change(screen.getByLabelText("k"), {
       target: { value: "99" },
     });
-    fireEvent.change(screen.getByLabelText("chain_depth"), {
+    fireEvent.change(screen.getByLabelText("Chain depth"), {
       target: { value: "9" },
     });
     fireEvent.click(screen.getByRole("button", { name: /Trace|追踪/ }));
@@ -101,12 +102,17 @@ describe("RecallTracePanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getAllByText(/bm25/i).length > 0).toBeTruthy();
+      expect(screen.getAllByText(/BM25/).length > 0).toBeTruthy();
     });
-    expect(screen.getByText("emotion_boost")).toBeTruthy();
+    expect(screen.getByText("Emotion boost")).toBeTruthy();
+    expect(screen.getByText("Memory search")).toBeTruthy();
     expect(screen.getByText(/mem-coffee/)).toBeTruthy();
-    expect(screen.getByText(/low_score/)).toBeTruthy();
+    expect(screen.getByText("Low score")).toBeTruthy();
+    expect(screen.getByText("Rerank")).toBeTruthy();
+    expect(screen.getByText("Missing fields")).toBeTruthy();
     expect(screen.getByText(/84\.2ms/)).toBeTruthy();
+    expect(screen.queryAllByText("n/a")).toHaveLength(0);
+    expect(screen.getAllByText("--").length).toBeGreaterThanOrEqual(2);
     expect(container.querySelector("select")).toBe(null);
   });
 

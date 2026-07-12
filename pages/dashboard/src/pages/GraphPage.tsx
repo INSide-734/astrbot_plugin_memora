@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import type { GraphNode } from "@/types";
+import { dashboardLocale, formatDashboardNumber, formatDashboardPercent, type Translate } from "@/lib/i18n";
 
 interface GraphPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -100,14 +101,15 @@ function nodeTypeLabel(type: string): string {
 }
 
 /** Format hours to human-readable label */
-function formatHours(h: number): string {
-  if (h === 0) return "全部";
-  if (h < 24) return `${h}h`;
-  return `${Math.round(h / 24)}d`;
+function formatHours(h: number, t: Translate): string {
+  if (h === 0) return t("graph.all");
+  if (h < 24) return t("graph.hoursShort", String(h));
+  return t("graph.daysShort", String(Math.round(h / 24)));
 }
 
 export function GraphPage({ showToast }: GraphPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
   const [totalMemories, setTotal] = useState(0);
   const [nodeCount, setNodeCount] = useState(0);
   const [edgeCount, setEdgeCount] = useState(0);
@@ -513,13 +515,13 @@ export function GraphPage({ showToast }: GraphPageProps) {
             size="icon-sm"
             onClick={toggleFullscreen}
             className="bg-background/80"
-            aria-label={isFullscreen ? "退出全屏" : "全屏"}
-            title={isFullscreen ? "退出全屏" : "全屏"}
+            aria-label={t(isFullscreen ? "graph.exitFullscreen" : "graph.fullscreen")}
+            title={t(isFullscreen ? "graph.exitFullscreen" : "graph.fullscreen")}
           >
             {isFullscreen ? <Minimize2 /> : <Maximize2 />}
           </Button>
           <span className="rounded-md bg-background/80 px-2 py-0.5 text-2xs text-muted-foreground">
-            {Math.round(scale * 100)}%
+            {formatDashboardPercent(scale, locale, { maximumFractionDigits: 0 })}
           </span>
         </div>
       </div>
@@ -556,7 +558,7 @@ export function GraphPage({ showToast }: GraphPageProps) {
           </div>
         ))}
         <span className="mx-2 h-3 w-px bg-border" />
-        <span className="mr-1 text-2xs">时序边:</span>
+        <span className="mr-1 text-2xs">{t("graph.temporalEdges")}</span>
         {Object.entries(EDGE_STYLES).filter(([type]) => TEMPORAL_EDGES.has(type)).map(([type, style]) => (
           <div key={type} className="flex items-center gap-1.5 text-2xs">
             <svg width="14" height="8" className="shrink-0">
@@ -565,7 +567,7 @@ export function GraphPage({ showToast }: GraphPageProps) {
             {t(style.label)}
           </div>
         ))}
-        <span className="ml-1 mr-1 text-2xs">因果边:</span>
+        <span className="ml-1 mr-1 text-2xs">{t("graph.causalEdges")}</span>
         {Object.entries(EDGE_STYLES).filter(([type]) => CAUSAL_EDGES.has(type)).map(([type, style]) => (
           <div key={type} className="flex items-center gap-1.5 text-2xs">
             <svg width="14" height="8" className="shrink-0">
@@ -578,7 +580,7 @@ export function GraphPage({ showToast }: GraphPageProps) {
 
       {/* Dual range time filter */}
       <div className="flex flex-nowrap items-center gap-3 overflow-x-auto whitespace-nowrap border-t px-6 py-2">
-        <span className="shrink-0 text-2xs text-muted-foreground">时间范围:</span>
+        <span className="shrink-0 text-2xs text-muted-foreground">{t("graph.timeRange")}</span>
         <div className="relative flex-1 max-w-[240px] h-6 flex items-center">
           <input
             type="range"
@@ -610,10 +612,12 @@ export function GraphPage({ showToast }: GraphPageProps) {
           onClick={() => { setTimeRangeStart(0); setTimeRangeEnd(720); }}
           className="shrink-0"
         >
-          重置
+          {t("common.reset")}
         </Button>
         <span className="w-28 shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
-          {timeRangeStart === 0 && timeRangeEnd >= 720 ? "全部" : `${formatHours(timeRangeStart)} – ${formatHours(timeRangeEnd)}`}
+          {timeRangeStart === 0 && timeRangeEnd >= 720
+            ? t("graph.all")
+            : `${formatHours(timeRangeStart, t)} – ${formatHours(timeRangeEnd, t)}`}
         </span>
       </div>
 
@@ -665,7 +669,7 @@ export function GraphPage({ showToast }: GraphPageProps) {
                   {t("detail.nodeWeight")}
                 </label>
                 <p className="text-sm font-semibold">
-                  {Number(selectedNode.weight ?? 0).toFixed(2)}
+                  {formatDashboardNumber(selectedNode.weight ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               </div>
             </div>

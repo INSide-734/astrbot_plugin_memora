@@ -1,6 +1,7 @@
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { formatDashboardDate, formatDashboardPercent, formatDashboardShortDate } from "@/lib/i18n";
 
 export interface DailyMemoryCount {
   date: string;
@@ -12,29 +13,46 @@ export interface NamedCount {
   count: number;
 }
 
-const trendConfig = {
-  count: { label: "Memories", color: "var(--primary)" },
-} satisfies ChartConfig;
-
-const importanceConfig = {
-  count: { label: "Memories", color: "var(--primary)" },
-} satisfies ChartConfig;
-
-function shortDate(value: string) {
-  const parts = value.split("-");
-  return parts.length === 3 ? `${parts[1]}/${parts[2]}` : value;
+function countConfig(label: string) {
+  return {
+    count: { label, color: "var(--primary)" },
+  } satisfies ChartConfig;
 }
 
-export function GrowthTrendChart({ data, ariaLabel, valueLabel }: { data: DailyMemoryCount[]; ariaLabel: string; valueLabel: string }) {
+export function GrowthTrendChart({
+  data,
+  ariaLabel,
+  valueLabel,
+  locale,
+}: {
+  data: DailyMemoryCount[];
+  ariaLabel: string;
+  valueLabel: string;
+  locale: string;
+}) {
   const tickInterval = data.length <= 7 ? 0 : data.length <= 30 ? 4 : 13;
   return (
     <div role="img" aria-label={ariaLabel} className="h-64 min-w-0">
-      <ChartContainer config={trendConfig} className="h-full w-full">
+      <ChartContainer config={countConfig(valueLabel)} className="h-full w-full">
         <AreaChart data={data} margin={{ top: 12, right: 8, left: 0, bottom: 0 }} accessibilityLayer>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
-          <XAxis dataKey="date" tickFormatter={shortDate} interval={tickInterval} tickLine={false} axisLine={false} minTickGap={18} />
+          <XAxis
+            dataKey="date"
+            tickFormatter={(value) => formatDashboardShortDate(value, locale)}
+            interval={tickInterval}
+            tickLine={false}
+            axisLine={false}
+            minTickGap={18}
+          />
           <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={38} />
-          <ChartTooltip content={<ChartTooltipContent valueLabel={valueLabel} />} />
+          <ChartTooltip
+            content={(
+              <ChartTooltipContent
+                valueLabel={valueLabel}
+                formatLabel={(value) => formatDashboardDate(value, locale)}
+              />
+            )}
+          />
           <Area
             dataKey="count"
             type="monotone"
@@ -53,9 +71,11 @@ export function GrowthTrendChart({ data, ariaLabel, valueLabel }: { data: DailyM
 export function StatusComposition({
   items,
   ariaLabel,
+  locale,
 }: {
   items: Array<NamedCount & { colorClass: string }>;
   ariaLabel: string;
+  locale: string;
 }) {
   const total = items.reduce((sum, item) => sum + item.count, 0);
   return (
@@ -73,7 +93,7 @@ export function StatusComposition({
               <span className="truncate">{item.name}</span>
             </div>
             <div className="mt-0.5 text-sm font-semibold tabular-nums text-foreground">
-              {item.count.toLocaleString()} <span className="text-xs font-normal text-muted-foreground">{total > 0 ? `${Math.round((item.count / total) * 100)}%` : "0%"}</span>
+              {item.count.toLocaleString(locale)} <span className="text-xs font-normal text-muted-foreground">{formatDashboardPercent(total > 0 ? item.count / total : 0, locale, { maximumFractionDigits: 0 })}</span>
             </div>
           </div>
         ))}
@@ -82,7 +102,7 @@ export function StatusComposition({
   );
 }
 
-export function RankedBars({ items, ariaLabel }: { items: NamedCount[]; ariaLabel: string }) {
+export function RankedBars({ items, ariaLabel, locale }: { items: NamedCount[]; ariaLabel: string; locale: string }) {
   const maximum = Math.max(1, ...items.map((item) => item.count));
   return (
     <div role="img" aria-label={ariaLabel} className="space-y-2.5">
@@ -92,22 +112,30 @@ export function RankedBars({ items, ariaLabel }: { items: NamedCount[]; ariaLabe
           <div className="h-2 overflow-hidden rounded-full bg-muted">
             <div className="h-full rounded-full bg-primary" style={{ width: `${(item.count / maximum) * 100}%` }} />
           </div>
-          <span className="text-right font-medium tabular-nums text-foreground">{item.count}</span>
+          <span className="text-right font-medium tabular-nums text-foreground">{item.count.toLocaleString(locale)}</span>
         </div>
       ))}
     </div>
   );
 }
 
-export function ImportanceDistribution({ items, ariaLabel }: { items: NamedCount[]; ariaLabel: string }) {
+export function ImportanceDistribution({
+  items,
+  ariaLabel,
+  valueLabel,
+}: {
+  items: NamedCount[];
+  ariaLabel: string;
+  valueLabel: string;
+}) {
   return (
     <div role="img" aria-label={ariaLabel} className="h-32 min-w-0">
-      <ChartContainer config={importanceConfig} className="h-full w-full">
+      <ChartContainer config={countConfig(valueLabel)} className="h-full w-full">
         <BarChart data={items} margin={{ top: 8, right: 2, left: 0, bottom: 0 }} accessibilityLayer>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
           <XAxis dataKey="name" tickLine={false} axisLine={false} interval={1} fontSize={10} />
           <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={30} />
-          <ChartTooltip content={<ChartTooltipContent valueLabel="Memories" />} />
+          <ChartTooltip content={<ChartTooltipContent valueLabel={valueLabel} />} />
           <Bar dataKey="count" fill="var(--color-count)" radius={[3, 3, 0, 0]} isAnimationActive={false} />
         </BarChart>
       </ChartContainer>

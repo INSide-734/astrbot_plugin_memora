@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/Progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { dashboardLocale, formatDashboardDateTime, formatDashboardNumber, formatDashboardPercent, translateEnum } from "@/lib/i18n";
 
 interface LearningPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -25,7 +26,7 @@ interface LearningStats {
 }
 
 export function LearningPage({ showToast }: LearningPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
   const { groups, groupId, setGroupId } = useGroups();
   const [stats, setStats] = useState<LearningStats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -62,6 +63,7 @@ export function LearningPage({ showToast }: LearningPageProps) {
   };
 
   const s = stats ?? {};
+  const locale = dashboardLocale(currentLang());
 
   return (
     <PageFrame variant="standard" aria-label={t("nav.learning")}>
@@ -71,11 +73,11 @@ export function LearningPage({ showToast }: LearningPageProps) {
         actions={<Button variant="secondary" size="sm" onClick={resetLearning}><RotateCw data-icon="inline-start" />{t("learning.reset")}</Button>}
       />
       <PageContent className="flex flex-col gap-6">
-        {loading && !stats && <p className="text-center text-sm text-muted-foreground">Loading...</p>}
+        {loading && !stats && <p className="text-center text-sm text-muted-foreground">{t("common.loading")}</p>}
 
         <MetricGrid minItemWidth="10rem">
-          {[{ label: t("learning.hitRate"), value: s.hit_rate, fmt: (v: number) => `${(v * 100).toFixed(1)}%` },
-            { label: t("learning.avgQuality"), value: s.avg_quality, fmt: (v: number) => v.toFixed(3) },
+          {[{ label: t("learning.hitRate"), value: s.hit_rate, fmt: (v: number) => formatDashboardPercent(v, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) },
+            { label: t("learning.avgQuality"), value: s.avg_quality, fmt: (v: number) => formatDashboardNumber(v, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) },
             { label: t("learning.trials"), value: s.total_trials, fmt: (v: number) => String(v) },
             { label: t("learning.corrections"), value: s.total_corrections, fmt: (v: number) => String(v) }].map((item) => (
             <Card key={item.label} size="sm">
@@ -98,7 +100,7 @@ export function LearningPage({ showToast }: LearningPageProps) {
                 <div key={key} className="grid min-w-0 grid-cols-[minmax(6rem,10rem)_minmax(4rem,1fr)_3.5rem] items-center gap-3">
                   <span className="truncate text-xs text-muted-foreground">{key}</span>
                   <Progress aria-label={key} value={Number(value)} className="h-2" />
-                  <span className="text-right text-xs tabular-nums text-muted-foreground">{Number(value).toFixed(2)}</span>
+                  <span className="text-right text-xs tabular-nums text-muted-foreground">{formatDashboardNumber(value, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               ))}
             </CardContent>
@@ -111,8 +113,8 @@ export function LearningPage({ showToast }: LearningPageProps) {
             <CardContent className="flex max-h-80 flex-col gap-1 overflow-auto">
               {s.history.map((h, i) => (
                 <div key={i} className="flex min-w-0 items-center gap-3 rounded-md px-3 py-2 text-sm hover:bg-muted/50">
-                  <span className="w-24 shrink-0 text-xs text-muted-foreground">{String(h.timestamp ?? "").slice(0, 16)}</span>
-                  <Badge variant="secondary">{h.action}</Badge>
+                  <span className="w-36 shrink-0 text-xs text-muted-foreground">{formatDashboardDateTime(h.timestamp, locale)}</span>
+                  <Badge variant="secondary">{translateEnum(t, "learning.historyAction", h.action, h.action)}</Badge>
                   <span className="truncate text-xs text-foreground">{h.detail}</span>
                 </div>
               ))}
@@ -164,7 +166,7 @@ export function LearningPage({ showToast }: LearningPageProps) {
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <Progress aria-label={`${p.situation} ${p.expression} ${t("expression.weight")} ${p.pattern_id}`} value={p.weight} className="h-1.5 w-16" />
-                        <span className="text-xs tabular-nums text-muted-foreground">{(p.weight * 100).toFixed(0)}%</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(p.weight, locale, { maximumFractionDigits: 0 })}</span>
                       </div>
                     </TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{p.usage_count}</TableCell>

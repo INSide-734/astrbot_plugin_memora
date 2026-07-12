@@ -91,6 +91,7 @@ describe("TimelinePage", () => {
   });
 
   it("switches zoom levels and toggles the expanded memory detail panel", async () => {
+    bridge.t?.mockImplementation((key: string) => key === "dashboard.memory.type.fact" ? "Fact memory" : key);
     bridge.apiGet.mockResolvedValue(ok({
       items: [
         {
@@ -123,7 +124,7 @@ describe("TimelinePage", () => {
     fireEvent.click(screen.getByText("Within the day window"));
 
     expect(await screen.findByText("0.91")).toBeTruthy();
-    expect(screen.getByText("fact")).toBeTruthy();
+    expect(screen.getByText("Fact memory")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Within the day window"));
 

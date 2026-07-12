@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EN_MAP } from "../mock";
 import { NotesPage } from "./NotesPage";
 
 interface BridgeMock {
@@ -45,6 +46,7 @@ describe("NotesPage", () => {
   });
 
   it("switches between list and search requests for notes", async () => {
+    const localeSpy = vi.spyOn(Date.prototype, "toLocaleDateString");
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/notes") {
         return Promise.resolve(ok({
@@ -86,6 +88,7 @@ describe("NotesPage", () => {
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/notes", { limit: "100" });
     });
+    expect(localeSpy).toHaveBeenCalledWith("en-US");
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select note List all" }));
     expect(screen.getByText("1 selected")).toBeTruthy();
@@ -154,7 +157,7 @@ describe("NotesPage", () => {
         action: "archive",
       });
     });
-    expect(showToast).toHaveBeenCalledWith("archived 2 notes");
+    expect(showToast).toHaveBeenCalledWith(EN_MAP["toast.batchArchived"].replace("{0}", "2"));
   });
 
   it("opens note detail, saves edits, and archives the note from the detail panel", async () => {
@@ -200,6 +203,9 @@ describe("NotesPage", () => {
     });
 
     const drawer = await screen.findByRole("dialog", { name: "Gamma note" });
+    expect(within(drawer).getByText(
+      `Updated: ${new Date("2026-06-28T12:00:00Z").toLocaleDateString("en-US")}`,
+    )).toBeTruthy();
 
     fireEvent.change(within(drawer).getByPlaceholderText("New title"), {
       target: { value: "Updated gamma note" },

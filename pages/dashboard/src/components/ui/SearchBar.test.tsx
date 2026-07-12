@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EN_MAP, RU_MAP } from "../../mock";
 import { SearchBar } from "./SearchBar";
 
 interface BridgeMock {
@@ -66,11 +67,17 @@ describe("SearchBar", () => {
       })
       .mockResolvedValueOnce({
         status: "ok",
-        data: [{ entry_id: "k-1", title: "Python knowledge", category: "fact" }],
+        data: [
+          { entry_id: "k-1", title: "Python knowledge", category: "fact" },
+          { entry_id: "k-2", title: "Vendor knowledge", category: "vendor_category" },
+        ],
       })
       .mockResolvedValueOnce({
         status: "ok",
-        data: [{ note_id: "n-1", title: "Python note", status: "active" }],
+        data: [
+          { note_id: "n-1", title: "Python note", status: "active" },
+          { note_id: "n-2", title: "Vendor note", status: "vendor_status" },
+        ],
       });
 
     render(<SearchBar onNavigate={onNavigate} />);
@@ -104,6 +111,20 @@ describe("SearchBar", () => {
     expect(screen.getByText("Python memory")).toBeTruthy();
     expect(screen.getByText("Python knowledge")).toBeTruthy();
     expect(screen.getByText("Python note")).toBeTruthy();
+    expect(screen.getByText(EN_MAP["category.fact"])).toBeTruthy();
+    expect(screen.getByText(EN_MAP["status.active"])).toBeTruthy();
+    expect(screen.getByText("vendor_category")).toBeTruthy();
+    expect(screen.getByText("vendor_status")).toBeTruthy();
+
+    bridge.getLocale?.mockReturnValue("ru-RU");
+    await act(async () => {
+      window.dispatchEvent(new Event("languagechange"));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(RU_MAP["category.fact"])).toBeTruthy();
+    expect(screen.getByText(RU_MAP["status.active"])).toBeTruthy();
+    expect(screen.queryByText(EN_MAP["category.fact"])).toBeNull();
   });
 
   it("navigates to the target page with highlight state when a result is clicked", async () => {

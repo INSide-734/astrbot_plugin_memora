@@ -16,7 +16,7 @@ function ok<T>(data: T) {
 }
 
 async function waitForDetailReady() {
-  expect(await screen.findByLabelText(/Edit content|编辑内容/i)).toBeTruthy();
+  expect(await screen.findByLabelText(/Edit content|编辑内容|Редактировать/i)).toBeTruthy();
 }
 
 describe("ReviewQueue", () => {
@@ -109,7 +109,7 @@ describe("ReviewQueue", () => {
   it("renders review items and exposes status reason severity filters", async () => {
     const { container } = render(<ReviewQueue showToast={() => undefined} />);
 
-    expect((await screen.findAllByText(/duplicate|重复/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/duplicate|重复/i)).length).toBeGreaterThan(0);
     expect(screen.getByLabelText(/Status|状态/i)).toBeTruthy();
     expect(screen.getByLabelText(/Reason|原因/i)).toBeTruthy();
     expect(screen.getByLabelText(/Severity|严重/i)).toBeTruthy();
@@ -143,6 +143,39 @@ describe("ReviewQueue", () => {
     expect(screen.getByText("操作历史")).toBeTruthy();
     expect(screen.queryByText("Review queue")).toBe(null);
     expect(screen.queryByText("Memory review")).toBe(null);
+  });
+
+  it("localizes review enums in list and filters while preserving unknown values", async () => {
+    bridge.getLocale.mockReturnValue("zh-CN");
+    bridge.t.mockImplementation((key: string) => ({
+      "dashboard.intelligence.review.status.open": "待处理",
+      "dashboard.intelligence.review.status.approved": "已批准",
+      "dashboard.severity.medium": "中等",
+      "dashboard.severity.low": "低",
+      "dashboard.intelligence.review.reason.duplicate": "重复项",
+      "dashboard.intelligence.review.reason.stale": "陈旧",
+    })[key] ?? key);
+
+    render(<ReviewQueue showToast={() => undefined} />);
+
+    expect((await screen.findAllByText("重复项")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("中等").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("待处理").length).toBeGreaterThan(0);
+    expect(await screen.findByText("flagged")).toBeTruthy();
+
+    const reasonFilter = screen.getByLabelText("原因");
+    fireEvent.click(reasonFilter);
+    expect(await screen.findByRole("option", { name: "陈旧" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "stale" })).toBe(null);
+  });
+
+  it("formats queue and detail timestamps with the dashboard locale", async () => {
+    bridge.getLocale.mockReturnValue("ru-RU");
+    render(<ReviewQueue showToast={() => undefined} />);
+
+    await waitForDetailReady();
+    const expected = new Date(1783150200 * 1000).toLocaleString("ru-RU");
+    expect(screen.getAllByText(expected).length).toBeGreaterThan(0);
   });
 
   it("requires inline confirmation before deleting a review item", async () => {
@@ -233,7 +266,11 @@ describe("ReviewQueue", () => {
   });
 
   it("posts edited content without confirmation", async () => {
-    render(<ReviewQueue showToast={() => undefined} />);
+    const showToast = vi.fn();
+    bridge.t.mockImplementation((key: string) => (
+      key === "dashboard.intelligence.review.action.edit" ? "Edit action" : key
+    ));
+    render(<ReviewQueue showToast={showToast} />);
 
     expect(await screen.findByText("mem-duplicate-1")).toBeTruthy();
     await waitForDetailReady();
@@ -249,6 +286,7 @@ describe("ReviewQueue", () => {
         payload: { content: "修订后的记忆内容" },
       });
     });
+    expect(showToast).toHaveBeenCalledWith("Review action submitted: Edit action");
   });
 
   it("shows backend error envelopes through toast", async () => {

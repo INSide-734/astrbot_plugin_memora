@@ -2,6 +2,16 @@
 
 const ENDPOINT_PREFIX = "page";
 
+function localizedError(key: string, ...args: string[]): Error {
+  try {
+    if (typeof window !== "undefined" && typeof window.t === "function") {
+      const translated = window.t(key, ...args);
+      if (translated && translated !== key) return new Error(translated);
+    }
+  } catch { /* fall through to the stable key */ }
+  return new Error(key);
+}
+
 function buildEndpoint(path: string): string {
   return `${ENDPOINT_PREFIX}/${path.replace(/^\/+/, "").replace(/\/+/g, "/")}`;
 }
@@ -11,7 +21,7 @@ export async function apiGet(
   params?: Record<string, string>
 ): Promise<ApiResponse> {
   const bridge = window.AstrBotPluginPage;
-  if (!bridge) throw new Error("Bridge not available");
+  if (!bridge) throw localizedError("error.bridgeUnavailable");
   return bridge.apiGet(buildEndpoint(path), params ?? {});
 }
 
@@ -20,7 +30,7 @@ export async function apiPost(
   body?: unknown
 ): Promise<ApiResponse> {
   const bridge = window.AstrBotPluginPage;
-  if (!bridge) throw new Error("Bridge not available");
+  if (!bridge) throw localizedError("error.bridgeUnavailable");
   return bridge.apiPost(buildEndpoint(path), body ?? {});
 }
 
@@ -52,7 +62,7 @@ export async function apiRequest(
       await new Promise((r) => setTimeout(r, Math.min(1000 * Math.pow(2, attempt), 5000)));
     }
   }
-  throw lastError ?? new Error("Request failed");
+  throw lastError ?? localizedError("error.requestFailed");
 }
 
 export function unwrapApiData<T = Record<string, unknown>>(response: ApiResponse): T {
@@ -60,12 +70,14 @@ export function unwrapApiData<T = Record<string, unknown>>(response: ApiResponse
     return (response.data ?? {}) as T;
   }
   if (response?.status === "error") {
-    throw new Error((response.message as string) ?? "Request failed");
+    throw response.message
+      ? new Error(String(response.message))
+      : localizedError("error.requestFailed");
   }
   // Guard: if the response doesn't match the expected envelope, throw instead
   // of silently casting — downstream components would receive wrong-shaped data.
   if (typeof response !== "object" || response === null) {
-    throw new Error(`[bridge] Unexpected API response type: ${typeof response}`);
+    throw localizedError("error.unexpectedResponseType", typeof response);
   }
   return response as unknown as T;
 }

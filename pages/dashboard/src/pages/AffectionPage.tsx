@@ -12,13 +12,15 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AffectionStatus, AffectionUserEntry } from "@/types";
 import { MOOD_TYPES } from "@/lib/constants";
+import { dashboardLocale, formatDashboardPercent, translateEnum } from "@/lib/i18n";
 
 interface AffectionPageProps {
   showToast: (msg: string, isError?: boolean) => void;
 }
 
 export function AffectionPage({ showToast }: AffectionPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
   const { groups, groupId, setGroupId } = useGroups();
   const [data, setData] = useState<AffectionStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -36,7 +38,14 @@ export function AffectionPage({ showToast }: AffectionPageProps) {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const mood = data?.current_mood;
-  const moodMeta = MOOD_TYPES.find((m) => m.type === mood?.mood_type);
+  const normalizedMoodType = String(mood?.mood_type ?? "").toUpperCase();
+  const moodMeta = MOOD_TYPES.find((item) => item.type === normalizedMoodType);
+  const affectionLevelLabel = (entry: AffectionUserEntry): string => {
+    const level = String(entry.affection_level ?? "").trim();
+    return level
+      ? translateEnum(t, "affection.levelValue", level)
+      : entry.level_name || "--";
+  };
 
   return (
     <PageFrame variant="standard" aria-label={t("affection.title")}>
@@ -73,7 +82,7 @@ export function AffectionPage({ showToast }: AffectionPageProps) {
                 <span className="text-4xl">{moodMeta?.emoji ?? "🤖"}</span>
                 <div className="min-w-0">
                   <div className="text-lg font-semibold text-foreground">
-                    {moodMeta?.label ?? mood?.mood_type ?? "—"}
+                    {moodMeta ? t(`mood.${moodMeta.type}`) : mood?.mood_type ?? "—"}
                   </div>
                   <div className="mt-0.5 text-xs text-muted-foreground">{mood?.description ?? ""}</div>
                 </div>
@@ -81,7 +90,7 @@ export function AffectionPage({ showToast }: AffectionPageProps) {
               <div className="min-w-[10rem] flex-1">
                 <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
                   <span>{t("affection.moodIntensity")}</span>
-                  <span>{mood?.intensity != null ? `${Math.round(mood.intensity * 100)}%` : "—"}</span>
+                  <span>{mood?.intensity != null ? formatDashboardPercent(mood.intensity, locale, { maximumFractionDigits: 0 }) : "—"}</span>
                 </div>
                 <Progress aria-label={t("affection.moodIntensity")} value={mood?.intensity ?? 0} className="h-2" />
               </div>
@@ -102,11 +111,11 @@ export function AffectionPage({ showToast }: AffectionPageProps) {
               {MOOD_TYPES.map((mt) => (
                 <div
                   key={mt.type}
-                  className={`flex flex-col items-center gap-1.5 rounded-md border p-3 transition-colors ${mood?.mood_type === mt.type ? "border-primary bg-primary/5" : "border-border"}`}
+                  className={`flex flex-col items-center gap-1.5 rounded-md border p-3 transition-colors ${normalizedMoodType === mt.type ? "border-primary bg-primary/5" : "border-border"}`}
                 >
                   <span className="text-xl">{mt.emoji}</span>
-                  <span className="text-xs font-medium text-foreground">{mt.label}</span>
-                  {mood?.mood_type === mt.type && (
+                  <span className="text-xs font-medium text-foreground">{t(`mood.${mt.type}`)}</span>
+                  {normalizedMoodType === mt.type && (
                     <Badge>{t("status.active")}</Badge>
                   )}
                 </div>
@@ -135,7 +144,11 @@ export function AffectionPage({ showToast }: AffectionPageProps) {
                         <span className="text-xs font-medium tabular-nums">{u.affection_score}</span>
                       </div>
                     </TableCell>
-                    <TableCell><Badge variant="secondary">{u.level_name}</Badge></TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">
+                        {affectionLevelLabel(u)}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{u.interaction_count}</TableCell>
                   </TableRow>
                 ))}

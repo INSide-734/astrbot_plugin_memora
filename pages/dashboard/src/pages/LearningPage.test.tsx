@@ -52,6 +52,7 @@ describe("LearningPage", () => {
   });
 
   it("loads learning stats, groups, and expression patterns", async () => {
+    const localeSpy = vi.spyOn(Date.prototype, "toLocaleString");
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/groups") {
         return Promise.resolve(ok({
@@ -72,7 +73,8 @@ describe("LearningPage", () => {
             style_bias: 0.35,
           },
           history: [
-            { timestamp: "2026-06-28T10:30:00Z", action: "adjusted", detail: "Raised retrieval weight" },
+            { timestamp: "2026-06-28T10:30:00Z", action: "weight_adjust", detail: "Raised retrieval weight" },
+            { timestamp: "2026-06-27T10:30:00Z", action: "vendor_action", detail: "Vendor-defined action" },
           ],
         }));
       }
@@ -117,8 +119,10 @@ describe("LearningPage", () => {
     expect(screen.getByRole("progressbar", { name: "retrieval_weight" })).toBeTruthy();
     expect(screen.getByText("Learning History")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Learning History" })).toBeTruthy();
-    expect(screen.getByText("adjusted")).toBeTruthy();
+    expect(screen.getByText("Weight adjustment")).toBeTruthy();
+    expect(screen.getByText("vendor_action")).toBeTruthy();
     expect(screen.getByText("Raised retrieval weight")).toBeTruthy();
+    expect(localeSpy).toHaveBeenCalledWith("en-US");
     expect(screen.getByText("Expression Patterns")).toBeTruthy();
     expect(screen.getByText("Greeting")).toBeTruthy();
     expect(screen.getByText("Formal greeting")).toBeTruthy();

@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EN_MAP } from "../mock";
+
 type GraphEventHandler = (event?: { target?: { id?: string } }) => void;
 
 function getGraphMockState() {
@@ -330,6 +332,11 @@ describe("GraphPage", () => {
   });
 
   it("re-applies the cached graph and removes out-of-range graph items when the time range changes", async () => {
+    bridge.t?.mockImplementation((key: string) => {
+      if (key === "dashboard.graph.hoursShort") return "{0} hours";
+      if (key === "dashboard.graph.daysShort") return "{0} days";
+      return key;
+    });
     const { GraphPage } = await loadGraphPage();
     const nowSeconds = Math.floor(Date.now() / 1000);
 
@@ -368,7 +375,10 @@ describe("GraphPage", () => {
     });
 
     const timeSliders = screen.getAllByRole("slider");
+    fireEvent.change(timeSliders[1], { target: { value: "12" } });
+    expect(screen.getByText("All – 12 hours")).toBeTruthy();
     fireEvent.change(timeSliders[1], { target: { value: "24" } });
+    expect(screen.getByText("All – 1 days")).toBeTruthy();
 
     await waitFor(() => {
       expect(graph.setData).toHaveBeenLastCalledWith({
@@ -525,11 +535,11 @@ describe("GraphPage", () => {
       expect(screen.queryByText("Failed to load graph data")).toBeNull();
     });
 
-    const fullscreenButton = screen.getByTitle("全屏");
+    const fullscreenButton = screen.getByTitle(EN_MAP["graph.fullscreen"]);
     fireEvent.click(fullscreenButton);
 
     expect(HTMLElement.prototype.requestFullscreen).toHaveBeenCalled();
-    expect(screen.getByTitle("退出全屏")).toBeTruthy();
+    expect(screen.getByTitle(EN_MAP["graph.exitFullscreen"])).toBeTruthy();
 
     // Simulate browser fullscreen exit notification.
     Object.defineProperty(document, "fullscreenElement", {
@@ -540,7 +550,7 @@ describe("GraphPage", () => {
     fireEvent(document, new Event("fullscreenchange"));
 
     await waitFor(() => {
-      expect(screen.getByTitle("全屏")).toBeTruthy();
+      expect(screen.getByTitle(EN_MAP["graph.fullscreen"])).toBeTruthy();
     });
   });
 });

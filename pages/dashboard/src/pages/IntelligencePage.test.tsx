@@ -20,5 +20,5 @@ it("switches intelligence tabs", async () => {
   fireEvent.click(screen.getByRole("tab", { name: /Diagnostics|诊断/ }));
   expect(screen.getByRole("tab", { name: /Diagnostics|诊断/ }).getAttribute("aria-selected")).toBe("true");
   expect(screen.getByRole("tabpanel", { name: /Diagnostics|诊断/ })).toBeTruthy();
-  expect(screen.getByText(/Health|健康/)).toBeTruthy();
+  expect(screen.getAllByText(/^(Health|健康)$/).length).toBeGreaterThan(0);
 });

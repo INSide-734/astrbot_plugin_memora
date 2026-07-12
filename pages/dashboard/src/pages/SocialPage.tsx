@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RELATION_CATEGORIES } from "@/lib/constants";
+import { dashboardLocale, formatDashboardPercent } from "@/lib/i18n";
 import type { SocialRelationEntry } from "@/types";
 
 interface SocialPageProps {
@@ -19,7 +20,8 @@ interface SocialPageProps {
 }
 
 export function SocialPage({ showToast }: SocialPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
   const { groups, groupId, setGroupId } = useGroups();
   const [relations, setRelations] = useState<SocialRelationEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -48,7 +50,7 @@ export function SocialPage({ showToast }: SocialPageProps) {
 
   const categories = [
     { value: "all", label: t("social.allCategories") },
-    ...Object.entries(RELATION_CATEGORIES).map(([value, meta]) => ({ value, label: meta.label })),
+    ...Object.keys(RELATION_CATEGORIES).map((value) => ({ value, label: t(`social.category.${value}`) })),
   ];
 
   const relationTable = loading ? (
@@ -76,11 +78,11 @@ export function SocialPage({ showToast }: SocialPageProps) {
                 </div>
                 <div className="mt-0.5 text-xs text-muted-foreground">{relationLabel(r.relation_type)}</div>
               </TableCell>
-              <TableCell><Badge variant="secondary">{RELATION_CATEGORIES[r.category]?.label ?? r.category}</Badge></TableCell>
+              <TableCell><Badge variant="secondary">{RELATION_CATEGORIES[r.category] ? t(`social.category.${r.category}`) : r.category}</Badge></TableCell>
               <TableCell>
                 <div className="flex items-center gap-2">
-                  <Progress aria-label={`${r.from_user} to ${r.to_user} ${relationLabel(r.relation_type)} ${t("social.strength")}`} value={r.strength} className="h-1.5 w-20" />
-                  <span className="text-xs tabular-nums text-muted-foreground">{(r.strength * 100).toFixed(0)}%</span>
+                  <Progress aria-label={`${r.from_user} → ${r.to_user} ${relationLabel(r.relation_type)} ${t("social.strength")}`} value={r.strength} className="h-1.5 w-20" />
+                  <span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(r.strength, locale, { maximumFractionDigits: 0 })}</span>
                 </div>
               </TableCell>
               <TableCell className="text-xs tabular-nums text-muted-foreground">{r.frequency}</TableCell>

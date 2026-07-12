@@ -1,20 +1,22 @@
 import type { EvaluationCaseResult } from "@/types/intelligence";
 import { useI18n } from "@/hooks/useI18n";
+import { dashboardLocale, formatDashboardNumber, formatDashboardPercent } from "@/lib/i18n";
 
 interface EvaluationCaseTableProps {
   cases: EvaluationCaseResult[];
 }
 
-function formatPercent(value: number): string {
-  return `${Math.round(value * 100)}%`;
+function formatPercent(value: number, locale: string): string {
+  return formatDashboardPercent(value, locale, { maximumFractionDigits: 0 });
 }
 
-function formatMs(value: number): string {
-  return `${value.toFixed(1)}ms`;
+function formatMs(value: number, locale: string): string {
+  return `${formatDashboardNumber(value, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}ms`;
 }
 
 export function EvaluationCaseTable({ cases }: EvaluationCaseTableProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
 
   if (cases.length === 0) {
     return (
@@ -64,10 +66,10 @@ export function EvaluationCaseTable({ cases }: EvaluationCaseTableProps) {
                   <td className="max-w-[260px] px-4 py-3 align-top font-mono text-2xs text-[var(--text-tertiary)]">
                     {row.ranked_doc_ids.length > 0 ? row.ranked_doc_ids.join(", ") : "-"}
                   </td>
-                  <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{formatPercent(row.recall_at_k)}</td>
-                  <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{row.reciprocal_rank.toFixed(2)}</td>
-                  <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{row.ndcg_at_k.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-right align-top tabular-nums text-[var(--text-secondary)]">{formatMs(row.latency_ms)}</td>
+                  <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{formatPercent(row.recall_at_k, locale)}</td>
+                  <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{formatDashboardNumber(row.reciprocal_rank, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{formatDashboardNumber(row.ndcg_at_k, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-3 text-right align-top tabular-nums text-[var(--text-secondary)]">{formatMs(row.latency_ms, locale)}</td>
                 </tr>
               );
             })}

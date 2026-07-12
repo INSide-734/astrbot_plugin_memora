@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
+import { dashboardLocale, formatDashboardNumber, translateEnum } from "@/lib/i18n";
 import type {
   RecallTraceFilteredCandidate,
   RecallTraceRequest,
@@ -31,12 +32,14 @@ function clampNumber(value: number, min: number, max: number, fallback: number):
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
-function formatMs(value: number): string {
-  return `${value.toFixed(1)}ms`;
+function formatMs(value: number, locale: string): string {
+  return `${formatDashboardNumber(value, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}ms`;
 }
 
-function formatScore(value: number | undefined): string {
-  return value === undefined ? "n/a" : value.toFixed(3);
+function formatScore(value: number | undefined, locale: string): string {
+  return value === undefined
+    ? "--"
+    : formatDashboardNumber(value, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 }
 
 function metadataEntries(metadata: Record<string, unknown>, limit = 5) {
@@ -62,7 +65,8 @@ function MetadataChips({ metadata, limit = 5 }: { metadata: Record<string, unkno
 }
 
 function ResultCard({ result }: { result: RecallTraceResult }) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
 
   return (
     <article className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]">
@@ -72,7 +76,7 @@ function ResultCard({ result }: { result: RecallTraceResult }) {
             #{result.rank} {result.doc_id}
           </p>
           <p className="mt-1 text-2xs text-[var(--text-tertiary)]">
-            {t("intelligence.trace.initialFinal", formatScore(result.initial_score), formatScore(result.final_score))}
+            {t("intelligence.trace.initialFinal", formatScore(result.initial_score, locale), formatScore(result.final_score, locale))}
           </p>
         </div>
         <MetadataChips metadata={result.metadata} limit={4} />
@@ -95,7 +99,7 @@ function ResultCard({ result }: { result: RecallTraceResult }) {
                 >
                   <p className="text-xs text-[var(--text-primary)]">{path.nodes.join(" -> ")}</p>
                   <p className="mt-1 text-2xs text-[var(--text-tertiary)]">
-                    {path.edges.join(" / ")} · {t("intelligence.trace.scoreValue", formatScore(path.score))}
+                    {path.edges.join(" / ")} · {t("intelligence.trace.scoreValue", formatScore(path.score, locale))}
                   </p>
                   <div className="mt-2">
                     <MetadataChips metadata={path.metadata} limit={3} />
@@ -111,18 +115,25 @@ function ResultCard({ result }: { result: RecallTraceResult }) {
 }
 
 function FilteredCandidateRow({ item }: { item: RecallTraceFilteredCandidate }) {
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
   return (
     <tr className="border-t border-[var(--color-border-light)]">
       <td className="px-4 py-2 font-medium text-[var(--text-primary)]">{item.doc_id}</td>
-      <td className="px-4 py-2 text-[var(--text-secondary)]">{item.reason}</td>
-      <td className="px-4 py-2 text-[var(--text-tertiary)]">{item.stage ?? "n/a"}</td>
-      <td className="px-4 py-2 text-right tabular-nums text-[var(--text-secondary)]">{formatScore(item.score)}</td>
+      <td className="px-4 py-2 text-[var(--text-secondary)]">
+        {translateEnum(t, "intelligence.trace.filterReason", item.reason, item.reason)}
+      </td>
+      <td className="px-4 py-2 text-[var(--text-tertiary)]">
+        {item.stage ? translateEnum(t, "intelligence.trace.stage", item.stage, item.stage) : "--"}
+      </td>
+      <td className="px-4 py-2 text-right tabular-nums text-[var(--text-secondary)]">{formatScore(item.score, locale)}</td>
     </tr>
   );
 }
 
 export function RecallTracePanel({ showToast }: RecallTracePanelProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
   const [query, setQuery] = useState("");
   const [k, setK] = useState(5);
   const [sessionId, setSessionId] = useState("");
@@ -157,7 +168,7 @@ export function RecallTracePanel({ showToast }: RecallTracePanelProps) {
       const nextTrace = unwrapApiData<RecallTraceResponse>(response);
       setTrace(nextTrace);
     } catch (error) {
-      showToast(`Error: ${error instanceof Error ? error.message : String(error)}`, true);
+      showToast(t("common.errorPrefix", error instanceof Error ? error.message : String(error)), true);
     } finally {
       setLoading(false);
     }
@@ -198,7 +209,7 @@ export function RecallTracePanel({ showToast }: RecallTracePanelProps) {
             <label className="text-xs font-medium text-[var(--text-secondary)]">
               {t("intelligence.trace.chainDepth")}
               <input
-                aria-label="chain_depth"
+                aria-label={t("intelligence.trace.chainDepth")}
                 type="number"
                 min={0}
                 max={5}
@@ -264,7 +275,7 @@ export function RecallTracePanel({ showToast }: RecallTracePanelProps) {
             <div className="grid gap-3 md:grid-cols-4">
               {[
                 [t("intelligence.trace.stat.trace"), trace.trace_id],
-                [t("intelligence.trace.stat.total"), formatMs(trace.total_ms)],
+                [t("intelligence.trace.stat.total"), formatMs(trace.total_ms, locale)],
                 [t("intelligence.trace.stat.stages"), String(trace.stages.length)],
                 [t("intelligence.trace.stat.results"), String(trace.results.length)],
               ].map(([label, value]) => (
@@ -283,8 +294,10 @@ export function RecallTracePanel({ showToast }: RecallTracePanelProps) {
                 {trace.stages.map((stage) => (
                   <div key={stage.name} className="rounded-lg border border-[var(--color-border-light)] bg-[var(--color-surface)] p-3">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-medium text-[var(--text-primary)]">{stage.name}</p>
-                      <span className="text-2xs tabular-nums text-[var(--text-secondary)]">{formatMs(stage.duration_ms)}</span>
+                      <p className="text-xs font-medium text-[var(--text-primary)]">
+                        {translateEnum(t, "intelligence.trace.stage", stage.name, stage.name)}
+                      </p>
+                      <span className="text-2xs tabular-nums text-[var(--text-secondary)]">{formatMs(stage.duration_ms, locale)}</span>
                     </div>
                     <p className="mt-2 text-2xs text-[var(--text-tertiary)]">{t("intelligence.trace.candidates", String(stage.candidate_count))}</p>
                     <div className="mt-2">

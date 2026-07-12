@@ -131,6 +131,9 @@ export function Sidebar({
       items: [{ id: "system", label: t("nav.system"), icon: <BarChart3 /> }],
     },
   ];
+  const navigationToggleLabel = collapsed
+    ? t("sidebar.expandNavigation")
+    : t("sidebar.collapseNavigation");
 
   const handleTouchStart = useCallback((event: React.TouchEvent) => {
     touchStartX.current = event.touches[0].clientX;
@@ -191,13 +194,13 @@ export function Sidebar({
           </div>
           {!collapsed ? <span className="min-w-0 flex-1 truncate text-sm font-semibold">Memora</span> : null}
           {onCloseMobile ? (
-            <Button aria-label="Close navigation" variant="ghost" size="icon" onClick={onCloseMobile} className="md:hidden">
+            <Button aria-label={t("sidebar.closeNavigation")} variant="ghost" size="icon" onClick={onCloseMobile} className="md:hidden">
               <X />
             </Button>
           ) : null}
           <Button
-            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-            title={collapsed ? "Expand navigation" : "Collapse navigation"}
+            aria-label={navigationToggleLabel}
+            title={navigationToggleLabel}
             variant="ghost"
             size="icon-sm"
             onClick={() => setCollapsed((value) => !value)}
@@ -207,7 +210,7 @@ export function Sidebar({
           </Button>
         </div>
 
-        <nav aria-label="Dashboard" className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 py-3">
+        <nav aria-label={t("sidebar.navigationLabel")} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 py-3">
           {groups.map((group) => {
             const open = openGroups[group.id];
             return (

@@ -3,6 +3,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { Button } from "@/components/ui/Button";
 import { Activity, AlertTriangle, CheckCircle2, Info, XCircle, RefreshCw } from "lucide-react";
+import { dashboardLocale, formatDashboardPercent, translateEnum } from "@/lib/i18n";
 import type { QualityScoreEntry, QualityAlertEntry, QualityStats } from "@/types";
 
 interface QualityMonitorTabProps {
@@ -10,11 +11,12 @@ interface QualityMonitorTabProps {
 }
 
 export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
   const [stats, setStats] = useState<QualityStats | null>(null);
   const [scores, setScores] = useState<QualityScoreEntry[]>([]);
   const [alerts, setAlerts] = useState<QualityAlertEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const locale = dashboardLocale(currentLang());
 
   const fetchQuality = useCallback(async () => {
     setLoading(true);
@@ -75,7 +77,7 @@ export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
         ].map((dim) => (
           <div key={dim.label} className={`rounded-lg border p-4 ${dim.primary ? "border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
             <div className={`text-2xl font-bold tabular-nums ${(dim.value ?? 0) >= 0.7 ? "text-[var(--color-success)]" : (dim.value ?? 0) >= 0.5 ? "text-[var(--color-accent)]" : "text-[var(--color-danger)]"}`}>
-              {dim.value != null ? (dim.value * 100).toFixed(0) + "%" : "—"}
+              {dim.value != null ? formatDashboardPercent(dim.value, locale, { maximumFractionDigits: 0 }) : "—"}
             </div>
             <div className="text-xs text-[var(--text-tertiary)] mt-1">{dim.label}</div>
           </div>
@@ -104,9 +106,15 @@ export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
                 <div key={a.id} className="px-5 py-2.5 hover:bg-[var(--color-surface-secondary)] transition-colors">
                   <div className="flex items-center gap-2">
                     {levelIcon}
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-2xs font-medium ${levelBg}`}>{a.level}</span>
-                    <span className="text-xs font-medium text-[var(--text-primary)]">{a.dimension}</span>
-                    <span className="text-2xs text-[var(--text-tertiary)]">{new Date(a.timestamp * 1000).toLocaleString()}</span>
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-2xs font-medium ${levelBg}`}>
+                      {translateEnum(t, "severity", a.level, a.level)}
+                    </span>
+                    <span className="text-xs font-medium text-[var(--text-primary)]">
+                      {a.dimension === "overall"
+                        ? t("quality.overall")
+                        : translateEnum(t, "quality.dim", a.dimension, a.dimension)}
+                    </span>
+                    <span className="text-2xs text-[var(--text-tertiary)]">{new Date(a.timestamp * 1000).toLocaleString(locale)}</span>
                   </div>
                   <p className="text-xs text-[var(--text-secondary)] mt-1 ml-6">{a.message}</p>
                   <p className="text-2xs text-[var(--text-tertiary)] mt-0.5 ml-6">{a.suggestion}</p>
@@ -129,7 +137,7 @@ export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
           <table className="w-full">
             <thead>
               <tr className="text-2xs text-[var(--text-tertiary)]">
-                <th className="py-2 px-4 text-left font-medium">Atom ID</th>
+                <th className="py-2 px-4 text-left font-medium">{t("quality.atomId")}</th>
                 <th className="py-2 px-4 text-left font-medium">{t("quality.dim.consistency")}</th>
                 <th className="py-2 px-4 text-left font-medium">{t("quality.dim.coherence")}</th>
                 <th className="py-2 px-4 text-left font-medium">{t("quality.dim.relevance")}</th>
@@ -143,9 +151,9 @@ export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
                 <tr key={s.atom_id} className="border-t border-[var(--color-border-light)] hover:bg-[var(--color-surface-secondary)] transition-colors">
                   <td className="py-2 px-4 text-xs font-mono text-[var(--text-primary)]">{s.atom_id}</td>
                   {[s.consistency, s.coherence, s.relevance, s.freshness, s.accuracy].map((v, j) => (
-                    <td key={j} className="py-2 px-4 text-xs tabular-nums" style={{ color: v >= 0.7 ? "var(--color-success)" : v >= 0.5 ? "var(--color-accent)" : "var(--color-danger)" }}>{(v * 100).toFixed(0)}%</td>
+                    <td key={j} className="py-2 px-4 text-xs tabular-nums" style={{ color: v >= 0.7 ? "var(--color-success)" : v >= 0.5 ? "var(--color-accent)" : "var(--color-danger)" }}>{formatDashboardPercent(v, locale, { maximumFractionDigits: 0 })}</td>
                   ))}
-                  <td className="py-2 px-4 text-xs tabular-nums text-right font-semibold" style={{ color: s.overall >= 0.7 ? "var(--color-success)" : s.overall >= 0.5 ? "var(--color-accent)" : "var(--color-danger)" }}>{(s.overall * 100).toFixed(0)}%</td>
+                  <td className="py-2 px-4 text-xs tabular-nums text-right font-semibold" style={{ color: s.overall >= 0.7 ? "var(--color-success)" : s.overall >= 0.5 ? "var(--color-accent)" : "var(--color-danger)" }}>{formatDashboardPercent(s.overall, locale, { maximumFractionDigits: 0 })}</td>
                 </tr>
               ))}
             </tbody>

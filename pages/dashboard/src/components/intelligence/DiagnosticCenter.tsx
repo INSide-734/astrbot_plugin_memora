@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
+import { dashboardLocale, translateEnum } from "@/lib/i18n";
 import type {
   DiagnosticEvent,
   DiagnosticEventsResponse,
@@ -52,7 +53,7 @@ function normalizeDomain(domain: DiagnosticHealthDomain): DiagnosticHealthDomain
     name: String(domain.name || "unknown"),
     score: Number.isFinite(domain.score) ? domain.score : 0,
     status: String(domain.status || "unknown"),
-    message: String(domain.message || "No diagnostic message."),
+    message: String(domain.message || ""),
   };
 }
 
@@ -68,7 +69,7 @@ function normalizeEvent(event: DiagnosticEvent): DiagnosticEvent {
     created_at: String(event.created_at || ""),
     domain: String(event.domain || "unknown"),
     severity: String(event.severity || "info"),
-    title: String(event.title || "Untitled diagnostic event"),
+    title: String(event.title || ""),
     message: String(event.message || ""),
     source: String(event.source || "unknown"),
     payload: payload as Record<string, unknown>,
@@ -76,11 +77,11 @@ function normalizeEvent(event: DiagnosticEvent): DiagnosticEvent {
   };
 }
 
-function formatCreatedAt(value: string): string {
+function formatCreatedAt(value: string, locale: string): string {
   if (!value) return "--";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  return date.toLocaleString(locale);
 }
 
 function statusClass(status: string): string {
@@ -105,7 +106,7 @@ function severityIcon(severity: string) {
 }
 
 export function DiagnosticCenter({ showToast }: DiagnosticCenterProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
   const [health, setHealth] = useState<DiagnosticHealthResponse | null>(null);
   const [events, setEvents] = useState<DiagnosticEvent[]>([]);
   const [totalEvents, setTotalEvents] = useState(0);
@@ -118,14 +119,18 @@ export function DiagnosticCenter({ showToast }: DiagnosticCenterProps) {
     setHealth({
       ...EMPTY_HEALTH,
       ...data,
-      domains: Array.isArray(data.domains) ? data.domains.map(normalizeDomain) : [],
+      domains: Array.isArray(data.domains)
+        ? data.domains.map(normalizeDomain)
+        : [],
       recommended_actions: Array.isArray(data.recommended_actions) ? data.recommended_actions.map(String) : [],
     });
   }, []);
 
   const loadEvents = useCallback(async () => {
     const data = unwrapApiData<DiagnosticEventsResponse>(await apiRequest("diagnostics/events?limit=50"));
-    setEvents(Array.isArray(data.events) ? data.events.map(normalizeEvent) : []);
+    setEvents(Array.isArray(data.events)
+      ? data.events.map(normalizeEvent)
+      : []);
     setTotalEvents(Number.isFinite(data.total) ? data.total : 0);
   }, []);
 
@@ -150,9 +155,9 @@ export function DiagnosticCenter({ showToast }: DiagnosticCenterProps) {
       name,
       score: 100,
       status: "healthy",
-      message: "No active diagnostic signal.",
+      message: t("intelligence.diagnostics.noActiveSignal"),
     });
-  }, [health]);
+  }, [health, t]);
 
   const runRefresh = async () => {
     setAction("refresh");
@@ -188,6 +193,7 @@ export function DiagnosticCenter({ showToast }: DiagnosticCenterProps) {
   };
 
   const currentHealth = health ?? EMPTY_HEALTH;
+  const locale = dashboardLocale(currentLang());
 
   return (
     <section className="space-y-4">
@@ -201,7 +207,7 @@ export function DiagnosticCenter({ showToast }: DiagnosticCenterProps) {
                   {loading ? "--" : currentHealth.score}
                 </span>
                 <span className={`mb-1 rounded-full border px-2 py-1 text-2xs font-semibold uppercase ${statusClass(currentHealth.level)}`}>
-                  {currentHealth.level}
+                  {translateEnum(t, "intelligence.diagnostics.level", currentHealth.level)}
                 </span>
               </div>
             </div>
@@ -267,14 +273,16 @@ export function DiagnosticCenter({ showToast }: DiagnosticCenterProps) {
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
                     <span className="text-[var(--text-tertiary)]">{DOMAIN_ICONS[domain.name] ?? <Stethoscope size={16} />}</span>
-                    {domain.name}
+                    {translateEnum(t, "intelligence.diagnostics.domain", domain.name, domain.name)}
                   </div>
                   <span className={`rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase ${statusClass(domain.status)}`}>
-                    {domain.status}
+                    {translateEnum(t, "intelligence.diagnostics.status", domain.status)}
                   </span>
                 </div>
                 <div className="mt-3 flex items-end justify-between gap-3">
-                  <p className="text-xs leading-5 text-[var(--text-secondary)]">{domain.message}</p>
+                  <p className="text-xs leading-5 text-[var(--text-secondary)]">
+                    {domain.message || t("intelligence.diagnostics.noMessage")}
+                  </p>
                   <span className="text-lg font-semibold tabular-nums text-[var(--text-primary)]">{domain.score}</span>
                 </div>
               </div>
@@ -299,19 +307,23 @@ export function DiagnosticCenter({ showToast }: DiagnosticCenterProps) {
               const state = event.resolved_at ? "resolved" : "open";
               return (
                 <article key={event.event_id} className="grid gap-3 px-4 py-3 text-xs lg:grid-cols-[170px_120px_120px_1fr_90px]">
-                  <div className="font-mono text-[var(--text-tertiary)]">{formatCreatedAt(event.created_at)}</div>
+                  <div className="font-mono text-[var(--text-tertiary)]">{formatCreatedAt(event.created_at, locale)}</div>
                   <div className="flex items-center gap-1.5 text-[var(--text-secondary)]">
                     {severityIcon(event.severity)}
-                    {event.severity}
+                    {translateEnum(t, "intelligence.diagnostics.severity", event.severity)}
                   </div>
-                  <div className="font-medium text-[var(--text-secondary)]">{event.domain}</div>
+                  <div className="font-medium text-[var(--text-secondary)]">
+                    {translateEnum(t, "intelligence.diagnostics.domain", event.domain, event.domain)}
+                  </div>
                   <div>
-                    <p className="text-sm font-semibold text-[var(--text-primary)]">{event.title}</p>
+                    <p className="text-sm font-semibold text-[var(--text-primary)]">
+                      {event.title || t("intelligence.diagnostics.untitledEvent")}
+                    </p>
                     <p className="mt-1 text-[var(--text-secondary)]">{event.message}</p>
                     <p className="mt-1 text-2xs uppercase text-[var(--text-tertiary)]">{event.source}</p>
                   </div>
                   <span className={`h-fit justify-self-start rounded-full border px-2 py-1 text-2xs font-semibold uppercase ${statusClass(state)}`}>
-                    {state}
+                    {translateEnum(t, "intelligence.diagnostics.state", state)}
                   </span>
                 </article>
               );

@@ -8,6 +8,7 @@ import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/c
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/Table";
 import { Checkbox } from "@/components/ui/checkbox";
+import { dashboardLocale, formatDashboardDate, formatDashboardPercent } from "@/lib/i18n";
 
 interface ProfilesPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -27,7 +28,8 @@ interface Profile {
 const PAGE_SIZE = 100;
 
 export function ProfilesPage({ showToast }: ProfilesPageProps) {
-  const { t } = useI18n();
+  const { t, currentLang } = useI18n();
+  const locale = dashboardLocale(currentLang());
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [total, setTotal] = useState(0);
   const [detail, setDetail] = useState<Profile | null>(null);
@@ -82,7 +84,7 @@ export function ProfilesPage({ showToast }: ProfilesPageProps) {
     if (!selected.size) return;
     try {
       await apiRequest("profiles/batch", { method: "POST", body: { user_ids: Array.from(selected), action: "delete" } });
-      showToast(`Deleted ${selected.size} profiles`);
+      showToast(t("toast.batchDeleted", String(selected.size)));
       setSelected(new Set());
       fetchProfiles();
     } catch (e) { showToast(String(e), true); }
@@ -112,12 +114,12 @@ export function ProfilesPage({ showToast }: ProfilesPageProps) {
           <Table>
             <TableHeader className="sticky top-0 bg-background">
               <TableRow className="text-left text-xs font-medium uppercase text-muted-foreground">
-                <TableHead className="w-10 px-4"><Checkbox aria-label="Select all profiles" checked={selected.size === profiles.length && profiles.length > 0} onCheckedChange={toggleSelectAll} /></TableHead>
+                <TableHead className="w-10 px-4"><Checkbox aria-label={selected.size === profiles.length && profiles.length > 0 ? t("profiles.deselectAll") : t("profiles.selectAll")} checked={selected.size === profiles.length && profiles.length > 0} onCheckedChange={toggleSelectAll} /></TableHead>
                 <TableHead className="px-4">{t("table.userId")}</TableHead>
                 <TableHead>{t("table.name")}</TableHead>
                 <TableHead>{t("table.tags")}</TableHead>
-                <TableHead>Interests</TableHead>
-                <TableHead>Last Seen</TableHead>
+                <TableHead>{t("table.interests")}</TableHead>
+                <TableHead>{t("table.lastSeen")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -125,13 +127,13 @@ export function ProfilesPage({ showToast }: ProfilesPageProps) {
                 <TableRow key={p.user_id} className="cursor-pointer text-sm"
                   onClick={() => fetchDetail(p.user_id)}>
                   <TableCell className="px-4" onClick={(ev) => ev.stopPropagation()}>
-                    <Checkbox aria-label={`Select profile ${p.display_name ?? p.user_id}`} checked={selected.has(p.user_id)} onCheckedChange={() => toggleSelect(p.user_id)} />
+                    <Checkbox aria-label={t("profiles.selectProfile", p.display_name ?? p.user_id)} checked={selected.has(p.user_id)} onCheckedChange={() => toggleSelect(p.user_id)} />
                   </TableCell>
                   <TableCell className="px-4 font-mono text-xs text-muted-foreground">{p.user_id}</TableCell>
-                  <TableCell className="font-medium"><Button variant="link" className="h-auto p-0 font-medium" aria-label={`Open profile ${p.display_name ?? p.user_id}`} onClick={(event) => { event.stopPropagation(); fetchDetail(p.user_id); }}>{p.display_name ?? "--"}</Button></TableCell>
+                  <TableCell className="font-medium"><Button variant="link" className="h-auto p-0 font-medium" aria-label={t("profiles.openProfile", p.display_name ?? p.user_id)} onClick={(event) => { event.stopPropagation(); fetchDetail(p.user_id); }}>{p.display_name ?? "--"}</Button></TableCell>
                   <TableCell><Badge>{p.tag_count ?? p.tags?.length ?? 0}</Badge></TableCell>
                   <TableCell className="max-w-xs"><div className="flex flex-wrap gap-1">{(p.top_interests ?? []).slice(0, 3).map((t) => <Badge key={t} variant="secondary">{t}</Badge>)}</div></TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{String(p.last_seen ?? "").slice(0, 10)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{formatDashboardDate(p.last_seen, locale)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -139,16 +141,16 @@ export function ProfilesPage({ showToast }: ProfilesPageProps) {
         )}
       </PageContent>
 
-      <nav className="flex min-h-12 shrink-0 items-center justify-between border-t bg-background px-4 py-2 sm:px-5 lg:px-6" aria-label="Profiles pagination">
-        <Button variant="outline" size="sm" aria-label="Previous page" disabled={page === 0} onClick={() => changePage(Math.max(0, page - 1))}>Previous</Button>
-        <span className="text-sm text-muted-foreground">Page {page + 1} of {totalPages}</span>
-        <Button variant="outline" size="sm" aria-label="Next page" disabled={page + 1 >= totalPages} onClick={() => changePage(page + 1)}>Next</Button>
+      <nav className="flex min-h-12 shrink-0 items-center justify-between border-t bg-background px-4 py-2 sm:px-5 lg:px-6" aria-label={t("profiles.pagination")}>
+        <Button variant="outline" size="sm" aria-label={t("pagination.previousPage")} disabled={page === 0} onClick={() => changePage(Math.max(0, page - 1))}>{t("pagination.prev")}</Button>
+        <span className="text-sm text-muted-foreground">{t("pagination.pageOf", String(page + 1), String(totalPages))}</span>
+        <Button variant="outline" size="sm" aria-label={t("pagination.nextPage")} disabled={page + 1 >= totalPages} onClick={() => changePage(page + 1)}>{t("pagination.next")}</Button>
       </nav>
 
       {selected.size > 0 && (
         <PageToolbar className="border-b-0 border-t bg-muted/40 animate-slide-up">
-          <span className="text-sm font-medium">{selected.size} selected</span>
-          <Button variant="destructive" size="sm" onClick={batchDelete}><Trash2 data-icon="inline-start" />Delete</Button>
+          <span className="text-sm font-medium">{t("select.selected", String(selected.size))}</span>
+          <Button variant="destructive" size="sm" onClick={batchDelete}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X data-icon="inline-start" />{t("common.clear")}</Button>
         </PageToolbar>
       )}
@@ -157,23 +159,23 @@ export function ProfilesPage({ showToast }: ProfilesPageProps) {
         {detail && (
         <SheetContent>
           <SheetHeader>
-            <SheetTitle>Profile: {detail.display_name ?? detail.user_id}</SheetTitle>
-            <SheetDescription>User profile details</SheetDescription>
+            <SheetTitle>{t("detail.profileOf", detail.display_name ?? detail.user_id)}</SheetTitle>
+            <SheetDescription>{t("profiles.details")}</SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium text-muted-foreground">User ID</label><p className="font-mono text-sm">{detail.user_id}</p></div>
-              <div><label className="text-xs font-medium text-muted-foreground">Messages</label><p className="text-sm">{detail.message_count ?? "--"}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.userId")}</label><p className="font-mono text-sm">{detail.user_id}</p></div>
+              <div><label className="text-xs font-medium text-muted-foreground">{t("table.messages")}</label><p className="text-sm">{detail.message_count ?? "--"}</p></div>
             </div>
             {detail.tags && detail.tags.length > 0 && (
-              <div><h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5"><Tag size={12} /> Tags</h4>
+              <div><h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5"><Tag size={12} /> {t("table.tags")}</h4>
                 <div className="flex flex-col gap-1.5">
                   {detail.tags.map((t, i) => (
                     <div key={i} className="flex items-center justify-between rounded-lg bg-muted px-3 py-1.5 text-sm">
                       <span>{t.name}</span>
                       <div className="flex items-center gap-2">
                         <div className="h-1 w-16 rounded-full bg-border"><div className="h-1 rounded-full bg-primary" style={{ width: `${(t.confidence ?? 0) * 100}%` }} /></div>
-                        <span className="text-xs tabular-nums text-muted-foreground">{((t.confidence ?? 0) * 100).toFixed(0)}%</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(t.confidence ?? 0, locale, { maximumFractionDigits: 0 })}</span>
                       </div>
                     </div>
                   ))}

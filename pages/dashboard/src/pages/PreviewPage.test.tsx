@@ -102,13 +102,27 @@ describe("PreviewPage", () => {
     const growthCardElement = growthCard as HTMLElement;
     expect(within(growthCardElement).getByText("465")).toBeTruthy();
     expect(within(growthCardElement).getByText("15.5")).toBeTruthy();
-    expect(within(growthCardElement).getByText("2026-07-12")).toBeTruthy();
+    expect(within(growthCardElement).getByText(new Date("2026-07-12T00:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC" }))).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Quick links" }));
     expect((await screen.findByRole("menuitem", { name: "Knowledge Graph" })).getAttribute("href")).toBe("#/graph");
     expect(screen.getByRole("menuitem", { name: "Memories" }).getAttribute("href")).toBe("#/memory");
     expect(screen.getByRole("menuitem", { name: "Recall Test" }).getAttribute("href")).toBe("#/recall");
     expect(screen.getByRole("menuitem", { name: "System" }).getAttribute("href")).toBe("#/system");
+  });
+
+  it("localizes atom types, numbers, and peak dates while preserving unknown atom types", async () => {
+    bridge.t.mockImplementation((key: string) => key === "dashboard.memory.type.factual" ? "Factual memory" : key);
+    const payload = statsPayload(1234);
+    (payload as unknown as { atom_breakdown: Record<string, number> }).atom_breakdown = { FACTUAL: 6, vendor_type: 5 };
+    mockOverview(payload);
+    const localeSpy = vi.spyOn(Number.prototype, "toLocaleString");
+
+    render(<PreviewPage showToast={showToast} />);
+
+    expect(await screen.findByText("Factual memory")).toBeTruthy();
+    expect(screen.getByText("vendor_type")).toBeTruthy();
+    expect(localeSpy).toHaveBeenCalledWith("en-US");
   });
 
   it("switches 7, 30 and 90 day ranges without refetching", async () => {

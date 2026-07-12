@@ -7,6 +7,7 @@ const listeners = new Set<() => void>();
 
 if (typeof window !== "undefined") {
   window.addEventListener("languagechange", () => {
+    syncDocumentLanguage(langOverride ?? getCurrentLocale());
     langVersion++;
     listeners.forEach((fn) => fn());
   });
@@ -40,27 +41,45 @@ function getBridgeI18n(): Record<string, unknown> | null {
   }
 }
 
+function getStoredLanguage(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = window.localStorage.getItem("memora_lang");
+    return stored === "zh" || stored === "en" || stored === "ru" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
 // 记录本地语言覆盖值（null 表示跟随 AstrBot）
-let langOverride: string | null = null;
+let langOverride: string | null = getStoredLanguage();
+syncDocumentLanguage(langOverride ?? getCurrentLocale());
 
 export function useI18n() {
-  const [, setTick] = useState(langVersion);
+  const [version, setVersion] = useState(langVersion);
 
   useEffect(() => {
-    const fn = () => setTick(langVersion);
+    const fn = () => setVersion(langVersion);
+    let removeBridgeListener: (() => void) | undefined;
     listeners.add(fn);
     // 同时监听 AstrBot 上下文变更
     try {
       const bridge = window.AstrBotPluginPage;
       if (bridge && typeof bridge.onContextChange === "function") {
-        bridge.onContextChange(() => {
+        const handler = () => {
+          syncDocumentLanguage(langOverride ?? getCurrentLocale());
           langVersion++;
           listeners.forEach((l) => l());
-        });
+        };
+        bridge.onContextChange(handler);
+        if (typeof bridge.offContextChange === "function") {
+          removeBridgeListener = () => bridge.offContextChange(handler);
+        }
       }
     } catch { /* */ }
     return () => {
       listeners.delete(fn);
+      removeBridgeListener?.();
     };
   }, []);
 
@@ -71,10 +90,18 @@ export function useI18n() {
       if (!args.length) return val;
       let result = val;
       args.forEach((arg, i) => {
-        result = result.replace(new RegExp(`\\{${i}\\}`, "g"), arg);
+        result = result.replace(new RegExp(`\\{${i}\\}`, "g"), () => arg);
       });
       return result;
     };
+
+    // An explicit dashboard language selection must take precedence over the
+    // host bridge locale, which may remain unchanged in embedded mode.
+    if (langOverride) {
+      const langKey = langOverride === "en" ? "en" : langOverride === "ru" ? "ru" : "zh";
+      const value = (LANG_MAPS[langKey] ?? I18N_MAP)[key];
+      if (value) return replaceArgs(value);
+    }
 
     // 1. 优先尝试带完整 dashboard. 前缀的 bridge.t()
     try {
@@ -144,11 +171,11 @@ export function useI18n() {
     } catch { /* */ }
 
     return key;
-  }, []);
+  }, [version]);
 
   const currentLang = useCallback((): string => {
     return langOverride ?? getCurrentLocale();
-  }, []);
+  }, [version]);
 
   return { t, currentLang };
 }
@@ -163,11 +190,26 @@ function getCurrentLocale(): string {
   return "zh";
 }
 
+function syncDocumentLanguage(language: string): void {
+  if (typeof document === "undefined") return;
+  const normalized = language.slice(0, 2).toLowerCase();
+  document.documentElement.lang = normalized === "en"
+    ? "en-US"
+    : normalized === "ru"
+      ? "ru-RU"
+      : "zh-CN";
+}
+
 /** Toggle language and notify all useI18n hooks to re-render. */
 export function toggleLanguage(): string {
   const current = langOverride ?? getCurrentLocale();
   const next = current === "zh" ? "en" : current === "en" ? "ru" : "zh";
   langOverride = next;
+  syncDocumentLanguage(next);
+
+  try {
+    window.localStorage.setItem("memora_lang", next);
+  } catch { /* */ }
 
   // 同步到全局 window.setLanguage（mock bridge）
   try {
