@@ -73,10 +73,9 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
   const [query, setQuery] = useState("");
   const [modifiedOnly, setModifiedOnly] = useState(false);
   const [activePath, setActivePath] = useState("");
-  const dirtyRef = useRef(false);
-  const dirtyCallbackRef = useRef(onDirtyChange);
+  const dirtyOwnerRef = useRef<ConfigPageProps["onDirtyChange"]>(undefined);
+  const sectionFocusTimerRef = useRef<number | null>(null);
   const previousStatusRef = useRef(sync.status);
-  dirtyCallbackRef.current = onDirtyChange;
   const dirty = sync.dirtyPaths.length > 0;
 
   const sections = useMemo(
@@ -96,9 +95,23 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
   }, [activePath, sections]);
 
   useEffect(() => {
-    if (dirtyRef.current === dirty) return;
-    dirtyRef.current = dirty;
-    onDirtyChange?.(dirty);
+    const owner = dirtyOwnerRef.current;
+    if (!dirty) {
+      if (owner) {
+        dirtyOwnerRef.current = undefined;
+        owner(false);
+      }
+      return;
+    }
+    if (owner === onDirtyChange) return;
+    if (owner) {
+      dirtyOwnerRef.current = undefined;
+      owner(false);
+    }
+    if (onDirtyChange) {
+      dirtyOwnerRef.current = onDirtyChange;
+      onDirtyChange(true);
+    }
   }, [dirty, onDirtyChange]);
 
   useEffect(() => {
@@ -116,9 +129,10 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
 
   useEffect(
     () => () => {
-      if (!dirtyRef.current) return;
-      dirtyRef.current = false;
-      dirtyCallbackRef.current?.(false);
+      const owner = dirtyOwnerRef.current;
+      if (!owner) return;
+      dirtyOwnerRef.current = undefined;
+      owner(false);
     },
     [],
   );
@@ -146,6 +160,28 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
     focusTarget.setAttribute("tabindex", "-1");
     focusTarget.focus({ preventScroll: true });
   }, []);
+
+  const scheduleSectionFocus = useCallback(
+    (id: string, path: string) => {
+      if (sectionFocusTimerRef.current !== null) {
+        window.clearTimeout(sectionFocusTimerRef.current);
+      }
+      sectionFocusTimerRef.current = window.setTimeout(() => {
+        sectionFocusTimerRef.current = null;
+        goToSection(id, path);
+      }, 0);
+    },
+    [goToSection],
+  );
+
+  useEffect(
+    () => () => {
+      if (sectionFocusTimerRef.current === null) return;
+      window.clearTimeout(sectionFocusTimerRef.current);
+      sectionFocusTimerRef.current = null;
+    },
+    [],
+  );
 
   const loaded = Boolean(sync.schemaData && sync.draft && sync.baseConfig);
   const controlsDisabled =
@@ -321,10 +357,7 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
                 onValueChange={(path) => {
                   const section = sections.find((item) => item.path === path);
                   if (section) {
-                    window.setTimeout(
-                      () => goToSection(section.id, section.path),
-                      0,
-                    );
+                    scheduleSectionFocus(section.id, section.path);
                   }
                 }}
               >

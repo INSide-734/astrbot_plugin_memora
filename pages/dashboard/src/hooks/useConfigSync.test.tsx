@@ -376,6 +376,58 @@ describe("useConfigSync", () => {
     expect(hook.result.current.remoteConfig).toBeNull();
   });
 
+  it("ignores an in-flight refresh after accepting the remote snapshot", async () => {
+    const lateResponse = deferred<ApiResponse>();
+    const remote = {
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 20, mode: "vector" },
+    };
+    let requestCount = 0;
+    stateHandler = () => {
+      requestCount += 1;
+      if (requestCount === 1) return resolveReply(stateSuccess(BASE_CONFIG));
+      if (requestCount === 2) {
+        return resolveReply(stateSuccess(remote, "rev-2"));
+      }
+      return lateResponse.promise;
+    };
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.refresh());
+    expect(hook.result.current.status).toBe("conflict");
+
+    let lateRefresh!: Promise<void>;
+    act(() => {
+      lateRefresh = hook.result.current.refresh();
+    });
+    expect(stateCalls()[2]).toEqual([
+      "page/config/state",
+      { revision: "rev-1" },
+    ]);
+
+    act(() => {
+      hook.result.current.acceptRemote();
+      hook.result.current.changeField("bot_language", "en");
+    });
+    expect(hook.result.current.status).toBe("dirty");
+
+    lateResponse.resolve(
+      await resolveReply(stateSuccess(remote, "rev-2"))
+    );
+    await act(async () => lateRefresh);
+
+    expect(hook.result.current.status).toBe("dirty");
+    expect(hook.result.current.revision).toBe("rev-2");
+    expect(hook.result.current.baseConfig).toEqual(remote);
+    expect(hook.result.current.draft).toEqual({
+      ...remote,
+      bot_language: "en",
+    });
+    expect(hook.result.current.remoteConfig).toBeNull();
+    expect(bridge.apiPost).not.toHaveBeenCalled();
+  });
+
   it("rebaseRemote overlays only local dirty values and does not save", async () => {
     const remote = {
       ...BASE_CONFIG,
@@ -397,6 +449,55 @@ describe("useConfigSync", () => {
     });
     expect(hook.result.current.revision).toBe("rev-2");
     expect(hook.result.current.dirtyPaths).toEqual(["recall_engine.top_k"]);
+    expect(bridge.apiPost).not.toHaveBeenCalled();
+  });
+
+  it("ignores an in-flight refresh after rebasing onto the remote snapshot", async () => {
+    const lateResponse = deferred<ApiResponse>();
+    const remote = {
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 20, mode: "vector" },
+    };
+    let requestCount = 0;
+    stateHandler = () => {
+      requestCount += 1;
+      if (requestCount === 1) return resolveReply(stateSuccess(BASE_CONFIG));
+      if (requestCount === 2) {
+        return resolveReply(stateSuccess(remote, "rev-2"));
+      }
+      return lateResponse.promise;
+    };
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.refresh());
+    expect(hook.result.current.status).toBe("conflict");
+
+    let lateRefresh!: Promise<void>;
+    act(() => {
+      lateRefresh = hook.result.current.refresh();
+    });
+    expect(stateCalls()[2]).toEqual([
+      "page/config/state",
+      { revision: "rev-1" },
+    ]);
+
+    act(() => hook.result.current.rebaseRemote());
+    expect(hook.result.current.status).toBe("dirty");
+
+    lateResponse.resolve(
+      await resolveReply(stateSuccess(remote, "rev-2"))
+    );
+    await act(async () => lateRefresh);
+
+    expect(hook.result.current.status).toBe("dirty");
+    expect(hook.result.current.revision).toBe("rev-2");
+    expect(hook.result.current.baseConfig).toEqual(remote);
+    expect(hook.result.current.draft).toEqual({
+      ...remote,
+      recall_engine: { top_k: 12, mode: "vector" },
+    });
+    expect(hook.result.current.remoteConfig).toBeNull();
     expect(bridge.apiPost).not.toHaveBeenCalled();
   });
 

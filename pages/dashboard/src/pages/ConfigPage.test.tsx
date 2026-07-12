@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -151,6 +152,14 @@ describe("ConfigPage", () => {
   let stateHandler: (params: Record<string, string>) => Promise<ApiResponse>;
   let applyHandler: (body: unknown) => Promise<ApiResponse>;
 
+  const flushMicrotasks = async () => {
+    await act(async () => {
+      for (let index = 0; index < 8; index += 1) {
+        await Promise.resolve();
+      }
+    });
+  };
+
   beforeEach(() => {
     localStorage.clear();
     schemaHandler = async () => ok(schemaData) as ApiResponse;
@@ -186,6 +195,7 @@ describe("ConfigPage", () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     localStorage.clear();
     Object.defineProperty(window, "AstrBotPluginPage", {
@@ -294,6 +304,107 @@ describe("ConfigPage", () => {
     expect(screen.getAllByRole("textbox", { name: "Bot name" })).toHaveLength(1);
   });
 
+  it("replaces a pending mobile section focus with the latest selection", async () => {
+    vi.useFakeTimers();
+    const extendedSchema: ConfigSchemaData = {
+      ...schemaData,
+      schema: {
+        ...schemaData.schema,
+        advanced: {
+          type: "object",
+          description: "Advanced",
+          items: {
+            archive_label: {
+              type: "string",
+              description: "Archive label",
+            },
+          },
+        },
+      },
+    };
+    const extendedConfig: ConfigObject = {
+      ...baseConfig,
+      advanced: { archive_label: "Long term" },
+    };
+    schemaHandler = async () => ok(extendedSchema) as ApiResponse;
+    stateHandler = async () => state(extendedConfig) as ApiResponse;
+    const { container } = render(<ConfigPage />);
+    await flushMicrotasks();
+
+    const providerSection = container.querySelector<HTMLElement>(
+      "[data-config-section='provider_settings']",
+    )!;
+    const advancedSection = container.querySelector<HTMLElement>(
+      "[data-config-section='advanced']",
+    )!;
+    const providerFocusTarget =
+      providerSection.querySelector<HTMLElement>("[data-slot='config-group']") ??
+      providerSection;
+    const advancedFocusTarget =
+      advancedSection.querySelector<HTMLElement>("[data-slot='config-group']") ??
+      advancedSection;
+    const providerScroll = vi.spyOn(providerSection, "scrollIntoView");
+    const providerFocus = vi.spyOn(providerFocusTarget, "focus");
+    const advancedScroll = vi.spyOn(advancedSection, "scrollIntoView");
+    const advancedFocus = vi.spyOn(advancedFocusTarget, "focus");
+    const mobileSelect = screen.getByRole("combobox", {
+      name: "Configuration group",
+    });
+
+    fireEvent.click(mobileSelect);
+    const providerOption = screen.getByRole("option", {
+      name: "Provider settings",
+    });
+    fireEvent.pointerDown(providerOption, { pointerType: "mouse" });
+    fireEvent.click(providerOption);
+
+    fireEvent.click(mobileSelect);
+    const advancedOption = screen.getByRole("option", { name: "Advanced" });
+    fireEvent.pointerDown(advancedOption, { pointerType: "mouse" });
+    fireEvent.click(advancedOption);
+
+    expect(providerScroll).not.toHaveBeenCalled();
+    expect(advancedScroll).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(100));
+
+    expect(providerScroll).not.toHaveBeenCalled();
+    expect(providerFocus).not.toHaveBeenCalled();
+    expect(advancedScroll).toHaveBeenCalledTimes(1);
+    expect(advancedFocus).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(advancedFocusTarget);
+  });
+
+  it("clears pending mobile section focus when the page unmounts", async () => {
+    vi.useFakeTimers();
+    const view = render(<ConfigPage />);
+    await flushMicrotasks();
+
+    const providerSection = view.container.querySelector<HTMLElement>(
+      "[data-config-section='provider_settings']",
+    )!;
+    const providerFocusTarget =
+      providerSection.querySelector<HTMLElement>("[data-slot='config-group']") ??
+      providerSection;
+    const providerScroll = vi.spyOn(providerSection, "scrollIntoView");
+    const providerFocus = vi.spyOn(providerFocusTarget, "focus");
+    const mobileSelect = screen.getByRole("combobox", {
+      name: "Configuration group",
+    });
+    fireEvent.click(mobileSelect);
+    const providerOption = screen.getByRole("option", {
+      name: "Provider settings",
+    });
+    fireEvent.pointerDown(providerOption, { pointerType: "mouse" });
+    fireEvent.click(providerOption);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    view.unmount();
+
+    await act(async () => vi.advanceTimersByTimeAsync(100));
+    expect(providerScroll).not.toHaveBeenCalled();
+    expect(providerFocus).not.toHaveBeenCalled();
+  });
+
   it("reports dirty transitions and protects only dirty drafts from browser close", async () => {
     const onDirtyChange = vi.fn();
     const addListener = vi.spyOn(window, "addEventListener");
@@ -343,6 +454,83 @@ describe("ConfigPage", () => {
     expect(
       removeListener.mock.calls.some(([type]) => type === "beforeunload"),
     ).toBe(true);
+  });
+
+  it("transfers dirty notification ownership when the callback changes", async () => {
+    const ownerA = vi.fn();
+    const ownerB = vi.fn();
+    const view = render(<ConfigPage onDirtyChange={ownerA} />);
+
+    fireEvent.change(await screen.findByRole("textbox", { name: "Bot name" }), {
+      target: { value: "Archive" },
+    });
+    await waitFor(() => expect(ownerA.mock.calls).toEqual([[true]]));
+
+    view.rerender(<ConfigPage onDirtyChange={ownerB} />);
+    await waitFor(() => {
+      expect(ownerA.mock.calls).toEqual([[true], [false]]);
+      expect(ownerB.mock.calls).toEqual([[true]]);
+    });
+
+    view.rerender(<ConfigPage onDirtyChange={ownerB} />);
+    expect(ownerA.mock.calls).toEqual([[true], [false]]);
+    expect(ownerB.mock.calls).toEqual([[true]]);
+
+    view.rerender(<ConfigPage />);
+    await waitFor(() => expect(ownerB.mock.calls).toEqual([[true], [false]]));
+
+    view.unmount();
+    expect(ownerA.mock.calls).toEqual([[true], [false]]);
+    expect(ownerB.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("keeps clean callback swaps silent and releases the dirty owner on unmount", async () => {
+    const ownerA = vi.fn();
+    const ownerB = vi.fn();
+    const view = render(<ConfigPage onDirtyChange={ownerA} />);
+
+    const name = await screen.findByRole("textbox", { name: "Bot name" });
+    view.rerender(<ConfigPage onDirtyChange={ownerB} />);
+    expect(ownerA).not.toHaveBeenCalled();
+    expect(ownerB).not.toHaveBeenCalled();
+
+    fireEvent.change(name, { target: { value: "Archive" } });
+    await waitFor(() => expect(ownerB.mock.calls).toEqual([[true]]));
+
+    view.unmount();
+
+    expect(ownerA).not.toHaveBeenCalled();
+    expect(ownerB.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("does not duplicate stable dirty notifications during StrictMode replay", async () => {
+    const onDirtyChange = vi.fn();
+    const view = render(
+      <StrictMode>
+        <ConfigPage onDirtyChange={onDirtyChange} />
+      </StrictMode>,
+    );
+
+    const name = await screen.findByRole("textbox", { name: "Bot name" });
+    expect(onDirtyChange).not.toHaveBeenCalled();
+
+    fireEvent.change(name, { target: { value: "Archive" } });
+    await waitFor(() => expect(onDirtyChange.mock.calls).toEqual([[true]]));
+
+    view.rerender(
+      <StrictMode>
+        <ConfigPage onDirtyChange={onDirtyChange} />
+      </StrictMode>,
+    );
+    expect(onDirtyChange.mock.calls).toEqual([[true]]);
+
+    fireEvent.change(name, { target: { value: "Memora" } });
+    await waitFor(() =>
+      expect(onDirtyChange.mock.calls).toEqual([[true], [false]]),
+    );
+
+    view.unmount();
+    expect(onDirtyChange.mock.calls).toEqual([[true], [false]]);
   });
 
   it("posts exact dotted changes once and keeps fields disabled through applying and reloading", async () => {

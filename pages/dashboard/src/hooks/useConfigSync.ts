@@ -327,6 +327,8 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
   }, [loadInitial]);
 
   const acceptRemote = useCallback(() => {
+    if (!stateRef.current.remote) return;
+    refreshGenerationRef.current += 1;
     setState((previous) => {
       if (!previous.remote) return previous;
       return {
@@ -345,6 +347,14 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
   }, []);
 
   const rebaseRemote = useCallback(() => {
+    if (
+      !stateRef.current.remote ||
+      !stateRef.current.baseConfig ||
+      !stateRef.current.draft
+    ) {
+      return;
+    }
+    refreshGenerationRef.current += 1;
     setState((previous) => {
       if (!previous.remote || !previous.baseConfig || !previous.draft) {
         return previous;
