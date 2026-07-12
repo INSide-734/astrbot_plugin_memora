@@ -55,12 +55,12 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         # 版本变更时自动备份数据（延迟到异步初始化阶段执行，避免 __init__ 中同步 I/O 阻塞）
         self._backup_manager = BackupManager(data_dir)
 
-        # 初始化配置管理器（三层合并：AstrBot → 持久化 → 默认值）
-        persisted_config_path = os.path.join(data_dir, "config_persisted.json")
-        self.config_manager = ConfigManager(config, persisted_config_path=persisted_config_path)
+        # 保留 AstrBot 注入对象，配置变更通过其原子保存能力持久化
+        self.astrbot_config = config
+        self.config_manager = ConfigManager(self.astrbot_config)
 
         # 初始化后端 i18n
-        i18n_init(config.get("bot_language", "zh"))
+        i18n_init(self.astrbot_config.get("bot_language", "zh"))
 
         # 初始化插件初始化器
         self.initializer = PluginInitializer(context, self.config_manager, data_dir)

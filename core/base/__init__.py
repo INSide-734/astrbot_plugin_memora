@@ -3,7 +3,13 @@
 包含异常、常量、配置管理等基础组件
 """
 
-from .config_manager import ConfigManager
+from .config_manager import (
+    ConfigApplyResult,
+    ConfigConflictError,
+    ConfigManager,
+    ConfigPersistenceError,
+    ConfigValidationError,
+)
 from .constants import *
 from .exceptions import (
     ConfigurationError,
@@ -25,5 +31,9 @@ __all__ = [
     "ProviderNotReadyError",
     "RetrievalError",
     "ValidationError",
+    "ConfigApplyResult",
+    "ConfigConflictError",
     "ConfigManager",
+    "ConfigPersistenceError",
+    "ConfigValidationError",
 ]
