@@ -69,7 +69,12 @@ class ConfigManager:
         self._revision = ""
         self._validation_errors: list[dict[str, Any]] = []
         self._apply_lock = asyncio.Lock()
-        self._schema_leaf_paths = self._load_schema_leaf_paths()
+        self._persistence_capable = callable(
+            getattr(self._source_config, "save_config", None)
+        )
+        self._schema_leaf_paths = self._load_schema_leaf_paths(
+            self._source_config
+        )
         self._load_config()
 
     def _load_config(self) -> None:
@@ -178,7 +183,17 @@ class ConfigManager:
         return hashlib.sha256(canonical).hexdigest()
 
     @classmethod
-    def _load_schema_leaf_paths(cls) -> frozenset[str] | None:
+    def _load_schema_leaf_paths(
+        cls,
+        source_config: MutableMapping[str, Any],
+    ) -> frozenset[str] | None:
+        injected_schema = getattr(source_config, "schema", None)
+        injected_paths = cls._parse_schema_leaf_paths(injected_schema)
+        if injected_paths is not None:
+            return injected_paths
+        if injected_schema is not None:
+            logger.warning("AstrBot 注入的配置 schema 无效，尝试仓库 schema")
+
         schema_path = Path(__file__).resolve().parents[2] / "_conf_schema.json"
         try:
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -186,12 +201,22 @@ class ConfigManager:
             logger.warning(f"无法加载 AstrBot 配置 schema，跳过未知字段检查: {exc}")
             return None
 
-        if not isinstance(schema, Mapping):
-            logger.warning("AstrBot 配置 schema 不是对象，跳过未知字段检查")
+        paths = cls._parse_schema_leaf_paths(schema)
+        if paths is None:
+            logger.warning("仓库 AstrBot 配置 schema 无效，无法检查配置字段")
             return None
+        return paths
 
+    @classmethod
+    def _parse_schema_leaf_paths(
+        cls,
+        schema: Any,
+    ) -> frozenset[str] | None:
+        if not isinstance(schema, dict) or not schema:
+            return None
         paths: set[str] = set()
-        cls._collect_schema_leaf_paths(schema, (), paths)
+        if not cls._collect_schema_leaf_paths(schema, (), paths) or not paths:
+            return None
         return frozenset(paths)
 
     @classmethod
@@ -200,16 +225,25 @@ class ConfigManager:
         schema: Mapping[str, Any],
         prefix: tuple[str, ...],
         result: set[str],
-    ) -> None:
+    ) -> bool:
         for key, field_schema in schema.items():
-            if not isinstance(field_schema, Mapping):
-                continue
-            path = (*prefix, str(key))
+            if (
+                not isinstance(key, str)
+                or not key
+                or not isinstance(field_schema, dict)
+                or not isinstance(field_schema.get("type"), str)
+            ):
+                return False
+            path = (*prefix, key)
             items = field_schema.get("items")
-            if field_schema.get("type") == "object" and isinstance(items, Mapping):
-                cls._collect_schema_leaf_paths(items, path, result)
+            if field_schema["type"] == "object":
+                if not isinstance(items, dict) or not cls._collect_schema_leaf_paths(
+                    items, path, result
+                ):
+                    return False
             else:
                 result.add(".".join(path))
+        return True
 
     def get_config_snapshot(self) -> tuple[dict[str, Any], str]:
         """返回与内部状态隔离的配置副本及其 SHA-256 修订号。"""
@@ -255,18 +289,26 @@ class ConfigManager:
             candidate_revision = self._compute_revision(candidate_snapshot)
             changed_paths = tuple(sorted(normalized_changes))
 
+            persistence_cancelled = False
             if persist:
-                await self._persist_source(candidate_snapshot)
+                persistence_cancelled = await self._persist_source(
+                    candidate_snapshot
+                )
 
             self._config_obj = candidate_obj
             self._config = candidate_snapshot
             self._revision = candidate_revision
+            if persistence_cancelled:
+                raise asyncio.CancelledError
             return ConfigApplyResult(candidate_revision, changed_paths)
 
     def _validate_change_paths(
         self,
         changes: Mapping[str, Any],
     ) -> dict[str, str]:
+        if self._persistence_capable and self._schema_leaf_paths is None:
+            return {"*": "AstrBot 配置 schema 不可用，已拒绝持久化配置更新"}
+
         field_errors: dict[str, str] = {}
         for raw_path in changes:
             if not isinstance(raw_path, str):
@@ -306,19 +348,38 @@ class ConfigManager:
             errors[path] = str(item.get("msg", "配置值无效"))
         return errors or {"*": str(exc)}
 
-    async def _persist_source(self, candidate: dict[str, Any]) -> None:
+    async def _persist_source(self, candidate: dict[str, Any]) -> bool:
         source_before = copy.deepcopy(dict(self._source_config))
+        cancellation_requested = False
         try:
             self._replace_source(candidate)
             save_config = getattr(self._source_config, "save_config", None)
             if callable(save_config):
-                await asyncio.to_thread(save_config)
+                save_task = asyncio.create_task(asyncio.to_thread(save_config))
+                while True:
+                    try:
+                        await asyncio.shield(save_task)
+                        break
+                    except asyncio.CancelledError:
+                        cancellation_requested = True
+                        self._consume_pending_cancellation()
         except Exception as exc:
             try:
                 self._replace_source(source_before)
             except Exception as rollback_exc:
                 logger.error(f"恢复 AstrBot 配置映射失败: {rollback_exc}")
+            if cancellation_requested:
+                raise asyncio.CancelledError from exc
             raise ConfigPersistenceError(f"配置持久化失败: {exc}") from exc
+        return cancellation_requested
+
+    @staticmethod
+    def _consume_pending_cancellation() -> None:
+        current_task = asyncio.current_task()
+        if current_task is None:
+            return
+        while current_task.cancelling():
+            current_task.uncancel()
 
     def _replace_source(self, config: Mapping[str, Any]) -> None:
         self._source_config.clear()
@@ -353,6 +414,8 @@ class ConfigManager:
                     return default
             else:
                 return default
+        if isinstance(value, (dict, list)):
+            return copy.deepcopy(value)
         return value
 
     def get_section(self, section: str) -> dict[str, Any]:

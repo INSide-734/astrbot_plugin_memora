@@ -33,6 +33,33 @@ class SavingConfig(dict[str, Any]):
             raise OSError("simulated atomic save failure")
 
 
+class BlockingSavingConfig(SavingConfig):
+    """Persistence double that exposes deterministic thread boundaries."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.save_entered = threading.Event()
+        self.release_save = threading.Event()
+        self.save_finished = threading.Event()
+        self.clear_calls = 0
+
+    def clear(self) -> None:
+        self.clear_calls += 1
+        super().clear()
+
+    def save_config(self) -> None:
+        self.save_thread_id = threading.get_ident()
+        self.save_entered.set()
+        try:
+            if not self.release_save.wait(timeout=5):
+                raise TimeoutError("test did not release save_config")
+            if self.fail_save:
+                raise OSError("simulated atomic save failure")
+            self.saved_snapshots.append(copy.deepcopy(dict(self)))
+        finally:
+            self.save_finished.set()
+
+
 def _iter_schema_defaults(
     schema: Mapping[str, Any],
     prefix: tuple[str, ...] = (),
@@ -104,18 +131,24 @@ def test_config_revision_is_stable_across_dict_insertion_order() -> None:
 
     first = ConfigManager(
         {
-            "bot_language": "zh",
+            "扩展乙": {"内部乙": "值乙", "内部甲": "值甲"},
+            "扩展甲": {"列表": [{"右": 2, "左": 1}]},
             "recall_engine": {"top_k": 5, "max_k": 10},
         }
     )
     second = ConfigManager(
         {
             "recall_engine": {"max_k": 10, "top_k": 5},
-            "bot_language": "zh",
+            "扩展甲": {"列表": [{"左": 1, "右": 2}]},
+            "扩展乙": {"内部甲": "值甲", "内部乙": "值乙"},
         }
     )
 
-    assert first.get_config_snapshot()[1] == second.get_config_snapshot()[1]
+    first_snapshot, first_revision = first.get_config_snapshot()
+    second_snapshot, second_revision = second.get_config_snapshot()
+
+    assert first_snapshot == second_snapshot
+    assert first_revision == second_revision
 
 
 def test_config_snapshots_are_deeply_isolated() -> None:
@@ -137,6 +170,26 @@ def test_config_snapshots_are_deeply_isolated() -> None:
     section["strategy_b"]["similarity_threshold"] = 0.3
 
     assert manager.get("topic_segmentation.strategy_b.similarity_threshold") == 0.75
+
+
+def test_get_mutable_value_cannot_bypass_config_revision() -> None:
+    from core.base.config_manager import ConfigManager
+
+    manager = ConfigManager(
+        {
+            "topic_segmentation": {
+                "strategy_b": {"similarity_threshold": 0.75}
+            }
+        }
+    )
+    snapshot_before, revision_before = manager.get_config_snapshot()
+
+    exposed_section = manager.get("topic_segmentation")
+    exposed_section["strategy_b"]["similarity_threshold"] = 0.1
+
+    snapshot_after, revision_after = manager.get_config_snapshot()
+    assert snapshot_after == snapshot_before
+    assert revision_after == revision_before
 
 
 @pytest.mark.asyncio
@@ -176,6 +229,116 @@ async def test_apply_rejects_unknown_leaf_when_schema_is_available() -> None:
         )
 
     assert "recall_engine.not_a_real_setting" in exc_info.value.field_errors
+
+
+@pytest.mark.asyncio
+async def test_apply_prefers_valid_injected_schema_when_repo_schema_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.base.config_manager import ConfigManager, ConfigValidationError
+
+    source = SavingConfig({"recall_engine": {"top_k": 5}})
+    source.schema = {
+        "recall_engine": {
+            "type": "object",
+            "items": {"top_k": {"type": "int", "default": 5}},
+        }
+    }
+
+    def missing_schema(*args: Any, **kwargs: Any) -> str:
+        raise FileNotFoundError("repo schema unavailable")
+
+    monkeypatch.setattr(Path, "read_text", missing_schema)
+    manager = ConfigManager(source)
+    _, revision = manager.get_config_snapshot()
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        await manager.apply_config_changes(
+            {"recall_engine.max_k": 12},
+            expected_revision=revision,
+        )
+
+    assert "recall_engine.max_k" in exc_info.value.field_errors
+    assert source.saved_snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_persistent_source_fails_closed_when_schema_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.base.config_manager import ConfigManager, ConfigValidationError
+
+    source = SavingConfig({"recall_engine": {"top_k": 5}})
+
+    def missing_schema(*args: Any, **kwargs: Any) -> str:
+        raise FileNotFoundError("repo schema unavailable")
+
+    monkeypatch.setattr(Path, "read_text", missing_schema)
+    manager = ConfigManager(source)
+    source_before = copy.deepcopy(dict(source))
+    snapshot_before = manager.get_config_snapshot()
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        await manager.apply_config_changes(
+            {"recall_engine.top_k": 8},
+            expected_revision=snapshot_before[1],
+        )
+
+    assert "*" in exc_info.value.field_errors
+    assert dict(source) == source_before
+    assert source.saved_snapshots == []
+    assert manager.get_config_snapshot() == snapshot_before
+
+
+@pytest.mark.asyncio
+async def test_persistent_source_fails_closed_when_schemas_are_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.base.config_manager import ConfigManager, ConfigValidationError
+
+    source = SavingConfig({"recall_engine": {"top_k": 5}})
+    source.schema = {
+        "recall_engine": {"type": "object", "items": "not-an-object"}
+    }
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda *args, **kwargs: "{malformed-json",
+    )
+    manager = ConfigManager(source)
+    source_before = copy.deepcopy(dict(source))
+    snapshot_before = manager.get_config_snapshot()
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        await manager.apply_config_changes(
+            {"recall_engine.top_k": 8},
+            expected_revision=snapshot_before[1],
+        )
+
+    assert "*" in exc_info.value.field_errors
+    assert dict(source) == source_before
+    assert source.saved_snapshots == []
+    assert manager.get_config_snapshot() == snapshot_before
+
+
+@pytest.mark.asyncio
+async def test_plain_dict_remains_usable_without_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.base.config_manager import ConfigManager
+
+    def missing_schema(*args: Any, **kwargs: Any) -> str:
+        raise FileNotFoundError("repo schema unavailable")
+
+    monkeypatch.setattr(Path, "read_text", missing_schema)
+    source: dict[str, Any] = {"recall_engine": {"top_k": 5}}
+    manager = ConfigManager(source)
+
+    assert await manager.update_runtime_config(
+        {"recall_engine.top_k": 8},
+        persist=True,
+    )
+    assert source["recall_engine"]["top_k"] == 8
 
 
 @pytest.mark.asyncio
@@ -235,6 +398,72 @@ async def test_apply_rolls_back_source_and_snapshot_when_save_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_apply_publishes_successful_save_before_propagating() -> None:
+    from core.base.config_manager import ConfigManager
+
+    source = BlockingSavingConfig({"recall_engine": {"top_k": 5}})
+    manager = ConfigManager(source)
+    _, original_revision = manager.get_config_snapshot()
+    apply_task = asyncio.create_task(
+        manager.apply_config_changes(
+            {"recall_engine.top_k": 9},
+            expected_revision=original_revision,
+        )
+    )
+
+    assert await asyncio.to_thread(source.save_entered.wait, 2)
+    apply_task.cancel()
+    await asyncio.sleep(0)
+    assert not apply_task.done()
+    apply_task.cancel()
+    await asyncio.sleep(0)
+    assert not apply_task.done()
+    source.release_save.set()
+    assert await asyncio.to_thread(source.save_finished.wait, 2)
+
+    with pytest.raises(asyncio.CancelledError):
+        await apply_task
+
+    snapshot, revision = manager.get_config_snapshot()
+    assert source.saved_snapshots == [snapshot]
+    assert dict(source) == snapshot
+    assert snapshot["recall_engine"]["top_k"] == 9
+    assert revision != original_revision
+
+
+@pytest.mark.asyncio
+async def test_cancelled_apply_rolls_back_after_failed_save() -> None:
+    from core.base.config_manager import ConfigManager
+
+    source = BlockingSavingConfig(
+        {"recall_engine": {"top_k": 5}},
+        fail_save=True,
+    )
+    manager = ConfigManager(source)
+    source_before = copy.deepcopy(dict(source))
+    snapshot_before = manager.get_config_snapshot()
+    apply_task = asyncio.create_task(
+        manager.apply_config_changes(
+            {"recall_engine.top_k": 9},
+            expected_revision=snapshot_before[1],
+        )
+    )
+
+    assert await asyncio.to_thread(source.save_entered.wait, 2)
+    apply_task.cancel()
+    await asyncio.sleep(0)
+    source.release_save.set()
+    assert await asyncio.to_thread(source.save_finished.wait, 2)
+
+    with pytest.raises(asyncio.CancelledError):
+        await apply_task
+
+    assert source.saved_snapshots == []
+    assert dict(source) == source_before
+    assert manager.get_config_snapshot() == snapshot_before
+
+
+@pytest.mark.asyncio
 async def test_concurrent_writes_with_same_revision_are_serialized() -> None:
     from core.base.config_manager import (
         ConfigApplyResult,
@@ -242,7 +471,7 @@ async def test_concurrent_writes_with_same_revision_are_serialized() -> None:
         ConfigManager,
     )
 
-    source: dict[str, Any] = {"recall_engine": {"top_k": 5}}
+    source = BlockingSavingConfig({"recall_engine": {"top_k": 5}})
     manager = ConfigManager(source)
     _, revision = manager.get_config_snapshot()
 
@@ -255,11 +484,20 @@ async def test_concurrent_writes_with_same_revision_are_serialized() -> None:
         except ConfigConflictError as exc:
             return exc
 
-    outcomes = await asyncio.gather(write(6), write(7))
+    first_write = asyncio.create_task(write(6))
+    assert await asyncio.to_thread(source.save_entered.wait, 2)
+    second_write = asyncio.create_task(write(7))
+    await asyncio.sleep(0)
+    replacements_before_release = source.clear_calls
+    source.release_save.set()
+    outcomes = await asyncio.gather(first_write, second_write)
 
+    assert replacements_before_release == 1
     assert sum(isinstance(item, ConfigApplyResult) for item in outcomes) == 1
     assert sum(isinstance(item, ConfigConflictError) for item in outcomes) == 1
-    assert source["recall_engine"]["top_k"] in {6, 7}
+    assert len(source.saved_snapshots) == 1
+    assert source["recall_engine"]["top_k"] == 6
+    assert manager.get("recall_engine.top_k") == 6
 
 
 @pytest.mark.asyncio
