@@ -27,15 +27,30 @@ function handleStats(): ApiResponse {
   const deleted = MEMORIES.filter((m) => m.status === "deleted").length;
 
   const importanceDist: Record<string, number> = {};
-  for (let i = 1; i <= 10; i++) importanceDist[String(i)] = 0;
+  for (let i = 0; i < 10; i++) importanceDist[`${i}-${i + 1}`] = 0;
   MEMORIES.forEach((m) => {
-    const bucket = String(Math.min(10, Math.max(1, Math.ceil(m.importance))));
+    const normalized = m.importance <= 1 ? m.importance * 10 : m.importance;
+    const index = Math.min(9, Math.max(0, Math.floor(normalized)));
+    const bucket = `${index}-${index + 1}`;
     importanceDist[bucket] = (importanceDist[bucket] ?? 0) + 1;
   });
 
   const atomTypes: Record<string, number> = {};
   MEMORIES.forEach((m) => {
     atomTypes[m.type] = (atomTypes[m.type] ?? 0) + 1;
+  });
+
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const dailyMemoryCounts = Array.from({ length: 90 }, (_, index) => {
+    const day = new Date(today);
+    day.setUTCDate(today.getUTCDate() - (89 - index));
+    return { date: day.toISOString().slice(0, 10), count: 0 };
+  });
+  const dailyByDate = new Map(dailyMemoryCounts.map((item) => [item.date, item]));
+  MEMORIES.forEach((memory) => {
+    const bucket = dailyByDate.get(String(memory.created_at).slice(0, 10));
+    if (bucket) bucket.count += 1;
   });
 
   return ok({
@@ -45,16 +60,22 @@ function handleStats(): ApiResponse {
     deleted_count: deleted,
     graph_nodes: GRAPH_NODES.length,
     graph_edges: GRAPH_EDGES.length,
+    graph_entries: GRAPH_NODES.length,
     atom_count: MEMORIES.length,
+    avg_importance: MEMORIES.length > 0
+      ? MEMORIES.reduce((sum, memory) => sum + Math.min(1, memory.importance > 1 ? memory.importance / 10 : memory.importance), 0) / MEMORIES.length
+      : 0,
+    status_breakdown: { active, archived, deleted },
     importance_distribution: importanceDist,
-    atom_types: atomTypes,
-    sessions: {
-      sess_1: { message_count: 45, last_active: "2026-06-12T10:00:00Z" },
-      sess_2: { message_count: 32, last_active: "2026-06-12T09:30:00Z" },
-      sess_3: { message_count: 28, last_active: "2026-06-11T18:00:00Z" },
-      sess_4: { message_count: 19, last_active: "2026-06-11T14:00:00Z" },
-      sess_5: { message_count: 55, last_active: "2026-06-12T11:00:00Z" },
-    },
+    atom_breakdown: atomTypes,
+    recent_sessions: [
+      { session_id: "sess_5", message_count: 55 },
+      { session_id: "sess_1", message_count: 45 },
+      { session_id: "sess_2", message_count: 32 },
+      { session_id: "sess_3", message_count: 28 },
+      { session_id: "sess_4", message_count: 19 },
+    ],
+    daily_memory_counts: dailyMemoryCounts,
     backups: [
       { name: "pre_v2.4.0_backup", size: 2_560_000, created: "2026-06-01T00:00:00Z" },
       { name: "pre_v2.3.0_backup", size: 2_100_000, created: "2026-05-15T00:00:00Z" },

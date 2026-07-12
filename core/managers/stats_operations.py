@@ -15,13 +15,57 @@
 import asyncio
 import inspect
 import json
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from astrbot.api import logger
 
 from ..utils.number_utils import clamp_float, safe_float
 from .decay_operations import _normalize_batch_metadata
+
+
+_TREND_DAYS = 90
+_MILLISECOND_TIMESTAMP_THRESHOLD = 100_000_000_000
+
+
+def _normalize_unix_timestamp(value: Any) -> float | None:
+    timestamp = safe_float(value, -1.0)
+    if timestamp > _MILLISECOND_TIMESTAMP_THRESHOLD:
+        timestamp /= 1000.0
+    return timestamp if timestamp >= 0 else None
+
+
+def _recent_utc_date(value: Any, *, today: date) -> str | None:
+    timestamp = _normalize_unix_timestamp(value)
+    if timestamp is None:
+        return None
+    try:
+        memory_date = datetime.fromtimestamp(timestamp, tz=UTC).date()
+    except (OverflowError, OSError, ValueError):
+        return None
+    first_date = today - timedelta(days=_TREND_DAYS - 1)
+    if memory_date < first_date or memory_date > today:
+        return None
+    return memory_date.isoformat()
+
+
+def _build_daily_memory_counts(
+    timestamps: Iterable[Any],
+    *,
+    today: date | None = None,
+) -> list[dict[str, int | str]]:
+    current_date = today or datetime.now(tz=UTC).date()
+    first_date = current_date - timedelta(days=_TREND_DAYS - 1)
+    counts = {
+        (first_date + timedelta(days=offset)).isoformat(): 0
+        for offset in range(_TREND_DAYS)
+    }
+    for value in timestamps:
+        bucket = _recent_utc_date(value, today=current_date)
+        if bucket is not None:
+            counts[bucket] += 1
+    return [{"date": bucket, "count": count} for bucket, count in counts.items()]
 
 
 class StatsOperationsMixin:
@@ -126,6 +170,11 @@ class StatsOperationsMixin:
             }
             oldest_time = None
             newest_time = None
+            trend_today = datetime.now(tz=UTC).date()
+            daily_memory_counts = _build_daily_memory_counts([], today=trend_today)
+            daily_memory_by_date = {
+                str(item["date"]): item for item in daily_memory_counts
+            }
 
             batch_size = 500
             offset = 0
@@ -179,6 +228,12 @@ class StatsOperationsMixin:
 
                     create_time = metadata.get("create_time")
                     if create_time:
+                        trend_bucket = _recent_utc_date(
+                            create_time,
+                            today=trend_today,
+                        )
+                        if trend_bucket is not None:
+                            daily_memory_by_date[trend_bucket]["count"] += 1
                         create_time = safe_float(create_time, 0.0)
                         if oldest_time is None or create_time < oldest_time:
                             oldest_time = create_time
@@ -195,6 +250,7 @@ class StatsOperationsMixin:
             stats["importance_distribution"] = importance_distribution
             stats["oldest_memory"] = oldest_time
             stats["newest_memory"] = newest_time
+            stats["daily_memory_counts"] = daily_memory_counts
             if self._graph_store is not None:
                 stats.update(await self._graph_store.get_memory_entry_stats())
                 stats["graph_memory_enabled"] = True
@@ -213,6 +269,7 @@ class StatsOperationsMixin:
                 "avg_importance": 0.0,
                 "oldest_memory": None,
                 "newest_memory": None,
+                "daily_memory_counts": _build_daily_memory_counts([]),
                 "graph_memory_enabled": bool(self._graph_store is not None),
             }
 

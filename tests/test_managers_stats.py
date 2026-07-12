@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,6 +11,7 @@ import aiosqlite
 import pytest
 
 from core.managers.maintenance_operations import MaintenanceOperations
+from core.managers import stats_operations
 from core.managers.stats_operations import StatsOperationsMixin
 from core.validators.index_validator import IndexValidator
 
@@ -168,6 +170,33 @@ class TestGetStatistics:
         faiss_db.document_storage.get_documents = AsyncMock(return_value=[])
         return MaintenanceOperations(config={}, faiss_db=faiss_db)
 
+    def test_daily_memory_counts_normalize_units_and_fill_90_days(self) -> None:
+        target = datetime(2026, 7, 10, 12, tzinfo=timezone.utc).timestamp()
+        assert hasattr(stats_operations, "_build_daily_memory_counts")
+
+        result = stats_operations._build_daily_memory_counts(
+            [
+                target,
+                target * 1000,
+                target * 1_000_000,
+                datetime(2026, 4, 1, tzinfo=timezone.utc).timestamp(),
+                datetime(2026, 7, 13, tzinfo=timezone.utc).timestamp(),
+                -1,
+                "invalid",
+                None,
+            ],
+            today=date(2026, 7, 12),
+        )
+
+        assert len(result) == 90
+        assert result[0]["date"] == "2026-04-14"
+        assert result[-1]["date"] == "2026-07-12"
+        assert sum(item["count"] for item in result) == 2
+        assert next(item for item in result if item["date"] == "2026-07-10") == {
+            "date": "2026-07-10",
+            "count": 2,
+        }
+
     @pytest.mark.asyncio
     async def test_empty_stats(self) -> None:
         """当 no documents, returns defaults."""
@@ -181,6 +210,8 @@ class TestGetStatistics:
         assert stats["oldest_memory"] is None
         assert stats["newest_memory"] is None
         assert stats["graph_memory_enabled"] is False
+        assert len(stats["daily_memory_counts"]) == 90
+        assert sum(item["count"] for item in stats["daily_memory_counts"]) == 0
 
     @pytest.mark.asyncio
     async def test_stats_with_documents(self) -> None:
@@ -300,6 +331,8 @@ class TestGetStatistics:
         assert stats["avg_importance"] == 0.0
         # graph_memory_enabled is based on _graph_store truthiness even in error
         assert stats["graph_memory_enabled"] is True
+        assert len(stats["daily_memory_counts"]) == 90
+        assert sum(item["count"] for item in stats["daily_memory_counts"]) == 0
 
 
 # ---------------------------------------------------------------------------

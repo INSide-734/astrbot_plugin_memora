@@ -26,6 +26,9 @@ const SCREENSHOT_BASELINES = {
   "mobile-jargon.png": { width: 390, height: 844, minBytes: 10_000 },
   "system-confirmation.png": { width: 1366, height: 900, minBytes: 10_000 },
   "dark-system.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "preview.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "mobile-preview.png": { width: 390, height: 844, minBytes: 10_000 },
+  "dark-preview.png": { width: 1366, height: 900, minBytes: 10_000 },
   "wide-preview.png": { width: 2048, height: 1152, minBytes: 10_000 },
   "wide-learning.png": { width: 2048, height: 1152, minBytes: 10_000 },
   "wide-affection.png": { width: 2048, height: 1152, minBytes: 10_000 },
@@ -68,7 +71,30 @@ function bridgePayload(endpoint) {
       graph_nodes: 7,
       graph_edges: 5,
       atom_count: 10,
-      importance_distribution: { "1": 2, "2": 5 },
+      graph_entries: 4,
+      avg_importance: 0.64,
+      status_breakdown: { active: 8, archived: 3, deleted: 1 },
+      atom_breakdown: { fact: 6, preference: 5, event: 3, relation: 2, summary: 1, other_type: 1 },
+      recent_sessions: [
+        { session_id: "group-smoke-primary", message_count: 9 },
+        { session_id: "group-smoke-secondary", message_count: 5 },
+      ],
+      daily_memory_counts: Array.from({ length: 90 }, (_, index) => ({
+        date: new Date(Date.UTC(2026, 3, 14 + index)).toISOString().slice(0, 10),
+        count: index < 60 ? 0 : index - 59,
+      })),
+      importance_distribution: {
+        "0-1": 0,
+        "1-2": 1,
+        "2-3": 1,
+        "3-4": 2,
+        "4-5": 3,
+        "5-6": 4,
+        "6-7": 4,
+        "7-8": 3,
+        "8-9": 1,
+        "9-10": 1,
+      },
       atom_types: { fact: 4, note: 6 },
       sessions: { "group-smoke": { message_count: 3 } },
     };
@@ -621,7 +647,36 @@ async function clickMobileNav(page, label, expectedHash, expectedText, screensho
     { timeout: 5_000 }
   );
   await waitForRootText(page, expectedText, expectedHash);
+  if (expectedHash === "#/preview") {
+    await assertMobilePreviewLayout(page);
+  }
   return await captureBaselineScreenshot(page, screenshotPath, `mobile-${label}`);
+}
+
+async function assertMobilePreviewLayout(page) {
+  const slots = [
+    "preview-metrics",
+    "growth-panel",
+    "composition-panel",
+    "module-assets-panel",
+    "active-sessions-panel",
+  ];
+  await page.locator('[data-slot="active-sessions-panel"]').waitFor({ state: "visible" });
+  const positions = await Promise.all(slots.map(async (slot) => {
+    const box = await page.locator(`[data-slot="${slot}"]`).boundingBox();
+    return { slot, top: box?.y ?? Number.NaN };
+  }));
+  const overflow = await page.locator('[data-slot="page-content"]').last().evaluate(
+    (content) => content.scrollWidth - content.clientWidth
+  );
+  const result = { positions, overflow };
+  const validOrder = result.positions.every((item, index) => (
+    Number.isFinite(item.top)
+    && (index === 0 || item.top > result.positions[index - 1].top)
+  ));
+  if (!validOrder || !Number.isFinite(result.overflow) || result.overflow > 1) {
+    throw new Error(`Mobile preview layout is invalid: ${JSON.stringify(result)}`);
+  }
 }
 
 function assertNoPostCall(postCalls, endpoint) {
@@ -830,6 +885,7 @@ try {
   const baselineResults = [];
 
   const routes = [
+    ["数据预览", "#/preview", ["数据预览", "记忆增长", "模块资产", "活跃会话"], "preview.png"],
     ["知识图谱", "#/graph", "知识图谱", "graph.png"],
     ["记忆管理", "#/memory", "记忆管理", "memory.png"],
     ["系统概览", "#/system", ["系统概览", "运行观测", "Provider 状态"], "system.png"],
@@ -899,6 +955,7 @@ try {
   await mobilePage.waitForSelector("#root > *", { timeout: 10_000 });
 
   const mobileRoutes = [
+    ["数据预览", "#/preview", ["数据预览", "记忆增长", "模块资产"], "mobile-preview.png"],
     ["系统概览", "#/system", ["系统概览", "运行观测", "Provider 状态"], "mobile-system.png"],
     ["黑话发现", "#/jargon", "黑话", "mobile-jargon.png"],
   ];
@@ -924,7 +981,7 @@ try {
   await widePage.waitForSelector("#root > *", { timeout: 10_000 });
 
   const wideRoutes = [
-    ["#/preview", ["数据预览", "12", "快捷操作"], "wide-preview.png", "wide-preview"],
+    ["#/preview", ["数据预览", "记忆增长", "记忆构成", "模块资产", "group-smoke-primary"], "wide-preview.png", "wide-preview"],
     ["#/learning", ["自主学习", "83.0%", "retrieval_weight", "Formal greeting"], "wide-learning.png", "wide-learning"],
     ["#/affection", ["好感度与情绪", "群聊今天的氛围很积极。", "alice"], "wide-affection.png", "wide-affection"],
     ["#/social", ["社交关系", "alice", "bob", "pair", "project"], "wide-social.png", "wide-social"],
@@ -970,6 +1027,16 @@ try {
       page,
       path.join(screenshotsDir, "dark-system.png"),
       "dark-system"
+    )
+  );
+
+  baselineResults.push(
+    await captureRoute(
+      page,
+      "#/preview",
+      ["数据预览", "记忆增长", "记忆构成", "模块资产"],
+      path.join(screenshotsDir, "dark-preview.png"),
+      "dark-preview"
     )
   );
 

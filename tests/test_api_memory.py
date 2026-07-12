@@ -1106,13 +1106,20 @@ class TestMemoryStatsRecallValidation:
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 engine.get_statistics = AsyncMock(return_value={
-                    "total": 10, "status_breakdown": {"active": 8, "archived": 2, "deleted": 0}
+                    "total": 10,
+                    "status_breakdown": {"active": 8, "archived": 2, "deleted": 0},
+                    "daily_memory_counts": [
+                        {"date": "2026-07-12", "count": 3},
+                    ],
                 })
                 return {"memory_engine": engine}, None
 
         with patch("core.api.memory_stats_recall_api.request", _mock_request()):
             result = await Stub().get_stats()
         assert result["status"] == "ok"
+        assert result["data"]["daily_memory_counts"] == [
+            {"date": "2026-07-12", "count": 3},
+        ]
 
     @pytest.mark.asyncio
     async def test_stats_tolerates_malformed_aggregate_payloads(self) -> None:
