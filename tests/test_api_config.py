@@ -280,7 +280,15 @@ class TestConfigApplyApi:
             _Request(body=["not", "an", "object"]),
             _Request(body={}),
             _Request(body={"base_revision": 123, "changes": {}}),
+            _Request(body={"base_revision": "   ", "changes": {}}),
             _Request(body={"base_revision": "rev-1", "changes": []}),
+            _Request(
+                body={
+                    "base_revision": "rev-1",
+                    "changes": {},
+                    "unexpected": "field",
+                }
+            ),
         ],
     )
     async def test_invalid_payloads_have_stable_error_shape(

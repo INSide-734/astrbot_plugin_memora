@@ -139,6 +139,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
 
         async def _delayed_reload() -> None:
             await asyncio.sleep(0.5)
+            if self._terminating:
+                logger.debug("插件正在停止，跳过延迟重载")
+                return
             result = await reload_plugin("astrbot_plugin_memora")
             failed = result is False
             if isinstance(result, tuple):
