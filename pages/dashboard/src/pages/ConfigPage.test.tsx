@@ -376,17 +376,13 @@ describe("ConfigPage", () => {
 
   it("clears pending mobile section focus when the page unmounts", async () => {
     vi.useFakeTimers();
-    const view = render(<ConfigPage />);
+    const firstView = render(<ConfigPage />);
     await flushMicrotasks();
 
-    const providerSection = view.container.querySelector<HTMLElement>(
+    const firstProviderSection = firstView.container.querySelector<HTMLElement>(
       "[data-config-section='provider_settings']",
     )!;
-    const providerFocusTarget =
-      providerSection.querySelector<HTMLElement>("[data-slot='config-group']") ??
-      providerSection;
-    const providerScroll = vi.spyOn(providerSection, "scrollIntoView");
-    const providerFocus = vi.spyOn(providerFocusTarget, "focus");
+    const providerSectionId = firstProviderSection.id;
     const mobileSelect = screen.getByRole("combobox", {
       name: "Configuration group",
     });
@@ -398,11 +394,27 @@ describe("ConfigPage", () => {
     fireEvent.click(providerOption);
     expect(vi.getTimerCount()).toBeGreaterThan(0);
 
-    view.unmount();
+    firstView.unmount();
+    const secondView = render(<ConfigPage />);
+    await flushMicrotasks();
+
+    const secondProviderSection = secondView.container.querySelector<HTMLElement>(
+      "[data-config-section='provider_settings']",
+    )!;
+    expect(secondProviderSection.id).toBe(providerSectionId);
+    const secondProviderFocusTarget =
+      secondProviderSection.querySelector<HTMLElement>(
+        "[data-slot='config-group']",
+      ) ?? secondProviderSection;
+    const secondProviderScroll = vi.spyOn(
+      secondProviderSection,
+      "scrollIntoView",
+    );
+    const secondProviderFocus = vi.spyOn(secondProviderFocusTarget, "focus");
 
     await act(async () => vi.advanceTimersByTimeAsync(100));
-    expect(providerScroll).not.toHaveBeenCalled();
-    expect(providerFocus).not.toHaveBeenCalled();
+    expect(secondProviderScroll).not.toHaveBeenCalled();
+    expect(secondProviderFocus).not.toHaveBeenCalled();
   });
 
   it("reports dirty transitions and protects only dirty drafts from browser close", async () => {
