@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isRouteTextSettled } from "./browser_smoke_helpers.mjs";
+import {
+  BROWSER_LAUNCH_CANDIDATES,
+  isRouteTextSettled,
+} from "./browser_smoke_helpers.mjs";
 
 describe("browser smoke helpers", () => {
   it("keeps route waits pending while expected text is present but loading text remains", () => {
@@ -14,5 +17,13 @@ describe("browser smoke helpers", () => {
 
   it("keeps route waits pending until every expected text is present", () => {
     expect(isRouteTextSettled("系统概览 Provider 状态", ["系统概览", "运行观测"])).toBe(false);
+  });
+
+  it("prefers isolated headless Chrome before falling back to system Edge", () => {
+    expect(BROWSER_LAUNCH_CANDIDATES).toEqual([
+      { channel: "chrome", label: "Google Chrome" },
+      { channel: "msedge", label: "Microsoft Edge" },
+      { channel: undefined, label: "Playwright Chromium" },
+    ]);
   });
 });

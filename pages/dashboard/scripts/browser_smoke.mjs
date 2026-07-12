@@ -3,7 +3,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { ROUTE_LOADING_TEXT } from "./browser_smoke_helpers.mjs";
+import {
+  BROWSER_LAUNCH_CANDIDATES,
+  ROUTE_LOADING_TEXT,
+} from "./browser_smoke_helpers.mjs";
 
 const dashboardRoot = process.cwd();
 const htmlPath = path.join(dashboardRoot, "index.html");
@@ -35,15 +38,9 @@ const SCREENSHOT_BASELINES = {
   "wide-social.png": { width: 2048, height: 1152, minBytes: 10_000 },
 };
 
-const launchCandidates = [
-  { channel: "msedge", label: "Microsoft Edge" },
-  { channel: "chrome", label: "Google Chrome" },
-  { channel: undefined, label: "Playwright Chromium" },
-];
-
 async function launchBrowser() {
   const failures = [];
-  for (const candidate of launchCandidates) {
+  for (const candidate of BROWSER_LAUNCH_CANDIDATES) {
     try {
       const options = candidate.channel
         ? { channel: candidate.channel, headless: true }
