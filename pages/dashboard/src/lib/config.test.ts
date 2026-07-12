@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { ConfigObject } from "@/types/config";
+import type {
+  ConfigApplyRequest,
+  ConfigObject,
+} from "@/types/config";
 
 import {
   applyConfigChanges,
@@ -11,7 +14,34 @@ import {
   getConfigValue,
   rebaseConfig,
   setConfigValue,
+  toJsonConfigChanges,
 } from "./config";
+
+const DANGEROUS_SEGMENTS = ["__proto__", "prototype", "constructor"] as const;
+const NON_JSON_VALUES: ReadonlyArray<readonly [string, unknown]> = [
+  ["undefined", undefined],
+  ["NaN", Number.NaN],
+  ["positive infinity", Number.POSITIVE_INFINITY],
+  ["negative infinity", Number.NEGATIVE_INFINITY],
+  ["a function", () => true],
+  ["a symbol", Symbol("invalid-config-value")],
+];
+
+function configWithOwnKey(key: string, value: ConfigObject): ConfigObject {
+  const config: ConfigObject = {};
+  Object.defineProperty(config, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+  return config;
+}
+
+function expectObjectPrototypeClean(): void {
+  expect(Object.getPrototypeOf(Object.prototype)).toBeNull();
+  expect(Object.prototype).not.toHaveProperty("polluted");
+}
 
 describe("config dotted-path helpers", () => {
   it("reads nested values without collapsing null into an absent value", () => {
@@ -69,6 +99,47 @@ describe("config dotted-path helpers", () => {
     expect(() => setConfigValue({}, "group..field", true)).toThrow(/path/i);
   });
 
+  it.each(DANGEROUS_SEGMENTS)(
+    "rejects the dangerous %s segment when setting a dotted path",
+    (segment) => {
+      const original: ConfigObject = { stable: { value: true } };
+      const originalPrototype = Object.getPrototypeOf(original);
+      let produced: ConfigObject | undefined;
+
+      expect(() => {
+        produced = setConfigValue(
+          original,
+          `target.${segment}.polluted`,
+          true
+        );
+      }).toThrow(/config|key|path|segment/i);
+
+      expect(Object.getPrototypeOf(original)).toBe(originalPrototype);
+      expect(original).toEqual({ stable: { value: true } });
+      if (produced) {
+        expect(Object.getPrototypeOf(produced)).toBe(Object.prototype);
+        expect(Object.getPrototypeOf(produced.target as ConfigObject)).toBe(
+          Object.prototype
+        );
+      }
+      expectObjectPrototypeClean();
+    }
+  );
+
+  it("does not read an inherited value while creating a missing path branch", () => {
+    const inherited = Object.defineProperty({}, "branch", {
+      get: () => {
+        throw new Error("inherited getter must not run");
+      },
+    });
+    const original = Object.create(inherited) as ConfigObject;
+
+    const updated = setConfigValue(original, "branch.leaf", true);
+
+    expect(updated.branch).toEqual({ leaf: true });
+    expect(Object.prototype.hasOwnProperty.call(original, "branch")).toBe(false);
+  });
+
   it("returns sorted changed leaf paths across nested objects", () => {
     const before = {
       zeta: 1,
@@ -122,6 +193,26 @@ describe("config dotted-path helpers", () => {
     );
   });
 
+  it.each(DANGEROUS_SEGMENTS)(
+    "rejects the dangerous own key %s while cloning",
+    (segment) => {
+      const original = configWithOwnKey(segment, { polluted: true });
+      const originalPrototype = Object.getPrototypeOf(original);
+      let produced: ConfigObject | undefined;
+
+      expect(() => {
+        produced = cloneConfig(original);
+      }).toThrow(/config|key|path|segment/i);
+
+      expect(Object.getPrototypeOf(original)).toBe(originalPrototype);
+      expect(Object.prototype.hasOwnProperty.call(original, segment)).toBe(true);
+      if (produced) {
+        expect(Object.getPrototypeOf(produced)).toBe(Object.prototype);
+      }
+      expectObjectPrototypeClean();
+    }
+  );
+
   it("builds a deterministic dotted changes payload from the draft", () => {
     const draft = {
       recall_engine: { top_k: 12 },
@@ -139,6 +230,35 @@ describe("config dotted-path helpers", () => {
       "recall_engine.top_k": 12,
     });
   });
+
+  it("constructs an exact JSON-only apply request", () => {
+    const request: ConfigApplyRequest = {
+      base_revision: "rev-1",
+      changes: toJsonConfigChanges({
+        "provider_settings.ids": ["primary", null],
+        "recall_engine.top_k": 12,
+      }),
+    };
+
+    expect(request).toEqual({
+      base_revision: "rev-1",
+      changes: {
+        "provider_settings.ids": ["primary", null],
+        "recall_engine.top_k": 12,
+      },
+    });
+  });
+
+  it.each(NON_JSON_VALUES)(
+    "rejects %s recursively at the JSON changes boundary",
+    (_label, value) => {
+      expect(() =>
+        toJsonConfigChanges({
+          "group.value": { nested: [value] },
+        })
+      ).toThrow(/json/i);
+    }
+  );
 
   it("applies dotted changes and rebases local dirty values onto remote config", () => {
     const remote = {
@@ -165,4 +285,61 @@ describe("config dotted-path helpers", () => {
       remote_only: true,
     });
   });
+
+  it.each(DANGEROUS_SEGMENTS)(
+    "rejects the dangerous %s segment while applying changes",
+    (segment) => {
+      const remote: ConfigObject = { stable: true };
+      const remotePrototype = Object.getPrototypeOf(remote);
+      let produced: ConfigObject | undefined;
+
+      expect(() => {
+        produced = applyConfigChanges(remote, {
+          [`target.${segment}.polluted`]: true,
+        });
+      }).toThrow(/config|key|path|segment/i);
+
+      expect(remote).toEqual({ stable: true });
+      expect(Object.getPrototypeOf(remote)).toBe(remotePrototype);
+      if (produced) {
+        expect(Object.getPrototypeOf(produced)).toBe(Object.prototype);
+        expect(Object.getPrototypeOf(produced.target as ConfigObject)).toBe(
+          Object.prototype
+        );
+      }
+      expectObjectPrototypeClean();
+    }
+  );
+
+  it.each(DANGEROUS_SEGMENTS)(
+    "rejects the dangerous %s segment while rebasing changes",
+    (segment) => {
+      const remote: ConfigObject = { stable: true };
+      const localDraft: ConfigObject = {
+        stable: true,
+        target: configWithOwnKey(segment, { polluted: true }),
+      };
+      const remotePrototype = Object.getPrototypeOf(remote);
+      let produced: ConfigObject | undefined;
+
+      expect(() => {
+        produced = rebaseConfig(remote, localDraft, [
+          `target.${segment}.polluted`,
+        ]);
+      }).toThrow(/config|key|path|segment/i);
+
+      expect(remote).toEqual({ stable: true });
+      expect(Object.getPrototypeOf(remote)).toBe(remotePrototype);
+      expect(Object.prototype.hasOwnProperty.call(localDraft.target, segment)).toBe(
+        true
+      );
+      if (produced) {
+        expect(Object.getPrototypeOf(produced)).toBe(Object.prototype);
+        expect(Object.getPrototypeOf(produced.target as ConfigObject)).toBe(
+          Object.prototype
+        );
+      }
+      expectObjectPrototypeClean();
+    }
+  );
 });

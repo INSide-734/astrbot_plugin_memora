@@ -88,7 +88,7 @@ export interface ConfigApplyData {
 
 export interface ConfigApplyRequest {
   base_revision: string;
-  changes: Record<string, ConfigValue>;
+  changes: Record<string, JsonValue>;
 }
 
 export type ConfigErrorCode =

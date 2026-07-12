@@ -417,6 +417,33 @@ describe("useConfigSync", () => {
     expect(hook.result.current.dirtyPaths).toEqual([]);
   });
 
+  it("rejects an undefined draft change locally without discarding it", async () => {
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() =>
+      hook.result.current.changeField("recall_engine.top_k", undefined)
+    );
+
+    await act(async () => hook.result.current.apply());
+
+    expect(bridge.apiPost).not.toHaveBeenCalled();
+    expect(stateCalls()).toHaveLength(1);
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.error).toMatchObject({
+      kind: "protocol",
+      code: "invalid_request",
+    });
+    expect(hook.result.current.error?.message).toMatch(/json/i);
+    expect(hook.result.current.baseConfig).toEqual(BASE_CONFIG);
+    const recallEngine = hook.result.current.draft
+      ?.recall_engine as ConfigObject;
+    expect(Object.prototype.hasOwnProperty.call(recallEngine, "top_k")).toBe(
+      true
+    );
+    expect(recallEngine.top_k).toBeUndefined();
+    expect(hook.result.current.dirtyPaths).toEqual(["recall_engine.top_k"]);
+  });
+
   it("suppresses repeated apply and refreshes while apply is pending", async () => {
     vi.useFakeTimers();
     const pendingPost = deferred<ApiResponse>();
