@@ -28,15 +28,17 @@ describe("browser smoke helpers", () => {
     ]);
   });
 
-  it("uses Chromium new headless mode without Playwright's legacy headless flag", () => {
-    expect(createBrowserLaunchOptions("chrome")).toEqual({
+  it("opens a visible browser on local Windows runs", () => {
+    expect(createBrowserLaunchOptions("chrome", { platform: "win32", ci: false })).toEqual({
       channel: "chrome",
       headless: false,
-      args: ["--headless=new"],
+      slowMo: 50,
     });
-    expect(createBrowserLaunchOptions(undefined)).toEqual({
-      headless: false,
-      args: ["--headless=new"],
+  });
+
+  it("keeps CI runs headless", () => {
+    expect(createBrowserLaunchOptions(undefined, { platform: "win32", ci: true })).toEqual({
+      headless: true,
     });
   });
 });

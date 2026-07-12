@@ -6,11 +6,21 @@ export const BROWSER_LAUNCH_CANDIDATES = [
   { channel: undefined, label: "Playwright Chromium" },
 ];
 
-export function createBrowserLaunchOptions(channel) {
+export function createBrowserLaunchOptions(
+  channel,
+  {
+    platform = process.platform,
+    ci = ["1", "true"].includes(String(process.env.CI ?? "").toLowerCase()),
+  } = {},
+) {
+  const browser = channel ? { channel } : {};
+  if (ci || platform !== "win32") {
+    return { ...browser, headless: true };
+  }
   return {
-    ...(channel ? { channel } : {}),
+    ...browser,
     headless: false,
-    args: ["--headless=new"],
+    slowMo: 50,
   };
 }
 
