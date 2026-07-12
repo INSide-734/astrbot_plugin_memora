@@ -27,6 +27,63 @@ const NON_JSON_VALUES: ReadonlyArray<readonly [string, unknown]> = [
   ["a symbol", Symbol("invalid-config-value")],
 ];
 
+class CustomConfigValue {
+  readonly value = 1;
+}
+
+const INVALID_JSON_CONTAINERS: ReadonlyArray<
+  readonly [string, () => unknown]
+> = [
+  ["a Date", () => new Date("2026-07-13T00:00:00Z")],
+  ["a Map", () => new Map([["value", 1]])],
+  ["a Set", () => new Set([1])],
+  ["a RegExp", () => /memora/],
+  ["a boxed primitive", () => new Number(1)],
+  ["a custom class instance", () => new CustomConfigValue()],
+  [
+    "a sparse array",
+    () => {
+      const value = new Array<unknown>(2);
+      value[1] = true;
+      return value;
+    },
+  ],
+  [
+    "an array with an enumerable string key",
+    () => {
+      const value: unknown[] = [true];
+      Object.defineProperty(value, "extra", {
+        enumerable: true,
+        value: "unexpected",
+      });
+      return value;
+    },
+  ],
+  [
+    "an array with an enumerable symbol key",
+    () => {
+      const value: unknown[] = [true];
+      Object.defineProperty(value, Symbol("extra"), {
+        enumerable: true,
+        value: "unexpected",
+      });
+      return value;
+    },
+  ],
+  [
+    "an array with a dangerous own key",
+    () => {
+      const value: unknown[] = [true];
+      Object.defineProperty(value, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        value: { polluted: true },
+      });
+      return value;
+    },
+  ],
+];
+
 function configWithOwnKey(key: string, value: ConfigObject): ConfigObject {
   const config: ConfigObject = {};
   Object.defineProperty(config, key, {
@@ -259,6 +316,30 @@ describe("config dotted-path helpers", () => {
       ).toThrow(/json/i);
     }
   );
+
+  it.each(INVALID_JSON_CONTAINERS)(
+    "rejects %s instead of silently coercing it at the JSON boundary",
+    (_label, createValue) => {
+      expect(() =>
+        toJsonConfigChanges({
+          "group.value": { nested: createValue() },
+        })
+      ).toThrow(/json/i);
+    }
+  );
+
+  it("accepts a JSON record with a null prototype", () => {
+    const record = Object.create(null) as Record<string, unknown>;
+    record.enabled = true;
+    record.values = [1, null, "ok"];
+
+    expect(toJsonConfigChanges({ "group.value": record })).toEqual({
+      "group.value": {
+        enabled: true,
+        values: [1, null, "ok"],
+      },
+    });
+  });
 
   it("applies dotted changes and rebases local dirty values onto remote config", () => {
     const remote = {
