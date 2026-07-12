@@ -42,7 +42,7 @@ function pathSegments(path: string): string[] {
   return segments;
 }
 
-function hasOwn(value: ConfigObject, key: string): boolean {
+function hasOwn(value: object, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
@@ -205,6 +205,30 @@ export function buildConfigChanges(
   return changes;
 }
 
+function assertJsonArrayShape(value: unknown[], path: string): void {
+  if (Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new Error(`Invalid JSON config value at ${path}: non-plain array`);
+  }
+
+  const expectedKeys = new Set<PropertyKey>(["length"]);
+  for (let index = 0; index < value.length; index += 1) {
+    const key = String(index);
+    if (!hasOwn(value, key)) {
+      throw new Error(`Invalid JSON config value at ${path}: sparse array`);
+    }
+    expectedKeys.add(key);
+  }
+
+  if (Reflect.ownKeys(value).some((key) => !expectedKeys.has(key))) {
+    throw new Error(`Invalid JSON config value at ${path}: unexpected array key`);
+  }
+}
+
+function isPlainConfigRecord(value: ConfigObject): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function toJsonConfigValue(value: unknown, path: string): JsonValue {
   if (
     value === null ||
@@ -218,11 +242,15 @@ function toJsonConfigValue(value: unknown, path: string): JsonValue {
     throw new Error(`Invalid JSON config value at ${path}: non-finite number`);
   }
   if (Array.isArray(value)) {
+    assertJsonArrayShape(value, path);
     return value.map((item, index) =>
       toJsonConfigValue(item, `${path}[${index}]`)
     );
   }
   if (isConfigObject(value)) {
+    if (!isPlainConfigRecord(value)) {
+      throw new Error(`Invalid JSON config value at ${path}: non-plain object`);
+    }
     const converted: Record<string, JsonValue> = {};
     for (const key of configObjectKeys(value)) {
       converted[key] = toJsonConfigValue(value[key], `${path}.${key}`);
