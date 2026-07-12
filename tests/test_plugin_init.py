@@ -393,6 +393,136 @@ class TestMemoraPluginConfig:
         assert plugin.astrbot_config is astrbot_config
         assert plugin.config_manager._source_config is astrbot_config
 
+    def test_assigns_unique_instance_id_to_each_plugin_instance(self) -> None:
+        MemoraPlugin = _load_memora_plugin_class()
+
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ):
+            first = MemoraPlugin(MagicMock(), {})
+            second = MemoraPlugin(MagicMock(), {})
+
+        assert len(first.instance_id) == 32
+        assert len(second.instance_id) == 32
+        assert first.instance_id != second.instance_id
+
+
+class TestMemoraPluginReloadScheduling:
+    """配置应用后的插件重载必须延迟执行且不进入常规任务集合。"""
+
+    @staticmethod
+    def _make_plugin(context: MagicMock):
+        MemoraPlugin = _load_memora_plugin_class()
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ):
+            plugin = MemoraPlugin(context, {})
+        return plugin
+
+    def test_reports_false_when_star_manager_reload_is_missing(self) -> None:
+        context = MagicMock()
+        context._star_manager = types.SimpleNamespace()
+        plugin = self._make_plugin(context)
+
+        assert plugin.supports_plugin_reload() is False
+        assert plugin.schedule_plugin_reload() is False
+        assert plugin._background_tasks == set()
+
+    @pytest.mark.asyncio
+    async def test_delays_reload_and_uses_memora_plugin_name(self) -> None:
+        context = MagicMock()
+        reload_called = asyncio.Event()
+        sleep_entered = asyncio.Event()
+        release_sleep = asyncio.Event()
+        reload_names: list[str] = []
+
+        async def reload_plugin(name: str) -> bool:
+            reload_names.append(name)
+            reload_called.set()
+            return True
+
+        async def delayed_sleep(delay: float) -> None:
+            assert delay == 0.5
+            sleep_entered.set()
+            await release_sleep.wait()
+
+        context._star_manager = types.SimpleNamespace(reload=reload_plugin)
+        plugin = self._make_plugin(context)
+        module = sys.modules[plugin.__class__.__module__]
+
+        with patch.object(module.asyncio, "sleep", side_effect=delayed_sleep):
+            assert plugin.schedule_plugin_reload() is True
+            await asyncio.wait_for(sleep_entered.wait(), timeout=1.0)
+            assert reload_called.is_set() is False
+            assert plugin._background_tasks == set()
+            release_sleep.set()
+            await asyncio.wait_for(reload_called.wait(), timeout=1.0)
+
+        await asyncio.sleep(0)
+        assert reload_names == ["astrbot_plugin_memora"]
+
+    @pytest.mark.asyncio
+    async def test_logs_false_reload_result(self) -> None:
+        context = MagicMock()
+        reload_called = asyncio.Event()
+
+        async def reload_plugin(_name: str) -> bool:
+            reload_called.set()
+            return False
+
+        async def no_delay(_delay: float) -> None:
+            return None
+
+        context._star_manager = types.SimpleNamespace(reload=reload_plugin)
+        plugin = self._make_plugin(context)
+        module = sys.modules[plugin.__class__.__module__]
+
+        with patch.object(module.asyncio, "sleep", side_effect=no_delay), patch.object(
+            module.logger, "warning"
+        ) as warning:
+            assert plugin.schedule_plugin_reload() is True
+            await asyncio.wait_for(reload_called.wait(), timeout=1.0)
+            await asyncio.sleep(0)
+
+        assert any("重载" in str(call) for call in warning.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_logs_reload_exception(self) -> None:
+        context = MagicMock()
+        reload_called = asyncio.Event()
+        error_logged = asyncio.Event()
+
+        async def reload_plugin(_name: str) -> bool:
+            reload_called.set()
+            raise RuntimeError("reload failed")
+
+        async def no_delay(_delay: float) -> None:
+            return None
+
+        context._star_manager = types.SimpleNamespace(reload=reload_plugin)
+        plugin = self._make_plugin(context)
+        module = sys.modules[plugin.__class__.__module__]
+
+        def record_error(*_args, **_kwargs) -> None:
+            error_logged.set()
+
+        with patch.object(module.asyncio, "sleep", side_effect=no_delay), patch.object(
+            module.logger, "error", side_effect=record_error
+        ) as error:
+            assert plugin.schedule_plugin_reload() is True
+            await asyncio.wait_for(reload_called.wait(), timeout=1.0)
+            await asyncio.wait_for(error_logged.wait(), timeout=1.0)
+
+        assert any("重载" in str(call) for call in error.call_args_list)
+
 
 class TestMemoraPluginTerminate:
     """测试 MemoraPlugin.terminate 生命周期清理。"""

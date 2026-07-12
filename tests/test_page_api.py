@@ -1115,6 +1115,38 @@ class TestRegisterRoutes:
         paths = [c[0][0] for c in register.call_args_list]
         assert f"{PAGE_API_PREFIX}/metrics/summary" in paths
 
+    def test_config_routes_register_primary_aliases_and_metadata(self) -> None:
+        plugin = MagicMock()
+        api = PluginPageApi(plugin)
+
+        api.register_routes()
+
+        calls = plugin.context.register_web_api.call_args_list
+        registered = {
+            (call.args[0], tuple(call.args[2])): call.args[1]
+            for call in calls
+        }
+        for suffix, methods in (
+            ("/config/schema", ("GET",)),
+            ("/config/state", ("GET",)),
+            ("/config/apply", ("POST",)),
+        ):
+            assert (f"{PAGE_API_PREFIX}{suffix}", methods) in registered
+            assert (f"/Memora/page{suffix}", methods) in registered
+
+        metadata = {item["path"]: item for item in api.get_route_metadata()}
+        schema_metadata = metadata[f"{PAGE_API_PREFIX}/config/schema"]
+        state_metadata = metadata[f"{PAGE_API_PREFIX}/config/state"]
+        apply_metadata = metadata[f"{PAGE_API_PREFIX}/config/apply"]
+
+        assert schema_metadata["requires_ready"] is False
+        assert state_metadata["requires_ready"] is False
+        assert apply_metadata["requires_ready"] is False
+        assert apply_metadata["risk"] == "maintenance"
+        assert apply_metadata["auth"] == "admin"
+        assert apply_metadata["write_guard"] is True
+        assert all(not path.startswith("/Memora/page") for path in metadata)
+
     def test_route_metadata_declares_risk_auth_and_guards_for_post_routes(self) -> None:
         """Plugin-side route metadata is available for audit and frontend contracts."""
         plugin = MagicMock()
