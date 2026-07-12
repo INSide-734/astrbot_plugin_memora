@@ -1,0 +1,601 @@
+import {
+  act,
+  cleanup,
+  renderHook,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type {
+  ConfigApiError,
+  ConfigApiResponse,
+  ConfigApplyData,
+  ConfigObject,
+  ConfigSchemaData,
+  ConfigStateData,
+  ConfigSyncOptions,
+} from "@/types/config";
+
+import { useConfigSync } from "./useConfigSync";
+
+interface BridgeMock {
+  apiGet: ReturnType<typeof vi.fn>;
+  apiPost: ReturnType<typeof vi.fn>;
+}
+
+type BridgeReply<T> = ConfigApiResponse<T> | Error;
+
+const BASE_CONFIG: ConfigObject = {
+  bot_language: "zh",
+  recall_engine: { top_k: 8, mode: "hybrid" },
+  provider_settings: {
+    llm_provider_id: "",
+    embedding_provider_id: "",
+  },
+};
+
+function schemaSuccess(): ConfigApiResponse<ConfigSchemaData> {
+  return {
+    status: "ok",
+    data: {
+      plugin_name: "astrbot_plugin_memora",
+      schema: {
+        bot_language: {
+          type: "string",
+          description: "Bot language",
+          options: ["zh", "en", "ru"],
+        },
+      },
+      provider_options: {
+        llm: [{ id: "llm-primary", label: "GPT Primary" }],
+        embedding: [{ id: "embed-primary", label: "Embedding Primary" }],
+      },
+      capabilities: { hot_reload: true },
+    },
+  };
+}
+
+function stateSuccess(
+  config: ConfigObject,
+  revision = "rev-1",
+  instanceId = "instance-1"
+): ConfigApiResponse<ConfigStateData> {
+  return {
+    status: "ok",
+    data: {
+      revision,
+      instance_id: instanceId,
+      changed: true,
+      config,
+    },
+  };
+}
+
+function stateUnchanged(
+  revision = "rev-1",
+  instanceId = "instance-1"
+): ConfigApiResponse<ConfigStateData> {
+  return {
+    status: "ok",
+    data: { revision, instance_id: instanceId, changed: false },
+  };
+}
+
+function applySuccess(
+  overrides: Partial<ConfigApplyData> = {}
+): ConfigApiResponse<ConfigApplyData> {
+  return {
+    status: "ok",
+    data: {
+      revision: "rev-2",
+      changed_paths: ["recall_engine.top_k"],
+      reload_scheduled: false,
+      instance_id: "instance-1",
+      ...overrides,
+    },
+  };
+}
+
+function configError(
+  code: ConfigApiError["code"],
+  message: string,
+  data?: ConfigApiError["data"]
+): ConfigApiError {
+  return { status: "error", code, message, ...(data ? { data } : {}) };
+}
+
+async function resolveReply<T>(reply: BridgeReply<T>): Promise<ApiResponse> {
+  if (reply instanceof Error) throw reply;
+  return reply as ApiResponse;
+}
+
+describe("useConfigSync", () => {
+  let bridge: BridgeMock;
+  let visibility: DocumentVisibilityState;
+  let schemaHandler: () => Promise<ApiResponse>;
+  let stateHandler: (params: Record<string, string>) => Promise<ApiResponse>;
+  let postHandler: (body: unknown) => Promise<ApiResponse>;
+
+  const stateCalls = () =>
+    bridge.apiGet.mock.calls.filter(([endpoint]) => endpoint === "page/config/state");
+
+  const queueStates = (...replies: Array<BridgeReply<ConfigStateData>>) => {
+    let index = 0;
+    stateHandler = async () => {
+      const reply = replies[Math.min(index, replies.length - 1)];
+      index += 1;
+      return resolveReply(reply);
+    };
+  };
+
+  const renderSync = (options: ConfigSyncOptions = {}) =>
+    renderHook(() =>
+      useConfigSync({
+        pollIntervalMs: 60_000,
+        reloadTimeoutMs: 30_000,
+        ...options,
+      })
+    );
+
+  const waitForLoaded = async (
+    hook: ReturnType<typeof renderSync>,
+    status: "synced" | "offline" | "error" = "synced"
+  ) => {
+    await waitFor(() => expect(hook.result.current.status).toBe(status));
+  };
+
+  const flushMicrotasks = async () => {
+    await act(async () => {
+      for (let index = 0; index < 8; index += 1) {
+        await Promise.resolve();
+      }
+    });
+  };
+
+  beforeEach(() => {
+    visibility = "visible";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visibility,
+    });
+
+    schemaHandler = () => resolveReply(schemaSuccess());
+    stateHandler = () => resolveReply(stateSuccess(BASE_CONFIG));
+    postHandler = () => resolveReply(applySuccess());
+
+    bridge = {
+      apiGet: vi.fn((endpoint: string, params: Record<string, string> = {}) => {
+        if (endpoint === "page/config/schema") return schemaHandler();
+        if (endpoint === "page/config/state") return stateHandler(params);
+        return Promise.reject(new Error(`Unexpected GET endpoint: ${endpoint}`));
+      }),
+      apiPost: vi.fn((endpoint: string, body: unknown) => {
+        if (endpoint === "page/config/apply") return postHandler(body);
+        return Promise.reject(new Error(`Unexpected POST endpoint: ${endpoint}`));
+      }),
+    };
+
+    Object.defineProperty(window, "AstrBotPluginPage", {
+      configurable: true,
+      value: bridge,
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    Object.defineProperty(window, "AstrBotPluginPage", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+
+  it("loads schema metadata and a full config snapshot into synced state", async () => {
+    const hook = renderSync();
+
+    expect(hook.result.current.status).toBe("loading");
+    await waitForLoaded(hook);
+
+    expect(hook.result.current.schemaData).toEqual(schemaSuccess().data);
+    expect(hook.result.current.baseConfig).toEqual(BASE_CONFIG);
+    expect(hook.result.current.draft).toEqual(BASE_CONFIG);
+    expect(hook.result.current.draft).not.toBe(hook.result.current.baseConfig);
+    expect(hook.result.current.revision).toBe("rev-1");
+    expect(hook.result.current.instanceId).toBe("instance-1");
+    expect(hook.result.current.dirtyPaths).toEqual([]);
+  });
+
+  it("changes a field immutably and exposes sorted dirty/local paths", async () => {
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    const base = hook.result.current.baseConfig;
+
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    expect(hook.result.current.status).toBe("dirty");
+    expect(hook.result.current.baseConfig).toBe(base);
+    expect(hook.result.current.baseConfig).toEqual(BASE_CONFIG);
+    expect(hook.result.current.draft).toEqual({
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 12, mode: "hybrid" },
+    });
+    expect(hook.result.current.dirtyPaths).toEqual(["recall_engine.top_k"]);
+    expect(hook.result.current.localPaths).toEqual(["recall_engine.top_k"]);
+  });
+
+  it("polls a visible page conditionally and refreshes immediately on focus", async () => {
+    vi.useFakeTimers();
+    queueStates(stateSuccess(BASE_CONFIG), stateUnchanged());
+    const hook = renderSync({ pollIntervalMs: 5_000 });
+    await flushMicrotasks();
+    expect(hook.result.current.status).toBe("synced");
+    expect(stateCalls()).toHaveLength(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(4_999));
+    expect(stateCalls()).toHaveLength(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(stateCalls()).toHaveLength(2);
+    expect(stateCalls()[1]).toEqual([
+      "page/config/state",
+      { revision: "rev-1" },
+    ]);
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    await flushMicrotasks();
+    expect(stateCalls()).toHaveLength(3);
+  });
+
+  it("pauses interval refresh while hidden and refreshes immediately when visible", async () => {
+    vi.useFakeTimers();
+    queueStates(stateSuccess(BASE_CONFIG), stateUnchanged());
+    const hook = renderSync({ pollIntervalMs: 100 });
+    await flushMicrotasks();
+    expect(hook.result.current.status).toBe("synced");
+
+    visibility = "hidden";
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(stateCalls()).toHaveLength(1);
+
+    visibility = "visible";
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await flushMicrotasks();
+    expect(stateCalls()).toHaveLength(2);
+  });
+
+  it("automatically accepts a new remote snapshot when the local draft is clean", async () => {
+    const remote = {
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 20, mode: "vector" },
+    };
+    queueStates(
+      stateSuccess(BASE_CONFIG),
+      stateSuccess(remote, "rev-2", "instance-1")
+    );
+    const hook = renderSync();
+    await waitForLoaded(hook);
+
+    await act(async () => hook.result.current.refresh());
+
+    expect(hook.result.current.status).toBe("synced");
+    expect(hook.result.current.revision).toBe("rev-2");
+    expect(hook.result.current.baseConfig).toEqual(remote);
+    expect(hook.result.current.draft).toEqual(remote);
+  });
+
+  it("preserves dirty local values and exposes remote and overlapping paths", async () => {
+    const remote = {
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 20, mode: "vector" },
+    };
+    queueStates(stateSuccess(BASE_CONFIG), stateSuccess(remote, "rev-2"));
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    await act(async () => hook.result.current.refresh());
+
+    expect(hook.result.current.status).toBe("conflict");
+    expect(hook.result.current.draft).toEqual({
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 12, mode: "hybrid" },
+    });
+    expect(hook.result.current.remoteConfig).toEqual(remote);
+    expect(hook.result.current.remoteRevision).toBe("rev-2");
+    expect(hook.result.current.remotePaths).toEqual([
+      "recall_engine.mode",
+      "recall_engine.top_k",
+    ]);
+    expect(hook.result.current.overlapPaths).toEqual(["recall_engine.top_k"]);
+  });
+
+  it("acceptRemote discards local edits and adopts the full remote snapshot", async () => {
+    const remote = { ...BASE_CONFIG, bot_language: "en" };
+    queueStates(stateSuccess(BASE_CONFIG), stateSuccess(remote, "rev-2"));
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("bot_language", "ru"));
+    await act(async () => hook.result.current.refresh());
+
+    act(() => hook.result.current.acceptRemote());
+
+    expect(hook.result.current.status).toBe("synced");
+    expect(hook.result.current.baseConfig).toEqual(remote);
+    expect(hook.result.current.draft).toEqual(remote);
+    expect(hook.result.current.revision).toBe("rev-2");
+    expect(hook.result.current.remoteConfig).toBeNull();
+  });
+
+  it("rebaseRemote overlays only local dirty values and does not save", async () => {
+    const remote = {
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 20, mode: "vector" },
+    };
+    queueStates(stateSuccess(BASE_CONFIG), stateSuccess(remote, "rev-2"));
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.refresh());
+
+    act(() => hook.result.current.rebaseRemote());
+
+    expect(hook.result.current.status).toBe("dirty");
+    expect(hook.result.current.baseConfig).toEqual(remote);
+    expect(hook.result.current.draft).toEqual({
+      ...remote,
+      recall_engine: { top_k: 12, mode: "vector" },
+    });
+    expect(hook.result.current.revision).toBe("rev-2");
+    expect(hook.result.current.dirtyPaths).toEqual(["recall_engine.top_k"]);
+    expect(bridge.apiPost).not.toHaveBeenCalled();
+  });
+
+  it("applies only dirty dotted changes and becomes synced without reload", async () => {
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    await act(async () => hook.result.current.apply());
+
+    expect(bridge.apiPost).toHaveBeenCalledWith("page/config/apply", {
+      base_revision: "rev-1",
+      changes: { "recall_engine.top_k": 12 },
+    });
+    expect(hook.result.current.status).toBe("synced");
+    expect(hook.result.current.revision).toBe("rev-2");
+    expect(hook.result.current.baseConfig).toEqual(hook.result.current.draft);
+    expect(hook.result.current.dirtyPaths).toEqual([]);
+  });
+
+  it("loads the latest full snapshot after a stale apply conflict", async () => {
+    const remote = {
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 20, mode: "vector" },
+    };
+    queueStates(stateSuccess(BASE_CONFIG), stateSuccess(remote, "rev-2"));
+    postHandler = () =>
+      resolveReply(
+        configError("config_conflict", "stale revision", {
+          current_revision: "rev-2",
+        })
+      );
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    await act(async () => hook.result.current.apply());
+
+    expect(hook.result.current.status).toBe("conflict");
+    expect(hook.result.current.error).toEqual({
+      kind: "protocol",
+      code: "config_conflict",
+      message: "stale revision",
+    });
+    expect(hook.result.current.revision).toBe("rev-1");
+    expect(hook.result.current.remoteRevision).toBe("rev-2");
+    expect(hook.result.current.remoteConfig).toEqual(remote);
+    expect(hook.result.current.draft).toEqual({
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 12, mode: "hybrid" },
+    });
+  });
+
+  it("keeps validation errors path-indexed without discarding the draft", async () => {
+    postHandler = () =>
+      resolveReply(
+        configError("validation_failed", "invalid config", {
+          field_errors: { "recall_engine.top_k": "Must be positive" },
+        })
+      );
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", -1));
+
+    await act(async () => hook.result.current.apply());
+
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.fieldErrors).toEqual({
+      "recall_engine.top_k": "Must be positive",
+    });
+    expect(hook.result.current.draft).toEqual({
+      ...BASE_CONFIG,
+      recall_engine: { top_k: -1, mode: "hybrid" },
+    });
+    expect(hook.result.current.dirtyPaths).toEqual(["recall_engine.top_k"]);
+  });
+
+  it("keeps persist failures retryable", async () => {
+    let attempt = 0;
+    postHandler = () =>
+      resolveReply(
+        attempt++ === 0
+          ? configError("persist_failed", "disk full")
+          : applySuccess()
+      );
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    await act(async () => hook.result.current.apply());
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.dirtyPaths).toEqual(["recall_engine.top_k"]);
+
+    await act(async () => hook.result.current.apply());
+    expect(bridge.apiPost).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.status).toBe("synced");
+  });
+
+  it("reconciles a lost POST response when persisted values match", async () => {
+    const persisted = {
+      ...BASE_CONFIG,
+      bot_language: "en",
+      recall_engine: { top_k: 12, mode: "hybrid" },
+    };
+    queueStates(stateSuccess(BASE_CONFIG), stateSuccess(persisted, "rev-2"));
+    postHandler = () => Promise.reject(new Error("connection reset"));
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    await act(async () => hook.result.current.apply());
+
+    expect(hook.result.current.status).toBe("synced");
+    expect(hook.result.current.revision).toBe("rev-2");
+    expect(hook.result.current.baseConfig).toEqual(persisted);
+    expect(hook.result.current.draft).toEqual(persisted);
+  });
+
+  it("does not retry a lost POST and keeps an unconfirmed draft retryable", async () => {
+    vi.useFakeTimers();
+    queueStates(stateSuccess(BASE_CONFIG), stateUnchanged());
+    postHandler = () => Promise.reject(new Error("connection reset"));
+    const hook = renderSync({ pollIntervalMs: 60_000 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    await act(async () => hook.result.current.apply());
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+
+    expect(bridge.apiPost).toHaveBeenCalledTimes(1);
+    expect(stateCalls()).toHaveLength(2);
+    expect(stateCalls()[1]).toEqual([
+      "page/config/state",
+      { revision: "rev-1" },
+    ]);
+    expect(hook.result.current.status).toBe("offline");
+    expect(hook.result.current.draft).toEqual({
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 12, mode: "hybrid" },
+    });
+    expect(hook.result.current.dirtyPaths).toEqual(["recall_engine.top_k"]);
+  });
+
+  it("tolerates reload disconnects until a changed instance confirms success", async () => {
+    vi.useFakeTimers();
+    queueStates(
+      stateSuccess(BASE_CONFIG),
+      new Error("restarting"),
+      stateUnchanged("rev-2", "instance-1"),
+      stateUnchanged("rev-2", "instance-2")
+    );
+    postHandler = () =>
+      resolveReply(applySuccess({ reload_scheduled: true }));
+    const hook = renderSync({ pollIntervalMs: 50, reloadTimeoutMs: 500 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.apply());
+    expect(hook.result.current.status).toBe("reloading");
+
+    await act(async () => vi.advanceTimersByTimeAsync(50));
+    expect(hook.result.current.status).toBe("reloading");
+    await act(async () => vi.advanceTimersByTimeAsync(50));
+    expect(hook.result.current.status).toBe("reloading");
+    await act(async () => vi.advanceTimersByTimeAsync(50));
+
+    expect(hook.result.current.status).toBe("synced");
+    expect(hook.result.current.instanceId).toBe("instance-2");
+    expect(hook.result.current.revision).toBe("rev-2");
+  });
+
+  it("stops reload polling at the configured timeout", async () => {
+    vi.useFakeTimers();
+    queueStates(stateSuccess(BASE_CONFIG), stateUnchanged("rev-2", "instance-1"));
+    postHandler = () =>
+      resolveReply(applySuccess({ reload_scheduled: true }));
+    const hook = renderSync({ pollIntervalMs: 20, reloadTimeoutMs: 50 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.apply());
+
+    await act(async () => vi.advanceTimersByTimeAsync(80));
+
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.error?.message).toMatch(/reload.*timed out/i);
+  });
+
+  it("cleans focus, visibility, interval, and reload timers on unmount", async () => {
+    vi.useFakeTimers();
+    const windowRemove = vi.spyOn(window, "removeEventListener");
+    const documentRemove = vi.spyOn(document, "removeEventListener");
+    postHandler = () =>
+      resolveReply(applySuccess({ reload_scheduled: true }));
+    const hook = renderSync({ pollIntervalMs: 50, reloadTimeoutMs: 500 });
+    await flushMicrotasks();
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.apply());
+    expect(vi.getTimerCount()).toBeGreaterThanOrEqual(2);
+
+    hook.unmount();
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(windowRemove).toHaveBeenCalledWith("focus", expect.any(Function));
+    expect(documentRemove).toHaveBeenCalledWith(
+      "visibilitychange",
+      expect.any(Function)
+    );
+  });
+
+  it("preserves loaded data offline and recovers to dirty after a successful refresh", async () => {
+    queueStates(
+      stateSuccess(BASE_CONFIG),
+      new Error("network down"),
+      stateUnchanged()
+    );
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    await act(async () => hook.result.current.refresh());
+    expect(hook.result.current.status).toBe("offline");
+    expect(hook.result.current.draft).toEqual({
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 12, mode: "hybrid" },
+    });
+
+    await act(async () => hook.result.current.refresh());
+    expect(hook.result.current.status).toBe("dirty");
+    expect(hook.result.current.error).toBeNull();
+  });
+
+  it("distinguishes server protocol errors from transport offline failures", async () => {
+    schemaHandler = () =>
+      resolveReply(configError("schema_unavailable", "schema missing"));
+    const protocolHook = renderSync();
+    await waitForLoaded(protocolHook, "error");
+    expect(protocolHook.result.current.error).toEqual({
+      kind: "protocol",
+      code: "schema_unavailable",
+      message: "schema missing",
+    });
+    protocolHook.unmount();
+
+    schemaHandler = () => Promise.reject(new Error("bridge disconnected"));
+    const offlineHook = renderSync();
+    await waitForLoaded(offlineHook, "offline");
+    expect(offlineHook.result.current.error).toEqual({
+      kind: "transport",
+      message: "bridge disconnected",
+    });
+  });
+});
