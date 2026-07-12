@@ -16,6 +16,7 @@ import {
   PanelLeftOpen,
   ScrollText,
   Search,
+  Settings,
   StickyNote,
   Sun,
   UserRound,
@@ -128,7 +129,10 @@ export function Sidebar({
     {
       id: "system",
       label: t("nav.groupSystem"),
-      items: [{ id: "system", label: t("nav.system"), icon: <BarChart3 /> }],
+      items: [
+        { id: "system", label: t("nav.system"), icon: <BarChart3 /> },
+        { id: "config", label: t("nav.config"), icon: <Settings /> },
+      ],
     },
   ];
   const navigationToggleLabel = collapsed

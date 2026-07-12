@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { ConfigUnsavedDialog } from "@/components/config/ConfigUnsavedDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Button } from "@/components/ui/Button";
 import { Toast } from "@/components/ui/Toast";
@@ -19,6 +20,7 @@ const GraphPage = lazy(() => import("@/pages/GraphPage").then(m => ({ default: m
 const MemoryPage = lazy(() => import("@/pages/MemoryPage").then(m => ({ default: m.MemoryPage })));
 const RecallPage = lazy(() => import("@/pages/RecallPage").then(m => ({ default: m.RecallPage })));
 const SystemPage = lazy(() => import("@/pages/SystemPage").then(m => ({ default: m.SystemPage })));
+const ConfigPage = lazy(() => import("@/pages/ConfigPage").then(m => ({ default: m.ConfigPage })));
 const ProfilesPage = lazy(() => import("@/pages/ProfilesPage").then(m => ({ default: m.ProfilesPage })));
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage").then(m => ({ default: m.KnowledgePage })));
 const NotesPage = lazy(() => import("@/pages/NotesPage").then(m => ({ default: m.NotesPage })));
@@ -50,6 +52,7 @@ const HASH_TO_PAGE: Record<string, PageId> = {
   preview: "preview",
   graph: "graph", memory: "memory", timeline: "timeline",
   recall: "recall", system: "system",
+  config: "config",
   profiles: "profiles", knowledge: "knowledge", notes: "notes", learning: "learning",
   jargon: "jargon", affection: "affection", social: "social",
   intelligence: "intelligence",
@@ -65,19 +68,87 @@ export default function App() {
   const { t } = useI18n();
   const { toast, showToast } = useToast();
   const [currentPage, setCurrentPage] = useState<PageId>(getPageFromHash);
+  const [pendingPage, setPendingPage] = useState<PageId | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const currentPageRef = useRef(currentPage);
+  const configDirtyRef = useRef(false);
+  const pendingPageRef = useRef<PageId | null>(null);
   const { connected: sseConnected, unreadCount, lastEvent, markSeen } = useRealtimeStream();
 
-  useEffect(() => {
-    const handler = () => setCurrentPage(getPageFromHash());
-    window.addEventListener("hashchange", handler);
-    return () => window.removeEventListener("hashchange", handler);
-  }, []);
-
-  const navigate = useCallback((page: PageId) => {
-    window.location.hash = `#/${page}`;
+  const applyPage = useCallback((page: PageId) => {
+    currentPageRef.current = page;
+    setCurrentPage(page);
     setMobileMenuOpen(false);
   }, []);
+
+  const commitNavigation = useCallback((page: PageId) => {
+    applyPage(page);
+    const nextHash = `#/${page}`;
+    if (window.location.hash !== nextHash) {
+      window.location.hash = nextHash;
+    }
+  }, [applyPage]);
+
+  const navigate = useCallback((page: PageId) => {
+    setMobileMenuOpen(false);
+    if (page === currentPageRef.current) return;
+
+    if (currentPageRef.current === "config" && configDirtyRef.current) {
+      pendingPageRef.current = page;
+      setPendingPage(page);
+      return;
+    }
+
+    commitNavigation(page);
+  }, [commitNavigation]);
+
+  const handleConfigDirtyChange = useCallback((dirty: boolean) => {
+    configDirtyRef.current = dirty;
+    if (dirty || pendingPageRef.current === null) return;
+
+    pendingPageRef.current = null;
+    setPendingPage(null);
+  }, []);
+
+  const cancelPendingNavigation = useCallback(() => {
+    pendingPageRef.current = null;
+    setPendingPage(null);
+  }, []);
+
+  const discardAndNavigate = useCallback(() => {
+    const target = pendingPageRef.current;
+    pendingPageRef.current = null;
+    configDirtyRef.current = false;
+    setPendingPage(null);
+    if (target !== null) commitNavigation(target);
+  }, [commitNavigation]);
+
+  useEffect(() => {
+    const handler = () => {
+      const target = getPageFromHash();
+      if (target === currentPageRef.current) return;
+
+      if (currentPageRef.current === "config" && configDirtyRef.current) {
+        pendingPageRef.current = target;
+        setPendingPage(target);
+        if (window.location.hash !== "#/config") {
+          window.history.replaceState(window.history.state, "", "#/config");
+        }
+        return;
+      }
+
+      applyPage(target);
+    };
+    window.addEventListener("hashchange", handler);
+    return () => window.removeEventListener("hashchange", handler);
+  }, [applyPage]);
+
+  const showConfigToast = useCallback((
+    message: string,
+    type?: "success" | "error" | "info",
+  ) => {
+    showToast(message, type === "error");
+  }, [showToast]);
 
   const cycleLanguage = useCallback(() => {
     toggleLanguage();
@@ -129,7 +200,7 @@ export default function App() {
               {sseConnected ? t("status.realtime") : t("status.offline")}
             </span>
           </div>
-          <SearchBar onNavigate={(page) => navigate(page)} />
+          <SearchBar onNavigate={navigate} />
         </header>
 
         <div className="min-h-0 flex-1 overflow-hidden">
@@ -143,6 +214,12 @@ export default function App() {
                 {currentPage === "timeline" && <TimelinePage showToast={showToast} />}
                 {currentPage === "recall" && <RecallPage showToast={showToast} />}
                 {currentPage === "system" && <SystemPage showToast={showToast} />}
+                {currentPage === "config" && (
+                  <ConfigPage
+                    showToast={showConfigToast}
+                    onDirtyChange={handleConfigDirtyChange}
+                  />
+                )}
                 {currentPage === "profiles" && <ProfilesPage showToast={showToast} />}
                 {currentPage === "knowledge" && <KnowledgePage showToast={showToast} />}
                 {currentPage === "notes" && <NotesPage showToast={showToast} />}
@@ -159,6 +236,11 @@ export default function App() {
       </main>
 
       <Toast toast={toast} />
+      <ConfigUnsavedDialog
+        open={pendingPage !== null}
+        onCancel={cancelPendingNavigation}
+        onDiscard={discardAndNavigate}
+      />
     </div>
   );
 }
