@@ -6,6 +6,14 @@ export const BROWSER_LAUNCH_CANDIDATES = [
   { channel: undefined, label: "Playwright Chromium" },
 ];
 
+export function createBrowserLaunchOptions(channel) {
+  return {
+    ...(channel ? { channel } : {}),
+    headless: false,
+    args: ["--headless=new"],
+  };
+}
+
 export function isRouteTextSettled(text, expected, loadingText = ROUTE_LOADING_TEXT) {
   const value = String(text ?? "");
   const expectedItems = Array.isArray(expected) ? expected : [expected];
