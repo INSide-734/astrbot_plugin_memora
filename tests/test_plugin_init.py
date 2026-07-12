@@ -470,6 +470,46 @@ class TestMemoraPluginReloadScheduling:
         assert reload_names == ["astrbot_plugin_memora"]
 
     @pytest.mark.asyncio
+    async def test_skips_reload_when_termination_starts_during_delay(self) -> None:
+        context = MagicMock()
+        sleep_entered = asyncio.Event()
+        release_sleep = asyncio.Event()
+        reload_names: list[str] = []
+        created_tasks: list[asyncio.Task] = []
+
+        async def reload_plugin(name: str) -> bool:
+            reload_names.append(name)
+            return True
+
+        async def delayed_sleep(delay: float) -> None:
+            assert delay == 0.5
+            sleep_entered.set()
+            await release_sleep.wait()
+
+        context._star_manager = types.SimpleNamespace(reload=reload_plugin)
+        plugin = self._make_plugin(context)
+        module = sys.modules[plugin.__class__.__module__]
+        create_task = asyncio.create_task
+
+        def capture_task(coro) -> asyncio.Task:
+            task = create_task(coro)
+            created_tasks.append(task)
+            return task
+
+        with patch.object(
+            module.asyncio, "sleep", side_effect=delayed_sleep
+        ), patch.object(module.asyncio, "create_task", side_effect=capture_task):
+            assert plugin.schedule_plugin_reload() is True
+            await asyncio.wait_for(sleep_entered.wait(), timeout=1.0)
+            plugin._terminating = True
+            release_sleep.set()
+            await asyncio.wait_for(created_tasks[0], timeout=1.0)
+
+        assert reload_names == []
+        assert created_tasks[0].exception() is None
+        assert plugin._background_tasks == set()
+
+    @pytest.mark.asyncio
     async def test_logs_false_reload_result(self) -> None:
         context = MagicMock()
         reload_called = asyncio.Event()

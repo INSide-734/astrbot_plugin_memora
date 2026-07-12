@@ -146,10 +146,15 @@ class ConfigApiMixin:
                 "invalid_request",
                 "请求体必须是 JSON 对象",
             )
+        if set(body) != {"base_revision", "changes"}:
+            return None, None, _config_error(
+                "invalid_request",
+                "请求体字段必须严格为 base_revision 和 changes",
+            )
 
         base_revision = body.get("base_revision")
         changes = body.get("changes")
-        if not isinstance(base_revision, str) or not base_revision:
+        if not isinstance(base_revision, str) or not base_revision.strip():
             return None, None, _config_error(
                 "invalid_request",
                 "base_revision 必须是非空字符串",
