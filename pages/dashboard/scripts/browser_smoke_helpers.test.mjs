@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BROWSER_LAUNCH_CANDIDATES,
+  createBrowserLaunchOptions,
   isRouteTextSettled,
 } from "./browser_smoke_helpers.mjs";
 
@@ -25,5 +26,17 @@ describe("browser smoke helpers", () => {
       { channel: "msedge", label: "Microsoft Edge" },
       { channel: undefined, label: "Playwright Chromium" },
     ]);
+  });
+
+  it("uses Chromium new headless mode without Playwright's legacy headless flag", () => {
+    expect(createBrowserLaunchOptions("chrome")).toEqual({
+      channel: "chrome",
+      headless: false,
+      args: ["--headless=new"],
+    });
+    expect(createBrowserLaunchOptions(undefined)).toEqual({
+      headless: false,
+      args: ["--headless=new"],
+    });
   });
 });

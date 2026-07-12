@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   BROWSER_LAUNCH_CANDIDATES,
+  createBrowserLaunchOptions,
   ROUTE_LOADING_TEXT,
 } from "./browser_smoke_helpers.mjs";
 
@@ -42,9 +43,7 @@ async function launchBrowser() {
   const failures = [];
   for (const candidate of BROWSER_LAUNCH_CANDIDATES) {
     try {
-      const options = candidate.channel
-        ? { channel: candidate.channel, headless: true }
-        : { headless: true };
+      const options = createBrowserLaunchOptions(candidate.channel);
       const browser = await chromium.launch(options);
       return { browser, label: candidate.label };
     } catch (error) {
