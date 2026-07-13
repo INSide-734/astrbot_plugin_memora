@@ -72,6 +72,53 @@ def _iter_schema_defaults(
             yield path, field_schema["default"]
 
 
+def _iter_schema_options(
+    schema: Mapping[str, Any],
+    prefix: tuple[str, ...] = (),
+) -> Iterator[tuple[str, Any, tuple[Any, ...]]]:
+    for key, field_schema in schema.items():
+        path = (*prefix, key)
+        if field_schema.get("type") == "object":
+            yield from _iter_schema_options(field_schema.get("items", {}), path)
+        elif "options" in field_schema:
+            yield (
+                ".".join(path),
+                field_schema.get("default", _MISSING),
+                tuple(field_schema["options"]),
+            )
+
+
+def _schema_option_cases() -> list[Any]:
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    return [
+        pytest.param(path, default, options, id=path)
+        for path, default, options in _iter_schema_options(schema)
+    ]
+
+
+def _value_outside_options(options: tuple[Any, ...]) -> Any:
+    def is_declared(candidate: Any) -> bool:
+        return any(
+            type(candidate) is type(option) and candidate == option
+            for option in options
+        )
+
+    for option in options:
+        if isinstance(option, str):
+            candidate = f"{option}__memora_invalid_schema_option__"
+        elif type(option) is bool:
+            candidate = not option
+        elif type(option) is int:
+            candidate = option + 1
+        elif type(option) is float:
+            candidate = option + 0.5
+        else:
+            continue
+        if not is_declared(candidate):
+            return candidate
+    return {"not": "a JSON scalar option"}
+
+
 def _schema_default_tree(schema: Mapping[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for path, default in _iter_schema_defaults(schema):
@@ -478,6 +525,77 @@ async def test_apply_reports_pydantic_errors_by_dotted_field_path() -> None:
         )
 
     assert "recall_engine.top_k" in exc_info.value.field_errors
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path,default,options", _schema_option_cases())
+async def test_apply_enforces_every_schema_options_list(
+    path: str,
+    default: Any,
+    options: tuple[Any, ...],
+) -> None:
+    from core.base.config_manager import ConfigManager, ConfigValidationError
+
+    assert default is not _MISSING
+    assert any(
+        type(default) is type(option) and default == option
+        for option in options
+    )
+    assert options
+    invalid_value = _value_outside_options(options)
+
+    source = SavingConfig({})
+    manager = ConfigManager(source)
+    snapshot_before = manager.get_config_snapshot()
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        await manager.apply_config_changes(
+            {path: invalid_value},
+            expected_revision=snapshot_before[1],
+        )
+
+    assert path in exc_info.value.field_errors
+    assert manager.get_config_snapshot() == snapshot_before
+    assert dict(source) == {}
+    assert source.saved_snapshots == []
+
+    result = await manager.apply_config_changes(
+        {path: default},
+        expected_revision=snapshot_before[1],
+        persist=False,
+    )
+    assert result.changed_paths == (path,)
+
+
+@pytest.mark.asyncio
+async def test_schema_options_use_exact_json_scalar_equality() -> None:
+    from core.base.config_manager import ConfigManager, ConfigValidationError
+
+    source = SavingConfig({"recall_engine": {"top_k": 1}})
+    source.schema = {
+        "recall_engine": {
+            "type": "object",
+            "items": {
+                "top_k": {
+                    "type": "int",
+                    "default": 1,
+                    "options": [1],
+                }
+            },
+        }
+    }
+    manager = ConfigManager(source)
+    snapshot_before = manager.get_config_snapshot()
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        await manager.apply_config_changes(
+            {"recall_engine.top_k": True},
+            expected_revision=snapshot_before[1],
+        )
+
+    assert "recall_engine.top_k" in exc_info.value.field_errors
+    assert manager.get_config_snapshot() == snapshot_before
+    assert source.saved_snapshots == []
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import math
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,9 +74,12 @@ class ConfigManager:
         self._persistence_capable = callable(
             getattr(self._source_config, "save_config", None)
         )
-        self._schema_leaf_paths = self._load_schema_leaf_paths(
-            self._source_config
-        )
+        schema_contract = self._load_schema_contract(self._source_config)
+        if schema_contract is None:
+            self._schema_leaf_paths = None
+            self._schema_leaf_options: dict[str, tuple[Any, ...]] = {}
+        else:
+            self._schema_leaf_paths, self._schema_leaf_options = schema_contract
         self._load_config()
 
     def _load_config(self) -> None:
@@ -201,14 +205,14 @@ class ConfigManager:
         return hashlib.sha256(canonical).hexdigest()
 
     @classmethod
-    def _load_schema_leaf_paths(
+    def _load_schema_contract(
         cls,
         source_config: MutableMapping[str, Any],
-    ) -> frozenset[str] | None:
+    ) -> tuple[frozenset[str], dict[str, tuple[Any, ...]]] | None:
         injected_schema = getattr(source_config, "schema", None)
-        injected_paths = cls._parse_schema_leaf_paths(injected_schema)
-        if injected_paths is not None:
-            return injected_paths
+        injected_contract = cls._parse_schema_contract(injected_schema)
+        if injected_contract is not None:
+            return injected_contract
         if injected_schema is not None:
             logger.warning("AstrBot 注入的配置 schema 无效，尝试仓库 schema")
 
@@ -219,30 +223,35 @@ class ConfigManager:
             logger.warning(f"无法加载 AstrBot 配置 schema，跳过未知字段检查: {exc}")
             return None
 
-        paths = cls._parse_schema_leaf_paths(schema)
-        if paths is None:
+        contract = cls._parse_schema_contract(schema)
+        if contract is None:
             logger.warning("仓库 AstrBot 配置 schema 无效，无法检查配置字段")
             return None
-        return paths
+        return contract
 
     @classmethod
-    def _parse_schema_leaf_paths(
+    def _parse_schema_contract(
         cls,
         schema: Any,
-    ) -> frozenset[str] | None:
+    ) -> tuple[frozenset[str], dict[str, tuple[Any, ...]]] | None:
         if not isinstance(schema, dict) or not schema:
             return None
         paths: set[str] = set()
-        if not cls._collect_schema_leaf_paths(schema, (), paths) or not paths:
+        options: dict[str, tuple[Any, ...]] = {}
+        if (
+            not cls._collect_schema_contract(schema, (), paths, options)
+            or not paths
+        ):
             return None
-        return frozenset(paths)
+        return frozenset(paths), options
 
     @classmethod
-    def _collect_schema_leaf_paths(
+    def _collect_schema_contract(
         cls,
         schema: Mapping[str, Any],
         prefix: tuple[str, ...],
-        result: set[str],
+        paths: set[str],
+        options: dict[str, tuple[Any, ...]],
     ) -> bool:
         for key, field_schema in schema.items():
             if (
@@ -255,13 +264,39 @@ class ConfigManager:
             path = (*prefix, key)
             items = field_schema.get("items")
             if field_schema["type"] == "object":
-                if not isinstance(items, dict) or not cls._collect_schema_leaf_paths(
-                    items, path, result
+                if not isinstance(items, dict) or not cls._collect_schema_contract(
+                    items, path, paths, options
                 ):
                     return False
             else:
-                result.add(".".join(path))
+                dotted_path = ".".join(path)
+                paths.add(dotted_path)
+                if "options" in field_schema:
+                    raw_options = field_schema["options"]
+                    if not isinstance(raw_options, list) or any(
+                        not cls._is_json_scalar(option)
+                        for option in raw_options
+                    ):
+                        return False
+                    options[dotted_path] = tuple(copy.deepcopy(raw_options))
         return True
+
+    @staticmethod
+    def _is_json_scalar(value: Any) -> bool:
+        if value is None or type(value) in (bool, int, str):
+            return True
+        return type(value) is float and math.isfinite(value)
+
+    @classmethod
+    def _matches_schema_option(
+        cls,
+        value: Any,
+        options: tuple[Any, ...],
+    ) -> bool:
+        return cls._is_json_scalar(value) and any(
+            type(value) is type(option) and value == option
+            for option in options
+        )
 
     def get_config_snapshot(self) -> tuple[dict[str, Any], str]:
         """返回与内部状态隔离的配置副本及其 SHA-256 修订号。"""
@@ -365,6 +400,14 @@ class ConfigManager:
                 and raw_path not in self._schema_leaf_paths
             ):
                 field_errors[raw_path] = "配置路径不在 AstrBot schema 中"
+            elif (
+                raw_path in self._schema_leaf_options
+                and not self._matches_schema_option(
+                    changes[raw_path],
+                    self._schema_leaf_options[raw_path],
+                )
+            ):
+                field_errors[raw_path] = "配置值不在 AstrBot schema 允许的选项中"
         return field_errors
 
     @staticmethod

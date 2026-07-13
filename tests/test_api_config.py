@@ -355,7 +355,7 @@ class TestConfigApplyApi:
         manager.apply_config_changes = AsyncMock(
             side_effect=ConfigValidationError({"recall_engine.top_k": "must be positive"})
         )
-        api, _ = _make_api(
+        api, plugin = _make_api(
             request=_Request(
                 body={"base_revision": "rev-1", "changes": {"recall_engine.top_k": -1}}
             ),
@@ -370,6 +370,7 @@ class TestConfigApplyApi:
             "message": "配置验证失败",
             "data": {"field_errors": {"recall_engine.top_k": "must be positive"}},
         }
+        plugin.schedule_plugin_reload.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_maps_persistence_failure_without_scheduling_reload(self) -> None:
