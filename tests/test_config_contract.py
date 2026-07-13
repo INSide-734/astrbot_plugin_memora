@@ -639,6 +639,36 @@ async def test_apply_rolls_back_source_and_snapshot_when_save_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_save_preserves_concurrent_external_source_change() -> None:
+    from core.base.config_manager import ConfigManager, ConfigPersistenceError
+
+    source = BlockingSavingConfig(
+        {"recall_engine": {"top_k": 5}},
+        fail_save=True,
+    )
+    manager = ConfigManager(source)
+    _, original_revision = manager.get_config_snapshot()
+    apply_task = asyncio.create_task(
+        manager.apply_config_changes(
+            {"recall_engine.top_k": 6},
+            expected_revision=original_revision,
+        )
+    )
+
+    assert await asyncio.to_thread(source.save_entered.wait, 2)
+    source["recall_engine"]["top_k"] = 9
+    source.release_save.set()
+
+    with pytest.raises(ConfigPersistenceError):
+        await apply_task
+
+    snapshot, reconciled_revision = await manager.get_config_snapshot_async()
+    assert reconciled_revision != original_revision
+    assert snapshot["recall_engine"]["top_k"] == 9
+    assert source["recall_engine"]["top_k"] == 9
+
+
+@pytest.mark.asyncio
 async def test_cancelled_apply_publishes_successful_save_before_propagating() -> None:
     from core.base.config_manager import ConfigManager
 

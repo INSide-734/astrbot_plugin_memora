@@ -437,8 +437,10 @@ class ConfigManager:
     async def _persist_source(self, candidate: dict[str, Any]) -> bool:
         source_before = copy.deepcopy(dict(self._source_config))
         cancellation_requested = False
+        candidate_installed = False
         try:
             self._replace_source(candidate)
+            candidate_installed = True
             save_config = getattr(self._source_config, "save_config", None)
             if callable(save_config):
                 save_task = asyncio.create_task(asyncio.to_thread(save_config))
@@ -450,14 +452,24 @@ class ConfigManager:
                         cancellation_requested = True
                         self._consume_pending_cancellation()
         except Exception as exc:
-            try:
-                self._replace_source(source_before)
-            except Exception as rollback_exc:
-                logger.error(f"恢复 AstrBot 配置映射失败: {rollback_exc}")
+            if not candidate_installed or self._source_still_matches(candidate):
+                try:
+                    self._replace_source(source_before)
+                except Exception as rollback_exc:
+                    logger.error(f"恢复 AstrBot 配置映射失败: {rollback_exc}")
             if cancellation_requested:
                 raise asyncio.CancelledError from exc
             raise ConfigPersistenceError(f"配置持久化失败: {exc}") from exc
         return cancellation_requested
+
+    def _source_still_matches(self, candidate: Mapping[str, Any]) -> bool:
+        try:
+            source_snapshot = copy.deepcopy(dict(self._source_config))
+            return self._compute_revision(source_snapshot) == self._compute_revision(
+                candidate
+            )
+        except Exception:
+            return False
 
     @staticmethod
     def _consume_pending_cancellation() -> None:
