@@ -58,6 +58,26 @@ const HASH_TO_PAGE: Record<string, PageId> = {
   intelligence: "intelligence",
 };
 
+const HISTORY_INDEX_KEY = "__memoraHistoryIndex";
+const HISTORY_GUARD_KEY = "__memoraHistoryGuard";
+
+function getHistoryIndex(state: unknown): number | null {
+  if (!state || typeof state !== "object") return null;
+  const value = (state as Record<string, unknown>)[HISTORY_INDEX_KEY];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function withHistoryIndex(
+  state: unknown,
+  index: number,
+  extra: Record<string, unknown> = {},
+) {
+  const base = state && typeof state === "object"
+    ? state as Record<string, unknown>
+    : {};
+  return { ...base, ...extra, [HISTORY_INDEX_KEY]: index };
+}
+
 function getPageFromHash(): PageId {
   const hash = window.location.hash.replace("#/", "").replace("#", "");
   return HASH_TO_PAGE[hash] ?? "graph";
@@ -73,6 +93,12 @@ export default function App() {
   const currentPageRef = useRef(currentPage);
   const configDirtyRef = useRef(false);
   const pendingPageRef = useRef<PageId | null>(null);
+  const pendingHistoryDeltaRef = useRef<number | null>(null);
+  const historyIndexRef = useRef(0);
+  const restoringHistoryRef = useRef(false);
+  const replayingHistoryRef = useRef(false);
+  const ignoredHashChangesRef = useRef(0);
+  const browserHashRef = useRef(window.location.hash);
   const { connected: sseConnected, unreadCount, lastEvent, markSeen } = useRealtimeStream();
 
   const applyPage = useCallback((page: PageId) => {
@@ -82,11 +108,12 @@ export default function App() {
   }, []);
 
   const commitNavigation = useCallback((page: PageId) => {
-    applyPage(page);
     const nextHash = `#/${page}`;
-    if (window.location.hash !== nextHash) {
-      window.location.hash = nextHash;
-    }
+    const nextIndex = historyIndexRef.current + 1;
+    window.history.pushState(withHistoryIndex(null, nextIndex), "", nextHash);
+    historyIndexRef.current = nextIndex;
+    browserHashRef.current = nextHash;
+    applyPage(page);
   }, [applyPage]);
 
   const navigate = useCallback((page: PageId) => {
@@ -95,6 +122,7 @@ export default function App() {
 
     if (currentPageRef.current === "config" && configDirtyRef.current) {
       pendingPageRef.current = page;
+      pendingHistoryDeltaRef.current = null;
       setPendingPage(page);
       return;
     }
@@ -107,41 +135,141 @@ export default function App() {
     if (dirty || pendingPageRef.current === null) return;
 
     pendingPageRef.current = null;
+    pendingHistoryDeltaRef.current = null;
     setPendingPage(null);
   }, []);
 
   const cancelPendingNavigation = useCallback(() => {
     pendingPageRef.current = null;
+    pendingHistoryDeltaRef.current = null;
     setPendingPage(null);
   }, []);
 
   const discardAndNavigate = useCallback(() => {
     const target = pendingPageRef.current;
+    const historyDelta = pendingHistoryDeltaRef.current;
     pendingPageRef.current = null;
+    pendingHistoryDeltaRef.current = null;
     configDirtyRef.current = false;
     setPendingPage(null);
-    if (target !== null) commitNavigation(target);
+    if (historyDelta !== null) {
+      replayingHistoryRef.current = true;
+      window.history.go(historyDelta);
+    } else if (target !== null) {
+      commitNavigation(target);
+    }
   }, [commitNavigation]);
 
-  useEffect(() => {
-    const handler = () => {
-      const target = getPageFromHash();
-      if (target === currentPageRef.current) return;
+  const blockHistoryNavigation = useCallback((
+    target: PageId,
+    targetIndex: number | null,
+  ) => {
+    pendingPageRef.current = target;
 
-      if (currentPageRef.current === "config" && configDirtyRef.current) {
-        pendingPageRef.current = target;
-        setPendingPage(target);
-        if (window.location.hash !== "#/config") {
-          window.history.replaceState(window.history.state, "", "#/config");
-        }
+    if (targetIndex === null || targetIndex === historyIndexRef.current) {
+      const sentinelIndex = historyIndexRef.current + 1;
+      window.history.pushState(
+        withHistoryIndex(null, sentinelIndex, { [HISTORY_GUARD_KEY]: true }),
+        "",
+        "#/config",
+      );
+      historyIndexRef.current = sentinelIndex;
+      browserHashRef.current = "#/config";
+      pendingHistoryDeltaRef.current = -1;
+      setPendingPage(target);
+      return;
+    }
+
+    const historyDelta = targetIndex - historyIndexRef.current;
+    pendingHistoryDeltaRef.current = historyDelta;
+    restoringHistoryRef.current = true;
+    window.history.go(-historyDelta);
+  }, []);
+
+  const handleHistoryArrival = useCallback((
+    target: PageId,
+    targetIndex: number | null,
+  ) => {
+    if (restoringHistoryRef.current) {
+      restoringHistoryRef.current = false;
+      if (targetIndex !== null) historyIndexRef.current = targetIndex;
+      if (pendingPageRef.current !== null) {
+        setPendingPage(pendingPageRef.current);
+      }
+      return;
+    }
+
+    if (replayingHistoryRef.current) {
+      replayingHistoryRef.current = false;
+      if (targetIndex !== null) historyIndexRef.current = targetIndex;
+      applyPage(target);
+      return;
+    }
+
+    if (target === currentPageRef.current) {
+      if (targetIndex !== null) historyIndexRef.current = targetIndex;
+      return;
+    }
+
+    if (currentPageRef.current === "config" && configDirtyRef.current) {
+      blockHistoryNavigation(target, targetIndex);
+      return;
+    }
+
+    if (targetIndex !== null) historyIndexRef.current = targetIndex;
+    applyPage(target);
+  }, [applyPage, blockHistoryNavigation]);
+
+  useEffect(() => {
+    const initialIndex = getHistoryIndex(window.history.state) ?? 0;
+    if (getHistoryIndex(window.history.state) === null) {
+      window.history.replaceState(
+        withHistoryIndex(window.history.state, initialIndex),
+        "",
+        window.location.href,
+      );
+    }
+    historyIndexRef.current = initialIndex;
+    browserHashRef.current = window.location.hash;
+
+    const handlePopState = (event: PopStateEvent) => {
+      const nextHash = window.location.hash;
+      if (nextHash !== browserHashRef.current) {
+        ignoredHashChangesRef.current += 1;
+      }
+      browserHashRef.current = nextHash;
+      handleHistoryArrival(getPageFromHash(), getHistoryIndex(event.state));
+    };
+
+    const handleHashChange = () => {
+      if (ignoredHashChangesRef.current > 0) {
+        ignoredHashChangesRef.current -= 1;
+        browserHashRef.current = window.location.hash;
         return;
       }
 
-      applyPage(target);
+      browserHashRef.current = window.location.hash;
+      if (restoringHistoryRef.current || replayingHistoryRef.current) return;
+
+      let targetIndex = getHistoryIndex(window.history.state);
+      if (targetIndex === null || targetIndex === historyIndexRef.current) {
+        targetIndex = historyIndexRef.current + 1;
+        window.history.replaceState(
+          withHistoryIndex(window.history.state, targetIndex),
+          "",
+          window.location.href,
+        );
+      }
+      handleHistoryArrival(getPageFromHash(), targetIndex);
     };
-    window.addEventListener("hashchange", handler);
-    return () => window.removeEventListener("hashchange", handler);
-  }, [applyPage]);
+
+    window.addEventListener("popstate", handlePopState);
+    window.addEventListener("hashchange", handleHashChange);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      window.removeEventListener("hashchange", handleHashChange);
+    };
+  }, [handleHistoryArrival]);
 
   const showConfigToast = useCallback((
     message: string,
