@@ -98,14 +98,7 @@ function findButton(text, scope = window.document) {
   return button;
 }
 
-function editNumberField(pathName, value) {
-  const pathCode = [...window.document.querySelectorAll("code")].find(
-    (candidate) => candidate.textContent?.trim() === pathName,
-  );
-  const input = pathCode
-    ?.closest('[data-slot="field"]')
-    ?.querySelector('input[type="number"]');
-  if (!input) throw new Error(`Dashboard runtime could not find numeric field: ${pathName}`);
+function setInputValue(input, value) {
   const valueSetter = Object.getOwnPropertyDescriptor(
     window.HTMLInputElement.prototype,
     "value",
@@ -114,6 +107,17 @@ function editNumberField(pathName, value) {
   valueSetter.call(input, String(value));
   input.dispatchEvent(new window.Event("input", { bubbles: true }));
   input.dispatchEvent(new window.Event("change", { bubbles: true }));
+}
+
+function editNumberField(pathName, value) {
+  const pathCode = [...window.document.querySelectorAll("code")].find(
+    (candidate) => candidate.textContent?.trim() === pathName,
+  );
+  const input = pathCode
+    ?.closest('[data-slot="field"]')
+    ?.querySelector('input[type="number"]');
+  if (!input) throw new Error(`Dashboard runtime could not find numeric field: ${pathName}`);
+  setInputValue(input, value);
 }
 
 async function waitForRootText(expected, description, timeoutMs = 10_000) {
@@ -151,7 +155,20 @@ try {
 
   const bridge = window.AstrBotPluginPage;
   if (!bridge) throw new Error("Dashboard production bundle did not install its mock bridge");
-  const { calls, forwardPost } = instrumentRuntimeBridge(bridge);
+  let loseNextStaleApplyResponse = true;
+  const { calls, forwardPost } = instrumentRuntimeBridge(bridge, {
+    afterPost({ endpoint, response }) {
+      if (
+        !loseNextStaleApplyResponse
+        || endpoint !== "page/config/apply"
+        || response?.code !== "config_conflict"
+      ) {
+        return;
+      }
+      loseNextStaleApplyResponse = false;
+      throw new Error("Runtime smoke lost the stale apply response");
+    },
+  });
 
   const routes = [
     ["#/graph", "知识图谱"],
@@ -180,6 +197,20 @@ try {
     }
   }
 
+  const configSearch = window.document.querySelector('input[aria-label="搜索配置"]');
+  if (!configSearch) throw new Error("Dashboard runtime could not find config search");
+  setInputValue(configSearch, "recall_engine.top_k");
+  await waitFor(
+    () => {
+      const codePaths = [...window.document.querySelectorAll("code")].map(
+        (code) => code.textContent?.trim(),
+      );
+      return codePaths.includes("recall_engine.top_k")
+        && !codePaths.includes("provider_settings.embedding_provider_id");
+    },
+    { timeoutMs: 5_000, description: "config search to narrow the rendered schema" },
+  );
+
   editNumberField("recall_engine.top_k", 9);
   await waitForRootText("有未保存更改", "top_k edit to mark the page dirty");
   const initialStateCall = calls.find(
@@ -207,6 +238,17 @@ try {
       `${error.message}\nBody: ${(window.document.body.textContent ?? "").replace(/\s+/g, " ").trim()}\nConfig calls: ${JSON.stringify(configCalls)}`,
     );
   }
+  const staleApplyCalls = calls.filter(
+    (call) =>
+      call.method === "POST"
+      && call.endpoint === "page/config/apply"
+      && call.body?.base_revision === initialRevision,
+  );
+  if (staleApplyCalls.length !== 1) {
+    throw new Error(
+      `Dashboard runtime expected one stale Apply POST, received ${staleApplyCalls.length}`,
+    );
+  }
 
   await waitFor(
     () => {
@@ -219,7 +261,40 @@ try {
   await waitForRootText("有未保存更改", "rebased draft to remain dirty");
 
   findButton("应用配置").click();
-  await waitForRootText("正在重载", "successful apply to enter reload state", 5_000);
+  const successfulApplyCall = await waitFor(
+    () => [...calls].reverse().find(
+      (call) =>
+        call.method === "POST"
+        && call.endpoint === "page/config/apply"
+        && call.response?.status === "ok",
+    ),
+    {
+      timeoutMs: 5_000,
+      description: "successful Apply response to enter reload state",
+    },
+  );
+  const appliedRevision = successfulApplyCall?.response?.data?.revision;
+  if (!appliedRevision) {
+    throw new Error("Dashboard runtime did not capture the successful Apply revision");
+  }
+  await waitFor(
+    async () => {
+      window.dispatchEvent(new window.Event("focus"));
+      await delay(50);
+      return calls.some(
+        (call) =>
+          call.method === "GET"
+          && call.endpoint === "page/config/state"
+          && call.params?.revision === appliedRevision
+          && /Mock plugin is reloading/i.test(String(call.error ?? "")),
+      );
+    },
+    {
+      timeoutMs: 700,
+      intervalMs: 25,
+      description: "reload state GET to observe the mock disconnect",
+    },
+  );
   await delay(850);
   window.dispatchEvent(new window.Event("focus"));
   await waitForRootText("已同步", "changed plugin instance to finish reload", 5_000);
