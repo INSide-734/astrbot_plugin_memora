@@ -38,6 +38,7 @@ function configLifecycleCalls() {
         code: "config_conflict",
         data: { current_revision: "revision-2" },
       },
+      error: "Runtime smoke lost the stale apply response",
     },
     {
       method: "GET",
@@ -69,6 +70,12 @@ function configLifecycleCalls() {
           reload_scheduled: true,
         },
       },
+    },
+    {
+      method: "GET",
+      endpoint: "page/config/state",
+      params: { revision: "revision-3" },
+      error: "Mock plugin is reloading",
     },
     {
       method: "GET",
@@ -159,6 +166,56 @@ describe("runtime smoke bridge instrumentation", () => {
     expect(bridge.apiPost).toBe(originalPost);
   });
 
+  it("records a POST response before a one-shot afterPost transport failure", async () => {
+    let loseNextApplyResponse = true;
+    let forwardedCount = 0;
+    const bridge = {
+      async apiGet() {
+        return { status: "ok" };
+      },
+      async apiPost() {
+        forwardedCount += 1;
+        return {
+          status: "error",
+          code: "config_conflict",
+          data: { current_revision: "revision-2" },
+        };
+      },
+    };
+    const { calls } = instrumentRuntimeBridge(bridge, {
+      afterPost({ response }) {
+        if (!loseNextApplyResponse || response.code !== "config_conflict") return;
+        loseNextApplyResponse = false;
+        throw new Error("Runtime smoke lost the stale apply response");
+      },
+    });
+
+    await expect(
+      bridge.apiPost("page/config/apply", {
+        base_revision: "revision-1",
+        changes: { "recall_engine.top_k": 9 },
+      }),
+    ).rejects.toThrow("Runtime smoke lost the stale apply response");
+
+    expect(forwardedCount).toBe(1);
+    expect(calls).toEqual([
+      {
+        method: "POST",
+        endpoint: "page/config/apply",
+        body: {
+          base_revision: "revision-1",
+          changes: { "recall_engine.top_k": 9 },
+        },
+        response: {
+          status: "error",
+          code: "config_conflict",
+          data: { current_revision: "revision-2" },
+        },
+        error: "Runtime smoke lost the stale apply response",
+      },
+    ]);
+  });
+
   it("exposes an unrecorded POST bypass for external AstrBot changes", async () => {
     const forwarded = [];
     const bridge = {
@@ -210,6 +267,31 @@ describe("runtime smoke bridge instrumentation", () => {
         changedValue: 9,
       }),
     ).toThrow(/exactly two UI apply POSTs/);
+  });
+
+  it("rejects a conflict trace without the simulated lost response", () => {
+    const calls = configLifecycleCalls();
+    delete calls[2].error;
+
+    expect(() =>
+      runtimeHelpers.assertConfigRuntimeCalls(calls, {
+        changedPath: "recall_engine.top_k",
+        changedValue: 9,
+      }),
+    ).toThrow(/lost stale apply response/);
+  });
+
+  it("rejects a reload trace without a recorded disconnect", () => {
+    const calls = configLifecycleCalls().filter(
+      (call) => call.error !== "Mock plugin is reloading",
+    );
+
+    expect(() =>
+      runtimeHelpers.assertConfigRuntimeCalls(calls, {
+        changedPath: "recall_engine.top_k",
+        changedValue: 9,
+      }),
+    ).toThrow(/reload disconnect/);
   });
 
   it("times out bounded waits with the pending condition in the error", async () => {

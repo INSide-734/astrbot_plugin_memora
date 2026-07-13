@@ -76,6 +76,13 @@ export function assertConfigRuntimeCalls(
     applyCalls.length === 2,
     `expected exactly two UI apply POSTs, received ${applyCalls.length}`,
   );
+  const staleApplyCalls = applyCalls.filter(
+    (call) => call.body?.base_revision === initialRevision,
+  );
+  requireTrace(
+    staleApplyCalls.length === 1,
+    `expected exactly one stale UI apply POST before rebase, received ${staleApplyCalls.length}`,
+  );
   const expectedChanges = { [changedPath]: changedValue };
   requireTrace(
     sameJson(applyCalls[0].body?.changes, expectedChanges),
@@ -89,6 +96,10 @@ export function assertConfigRuntimeCalls(
     applyCalls[0].response?.status === "error"
       && applyCalls[0].response?.code === "config_conflict",
     "first apply was not rejected as a revision conflict",
+  );
+  requireTrace(
+    /lost.*stale apply response/i.test(String(applyCalls[0].error ?? "")),
+    "missing lost stale apply response transport error",
   );
   const conflictRevision = applyCalls[0].response?.data?.current_revision;
   requireTrace(
@@ -121,6 +132,18 @@ export function assertConfigRuntimeCalls(
       && call.response?.data?.changed === false,
   );
   requireTrace(finalStateCall, "missing unchanged conditional state GET after reload");
+  const successfulApplyIndex = configCalls.indexOf(applyCalls[1]);
+  const finalStateIndex = configCalls.indexOf(finalStateCall);
+  const reloadDisconnectCall = configCalls
+    .slice(successfulApplyIndex + 1, finalStateIndex)
+    .find(
+      (call) =>
+        call.method === "GET"
+        && call.endpoint === "page/config/state"
+        && call.params?.revision === appliedRevision
+        && /Mock plugin is reloading/i.test(String(call.error ?? "")),
+    );
+  requireTrace(reloadDisconnectCall, "missing reload disconnect before final state");
   requireTrace(
     !Object.prototype.hasOwnProperty.call(finalStateCall.response.data, "config"),
     "unchanged conditional state must omit config",
@@ -142,7 +165,7 @@ export function assertConfigRuntimeCalls(
   };
 }
 
-export function instrumentRuntimeBridge(bridge) {
+export function instrumentRuntimeBridge(bridge, { afterPost } = {}) {
   if (
     !bridge
     || typeof bridge.apiGet !== "function"
@@ -182,6 +205,13 @@ export function instrumentRuntimeBridge(bridge) {
     try {
       const response = await originalPost.call(this, endpoint, body);
       call.response = cloneJson(response);
+      if (typeof afterPost === "function") {
+        await afterPost({
+          endpoint: String(endpoint),
+          body: cloneJson(body),
+          response: cloneJson(response),
+        });
+      }
       return response;
     } catch (error) {
       call.error = errorMessage(error);
