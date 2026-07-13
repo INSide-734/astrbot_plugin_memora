@@ -123,7 +123,9 @@ export function ConfigField({
           <h2 id={`${id}-heading`} className="text-sm font-medium">
             {label}
           </h2>
-          <code className="text-xs text-muted-foreground">{path}</code>
+          <code className="block min-w-0 break-all text-xs text-muted-foreground">
+            {path}
+          </code>
           {node.hint ? (
             <p className="text-sm text-muted-foreground">{node.hint}</p>
           ) : null}
@@ -261,7 +263,7 @@ export function ConfigField({
       <FieldContent>
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
         <FieldDescription>
-          <code>{path}</code>
+          <code className="block min-w-0 break-all">{path}</code>
         </FieldDescription>
         {node.hint ? (
           <FieldDescription id={`${id}-hint`}>{node.hint}</FieldDescription>
