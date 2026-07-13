@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   BROWSER_LAUNCH_CANDIDATES,
   createBrowserLaunchOptions,
+  installBundledMockBridgeHarness,
+  instrumentBrowserBridge,
   isRouteTextSettled,
 } from "./browser_smoke_helpers.mjs";
 
@@ -40,5 +42,160 @@ describe("browser smoke helpers", () => {
     expect(createBrowserLaunchOptions(undefined, { platform: "win32", ci: true })).toEqual({
       headless: true,
     });
+  });
+
+  it("records immutable GET and POST transport snapshots while exposing a raw bypass", async () => {
+    const forwarded = [];
+    const sourceResponse = {
+      status: "ok",
+      data: { revision: "revision-2", nested: { value: 1 } },
+    };
+    const sourceBridge = {
+      marker: "source-bridge",
+      async apiGet(endpoint, params) {
+        forwarded.push({ method: "GET", endpoint, params, receiver: this.marker });
+        return sourceResponse;
+      },
+      async apiPost(endpoint, body) {
+        forwarded.push({ method: "POST", endpoint, body, receiver: this.marker });
+        return sourceResponse;
+      },
+    };
+    const { bridge, calls, postCalls, raw } = instrumentBrowserBridge(sourceBridge);
+    const params = { revision: "revision-1" };
+    const body = {
+      base_revision: "revision-1",
+      changes: { "recall_engine.top_k": 9 },
+    };
+
+    const getResponse = await bridge.apiGet("page/config/state", params);
+    await bridge.apiPost("page/config/apply", body);
+    params.revision = "mutated";
+    body.changes["recall_engine.top_k"] = 99;
+    getResponse.data.nested.value = 99;
+
+    expect(calls).toEqual([
+      {
+        method: "GET",
+        endpoint: "page/config/state",
+        params: { revision: "revision-1" },
+        response: {
+          status: "ok",
+          data: { revision: "revision-2", nested: { value: 1 } },
+        },
+      },
+      {
+        method: "POST",
+        endpoint: "page/config/apply",
+        body: {
+          base_revision: "revision-1",
+          changes: { "recall_engine.top_k": 9 },
+        },
+        response: {
+          status: "ok",
+          data: { revision: "revision-2", nested: { value: 1 } },
+        },
+      },
+    ]);
+    expect(postCalls).toEqual(["config/apply"]);
+
+    await raw.apiPost("page/config/apply", {
+      base_revision: "revision-2",
+      changes: { "recall_engine.top_k": 8 },
+    });
+    expect(calls).toHaveLength(2);
+    expect(postCalls).toEqual(["config/apply"]);
+    expect(forwarded.map((call) => call.receiver)).toEqual([
+      "source-bridge",
+      "source-bridge",
+      "source-bridge",
+    ]);
+  });
+
+  it("lets the bundle install its mock bridge before wrapping it for the smoke harness", async () => {
+    const target = {};
+    const harness = installBundledMockBridgeHarness(target);
+
+    expect(target.AstrBotPluginPage).toBeUndefined();
+    const sourceBridge = {
+      marker: "bundled-mock",
+      async apiGet(endpoint, params) {
+        return { status: "ok", data: { endpoint, params, marker: this.marker } };
+      },
+      async apiPost() {
+        return { status: "ok" };
+      },
+    };
+    target.AstrBotPluginPage = sourceBridge;
+
+    await target.AstrBotPluginPage.apiGet("page/config/state", {
+      revision: "revision-1",
+    });
+    expect(harness.calls).toEqual([
+      {
+        method: "GET",
+        endpoint: "page/config/state",
+        params: { revision: "revision-1" },
+        response: {
+          status: "ok",
+          data: {
+            endpoint: "page/config/state",
+            params: { revision: "revision-1" },
+            marker: "bundled-mock",
+          },
+        },
+      },
+    ]);
+    expect(target.__memoraBridgeCalls).toBe(harness.calls);
+    expect(target.__memoraRawBridge.apiGet).toBeTypeOf("function");
+    expect(await target.__memoraRawBridge.apiGet("page/config/state", {})).toMatchObject({
+      data: { marker: "bundled-mock" },
+    });
+    expect(harness.calls).toHaveLength(1);
+  });
+
+  it("records a response before an afterPost hook simulates a lost transport response", async () => {
+    const sourceBridge = {
+      async apiGet() {
+        return { status: "ok" };
+      },
+      async apiPost() {
+        return {
+          status: "error",
+          code: "config_conflict",
+          data: { current_revision: "revision-2" },
+        };
+      },
+    };
+    const { bridge, calls } = instrumentBrowserBridge(sourceBridge, {
+      afterPost({ response }) {
+        if (response.code === "config_conflict") {
+          throw new Error("Browser smoke lost the stale apply response");
+        }
+      },
+    });
+
+    await expect(
+      bridge.apiPost("page/config/apply", {
+        base_revision: "revision-1",
+        changes: { "recall_engine.top_k": 9 },
+      }),
+    ).rejects.toThrow("Browser smoke lost the stale apply response");
+    expect(calls).toEqual([
+      {
+        method: "POST",
+        endpoint: "page/config/apply",
+        body: {
+          base_revision: "revision-1",
+          changes: { "recall_engine.top_k": 9 },
+        },
+        response: {
+          status: "error",
+          code: "config_conflict",
+          data: { current_revision: "revision-2" },
+        },
+        error: "Browser smoke lost the stale apply response",
+      },
+    ]);
   });
 });

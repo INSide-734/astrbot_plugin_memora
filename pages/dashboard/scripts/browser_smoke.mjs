@@ -6,8 +6,11 @@ import { pathToFileURL } from "node:url";
 import {
   BROWSER_LAUNCH_CANDIDATES,
   createBrowserLaunchOptions,
+  installBundledMockBridgeHarness,
+  instrumentBrowserBridge,
   ROUTE_LOADING_TEXT,
 } from "./browser_smoke_helpers.mjs";
+import { assertConfigRuntimeCalls } from "./runtime_smoke_helpers.mjs";
 
 const dashboardRoot = process.cwd();
 const htmlPath = path.join(dashboardRoot, "index.html");
@@ -18,6 +21,9 @@ if (html.includes("/src/main") || html.includes('type="module"')) {
 }
 
 const SCREENSHOT_BASELINES = {
+  "config.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "config-conflict.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "mobile-config.png": { width: 390, height: 844, minBytes: 10_000 },
   "graph.png": { width: 1366, height: 900, minBytes: 10_000 },
   "memory.png": { width: 1366, height: 900, minBytes: 10_000 },
   "system.png": { width: 1366, height: 900, minBytes: 10_000 },
@@ -527,8 +533,30 @@ async function assertNoHorizontalOverflow(page, label) {
     || item.overflow > 1
   ));
   if (invalid.length > 0) {
+    const offenders = await page.evaluate(() => {
+      const viewportRight = document.documentElement.clientWidth;
+      return [...document.querySelectorAll('[data-slot="page-content"] *')]
+        .map((element) => {
+          const rect = element.getBoundingClientRect();
+          return {
+            tag: element.tagName.toLowerCase(),
+            slot: element.getAttribute("data-slot"),
+            className: element.getAttribute("class"),
+            text: (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
+            left: Math.round(rect.left),
+            right: Math.round(rect.right),
+            width: Math.round(rect.width),
+            scrollWidth: element.scrollWidth,
+            clientWidth: element.clientWidth,
+          };
+        })
+        .filter((item) => item.right > viewportRight + 1 && item.width > 1)
+        .sort((left, right) => right.right - left.right)
+        .slice(0, 12);
+    });
     throw new Error(
-      `Dashboard route ${label} has horizontal overflow: ${JSON.stringify(invalid)}`
+      `Dashboard route ${label} has horizontal overflow: ${JSON.stringify(invalid)}; `
+        + `offenders=${JSON.stringify(offenders)}`
     );
   }
 }
@@ -957,6 +985,330 @@ async function assertHighImpactConfirmation(page) {
   }
 }
 
+async function installBundledMockBridge(page) {
+  const content = `{
+    const instrumentBrowserBridge = ${instrumentBrowserBridge.toString()};
+    const installBundledMockBridgeHarness = ${installBundledMockBridgeHarness.toString()};
+    window.__memoraLoseNextStaleApplyResponse = true;
+    installBundledMockBridgeHarness(window, (sourceBridge, options) =>
+      instrumentBrowserBridge(sourceBridge, {
+        ...options,
+        afterPost({ endpoint, response }) {
+          if (
+            !window.__memoraLoseNextStaleApplyResponse
+            || endpoint !== "page/config/apply"
+            || response?.code !== "config_conflict"
+          ) return;
+          window.__memoraLoseNextStaleApplyResponse = false;
+          throw new Error("Browser smoke lost the stale apply response");
+        },
+      })
+    );
+  }`;
+  await page.addInitScript({ content });
+}
+
+async function openBundledConfigPage(browser, viewport, errors) {
+  const context = await browser.newContext({ viewport });
+  const page = await context.newPage();
+  collectPageErrors(page, errors);
+  await installBundledMockBridge(page);
+  await page.goto(`${pathToFileURL(htmlPath).href}#/config`, { waitUntil: "load" });
+  await page.bringToFront();
+  await page.waitForSelector("#root > *", { timeout: 10_000 });
+  return { context, page };
+}
+
+async function waitForConfigReady(page, label) {
+  await waitForRootText(
+    page,
+    ["配置", "单次召回数量", "recall_engine.top_k", "已同步"],
+    label,
+  );
+  await page.waitForFunction(
+    ({ sections, fields }) =>
+      document.querySelectorAll("[data-config-section]").length === sections
+      && document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length === fields,
+    { sections: 41, fields: 207 },
+    { timeout: 10_000 },
+  );
+  const counts = await page.evaluate(() => ({
+    sections: document.querySelectorAll("[data-config-section]").length,
+    fields: document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length,
+    text: document.querySelector("#root")?.innerText ?? "",
+  }));
+  const lingeringLoading = [
+    "正在加载配置",
+    "加载中...",
+    "Loading configuration",
+    "Загрузка конфигурации",
+  ].filter((text) => counts.text.includes(text));
+  if (counts.sections !== 41 || counts.fields !== 207 || lingeringLoading.length > 0) {
+    throw new Error(
+      `${label} did not render the complete settled schema: ${JSON.stringify({
+        sections: counts.sections,
+        fields: counts.fields,
+        lingeringLoading,
+      })}`,
+    );
+  }
+  return counts;
+}
+
+function configNumberInput(page, pathName) {
+  return page
+    .locator("code")
+    .filter({ hasText: pathName })
+    .first()
+    .locator("xpath=ancestor::*[@data-slot='field'][1]")
+    .getByRole("spinbutton");
+}
+
+async function getBrowserBridgeCalls(page) {
+  return await page.evaluate(() =>
+    JSON.parse(JSON.stringify(window.__memoraBridgeCalls ?? []))
+  );
+}
+
+async function runDesktopConfigSmoke(browser, errors, screenshotsDir) {
+  const { context, page } = await openBundledConfigPage(
+    browser,
+    { width: 1366, height: 900 },
+    errors,
+  );
+  try {
+    await waitForConfigReady(page, "#/config:desktop");
+    await assertNoHorizontalOverflow(page, "#/config:desktop");
+    const screenshots = [
+      await captureBaselineScreenshot(
+        page,
+        path.join(screenshotsDir, "config.png"),
+        "config",
+      ),
+    ];
+
+    const topKInput = configNumberInput(page, "recall_engine.top_k");
+    await topKInput.fill("9");
+    await page.waitForFunction(
+      () => document.querySelector("#root")?.innerText.includes("有未保存更改"),
+      undefined,
+      { timeout: 5_000 },
+    );
+
+    const initialCalls = await getBrowserBridgeCalls(page);
+    const initialState = initialCalls.find(
+      (call) =>
+        call.method === "GET"
+        && call.endpoint === "page/config/state"
+        && call.response?.data?.changed === true,
+    );
+    const initialRevision = initialState?.response?.data?.revision;
+    if (!initialRevision) {
+      throw new Error("Browser config smoke did not capture its initial revision");
+    }
+    const seeded = await page.evaluate(
+      async ({ revision }) =>
+        window.__memoraRawBridge.apiPost("page/config/apply", {
+          base_revision: revision,
+          changes: { "recall_engine.top_k": 8 },
+        }),
+      { revision: initialRevision },
+    );
+    if (seeded?.status !== "ok") {
+      throw new Error(`Browser config smoke could not seed the remote revision: ${JSON.stringify(seeded)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 850));
+
+    await page.getByRole("button", { name: "应用配置", exact: true }).click();
+    const conflictDialog = page.getByRole("dialog", {
+      name: "AstrBot 中的配置已更改",
+      exact: true,
+    });
+    await conflictDialog.waitFor({ state: "visible", timeout: 5_000 });
+    await conflictDialog
+      .getByRole("button", { name: "在最新版本上重新应用我的更改", exact: true })
+      .waitFor({ state: "visible", timeout: 5_000 });
+    for (const label of ["我的本地更改", "AstrBot 远端更改", "重叠更改"]) {
+      await conflictDialog.getByText(label, { exact: true }).waitFor({ timeout: 5_000 });
+    }
+    const conflictPaths = await conflictDialog.locator("code").evaluateAll(
+      (nodes) => nodes.map((node) => node.textContent?.trim()),
+    );
+    if (
+      conflictPaths.length !== 3
+      || conflictPaths.some((path) => path !== "recall_engine.top_k")
+    ) {
+      throw new Error(`Browser config conflict paths are incomplete: ${JSON.stringify(conflictPaths)}`);
+    }
+    screenshots.push(
+      await captureBaselineScreenshot(
+        page,
+        path.join(screenshotsDir, "config-conflict.png"),
+        "config-conflict",
+      ),
+    );
+
+    await conflictDialog
+      .getByRole("button", { name: "在最新版本上重新应用我的更改", exact: true })
+      .click();
+    await conflictDialog.waitFor({ state: "detached", timeout: 5_000 });
+    await page.waitForFunction(
+      () => document.querySelector("#root")?.innerText.includes("有未保存更改"),
+      undefined,
+      { timeout: 5_000 },
+    );
+    if ((await topKInput.inputValue()) !== "9") {
+      throw new Error(`Browser config rebase lost the local top_k draft: ${await topKInput.inputValue()}`);
+    }
+    const callsAfterRebase = await getBrowserBridgeCalls(page);
+    const successfulAppliesAfterRebase = callsAfterRebase.filter(
+      (call) =>
+        call.method === "POST"
+        && call.endpoint === "page/config/apply"
+        && call.response?.status === "ok",
+    );
+    if (successfulAppliesAfterRebase.length !== 0) {
+      throw new Error("Browser config rebase saved automatically instead of preserving a draft");
+    }
+    await page
+      .getByRole("searchbox", { name: "搜索配置", exact: true })
+      .fill("recall_engine.top_k");
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length === 1
+        && [...document.querySelectorAll("code")].some(
+          (code) => code.textContent?.trim() === "recall_engine.top_k",
+        ),
+      undefined,
+      { timeout: 5_000 },
+    );
+
+    await page.getByRole("button", { name: "应用配置", exact: true }).click();
+    const successfulApplyHandle = await page.waitForFunction(
+      () => {
+        const text = document.querySelector("#root")?.innerText ?? "";
+        const successfulApply = [...(window.__memoraBridgeCalls ?? [])].reverse().find(
+          (call) =>
+            call.method === "POST"
+            && call.endpoint === "page/config/apply"
+            && call.response?.status === "ok",
+        );
+        return text.includes("正在重载")
+          ? successfulApply?.response?.data?.revision ?? false
+          : false;
+      },
+      undefined,
+      { timeout: 2_000 },
+    );
+    const appliedRevision = await successfulApplyHandle.jsonValue();
+    await page.evaluate(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      window.dispatchEvent(new Event("focus"));
+    });
+    await page.waitForFunction(
+      (revision) => (window.__memoraBridgeCalls ?? []).some(
+        (call) =>
+          call.method === "GET"
+          && call.endpoint === "page/config/state"
+          && call.params?.revision === revision
+          && /Mock plugin is reloading/i.test(String(call.error ?? "")),
+      ),
+      appliedRevision,
+      { timeout: 2_000 },
+    );
+    await page.waitForFunction(
+      () => {
+        const text = document.querySelector("#root")?.innerText ?? "";
+        return text.includes("已同步")
+          && (window.__memoraBridgeCalls ?? []).some(
+            (call) =>
+              call.method === "GET"
+              && call.endpoint === "page/config/state"
+              && call.response?.data?.changed === false,
+          );
+      },
+      undefined,
+      { timeout: 10_000 },
+    );
+    const trace = assertConfigRuntimeCalls(await getBrowserBridgeCalls(page), {
+      changedPath: "recall_engine.top_k",
+      changedValue: 9,
+    });
+    await waitForRootText(page, ["已同步", trace.finalInstanceId], "#/config:reloaded");
+    await assertNoHorizontalOverflow(page, "#/config:reloaded");
+    return { screenshots, trace };
+  } finally {
+    await context.close();
+  }
+}
+
+async function runMobileConfigSmoke(browser, errors, screenshotsDir) {
+  const { context, page } = await openBundledConfigPage(
+    browser,
+    { width: 390, height: 844 },
+    errors,
+  );
+  try {
+    await waitForConfigReady(page, "#/config:mobile");
+    const groupSelect = page.getByRole("combobox", {
+      name: "选择配置分组",
+      exact: true,
+    });
+    await groupSelect.waitFor({ state: "visible", timeout: 5_000 });
+    const triggerBox = await groupSelect.boundingBox();
+    if (
+      !triggerBox
+      || triggerBox.x < 0
+      || triggerBox.y < 0
+      || triggerBox.x + triggerBox.width > 390
+      || triggerBox.y + triggerBox.height > 844
+    ) {
+      throw new Error(`Mobile config group trigger is outside the viewport: ${JSON.stringify(triggerBox)}`);
+    }
+    const desktopGroupNav = page.locator('[data-slot="page-frame"] nav').first();
+    if ((await desktopGroupNav.count()) !== 1 || await desktopGroupNav.isVisible()) {
+      throw new Error("Mobile config rendered the desktop group navigation");
+    }
+
+    await groupSelect.click();
+    await page.getByRole("option", { name: "记忆召回", exact: true }).click();
+    await page.waitForFunction(
+      () => {
+        const focusedSection = document.activeElement
+          ?.closest("[data-config-section]")
+          ?.getAttribute("data-config-section");
+        const section = document.querySelector('[data-config-section="recall_engine"]');
+        const pageContents = document.querySelectorAll('[data-slot="page-content"]');
+        const pageContent = pageContents[pageContents.length - 1];
+        const rect = section?.getBoundingClientRect();
+        const contentRect = pageContent?.getBoundingClientRect();
+        return focusedSection === "recall_engine"
+          && Boolean(rect)
+          && Boolean(contentRect)
+          && rect.top >= contentRect.top - 1
+          && rect.top <= contentRect.top + 24
+          && rect.bottom > contentRect.top;
+      },
+      undefined,
+      { timeout: 5_000 },
+    );
+    const recallSection = page.locator('[data-config-section="recall_engine"]');
+    const recallBox = await recallSection.boundingBox();
+    if (!recallBox || recallBox.y >= 844 || recallBox.y + recallBox.height <= 0) {
+      throw new Error(`Mobile config did not move the recall section into view: ${JSON.stringify(recallBox)}`);
+    }
+    await assertNoHorizontalOverflow(page, "#/config:mobile");
+    return await captureBaselineScreenshot(
+      page,
+      path.join(screenshotsDir, "mobile-config.png"),
+      "mobile-config",
+    );
+  } finally {
+    await context.close();
+  }
+}
+
 async function installBridge(page) {
   await page.addInitScript(() => {
     let nextSubscriptionId = 1;
@@ -1024,6 +1376,16 @@ try {
   const screenshotsDir = path.join(os.tmpdir(), "memora-dashboard-browser-smoke-screenshots");
   await mkdir(screenshotsDir, { recursive: true });
   const baselineResults = [];
+
+  const desktopConfigResult = await runDesktopConfigSmoke(
+    browser,
+    errors,
+    screenshotsDir,
+  );
+  baselineResults.push(...desktopConfigResult.screenshots);
+  baselineResults.push(
+    await runMobileConfigSmoke(browser, errors, screenshotsDir),
+  );
 
   const routes = [
     ["数据预览", "#/preview", ["数据预览", "记忆增长", "模块资产", "活跃会话"], "preview.png"],
