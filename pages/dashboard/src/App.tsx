@@ -248,6 +248,7 @@ export default function App() {
         return;
       }
 
+      const target = getPageFromHash();
       browserHashRef.current = window.location.hash;
       if (restoringHistoryRef.current || replayingHistoryRef.current) return;
 
@@ -260,7 +261,24 @@ export default function App() {
           window.location.href,
         );
       }
-      handleHistoryArrival(getPageFromHash(), targetIndex);
+
+      if (target !== currentPageRef.current
+        && currentPageRef.current === "config"
+        && configDirtyRef.current) {
+        pendingPageRef.current = target;
+        pendingHistoryDeltaRef.current = null;
+        window.history.replaceState(
+          withHistoryIndex(window.history.state, targetIndex),
+          "",
+          "#/config",
+        );
+        historyIndexRef.current = targetIndex;
+        browserHashRef.current = "#/config";
+        setPendingPage(target);
+        return;
+      }
+
+      handleHistoryArrival(target, targetIndex);
     };
 
     window.addEventListener("popstate", handlePopState);
