@@ -1,5 +1,10 @@
 /// <reference types="vite/client" />
 
+declare module "virtual:memora-config-schema" {
+  const schemaSource: string;
+  export default schemaSource;
+}
+
 interface AstrBotPluginPageBridge {
   ready(): Promise<AstrBotContext>;
   getContext(): AstrBotContext;

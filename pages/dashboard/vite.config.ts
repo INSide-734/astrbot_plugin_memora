@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import fs from "fs";
@@ -8,6 +8,26 @@ import { normalizeHtmlLineEndings } from "./buildUtils";
 const ROOT_DIR = __dirname;
 const TEMP_BUILD_DIR = path.resolve(ROOT_DIR, ".vite-build");
 const ROOT_ASSETS_DIR = path.resolve(ROOT_DIR, "assets");
+const CONFIG_SCHEMA_PATH = path.resolve(ROOT_DIR, "../../_conf_schema.json");
+const CONFIG_SCHEMA_VIRTUAL_ID = "virtual:memora-config-schema";
+const RESOLVED_CONFIG_SCHEMA_VIRTUAL_ID = `\0${CONFIG_SCHEMA_VIRTUAL_ID}`;
+
+export function memoraConfigSchemaPlugin(): Plugin {
+  return {
+    name: "memora-config-schema",
+    resolveId(id) {
+      return id === CONFIG_SCHEMA_VIRTUAL_ID
+        ? RESOLVED_CONFIG_SCHEMA_VIRTUAL_ID
+        : null;
+    },
+    load(id) {
+      if (id !== RESOLVED_CONFIG_SCHEMA_VIRTUAL_ID) return null;
+      const schemaSource = fs.readFileSync(CONFIG_SCHEMA_PATH, "utf-8");
+      JSON.parse(schemaSource);
+      return `export default ${JSON.stringify(schemaSource)};`;
+    },
+  };
+}
 
 // Clean stale build artifacts from assets/ before each build.
 // Hashed filenames change every build, so orphaned chunks accumulate.
@@ -51,6 +71,7 @@ function syncBuiltDashboard(): void {
 export default defineConfig({
   plugins: [
     react(),
+    memoraConfigSchemaPlugin(),
     {
       name: "clean-old-assets",
       apply: "build",
@@ -128,8 +149,5 @@ export default defineConfig({
   server: {
     port: 5173,
     open: false,
-    fs: {
-      allow: [path.resolve(ROOT_DIR, "../..")],
-    },
   },
 });

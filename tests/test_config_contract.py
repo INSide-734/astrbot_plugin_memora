@@ -91,6 +91,67 @@ def _get_path(config: Mapping[str, Any], path: tuple[str, ...]) -> Any:
     return current
 
 
+def _model_numeric_bounds() -> dict[str, dict[str, int | float]]:
+    from core.base.config_validator import MemoraConfig
+
+    model_schema = MemoraConfig.model_json_schema()
+    definitions = model_schema.get("$defs", {})
+    bounds_by_path: dict[str, dict[str, int | float]] = {}
+
+    def resolve(node: Mapping[str, Any]) -> Mapping[str, Any]:
+        while "$ref" in node:
+            node = definitions[str(node["$ref"]).rsplit("/", 1)[-1]]
+        return node
+
+    def visit(node: Mapping[str, Any], path: tuple[str, ...] = ()) -> None:
+        node = resolve(node)
+        if node.get("type") == "object":
+            for key, child in node.get("properties", {}).items():
+                visit(child, (*path, key))
+            return
+
+        unsupported = {
+            key: node[key]
+            for key in ("exclusiveMinimum", "exclusiveMaximum", "multipleOf")
+            if key in node
+        }
+        assert not unsupported, (
+            f"unsupported numeric constraints at {'.'.join(path)}: {unsupported}"
+        )
+        bounds = {
+            name: node[key]
+            for key, name in (("minimum", "min"), ("maximum", "max"))
+            if key in node
+        }
+        if bounds:
+            bounds_by_path[".".join(path)] = bounds
+
+    visit(model_schema)
+    return bounds_by_path
+
+
+def _schema_numeric_bounds(
+    schema: Mapping[str, Any],
+    prefix: tuple[str, ...] = (),
+) -> dict[str, dict[str, int | float]]:
+    bounds_by_path: dict[str, dict[str, int | float]] = {}
+    for key, field_schema in schema.items():
+        path = (*prefix, key)
+        if field_schema.get("type") == "object":
+            bounds_by_path.update(
+                _schema_numeric_bounds(field_schema.get("items", {}), path)
+            )
+            continue
+        bounds = {
+            name: field_schema[name]
+            for name in ("min", "max")
+            if name in field_schema
+        }
+        if bounds:
+            bounds_by_path[".".join(path)] = bounds
+    return bounds_by_path
+
+
 def test_memora_config_preserves_every_schema_leaf_and_default() -> None:
     from core.base.config_validator import MemoraConfig
 
@@ -118,6 +179,16 @@ def test_memora_config_preserves_every_schema_leaf_and_default() -> None:
         + "; Pydantic default drift: "
         + ", ".join(default_drift)
     )
+
+
+def test_schema_numeric_bounds_match_every_pydantic_constraint() -> None:
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+
+    model_bounds = _model_numeric_bounds()
+    schema_bounds = _schema_numeric_bounds(schema)
+
+    assert len(model_bounds) == 71
+    assert schema_bounds == model_bounds
 
 
 def test_main_does_not_reference_legacy_persisted_config_file() -> None:

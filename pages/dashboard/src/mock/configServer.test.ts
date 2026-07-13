@@ -186,6 +186,86 @@ describe("createMockConfigServer", () => {
     expect(server.controls.snapshot()).toEqual(initial);
   });
 
+  it.each([
+    ["recall_engine.top_k", -1, "Value must be at least 0"],
+    ["recall_engine.top_k", 51, "Value must be at most 50"],
+    [
+      "graph_memory.cross_route_bonus",
+      0.51,
+      "Value must be at most 0.5",
+    ],
+  ] as const)(
+    "rejects %s=%s outside its schema numeric bounds",
+    (path, value, expectedError) => {
+      const server = createMockConfigServer();
+      const before = server.controls.snapshot();
+
+      const response = server.handlePost("config/apply", {
+        base_revision: before.revision,
+        changes: { [path]: value },
+      });
+
+      expect(response?.status).toBe("error");
+      if (response?.status !== "error") {
+        throw new Error("Expected the numeric boundary to be enforced");
+      }
+      expect(response.code).toBe("validation_failed");
+      expect(response.data?.field_errors).toEqual({
+        [path]: expectedError,
+      });
+      expect(server.controls.snapshot()).toEqual(before);
+    }
+  );
+
+  it("accepts values exactly on inclusive numeric boundaries", () => {
+    const server = createMockConfigServer({ hotReload: false });
+    const before = server.controls.snapshot();
+
+    const response = server.handlePost("config/apply", {
+      base_revision: before.revision,
+      changes: {
+        "graph_memory.cross_route_bonus": 0.5,
+        "recall_engine.top_k": 0,
+      },
+    });
+
+    expect(response?.status).toBe("ok");
+    expect(server.controls.snapshot().config).toMatchObject({
+      graph_memory: { cross_route_bonus: 0.5 },
+      recall_engine: { top_k: 0 },
+    });
+  });
+
+  it.each([
+    "__proto__",
+    "prototype",
+    "constructor",
+    "recall_engine.__proto__",
+  ])("rejects the dangerous path %s without scheduling reload", (path) => {
+    const server = createMockConfigServer();
+    const before = server.controls.snapshot();
+    const changes = JSON.parse(`{"${path}":true}`) as Record<
+      string,
+      boolean
+    >;
+
+    const response = server.handlePost("config/apply", {
+      base_revision: before.revision,
+      changes,
+    });
+
+    expect(response?.status).toBe("error");
+    if (response?.status !== "error") {
+      throw new Error("Expected the unsafe path to be rejected");
+    }
+    expect(response.code).toBe("validation_failed");
+    expect(Object.keys(response.data?.field_errors ?? {})).toEqual([path]);
+    expect(response.data?.field_errors?.[path]).toBe(
+      "Path is not in the AstrBot schema"
+    );
+    expect(server.controls.snapshot()).toEqual(before);
+  });
+
   it("rolls back memory, persisted state, and revision after persistence failure", () => {
     const server = createMockConfigServer();
     const before = server.controls.snapshot();
