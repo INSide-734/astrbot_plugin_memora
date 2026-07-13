@@ -275,7 +275,7 @@ describe("App", () => {
     expect(window.location.hash).toBe("#/config");
   });
 
-  it("captures dirty direct hash navigation and restores the indexed config entry", async () => {
+  it("captures dirty direct hash navigation and synchronously restores #/config", async () => {
     window.history.replaceState({}, "", "#/config");
     render(<App />);
     expect(await screen.findByText("Config Page")).toBeTruthy();
@@ -286,7 +286,7 @@ describe("App", () => {
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
 
-    await waitFor(() => expect(window.location.hash).toBe("#/config"));
+    expect(window.location.hash).toBe("#/config");
     expect(await screen.findByRole("dialog", {
       name: "Leave configuration without saving?",
     })).toBeTruthy();
