@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   assertConfigRuntimeCalls,
   instrumentRuntimeBridge,
+  resolveRuntimeResourcePath,
   waitFor,
 } from "./runtime_smoke_helpers.mjs";
 
@@ -14,16 +15,12 @@ const errors = [];
 const runtimeOrigin = "https://memora.runtime";
 
 class LocalDashboardResourceLoader extends ResourceLoader {
-  fetch(url, options) {
-    const resourceUrl = new URL(url);
-    if (resourceUrl.origin !== runtimeOrigin) return super.fetch(url, options);
-    const relativePath = decodeURIComponent(resourceUrl.pathname).replace(/^\/+/, "");
-    const localPath = path.resolve(dashboardRoot, relativePath);
-    const relativeToRoot = path.relative(dashboardRoot, localPath);
-    if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
-      return null;
-    }
-    return readFile(localPath);
+  fetch(url) {
+    const localPath = resolveRuntimeResourcePath(url, {
+      runtimeOrigin,
+      dashboardRoot,
+    });
+    return localPath ? readFile(localPath) : null;
   }
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
 
 import * as runtimeHelpers from "./runtime_smoke_helpers.mjs";
 
@@ -94,6 +95,34 @@ function configLifecycleCalls() {
 }
 
 describe("runtime smoke bridge instrumentation", () => {
+  it("allows only contained same-origin runtime resources", () => {
+    expect(runtimeHelpers.resolveRuntimeResourcePath).toBeTypeOf("function");
+    const dashboardRoot = path.resolve("runtime-smoke-dashboard");
+    const options = {
+      runtimeOrigin: "https://memora.runtime",
+      dashboardRoot,
+    };
+
+    expect(
+      runtimeHelpers.resolveRuntimeResourcePath(
+        "https://memora.runtime/assets/index.js",
+        options,
+      ),
+    ).toBe(path.join(dashboardRoot, "assets", "index.js"));
+    expect(
+      runtimeHelpers.resolveRuntimeResourcePath(
+        "https://evil.example/script.js",
+        options,
+      ),
+    ).toBeNull();
+    expect(
+      runtimeHelpers.resolveRuntimeResourcePath(
+        "https://memora.runtime/%2e%2e%2fsecret.js",
+        options,
+      ),
+    ).toBeNull();
+  });
+
   it("records exact GET params and POST bodies while forwarding through the bridge", async () => {
     const forwarded = [];
     const bridge = {
