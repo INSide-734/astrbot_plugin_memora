@@ -105,6 +105,21 @@ interface BridgeMock {
   apiGet?: ReturnType<typeof vi.fn>;
 }
 
+async function traverseHistory(action: () => void) {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        window.clearTimeout(timer);
+        window.removeEventListener("popstate", finish);
+        resolve();
+      };
+      const timer = window.setTimeout(finish, 50);
+      window.addEventListener("popstate", finish, { once: true });
+      action();
+    });
+  });
+}
+
 describe("App", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -260,7 +275,7 @@ describe("App", () => {
     expect(window.location.hash).toBe("#/config");
   });
 
-  it("captures dirty direct hash navigation and synchronously restores #/config", async () => {
+  it("captures dirty direct hash navigation and restores the indexed config entry", async () => {
     window.history.replaceState({}, "", "#/config");
     render(<App />);
     expect(await screen.findByText("Config Page")).toBeTruthy();
@@ -271,11 +286,83 @@ describe("App", () => {
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
 
-    expect(window.location.hash).toBe("#/config");
-    expect(screen.getByRole("dialog", {
+    await waitFor(() => expect(window.location.hash).toBe("#/config"));
+    expect(await screen.findByRole("dialog", {
       name: "Leave configuration without saving?",
     })).toBeTruthy();
     expect(screen.getByText("Config Page")).toBeTruthy();
+  });
+
+  it("keeps the original Back target after Keep editing and a no-op Forward", async () => {
+    window.history.replaceState({ route: "preview" }, "", "#/preview");
+    window.history.pushState({ route: "graph" }, "", "#/graph");
+    render(<App />);
+    expect(await screen.findByText("Graph Page")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Configuration" }));
+    expect(await screen.findByText("Config Page")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("make-config-dirty"));
+
+    await traverseHistory(() => window.history.back());
+    fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", {
+        name: "Leave configuration without saving?",
+      })).toBeNull();
+    });
+
+    await traverseHistory(() => window.history.forward());
+    await traverseHistory(() => window.history.back());
+    expect(await screen.findByRole("dialog", {
+      name: "Leave configuration without saving?",
+    })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", {
+      name: "Discard changes and leave",
+    }));
+
+    expect(await screen.findByText("Graph Page")).toBeTruthy();
+    expect(window.location.hash).toBe("#/graph");
+  });
+
+  it("returns to Preview when going Back after discarding to the historical Graph entry", async () => {
+    window.history.replaceState({ route: "preview" }, "", "#/preview");
+    window.history.pushState({ route: "graph" }, "", "#/graph");
+    render(<App />);
+    expect(await screen.findByText("Graph Page")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Configuration" }));
+    expect(await screen.findByText("Config Page")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("make-config-dirty"));
+
+    await traverseHistory(() => window.history.back());
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Discard changes and leave",
+    }));
+    expect(await screen.findByText("Graph Page")).toBeTruthy();
+
+    await traverseHistory(() => window.history.back());
+
+    expect(await screen.findByText("Preview Page")).toBeTruthy();
+    expect(window.location.hash).toBe("#/preview");
+  });
+
+  it("preserves Forward from Graph to Config after discarding a Back request", async () => {
+    window.history.replaceState({ route: "preview" }, "", "#/preview");
+    window.history.pushState({ route: "graph" }, "", "#/graph");
+    render(<App />);
+    expect(await screen.findByText("Graph Page")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Configuration" }));
+    expect(await screen.findByText("Config Page")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("make-config-dirty"));
+
+    await traverseHistory(() => window.history.back());
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Discard changes and leave",
+    }));
+    expect(await screen.findByText("Graph Page")).toBeTruthy();
+
+    await traverseHistory(() => window.history.forward());
+
+    expect(await screen.findByText("Config Page")).toBeTruthy();
+    await waitFor(() => expect(window.location.hash).toBe("#/config"));
   });
 
   it("keeps editing after cancelling the pending navigation", async () => {
@@ -350,7 +437,7 @@ describe("App", () => {
       window.location.hash = "#/system";
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
-    expect(window.location.hash).toBe("#/config");
+    await waitFor(() => expect(window.location.hash).toBe("#/config"));
     fireEvent.click(screen.getByRole("button", {
       name: "Discard changes and leave",
     }));
