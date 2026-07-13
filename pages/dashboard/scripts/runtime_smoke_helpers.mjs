@@ -1,3 +1,5 @@
+import path from "node:path";
+
 function cloneJson(value) {
   if (value === undefined) return undefined;
   return JSON.parse(JSON.stringify(value));
@@ -13,6 +15,28 @@ function requireTrace(condition, message) {
 
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function resolveRuntimeResourcePath(
+  url,
+  { runtimeOrigin, dashboardRoot },
+) {
+  let resourceUrl;
+  let relativePath;
+  try {
+    resourceUrl = new URL(url);
+    relativePath = decodeURIComponent(resourceUrl.pathname).replace(/^\/+/, "");
+  } catch {
+    return null;
+  }
+  if (resourceUrl.origin !== runtimeOrigin || !relativePath) return null;
+
+  const localPath = path.resolve(dashboardRoot, relativePath);
+  const relativeToRoot = path.relative(dashboardRoot, localPath);
+  if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+    return null;
+  }
+  return localPath;
 }
 
 export async function waitFor(
