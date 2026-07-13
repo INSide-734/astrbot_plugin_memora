@@ -2,8 +2,14 @@
 // Mock API server — simulates AstrBot Plugin Page bridge
 // ================================================================
 import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_DATASETS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS } from "./data";
+import { createMockConfigServer } from "./configServer";
 
 type ApiResponse = { status: string; data?: unknown; message?: string };
+
+const configServer = createMockConfigServer({
+  disconnectDuringReload: true,
+  autoCompleteReloadMs: 750,
+});
 
 function ok(data: unknown): ApiResponse {
   return { status: "ok", data };
@@ -654,6 +660,8 @@ function handleExportMemories(body: Record<string, unknown>): ApiResponse {
 export async function handleApiGet(path: string, params: Record<string, string> = {}): Promise<ApiResponse> {
   await delay();
   const p = path.replace(/^page\/?/, "");
+  const configResponse = configServer.handleGet(p, params);
+  if (configResponse) return configResponse;
 
   if (p === "stats") return handleStats();
   if (p === "metrics/summary") return handleMetricsSummary();
@@ -701,6 +709,8 @@ export async function handleApiGet(path: string, params: Record<string, string> 
 export async function handleApiPost(path: string, body: unknown = {}): Promise<ApiResponse> {
   await delay();
   const p = path.replace(/^page\/?/, "");
+  const configResponse = configServer.handlePost(p, body);
+  if (configResponse) return configResponse;
   const data = body as Record<string, unknown>;
 
   if (p === "recall/test") return handleRecallTest(data);
