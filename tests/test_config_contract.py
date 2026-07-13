@@ -287,6 +287,58 @@ async def test_apply_rejects_a_stale_revision_with_current_revision() -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_rejects_external_source_change_without_overwriting_it() -> None:
+    from core.base.config_manager import ConfigConflictError, ConfigManager
+
+    source = SavingConfig({"recall_engine": {"top_k": 5}})
+    manager = ConfigManager(source)
+    _, original_revision = manager.get_config_snapshot()
+
+    source["recall_engine"]["top_k"] = 9
+
+    with pytest.raises(ConfigConflictError) as exc_info:
+        await manager.apply_config_changes(
+            {"recall_engine.max_k": 12},
+            expected_revision=original_revision,
+        )
+
+    snapshot, reconciled_revision = manager.get_config_snapshot()
+    assert exc_info.value.current_revision == reconciled_revision
+    assert reconciled_revision != original_revision
+    assert snapshot["recall_engine"]["top_k"] == 9
+    assert source["recall_engine"]["top_k"] == 9
+    assert source.saved_snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_apply_detects_external_source_change_during_persistence() -> None:
+    from core.base.config_manager import ConfigConflictError, ConfigManager
+
+    source = BlockingSavingConfig({"recall_engine": {"top_k": 5}})
+    manager = ConfigManager(source)
+    _, original_revision = manager.get_config_snapshot()
+    apply_task = asyncio.create_task(
+        manager.apply_config_changes(
+            {"recall_engine.top_k": 6},
+            expected_revision=original_revision,
+        )
+    )
+
+    assert await asyncio.to_thread(source.save_entered.wait, 2)
+    source["recall_engine"]["top_k"] = 9
+    source.release_save.set()
+
+    with pytest.raises(ConfigConflictError) as exc_info:
+        await apply_task
+
+    snapshot, reconciled_revision = manager.get_config_snapshot()
+    assert exc_info.value.current_revision == reconciled_revision
+    assert snapshot["recall_engine"]["top_k"] == 9
+    assert source["recall_engine"]["top_k"] == 9
+    assert source.saved_snapshots[-1]["recall_engine"]["top_k"] == 9
+
+
+@pytest.mark.asyncio
 async def test_apply_rejects_unknown_leaf_when_schema_is_available() -> None:
     from core.base.config_manager import ConfigManager, ConfigValidationError
 

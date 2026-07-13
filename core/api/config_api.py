@@ -73,7 +73,9 @@ class ConfigApiMixin:
 
     async def get_config_state(self) -> dict[str, Any]:
         """Return a conditional full snapshot without requiring initialized engines."""
-        config, revision = self.plugin.config_manager.get_config_snapshot()
+        config, revision = (
+            await self.plugin.config_manager.get_config_snapshot_async()
+        )
         request = getattr(self.plugin.context, "request", None)
         args = getattr(request, "args", {}) or {}
         try:

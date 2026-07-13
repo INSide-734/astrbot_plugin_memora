@@ -207,9 +207,30 @@ class TestConfigSchemaApi:
 
 class TestConfigStateApi:
     @pytest.mark.asyncio
+    async def test_reconciles_external_source_change_before_returning_state(self) -> None:
+        from core.base.config_manager import ConfigManager
+
+        source = {"recall_engine": {"top_k": 5}}
+        manager = ConfigManager(source)
+        _, original_revision = manager.get_config_snapshot()
+        source["recall_engine"]["top_k"] = 9
+        api, _ = _make_api(
+            request=_Request(args={"revision": original_revision}),
+            config_manager=manager,
+        )
+
+        result = await api.get_config_state()
+
+        assert result["data"]["changed"] is True
+        assert result["data"]["revision"] != original_revision
+        assert result["data"]["config"]["recall_engine"]["top_k"] == 9
+
+    @pytest.mark.asyncio
     async def test_matching_revision_omits_config_and_marks_unchanged(self) -> None:
         manager = MagicMock()
-        manager.get_config_snapshot.return_value = ({"secret": "not-returned"}, "rev-1")
+        manager.get_config_snapshot_async = AsyncMock(
+            return_value=({"secret": "not-returned"}, "rev-1")
+        )
         api, plugin = _make_api(
             request=_Request(args={"revision": "rev-1"}),
             config_manager=manager,
@@ -237,7 +258,9 @@ class TestConfigStateApi:
     ) -> None:
         config = {"provider_settings": {"llm_provider_id": "llm-primary"}}
         manager = MagicMock()
-        manager.get_config_snapshot.return_value = (config, "rev-current")
+        manager.get_config_snapshot_async = AsyncMock(
+            return_value=(config, "rev-current")
+        )
         api, _ = _make_api(request=_Request(args=args), config_manager=manager)
 
         result = await api.get_config_state()

@@ -67,6 +67,7 @@ class ConfigManager:
         self._config: dict[str, Any] = {}
         self._config_obj: MemoraConfig | None = None
         self._revision = ""
+        self._source_revision = ""
         self._validation_errors: list[dict[str, Any]] = []
         self._apply_lock = asyncio.Lock()
         self._persistence_capable = callable(
@@ -80,13 +81,30 @@ class ConfigManager:
     def _load_config(self) -> None:
         """合并模型默认值并校验 AstrBot 当前配置。"""
         try:
-            source_snapshot = copy.deepcopy(dict(self._source_config))
-            merged_config = merge_config_with_defaults(source_snapshot)
-            self._config_obj = self._validate_with_branch_fallback(merged_config)
-            self._config = self._config_obj.model_dump()
-            self._revision = self._compute_revision(self._config)
+            config_obj, config, revision = self._read_source_state()
+            self._config_obj = config_obj
+            self._config = config
+            self._revision = revision
+            self._source_revision = revision
         except Exception as exc:
             raise ConfigurationError(f"配置加载失败: {exc}") from exc
+
+    def _read_source_state(self) -> tuple[MemoraConfig, dict[str, Any], str]:
+        source_snapshot = copy.deepcopy(dict(self._source_config))
+        merged_config = merge_config_with_defaults(source_snapshot)
+        config_obj = self._validate_with_branch_fallback(merged_config)
+        config = config_obj.model_dump()
+        return config_obj, config, self._compute_revision(config)
+
+    def _reconcile_source_locked(self) -> None:
+        """Publish external AstrBotConfig changes without persisting them."""
+        config_obj, config, revision = self._read_source_state()
+        if revision == self._source_revision:
+            return
+        self._config_obj = config_obj
+        self._config = config
+        self._revision = revision
+        self._source_revision = revision
 
     def _validate_with_branch_fallback(
         self,
@@ -249,6 +267,12 @@ class ConfigManager:
         """返回与内部状态隔离的配置副本及其 SHA-256 修订号。"""
         return copy.deepcopy(self._config), self._revision
 
+    async def get_config_snapshot_async(self) -> tuple[dict[str, Any], str]:
+        """Reconcile the live AstrBotConfig and return an isolated snapshot."""
+        async with self._apply_lock:
+            self._reconcile_source_locked()
+            return self.get_config_snapshot()
+
     async def apply_config_changes(
         self,
         changes: Mapping[str, Any],
@@ -258,6 +282,7 @@ class ConfigManager:
     ) -> ConfigApplyResult:
         """串行校验并应用点号路径配置变更。"""
         async with self._apply_lock:
+            self._reconcile_source_locked()
             if (
                 expected_revision is not None
                 and expected_revision != self._revision
@@ -290,16 +315,34 @@ class ConfigManager:
             changed_paths = tuple(sorted(normalized_changes))
 
             persistence_cancelled = False
+            persistence_conflict_revision: str | None = None
             if persist:
                 persistence_cancelled = await self._persist_source(
                     candidate_snapshot
                 )
+                source_obj, source_snapshot, source_revision = (
+                    self._read_source_state()
+                )
+                if source_revision != candidate_revision:
+                    self._config_obj = source_obj
+                    self._config = source_snapshot
+                    self._revision = source_revision
+                    self._source_revision = source_revision
+                    persistence_conflict_revision = source_revision
 
-            self._config_obj = candidate_obj
-            self._config = candidate_snapshot
-            self._revision = candidate_revision
+            if persistence_conflict_revision is None:
+                self._config_obj = candidate_obj
+                self._config = candidate_snapshot
+                self._revision = candidate_revision
+                if persist:
+                    self._source_revision = candidate_revision
             if persistence_cancelled:
                 raise asyncio.CancelledError
+            if persistence_conflict_revision is not None:
+                raise ConfigConflictError(
+                    expected_revision or candidate_revision,
+                    persistence_conflict_revision,
+                )
             return ConfigApplyResult(candidate_revision, changed_paths)
 
     def _validate_change_paths(
