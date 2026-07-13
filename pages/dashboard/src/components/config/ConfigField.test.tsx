@@ -83,6 +83,13 @@ describe("ConfigField", () => {
     expect(within(group).getByText("Select models used by memory processing.")).toBeTruthy();
     expect(within(group).getByText("provider_settings.enabled")).toBeTruthy();
     expect(within(group).getByRole("switch", { name: "Provider enabled" })).toBeTruthy();
+    const groupHeading = group.querySelector("[data-slot='config-group-heading']");
+    expect(groupHeading).toBeTruthy();
+    expect(within(groupHeading as HTMLElement).getByRole("heading", {
+      name: "Provider settings",
+    })).toBeTruthy();
+    expect(within(groupHeading as HTMLElement).getByText("provider_settings")).toBeTruthy();
+    expect(groupHeading?.classList.contains("flex-wrap")).toBe(true);
     expect(screen.queryByText("Hidden secret")).toBeNull();
     expect(group.querySelector("[data-slot='card']")).toBeNull();
   });
@@ -101,6 +108,31 @@ describe("ConfigField", () => {
     expect(onChange).toHaveBeenCalledWith("recall.enabled", true);
   });
 
+  it("keeps boolean content left and a visibly styled Switch right", () => {
+    renderField({
+      path: "session_manager.enable_full_group_capture",
+      node: {
+        type: "bool",
+        description: "Capture all group messages",
+        hint: "Capture every message in group chats.",
+      },
+      value: true,
+    });
+
+    const toggle = screen.getByRole("switch", {
+      name: "Capture all group messages",
+    });
+    const field = toggle.closest("[data-slot='field']");
+    const content = field?.querySelector("[data-slot='field-content']");
+
+    expect(field?.getAttribute("data-orientation")).toBe("horizontal");
+    expect(field?.classList.contains("justify-between")).toBe(true);
+    expect(content?.classList.contains("min-w-0")).toBe(true);
+    expect(toggle.classList.contains("data-[checked]:bg-primary")).toBe(true);
+    expect(toggle.classList.contains("data-[unchecked]:bg-input")).toBe(true);
+    expect(field?.children[1]).toBe(toggle);
+  });
+
   it("renders schema options with the Base UI Select and emits the selected value", async () => {
     const onChange = vi.fn();
     renderField({
@@ -116,6 +148,12 @@ describe("ConfigField", () => {
 
     const trigger = screen.getByRole("combobox", { name: "Bot language" });
     fireEvent.click(trigger);
+    const popup = await screen.findByRole("listbox");
+    const content = popup.closest("[data-slot='select-content']");
+    expect(content?.classList.contains("w-[var(--anchor-width)]")).toBe(true);
+    expect(content?.classList.contains("min-w-[var(--anchor-width)]")).toBe(true);
+    expect(content?.classList.contains("max-h-[var(--available-height)]")).toBe(true);
+    expect(content?.parentElement?.getAttribute("data-align")).toBe("start");
     const englishOption = await screen.findByRole("option", { name: "en" });
     fireEvent.pointerDown(englishOption, { pointerType: "mouse" });
     fireEvent.click(englishOption);
@@ -140,6 +178,14 @@ describe("ConfigField", () => {
     expect(input.getAttribute("id")).toMatch(/^config-[a-z0-9-]+$/);
     expect(screen.getByText("Used in generated memories.")).toBeTruthy();
     expect(screen.getByText("identity.bot_name")).toBeTruthy();
+
+    const field = input.closest("[data-slot='field']");
+    const heading = field?.querySelector("[data-slot='config-field-heading']");
+    const key = screen.getByText("identity.bot_name");
+    expect(heading).toBeTruthy();
+    expect(heading?.classList.contains("flex-wrap")).toBe(true);
+    expect(heading?.classList.contains("items-baseline")).toBe(true);
+    expect(key.parentElement).toBe(heading);
 
     fireEvent.change(input, { target: { value: "Archive" } });
     expect(onChange).toHaveBeenCalledWith("identity.bot_name", "Archive");

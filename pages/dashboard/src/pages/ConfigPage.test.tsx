@@ -146,6 +146,30 @@ function applyResult(
   });
 }
 
+function elementRect({
+  bottom,
+  left = 0,
+  right = 200,
+  top,
+}: {
+  bottom: number;
+  left?: number;
+  right?: number;
+  top: number;
+}): DOMRect {
+  return {
+    bottom,
+    height: bottom - top,
+    left,
+    right,
+    top,
+    width: right - left,
+    x: left,
+    y: top,
+    toJSON: () => ({}),
+  };
+}
+
 describe("ConfigPage", () => {
   let bridge: BridgeMock;
   let schemaHandler: () => Promise<ApiResponse>;
@@ -302,6 +326,104 @@ describe("ConfigPage", () => {
     expect(ids.length).toBeGreaterThan(0);
     expect(new Set(ids).size).toBe(ids.length);
     expect(screen.getAllByRole("textbox", { name: "Bot name" })).toHaveLength(1);
+  });
+
+  it("tracks the visible desktop form section and keeps its nav item visible", async () => {
+    const { container } = render(<ConfigPage />);
+
+    await screen.findByRole("textbox", { name: "Bot name" });
+    const navigation = screen.getByRole("navigation", {
+      name: "Configuration groups",
+    });
+    const formScroll = container.querySelector<HTMLElement>(
+      "[data-slot='config-form-scroll']",
+    )!;
+    const generalSection = container.querySelector<HTMLElement>(
+      "[data-config-section='general']",
+    )!;
+    const providerSection = container.querySelector<HTMLElement>(
+      "[data-config-section='provider_settings']",
+    )!;
+    const generalNav = within(navigation).getByRole("button", { name: "General" });
+    const providerNav = within(navigation).getByRole("button", {
+      name: "Provider settings",
+    });
+
+    expect(formScroll).toBeTruthy();
+    Object.defineProperties(formScroll, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 2_000 },
+      scrollTop: { configurable: true, value: 500, writable: true },
+    });
+    Object.defineProperty(navigation, "scrollTop", {
+      configurable: true,
+      value: 25,
+      writable: true,
+    });
+    vi.spyOn(formScroll, "getBoundingClientRect").mockReturnValue(
+      elementRect({ top: 100, bottom: 700 }),
+    );
+    vi.spyOn(generalSection, "getBoundingClientRect").mockReturnValue(
+      elementRect({ top: -500, bottom: 90 }),
+    );
+    vi.spyOn(providerSection, "getBoundingClientRect").mockReturnValue(
+      elementRect({ top: 115, bottom: 680 }),
+    );
+    vi.spyOn(navigation, "getBoundingClientRect").mockReturnValue(
+      elementRect({ top: 100, bottom: 300 }),
+    );
+    vi.spyOn(providerNav, "getBoundingClientRect").mockReturnValue(
+      elementRect({ top: 330, bottom: 370 }),
+    );
+
+    fireEvent.scroll(formScroll);
+
+    await waitFor(() =>
+      expect(providerNav.getAttribute("aria-current")).toBe("true"),
+    );
+    expect(generalNav.hasAttribute("aria-current")).toBe(false);
+    expect(navigation.scrollTop).toBe(95);
+  });
+
+  it("pins scroll-spy to the first and last groups and contains nested wheel scrolling", async () => {
+    const { container } = render(<ConfigPage />);
+
+    await screen.findByRole("textbox", { name: "Bot name" });
+    const navigation = screen.getByRole("navigation", {
+      name: "Configuration groups",
+    });
+    const formScroll = container.querySelector<HTMLElement>(
+      "[data-slot='config-form-scroll']",
+    )!;
+    const generalNav = within(navigation).getByRole("button", { name: "General" });
+    const providerNav = within(navigation).getByRole("button", {
+      name: "Provider settings",
+    });
+
+    expect(formScroll).toBeTruthy();
+    expect(navigation.classList.contains("overscroll-contain")).toBe(true);
+    expect(formScroll.classList.contains("lg:overscroll-contain")).toBe(true);
+    Object.defineProperties(formScroll, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 2_000 },
+      scrollTop: { configurable: true, value: 1_400, writable: true },
+    });
+
+    fireEvent.scroll(formScroll);
+    await waitFor(() =>
+      expect(providerNav.getAttribute("aria-current")).toBe("true"),
+    );
+
+    Object.defineProperty(formScroll, "scrollHeight", {
+      configurable: true,
+      value: 600,
+    });
+    formScroll.scrollTop = 0;
+    fireEvent.scroll(formScroll);
+    await waitFor(() =>
+      expect(generalNav.getAttribute("aria-current")).toBe("true"),
+    );
+    expect(providerNav.hasAttribute("aria-current")).toBe(false);
   });
 
   it("replaces a pending mobile section focus with the latest selection", async () => {
