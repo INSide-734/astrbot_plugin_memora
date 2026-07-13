@@ -119,13 +119,18 @@ export function ConfigField({
         className="flex flex-col gap-3"
         data-slot="config-group"
       >
-        <div className="flex flex-col gap-1">
-          <h2 id={`${id}-heading`} className="text-sm font-medium">
-            {label}
-          </h2>
-          <code className="block min-w-0 break-all text-xs text-muted-foreground">
-            {path}
-          </code>
+        <div className="flex min-w-0 flex-col gap-1">
+          <div
+            data-slot="config-group-heading"
+            className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
+          >
+            <h2 id={`${id}-heading`} className="text-sm font-medium">
+              {label}
+            </h2>
+            <code className="min-w-0 max-w-full break-all text-xs text-muted-foreground">
+              {path}
+            </code>
+          </div>
           {node.hint ? (
             <p className="text-sm text-muted-foreground">{node.hint}</p>
           ) : null}
@@ -200,7 +205,11 @@ export function ConfigField({
         >
           <SelectValue />
         </SelectTrigger>
-        <SelectContent alignItemWithTrigger={false}>
+        <SelectContent
+          align="start"
+          alignItemWithTrigger={false}
+          className="w-[var(--anchor-width)] min-w-[var(--anchor-width)]"
+        >
           <SelectGroup>
             {options.map((option) => (
               <SelectItem
@@ -257,20 +266,38 @@ export function ConfigField({
 
   return (
     <Field
+      orientation={node.type === "bool" ? "horizontal" : "vertical"}
+      className={
+        node.type === "bool"
+          ? "flex-wrap items-start justify-between gap-x-4 gap-y-2"
+          : undefined
+      }
       data-disabled={disabled ? true : undefined}
       data-invalid={error ? true : undefined}
     >
-      <FieldContent>
-        <FieldLabel htmlFor={id}>{label}</FieldLabel>
-        <FieldDescription>
-          <code className="block min-w-0 break-all">{path}</code>
-        </FieldDescription>
+      <FieldContent className="min-w-0">
+        <div
+          data-slot="config-field-heading"
+          className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
+        >
+          <FieldLabel htmlFor={id}>{label}</FieldLabel>
+          <code className="min-w-0 max-w-full break-all text-xs text-muted-foreground">
+            {path}
+          </code>
+        </div>
         {node.hint ? (
           <FieldDescription id={`${id}-hint`}>{node.hint}</FieldDescription>
         ) : null}
       </FieldContent>
       {control}
-      {error ? <FieldError id={`${id}-error`}>{error}</FieldError> : null}
+      {error ? (
+        <FieldError
+          id={`${id}-error`}
+          className={node.type === "bool" ? "basis-full" : undefined}
+        >
+          {error}
+        </FieldError>
+      ) : null}
     </Field>
   );
 }

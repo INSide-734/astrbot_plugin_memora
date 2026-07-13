@@ -1,5 +1,12 @@
 import { LoaderCircle, RefreshCw, Save, Settings2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type UIEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { ConfigConflictDialog } from "@/components/config/ConfigConflictDialog";
 import { ConfigField } from "@/components/config/ConfigField";
@@ -74,6 +81,7 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
   const [modifiedOnly, setModifiedOnly] = useState(false);
   const [activePath, setActivePath] = useState("");
   const dirtyOwnerRef = useRef<ConfigPageProps["onDirtyChange"]>(undefined);
+  const groupNavigationRef = useRef<HTMLElement | null>(null);
   const sectionFocusTimerRef = useRef<number | null>(null);
   const previousStatusRef = useRef(sync.status);
   const dirty = sync.dirtyPaths.length > 0;
@@ -91,6 +99,26 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
   useEffect(() => {
     if (!sections.some((section) => section.path === activePath)) {
       setActivePath(sections[0]?.path ?? "");
+    }
+  }, [activePath, sections]);
+
+  useEffect(() => {
+    const navigation = groupNavigationRef.current;
+    if (!navigation || !activePath) return;
+    const activeItem = Array.from(
+      navigation.querySelectorAll<HTMLElement>("[data-config-nav-path]"),
+    ).find((item) => item.dataset.configNavPath === activePath);
+    if (!activeItem) return;
+
+    const navigationRect = navigation.getBoundingClientRect();
+    const itemRect = activeItem.getBoundingClientRect();
+    if (itemRect.top < navigationRect.top) {
+      navigation.scrollTop = Math.max(
+        0,
+        navigation.scrollTop - (navigationRect.top - itemRect.top),
+      );
+    } else if (itemRect.bottom > navigationRect.bottom) {
+      navigation.scrollTop += itemRect.bottom - navigationRect.bottom;
     }
   }, [activePath, sections]);
 
@@ -153,12 +181,42 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
     const section = document.getElementById(id);
     if (!section) return;
     setActivePath(path);
-    section.scrollIntoView({ behavior: "smooth", block: "start" });
+    section.scrollIntoView({ behavior: "auto", block: "start" });
     const focusTarget =
       section.querySelector<HTMLElement>("[data-slot='config-group']") ??
       section;
     focusTarget.setAttribute("tabindex", "-1");
     focusTarget.focus({ preventScroll: true });
+  }, []);
+
+  const handleSectionScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    const container = event.currentTarget;
+    const sectionElements = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-config-section]"),
+    );
+    if (sectionElements.length === 0) return;
+
+    let nextPath = sectionElements[0].dataset.configSection ?? "";
+    const maximumScrollTop = container.scrollHeight - container.clientHeight;
+    if (container.scrollTop <= 1) {
+      nextPath = sectionElements[0].dataset.configSection ?? nextPath;
+    } else if (container.scrollTop >= maximumScrollTop - 1) {
+      nextPath =
+        sectionElements[sectionElements.length - 1].dataset.configSection ??
+        nextPath;
+    } else {
+      const activationLine = container.getBoundingClientRect().top + 24;
+      for (const section of sectionElements) {
+        if (section.getBoundingClientRect().top > activationLine) break;
+        nextPath = section.dataset.configSection ?? nextPath;
+      }
+    }
+
+    if (nextPath) {
+      setActivePath((currentPath) =>
+        currentPath === nextPath ? currentPath : nextPath,
+      );
+    }
   }, []);
 
   const scheduleSectionFocus = useCallback(
@@ -299,7 +357,11 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
         </Button>
       </PageToolbar>
 
-      <PageContent width="full" className="min-w-0">
+      <PageContent
+        width="full"
+        className="min-w-0 lg:overflow-hidden"
+        onScroll={handleSectionScroll}
+      >
         {!loaded && sync.status === "loading" ? (
           <StatePanel
             state="loading"
@@ -323,7 +385,7 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
             onAction={() => void sync.refresh()}
           />
         ) : (
-          <div className="flex min-w-0 flex-col gap-4">
+          <div className="flex min-h-0 min-w-0 flex-col gap-4 lg:h-full">
             {sync.status === "offline" || sync.status === "error" ? (
               <>
                 <div
@@ -368,7 +430,11 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent alignItemWithTrigger={false}>
+                <SelectContent
+                  align="start"
+                  alignItemWithTrigger={false}
+                  className="w-[var(--anchor-width)] min-w-[var(--anchor-width)]"
+                >
                   <SelectGroup>
                     {sectionItems.map((item) => (
                       <SelectItem key={item.value} value={item.value}>
@@ -380,16 +446,21 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
               </Select>
             </div>
 
-            <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)]">
+            <div className="grid min-w-0 gap-5 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)]">
               <nav
+                ref={groupNavigationRef}
                 aria-label={t("config.groupNavigation")}
-                className="sticky top-0 hidden max-h-[calc(100vh-12rem)] min-w-0 self-start overflow-y-auto lg:block"
+                className="hidden min-w-0 overflow-y-auto overscroll-contain lg:block lg:h-full lg:min-h-0"
               >
                 <div className="flex min-w-0 flex-col gap-1 pr-2">
                   {sections.map((section) => (
                     <Button
                       key={section.path}
                       type="button"
+                      aria-current={
+                        activePath === section.path ? "true" : undefined
+                      }
+                      data-config-nav-path={section.path}
                       variant={activePath === section.path ? "secondary" : "ghost"}
                       className="h-auto min-h-8 min-w-0 justify-start whitespace-normal text-left"
                       onClick={() => goToSection(section.id, section.path)}
@@ -400,7 +471,11 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
                 </div>
               </nav>
 
-              <div className="flex min-w-0 flex-col gap-5">
+              <div
+                data-slot="config-form-scroll"
+                className="flex min-w-0 flex-col gap-5 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:pr-2"
+                onScroll={handleSectionScroll}
+              >
                 {sections.length === 0 ? (
                   <p className="py-10 text-center text-sm text-muted-foreground">
                     {t("config.noResults")}
