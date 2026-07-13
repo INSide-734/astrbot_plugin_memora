@@ -1,4 +1,4 @@
-import schemaSource from "../../../../_conf_schema.json?raw";
+import schemaSource from "virtual:memora-config-schema";
 
 import type {
   ConfigApiError,
@@ -177,7 +177,7 @@ function validateChanges(
   changes: Record<string, unknown>,
   leaves: ReadonlyMap<string, LeafSchemaEntry>
 ): Record<string, string> {
-  const fieldErrors: Record<string, string> = {};
+  const fieldErrors = Object.create(null) as Record<string, string>;
   for (const path of Object.keys(changes).sort()) {
     const entry = isSafePath(path) ? leaves.get(path) : undefined;
     if (!entry) {
@@ -188,6 +188,23 @@ function validateChanges(
     const value = changes[path];
     if (!matchesSchemaType(entry.node, value)) {
       fieldErrors[path] = expectedTypeMessage(entry.node);
+      continue;
+    }
+
+    if (
+      typeof value === "number" &&
+      entry.node.min !== undefined &&
+      value < entry.node.min
+    ) {
+      fieldErrors[path] = `Value must be at least ${entry.node.min}`;
+      continue;
+    }
+    if (
+      typeof value === "number" &&
+      entry.node.max !== undefined &&
+      value > entry.node.max
+    ) {
+      fieldErrors[path] = `Value must be at most ${entry.node.max}`;
       continue;
     }
 
