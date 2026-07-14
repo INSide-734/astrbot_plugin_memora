@@ -279,6 +279,27 @@ class TestProfileManualAdminCRUD:
         store.create_profile_strict.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("preference_key", [1, None])
+    async def test_create_profile_manual_rejects_non_string_preference_keys(
+        self, preference_key
+    ) -> None:
+        store = MagicMock()
+        store.create_profile_strict = AsyncMock()
+        mgr = ProfileManager(profile_store=store)
+
+        with pytest.raises(EntityValidationError) as raised:
+            await mgr.create_profile_manual(
+                user_id="user-1",
+                preferences={preference_key: "invalid"},
+                tags=[],
+            )
+
+        assert raised.value.field_errors == {
+            "preferences": "字段名称必须为字符串"
+        }
+        store.create_profile_strict.assert_not_awaited()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("preferences", [[], "formal", 1, True])
     async def test_manual_profile_rejects_malformed_preferences(
         self, preferences

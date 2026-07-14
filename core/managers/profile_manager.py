@@ -245,6 +245,8 @@ class ProfileManager:
     def _normalize_preferences(cls, value: Any) -> UserPreferences:
         if not isinstance(value, Mapping):
             raise EntityValidationError({"preferences": "必须为对象"})
+        if any(not isinstance(key, str) for key in value):
+            raise EntityValidationError({"preferences": "字段名称必须为字符串"})
         unknown = sorted(set(value) - _EDITABLE_PREFERENCE_FIELDS)
         if unknown:
             raise EntityValidationError(
