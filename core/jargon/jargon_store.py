@@ -6,12 +6,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import time
+from collections.abc import Mapping
 from typing import Any
+
+import aiosqlite
 
 from astrbot.api import logger
 
+from ..base.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    EntityValidationError,
+    compute_entity_revision,
+)
 from ..storage.base_store import BaseStore
 from .models import JargonMeaning
 
@@ -46,6 +58,38 @@ _JARGON_TERM_INDEX = (
 )
 
 
+def _meaning_revision_payload(meaning: JargonMeaning) -> dict[str, Any]:
+    """返回与持久化 JargonMeaning 完整状态一致的稳定载荷。"""
+
+    return {
+        "term": meaning.term,
+        "group_id": meaning.group_id,
+        "meaning": meaning.meaning,
+        "confidence": meaning.confidence,
+        "is_jargon": meaning.is_jargon,
+        "is_confirmed": meaning.is_confirmed,
+        "is_global": meaning.is_global,
+        "is_complete": meaning.is_complete,
+        "count": meaning.count,
+        "last_inference_count": meaning.last_inference_count,
+        "context_examples": list(meaning.context_examples),
+        "created_at": meaning.created_at,
+        "updated_at": meaning.updated_at,
+    }
+
+
+_STRICT_UPDATE_FIELDS = frozenset(
+    {
+        "meaning",
+        "confidence",
+        "is_jargon",
+        "is_confirmed",
+        "is_global",
+        "is_complete",
+    }
+)
+
+
 # ---------------------------------------------------------------------------
 # JargonStore
 # ---------------------------------------------------------------------------
@@ -61,6 +105,7 @@ class JargonStore(BaseStore):
     def __init__(self, db_path: str) -> None:
         super().__init__(db_path)
         self._initialized = False
+        self._write_lock = asyncio.Lock()
 
     # ---- 生命周期 ---------------------------------------------------------------
 
@@ -120,6 +165,174 @@ class JargonStore(BaseStore):
             created_at=float(row["created_at"] or 0.0),
             updated_at=float(row["updated_at"] or 0.0),
         )
+
+    @staticmethod
+    def _meaning_values(meaning: JargonMeaning) -> tuple[Any, ...]:
+        return (
+            meaning.term,
+            meaning.group_id,
+            meaning.meaning,
+            meaning.confidence,
+            int(meaning.is_jargon),
+            int(meaning.is_confirmed),
+            int(meaning.is_global),
+            int(meaning.is_complete),
+            meaning.count,
+            meaning.last_inference_count,
+            JargonStore._serialize_context(meaning.context_examples),
+            meaning.created_at,
+            meaning.updated_at,
+        )
+
+    async def _rollback_safely(self) -> None:
+        """尽力回滚，但不允许清理错误覆盖原始异常。"""
+
+        if self.connection is None:
+            return
+        try:
+            await self.connection.rollback()
+        except BaseException:
+            pass
+
+    async def create_strict(self, meaning: JargonMeaning) -> JargonMeaning:
+        """在现有连接的单个事务中严格创建新词条。"""
+
+        async with self._write_lock:
+            try:
+                await self._execute("BEGIN IMMEDIATE")
+                try:
+                    await self._execute(
+                        """INSERT INTO jargon_terms
+                        (term, group_id, meaning, confidence, is_jargon,
+                         is_confirmed, is_global, is_complete, count,
+                         last_inference_count, context_examples, created_at,
+                         updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        self._meaning_values(meaning),
+                    )
+                except aiosqlite.IntegrityError as exc:
+                    raise EntityAlreadyExistsError("黑话词条已存在") from exc
+                row = await self._fetch_one(
+                    "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
+                    (meaning.term, meaning.group_id),
+                )
+                if row is None:
+                    raise RuntimeError("严格创建后无法读取黑话词条")
+                created = self._row_to_meaning(row)
+                await self._commit()
+                return created
+            except BaseException:
+                try:
+                    await self._rollback_safely()
+                except BaseException:
+                    pass
+                raise
+
+    async def update_if_revision(
+        self,
+        term: str,
+        group_id: str,
+        changes: Mapping[str, Any],
+        *,
+        expected_revision: str,
+    ) -> JargonMeaning:
+        """在单个锁定事务中比较修订版本并更新词条。"""
+
+        unknown = sorted(set(changes) - _STRICT_UPDATE_FIELDS)
+        if unknown:
+            raise EntityValidationError({name: "字段不可写" for name in unknown})
+        if not changes:
+            raise EntityValidationError({"changes": "不能为空"})
+
+        async with self._write_lock:
+            try:
+                await self._execute("BEGIN IMMEDIATE")
+                row = await self._fetch_one(
+                    "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
+                    (term, group_id),
+                )
+                if row is None:
+                    raise EntityNotFoundError("黑话词条不存在")
+                current = self._row_to_meaning(row)
+                current_payload = _meaning_revision_payload(current)
+                current_revision = compute_entity_revision(current_payload)
+                if current_revision != expected_revision:
+                    raise EditConflictError(current_payload, current_revision)
+
+                persisted_changes = dict(changes)
+                next_confirmed = bool(
+                    persisted_changes.get("is_confirmed", current.is_confirmed)
+                )
+                persisted_changes["is_complete"] = next_confirmed or current.count >= 100
+                persisted_changes["updated_at"] = max(
+                    time.time(), math.nextafter(current.updated_at, math.inf)
+                )
+                columns = list(persisted_changes)
+                values = [
+                    int(value) if column.startswith("is_") else value
+                    for column, value in persisted_changes.items()
+                ]
+                assignments = ", ".join(column + " = ?" for column in columns)
+                await self._execute(
+                    "UPDATE jargon_terms SET "
+                    + assignments
+                    + " WHERE term = ? AND group_id = ?",
+                    tuple(values) + (term, group_id),
+                )
+                updated_row = await self._fetch_one(
+                    "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
+                    (term, group_id),
+                )
+                if updated_row is None:
+                    raise EntityNotFoundError("黑话词条不存在")
+                updated = self._row_to_meaning(updated_row)
+                await self._commit()
+                return updated
+            except BaseException:
+                try:
+                    await self._rollback_safely()
+                except BaseException:
+                    pass
+                raise
+
+    async def delete_if_revision(
+        self,
+        term: str,
+        group_id: str,
+        *,
+        expected_revision: str,
+    ) -> bool:
+        """在单个锁定事务中比较修订版本并删除词条。"""
+
+        async with self._write_lock:
+            try:
+                await self._execute("BEGIN IMMEDIATE")
+                row = await self._fetch_one(
+                    "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
+                    (term, group_id),
+                )
+                if row is None:
+                    raise EntityNotFoundError("黑话词条不存在")
+                current = self._row_to_meaning(row)
+                current_payload = _meaning_revision_payload(current)
+                current_revision = compute_entity_revision(current_payload)
+                if current_revision != expected_revision:
+                    raise EditConflictError(current_payload, current_revision)
+
+                cursor = await self._execute(
+                    "DELETE FROM jargon_terms WHERE term = ? AND group_id = ?",
+                    (term, group_id),
+                )
+                if cursor.rowcount != 1:
+                    raise EntityNotFoundError("黑话词条不存在")
+                await self._commit()
+                return True
+            except BaseException:
+                try:
+                    await self._rollback_safely()
+                except BaseException:
+                    pass
+                raise
 
     async def upsert(self, meaning: JargonMeaning) -> None:
         """插入或更新黑话含义（INSERT OR REPLACE）。
