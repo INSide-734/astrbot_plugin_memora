@@ -283,22 +283,13 @@ class AffectionManager:
         resolved_intensity = max(0.1, min(1.0, normalized_intensity))
         resolved_duration = max(0.25, min(168.0, normalized_duration))
         async with self._mood_lock:
-            mood = BotMood(
-                mood_type=mood_type,
-                intensity=resolved_intensity,
-                description=resolved_description,
-                start_time=time.time(),
-                duration_hours=resolved_duration,
-            )
-            await self._store.save_bot_mood(
+            return await self._persist_mood_locked(
                 normalized_group_id,
-                mood_type.value,
-                mood.intensity,
-                mood.description,
-                mood.duration_hours,
+                mood_type,
+                resolved_intensity,
+                resolved_description,
+                resolved_duration,
             )
-            self._mood_cache[normalized_group_id] = mood
-            return mood
 
     async def reset_mood(self, group_id: Any) -> BotMood:
         """将群组情绪重置为默认平静状态，并保留一条新的历史记录。"""
@@ -315,7 +306,11 @@ class AffectionManager:
         records = await self._store.get_mood_history(
             normalized_group_id, limit=normalized_limit
         )
-        return [self._mood_from_record(record) for record in records]
+        return [
+            mood
+            for record in records
+            if (mood := self._mood_from_record(record)) is not None
+        ]
 
     @staticmethod
     def revision_for_affection(value: UserAffection) -> str:
@@ -425,14 +420,37 @@ class AffectionManager:
         )
 
     @staticmethod
-    def _mood_from_record(record: dict[str, Any]) -> BotMood:
-        return BotMood(
-            mood_type=MoodType(record["mood_type"]),
-            intensity=record["intensity"],
-            description=record["description"],
-            start_time=record["start_time"],
-            duration_hours=record["duration_hours"],
-        )
+    def _mood_from_record(record: dict[str, Any]) -> BotMood | None:
+        """在唯一的持久化边界验证 mood 行；损坏记录安全跳过。"""
+        try:
+            mood_type = MoodType(record["mood_type"])
+            description = record["description"]
+            values = (
+                record["intensity"],
+                record["start_time"],
+                record["duration_hours"],
+            )
+            if not isinstance(description, str):
+                raise TypeError("description")
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in values
+            ):
+                raise ValueError("numeric")
+            return BotMood(
+                mood_type=mood_type,
+                intensity=float(record["intensity"]),
+                description=description,
+                start_time=float(record["start_time"]),
+                duration_hours=float(record["duration_hours"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning(
+                "[好感度管理] 跳过格式异常的情绪记录: %s", type(exc).__name__
+            )
+            return None
 
     @staticmethod
     def _normalize_identity(value: Any, field: str) -> str:
@@ -502,21 +520,91 @@ class AffectionManager:
 
     async def _ensure_mood(self, group_id: str) -> BotMood:
         """获取或创建指定群组的有效情绪。"""
-        # 先检查缓存
         cached = self._mood_cache.get(group_id)
         if cached and cached.is_active():
             return cached
 
-        # 尝试从存储层读取
-        record = await self._store.get_active_mood(group_id)
-        if record:
-            mood = self._mood_from_record(record)
-            if mood.is_active():
+        async with self._mood_lock:
+            cached = self._mood_cache.get(group_id)
+            if cached and cached.is_active():
+                return cached
+
+            mood = await self._load_active_mood(group_id)
+            if mood is not None:
                 self._mood_cache[group_id] = mood
                 return mood
 
-        # 不存在时创建默认情绪
-        return await self.set_mood(group_id, self.DEFAULT_MOOD, self.DEFAULT_INTENSITY)
+            return await self._persist_mood_locked(
+                group_id,
+                self.DEFAULT_MOOD,
+                self.DEFAULT_INTENSITY,
+                _random_mood_description(self.DEFAULT_MOOD),
+                4.0,
+            )
+
+    async def _load_active_mood(self, group_id: str) -> BotMood | None:
+        """读取首条有效活动情绪；若首条损坏则继续扫描较旧记录。"""
+        record = await self._store.get_active_mood(group_id)
+        mood = self._mood_from_record(record) if record else None
+        if mood and mood.is_active():
+            return mood
+        if record is None:
+            return None
+        for candidate in await self._store.get_active_moods(group_id):
+            mood = self._mood_from_record(candidate)
+            if mood and mood.is_active():
+                return mood
+        return None
+
+    async def _persist_mood_locked(
+        self,
+        group_id: str,
+        mood_type: MoodType,
+        intensity: float,
+        description: str,
+        duration_hours: float,
+    ) -> BotMood:
+        """在持有 ``_mood_lock`` 时持久化，并使取消后的缓存与提交一致。"""
+        mood = BotMood(
+            mood_type=mood_type,
+            intensity=intensity,
+            description=description,
+            start_time=time.time(),
+            duration_hours=duration_hours,
+        )
+        save_task = asyncio.create_task(
+            self._store.save_bot_mood(
+                group_id,
+                mood_type.value,
+                mood.intensity,
+                mood.description,
+                mood.duration_hours,
+            )
+        )
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            await asyncio.shield(save_task)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+            try:
+                await self._await_mood_save_completion(save_task)
+            except BaseException:
+                raise cancellation
+
+        self._mood_cache[group_id] = mood
+        if cancellation is not None:
+            raise cancellation
+        return mood
+
+    @staticmethod
+    async def _await_mood_save_completion(save_task: asyncio.Task[Any]) -> Any:
+        """即使调用方重复取消，也消费内部写任务的最终结果。"""
+        while not save_task.done():
+            try:
+                await asyncio.shield(save_task)
+            except asyncio.CancelledError:
+                continue
+        return save_task.result()
 
 # ---- 内部：交互分类 ------------------------------------------------------
 
@@ -625,9 +713,23 @@ class AffectionManager:
                 if cut < 1:
                     continue
                 new_score = u["affection_score"] - cut
-                await self._store.set_affection_score(group_id, u["user_id"], new_score)
-                u["affection_score"] = new_score
-                overhead -= cut
+                expected_revision = compute_entity_revision(
+                    {
+                        "user_id": u["user_id"],
+                        "group_id": u["group_id"],
+                        "affection_score": u["affection_score"],
+                        "interaction_count": u["interaction_count"],
+                        "last_interaction": u["last_interaction"],
+                    }
+                )
+                if await self._store.redistribute_affection_if_revision(
+                    group_id,
+                    u["user_id"],
+                    new_score,
+                    expected_revision=expected_revision,
+                ):
+                    u["affection_score"] = new_score
+                    overhead -= cut
 
 # ---- 内部：情绪级联 --------------------------------------------------------
 

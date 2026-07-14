@@ -400,6 +400,254 @@ class TestMoodAdminOperations:
 
 
 # ============================================================================
+# Task 8 质量审查并发与损坏数据回归
+# ============================================================================
+
+
+class TestAffectionQualityReviewRegressions:
+    """覆盖管理员写入、读取快照及情绪缓存的审查回归。"""
+
+    @pytest.mark.asyncio
+    async def test_redistribution_skips_admin_changed_candidate_after_read(
+        self, tmp_db_path, monkeypatch
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store, max_total_affection=100)
+            alice = await manager.create_user_affection_manual("g1", "alice", 100)
+            await manager.create_user_affection_manual("g1", "bob", 50)
+            read_complete = asyncio.Event()
+            release_redistribution = asyncio.Event()
+            original_get_all = store.get_all_affections
+
+            async def gated_get_all(group_id):
+                rows = await original_get_all(group_id)
+                read_complete.set()
+                await release_redistribution.wait()
+                return rows
+
+            monkeypatch.setattr(store, "get_all_affections", gated_get_all)
+            redistribution = asyncio.create_task(
+                manager._maybe_redistribute("g1", exclude_user="actor")
+            )
+            await read_complete.wait()
+            await manager.update_user_affection_manual(
+                "g1",
+                "alice",
+                7,
+                expected_revision=manager.revision_for_affection(alice),
+            )
+            release_redistribution.set()
+            await redistribution
+
+            persisted = await manager.get_user_affection("g1", "alice")
+            assert persisted is not None
+            assert persisted.affection_score == 7
+            assert persisted.interaction_count == 0
+            assert persisted.last_interaction == 0.0
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_mood_cache_repairs_after_committed_save_is_cancelled(
+        self, tmp_db_path, monkeypatch
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            old = await manager.set_mood("g1", MoodType.HAPPY, description="old")
+            committed = asyncio.Event()
+            release_save = asyncio.Event()
+            original_save = store.save_bot_mood
+
+            async def commit_then_wait(*args, **kwargs):
+                row_id = await original_save(*args, **kwargs)
+                committed.set()
+                await release_save.wait()
+                return row_id
+
+            monkeypatch.setattr(store, "save_bot_mood", commit_then_wait)
+            setter = asyncio.create_task(
+                manager.set_mood("g1", MoodType.SAD, description="new")
+            )
+            await committed.wait()
+            latest_before_cancel = await store.get_latest_mood("g1")
+            assert latest_before_cancel is not None
+            assert latest_before_cancel["mood_type"] == MoodType.SAD.value
+            assert manager._mood_cache["g1"] is old
+
+            setter.cancel()
+            release_save.set()
+            with pytest.raises(asyncio.CancelledError):
+                await setter
+
+            assert manager._mood_cache["g1"].mood_type is MoodType.SAD
+            assert manager._mood_cache["g1"].description == "new"
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_get_mood_creates_one_default_history_row(
+        self, tmp_db_path, monkeypatch
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            first_read_started = asyncio.Event()
+            release_first_read = asyncio.Event()
+            original_get_active = store.get_active_mood
+            calls = 0
+
+            async def gate_first_read(group_id):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    first_read_started.set()
+                    await release_first_read.wait()
+                return await original_get_active(group_id)
+
+            monkeypatch.setattr(store, "get_active_mood", gate_first_read)
+            first = asyncio.create_task(manager.get_mood("g1"))
+            await first_read_started.wait()
+            second = asyncio.create_task(manager.get_mood("g1"))
+            release_first_read.set()
+            moods = await asyncio.gather(first, second)
+
+            assert [mood.mood_type for mood in moods] == [MoodType.CALM, MoodType.CALM]
+            assert len(await store.get_mood_history("g1", limit=10)) == 1
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_list_affections_uses_one_snapshot_against_external_writer(
+        self, tmp_db_path, monkeypatch
+    ):
+        reader = AffectionStore(tmp_db_path)
+        writer = AffectionStore(tmp_db_path)
+        await reader.initialize()
+        await writer.initialize()
+        try:
+            await reader.create_affection_strict("g1", "alice", 10)
+            count_complete = asyncio.Event()
+            release_page = asyncio.Event()
+            original_fetch_scalar = reader._fetch_scalar
+
+            async def gated_fetch_scalar(sql, params=()):
+                value = await original_fetch_scalar(sql, params)
+                if sql.startswith("SELECT COUNT(*) FROM user_affection"):
+                    count_complete.set()
+                    await release_page.wait()
+                return value
+
+            monkeypatch.setattr(reader, "_fetch_scalar", gated_fetch_scalar)
+            page_task = asyncio.create_task(reader.list_affections("g1", 10, 0))
+            await count_complete.wait()
+            await writer.create_affection_strict("g1", "bob", 20)
+            release_page.set()
+            rows, total = await page_task
+
+            assert total == len(rows)
+            assert [row["user_id"] for row in rows] == ["alice"]
+        finally:
+            await writer.close()
+            await reader.close()
+
+    @pytest.mark.asyncio
+    async def test_two_stores_strict_create_duplicate_is_domain_conflict(self, tmp_db_path):
+        first = AffectionStore(tmp_db_path)
+        second = AffectionStore(tmp_db_path)
+        await first.initialize()
+        await second.initialize()
+        try:
+            results = await asyncio.gather(
+                first.create_affection_strict("g1", "alice", 10),
+                second.create_affection_strict("g1", "alice", 20),
+                return_exceptions=True,
+            )
+            assert sum(isinstance(result, dict) for result in results) == 1
+            assert sum(isinstance(result, EntityAlreadyExistsError) for result in results) == 1
+        finally:
+            await second.close()
+            await first.close()
+
+    @pytest.mark.asyncio
+    async def test_mood_history_skips_malformed_rows_without_leaking_values(
+        self, tmp_db_path, monkeypatch, caplog
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            malformed = [
+                {
+                    "mood_type": "unknown-legacy-mood",
+                    "intensity": 0.5,
+                    "description": "secret unknown description",
+                    "start_time": 20.0,
+                    "duration_hours": 1.0,
+                },
+                {
+                    "mood_type": MoodType.HAPPY.value,
+                    "intensity": math.nan,
+                    "description": "secret nan description",
+                    "start_time": 19.0,
+                    "duration_hours": 1.0,
+                },
+                {
+                    "mood_type": MoodType.HAPPY.value,
+                    "intensity": 0.5,
+                    "description": None,
+                    "start_time": None,
+                    "duration_hours": "invalid-duration",
+                },
+                {
+                    "mood_type": MoodType.CALM.value,
+                    "intensity": 0.5,
+                    "description": "valid",
+                    "start_time": 10.0,
+                    "duration_hours": 1.0,
+                },
+            ]
+
+            async def injected_history(*args, **kwargs):
+                return malformed
+
+            monkeypatch.setattr(store, "get_mood_history", injected_history)
+            history = await manager.get_mood_history("g1", limit=10)
+            assert [(mood.mood_type, mood.description) for mood in history] == [
+                (MoodType.CALM, "valid")
+            ]
+            assert "ValueError" in caplog.text
+            assert "secret unknown description" not in caplog.text
+            assert "secret nan description" not in caplog.text
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_invalid_active_mood_is_skipped_for_next_valid_row(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.save_bot_mood("g1", MoodType.HAPPY.value, 0.5, "valid", 4.0)
+            async with store._write_transaction():
+                await store._execute(
+                    """INSERT INTO bot_mood (group_id, mood_type, intensity,
+                       description, start_time, duration_hours)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    ("g1", "unknown-legacy-mood", 0.5, "bad", time.time() + 1, 4.0),
+                )
+
+            mood = await AffectionManager(store).get_mood("g1")
+            assert mood.mood_type is MoodType.HAPPY
+            assert mood.description == "valid"
+        finally:
+            await store.close()
+
+
+# ============================================================================
 # 模型测试
 # ============================================================================
 
