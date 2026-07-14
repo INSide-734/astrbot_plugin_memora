@@ -861,7 +861,8 @@ class AffectionManager:
 
     async def close(self) -> None:
         """清理资源。"""
-        await self._store.close()
+        async with self._mood_lock:
+            await self._store.close()
 
 
 __all__ = ["AffectionManager", "LLMAdapter"]

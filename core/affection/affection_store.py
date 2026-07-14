@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from typing import Any
 
+from astrbot.api import logger
+
 from ..base.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
@@ -71,13 +73,26 @@ class AffectionStore(BaseStore):
                 await self._execute(idx_sql)
 
     async def _rollback_safely(self) -> None:
-        """尽力回滚，且绝不让回滚错误覆盖原始写入错误。"""
+        """等待回滚到终态，且绝不让清理失败覆盖原始事务错误。"""
         if self.connection is None:
             return
         try:
-            await self.connection.rollback()
-        except BaseException:
-            pass
+            rollback_task = asyncio.create_task(self.connection.rollback())
+            await self._await_task_completion(rollback_task)
+        except BaseException as exc:
+            logger.warning(
+                "[AffectionStore] rollback cleanup failed: %s", type(exc).__name__
+            )
+
+    @staticmethod
+    async def _await_task_completion(task: asyncio.Task[Any]) -> Any:
+        """在调用方重复取消时仍等待任务到达终态并消费其结果。"""
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+        return task.result()
 
     @asynccontextmanager
     async def _write_transaction(self) -> AsyncIterator[None]:

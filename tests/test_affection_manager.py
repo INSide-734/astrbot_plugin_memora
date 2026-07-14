@@ -648,6 +648,172 @@ class TestAffectionQualityReviewRegressions:
 
 
 # ============================================================================
+# Task 8 取消与关闭生命周期回归
+# ============================================================================
+
+
+class TestAffectionLifecycleRegressions:
+    """事务清理和管理器关闭必须等待其已启动的异步生命周期。"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("transaction_name", ["_write_transaction", "_read_snapshot"])
+    async def test_transaction_rollback_completes_after_repeated_cancellation(
+        self, tmp_db_path, monkeypatch, transaction_name
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        rollback_started = asyncio.Event()
+        release_rollback = asyncio.Event()
+        rollback_completed = asyncio.Event()
+        body_started = asyncio.Event()
+        original_rollback = store.connection.rollback
+
+        async def gated_rollback():
+            rollback_started.set()
+            await release_rollback.wait()
+            await original_rollback()
+            rollback_completed.set()
+
+        monkeypatch.setattr(store.connection, "rollback", gated_rollback)
+
+        async def cancelled_transaction():
+            async with getattr(store, transaction_name)():
+                body_started.set()
+                await asyncio.Event().wait()
+
+        transaction = asyncio.create_task(cancelled_transaction())
+        try:
+            await body_started.wait()
+            transaction.cancel()
+            await rollback_started.wait()
+            transaction.cancel()
+            release_rollback.set()
+            with pytest.raises(asyncio.CancelledError):
+                await transaction
+
+            assert rollback_completed.is_set()
+            await store.create_affection_strict("g1", transaction_name, 1)
+            rows, total = await store.list_affections("g1", 10, 0)
+            assert total == 1
+            assert rows[0]["user_id"] == transaction_name
+        finally:
+            release_rollback.set()
+            if not transaction.done():
+                transaction.cancel()
+            await asyncio.gather(transaction, return_exceptions=True)
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_close_waits_for_inflight_mood_save(self, tmp_db_path, monkeypatch):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        manager = AffectionManager(store)
+        save_started = asyncio.Event()
+        release_save = asyncio.Event()
+        close_entered = asyncio.Event()
+        release_close = asyncio.Event()
+        original_save = store.save_bot_mood
+        original_close = store.close
+
+        async def gated_save(*args, **kwargs):
+            save_started.set()
+            await release_save.wait()
+            return await original_save(*args, **kwargs)
+
+        async def gated_close():
+            close_entered.set()
+            await release_close.wait()
+            await original_close()
+
+        monkeypatch.setattr(store, "save_bot_mood", gated_save)
+        monkeypatch.setattr(store, "close", gated_close)
+        setter = asyncio.create_task(
+            manager.set_mood("g1", MoodType.HAPPY, description="pending")
+        )
+        closer: asyncio.Task[None] | None = None
+        try:
+            await save_started.wait()
+            closer = asyncio.create_task(manager.close())
+            await asyncio.sleep(0)
+            assert not close_entered.is_set()
+
+            release_save.set()
+            mood = await setter
+            assert mood.mood_type is MoodType.HAPPY
+            await close_entered.wait()
+            release_close.set()
+            await closer
+            assert store.connection is None
+        finally:
+            release_save.set()
+            release_close.set()
+            if not setter.done():
+                setter.cancel()
+            await asyncio.gather(setter, return_exceptions=True)
+            if closer is not None:
+                if not closer.done():
+                    closer.cancel()
+                await asyncio.gather(closer, return_exceptions=True)
+            if store.connection is not None:
+                await original_close()
+
+    @pytest.mark.asyncio
+    async def test_close_waits_for_cancelled_mood_setter_cleanup(self, tmp_db_path, monkeypatch):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        manager = AffectionManager(store)
+        save_started = asyncio.Event()
+        release_save = asyncio.Event()
+        close_entered = asyncio.Event()
+        release_close = asyncio.Event()
+        original_save = store.save_bot_mood
+        original_close = store.close
+
+        async def gated_save(*args, **kwargs):
+            save_started.set()
+            await release_save.wait()
+            return await original_save(*args, **kwargs)
+
+        async def gated_close():
+            close_entered.set()
+            await release_close.wait()
+            await original_close()
+
+        monkeypatch.setattr(store, "save_bot_mood", gated_save)
+        monkeypatch.setattr(store, "close", gated_close)
+        setter = asyncio.create_task(
+            manager.set_mood("g1", MoodType.SAD, description="cancelled")
+        )
+        closer: asyncio.Task[None] | None = None
+        try:
+            await save_started.wait()
+            setter.cancel()
+            closer = asyncio.create_task(manager.close())
+            await asyncio.sleep(0)
+            assert not close_entered.is_set()
+
+            release_save.set()
+            with pytest.raises(asyncio.CancelledError):
+                await setter
+            await close_entered.wait()
+            release_close.set()
+            await closer
+            assert store.connection is None
+        finally:
+            release_save.set()
+            release_close.set()
+            if not setter.done():
+                setter.cancel()
+            await asyncio.gather(setter, return_exceptions=True)
+            if closer is not None:
+                if not closer.done():
+                    closer.cancel()
+                await asyncio.gather(closer, return_exceptions=True)
+            if store.connection is not None:
+                await original_close()
+
+
+# ============================================================================
 # 模型测试
 # ============================================================================
 
