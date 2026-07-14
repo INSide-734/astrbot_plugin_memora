@@ -5,6 +5,7 @@ Validates request validation, response format, and error handling.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +17,8 @@ from core.base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
+from core.managers.profile_manager import ProfileManager
+from core.storage.profile_store import ProfileStore
 
 
 def _mock_request(**args):
@@ -1251,3 +1254,151 @@ class TestRevisionedProfileBatch:
             "failed_ids": [],
         }
         assert mixin.profile_manager.delete_profile.await_count == 2
+
+
+class TestRevisionedProfileBatchIntegration:
+    @staticmethod
+    def _mixin(manager: ProfileManager):
+        engine = SimpleNamespace(profile_manager=manager)
+
+        class Stub:
+            batch_delete_profiles = ProfileApiMixin.batch_delete_profiles
+            _batch_profile_actions = ProfileApiMixin._batch_profile_actions
+
+            @staticmethod
+            def _maintenance_write_guard():
+                return None
+
+            async def _ensure_plugin_ready(self):
+                return {"memory_engine": engine}, None
+
+        return Stub()
+
+    @staticmethod
+    def _batch_payload(action: str, revision: str) -> dict:
+        return {
+            "action": action,
+            "items": [
+                {
+                    "identity": {"user_id": "real-user"},
+                    "expected_revision": revision,
+                }
+            ],
+            "params": {
+                "tag": {
+                    "category": "interest",
+                    "value": "graphs",
+                    "confidence": 0.9,
+                }
+            },
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("action", "initial_tags", "expected_values"),
+        [
+            ("tags_add", [], ["graphs"]),
+            (
+                "tags_remove",
+                [
+                    {
+                        "category": "interest",
+                        "value": "graphs",
+                        "confidence": 0.9,
+                    },
+                    {
+                        "category": "custom",
+                        "value": "keep",
+                        "confidence": 0.5,
+                    },
+                ],
+                ["keep"],
+            ),
+        ],
+    )
+    async def test_real_manager_batch_tag_action_persists(
+        self,
+        tmp_db_path: str,
+        action: str,
+        initial_tags: list[dict],
+        expected_values: list[str],
+    ) -> None:
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        manager = ProfileManager(store)
+        current = await manager.create_profile_manual(
+            "real-user",
+            display_name="Alice",
+            preferences={
+                "reply_style": "formal",
+                "preferred_topics": ["graphs"],
+                "avoided_topics": ["spoilers"],
+                "active_hours": [9, 10],
+            },
+            tags=initial_tags,
+        )
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            return_value=self._batch_payload(action, manager.revision_for(current))
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await self._mixin(manager).batch_delete_profiles()
+
+        assert result["data"]["failures"] == [], result
+        assert result["data"]["succeeded_count"] == 1
+        persisted = await manager.get_profile("real-user")
+        assert persisted is not None
+        assert [tag.value for tag in persisted.tags] == expected_values
+        assert persisted.preferences.reply_style == "formal"
+        assert persisted.preferences.preferred_topics == ["graphs"]
+        assert persisted.preferences.avoided_topics == ["spoilers"]
+        assert persisted.preferences.active_hours == [9, 10]
+
+    @pytest.mark.asyncio
+    async def test_real_manager_batch_tag_action_preserves_revision_conflict(
+        self, tmp_db_path: str
+    ) -> None:
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        manager = ProfileManager(store)
+        original = await manager.create_profile_manual(
+            "real-user",
+            display_name="Before",
+            preferences={
+                "reply_style": "casual",
+                "preferred_topics": [],
+                "avoided_topics": [],
+                "active_hours": [],
+            },
+            tags=[],
+        )
+        stale_revision = manager.revision_for(original)
+        concurrent = await manager.update_profile_manual(
+            "real-user",
+            display_name="Concurrent",
+            preferences={
+                "reply_style": "formal",
+                "preferred_topics": ["current"],
+                "avoided_topics": [],
+                "active_hours": [12],
+            },
+            tags=[],
+            expected_revision=stale_revision,
+        )
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            return_value=self._batch_payload("tags_add", stale_revision)
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await self._mixin(manager).batch_delete_profiles()
+
+        failure = result["data"]["failures"][0]
+        assert failure["code"] == "edit_conflict"
+        assert failure["current_revision"] == manager.revision_for(concurrent)
+        persisted = await manager.get_profile("real-user")
+        assert persisted is not None
+        assert persisted.display_name == "Concurrent"
+        assert persisted.preferences.preferred_topics == ["current"]
+        assert persisted.tags == []

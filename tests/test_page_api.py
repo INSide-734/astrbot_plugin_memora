@@ -570,20 +570,22 @@ class TestMaintenanceWriteGuard:
 
         assert api._maintenance_write_guard() is None
 
-    def test_returns_error_with_pending_restore_file_list(self) -> None:
+    def test_pending_restore_response_redacts_file_paths(self) -> None:
+        secret = "C:/secret/pending_restore.db"
         plugin = MagicMock()
         plugin._backup_manager = MagicMock()
         plugin._backup_manager.has_pending_restores.return_value = True
-        plugin._backup_manager.list_pending_restores.return_value = ["a.restore", "b.restore"]
+        plugin._backup_manager.list_pending_restores.return_value = [secret]
         api = PluginPageApi(plugin)
 
         result = api._maintenance_write_guard()
 
-        assert result is not None
-        assert result["status"] == "error"
-        assert "拒绝写入操作" in result["message"]
-        assert "a.restore" in result["message"]
-        assert "b.restore" in result["message"]
+        assert result == {
+            "status": "error",
+            "message": "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。",
+            "code": "maintenance_blocked",
+        }
+        assert secret not in str(result)
 
     def test_returns_error_when_restore_status_check_raises(self) -> None:
         plugin = MagicMock()
@@ -611,9 +613,11 @@ class TestMaintenanceWriteGuard:
 
         result = api._maintenance_write_guard()
 
-        assert result is not None
-        assert result["status"] == "error"
-        assert "待恢复文件=[]" in result["message"]
+        assert result == {
+            "status": "error",
+            "message": "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。",
+            "code": "maintenance_blocked",
+        }
 
     def test_pending_restore_listing_failure_is_redacted_and_still_blocks(
         self,
@@ -629,10 +633,8 @@ class TestMaintenanceWriteGuard:
 
         assert result == {
             "status": "error",
-            "message": (
-                "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。"
-                " 待恢复文件=[]"
-            ),
+            "message": "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。",
+            "code": "maintenance_blocked",
         }
         assert secret not in str(result)
         assert all(secret not in str(arg) for arg in log_debug.call_args.args)

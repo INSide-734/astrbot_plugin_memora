@@ -1107,8 +1107,8 @@ class PluginPageApi(
             )
             pending_files = []
         return error_response(
-            "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。"
-            f" 待恢复文件={pending_files}"
+            "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。",
+            code="maintenance_blocked",
         )
 
     @staticmethod
