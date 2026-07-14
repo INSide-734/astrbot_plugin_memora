@@ -192,8 +192,11 @@ def _batch_failure(identity: Mapping[str, Any], error: Mapping[str, Any]) -> dic
     if error.get("field_errors"):
         failure["field_errors"] = dict(error["field_errors"])
     data = error.get("data")
-    if isinstance(data, Mapping) and data.get("current_revision") is not None:
-        failure["current_revision"] = data["current_revision"]
+    if isinstance(data, Mapping):
+        if isinstance(data.get("current_entity"), Mapping):
+            failure["current_entity"] = dict(data["current_entity"])
+        if data.get("current_revision") is not None:
+            failure["current_revision"] = data["current_revision"]
     return failure
 
 

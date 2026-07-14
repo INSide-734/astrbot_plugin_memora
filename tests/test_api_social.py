@@ -593,6 +593,31 @@ class TestSocialRelationBatch:
         assert result["data"]["succeeded_ids"] == [_identity(to_user="carol")]
 
     @pytest.mark.asyncio
+    async def test_batch_conflict_preserves_current_entity_and_revision(self) -> None:
+        stub = _make_write_stub()
+        current_entity = {
+            **_identity(),
+            "strength": 0.6,
+            "frequency": 3,
+            "last_interaction": 1700000000.0,
+            "tags": ["current"],
+            "category": "career",
+        }
+        stub.plugin._relation_manager.delete_manual_relation.side_effect = (
+            EditConflictError(current_entity, "rev-current")
+        )
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = _batch_payload()
+
+        with patch("core.api.social_api.request", request_mock):
+            result = await stub.batch_social_relations()
+
+        failure = result["data"]["failures"][0]
+        assert failure["code"] == "edit_conflict"
+        assert failure["current_entity"] == current_entity
+        assert failure["current_revision"] == "rev-current"
+
+    @pytest.mark.asyncio
     async def test_batch_rejects_more_than_100_before_mutation(self) -> None:
         stub = _make_write_stub()
         request_mock = _mock_request()
