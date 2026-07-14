@@ -208,6 +208,13 @@ class JargonStore(BaseStore):
                     pass
                 raise
 
+    @asynccontextmanager
+    async def read_guard(self) -> AsyncIterator[None]:
+        """阻止同一连接上的读取与写事务交错。"""
+
+        async with self._write_lock:
+            yield
+
     async def create_strict(self, meaning: JargonMeaning) -> JargonMeaning:
         """在现有连接的单个事务中严格创建新词条。"""
 
