@@ -273,6 +273,13 @@ async def _apply_revisioned_tag_action(
     current_entity = _safe_profile_to_dict(current)
     if current_entity is None:
         raise RuntimeError("profile serialization failed")
+    current_preferences = current_entity.get("preferences", {})
+    editable_preferences = {
+        "reply_style": current_preferences.get("reply_style", "casual"),
+        "preferred_topics": current_preferences.get("preferred_topics", []),
+        "avoided_topics": current_preferences.get("avoided_topics", []),
+        "active_hours": current_preferences.get("active_hours", []),
+    }
     current_tags = list(current_entity.get("tags", []) or [])
     identity = (tag["category"], tag["value"])
     if action == "tags_add":
@@ -294,7 +301,7 @@ async def _apply_revisioned_tag_action(
     await manager.update_profile_manual(
         user_id=user_id,
         display_name=current_entity.get("display_name", ""),
-        preferences=current_entity.get("preferences", {}),
+        preferences=editable_preferences,
         tags=current_tags,
         expected_revision=expected_revision,
     )
