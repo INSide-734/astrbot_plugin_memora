@@ -61,6 +61,24 @@ class TestErrorResponse:
         result = error_response("test")
         assert set(result.keys()) == {"status", "message"}
 
+    def test_error_keeps_backward_compatible_minimum(self) -> None:
+        assert error_response("bad") == {"status": "error", "message": "bad"}
+
+    def test_error_supports_structured_editing_details(self) -> None:
+        result = error_response(
+            "invalid",
+            code="validation_error",
+            field_errors={"strength": "out of range"},
+            data={"current_revision": "rev-2"},
+        )
+        assert result == {
+            "status": "error",
+            "message": "invalid",
+            "code": "validation_error",
+            "field_errors": {"strength": "out of range"},
+            "data": {"current_revision": "rev-2"},
+        }
+
 
 class TestResponseRemainsImmutable:
     """ok_response / error_response must not share mutable state across calls."""
