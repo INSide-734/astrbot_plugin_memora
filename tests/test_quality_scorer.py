@@ -159,6 +159,14 @@ class TestTextToSimpleEmbedding:
         vec = _text_to_simple_embedding("这是一段测试内容", dim=64)
         assert any(v != 0.0 for v in vec)
 
+    def test_embedding_does_not_depend_on_process_randomized_hash(self):
+        with patch("builtins.hash", return_value=1):
+            first = _text_to_simple_embedding("稳定的质量评分向量", dim=64)
+        with patch("builtins.hash", return_value=2):
+            second = _text_to_simple_embedding("稳定的质量评分向量", dim=64)
+
+        assert first == second
+
 
 # ---------------------------------------------------------------------------
 # QualityScore dataclass
