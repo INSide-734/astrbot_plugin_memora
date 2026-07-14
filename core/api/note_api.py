@@ -230,6 +230,17 @@ class NoteApiMixin:
         note = await backend.get_note(note_id) if manager else await store.get(note_id)
         if note is None:
             return error_response("not found: 笔记不存在")
+        if "changes" in payload:
+            changes = payload["changes"]
+            if not isinstance(changes, dict):
+                return error_response("changes 必须是 JSON 对象")
+            if not changes:
+                return error_response("changes 不能为空")
+            editable_fields = {"title", "content", "tags", "status"}
+            unsupported = sorted(set(changes) - editable_fields)
+            if unsupported:
+                return error_response(f"不支持的字段: {unsupported[0]}")
+            payload = changes
         # field/value 模式（前端兼容）：{note_id, field: "title"|"content"|"tags"|"status", value}
         field = str(payload.get("field", "")).strip()
         if field and "value" in payload:

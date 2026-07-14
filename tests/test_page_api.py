@@ -104,6 +104,170 @@ class TestImportanceToDisplay:
         assert PluginPageApi._importance_to_display(0.0) == 0.0
 
 
+class TestMemoryFullFormUpdate:
+    """The memory editor may submit all editable fields in one request."""
+
+    @staticmethod
+    def _api_and_engine():
+        engine = MagicMock()
+        engine.add_memory = AsyncMock(return_value=8)
+        engine.delete_memory = AsyncMock(return_value=True)
+        engine.update_memory = AsyncMock(return_value=True)
+        api = PluginPageApi(SimpleNamespace())
+        api._maintenance_write_guard = MagicMock(return_value=None)
+        api._ensure_plugin_ready = AsyncMock(
+            return_value=({"memory_engine": engine}, None)
+        )
+        api._get_memory_record = AsyncMock(
+            return_value={
+                "text": "Old content",
+                "metadata": {
+                    "session_id": "session-1",
+                    "persona_id": "persona-1",
+                    "importance": 0.2,
+                    "status": "archived",
+                    "memory_type": "GENERAL",
+                },
+            }
+        )
+        return api, engine
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_applies_content_and_metadata_once(self) -> None:
+        api, engine = self._api_and_engine()
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={
+                "memory_id": 7,
+                "changes": {
+                    "content": "New content",
+                    "importance": 0.8,
+                    "type": "factual",
+                    "status": "active",
+                },
+                "reason": "corrected by administrator",
+            }
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            result = await api.update_memory()
+
+        assert result["status"] == "ok"
+        assert engine.add_memory.await_count == 1
+        assert engine.delete_memory.await_count == 1
+        engine.update_memory.assert_not_awaited()
+        added = engine.add_memory.await_args.kwargs
+        assert added["content"] == "New content"
+        assert added["importance"] == 0.8
+        assert added["metadata"]["importance"] == 0.8
+        assert added["metadata"]["memory_type"] == "factual"
+        assert added["metadata"]["status"] == "active"
+        assert added["metadata"]["update_reason"] == "corrected by administrator"
+        assert [item["field"] for item in added["metadata"]["update_history"]] == [
+            "content",
+            "importance",
+            "type",
+            "status",
+        ]
+        assert {
+            item["reason"] for item in added["metadata"]["update_history"]
+        } == {"corrected by administrator"}
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_validates_every_change_before_writing(self) -> None:
+        api, engine = self._api_and_engine()
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={
+                "memory_id": 7,
+                "changes": {"content": "New content", "importance": 99},
+            }
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            result = await api.update_memory()
+
+        assert result["status"] == "error"
+        engine.add_memory.assert_not_awaited()
+        engine.delete_memory.assert_not_awaited()
+        engine.update_memory.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_updates_metadata_once_with_field_history(self) -> None:
+        api, engine = self._api_and_engine()
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={
+                "memory_id": 7,
+                "changes": {"importance": 0.8, "status": "active"},
+                "reason": "corrected by administrator",
+            }
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            result = await api.update_memory()
+
+        assert result["status"] == "ok"
+        engine.add_memory.assert_not_awaited()
+        engine.delete_memory.assert_not_awaited()
+        engine.update_memory.assert_awaited_once()
+        updates = engine.update_memory.await_args.args[1]
+        assert updates["importance"] == 0.8
+        assert updates["metadata"]["status"] == "active"
+        assert [item["field"] for item in updates["metadata"]["update_history"]] == [
+            "importance",
+            "status",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_cleans_up_new_memory_when_old_delete_fails(self) -> None:
+        api, engine = self._api_and_engine()
+        engine.delete_memory = AsyncMock(side_effect=[False, True])
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            result = await api.update_memory()
+
+        assert result["status"] == "error"
+        assert engine.delete_memory.await_args_list[0].args == (7,)
+        assert engine.delete_memory.await_args_list[1].args == (8,)
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_rejects_read_only_changes_before_writing(self) -> None:
+        api, engine = self._api_and_engine()
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"memory_id": 8}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            result = await api.update_memory()
+
+        assert result["status"] == "error"
+        engine.add_memory.assert_not_awaited()
+        engine.delete_memory.assert_not_awaited()
+        engine.update_memory.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_redacts_backend_write_errors(self) -> None:
+        api, engine = self._api_and_engine()
+        secret = r"database password at C:\private\memory.db"
+        engine.update_memory = AsyncMock(side_effect=RuntimeError(secret))
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"status": "active"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            result = await api.update_memory()
+
+        assert result["status"] == "error"
+        assert secret not in result["message"]
+
+
 class TestOkError:
     """测试 _ok and _error static helpers."""
 

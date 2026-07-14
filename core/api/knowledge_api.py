@@ -217,6 +217,17 @@ class KnowledgeApiMixin:
         entry = await manager.get_entry(entry_id)
         if entry is None:
             return error_response("not found: 条目不存在")
+        if "changes" in payload:
+            changes = payload["changes"]
+            if not isinstance(changes, dict):
+                return error_response("changes 必须是 JSON 对象")
+            if not changes:
+                return error_response("changes 不能为空")
+            editable_fields = {"title", "content", "category", "confidence", "tags"}
+            unsupported = sorted(set(changes) - editable_fields)
+            if unsupported:
+                return error_response(f"不支持的字段: {unsupported[0]}")
+            payload = changes
         # field/value 模式（前端兼容）：{entry_id, field: "title"|"content"|..., value}
         field = str(payload.get("field", "")).strip()
         if field and "value" in payload:

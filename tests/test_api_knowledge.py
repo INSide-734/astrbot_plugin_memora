@@ -223,6 +223,77 @@ class TestKnowledgeValidation:
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
+    async def test_update_accepts_changes_envelope(self) -> None:
+        entry = KnowledgeEntry(
+            title="old",
+            content="body",
+            category=KnowledgeType.FACT,
+            confidence=0.8,
+            tags=["old"],
+        )
+        mock_req = _make_mock_request()
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "entry_id": 2,
+                "changes": {
+                    "title": "new title",
+                    "content": "new body",
+                    "category": "concept",
+                    "confidence": 0.4,
+                    "tags": ["new"],
+                },
+            }
+        )
+        with patch("core.api.knowledge_api.request", mock_req):
+            mixin = _make_mixin(detail_entry=entry)
+            result = await mixin.update_knowledge_entry()
+        assert result["status"] == "ok"
+        updated = mixin.engine.knowledge_manager.update_entry.await_args.args[0]
+        assert updated.title == "new title"
+        assert updated.content == "new body"
+        assert updated.category == KnowledgeType.CONCEPT
+        assert updated.confidence == 0.4
+        assert updated.tags == ["new"]
+
+    @pytest.mark.asyncio
+    async def test_update_changes_rejects_read_only_field_before_manager_write(self) -> None:
+        entry = KnowledgeEntry(
+            title="old",
+            content="body",
+            category=KnowledgeType.FACT,
+            confidence=0.8,
+            tags=["old"],
+        )
+        mock_req = _make_mock_request()
+        mock_req.get_json = AsyncMock(
+            return_value={"entry_id": 2, "changes": {"entry_id": 3}}
+        )
+        with patch("core.api.knowledge_api.request", mock_req):
+            mixin = _make_mixin(detail_entry=entry)
+            result = await mixin.update_knowledge_entry()
+        assert result["status"] == "error"
+        mixin.engine.knowledge_manager.update_entry.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_keeps_field_value_compatibility(self) -> None:
+        entry = KnowledgeEntry(
+            title="old",
+            content="body",
+            category=KnowledgeType.FACT,
+            confidence=0.8,
+            tags=["old"],
+        )
+        mock_req = _make_mock_request()
+        mock_req.get_json = AsyncMock(
+            return_value={"entry_id": 2, "field": "title", "value": "new title"}
+        )
+        with patch("core.api.knowledge_api.request", mock_req):
+            mixin = _make_mixin(detail_entry=entry)
+            result = await mixin.update_knowledge_entry()
+        assert result["status"] == "ok"
+        assert mixin.engine.knowledge_manager.update_entry.await_args.args[0].title == "new title"
+
+    @pytest.mark.asyncio
     async def test_batch_requires_ids(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={
