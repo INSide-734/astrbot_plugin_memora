@@ -5,6 +5,14 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import aiosqlite
+
+from ..base.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    compute_entity_revision,
+)
 from ..models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
 from .base import BaseStore
 
@@ -61,15 +69,7 @@ class ProfileStore(BaseStore):
 
     async def get_profile(self, user_id: str) -> UserProfile | None:
         async with self._connect() as db:
-            cursor = await db.execute(
-                "SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)
-            )
-            row = await cursor.fetchone()
-            if not row:
-                return None
-            profile = self._row_to_profile(row)
-        profile.tags = await self._get_tags(user_id)
-        return profile
+            return await self._get_profile_with_db(db, user_id)
 
     async def get_or_create_profile(self, user_id: str) -> UserProfile:
         profile = await self.get_profile(user_id)
@@ -95,6 +95,119 @@ class ProfileStore(BaseStore):
             created_at=now,
             updated_at=now,
         )
+
+    async def create_profile_strict(
+        self,
+        user_id: str,
+        display_name: str = "",
+        preferences: UserPreferences | None = None,
+        tags: list[UserTag] | None = None,
+    ) -> UserProfile:
+        """在单个事务中严格创建画像及其管理员标签。"""
+        now = time.time()
+        normalized_preferences = preferences or UserPreferences()
+        async with self._connect() as db:
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                await db.execute(
+                    """INSERT INTO user_profiles
+                       (user_id, display_name, preferences_json,
+                        total_messages, total_sessions, first_seen_at,
+                        last_seen_at, created_at, updated_at)
+                       VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)""",
+                    (
+                        user_id,
+                        display_name,
+                        self._to_json(normalized_preferences.to_dict()),
+                        now,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+                await self._replace_tags_with_db(db, user_id, tags or [], now)
+                created = await self._get_profile_with_db(db, user_id)
+                if created is None:
+                    raise EntityNotFoundError("画像不存在")
+                await db.commit()
+                return created
+            except aiosqlite.IntegrityError as exc:
+                await db.rollback()
+                raise EntityAlreadyExistsError("用户画像已存在") from exc
+            except BaseException:
+                await db.rollback()
+                raise
+
+    async def replace_editable_fields(
+        self,
+        user_id: str,
+        *,
+        display_name: str,
+        preferences: UserPreferences,
+        tags: list[UserTag],
+        expected_revision: str,
+    ) -> UserProfile:
+        """按修订版本原子替换画像的全部管理员可写字段。"""
+        async with self._connect() as db:
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                current = await self._get_profile_with_db(db, user_id)
+                if current is None:
+                    raise EntityNotFoundError("画像不存在")
+                current_revision = compute_entity_revision(current.to_dict())
+                if current_revision != expected_revision:
+                    raise EditConflictError(current.to_dict(), current_revision)
+
+                now = time.time()
+                await db.execute(
+                    """UPDATE user_profiles
+                       SET display_name = ?, preferences_json = ?, updated_at = ?
+                       WHERE user_id = ?""",
+                    (
+                        display_name,
+                        self._to_json(preferences.to_dict()),
+                        now,
+                        user_id,
+                    ),
+                )
+                await self._replace_tags_with_db(db, user_id, tags, now)
+                updated = await self._get_profile_with_db(db, user_id)
+                if updated is None:
+                    raise EntityNotFoundError("画像不存在")
+                await db.commit()
+                return updated
+            except BaseException:
+                await db.rollback()
+                raise
+
+    async def delete_profile_if_revision(
+        self,
+        user_id: str,
+        *,
+        expected_revision: str,
+    ) -> bool:
+        """按修订版本在单个事务中删除画像及其标签。"""
+        async with self._connect() as db:
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                current = await self._get_profile_with_db(db, user_id)
+                if current is None:
+                    raise EntityNotFoundError("画像不存在")
+                current_revision = compute_entity_revision(current.to_dict())
+                if current_revision != expected_revision:
+                    raise EditConflictError(current.to_dict(), current_revision)
+
+                await db.execute(
+                    "DELETE FROM user_tags WHERE user_id = ?", (user_id,)
+                )
+                cursor = await db.execute(
+                    "DELETE FROM user_profiles WHERE user_id = ?", (user_id,)
+                )
+                await db.commit()
+                return cursor.rowcount > 0
+            except BaseException:
+                await db.rollback()
+                raise
 
     async def update_profile(self, profile: UserProfile) -> None:
         profile.updated_at = time.time()
@@ -163,6 +276,49 @@ class ProfileStore(BaseStore):
             )
             rows = await cursor.fetchall()
         return [self._row_to_tag(row) for row in rows]
+
+    async def _get_profile_with_db(
+        self, db: aiosqlite.Connection, user_id: str
+    ) -> UserProfile | None:
+        """使用调用方连接加载画像及其标签。"""
+        cursor = await db.execute(
+            "SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        profile = self._row_to_profile(row)
+        cursor = await db.execute(
+            "SELECT * FROM user_tags WHERE user_id = ? ORDER BY confidence DESC",
+            (user_id,),
+        )
+        profile.tags = [self._row_to_tag(tag_row) for tag_row in await cursor.fetchall()]
+        return profile
+
+    async def _replace_tags_with_db(
+        self,
+        db: aiosqlite.Connection,
+        user_id: str,
+        tags: list[UserTag],
+        now: float,
+    ) -> None:
+        """使用调用方连接替换管理员标签，并强制服务端元数据。"""
+        await db.execute("DELETE FROM user_tags WHERE user_id = ?", (user_id,))
+        for tag in tags:
+            await db.execute(
+                """INSERT INTO user_tags
+                   (user_id, category, value, confidence, source,
+                    created_at, last_seen_at, occurrence_count)
+                   VALUES (?, ?, ?, ?, 'manual', ?, ?, 1)""",
+                (
+                    user_id,
+                    tag.category.value,
+                    tag.value,
+                    tag.confidence,
+                    now,
+                    now,
+                ),
+            )
 
     async def add_tag(self, user_id: str, tag: UserTag) -> bool:
         async with self._connect() as db:

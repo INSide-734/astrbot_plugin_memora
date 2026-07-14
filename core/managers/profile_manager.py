@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import math
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from astrbot.api import logger
 
-from ..models.user_profile import UserPreferences, UserProfile, UserTag
+from ..base.entity_editing import EntityValidationError, compute_entity_revision
+from ..models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
 from ..storage.profile_store import ProfileStore
+
+_EDITABLE_PREFERENCE_FIELDS = frozenset(
+    {"reply_style", "preferred_topics", "avoided_topics", "active_hours"}
+)
 
 
 class ProfileManager:
@@ -25,6 +32,59 @@ class ProfileManager:
 
     async def touch(self, user_id: str) -> None:
         await self._store.touch(user_id)
+
+    async def create_profile_manual(
+        self,
+        user_id: Any,
+        display_name: Any = "",
+        preferences: Any = None,
+        tags: Any = None,
+    ) -> UserProfile:
+        """校验并严格创建管理员画像。"""
+        return await self._store.create_profile_strict(
+            user_id=self._normalize_text(user_id, "user_id", allow_empty=False),
+            display_name=self._normalize_text(
+                display_name, "display_name", allow_empty=True
+            ),
+            preferences=self._normalize_preferences(preferences),
+            tags=self._normalize_manual_tags(tags),
+        )
+
+    async def update_profile_manual(
+        self,
+        user_id: Any,
+        *,
+        display_name: Any,
+        preferences: Any,
+        tags: Any,
+        expected_revision: Any,
+    ) -> UserProfile:
+        """校验并按修订版本替换管理员可写画像字段。"""
+        return await self._store.replace_editable_fields(
+            self._normalize_text(user_id, "user_id", allow_empty=False),
+            display_name=self._normalize_text(
+                display_name, "display_name", allow_empty=True
+            ),
+            preferences=self._normalize_preferences(preferences),
+            tags=self._normalize_manual_tags(tags),
+            expected_revision=self._normalize_revision(expected_revision),
+        )
+
+    async def delete_profile_manual(
+        self,
+        user_id: Any,
+        *,
+        expected_revision: Any,
+    ) -> bool:
+        """校验并按修订版本删除管理员画像。"""
+        return await self._store.delete_profile_if_revision(
+            self._normalize_text(user_id, "user_id", allow_empty=False),
+            expected_revision=self._normalize_revision(expected_revision),
+        )
+
+    @staticmethod
+    def revision_for(profile: UserProfile) -> str:
+        return compute_entity_revision(profile.to_dict())
 
     async def update_profile_fields(
         self,
@@ -163,6 +223,145 @@ class ProfileManager:
         self, limit: int = 50, offset: int = 0
     ) -> tuple[list[UserProfile], int]:
         return await self._store.list_profiles(limit=limit, offset=offset)
+
+    @staticmethod
+    def _normalize_text(
+        value: Any,
+        field: str,
+        *,
+        allow_empty: bool,
+        maximum: int = 128,
+    ) -> str:
+        if not isinstance(value, str):
+            raise EntityValidationError({field: "必须为字符串"})
+        normalized = value.strip()
+        if not normalized and not allow_empty:
+            raise EntityValidationError({field: "不能为空"})
+        if len(normalized) > maximum:
+            raise EntityValidationError({field: "文本过长"})
+        return normalized
+
+    @classmethod
+    def _normalize_preferences(cls, value: Any) -> UserPreferences:
+        if not isinstance(value, Mapping):
+            raise EntityValidationError({"preferences": "必须为对象"})
+        unknown = sorted(set(value) - _EDITABLE_PREFERENCE_FIELDS)
+        if unknown:
+            raise EntityValidationError(
+                {"preferences." + key: "字段不可写" for key in unknown}
+            )
+
+        normalized: dict[str, Any] = {}
+        if "reply_style" in value:
+            normalized["reply_style"] = cls._normalize_text(
+                value["reply_style"],
+                "preferences.reply_style",
+                allow_empty=False,
+            )
+        for field in ("preferred_topics", "avoided_topics"):
+            if field in value:
+                normalized[field] = cls._normalize_string_list(
+                    value[field], "preferences." + field
+                )
+        if "active_hours" in value:
+            normalized["active_hours"] = cls._normalize_active_hours(
+                value["active_hours"]
+            )
+        return UserPreferences.from_dict(normalized)
+
+    @staticmethod
+    def _normalize_active_hours(value: Any) -> list[int]:
+        if not isinstance(value, list):
+            raise EntityValidationError(
+                {"preferences.active_hours": "必须为整数数组"}
+            )
+        normalized: list[int] = []
+        for index, hour in enumerate(value):
+            field = "preferences.active_hours." + str(index)
+            if isinstance(hour, bool) or not isinstance(hour, int):
+                raise EntityValidationError({field: "必须为整数"})
+            if not 0 <= hour <= 23:
+                raise EntityValidationError({field: "必须在 0 到 23 之间"})
+            if hour not in normalized:
+                normalized.append(hour)
+        return normalized
+
+    @classmethod
+    def _normalize_manual_tags(cls, value: Any) -> list[UserTag]:
+        if not isinstance(value, list):
+            raise EntityValidationError({"tags": "必须为数组"})
+        normalized: list[UserTag] = []
+        for index, item in enumerate(value):
+            prefix = "tags." + str(index)
+            if not isinstance(item, Mapping):
+                raise EntityValidationError({prefix: "必须为对象"})
+            category = item.get("category", TagCategory.CUSTOM.value)
+            if not isinstance(category, str):
+                raise EntityValidationError({prefix + ".category": "不支持的标签分类"})
+            try:
+                normalized_category = TagCategory(category.strip())
+            except ValueError as exc:
+                raise EntityValidationError(
+                    {prefix + ".category": "不支持的标签分类"}
+                ) from exc
+            tag_value = cls._normalize_text(
+                item.get("value"),
+                prefix + ".value",
+                allow_empty=False,
+            )
+            confidence = item.get("confidence", 0.5)
+            if isinstance(confidence, bool) or not isinstance(
+                confidence, (int, float)
+            ):
+                raise EntityValidationError({prefix + ".confidence": "必须为数字"})
+            normalized_confidence = float(confidence)
+            if not math.isfinite(normalized_confidence):
+                raise EntityValidationError(
+                    {prefix + ".confidence": "必须为有限数字"}
+                )
+            if not 0.0 <= normalized_confidence <= 1.0:
+                raise EntityValidationError(
+                    {prefix + ".confidence": "必须在 0.0 到 1.0 之间"}
+                )
+            normalized.append(
+                UserTag.from_dict(
+                    {
+                        "category": normalized_category.value,
+                        "value": tag_value,
+                        "confidence": normalized_confidence,
+                    }
+                )
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_string_list(value: Any, field: str) -> list[str]:
+        if not isinstance(value, list):
+            raise EntityValidationError({field: "必须为字符串数组"})
+        normalized: list[str] = []
+        for index, item in enumerate(value):
+            item_field = field + "." + str(index)
+            if not isinstance(item, str):
+                raise EntityValidationError({item_field: "必须为字符串"})
+            text = item.strip()
+            if len(text) > 64:
+                raise EntityValidationError({item_field: "文本过长"})
+            if text and text not in normalized:
+                normalized.append(text)
+        if len(normalized) > 32:
+            raise EntityValidationError({field: "项目过多"})
+        return normalized
+
+    @staticmethod
+    def _normalize_revision(value: Any) -> str:
+        if not isinstance(value, str):
+            raise EntityValidationError({"expected_revision": "必须为字符串"})
+        normalized = value.strip()
+        if not normalized:
+            raise EntityValidationError({"expected_revision": "不能为空"})
+        if len(normalized) > 256:
+            raise EntityValidationError({"expected_revision": "文本过长"})
+        return normalized
 
 
 __all__ = ["ProfileManager"]
