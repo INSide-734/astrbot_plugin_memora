@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from astrbot.api import logger
@@ -144,6 +145,17 @@ def _exception_response(exc: Exception, *, operation: str) -> dict[str, Any]:
     return error_response("黑话操作失败", code="internal_error")
 
 
+def _invalid_json_response(exc: Exception, *, operation: str) -> dict[str, Any]:
+    """记录安全的 JSON 解析失败摘要，并保留 legacy 客户端消息。"""
+
+    logger.warning(
+        "[黑话接口] operation=%s error_class=%s",
+        operation,
+        type(exc).__name__,
+    )
+    return error_response("JSON 请求体无效")
+
+
 def _parse_identity(value: Any) -> tuple[dict[str, str] | None, dict | None]:
     identity, error = require_object(value)
     if error:
@@ -231,46 +243,118 @@ class JargonApiMixin:
         logger.info("[黑话接口] 已惰性创建黑话统计过滤器实例")
         return jf
 
-    async def _get_jargon_store(self) -> Any | None:
-        """惰性解析或创建 ``JargonStore``。
+    def _get_jargon_resolution_lock(self) -> asyncio.Lock:
+        """同步创建 plugin-scoped 解析锁；检查和赋值之间没有 suspension。"""
 
-        优先从插件或初始化器上查找现有 store。
-        若不存在，则基于插件数据目录惰性创建，并缓存到
-        ``plugin._jargon_store``。
-        """
-        plugin = getattr(self, "plugin", None)
-        if plugin is None:
-            return None
-        for attr_name in ("_jargon_store", "jargon_store"):
-            obj = getattr(plugin, attr_name, None)
-            if obj is not None:
-                return obj
+        plugin = self.plugin
+        lock = getattr(plugin, "_jargon_resolution_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            plugin._jargon_resolution_lock = lock
+        return lock
+
+    @staticmethod
+    def _is_closed_jargon_store(store: Any) -> bool:
+        """仅识别已初始化后关闭的真实 ``JargonStore`` 实例。"""
+
+        from ..jargon.jargon_store import JargonStore
+
+        return (
+            isinstance(store, JargonStore)
+            and getattr(store, "_initialized", False) is True
+            and store.connection is None
+        )
+
+    def _find_open_jargon_store(self, plugin: Any) -> tuple[Any | None, str | None]:
+        """查找可用 store，并保留已关闭真实 store 的数据库路径。"""
+
+        closed_db_path = None
         initializer = getattr(plugin, "initializer", None)
-        if initializer is not None:
-            obj = getattr(initializer, "jargon_store", None)
-            if obj is not None:
-                return obj
+        candidates = (
+            getattr(plugin, "_jargon_store", None),
+            getattr(plugin, "jargon_store", None),
+            getattr(initializer, "jargon_store", None)
+            if initializer is not None
+            else None,
+        )
+        for store in candidates:
+            if store is None:
+                continue
+            if self._is_closed_jargon_store(store):
+                closed_db_path = getattr(store, "db_path", closed_db_path)
+                continue
+            return store, closed_db_path
+        return None, closed_db_path
 
-        # ── 惰性创建并缓存 ──
+    async def _get_jargon_store_locked(self, plugin: Any) -> Any | None:
+        """在调用方已经持有解析锁时解析或初始化 store。"""
+
+        store, closed_db_path = self._find_open_jargon_store(plugin)
+        if store is not None:
+            return store
+
         from pathlib import Path
 
         from ..jargon.jargon_store import JargonStore
 
         data_dir = getattr(plugin, "data_dir", None)
-        if data_dir is None:
-            initializer = getattr(plugin, "initializer", None)
-            if initializer is not None:
-                data_dir = getattr(initializer, "data_dir", None)
-        if data_dir is None:
+        initializer = getattr(plugin, "initializer", None)
+        if data_dir is None and initializer is not None:
+            data_dir = getattr(initializer, "data_dir", None)
+        if data_dir is not None:
+            db_path = str(Path(data_dir) / "jargon.db")
+        elif closed_db_path is not None:
+            db_path = closed_db_path
+        else:
             logger.warning("[黑话接口] 无法惰性创建黑话存储：未找到数据目录")
             return None
 
-        db_path = str(Path(data_dir) / "jargon.db")
         store = JargonStore(db_path)
         await store.initialize()
         plugin._jargon_store = store
-        logger.info("[黑话接口] 已惰性创建黑话存储实例，路径=%s", db_path)
+        logger.info("[黑话接口] 已惰性创建黑话存储实例")
         return store
+
+    async def _get_jargon_store(self) -> Any | None:
+        """并发安全地解析或创建唯一的 plugin-scoped ``JargonStore``。"""
+
+        plugin = getattr(self, "plugin", None)
+        if plugin is None:
+            return None
+        store, _ = self._find_open_jargon_store(plugin)
+        if store is not None:
+            return store
+        lock = self._get_jargon_resolution_lock()
+        async with lock:
+            return await self._get_jargon_store_locked(plugin)
+
+    def _get_current_jargon_query_service(self) -> Any | None:
+        """同步读取当前 query service，不缓存可被替换的 bound method。"""
+
+        plugin = getattr(self, "plugin", None)
+        if plugin is None:
+            return None
+        query_service = (
+            getattr(plugin, "_jargon_query", None)
+            or getattr(plugin, "jargon_query", None)
+            or getattr(plugin, "jargon_query_service", None)
+        )
+        initializer = getattr(plugin, "initializer", None)
+        if query_service is None and initializer is not None:
+            query_service = (
+                getattr(initializer, "_jargon_query", None)
+                or getattr(initializer, "jargon_query", None)
+                or getattr(initializer, "jargon_query_service", None)
+            )
+        return query_service
+
+    def _invalidate_current_jargon_query(self, group_id: str) -> None:
+        """在每次提交后发现并失效当前 query service。"""
+
+        query_service = self._get_current_jargon_query_service()
+        invalidator = getattr(query_service, "invalidate_group", None)
+        if callable(invalidator):
+            invalidator(group_id)
 
     async def _get_jargon_admin_service(self) -> Any | None:
         """解析并在插件上缓存唯一的 ``JargonAdminService``。"""
@@ -282,38 +366,34 @@ class JargonApiMixin:
             )
             return None
         cached = getattr(plugin, "_jargon_admin_service", None)
-        if cached is not None:
+        if cached is not None and not self._is_closed_jargon_store(
+            getattr(cached, "_store", None)
+        ):
             return cached
 
+        lock = self._get_jargon_resolution_lock()
         try:
-            store = await self._get_jargon_store()
-            if store is None:
-                logger.warning(
-                    "[黑话接口] operation=resolve_service unavailable=store"
+            async with lock:
+                cached = getattr(plugin, "_jargon_admin_service", None)
+                if cached is not None and not self._is_closed_jargon_store(
+                    getattr(cached, "_store", None)
+                ):
+                    return cached
+                store = await self._get_jargon_store_locked(plugin)
+                if store is None:
+                    logger.warning(
+                        "[黑话接口] operation=resolve_service unavailable=store"
+                    )
+                    return None
+
+                from ..jargon.jargon_admin_service import JargonAdminService
+
+                service = JargonAdminService(
+                    store,
+                    self._invalidate_current_jargon_query,
                 )
-                return None
-
-            initializer = getattr(plugin, "initializer", None)
-            query_service = (
-                getattr(plugin, "_jargon_query", None)
-                or getattr(plugin, "jargon_query", None)
-                or getattr(plugin, "jargon_query_service", None)
-            )
-            if query_service is None and initializer is not None:
-                query_service = (
-                    getattr(initializer, "_jargon_query", None)
-                    or getattr(initializer, "jargon_query", None)
-                    or getattr(initializer, "jargon_query_service", None)
-                )
-            invalidator = getattr(query_service, "invalidate_group", None)
-            if not callable(invalidator):
-                invalidator = None
-
-            from ..jargon.jargon_admin_service import JargonAdminService
-
-            service = JargonAdminService(store, invalidator)
-            plugin._jargon_admin_service = service
-            return service
+                plugin._jargon_admin_service = service
+                return service
         except Exception as exc:
             logger.error(
                 "[黑话接口] operation=resolve_service error_class=%s",
@@ -367,9 +447,9 @@ class JargonApiMixin:
                     llm_client = ctx.get_using_provider()
                 except Exception as exc:
                     logger.debug(
-                        "[黑话接口] 从上下文回退获取 LLM 提供器失败: %s",
-                        exc,
-                        exc_info=True,
+                        "[黑话接口] operation=%s error_class=%s",
+                        "resolve_miner_provider",
+                        type(exc).__name__,
                     )
         if llm_client is None:
             logger.warning("[黑话接口] 无法惰性创建黑话挖掘器：LLM 提供器不可用")
@@ -471,12 +551,11 @@ class JargonApiMixin:
                 serialized_meanings.append(item)
             return ok_response({
                 "meanings": serialized_meanings,
-                "total": len(meanings),
+                "total": len(serialized_meanings),
                 "group_id": group_id,
             })
-        except Exception as e:
-            logger.error(f"[黑话接口] 获取黑话释义失败: {e}", exc_info=True)
-            return error_response(f"获取黑话释义失败：{e}")
+        except Exception as exc:
+            return _exception_response(exc, operation="list_meanings")
 
     # ------------------------------------------------------------------
     # POST /create, /update, /delete, /batch
@@ -661,15 +740,21 @@ class JargonApiMixin:
             confirmed (bool, 可选): ``True`` 表示确认，``False`` 表示拒绝，
                 默认 true。
         """
-        store = await self._get_jargon_store()
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+
+        try:
+            store = await self._get_jargon_store()
+        except Exception as exc:
+            return _exception_response(exc, operation="confirm_resolve_store")
         if store is None:
             return error_response("黑话存储不可用")
 
         try:
             body = await request.get_json()
         except Exception as exc:
-            logger.debug("[黑话接口] confirm_jargon 的 JSON 请求体无效: %s", exc, exc_info=True)
-            return error_response("JSON 请求体无效")
+            return _invalid_json_response(exc, operation="confirm_parse_json")
 
         if not body or not isinstance(body, dict):
             return error_response("请求体必须为 JSON 对象")
@@ -693,9 +778,8 @@ class JargonApiMixin:
                 "action": action,
                 "message": f"词条“{term}”{action_text}",
             })
-        except Exception as e:
-            logger.error(f"[黑话接口] 确认黑话词条失败: {e}", exc_info=True)
-            return error_response(f"确认黑话词条失败：{e}")
+        except Exception as exc:
+            return _exception_response(exc, operation="confirm")
 
     # ------------------------------------------------------------------
     # POST /mine
@@ -708,23 +792,32 @@ class JargonApiMixin:
             group_id (str, 必填): 群组标识。
             limit (int, 可选): 最多推断词条数，默认 5，最大 20。
         """
-        # 检查功能委托开关：若 self_learning 接管黑话能力，则拒绝执行挖掘
-        fd = self._get_feature_delegation()
-        if fd is not None and fd.should_delegate_jargon():
-            return error_response(
-                "黑话挖掘能力已委托给 self_learning 插件；"
-                "伴侣插件启用期间，Memora 本地黑话处理会保持关闭。"
-            )
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
 
-        miner = await self._get_jargon_miner()
+        try:
+            # 若 self_learning 接管黑话能力，则拒绝执行挖掘。
+            fd = self._get_feature_delegation()
+            if fd is not None and fd.should_delegate_jargon():
+                return error_response(
+                    "黑话挖掘能力已委托给 self_learning 插件；"
+                    "伴侣插件启用期间，Memora 本地黑话处理会保持关闭。"
+                )
+        except Exception as exc:
+            return _exception_response(exc, operation="mine_delegation")
+
+        try:
+            miner = await self._get_jargon_miner()
+        except Exception as exc:
+            return _exception_response(exc, operation="mine_resolve_miner")
         if miner is None:
             return error_response("黑话挖掘器不可用")
 
         try:
             body = await request.get_json()
         except Exception as exc:
-            logger.debug("[黑话接口] mine_jargon 的 JSON 请求体无效: %s", exc, exc_info=True)
-            return error_response("JSON 请求体无效")
+            return _invalid_json_response(exc, operation="mine_parse_json")
 
         if not body or not isinstance(body, dict):
             return error_response("请求体必须为 JSON 对象")
@@ -748,9 +841,8 @@ class JargonApiMixin:
                 "results": serialized_results,
                 "message": f"黑话挖掘完成，共推断出 {len(results)} 个词条",
             })
-        except Exception as e:
-            logger.error(f"[黑话接口] 执行黑话挖掘失败: {e}", exc_info=True)
-            return error_response(f"执行黑话挖掘失败：{e}")
+        except Exception as exc:
+            return _exception_response(exc, operation="mine")
 
 
 __all__ = ["JargonApiMixin"]
