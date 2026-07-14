@@ -11,6 +11,12 @@ import aiosqlite
 
 from astrbot.api import logger
 
+from ..base.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    compute_entity_revision,
+)
 from ..storage.base import BaseStore
 from .models import SocialRelation
 
@@ -92,6 +98,176 @@ class RelationStore(BaseStore):
         return dict(zip(cls._COLUMNS, row))
 
     # ---- CRUD -----------------------------------------------------------
+
+    async def create_relation_strict(
+        self, rel: SocialRelation
+    ) -> SocialRelation:
+        """严格插入关系；复合键已存在时不覆盖现有记录。"""
+        async with self._connect() as db:
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO "social_relations"
+                        (from_user, to_user, relation_type, strength, frequency,
+                         last_interaction, group_id, tags_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rel.from_user,
+                        rel.to_user,
+                        rel.relation_type,
+                        rel.strength,
+                        rel.frequency,
+                        rel.last_interaction,
+                        rel.group_id,
+                        json.dumps(rel.tags, ensure_ascii=False),
+                    ),
+                )
+                await db.commit()
+            except aiosqlite.IntegrityError as exc:
+                raise EntityAlreadyExistsError("社交关系已存在") from exc
+        return rel
+
+    async def update_relation_if_revision(
+        self,
+        identity: tuple[str, str, str, str],
+        *,
+        relation_type: str,
+        strength: float,
+        tags: list[str],
+        expected_revision: str,
+    ) -> SocialRelation:
+        """在同一事务内检查修订版本并绝对更新关系业务字段。"""
+        from_user, to_user, current_type, group_id = identity
+        async with self._connect() as db:
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                cursor = await db.execute(
+                    """
+                    SELECT *
+                    FROM "social_relations"
+                    WHERE from_user = ?
+                      AND to_user = ?
+                      AND relation_type = ?
+                      AND group_id = ?
+                    """,
+                    identity,
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    raise EntityNotFoundError("社交关系不存在")
+
+                current = SocialRelation.from_row(self._row_to_dict(row))
+                current_serialized = current.to_dict()
+                current_revision = compute_entity_revision(current_serialized)
+                if current_revision != expected_revision:
+                    raise EditConflictError(
+                        current_serialized,
+                        current_revision,
+                    )
+
+                if relation_type != current_type:
+                    cursor = await db.execute(
+                        """
+                        SELECT 1
+                        FROM "social_relations"
+                        WHERE from_user = ?
+                          AND to_user = ?
+                          AND relation_type = ?
+                          AND group_id = ?
+                        """,
+                        (from_user, to_user, relation_type, group_id),
+                    )
+                    if await cursor.fetchone() is not None:
+                        raise EntityAlreadyExistsError("社交关系已存在")
+
+                updated = SocialRelation(
+                    from_user=from_user,
+                    to_user=to_user,
+                    relation_type=relation_type,
+                    strength=strength,
+                    frequency=current.frequency,
+                    last_interaction=current.last_interaction,
+                    group_id=group_id,
+                    tags=list(tags),
+                )
+                await db.execute(
+                    """
+                    UPDATE "social_relations"
+                    SET relation_type = ?, strength = ?, tags_json = ?
+                    WHERE from_user = ?
+                      AND to_user = ?
+                      AND relation_type = ?
+                      AND group_id = ?
+                    """,
+                    (
+                        updated.relation_type,
+                        updated.strength,
+                        json.dumps(updated.tags, ensure_ascii=False),
+                        from_user,
+                        to_user,
+                        current_type,
+                        group_id,
+                    ),
+                )
+                await db.commit()
+                return updated
+            except aiosqlite.IntegrityError as exc:
+                await db.rollback()
+                raise EntityAlreadyExistsError("社交关系已存在") from exc
+            except Exception:
+                await db.rollback()
+                raise
+
+    async def delete_relation_if_revision(
+        self,
+        identity: tuple[str, str, str, str],
+        *,
+        expected_revision: str,
+    ) -> bool:
+        """在同一事务内检查修订版本并删除关系。"""
+        async with self._connect() as db:
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                cursor = await db.execute(
+                    """
+                    SELECT *
+                    FROM "social_relations"
+                    WHERE from_user = ?
+                      AND to_user = ?
+                      AND relation_type = ?
+                      AND group_id = ?
+                    """,
+                    identity,
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    raise EntityNotFoundError("社交关系不存在")
+
+                current = SocialRelation.from_row(self._row_to_dict(row))
+                current_serialized = current.to_dict()
+                current_revision = compute_entity_revision(current_serialized)
+                if current_revision != expected_revision:
+                    raise EditConflictError(
+                        current_serialized,
+                        current_revision,
+                    )
+
+                await db.execute(
+                    """
+                    DELETE FROM "social_relations"
+                    WHERE from_user = ?
+                      AND to_user = ?
+                      AND relation_type = ?
+                      AND group_id = ?
+                    """,
+                    identity,
+                )
+                await db.commit()
+                return True
+            except Exception:
+                await db.rollback()
+                raise
 
     async def upsert_relation(self, rel: SocialRelation) -> None:
         """插入或更新一条 ``SocialRelation``。"""

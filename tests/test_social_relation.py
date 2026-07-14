@@ -13,6 +13,12 @@ import time
 
 import pytest
 
+from core.base.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    EntityValidationError,
+)
 from core.social.models import (
     RELATION_CATEGORIES,
     RELATION_DIFFICULTY,
@@ -644,3 +650,261 @@ class TestRelationManagerEdgeCases:
         await manager.get_or_create("a", "b", "g1")
         await manager.get_or_create("c", "d", "g1")
         assert len(await manager.list_all()) == 2
+
+
+class TestRelationManagerManualCrud:
+    """管理员 CRUD 保持人工编辑语义、原子性与修订版本检查。"""
+
+    @pytest.mark.asyncio
+    async def test_manual_create_does_not_fake_interaction(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+
+        created = await manager.create_manual_relation(
+            from_user=" alice ",
+            to_user=" bob ",
+            group_id=" g1 ",
+            relation_type="colleague",
+            strength=0.4,
+            tags=[" work ", "work", "trusted"],
+        )
+
+        assert created.from_user == "alice"
+        assert created.to_user == "bob"
+        assert created.group_id == "g1"
+        assert created.strength == 0.4
+        assert created.tags == ["work", "trusted"]
+        assert created.frequency == 0
+        assert created.last_interaction == 0.0
+
+    @pytest.mark.asyncio
+    async def test_duplicate_manual_create_leaves_existing_unchanged(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+        created = await manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="g1",
+            relation_type="colleague",
+            strength=0.4,
+            tags=["work"],
+        )
+
+        with pytest.raises(EntityAlreadyExistsError):
+            await manager.create_manual_relation(
+                from_user="alice",
+                to_user="bob",
+                group_id="g1",
+                relation_type="colleague",
+                strength=0.9,
+                tags=["replacement"],
+            )
+
+        current = await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        )
+        assert current == created
+
+    @pytest.mark.asyncio
+    async def test_manual_update_migrates_relation_type_atomically(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+        created = await manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="g1",
+            relation_type="colleague",
+            strength=0.4,
+            tags=["work"],
+        )
+
+        updated = await manager.update_manual_relation(
+            identity=("alice", "bob", "colleague", "g1"),
+            relation_type="best_friend",
+            strength=0.8,
+            tags=[" trusted ", "trusted"],
+            expected_revision=manager.revision_for(created),
+        )
+
+        assert updated.relation_type == "best_friend"
+        assert updated.strength == 0.8
+        assert updated.tags == ["trusted"]
+        assert updated.frequency == 0
+        assert updated.last_interaction == 0.0
+        assert await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        ) is None
+        assert await manager._store.get_relation(
+            "alice", "bob", "best_friend", "g1"
+        ) == updated
+
+    @pytest.mark.asyncio
+    async def test_stale_manual_update_exposes_current_and_preserves_row(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+        created = await manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="g1",
+            relation_type="colleague",
+            strength=0.4,
+            tags=[],
+        )
+
+        with pytest.raises(EditConflictError) as caught:
+            await manager.update_manual_relation(
+                identity=("alice", "bob", "colleague", "g1"),
+                relation_type="colleague",
+                strength=0.9,
+                tags=[],
+                expected_revision="stale",
+            )
+
+        assert caught.value.current_entity == created.to_dict()
+        assert caught.value.current_revision == manager.revision_for(created)
+        current = await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        )
+        assert current is not None and current.strength == 0.4
+
+    @pytest.mark.asyncio
+    async def test_manual_update_rejects_occupied_destination_without_changes(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+        source = await manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="g1",
+            relation_type="colleague",
+            strength=0.4,
+            tags=["source"],
+        )
+        destination = await manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="g1",
+            relation_type="best_friend",
+            strength=0.7,
+            tags=["destination"],
+        )
+
+        with pytest.raises(EntityAlreadyExistsError):
+            await manager.update_manual_relation(
+                identity=("alice", "bob", "colleague", "g1"),
+                relation_type="best_friend",
+                strength=0.8,
+                tags=["replacement"],
+                expected_revision=manager.revision_for(source),
+            )
+
+        assert await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        ) == source
+        assert await manager._store.get_relation(
+            "alice", "bob", "best_friend", "g1"
+        ) == destination
+
+    @pytest.mark.asyncio
+    async def test_revision_checked_delete_removes_relation(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        created = await manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="g1",
+            relation_type="colleague",
+            strength=0.4,
+            tags=[],
+        )
+
+        deleted = await manager.delete_manual_relation(
+            identity=("alice", "bob", "colleague", "g1"),
+            expected_revision=manager.revision_for(created),
+        )
+
+        assert deleted is True
+        assert await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        ) is None
+
+    @pytest.mark.asyncio
+    async def test_stale_delete_leaves_relation_intact(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        created = await manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="g1",
+            relation_type="colleague",
+            strength=0.4,
+            tags=[],
+        )
+
+        with pytest.raises(EditConflictError) as caught:
+            await manager.delete_manual_relation(
+                identity=("alice", "bob", "colleague", "g1"),
+                expected_revision="stale",
+            )
+
+        assert caught.value.current_entity == created.to_dict()
+        assert caught.value.current_revision == manager.revision_for(created)
+        assert await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        ) == created
+
+    @pytest.mark.asyncio
+    async def test_missing_manual_update_and_delete_raise_not_found(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+        identity = ("missing", "user", "colleague", "g1")
+
+        with pytest.raises(EntityNotFoundError):
+            await manager.update_manual_relation(
+                identity=identity,
+                relation_type="best_friend",
+                strength=0.8,
+                tags=[],
+                expected_revision="irrelevant",
+            )
+        with pytest.raises(EntityNotFoundError):
+            await manager.delete_manual_relation(
+                identity=identity,
+                expected_revision="irrelevant",
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("overrides", "expected_field"),
+        [
+            ({"from_user": "   "}, "from_user"),
+            ({"from_user": "a" * 129}, "from_user"),
+            ({"to_user": "alice"}, "to_user"),
+            ({"group_id": ""}, "group_id"),
+            ({"relation_type": "unknown"}, "relation_type"),
+            ({"strength": True}, "strength"),
+            ({"strength": float("inf")}, "strength"),
+            ({"strength": 1.01}, "strength"),
+            ({"tags": "not-a-list"}, "tags"),
+            ({"tags": ["x" * 65]}, "tags.0"),
+        ],
+    )
+    async def test_manual_create_rejects_invalid_fields_structurally(
+        self, tmp_db_path, overrides, expected_field
+    ):
+        manager = await _create_manager(tmp_db_path)
+        values = {
+            "from_user": "alice",
+            "to_user": "bob",
+            "group_id": "g1",
+            "relation_type": "colleague",
+            "strength": 0.4,
+            "tags": ["work"],
+        }
+        values.update(overrides)
+
+        with pytest.raises(EntityValidationError) as caught:
+            await manager.create_manual_relation(**values)
+
+        assert expected_field in caught.value.field_errors
