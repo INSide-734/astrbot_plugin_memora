@@ -71,6 +71,12 @@ const REQUIRED_KEYS = [
   "profiles.details",
   "system.export",
   "system.exporting",
+  "search.inputPlaceholder",
+  "search.groupPages",
+  "search.groupConfig",
+  "search.results",
+  "search.configLoading",
+  "search.countLimited",
 ] as const;
 
 const KNOWN_RELATION_TYPES = [
@@ -147,6 +153,54 @@ describe("dashboard i18n dictionaries", () => {
       expect(EN_MAP[key], `missing en key: ${key}`).toBeTruthy();
       expect(RU_MAP[key], `missing ru key: ${key}`).toBeTruthy();
     }
+  });
+
+  it("uses the documented global search copy in every locale", () => {
+    expect({
+      inputPlaceholder: I18N_MAP["search.inputPlaceholder"],
+      groupPages: I18N_MAP["search.groupPages"],
+      groupConfig: I18N_MAP["search.groupConfig"],
+      results: I18N_MAP["search.results"],
+      configLoading: I18N_MAP["search.configLoading"],
+      countLimited: I18N_MAP["search.countLimited"],
+    }).toEqual({
+      inputPlaceholder: "搜索页面、配置、记忆、知识、笔记...",
+      groupPages: "页面",
+      groupConfig: "配置",
+      results: "搜索结果",
+      configLoading: "正在加载配置索引",
+      countLimited: "显示 {0}/{1}",
+    });
+    expect({
+      inputPlaceholder: EN_MAP["search.inputPlaceholder"],
+      groupPages: EN_MAP["search.groupPages"],
+      groupConfig: EN_MAP["search.groupConfig"],
+      results: EN_MAP["search.results"],
+      configLoading: EN_MAP["search.configLoading"],
+      countLimited: EN_MAP["search.countLimited"],
+    }).toEqual({
+      inputPlaceholder: "Search pages, configuration, memories, knowledge, notes...",
+      groupPages: "Pages",
+      groupConfig: "Configuration",
+      results: "Search results",
+      configLoading: "Loading configuration index",
+      countLimited: "Showing {0}/{1}",
+    });
+    expect({
+      inputPlaceholder: RU_MAP["search.inputPlaceholder"],
+      groupPages: RU_MAP["search.groupPages"],
+      groupConfig: RU_MAP["search.groupConfig"],
+      results: RU_MAP["search.results"],
+      configLoading: RU_MAP["search.configLoading"],
+      countLimited: RU_MAP["search.countLimited"],
+    }).toEqual({
+      inputPlaceholder: "Поиск страниц, настроек, памяти, знаний и заметок...",
+      groupPages: "Страницы",
+      groupConfig: "Конфигурация",
+      results: "Результаты поиска",
+      configLoading: "Загрузка индекса конфигурации",
+      countLimited: "Показано {0}/{1}",
+    });
   });
 
   it("defines every static production translation key in all locales", () => {

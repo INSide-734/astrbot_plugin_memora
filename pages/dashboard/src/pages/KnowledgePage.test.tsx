@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EN_MAP } from "../mock";
@@ -14,6 +14,16 @@ interface BridgeMock {
 
 function ok<T>(data: T) {
   return { status: "ok", data };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, reject, resolve };
 }
 
 describe("KnowledgePage", () => {
@@ -229,11 +239,13 @@ describe("KnowledgePage", () => {
     expect(await screen.findByText("Alpha entry")).toBeTruthy();
     expect(screen.getByText("Beta entry")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Select knowledge entry Alpha entry" }));
+    const alphaCheckbox = screen.getByRole("checkbox", { name: "Select knowledge entry Alpha entry" });
+    fireEvent.click(alphaCheckbox);
 
     await waitFor(() => {
       expect(screen.getByText("1 selected")).toBeTruthy();
     });
+    expect(alphaCheckbox.closest("tr")?.getAttribute("data-state")).toBe("selected");
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select knowledge entry Beta entry" }));
 
@@ -319,6 +331,122 @@ describe("KnowledgePage", () => {
       });
     });
     expect(showToast).toHaveBeenCalledWith("Entry deleted");
+  });
+
+  it("opens the exact knowledge detail for each navigation target request", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/knowledge") {
+        return Promise.resolve(ok({ entries: [], total: 0 }));
+      }
+      if (path === "page/knowledge/detail") {
+        return Promise.resolve(ok({
+          entry: {
+            entry_id: params.entry_id,
+            title: "Search target knowledge",
+            content: "Knowledge target body",
+            category: "fact",
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const { rerender } = render(
+      <KnowledgePage
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, id: "knowledge-search-target" }}
+      />,
+    );
+
+    expect(await screen.findByRole("dialog", {
+      name: "Search target knowledge",
+    })).toBeTruthy();
+    expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge/detail", {
+      entry_id: "knowledge-search-target",
+    });
+
+    rerender(
+      <KnowledgePage
+        showToast={showToast}
+        navigationTarget={{ requestId: 2, id: "knowledge-search-target" }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(bridge.apiGet.mock.calls.filter(
+        ([path]) => path === "page/knowledge/detail",
+      )).toHaveLength(2);
+    });
+  });
+
+  it("keeps the newest knowledge detail when an older target resolves last", async () => {
+    const staleDetail = deferred<ReturnType<typeof ok>>();
+    const staleError = deferred<ReturnType<typeof ok>>();
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/knowledge") {
+        return Promise.resolve(ok({ entries: [], total: 0 }));
+      }
+      if (path === "page/knowledge/detail" && params.entry_id === "knowledge-old") {
+        return staleDetail.promise;
+      }
+      if (path === "page/knowledge/detail" && params.entry_id === "knowledge-error") {
+        return staleError.promise;
+      }
+      if (path === "page/knowledge/detail" && params.entry_id === "knowledge-new") {
+        return Promise.resolve(ok({
+          entry: {
+            entry_id: "knowledge-new",
+            title: "Newest knowledge detail",
+            content: "Newest knowledge body",
+            category: "fact",
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const view = render(
+      <KnowledgePage
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, id: "knowledge-old" }}
+      />,
+    );
+    view.rerender(
+      <KnowledgePage
+        showToast={showToast}
+        navigationTarget={{ requestId: 2, id: "knowledge-error" }}
+      />,
+    );
+    view.rerender(
+      <KnowledgePage
+        showToast={showToast}
+        navigationTarget={{ requestId: 3, id: "knowledge-new" }}
+      />,
+    );
+
+    expect(await screen.findByRole("dialog", {
+      name: "Newest knowledge detail",
+    })).toBeTruthy();
+    await act(async () => {
+      staleDetail.resolve(ok({
+        entry: {
+          entry_id: "knowledge-old",
+          title: "Stale knowledge detail",
+          content: "Stale knowledge body",
+          category: "fact",
+        },
+      }));
+      staleError.reject(new Error("stale knowledge failure"));
+      await Promise.allSettled([staleDetail.promise, staleError.promise]);
+    });
+
+    expect(screen.getByRole("dialog", {
+      name: "Newest knowledge detail",
+    })).toBeTruthy();
+    expect(screen.queryByRole("dialog", {
+      name: "Stale knowledge detail",
+    })).toBeNull();
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   it("creates a new knowledge entry from the modal and refreshes the list", async () => {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { BookOpen, Plus, Search, Trash2, Pencil, X } from "lucide-react";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
@@ -13,9 +13,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { dashboardLocale, formatDashboardDate, formatDashboardNumber } from "@/lib/i18n";
 import { Textarea } from "@/components/ui/textarea";
+import type { EntityNavigationTarget } from "@/types";
 
 interface KnowledgePageProps {
   showToast: (msg: string, isError?: boolean) => void;
+  navigationTarget?: EntityNavigationTarget | null;
 }
 
 interface KnowledgeEntry {
@@ -34,7 +36,7 @@ const CAT_LABELS: Record<string, string> = {};
 const EDIT_KB_LABELS: Record<string, string> = {};
 const PAGE_SIZE = 100;
 
-export function KnowledgePage({ showToast }: KnowledgePageProps) {
+export function KnowledgePage({ showToast, navigationTarget }: KnowledgePageProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
 
@@ -59,6 +61,7 @@ export function KnowledgePage({ showToast }: KnowledgePageProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editField, setEditField] = useState("title");
   const [editData, setEditData] = useState<Record<string, string>>({});
+  const detailRequestRef = useRef(0);
 
   const fetchEntries = useCallback(async () => {
     setLoading(true);
@@ -92,13 +95,23 @@ export function KnowledgePage({ showToast }: KnowledgePageProps) {
 
   useEffect(() => { fetchEntries(); }, [fetchEntries]);
 
-  const fetchDetail = async (id: string) => {
+  const fetchDetail = useCallback(async (id: string) => {
+    const requestId = ++detailRequestRef.current;
     try {
       const res = unwrapApiData(await apiRequest(`knowledge/detail?entry_id=${id}`));
+      if (requestId !== detailRequestRef.current) return;
       setDetail((res.entry ?? res) as KnowledgeEntry);
       setEditData({});
-    } catch (e) { showToast(String(e), true); }
-  };
+    } catch (e) {
+      if (requestId !== detailRequestRef.current) return;
+      showToast(String(e), true);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!navigationTarget) return;
+    void fetchDetail(navigationTarget.id);
+  }, [fetchDetail, navigationTarget?.id, navigationTarget?.requestId]);
 
   const createEntry = async () => {
     try {
@@ -205,7 +218,7 @@ export function KnowledgePage({ showToast }: KnowledgePageProps) {
             </TableHeader>
             <TableBody>
               {entries.map((e) => (
-                <TableRow key={getEntryId(e)} className="cursor-pointer text-sm"
+                <TableRow key={getEntryId(e)} data-state={selected.has(getEntryId(e)) ? "selected" : undefined} className="cursor-pointer text-sm"
                   onClick={() => fetchDetail(getEntryId(e))}>
                   <TableCell className="px-4" onClick={(ev) => ev.stopPropagation()}>
                     <Checkbox aria-label={t("kb.selectEntry", e.title)} checked={selected.has(getEntryId(e))} onCheckedChange={() => toggleSelect(getEntryId(e))} />

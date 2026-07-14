@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { selectionStateVariants } from "@/components/ui/selection-state";
 import { StatePanel } from "@/components/ui/StatePanel";
 import { Switch } from "@/components/ui/switch";
 import { useConfigSync } from "@/hooks/useConfigSync";
@@ -36,6 +37,8 @@ import { useI18n } from "@/hooks/useI18n";
 import { getConfigValue } from "@/lib/config";
 import { filterConfigSections } from "@/lib/configSections";
 import type { Translate } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+import type { ConfigNavigationTarget } from "@/types";
 import type { ConfigSyncStatus } from "@/types/config";
 
 export interface ConfigPageProps {
@@ -44,6 +47,7 @@ export interface ConfigPageProps {
     type?: "success" | "error" | "info",
   ) => void;
   onDirtyChange?: (dirty: boolean) => void;
+  navigationTarget?: ConfigNavigationTarget | null;
 }
 
 function syncStatusLabel(t: Translate, status: ConfigSyncStatus): string {
@@ -74,17 +78,29 @@ function statusVariant(status: ConfigSyncStatus) {
   return "default";
 }
 
-export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
+export function ConfigPage({
+  navigationTarget,
+  onDirtyChange,
+  showToast,
+}: ConfigPageProps) {
   const { t } = useI18n();
   const sync = useConfigSync();
   const [query, setQuery] = useState("");
   const [modifiedOnly, setModifiedOnly] = useState(false);
   const [activePath, setActivePath] = useState("");
+  const [pendingTarget, setPendingTarget] =
+    useState<ConfigNavigationTarget | null>(null);
+  const [highlightedPath, setHighlightedPath] = useState<string | null>(null);
   const dirtyOwnerRef = useRef<ConfigPageProps["onDirtyChange"]>(undefined);
   const groupNavigationRef = useRef<HTMLElement | null>(null);
+  const configFormRef = useRef<HTMLDivElement | null>(null);
   const sectionFocusTimerRef = useRef<number | null>(null);
+  const processedTargetRef = useRef<number | null>(null);
+  const targetFocusTimerRef = useRef<number | null>(null);
+  const targetHighlightTimerRef = useRef<number | null>(null);
   const previousStatusRef = useRef(sync.status);
   const dirty = sync.dirtyPaths.length > 0;
+  const loaded = Boolean(sync.schemaData && sync.draft && sync.baseConfig);
 
   const sections = useMemo(
     () =>
@@ -101,6 +117,108 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
       setActivePath(sections[0]?.path ?? "");
     }
   }, [activePath, sections]);
+
+  useEffect(() => {
+    if (
+      !navigationTarget ||
+      processedTargetRef.current === navigationTarget.requestId
+    ) {
+      return;
+    }
+
+    processedTargetRef.current = navigationTarget.requestId;
+    if (targetFocusTimerRef.current !== null) {
+      window.clearTimeout(targetFocusTimerRef.current);
+      targetFocusTimerRef.current = null;
+    }
+    if (targetHighlightTimerRef.current !== null) {
+      window.clearTimeout(targetHighlightTimerRef.current);
+      targetHighlightTimerRef.current = null;
+    }
+    setHighlightedPath(null);
+    setModifiedOnly(false);
+    setQuery(navigationTarget.query);
+    setPendingTarget(navigationTarget);
+  }, [navigationTarget]);
+
+  useEffect(() => {
+    if (!loaded || !pendingTarget || sync.status === "conflict") return;
+
+    const { path } = pendingTarget;
+    const rootPath = path.split(".")[0] || path;
+    const rootSection = sections.find((section) => section.path === rootPath);
+    if (!rootSection) {
+      if (query !== path) {
+        setQuery(path);
+      } else {
+        setPendingTarget(null);
+      }
+      return;
+    }
+
+    if (targetFocusTimerRef.current !== null) {
+      window.clearTimeout(targetFocusTimerRef.current);
+    }
+    targetFocusTimerRef.current = window.setTimeout(() => {
+      targetFocusTimerRef.current = null;
+      const target = configFormRef.current
+        ? Array.from(
+            configFormRef.current.querySelectorAll<HTMLElement>(
+              "[data-config-path]",
+            ),
+          ).find((element) => element.dataset.configPath === path)
+        : undefined;
+
+      if (!target) {
+        if (query !== path) {
+          setQuery(path);
+        } else {
+          setPendingTarget(null);
+        }
+        return;
+      }
+
+      setActivePath(rootPath);
+      setHighlightedPath(path);
+      target.scrollIntoView({ behavior: "auto", block: "center" });
+
+      let focusTarget: HTMLElement = target;
+      if (target.dataset.slot === "config-group") {
+        target.tabIndex = -1;
+      } else {
+        const control = Array.from(
+          target.querySelectorAll<HTMLElement>(
+            "input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex='-1']):not([aria-disabled='true'])",
+          ),
+        ).find(
+          (element) =>
+            !element.hasAttribute("disabled") &&
+            element.getAttribute("aria-disabled") !== "true",
+        );
+        if (control) {
+          focusTarget = control;
+        } else {
+          target.tabIndex = -1;
+        }
+      }
+      focusTarget.focus({ preventScroll: true });
+      setPendingTarget(null);
+
+      if (targetHighlightTimerRef.current !== null) {
+        window.clearTimeout(targetHighlightTimerRef.current);
+      }
+      targetHighlightTimerRef.current = window.setTimeout(() => {
+        targetHighlightTimerRef.current = null;
+        setHighlightedPath(null);
+      }, 1_600);
+    }, 0);
+
+    return () => {
+      if (targetFocusTimerRef.current === null) return;
+      window.clearTimeout(targetFocusTimerRef.current);
+      targetFocusTimerRef.current = null;
+    };
+  }, [loaded, pendingTarget, query, sections, sync.status]);
 
   useEffect(() => {
     const navigation = groupNavigationRef.current;
@@ -234,14 +352,22 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
 
   useEffect(
     () => () => {
-      if (sectionFocusTimerRef.current === null) return;
-      window.clearTimeout(sectionFocusTimerRef.current);
-      sectionFocusTimerRef.current = null;
+      if (sectionFocusTimerRef.current !== null) {
+        window.clearTimeout(sectionFocusTimerRef.current);
+        sectionFocusTimerRef.current = null;
+      }
+      if (targetFocusTimerRef.current !== null) {
+        window.clearTimeout(targetFocusTimerRef.current);
+        targetFocusTimerRef.current = null;
+      }
+      if (targetHighlightTimerRef.current !== null) {
+        window.clearTimeout(targetHighlightTimerRef.current);
+        targetHighlightTimerRef.current = null;
+      }
     },
     [],
   );
 
-  const loaded = Boolean(sync.schemaData && sync.draft && sync.baseConfig);
   const controlsDisabled =
     sync.status === "applying" ||
     sync.status === "reloading" ||
@@ -462,7 +588,13 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
                       }
                       data-config-nav-path={section.path}
                       variant={activePath === section.path ? "secondary" : "ghost"}
-                      className="h-auto min-h-8 min-w-0 justify-start whitespace-normal text-left"
+                      className={cn(
+                        "h-auto min-h-8 min-w-0 justify-start whitespace-normal text-left",
+                        selectionStateVariants({
+                          kind: "current-item",
+                          selected: activePath === section.path,
+                        }),
+                      )}
                       onClick={() => goToSection(section.id, section.path)}
                     >
                       {section.label}
@@ -472,6 +604,7 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
               </nav>
 
               <div
+                ref={configFormRef}
                 data-slot="config-form-scroll"
                 className="flex min-w-0 flex-col gap-5 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:pr-2"
                 onScroll={handleSectionScroll}
@@ -500,6 +633,7 @@ export function ConfigPage({ onDirtyChange, showToast }: ConfigPageProps) {
                           disabled={controlsDisabled}
                           fieldErrors={sync.fieldErrors}
                           defaultProviderLabel={t("config.defaultProvider")}
+                          targetPath={highlightedPath}
                         />
                       </div>
                       {index < sections.length - 1 ? <Separator /> : null}

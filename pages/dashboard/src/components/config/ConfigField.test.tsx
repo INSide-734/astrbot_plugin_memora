@@ -31,6 +31,7 @@ interface RenderFieldOptions {
   disabled?: boolean;
   fieldErrors?: Record<string, string>;
   defaultProviderLabel?: string;
+  targetPath?: string | null;
 }
 
 function renderField({
@@ -41,6 +42,7 @@ function renderField({
   disabled,
   fieldErrors,
   defaultProviderLabel,
+  targetPath,
 }: RenderFieldOptions) {
   render(
     <ConfigField
@@ -52,6 +54,7 @@ function renderField({
       disabled={disabled}
       fieldErrors={fieldErrors}
       defaultProviderLabel={defaultProviderLabel}
+      targetPath={targetPath}
     />
   );
   return onChange;
@@ -90,8 +93,43 @@ describe("ConfigField", () => {
     })).toBeTruthy();
     expect(within(groupHeading as HTMLElement).getByText("provider_settings")).toBeTruthy();
     expect(groupHeading?.classList.contains("flex-wrap")).toBe(true);
+    expect(groupHeading?.classList.contains("justify-between")).toBe(true);
+    expect(
+      within(groupHeading as HTMLElement)
+        .getByText("provider_settings")
+        .classList.contains("ml-auto"),
+    ).toBe(true);
+    expect(
+      within(groupHeading as HTMLElement)
+        .getByText("provider_settings")
+        .classList.contains("text-right"),
+    ).toBe(true);
     expect(screen.queryByText("Hidden secret")).toBeNull();
     expect(group.querySelector("[data-slot='card']")).toBeNull();
+  });
+
+  it("marks stable group and leaf paths and highlights the precise target", () => {
+    renderField({
+      path: "general",
+      node: {
+        type: "object",
+        description: "General",
+        items: {
+          bot_name: { type: "string", description: "Bot name" },
+        },
+      },
+      value: { bot_name: "Memora" },
+      targetPath: "general.bot_name",
+    });
+
+    const group = screen.getByRole("region", { name: "General" });
+    const leaf = screen
+      .getByRole("textbox", { name: "Bot name" })
+      .closest("[data-slot='field']");
+
+    expect(group.getAttribute("data-config-path")).toBe("general");
+    expect(leaf?.getAttribute("data-config-path")).toBe("general.bot_name");
+    expect(leaf?.getAttribute("data-config-highlighted")).toBe("true");
   });
 
   it("emits booleans from a Switch", () => {
@@ -185,7 +223,10 @@ describe("ConfigField", () => {
     expect(heading).toBeTruthy();
     expect(heading?.classList.contains("flex-wrap")).toBe(true);
     expect(heading?.classList.contains("items-baseline")).toBe(true);
+    expect(heading?.classList.contains("justify-between")).toBe(true);
     expect(key.parentElement).toBe(heading);
+    expect(key.classList.contains("ml-auto")).toBe(true);
+    expect(key.classList.contains("text-right")).toBe(true);
 
     fireEvent.change(input, { target: { value: "Archive" } });
     expect(onChange).toHaveBeenCalledWith("identity.bot_name", "Archive");

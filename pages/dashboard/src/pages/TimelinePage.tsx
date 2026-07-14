@@ -5,7 +5,9 @@ import type { MemoryItem } from "@/types";
 import { Clock, Calendar } from "lucide-react";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { Button } from "@/components/ui/Button";
+import { selectionStateVariants } from "@/components/ui/selection-state";
 import { dashboardLocale, formatDashboardNumber, translateEnum } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 
 interface TimelinePageProps {
   showToast: (message: string, isError?: boolean) => void;
@@ -22,6 +24,10 @@ function parseTimestamp(item: MemoryItem): number {
     if (!isNaN(d.getTime())) return d.getTime() / 1000;
   }
   return 0;
+}
+
+function timelineDetailId(memoryId: string): string {
+  return `timeline-detail-${encodeURIComponent(memoryId)}`;
 }
 
 export function TimelinePage({ showToast }: TimelinePageProps) {
@@ -115,13 +121,19 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
                     className="absolute left-[-21px] top-2 w-3 h-3 rounded-full border-2 border-[var(--color-surface)] z-10"
                     style={{ backgroundColor: getImportanceColor(mem.importance ?? 0.5) }}
                   />
-                  <div
+                  <button
+                    type="button"
+                    aria-expanded={selectedId === mem.id}
+                    aria-controls={timelineDetailId(mem.id)}
                     onClick={() => setSelectedId(selectedId === mem.id ? null : mem.id)}
-                    className={`cursor-pointer rounded-lg border p-4 transition-all ${
-                      selectedId === mem.id
-                        ? "border-primary bg-primary/5"
-                        : "border-border bg-card hover:border-foreground/20 card-hover"
-                    }`}
+                    className={cn(
+                      "block w-full cursor-pointer rounded-lg border border-border bg-card p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      selectionStateVariants({
+                        kind: "current-item",
+                        selected: selectedId === mem.id,
+                      }),
+                      selectedId !== mem.id && "hover:border-foreground/20 card-hover",
+                    )}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
@@ -129,7 +141,7 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
                           {getMemoryText(mem)}
                         </p>
                         {selectedId === mem.id && (
-                          <div className="mt-3 space-y-2 border-t pt-3">
+                          <div id={timelineDetailId(mem.id)} className="mt-3 space-y-2 border-t pt-3">
                             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                               <span className="text-muted-foreground">{t("table.importance")}</span>
                               <span className="text-foreground">{formatDashboardNumber(mem.importance ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -143,7 +155,7 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
                         {formatDate(parseTimestamp(mem))}
                       </span>
                     </div>
-                  </div>
+                  </button>
                 </div>
               ))}
             </div>

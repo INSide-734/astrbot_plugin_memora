@@ -24,6 +24,8 @@ const SCREENSHOT_BASELINES = {
   "config.png": { width: 1366, height: 900, minBytes: 10_000 },
   "config-conflict.png": { width: 1366, height: 900, minBytes: 10_000 },
   "mobile-config.png": { width: 390, height: 844, minBytes: 10_000 },
+  "global-search-scroll.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "global-search-memory-target.png": { width: 1366, height: 900, minBytes: 10_000 },
   "graph.png": { width: 1366, height: 900, minBytes: 10_000 },
   "memory.png": { width: 1366, height: 900, minBytes: 10_000 },
   "system.png": { width: 1366, height: 900, minBytes: 10_000 },
@@ -35,6 +37,7 @@ const SCREENSHOT_BASELINES = {
   "mobile-system.png": { width: 390, height: 844, minBytes: 10_000 },
   "mobile-jargon.png": { width: 390, height: 844, minBytes: 10_000 },
   "system-confirmation.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "dark-learning.png": { width: 1366, height: 900, minBytes: 10_000 },
   "dark-system.png": { width: 1366, height: 900, minBytes: 10_000 },
   "preview.png": { width: 1366, height: 900, minBytes: 10_000 },
   "mobile-preview.png": { width: 390, height: 844, minBytes: 10_000 },
@@ -66,7 +69,7 @@ async function launchBrowser() {
   );
 }
 
-function bridgePayload(endpoint) {
+function bridgePayload(endpoint, params = {}) {
   const pathOnly = String(endpoint || "").replace(/^page\/?/, "");
   if (pathOnly === "stats") {
     return {
@@ -145,13 +148,44 @@ function bridgePayload(endpoint) {
     };
   }
   if (pathOnly === "memories") {
+    if (!params.keyword) {
+      return {
+        memories: [
+          {
+            id: 1,
+            content: "浏览器 smoke 记忆",
+            text: "浏览器 smoke 记忆",
+            importance: 0.8,
+            metadata: {},
+          },
+        ],
+        total: 1,
+      };
+    }
     return {
-      memories: [
-        { id: 1, text: "浏览器 smoke 记忆", importance: 0.8, metadata: {} },
-      ],
-      total: 1,
+      memories: Array.from({ length: 20 }, (_, index) => ({
+        id: `browser-search-memory-${index + 1}`,
+        content: `浏览器 smoke 记忆 ${index + 1}`,
+        text: `浏览器 smoke 记忆 ${index + 1}`,
+        importance: 0.8,
+        metadata: {},
+      })),
+      total: 20,
     };
   }
+  if (pathOnly === "memory/detail") {
+    return {
+      memory: {
+        id: params.id,
+        content: `浏览器 smoke 精确详情 ${params.id}`,
+        importance: 0.8,
+        status: "active",
+        type: "fact",
+      },
+    };
+  }
+  if (pathOnly === "knowledge/search") return { entries: [], total: 0 };
+  if (pathOnly === "notes/search") return { notes: [], total: 0 };
   if (pathOnly === "jargon/stats") return { total_terms: 1, confirmed_terms: 0 };
   if (pathOnly === "jargon/candidates") {
     return { candidates: [{ term: "梗", score: 0.9, occurrences: 3 }] };
@@ -668,6 +702,77 @@ async function captureBaselineScreenshot(page, screenshotPath, label) {
   }
   const screenshot = await page.screenshot({ path: screenshotPath, fullPage: false });
   return assertScreenshotMatchesBaseline(screenshot, path.basename(screenshotPath), label);
+}
+
+async function runGlobalSearchScrollAndTargetSmoke(page, screenshotsDir) {
+  await page.keyboard.press("Control+K");
+  const search = page.getByRole("combobox", { name: "全局搜索" });
+  await search.fill("浏览器");
+  await page.waitForFunction(
+    () => document.querySelectorAll("#global-search-results [role='option']").length >= 20,
+    undefined,
+    { timeout: 5_000 },
+  );
+
+  const listbox = page.locator("#global-search-results");
+  const viewport = listbox.locator("..");
+  const before = await viewport.evaluate((element) => ({
+    scrollTop: element.scrollTop,
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+  }));
+  if (before.scrollHeight <= before.clientHeight) {
+    throw new Error(`Global search results did not overflow: ${JSON.stringify(before)}`);
+  }
+
+  const viewportBox = await viewport.boundingBox();
+  if (!viewportBox) throw new Error("Global search result viewport has no layout box");
+  await page.mouse.move(
+    viewportBox.x + viewportBox.width / 2,
+    viewportBox.y + viewportBox.height / 2,
+  );
+  await page.mouse.wheel(0, 700);
+  await page.waitForFunction(
+    () => (document.querySelector("#global-search-results")?.parentElement?.scrollTop ?? 0) > 0,
+    undefined,
+    { timeout: 3_000 },
+  );
+
+  const after = await viewport.evaluate((element) => element.scrollTop);
+  if (after <= before.scrollTop) {
+    throw new Error(`Mouse wheel did not scroll global search results: ${before.scrollTop} -> ${after}`);
+  }
+
+  const screenshots = [
+    await captureBaselineScreenshot(
+      page,
+      path.join(screenshotsDir, "global-search-scroll.png"),
+      "global-search-scroll",
+    ),
+  ];
+
+  await page.getByRole("option", { name: /浏览器 smoke 记忆 20/ }).click();
+  await page.waitForFunction(
+    () => window.location.hash === "#/memory",
+    undefined,
+    { timeout: 5_000 },
+  );
+  await page.getByText(
+    "浏览器 smoke 精确详情 browser-search-memory-20",
+    { exact: true },
+  ).waitFor({ state: "visible", timeout: 5_000 });
+  if (await page.getByRole("dialog", { name: "全局搜索" }).count()) {
+    throw new Error("Global search dialog remained open after exact memory navigation");
+  }
+  await assertNoHorizontalOverflow(page, "#/memory:global-search-target");
+  screenshots.push(
+    await captureBaselineScreenshot(
+      page,
+      path.join(screenshotsDir, "global-search-memory-target.png"),
+      "global-search-memory-target",
+    ),
+  );
+  return screenshots;
 }
 
 async function navigateSidebar(page, label, expectedHash, expectedText) {
@@ -1315,8 +1420,8 @@ async function installBridge(page) {
     const timers = new Map();
     window.__memoraPostCalls = [];
     window.AstrBotPluginPage = {
-      async apiGet(endpoint) {
-        return window.__memoraBridgeOk(await window.__memoraBridgePayload(endpoint));
+      async apiGet(endpoint, params) {
+        return window.__memoraBridgeOk(await window.__memoraBridgePayload(endpoint, params));
       },
       async apiPost(endpoint) {
         window.__memoraPostCalls.push(String(endpoint || "").replace(/^page\/?/, ""));
@@ -1385,6 +1490,9 @@ try {
   baselineResults.push(...desktopConfigResult.screenshots);
   baselineResults.push(
     await runMobileConfigSmoke(browser, errors, screenshotsDir),
+  );
+  baselineResults.push(
+    ...await runGlobalSearchScrollAndTargetSmoke(page, screenshotsDir),
   );
 
   const routes = [
@@ -1521,18 +1629,91 @@ try {
   );
   await assertHighImpactConfirmation(page);
 
+  await navigateSidebar(
+    page,
+    "自主学习",
+    "#/learning",
+    ["自主学习", "命中率", "学习参数", "表达模式"],
+  );
+
+  await page.evaluate(() => {
+    window.__memoraThemeTransitionSeen = document.documentElement.classList.contains(
+      "theme-transitioning",
+    );
+    window.__memoraThemeTransitionObserver?.disconnect();
+    window.__memoraThemeTransitionObserver = new MutationObserver(() => {
+      if (document.documentElement.classList.contains("theme-transitioning")) {
+        window.__memoraThemeTransitionSeen = true;
+      }
+    });
+    window.__memoraThemeTransitionObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  });
   await page.getByRole("button", { name: "切换主题" }).click();
   await page.waitForFunction(
-    () => document.documentElement.getAttribute("data-theme") === "dark",
+    () => (
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      || window.__memoraThemeTransitionSeen === true
+    ),
     undefined,
     { timeout: 5_000 }
   );
+  await page.waitForFunction(
+    () => (
+      document.documentElement.getAttribute("data-theme") === "dark"
+      && !document.documentElement.classList.contains("theme-transitioning")
+    ),
+    undefined,
+    { timeout: 5_000 }
+  );
+  await page.waitForFunction(
+    () => {
+      const themeSurfaces = [
+        document.documentElement,
+        document.querySelector("aside"),
+        document.querySelector('aside [aria-current="page"]'),
+        document.querySelector("main"),
+        document.querySelector('main > [data-slot="app-header"]'),
+        document.querySelector('[data-slot="page-frame"]'),
+        document.querySelector('[data-slot="page-header"]'),
+        ...Array.from(document.querySelectorAll('[data-slot="card"]')).slice(0, 2),
+      ];
+      const hasActiveThemeTransition = (element) => (
+        element.getAnimations().some((animation) => (
+          animation instanceof CSSTransition
+          && (animation.pending || animation.playState === "running")
+        ))
+      );
+      return themeSurfaces.length >= 9
+        && themeSurfaces.every((element) => element instanceof HTMLElement)
+        && themeSurfaces.every((element) => !hasActiveThemeTransition(element));
+    },
+    undefined,
+    { timeout: 5_000 }
+  );
+  await page.evaluate(() => {
+    window.__memoraThemeTransitionObserver?.disconnect();
+    delete window.__memoraThemeTransitionObserver;
+    delete window.__memoraThemeTransitionSeen;
+  });
   await page.locator('[data-slot="page-content"]').last().evaluate((element) => {
     element.scrollTo({ top: 0, left: 0 });
   });
   baselineResults.push(
     await captureBaselineScreenshot(
       page,
+      path.join(screenshotsDir, "dark-learning.png"),
+      "dark-learning"
+    )
+  );
+
+  baselineResults.push(
+    await captureRoute(
+      page,
+      "#/system",
+      ["系统概览", "运行观测", "Provider 状态"],
       path.join(screenshotsDir, "dark-system.png"),
       "dark-system"
     )

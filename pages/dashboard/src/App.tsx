@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/useToast";
 import { useI18n, toggleLanguage } from "@/hooks/useI18n";
 import { useRealtimeStream } from "@/hooks/useRealtimeStream";
 import { Menu, Loader2 } from "lucide-react";
-import type { PageId } from "@/types";
+import type { PageId, PageNavigationIntent } from "@/types";
 
 // Lazy-load each page so its dependencies (e.g. @antv/g6 for GraphPage,
 // @tanstack/react-virtual for MemoryPage) are only fetched when the page
@@ -89,10 +89,13 @@ export default function App() {
   const { toast, showToast } = useToast();
   const [currentPage, setCurrentPage] = useState<PageId>(getPageFromHash);
   const [pendingPage, setPendingPage] = useState<PageId | null>(null);
+  const [navigationIntent, setNavigationIntent] =
+    useState<PageNavigationIntent | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const currentPageRef = useRef(currentPage);
   const configDirtyRef = useRef(false);
   const pendingPageRef = useRef<PageId | null>(null);
+  const pendingIntentRef = useRef<PageNavigationIntent | undefined>(undefined);
   const pendingHistoryDeltaRef = useRef<number | null>(null);
   const historyIndexRef = useRef(0);
   const restoringHistoryRef = useRef(false);
@@ -101,33 +104,47 @@ export default function App() {
   const browserHashRef = useRef(window.location.hash);
   const { connected: sseConnected, unreadCount, lastEvent, markSeen } = useRealtimeStream();
 
-  const applyPage = useCallback((page: PageId) => {
+  const applyPage = useCallback((
+    page: PageId,
+    intent?: PageNavigationIntent,
+  ) => {
     currentPageRef.current = page;
     setCurrentPage(page);
+    setNavigationIntent(intent ?? null);
     setMobileMenuOpen(false);
   }, []);
 
-  const commitNavigation = useCallback((page: PageId) => {
+  const commitNavigation = useCallback((
+    page: PageId,
+    intent?: PageNavigationIntent,
+  ) => {
     const nextHash = `#/${page}`;
     const nextIndex = historyIndexRef.current + 1;
     window.history.pushState(withHistoryIndex(null, nextIndex), "", nextHash);
     historyIndexRef.current = nextIndex;
     browserHashRef.current = nextHash;
-    applyPage(page);
+    applyPage(page, intent);
   }, [applyPage]);
 
-  const navigate = useCallback((page: PageId) => {
+  const navigate = useCallback((
+    page: PageId,
+    intent?: PageNavigationIntent,
+  ) => {
     setMobileMenuOpen(false);
-    if (page === currentPageRef.current) return;
+    if (page === currentPageRef.current) {
+      if (intent) setNavigationIntent(intent);
+      return;
+    }
 
     if (currentPageRef.current === "config" && configDirtyRef.current) {
       pendingPageRef.current = page;
+      pendingIntentRef.current = intent;
       pendingHistoryDeltaRef.current = null;
       setPendingPage(page);
       return;
     }
 
-    commitNavigation(page);
+    commitNavigation(page, intent);
   }, [commitNavigation]);
 
   const handleConfigDirtyChange = useCallback((dirty: boolean) => {
@@ -135,20 +152,24 @@ export default function App() {
     if (dirty || pendingPageRef.current === null) return;
 
     pendingPageRef.current = null;
+    pendingIntentRef.current = undefined;
     pendingHistoryDeltaRef.current = null;
     setPendingPage(null);
   }, []);
 
   const cancelPendingNavigation = useCallback(() => {
     pendingPageRef.current = null;
+    pendingIntentRef.current = undefined;
     pendingHistoryDeltaRef.current = null;
     setPendingPage(null);
   }, []);
 
   const discardAndNavigate = useCallback(() => {
     const target = pendingPageRef.current;
+    const intent = pendingIntentRef.current;
     const historyDelta = pendingHistoryDeltaRef.current;
     pendingPageRef.current = null;
+    pendingIntentRef.current = undefined;
     pendingHistoryDeltaRef.current = null;
     configDirtyRef.current = false;
     setPendingPage(null);
@@ -156,7 +177,7 @@ export default function App() {
       replayingHistoryRef.current = true;
       window.history.go(historyDelta);
     } else if (target !== null) {
-      commitNavigation(target);
+      commitNavigation(target, intent);
     }
   }, [commitNavigation]);
 
@@ -165,6 +186,7 @@ export default function App() {
     targetIndex: number | null,
   ) => {
     pendingPageRef.current = target;
+    pendingIntentRef.current = undefined;
 
     if (targetIndex === null || targetIndex === historyIndexRef.current) {
       const sentinelIndex = historyIndexRef.current + 1;
@@ -266,6 +288,7 @@ export default function App() {
         && currentPageRef.current === "config"
         && configDirtyRef.current) {
         pendingPageRef.current = target;
+        pendingIntentRef.current = undefined;
         pendingHistoryDeltaRef.current = null;
         window.history.replaceState(
           withHistoryIndex(window.history.state, targetIndex),
@@ -355,20 +378,36 @@ export default function App() {
               <motion.div key={currentPage} {...pageTransition} className="h-full min-h-0">
                 <Suspense fallback={<PageLoader />}>
                 {currentPage === "preview" && <PreviewPage showToast={showToast} />}
-                {currentPage === "graph" && <GraphPage showToast={showToast} />}
-                {currentPage === "memory" && <MemoryPage showToast={showToast} />}
+                {currentPage === "graph" && <GraphPage showToast={showToast} theme={theme} />}
+                {currentPage === "memory" && (
+                  <MemoryPage
+                    showToast={showToast}
+                    navigationTarget={navigationIntent?.entityTarget ?? null}
+                  />
+                )}
                 {currentPage === "timeline" && <TimelinePage showToast={showToast} />}
                 {currentPage === "recall" && <RecallPage showToast={showToast} />}
                 {currentPage === "system" && <SystemPage showToast={showToast} />}
                 {currentPage === "config" && (
                   <ConfigPage
+                    navigationTarget={navigationIntent?.configTarget ?? null}
                     showToast={showConfigToast}
                     onDirtyChange={handleConfigDirtyChange}
                   />
                 )}
                 {currentPage === "profiles" && <ProfilesPage showToast={showToast} />}
-                {currentPage === "knowledge" && <KnowledgePage showToast={showToast} />}
-                {currentPage === "notes" && <NotesPage showToast={showToast} />}
+                {currentPage === "knowledge" && (
+                  <KnowledgePage
+                    showToast={showToast}
+                    navigationTarget={navigationIntent?.entityTarget ?? null}
+                  />
+                )}
+                {currentPage === "notes" && (
+                  <NotesPage
+                    showToast={showToast}
+                    navigationTarget={navigationIntent?.entityTarget ?? null}
+                  />
+                )}
                 {currentPage === "learning" && <LearningPage showToast={showToast} />}
                 {currentPage === "jargon" && <JargonPage showToast={showToast} />}
                 {currentPage === "affection" && <AffectionPage showToast={showToast} />}

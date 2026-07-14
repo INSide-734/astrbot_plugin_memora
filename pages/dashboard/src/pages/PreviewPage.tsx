@@ -32,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { selectionStateVariants } from "@/components/ui/selection-state";
 import { StatePanel } from "@/components/ui/StatePanel";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
@@ -333,7 +334,17 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
                   <div><CardTitle><h2>{t("preview.memoryGrowth")}</h2></CardTitle><p className="mt-1 text-xs text-muted-foreground">{t("preview.growthDescription")}</p></div>
                   <div role="group" aria-label={t("preview.trendRange")} className="flex shrink-0 rounded-lg bg-muted p-0.5">
                     {([7, 30, 90] as TrendRange[]).map((days) => (
-                      <Button key={days} size="sm" variant={range === days ? "default" : "ghost"} aria-pressed={range === days} onClick={() => setRange(days)} className="h-7 px-2.5">
+                      <Button
+                        key={days}
+                        size="sm"
+                        variant="ghost"
+                        aria-pressed={range === days}
+                        onClick={() => setRange(days)}
+                        className={cn(
+                          "h-7 px-2.5",
+                          selectionStateVariants({ kind: "control", selected: range === days }),
+                        )}
+                      >
                         {t("preview.days").replace("{0}", String(days))}
                       </Button>
                     ))}

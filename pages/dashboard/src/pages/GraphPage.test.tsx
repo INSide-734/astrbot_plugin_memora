@@ -3,7 +3,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EN_MAP } from "../mock";
 
-type GraphEventHandler = (event?: { target?: { id?: string } }) => void;
+interface GraphPointerEvent {
+  target?: { id?: string };
+  targetType?: "node" | "edge" | "combo" | "canvas";
+}
+
+type GraphEventHandler = (event?: GraphPointerEvent) => void;
+
+interface ClickSelectBehaviorMock {
+  type: "click-select";
+  state: string;
+  animation?: boolean;
+  enable?: boolean | ((event: GraphPointerEvent) => boolean);
+  onClick?: GraphEventHandler;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 function getGraphMockState() {
   const globalState = globalThis as typeof globalThis & {
@@ -12,12 +35,16 @@ function getGraphMockState() {
         config: Record<string, unknown>;
         handlers: Map<string, GraphEventHandler>;
         setData: (...args: unknown[]) => unknown;
+        setOptions: (...args: unknown[]) => unknown;
+        draw: (...args: unknown[]) => Promise<void>;
         render: (...args: unknown[]) => Promise<void>;
         destroy: (...args: unknown[]) => unknown;
-        focusElement: (...args: unknown[]) => unknown;
+        focusElement: (...args: unknown[]) => Promise<void>;
+        setElementState: (id: string, states: string[], animation?: boolean) => Promise<void>;
+        getElementState: (id: string) => string[];
         getZoom: (...args: unknown[]) => number;
         on: (eventName: string, handler: GraphEventHandler) => void;
-        emit: (eventName: string, event?: { target?: { id?: string } }) => void;
+        emit: (eventName: string, event?: GraphPointerEvent) => void;
       }>;
     };
   };
@@ -48,9 +75,16 @@ async function loadGraphPage() {
       config: Record<string, unknown>;
       handlers = new Map<string, GraphEventHandler>();
       setData = vi.fn();
+      setOptions = vi.fn();
+      draw = vi.fn().mockResolvedValue(undefined);
       render = vi.fn().mockResolvedValue(undefined);
       destroy = vi.fn();
-      focusElement = vi.fn();
+      focusElement = vi.fn().mockResolvedValue(undefined);
+      stateMap = new Map<string, string[]>();
+      setElementState = vi.fn(async (id: string, states: string[]) => {
+        this.stateMap.set(id, [...states]);
+      });
+      getElementState = vi.fn((id: string) => this.stateMap.get(id) ?? []);
       getZoom = vi.fn().mockReturnValue(1.75);
 
       constructor(config: Record<string, unknown>) {
@@ -62,7 +96,44 @@ async function loadGraphPage() {
         this.handlers.set(eventName, handler);
       }
 
-      emit(eventName: string, event?: { target?: { id?: string } }) {
+      emit(eventName: string, event: GraphPointerEvent = {}) {
+        const clickSelect = (this.config.behaviors as unknown[] | undefined)?.find(
+          (behavior): behavior is ClickSelectBehaviorMock => (
+            typeof behavior === "object"
+            && behavior !== null
+            && (behavior as ClickSelectBehaviorMock).type === "click-select"
+          ),
+        );
+        const targetType = event.targetType
+          ?? (eventName.split(":", 1)[0] as GraphPointerEvent["targetType"]);
+        const pointerEvent = { ...event, targetType };
+        const enabled = clickSelect?.enable === undefined
+          || clickSelect.enable === true
+          || (typeof clickSelect.enable === "function" && clickSelect.enable(pointerEvent));
+        if (clickSelect && enabled && (targetType === "node" || targetType === "edge" || targetType === "combo")) {
+          const id = event.target?.id;
+          if (id) {
+            const state = clickSelect.state;
+            const current = this.getElementState(id);
+            if (current.includes(state)) {
+              this.stateMap.set(id, current.filter((item) => item !== state));
+            } else {
+              for (const [elementId, states] of this.stateMap) {
+                this.stateMap.set(elementId, states.filter((item) => item !== state));
+              }
+              this.stateMap.set(id, [...current, state]);
+            }
+            clickSelect.onClick?.(pointerEvent);
+          }
+        } else if (clickSelect && enabled && targetType === "canvas") {
+          for (const [elementId, states] of this.stateMap) {
+            this.stateMap.set(
+              elementId,
+              states.filter((item) => item !== clickSelect.state),
+            );
+          }
+          clickSelect.onClick?.(pointerEvent);
+        }
         const handler = this.handlers.get(eventName);
         handler?.(event);
       }
@@ -78,6 +149,11 @@ describe("GraphPage", () => {
 
   beforeEach(() => {
     document.documentElement.dataset.theme = "light";
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: vi.fn().mockReturnValue({ matches: false }),
+    });
 
     bridge = {
       apiGet: vi.fn(),
@@ -148,7 +224,7 @@ describe("GraphPage", () => {
       return Promise.resolve(ok({}));
     });
 
-    const { container } = render(<GraphPage showToast={showToast} />);
+    const { container } = render(<GraphPage showToast={showToast} theme="light" />);
 
     expect(container.querySelector('[data-slot="page-frame"]')?.getAttribute("data-layout")).toBe("workspace");
     expect(screen.getByRole("heading", { level: 1, name: "Knowledge Graph" })).toBeTruthy();
@@ -178,6 +254,31 @@ describe("GraphPage", () => {
 
     expect(getGraphMockState().instances).toHaveLength(1);
     const graph = getGraphMockState().instances[0];
+    const behaviors = graph.config.behaviors as ClickSelectBehaviorMock[];
+    const clickSelect = behaviors.find((behavior) => behavior.type === "click-select");
+    expect(clickSelect).toMatchObject({
+      type: "click-select",
+      multiple: false,
+      state: "selected",
+      degree: 0,
+      animation: true,
+    });
+    expect(clickSelect?.enable).toEqual(expect.any(Function));
+    expect(clickSelect?.onClick).toEqual(expect.any(Function));
+    const nodeConfig = graph.config.node as {
+      state: {
+        hover: { stroke: string; lineWidth: number };
+        selected: { stroke: string; lineWidth: number };
+      };
+    };
+    expect(nodeConfig.state.selected.stroke).not.toBe("#4dabf7");
+    expect(nodeConfig.state.selected.lineWidth).toBe(3);
+    expect(nodeConfig.state.hover.lineWidth).toBeLessThan(
+      nodeConfig.state.selected.lineWidth,
+    );
+    expect(nodeConfig.state.hover.stroke).not.toBe(
+      nodeConfig.state.selected.stroke,
+    );
     await waitFor(() => {
       expect(graph.setData).toHaveBeenCalledWith({
         nodes: [
@@ -259,7 +360,7 @@ describe("GraphPage", () => {
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    render(<GraphPage showToast={showToast} />);
+    render(<GraphPage showToast={showToast} theme="light" />);
 
     expect(await screen.findByText("8")).toBeTruthy();
 
@@ -321,6 +422,7 @@ describe("GraphPage", () => {
     });
     expect(warnSpy).toHaveBeenCalled();
 
+    vi.mocked(graph.setElementState).mockClear();
     graph.emit("node:click", { target: { id: "42" } });
 
     expect(await screen.findByText("Deploy topic")).toBeTruthy();
@@ -329,6 +431,99 @@ describe("GraphPage", () => {
     expect(screen.getByText("3")).toBeTruthy();
     expect(screen.getByText("1.20")).toBeTruthy();
     expect(graph.focusElement).toHaveBeenCalledWith("42", { duration: 500 });
+    expect(graph.getElementState("42")).toContain("selected");
+    expect(graph.setElementState).not.toHaveBeenCalled();
+
+    graph.emit("edge:click", {
+      target: { id: "e-42-84-0" },
+      targetType: "edge",
+    });
+    expect(graph.getElementState("42")).toContain("selected");
+    expect(graph.getElementState("e-42-84-0")).not.toContain("selected");
+    expect(screen.getByText("Deploy topic")).toBeTruthy();
+
+    graph.emit("node:click", { target: { id: "42" } });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Deploy topic")).toBeNull();
+    });
+    expect(graph.getElementState("42")).not.toContain("selected");
+    expect(graph.setElementState).not.toHaveBeenCalled();
+
+    graph.emit("node:click", { target: { id: "42" } });
+    expect(await screen.findByText("Deploy topic")).toBeTruthy();
+
+    graph.emit("canvas:click");
+
+    await waitFor(() => {
+      expect(screen.queryByText("Deploy topic")).toBeNull();
+    });
+    expect(graph.getElementState("42")).not.toContain("selected");
+    expect(graph.setElementState).not.toHaveBeenCalled();
+
+    graph.emit("node:click", { target: { id: "42" } });
+    expect(await screen.findByText("Deploy topic")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /search graph/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Deploy topic")).toBeNull();
+    });
+    expect(graph.setElementState).toHaveBeenLastCalledWith("42", [], false);
+  });
+
+  it("restores the selected node state after an in-place theme redraw", async () => {
+    const { GraphPage } = await loadGraphPage();
+
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") {
+        return Promise.resolve(ok({
+          total_memories: 1,
+          graph_nodes: 1,
+          graph_edges: 0,
+          sessions: {},
+        }));
+      }
+      if (path === "page/graph/search") {
+        return Promise.resolve(ok({
+          nodes: [
+            {
+              id: "theme-node",
+              label: "Theme node",
+              type: "topic",
+              memory_count: 1,
+              degree: 0,
+              entry_count: 1,
+              weight: 0.8,
+            },
+          ],
+          edges: [],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const view = render(<GraphPage showToast={showToast} theme="light" />);
+
+    const firstGraph = await waitFor(() => {
+      const instance = getGraphMockState().instances[0];
+      expect(instance.setData).toHaveBeenCalled();
+      return instance;
+    });
+    firstGraph.emit("node:click", { target: { id: "theme-node" } });
+    expect(await screen.findByText("Theme node")).toBeTruthy();
+    vi.mocked(firstGraph.setElementState).mockClear();
+
+    view.rerender(<GraphPage showToast={showToast} theme="dark" />);
+
+    await waitFor(() => {
+      expect(firstGraph.setElementState).toHaveBeenCalledWith(
+        "theme-node",
+        ["selected"],
+        false,
+      );
+    });
+    expect(getGraphMockState().instances).toHaveLength(1);
+    expect(screen.getByText("Theme node")).toBeTruthy();
   });
 
   it("re-applies the cached graph and removes out-of-range graph items when the time range changes", async () => {
@@ -366,7 +561,7 @@ describe("GraphPage", () => {
       return Promise.resolve(ok({}));
     });
 
-    render(<GraphPage showToast={showToast} />);
+    render(<GraphPage showToast={showToast} theme="light" />);
 
     const graph = await waitFor(() => {
       const instance = getGraphMockState().instances[0];
@@ -413,6 +608,144 @@ describe("GraphPage", () => {
     });
   });
 
+  it("applies a deferred graph response with the latest time range", async () => {
+    const { GraphPage } = await loadGraphPage();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const graphRequest = deferred<unknown>();
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
+      if (path === "page/graph/search") return graphRequest.promise;
+      return Promise.resolve(ok({}));
+    });
+
+    render(<GraphPage showToast={showToast} theme="light" />);
+    fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "12" } });
+    graphRequest.resolve(ok({
+      nodes: [
+        { id: "recent", label: "Recent", type: "topic" },
+        { id: "old", label: "Old", type: "fact" },
+        { id: "anchor", label: "Anchor", type: "summary" },
+      ],
+      edges: [
+        { source: "recent", target: "anchor", type: "before", timestamp: nowSeconds - 3600 },
+        { source: "old", target: "anchor", type: "after", timestamp: nowSeconds - 72 * 3600 },
+      ],
+    }));
+
+    const graph = await waitFor(() => {
+      const instance = getGraphMockState().instances[0];
+      expect(instance.setData).toHaveBeenCalled();
+      return instance;
+    });
+    const dataCalls = vi.mocked(graph.setData).mock.calls;
+    const data = dataCalls[dataCalls.length - 1]?.[0] as {
+      nodes: Array<{ id: string }>;
+      edges: Array<{ source: string; target: string }>;
+    };
+    expect(data.nodes.map((node) => node.id)).toEqual(["recent", "anchor"]);
+    expect(data.edges).toHaveLength(1);
+  });
+
+  it("ignores an older manual search response after a newer search completes", async () => {
+    const { GraphPage } = await loadGraphPage();
+    const oldSearch = deferred<unknown>();
+    const newSearch = deferred<unknown>();
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
+      if (path === "page/graph/search" && params.query === "old") return oldSearch.promise;
+      if (path === "page/graph/search" && params.query === "new") return newSearch.promise;
+      if (path === "page/graph/search") {
+        return Promise.resolve(ok({
+          nodes: [{ id: "seed", label: "Seed", type: "topic" }],
+          edges: [],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<GraphPage showToast={showToast} theme="light" />);
+    const graph = await waitFor(() => {
+      const instance = getGraphMockState().instances[0];
+      expect(instance.setData).toHaveBeenCalled();
+      return instance;
+    });
+
+    const queryInput = screen.getByPlaceholderText("Search entities, topics, or memories...");
+    fireEvent.change(queryInput, { target: { value: "old" } });
+    fireEvent.click(screen.getByRole("button", { name: /search graph/i }));
+    fireEvent.change(queryInput, { target: { value: "new" } });
+    fireEvent.click(screen.getByRole("button", { name: /search graph/i }));
+
+    newSearch.resolve(ok({
+      nodes: [{ id: "new", label: "Newest result", type: "fact" }],
+      edges: [],
+    }));
+    await waitFor(() => {
+      const dataCalls = vi.mocked(graph.setData).mock.calls;
+      const data = dataCalls[dataCalls.length - 1]?.[0] as {
+        nodes: Array<{ id: string }>;
+      };
+      expect(data.nodes.map((node) => node.id)).toEqual(["new"]);
+    });
+
+    oldSearch.resolve(ok({
+      nodes: [{ id: "old", label: "Stale result", type: "fact" }],
+      edges: [],
+    }));
+    await oldSearch.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const finalDataCalls = vi.mocked(graph.setData).mock.calls;
+    const finalData = finalDataCalls[finalDataCalls.length - 1]?.[0] as {
+      nodes: Array<{ id: string }>;
+    };
+    expect(finalData.nodes.map((node) => node.id)).toEqual(["new"]);
+  });
+
+  it("clears the selected detail and G6 state when time filtering removes the node", async () => {
+    const { GraphPage } = await loadGraphPage();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
+      if (path === "page/graph/search") {
+        return Promise.resolve(ok({
+          nodes: [
+            { id: "old", label: "Old selected node", type: "fact" },
+            { id: "anchor", label: "Anchor", type: "summary" },
+          ],
+          edges: [{
+            source: "old",
+            target: "anchor",
+            type: "after",
+            timestamp: nowSeconds - 72 * 3600,
+          }],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<GraphPage showToast={showToast} theme="light" />);
+    const graph = await waitFor(() => {
+      const instance = getGraphMockState().instances[0];
+      expect(instance.setData).toHaveBeenCalled();
+      return instance;
+    });
+
+    graph.emit("node:click", { target: { id: "old" } });
+    expect(await screen.findByText("Old selected node")).toBeTruthy();
+    vi.mocked(graph.setElementState).mockClear();
+
+    fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "12" } });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Old selected node")).toBeNull();
+    });
+    expect(graph.setElementState).toHaveBeenCalledWith("old", [], false);
+    expect(graph.getElementState("old")).not.toContain("selected");
+  });
+
   it("keeps in-range graph items when numeric timestamps are returned in milliseconds", async () => {
     const { GraphPage } = await loadGraphPage();
     const nowMs = Date.now();
@@ -446,7 +779,7 @@ describe("GraphPage", () => {
       return Promise.resolve(ok({}));
     });
 
-    render(<GraphPage showToast={showToast} />);
+    render(<GraphPage showToast={showToast} theme="light" />);
 
     const graph = await waitFor(() => {
       const instance = getGraphMockState().instances[0];
@@ -479,6 +812,194 @@ describe("GraphPage", () => {
     });
   });
 
+  it("enters the error state when the initial G6 render rejects", async () => {
+    const { GraphPage } = await loadGraphPage();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let resolveGraphRequest!: (value: unknown) => void;
+    const graphRequest = new Promise<unknown>((resolve) => {
+      resolveGraphRequest = resolve;
+    });
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
+      if (path === "page/graph/search") return graphRequest;
+      return Promise.resolve(ok({}));
+    });
+
+    render(<GraphPage showToast={showToast} theme="light" />);
+    const graph = getGraphMockState().instances[0];
+    vi.mocked(graph.render).mockRejectedValueOnce(new Error("G6 render exploded"));
+    resolveGraphRequest(ok({
+      nodes: [{ id: "broken", label: "Broken", type: "topic" }],
+      edges: [],
+    }));
+
+    expect(await screen.findByText("Failed to load graph data")).toBeTruthy();
+    expect(showToast).toHaveBeenCalledWith("Error: G6 render exploded", true);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("reports a G6 render rejection during a time-filter replay", async () => {
+    const { GraphPage } = await loadGraphPage();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
+      if (path === "page/graph/search") {
+        return Promise.resolve(ok({
+          nodes: [
+            { id: "recent", label: "Recent", type: "topic" },
+            { id: "anchor", label: "Anchor", type: "summary" },
+          ],
+          edges: [{
+            source: "recent",
+            target: "anchor",
+            type: "before",
+            timestamp: nowSeconds - 3600,
+          }],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<GraphPage showToast={showToast} theme="light" />);
+    const graph = await waitFor(() => {
+      const instance = getGraphMockState().instances[0];
+      expect(instance.render).toHaveBeenCalled();
+      return instance;
+    });
+    vi.mocked(graph.render).mockRejectedValueOnce(new Error("replay render exploded"));
+
+    fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "12" } });
+
+    expect(await screen.findByText("Failed to load graph data")).toBeTruthy();
+    expect(showToast).toHaveBeenCalledWith("Error: replay render exploded", true);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("ignores a pending render completion after the graph unmounts", async () => {
+    const { GraphPage } = await loadGraphPage();
+    const pendingRender = deferred<void>();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
+      if (path === "page/graph/search") {
+        return Promise.resolve(ok({
+          nodes: [
+            { id: "recent", label: "Recent selected", type: "topic" },
+            { id: "anchor", label: "Anchor", type: "summary" },
+          ],
+          edges: [{
+            source: "recent",
+            target: "anchor",
+            type: "before",
+            timestamp: nowSeconds - 3600,
+          }],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const view = render(<GraphPage showToast={showToast} theme="light" />);
+    const graph = await waitFor(() => {
+      const instance = getGraphMockState().instances[0];
+      expect(instance.render).toHaveBeenCalledTimes(1);
+      return instance;
+    });
+    graph.emit("node:click", { target: { id: "recent" } });
+    expect(await screen.findByText("Recent selected")).toBeTruthy();
+
+    vi.mocked(graph.render).mockImplementationOnce(() => pendingRender.promise);
+    fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "12" } });
+    await waitFor(() => expect(graph.render).toHaveBeenCalledTimes(2));
+    vi.mocked(graph.setElementState).mockClear();
+    showToast.mockClear();
+
+    view.unmount();
+    pendingRender.resolve();
+    await pendingRender.promise;
+    await Promise.resolve();
+
+    expect(graph.setElementState).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it("ignores a pending theme draw rejection after unmount", async () => {
+    const { GraphPage } = await loadGraphPage();
+    const pendingDraw = deferred<void>();
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
+      if (path === "page/graph/search") {
+        return Promise.resolve(ok({
+          nodes: [{ id: "theme-node", label: "Theme node", type: "topic" }],
+          edges: [],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const view = render(<GraphPage showToast={showToast} theme="light" />);
+    const graph = await waitFor(() => {
+      const instance = getGraphMockState().instances[0];
+      expect(instance.render).toHaveBeenCalled();
+      return instance;
+    });
+    vi.mocked(graph.draw).mockImplementationOnce(() => pendingDraw.promise);
+    view.rerender(<GraphPage showToast={showToast} theme="dark" />);
+    await waitFor(() => expect(graph.draw).toHaveBeenCalledTimes(1));
+    showToast.mockClear();
+
+    view.unmount();
+    pendingDraw.reject(new Error("late draw failure"));
+    await pendingDraw.promise.catch(() => undefined);
+    await Promise.resolve();
+
+    expect(showToast).not.toHaveBeenCalled();
+    expect(graph.setElementState).not.toHaveBeenCalled();
+  });
+
+  it("does not let an older render completion write after a newer replay", async () => {
+    const { GraphPage } = await loadGraphPage();
+    const olderRender = deferred<void>();
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
+      if (path === "page/graph/search") {
+        return Promise.resolve(ok({
+          nodes: [
+            { id: "selected", label: "Selected node", type: "topic" },
+            { id: "anchor", label: "Anchor", type: "summary" },
+          ],
+          edges: [{ source: "selected", target: "anchor", type: "related" }],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<GraphPage showToast={showToast} theme="light" />);
+    const graph = await waitFor(() => {
+      const instance = getGraphMockState().instances[0];
+      expect(instance.render).toHaveBeenCalledTimes(1);
+      return instance;
+    });
+    graph.emit("node:click", { target: { id: "selected" } });
+    expect(await screen.findByText("Selected node")).toBeTruthy();
+
+    vi.mocked(graph.render)
+      .mockImplementationOnce(() => olderRender.promise)
+      .mockResolvedValueOnce(undefined);
+    fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "12" } });
+    await waitFor(() => expect(graph.render).toHaveBeenCalledTimes(2));
+    fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "24" } });
+    await waitFor(() => expect(graph.render).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(graph.setElementState).toHaveBeenCalled());
+    vi.mocked(graph.setElementState).mockClear();
+
+    olderRender.resolve();
+    await olderRender.promise;
+    await Promise.resolve();
+
+    expect(graph.setElementState).not.toHaveBeenCalled();
+  });
+
   it("shows the error state on failed graph load, retries successfully, and supports fullscreen toggling", async () => {
     const { GraphPage } = await loadGraphPage();
 
@@ -505,7 +1026,7 @@ describe("GraphPage", () => {
       return Promise.resolve(ok({}));
     });
 
-    render(<GraphPage showToast={showToast} />);
+    render(<GraphPage showToast={showToast} theme="light" />);
 
     expect(await screen.findByText("Failed to load graph data")).toBeTruthy();
     expect(showToast).toHaveBeenCalledWith("Error: graph offline", true);
@@ -551,6 +1072,105 @@ describe("GraphPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTitle(EN_MAP["graph.fullscreen"])).toBeTruthy();
+    });
+  });
+
+  it("updates graph theme styles in place without rebuilding data or layout", async () => {
+    const { GraphPage } = await loadGraphPage();
+
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") {
+        return Promise.resolve(ok({
+          total_memories: 1,
+          graph_nodes: 1,
+          graph_edges: 0,
+          sessions: {},
+        }));
+      }
+      if (path === "page/graph/search") {
+        return Promise.resolve(ok({
+          nodes: [{ id: "theme-node", label: "Theme node", type: "topic" }],
+          edges: [],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const view = render(<GraphPage showToast={showToast} theme="light" />);
+    const graph = await waitFor(() => {
+      const instance = getGraphMockState().instances[0];
+      expect(instance.setData).toHaveBeenCalled();
+      return instance;
+    });
+    const apiCallCount = bridge.apiGet.mock.calls.length;
+    const dataRenderCount = vi.mocked(graph.render).mock.calls.length;
+
+    view.rerender(<GraphPage showToast={showToast} theme="dark" />);
+
+    await waitFor(() => expect(graph.setOptions).toHaveBeenCalled());
+    const optionCalls = vi.mocked(graph.setOptions).mock.calls;
+    const options = optionCalls[optionCalls.length - 1]?.[0] as {
+      node?: { style?: { labelFill?: string }; animation?: Record<string, unknown> };
+      edge?: { style?: { labelFill?: string }; animation?: Record<string, unknown> };
+    };
+
+    expect(getGraphMockState().instances).toHaveLength(1);
+    expect(graph.destroy).not.toHaveBeenCalled();
+    expect(graph.draw).toHaveBeenCalledTimes(1);
+    expect(graph.render).toHaveBeenCalledTimes(dataRenderCount);
+    expect(bridge.apiGet).toHaveBeenCalledTimes(apiCallCount);
+    expect(options.node?.style?.labelFill).toBe("#e8eaed");
+    expect(options.edge?.style?.labelFill).toBe("#94a3b8");
+    expect(options.node?.animation).toMatchObject({
+      update: [{ fields: ["fill"], shape: "label", duration: 200, easing: "ease-out" }],
+    });
+    expect(options.edge?.animation).toMatchObject({
+      update: [{ fields: ["fill"], shape: "label", duration: 200, easing: "ease-out" }],
+    });
+  });
+
+  it("disables every graph animation path when reduced motion is requested", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: vi.fn().mockReturnValue({ matches: true }),
+    });
+    const { GraphPage } = await loadGraphPage();
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
+      if (path === "page/graph/search") {
+        return Promise.resolve(ok({
+          nodes: [{ id: "reduced", label: "Reduced node", type: "topic" }],
+          edges: [],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<GraphPage showToast={showToast} theme="light" />);
+    const graph = await waitFor(() => {
+      const instance = getGraphMockState().instances[0];
+      expect(instance.setData).toHaveBeenCalled();
+      return instance;
+    });
+    const clickSelect = (graph.config.behaviors as ClickSelectBehaviorMock[])
+      .find((behavior) => behavior.type === "click-select");
+    const layout = graph.config.layout as { animation?: boolean };
+    const node = graph.config.node as { animation?: unknown };
+    const edge = graph.config.edge as { animation?: unknown };
+
+    expect(graph.config.animation).toBe(false);
+    expect(layout.animation).toBe(false);
+    expect(clickSelect?.animation).toBe(false);
+    expect(node.animation).toBe(false);
+    expect(edge.animation).toBe(false);
+
+    vi.mocked(graph.focusElement).mockRejectedValueOnce(new Error("focus failed"));
+    graph.emit("node:click", { target: { id: "reduced" } });
+
+    expect(graph.focusElement).toHaveBeenCalledWith("reduced", { duration: 0 });
+    await waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith("Error: focus failed", true);
     });
   });
 });

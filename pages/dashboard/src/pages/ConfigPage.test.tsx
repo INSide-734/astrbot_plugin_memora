@@ -19,7 +19,7 @@ import type {
 } from "@/types/config";
 import { toggleLanguage } from "@/hooks/useI18n";
 
-import { ConfigPage } from "./ConfigPage";
+import { ConfigPage, type ConfigPageProps } from "./ConfigPage";
 
 interface BridgeMock {
   apiGet: ReturnType<typeof vi.fn>;
@@ -219,8 +219,8 @@ describe("ConfigPage", () => {
 
   afterEach(() => {
     cleanup();
-    vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.useRealTimers();
     localStorage.clear();
     Object.defineProperty(window, "AstrBotPluginPage", {
       configurable: true,
@@ -245,6 +245,420 @@ describe("ConfigPage", () => {
 
     expect(await screen.findByRole("switch", { name: "Memory enabled" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  });
+
+  it("waits for config load before focusing and highlighting an exact field target", async () => {
+    vi.useFakeTimers();
+    const pendingSchema = deferred<ApiResponse>();
+    const pendingState = deferred<ApiResponse>();
+    schemaHandler = () => pendingSchema.promise;
+    stateHandler = () => pendingState.promise;
+    const view = render(
+      <ConfigPage
+        navigationTarget={{
+          requestId: 1,
+          path: "provider_settings.llm_provider_id",
+          query: "LLM provider",
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("searchbox", { name: "Search configuration" }),
+    ).toHaveProperty("value", "LLM provider");
+    pendingSchema.resolve(ok(schemaData) as ApiResponse);
+    pendingState.resolve(state() as ApiResponse);
+    await flushMicrotasks();
+
+    const provider = screen.getByRole("combobox", { name: "LLM provider" });
+    const field = provider.closest<HTMLElement>("[data-slot='field']")!;
+    const scroll = vi.spyOn(field, "scrollIntoView");
+    expect(scroll).not.toHaveBeenCalled();
+
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+
+    expect(scroll).toHaveBeenCalledWith({ behavior: "auto", block: "center" });
+    expect(document.activeElement).toBe(provider);
+    expect(field.dataset.configPath).toBe("provider_settings.llm_provider_id");
+    expect(field.dataset.configHighlighted).toBe("true");
+    expect(view.container.querySelectorAll("[data-config-highlighted='true']")).toHaveLength(1);
+  });
+
+  it("replays the same exact target when its request id changes", async () => {
+    vi.useFakeTimers();
+    const view = render(
+      <ConfigPage
+        navigationTarget={{
+          requestId: 1,
+          path: "provider_settings.llm_provider_id",
+          query: "LLM provider",
+        }}
+      />,
+    );
+    await flushMicrotasks();
+
+    const provider = screen.getByRole("combobox", { name: "LLM provider" });
+    const field = provider.closest<HTMLElement>("[data-slot='field']")!;
+    const scroll = vi.spyOn(field, "scrollIntoView");
+    const focus = vi.spyOn(provider, "focus");
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+
+    view.rerender(
+      <ConfigPage
+        navigationTarget={{
+          requestId: 2,
+          path: "provider_settings.llm_provider_id",
+          query: "LLM provider",
+        }}
+      />,
+    );
+    await flushMicrotasks();
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+
+    expect(scroll).toHaveBeenCalledTimes(2);
+    expect(focus).toHaveBeenCalledTimes(2);
+    expect(document.activeElement).toBe(provider);
+  });
+
+  it("focuses and highlights the group container for a group target", async () => {
+    vi.useFakeTimers();
+    render(
+      <ConfigPage
+        navigationTarget={{
+          requestId: 1,
+          path: "provider_settings",
+          query: "Provider settings",
+        }}
+      />,
+    );
+    await flushMicrotasks();
+
+    const group = screen.getByRole("region", { name: "Provider settings" });
+    const firstControl = screen.getByRole("combobox", { name: "LLM provider" });
+    const scroll = vi.spyOn(group, "scrollIntoView");
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+
+    expect(scroll).toHaveBeenCalledWith({ behavior: "auto", block: "center" });
+    expect(group.tabIndex).toBe(-1);
+    expect(document.activeElement).toBe(group);
+    expect(document.activeElement).not.toBe(firstControl);
+    expect(group.dataset.configHighlighted).toBe("true");
+  });
+
+  it("disables modified-only for a target without losing a dirty draft", async () => {
+    vi.useFakeTimers();
+    const view = render(<ConfigPage />);
+    await flushMicrotasks();
+
+    const name = screen.getByRole("textbox", { name: "Bot name" });
+    fireEvent.change(name, { target: { value: "Archive" } });
+    const modifiedOnly = screen.getByRole("switch", { name: "Modified only" });
+    fireEvent.click(modifiedOnly);
+    expect(modifiedOnly.getAttribute("aria-checked")).toBe("true");
+
+    view.rerender(
+      <ConfigPage
+        navigationTarget={{
+          requestId: 1,
+          path: "provider_settings.llm_provider_id",
+          query: "LLM provider",
+        }}
+      />,
+    );
+    await flushMicrotasks();
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+
+    expect(modifiedOnly.getAttribute("aria-checked")).toBe("false");
+    const search = screen.getByRole("searchbox", { name: "Search configuration" });
+    expect(search).toHaveProperty("value", "LLM provider");
+    fireEvent.change(search, { target: { value: "" } });
+    expect(screen.getByRole("textbox", { name: "Bot name" })).toHaveProperty(
+      "value",
+      "Archive",
+    );
+  });
+
+  it("falls back once when a visible group no longer contains the target leaf", async () => {
+    vi.useFakeTimers();
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    const scheduledSetTimeout = window.setTimeout;
+    const scheduledTimers: Array<{ id: unknown; delay: number | undefined }> = [];
+    window.setTimeout = ((
+      ...args: Parameters<typeof scheduledSetTimeout>
+    ) => {
+      const id = scheduledSetTimeout(...args);
+      scheduledTimers.push({ id, delay: args[1] });
+      return id;
+    }) as typeof window.setTimeout;
+
+    try {
+      render(
+        <ConfigPage
+          navigationTarget={{
+            requestId: 1,
+            path: "general.missing",
+            query: "General",
+          }}
+        />,
+      );
+      await flushMicrotasks();
+
+      const search = screen.getByRole("searchbox", { name: "Search configuration" });
+      expect(search).toHaveProperty("value", "General");
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      await flushMicrotasks();
+
+      expect(search).toHaveProperty("value", "general.missing");
+      expect(scroll).not.toHaveBeenCalled();
+      expect(scheduledTimers.filter(({ delay }) => delay === 0)).toHaveLength(1);
+
+      await act(async () => vi.advanceTimersByTimeAsync(1_600));
+      expect(scheduledTimers.filter(({ delay }) => delay === 0)).toHaveLength(1);
+    } finally {
+      window.setTimeout = scheduledSetTimeout;
+    }
+  });
+
+  it("recovers a target hidden by its original query with its full path", async () => {
+    vi.useFakeTimers();
+    const view = render(
+      <ConfigPage
+        navigationTarget={{
+          requestId: 1,
+          path: "general.enabled",
+          query: "Not an accepted ConfigPage substring",
+        }}
+      />,
+    );
+    await flushMicrotasks();
+
+    const search = screen.getByRole("searchbox", { name: "Search configuration" });
+    expect(search).toHaveProperty("value", "general.enabled");
+    const enabled = screen.getByRole("switch", { name: "Memory enabled" });
+    const field = enabled.closest<HTMLElement>("[data-slot='field']")!;
+    const scroll = vi.spyOn(field, "scrollIntoView");
+
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+
+    expect(scroll).toHaveBeenCalledWith({ behavior: "auto", block: "center" });
+    expect(document.activeElement).toBe(enabled);
+    expect(field.dataset.configHighlighted).toBe("true");
+    expect(view.container.querySelectorAll("[data-config-highlighted='true']")).toHaveLength(1);
+  });
+
+  it("keeps exact target lookup inside the configuration form", async () => {
+    vi.useFakeTimers();
+    const decoy = document.createElement("button");
+    decoy.dataset.configPath = "provider_settings.llm_provider_id";
+    document.body.prepend(decoy);
+    const decoyScroll = vi.spyOn(decoy, "scrollIntoView");
+    let view: ReturnType<typeof render> | undefined;
+    try {
+      view = render(
+        <ConfigPage
+          navigationTarget={{
+            requestId: 1,
+            path: "provider_settings.llm_provider_id",
+            query: "LLM provider",
+          }}
+        />,
+      );
+      await flushMicrotasks();
+
+      const provider = screen.getByRole("combobox", { name: "LLM provider" });
+      const field = provider.closest<HTMLElement>("[data-slot='field']")!;
+      const fieldScroll = vi.spyOn(field, "scrollIntoView");
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+
+      expect(decoyScroll).not.toHaveBeenCalled();
+      expect(fieldScroll).toHaveBeenCalledWith({ behavior: "auto", block: "center" });
+      expect(document.activeElement).toBe(provider);
+    } finally {
+      view?.unmount();
+      decoy.remove();
+    }
+  });
+
+  it("focuses the disabled field root while configuration is applying and reloading", async () => {
+    vi.useRealTimers();
+    const pendingApply = deferred<ApiResponse>();
+    applyHandler = () => pendingApply.promise;
+    const view = render(
+      <ConfigPage />,
+    );
+    await flushMicrotasks();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Bot name" }), {
+      target: { value: "Archive" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply configuration" }));
+    await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledTimes(1));
+
+    view.rerender(
+      <ConfigPage
+        navigationTarget={{
+          requestId: 1,
+          path: "provider_settings.llm_provider_id",
+          query: "LLM provider",
+        }}
+      />,
+    );
+    await flushMicrotasks();
+    const provider = screen.getByRole("combobox", { name: "LLM provider" });
+    const field = provider.closest<HTMLElement>("[data-slot='field']")!;
+    expect(provider).toHaveProperty("disabled", true);
+    await waitFor(() => {
+      expect(field.tabIndex).toBe(-1);
+      expect(document.activeElement).toBe(field);
+    });
+
+    pendingApply.resolve(applyResult({ reload_scheduled: true }) as ApiResponse);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Reloading..." })).toHaveProperty("disabled", true),
+    );
+    view.rerender(
+      <ConfigPage
+        navigationTarget={{
+          requestId: 2,
+          path: "provider_settings.llm_provider_id",
+          query: "LLM provider",
+        }}
+      />,
+    );
+    await flushMicrotasks();
+    await waitFor(() => {
+      expect(field.tabIndex).toBe(-1);
+      expect(document.activeElement).toBe(field);
+    });
+    view.unmount();
+  });
+
+  it("defers target focus until the configuration conflict resolves", async () => {
+    vi.useRealTimers();
+    const remoteConfig: ConfigObject = {
+      ...baseConfig,
+      general: { ...(baseConfig.general as ConfigObject), bot_name: "AstrBot copy" },
+    };
+    let stateAttempts = 0;
+    stateHandler = async () => {
+      stateAttempts += 1;
+      return (stateAttempts === 1 ? state() : state(remoteConfig, "rev-2")) as ApiResponse;
+    };
+    const view = render(<ConfigPage />);
+    const name = await screen.findByRole("textbox", { name: "Bot name" });
+    const provider = screen.getByRole("combobox", { name: "LLM provider" });
+    const field = provider.closest<HTMLElement>("[data-slot='field']")!;
+    const scroll = vi.spyOn(field, "scrollIntoView");
+    const focus = vi.spyOn(provider, "focus");
+    fireEvent.change(name, { target: { value: "Local copy" } });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh configuration" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Configuration changed in AstrBot",
+    });
+
+    view.rerender(
+      <ConfigPage
+        navigationTarget={{
+          requestId: 1,
+          path: "provider_settings.llm_provider_id",
+          query: "LLM provider",
+        }}
+      />,
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(scroll).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
+    expect(field.dataset.configHighlighted).toBeUndefined();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Load AstrBot version" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Configuration changed in AstrBot" }),
+      ).toBeNull(),
+    );
+    await waitFor(() => {
+      expect(scroll).toHaveBeenCalledWith({ behavior: "auto", block: "center" });
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(document.activeElement).toBe(provider);
+      expect(field.dataset.configHighlighted).toBe("true");
+    });
+    view.unmount();
+  });
+
+  it("uses and clears the exact target focus and highlight timer ids", async () => {
+    vi.useFakeTimers();
+    const scheduledSetTimeout = window.setTimeout;
+    const scheduledClearTimeout = window.clearTimeout;
+    const scheduledTimers: Array<{ id: unknown; delay: number | undefined }> = [];
+    const clearedTimerIds: unknown[] = [];
+    window.setTimeout = ((
+      ...args: Parameters<typeof scheduledSetTimeout>
+    ) => {
+      const id = scheduledSetTimeout(...args);
+      scheduledTimers.push({ id, delay: args[1] });
+      return id;
+    }) as typeof window.setTimeout;
+    window.clearTimeout = ((
+      ...args: Parameters<typeof scheduledClearTimeout>
+    ) => {
+      const [id] = args;
+      clearedTimerIds.push(id);
+      return scheduledClearTimeout(...args);
+    }) as typeof window.clearTimeout;
+
+    try {
+      const target = (requestId: number): ConfigPageProps => ({
+        navigationTarget: {
+          requestId,
+          path: "general.bot_name",
+          query: "Bot name",
+        },
+      });
+      const view = render(<ConfigPage {...target(1)} />);
+      await flushMicrotasks();
+      const timerId = (delay: number, occurrence: number) => {
+        const timer = scheduledTimers.filter(
+          (scheduledTimer) => scheduledTimer.delay === delay,
+        )[occurrence];
+        expect(timer).toBeDefined();
+        return timer!.id;
+      };
+      const firstFocusTimer = timerId(0, 0);
+
+      view.rerender(<ConfigPage {...target(2)} />);
+      await flushMicrotasks();
+      expect(clearedTimerIds).toContain(firstFocusTimer);
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      const firstHighlightTimer = timerId(1_600, 0);
+
+      view.rerender(<ConfigPage {...target(3)} />);
+      await flushMicrotasks();
+      expect(clearedTimerIds).toContain(firstHighlightTimer);
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      const nameField = screen
+        .getByRole("textbox", { name: "Bot name" })
+        .closest<HTMLElement>("[data-slot='field']")!;
+      expect(nameField.dataset.configHighlighted).toBe("true");
+      await act(async () => vi.advanceTimersByTimeAsync(1_600));
+      expect(nameField.dataset.configHighlighted).toBeUndefined();
+
+      view.rerender(<ConfigPage {...target(4)} />);
+      await flushMicrotasks();
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      const finalHighlightTimer = timerId(1_600, 2);
+
+      view.unmount();
+      expect(clearedTimerIds).toContain(finalHighlightTimer);
+    } finally {
+      window.setTimeout = scheduledSetTimeout;
+      window.clearTimeout = scheduledClearTimeout;
+    }
   });
 
   it("uses the dense shared layout and renders every supported field through ConfigField", async () => {
@@ -298,6 +712,13 @@ describe("ConfigPage", () => {
 
     fireEvent.click(
       within(navigation).getByRole("button", { name: "Provider settings" }),
+    );
+    const providerNav = within(navigation).getByRole("button", {
+      name: "Provider settings",
+    });
+    expect(providerNav.getAttribute("aria-current")).toBe("true");
+    expect(providerNav.className).toContain(
+      "shadow-[inset_2px_0_0_var(--selection-indicator)]",
     );
     const providerSection = screen.getByRole("region", {
       name: "Provider settings",

@@ -277,6 +277,12 @@ describe("SystemPage", () => {
     fireEvent.click(screen.getByText("Select all"));
 
     expect(screen.getByText("2 selected")).toBeTruthy();
+    expect(
+      screen.getByText("backup-a").closest('[data-state="selected"]'),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("backup-b").closest('[data-state="selected"]'),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /delete selected/i }));
 
     const confirmMessage = screen.getByText("Delete 2 backups? This cannot be undone.");

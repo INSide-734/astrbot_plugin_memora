@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { GitGraph, Search, Maximize2, Minimize2, X } from "lucide-react";
-import { Graph } from "@antv/g6";
+import { Graph, type GraphOptions, type IPointerEvent } from "@antv/g6";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { useI18n } from "@/hooks/useI18n";
+import type { Theme } from "@/hooks/useTheme";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
@@ -11,6 +12,7 @@ import { dashboardLocale, formatDashboardNumber, formatDashboardPercent, type Tr
 
 interface GraphPageProps {
   showToast: (msg: string, isError?: boolean) => void;
+  theme: Theme;
 }
 
 const NODE_COLORS: Record<string, string> = {
@@ -37,6 +39,110 @@ const CAUSAL_EDGES = new Set(["results_in", "caused_by"]);
 
 const EDGE_DEFAULT = { color: "rgba(148,163,184,0.5)", dash: false, label: "graph.edgeOther" };
 function edgeStyle(type: string | undefined) { return EDGE_STYLES[type ?? ""] ?? EDGE_DEFAULT; }
+
+function resolveSelectionColor(
+  token: "--selection-indicator" | "--selection-border",
+  fallback: string,
+): string {
+  if (typeof document === "undefined" || !document.body) return fallback;
+
+  const probe = document.createElement("span");
+  probe.hidden = true;
+  probe.style.color = `var(${token}, ${fallback})`;
+  document.body.appendChild(probe);
+
+  try {
+    const value = getComputedStyle(probe).color.trim();
+    return value && !value.includes("var(") && !value.includes("color-mix(")
+      ? value
+      : fallback;
+  } finally {
+    probe.remove();
+  }
+}
+
+function graphElementOptions(
+  theme: Theme,
+  animateLabels: boolean,
+): Pick<GraphOptions, "node" | "edge"> {
+  const selectedStroke = resolveSelectionColor(
+    "--selection-indicator",
+    theme === "dark" ? "#f1f3f5" : "#343a40",
+  );
+  const hoverStroke = resolveSelectionColor(
+    "--selection-border",
+    theme === "dark" ? "rgba(241,243,245,0.35)" : "rgba(52,58,64,0.35)",
+  );
+  const labelAnimation = animateLabels
+    ? {
+        update: [{
+          fields: ["fill"],
+          shape: "label",
+          duration: 200,
+          easing: "ease-out",
+        }],
+      }
+    : false;
+
+  return {
+    node: {
+      type: "circle",
+      style: {
+        size: 24,
+        fill: (datum: Record<string, unknown>) => (
+          NODE_COLORS[String((datum as any).data?.type ?? "other")] ?? NODE_COLORS.other
+        ),
+        fillOpacity: 0.85,
+        stroke: "transparent",
+        labelText: (datum: Record<string, unknown>) => (
+          String((datum as any).data?.label ?? datum.id ?? "")
+        ),
+        labelFontSize: 10,
+        labelFill: theme === "dark" ? "#e8eaed" : "#1e1e1e",
+        labelOffsetY: 12,
+        labelPlacement: "bottom",
+      },
+      state: {
+        hover: { stroke: hoverStroke, lineWidth: 2 },
+        selected: { stroke: selectedStroke, lineWidth: 3 },
+      },
+      animation: labelAnimation,
+    },
+    edge: {
+      type: "line",
+      style: {
+        stroke: (datum: Record<string, unknown>) => {
+          const type = String((datum as any)?.data?.type ?? "");
+          return edgeStyle(type).color;
+        },
+        lineWidth: (datum: Record<string, unknown>) => {
+          const type = String((datum as any)?.data?.type ?? "");
+          return CAUSAL_EDGES.has(type) ? 2 : 0.8;
+        },
+        lineDash: (datum: Record<string, unknown>) => {
+          const type = String((datum as any)?.data?.type ?? "");
+          return edgeStyle(type).dash ? [6, 3] : undefined;
+        },
+        labelText: (datum: Record<string, unknown>) => {
+          const data = (datum as any)?.data;
+          return data?.label ?? undefined;
+        },
+        labelFontSize: 9,
+        labelFill: theme === "dark" ? "#94a3b8" : "#64748b",
+        labelOffsetY: -6,
+      },
+      animation: labelAnimation,
+    },
+  };
+}
+
+function graphMotionEnabled(): boolean {
+  try {
+    return !(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
+  } catch {
+    return true;
+  }
+}
 
 interface GraphEdgePayload {
   source: string;
@@ -107,7 +213,7 @@ function formatHours(h: number, t: Translate): string {
   return t("graph.daysShort", String(Math.round(h / 24)));
 }
 
-export function GraphPage({ showToast }: GraphPageProps) {
+export function GraphPage({ showToast, theme }: GraphPageProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
   const [totalMemories, setTotal] = useState(0);
@@ -125,113 +231,125 @@ export function GraphPage({ showToast }: GraphPageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fullscreenRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
+  const mountedRef = useRef(false);
+  const requestGenerationRef = useRef(0);
+  const graphGenerationRef = useRef(0);
+  const renderGenerationRef = useRef(0);
+  const themeOperationGenerationRef = useRef(0);
+  const timeRangeRef = useRef({ start: timeRangeStart, end: timeRangeEnd });
+  const themeRef = useRef(theme);
+  const appliedThemeRef = useRef(theme);
   const nodesRef = useRef<GraphNode[]>([]);
   const allEdgesRef = useRef<GraphEdgePayload[]>([]);
+  const selectedNodeIdRef = useRef<string | null>(null);
   const [graphState, setGraphState] = useState<"loading" | "ready" | "error">("loading");
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestGenerationRef.current += 1;
+      graphGenerationRef.current += 1;
+      renderGenerationRef.current += 1;
+      themeOperationGenerationRef.current += 1;
+    };
+  }, []);
 
   const fetchOverview = useCallback(async () => {
     try {
       const data = unwrapApiData(await apiRequest("stats"));
+      if (!mountedRef.current) return;
       setTotal(Number(data.total_memories ?? data.total_count ?? 0));
       setNodeCount(Number(data.graph_nodes ?? 0));
       setEdgeCount(Number(data.graph_edges ?? 0));
       const sessions = (data.sessions ?? {}) as Record<string, unknown>;
       setSessionCount(Object.keys(sessions).length);
-    } catch (e) { showToast(String(e), true); }
+    } catch (e) {
+      if (mountedRef.current) showToast(String(e), true);
+    }
   }, [showToast]);
 
-  // 追踪 DOM 上的实际主题（只读，不写入）
-  const [domTheme, setDomTheme] = useState<"light" | "dark">(() =>
-    document.documentElement.dataset.theme === "dark" ? "dark" : "light"
-  );
-  // 缓存最新已加载的图谱数据，主题切换时重放
+  themeRef.current = theme;
+  timeRangeRef.current = { start: timeRangeStart, end: timeRangeEnd };
+
+  // 缓存最新已加载的图谱数据，供时间筛选重放。
   const lastDataRef = useRef<{ nodes: GraphNode[]; edges: GraphEdgePayload[] } | null>(null);
 
-  // 跟随 App.tsx 中的 useTheme 所管理的 data-theme 属性变化
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      const next = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
-      setDomTheme((prev) => (prev !== next ? next : prev));
-    });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    return () => observer.disconnect();
+  const clearGraphSelection = useCallback((graph = graphRef.current) => {
+    const selectedId = selectedNodeIdRef.current;
+    if (graph && selectedId) {
+      void graph.setElementState(selectedId, [], false).catch(() => {});
+    }
+    selectedNodeIdRef.current = null;
+    setSelectedNode(null);
   }, []);
 
   // 创建 G6 实例（不渲染数据，等 updateGraphData 调用）
-  const createGraph = useCallback((container: HTMLDivElement, isDark: boolean) => {
-    const nodeLabelFill = isDark ? "#e8eaed" : "#1e1e1e";
-    const edgeLabelFill = isDark ? "#94a3b8" : "#64748b";
-
+  const createGraph = useCallback((container: HTMLDivElement, initialTheme: Theme) => {
+    const motionEnabled = graphMotionEnabled();
     const graph = new Graph({
       container,
       autoFit: "view",
-      animation: true,
-      node: {
-        type: "circle",
-        style: {
-          size: 24,
-          fill: (d: Record<string, unknown>) => NODE_COLORS[String((d as any).data?.type ?? "other")] ?? NODE_COLORS.other,
-          fillOpacity: 0.85,
-          stroke: "transparent",
-          labelText: (d: Record<string, unknown>) => String((d as any).data?.label ?? d.id ?? ""),
-          labelFontSize: 10,
-          labelFill: nodeLabelFill,
-          labelOffsetY: 12,
-          labelPlacement: "bottom",
-        },
-        state: {
-          hover: { stroke: "#ffffff88", lineWidth: 3 },
-          selected: { stroke: "#4dabf7", lineWidth: 3 },
-        },
-      },
-      edge: {
-        type: "line",
-        style: {
-          stroke: (d: Record<string, unknown>) => {
-            const t = String((d as any)?.data?.type ?? "");
-            return edgeStyle(t).color;
-          },
-          lineWidth: (d: Record<string, unknown>) => {
-            const t = String((d as any)?.data?.type ?? "");
-            return CAUSAL_EDGES.has(t) ? 2 : 0.8;
-          },
-          lineDash: (d: Record<string, unknown>) => {
-            const t = String((d as any)?.data?.type ?? "");
-            return edgeStyle(t).dash ? [6, 3] : undefined;
-          },
-          labelText: (d: Record<string, unknown>) => {
-            const data = (d as any)?.data;
-            return data?.label ?? undefined;
-          },
-          labelFontSize: 9,
-          labelFill: edgeLabelFill,
-          labelOffsetY: -6,
-        },
-      },
+      animation: motionEnabled,
+      ...graphElementOptions(initialTheme, motionEnabled),
       layout: {
         type: "d3-force",
         preventOverlap: true,
         nodeStrength: -200,
         linkDistance: 120,
-        animation: true,
+        animation: motionEnabled,
       },
       behaviors: [
         "drag-canvas",
         "zoom-canvas",
         "drag-element",
+        {
+          type: "click-select",
+          multiple: false,
+          state: "selected",
+          degree: 0,
+          animation: motionEnabled,
+          enable: (event: IPointerEvent) => (
+            event.targetType === "node" || event.targetType === "canvas"
+          ),
+          onClick: (event: IPointerEvent) => {
+            if (!mountedRef.current || graphRef.current !== graph) return;
+            if (event.targetType === "canvas") {
+              selectedNodeIdRef.current = null;
+              setSelectedNode(null);
+              return;
+            }
+            if (event.targetType !== "node") return;
+
+            if (!("id" in event.target)) return;
+            const id = String(event.target.id ?? "");
+            if (!id) return;
+
+            if (!graph.getElementState(id).includes("selected")) {
+              if (selectedNodeIdRef.current === id) {
+                selectedNodeIdRef.current = null;
+                setSelectedNode(null);
+              }
+              return;
+            }
+
+            const node = nodesRef.current.find((item) => String(item.id) === id);
+            if (node) {
+              void Promise.resolve(graph.focusElement(id, {
+                duration: motionEnabled ? 500 : 0,
+              })).catch((error) => {
+                if (mountedRef.current && graphRef.current === graph) {
+                  showToast(String(error), true);
+                }
+              });
+              selectedNodeIdRef.current = id;
+              setSelectedNode(node);
+            }
+          },
+        },
         { type: "hover-activate", degree: 1, direction: "both" },
       ],
       data: { nodes: [], edges: [] },
-    });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    graph.on("node:click", (evt: any) => {
-      const id = evt.target?.id as string | undefined;
-      if (id) {
-        graph.focusElement(id, { duration: 500 });
-        const node = nodesRef.current.find((n) => String(n.id) === id);
-        if (node) setSelectedNode(node);
-      }
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -244,49 +362,98 @@ export function GraphPage({ showToast }: GraphPageProps) {
     });
     graph.on("node:pointerout", () => setHoveredNode(null));
 
-    graph.on("canvas:click", () => setSelectedNode(null));
     graph.on("viewport:change", () => setScale(graph.getZoom()));
 
     return graph;
-  }, []);
+  }, [showToast]);
 
-  // 当容器就绪或主题变化时，销毁旧图并重建
+  // 容器挂载时只创建一次图实例；主题变化由独立 effect 原位更新。
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    // 清空旧容器（G6 在 destroy 后可能残留 canvas）
-    el.innerHTML = "";
 
-    const isDark = domTheme === "dark";
-    const graph = createGraph(el, isDark);
+    const initialTheme = themeRef.current;
+    const graph = createGraph(el, initialTheme);
+    const graphGeneration = ++graphGenerationRef.current;
     graphRef.current = graph;
+    appliedThemeRef.current = initialTheme;
 
     // 如果已有缓存数据，立即渲染
     const cached = lastDataRef.current;
     if (cached) {
-      updateGraphData(cached.nodes, cached.edges);
+      void updateGraphData(cached.nodes, cached.edges).catch((error) => {
+        if (
+          mountedRef.current
+          && graphRef.current === graph
+          && graphGenerationRef.current === graphGeneration
+        ) {
+          showToast(String(error), true);
+          setGraphState("error");
+        }
+      });
     }
 
     return () => {
+      graphGenerationRef.current += 1;
+      renderGenerationRef.current += 1;
+      themeOperationGenerationRef.current += 1;
       graph.destroy();
-      graphRef.current = null;
+      if (graphRef.current === graph) graphRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [domTheme]);
+  }, [createGraph, showToast]);
+
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph || appliedThemeRef.current === theme) return;
+
+    appliedThemeRef.current = theme;
+    const graphGeneration = graphGenerationRef.current;
+    const operationGeneration = ++themeOperationGenerationRef.current;
+    const isCurrentOperation = () => (
+      mountedRef.current
+      && graphRef.current === graph
+      && graphGenerationRef.current === graphGeneration
+      && themeOperationGenerationRef.current === operationGeneration
+    );
+    const motionEnabled = graphMotionEnabled();
+    graph.setOptions(graphElementOptions(theme, motionEnabled));
+    void (async () => {
+      await graph.draw();
+      if (!isCurrentOperation()) return;
+        const selectedId = selectedNodeIdRef.current;
+        if (selectedId) {
+          await graph.setElementState(selectedId, ["selected"], false);
+        }
+    })().catch((error) => {
+      if (!isCurrentOperation()) return;
+        console.error("[GraphPage] G6 主题重绘失败:", error);
+        showToast(String(error), true);
+      });
+  }, [showToast, theme]);
 
   // 同步图谱数据到 G6 实例
   const updateGraphData = useCallback(async (nodes: GraphNode[], edges: GraphEdgePayload[]) => {
     const g = graphRef.current;
-    if (!g) return;
+    if (!g || !mountedRef.current) return false;
+    const graphGeneration = graphGenerationRef.current;
+    const operationGeneration = ++renderGenerationRef.current;
+    const isCurrentOperation = () => (
+      mountedRef.current
+      && graphRef.current === g
+      && graphGenerationRef.current === graphGeneration
+      && renderGenerationRef.current === operationGeneration
+    );
 
     nodesRef.current = nodes;
     allEdgesRef.current = edges;
-    // 缓存最新数据，供主题切换重建时重放
+    // 缓存最新数据，供时间筛选重放。
     lastDataRef.current = { nodes, edges };
 
     const now = Date.now() / 1000;
     const nodeIdSet = new Set(nodes.map((n) => String(n.id)));
-    const isTimeFilterActive = timeRangeStart > 0 || timeRangeEnd < 720;
+    const { start: currentTimeRangeStart, end: currentTimeRangeEnd } = timeRangeRef.current;
+    const isTimeFilterActive = currentTimeRangeStart > 0 || currentTimeRangeEnd < 720;
 
     // 第一步：过滤孤立边（source/target 不在节点列表中）
     const connectedEdges = edges.filter((e) => {
@@ -304,8 +471,12 @@ export function GraphPage({ showToast }: GraphPageProps) {
     // 第二步：按时间范围过滤边
     // - 无时间戳的边 (ts <= 0)：始终显示，但不参与时间筛选
     // - 有时间戳的边 (ts > 0)：按 cutoffStart/cutoffEnd 筛选
-    const cutoffStart = timeRangeStart > 0 ? now - timeRangeStart * 3600 : Infinity;
-    const cutoffEnd = timeRangeEnd > 0 ? now - timeRangeEnd * 3600 : 0;
+    const cutoffStart = currentTimeRangeStart > 0
+      ? now - currentTimeRangeStart * 3600
+      : Infinity;
+    const cutoffEnd = currentTimeRangeEnd > 0
+      ? now - currentTimeRangeEnd * 3600
+      : 0;
 
     const timeFilteredEdges = isTimeFilterActive
       ? connectedEdges.filter((e) => {
@@ -365,33 +536,80 @@ export function GraphPage({ showToast }: GraphPageProps) {
       };
     });
 
+    const selectedId = selectedNodeIdRef.current;
+    const selectionRemainsVisible = selectedId !== null
+      && g6Nodes.some((node) => node.id === selectedId);
+    if (selectedId && !selectionRemainsVisible) {
+      clearGraphSelection(g);
+    }
+
     try {
+      if (!isCurrentOperation()) return false;
       g.setData({ nodes: g6Nodes, edges: g6Edges });
       await g.render();
+      if (!isCurrentOperation()) return false;
+      if (selectedId && selectionRemainsVisible) {
+        await g.setElementState(selectedId, ["selected"], false);
+        if (!isCurrentOperation()) return false;
+      }
+      return true;
     } catch (err) {
+      if (!isCurrentOperation()) return false;
       console.error("[GraphPage] G6 render 失败:", err);
-      // 不抛出，让错误状态 UI 接管
+      throw err;
     }
-  }, [timeRangeStart, timeRangeEnd]);
+  }, [clearGraphSelection]);
 
   useEffect(() => {
     const cached = lastDataRef.current;
     if (!cached || !graphRef.current) return;
-    void updateGraphData(cached.nodes, cached.edges);
-  }, [timeRangeStart, timeRangeEnd, updateGraphData]);
+    void updateGraphData(cached.nodes, cached.edges)
+      .then((applied) => {
+        if (applied && mountedRef.current) setGraphState("ready");
+      })
+      .catch((error) => {
+        if (!mountedRef.current) return;
+        showToast(String(error), true);
+        setGraphState("error");
+      });
+  }, [showToast, timeRangeStart, timeRangeEnd, updateGraphData]);
+
+  const requestGraphData = useCallback(async (
+    endpoint: string,
+    options: { showLoading?: boolean; setErrorState?: boolean } = {},
+  ) => {
+    const requestGeneration = ++requestGenerationRef.current;
+    const isCurrentRequest = () => (
+      mountedRef.current && requestGenerationRef.current === requestGeneration
+    );
+    if (!isCurrentRequest()) return false;
+    if (options.showLoading) setGraphState("loading");
+
+    try {
+      const data = unwrapApiData(await apiRequest(endpoint));
+      if (!isCurrentRequest()) return false;
+      const applied = await updateGraphData(
+        (data.nodes ?? []) as GraphNode[],
+        (data.edges ?? []) as GraphEdgePayload[],
+      );
+      if (!applied || !isCurrentRequest()) return false;
+      if (options.showLoading) setGraphState("ready");
+      return true;
+    } catch (error) {
+      if (!isCurrentRequest()) return false;
+      showToast(String(error), true);
+      if (options.setErrorState) setGraphState("error");
+      return false;
+    }
+  }, [showToast, updateGraphData]);
 
   const searchGraph = useCallback(async () => {
-    try {
-      const params = new URLSearchParams();
-      if (query) params.set("query", query);
-      if (memoryId) params.set("memory_id", memoryId);
-      const data = unwrapApiData(await apiRequest(`graph/search?${params.toString()}`));
-      const newNodes = (data.nodes ?? []) as GraphNode[];
-      const newEdges = (data.edges ?? []) as GraphEdgePayload[];
-      setSelectedNode(null);
-      await updateGraphData(newNodes, newEdges);
-    } catch (e) { showToast(String(e), true); }
-  }, [query, memoryId, showToast, updateGraphData]);
+    clearGraphSelection();
+    const params = new URLSearchParams();
+    if (query) params.set("query", query);
+    if (memoryId) params.set("memory_id", memoryId);
+    await requestGraphData(`graph/search?${params.toString()}`);
+  }, [clearGraphSelection, query, memoryId, requestGraphData]);
 
   // Stats on mount
   useEffect(() => { fetchOverview(); }, [fetchOverview]);
@@ -399,23 +617,11 @@ export function GraphPage({ showToast }: GraphPageProps) {
   // Initial graph data load — triggered after container mounts
   useEffect(() => {
     if (!containerRef.current) return;
-    const load = async () => {
-      try {
-        setGraphState("loading");
-        const data = unwrapApiData(await apiRequest("graph/search"));
-        await updateGraphData(
-          (data.nodes ?? []) as GraphNode[],
-          (data.edges ?? []) as GraphEdgePayload[]
-        );
-        setGraphState("ready");
-      } catch (e) {
-        showToast(String(e), true);
-        setGraphState("error");
-      }
-    };
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void requestGraphData("graph/search", {
+      showLoading: true,
+      setErrorState: true,
+    });
+  }, [requestGraphData]);
 
   const toggleFullscreen = useCallback(() => {
     if (!fullscreenRef.current) return;
@@ -481,22 +687,10 @@ export function GraphPage({ showToast }: GraphPageProps) {
             <div className="text-center">
               <p className="text-sm text-muted-foreground">{t("error.graphSearch")}</p>
               <Button variant="link" size="xs" onClick={() => {
-                setGraphState("loading");
-                // 重试：重新加载图谱数据
-                const retry = async () => {
-                  try {
-                    const data = unwrapApiData(await apiRequest("graph/search"));
-                    await updateGraphData(
-                      (data.nodes ?? []) as GraphNode[],
-                      (data.edges ?? []) as GraphEdgePayload[]
-                    );
-                    setGraphState("ready");
-                  } catch (e2) {
-                    showToast(String(e2), true);
-                    setGraphState("error");
-                  }
-                };
-                retry();
+                void requestGraphData("graph/search", {
+                  showLoading: true,
+                  setErrorState: true,
+                });
               }}
                 className="mt-2">{t("common.retry")}</Button>
             </div>
@@ -637,7 +831,7 @@ export function GraphPage({ showToast }: GraphPageProps) {
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={() => setSelectedNode(null)}
+              onClick={() => clearGraphSelection()}
               aria-label={t("common.close")}
               title={t("common.close")}
             >

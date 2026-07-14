@@ -124,7 +124,7 @@ export function ProfilesPage({ showToast }: ProfilesPageProps) {
             </TableHeader>
             <TableBody>
               {profiles.map((p) => (
-                <TableRow key={p.user_id} className="cursor-pointer text-sm"
+                <TableRow key={p.user_id} data-state={selected.has(p.user_id) ? "selected" : undefined} className="cursor-pointer text-sm"
                   onClick={() => fetchDetail(p.user_id)}>
                   <TableCell className="px-4" onClick={(ev) => ev.stopPropagation()}>
                     <Checkbox aria-label={t("profiles.selectProfile", p.display_name ?? p.user_id)} checked={selected.has(p.user_id)} onCheckedChange={() => toggleSelect(p.user_id)} />

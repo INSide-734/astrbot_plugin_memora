@@ -17,6 +17,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
+import { cn } from "@/lib/utils";
 import type {
   ConfigProviderOptions,
   ConfigSchemaNode,
@@ -32,6 +33,7 @@ export interface ConfigFieldProps {
   disabled?: boolean;
   fieldErrors?: Record<string, string>;
   defaultProviderLabel?: string;
+  targetPath?: string | null;
 }
 
 interface SelectOption {
@@ -105,29 +107,37 @@ export function ConfigField({
   disabled = false,
   fieldErrors = {},
   defaultProviderLabel = "Use AstrBot default",
+  targetPath,
 }: ConfigFieldProps) {
   if (node.invisible) return null;
 
   const id = pathId(path);
   const label = displayLabel(path, node.description);
+  const highlighted = targetPath === path;
 
   if (node.type === "object") {
     const values = configObject(value);
     return (
       <section
         aria-labelledby={`${id}-heading`}
-        className="flex flex-col gap-3"
+        className={cn(
+          "flex scroll-mt-4 flex-col gap-3 transition-shadow motion-reduce:transition-none",
+          highlighted &&
+            "rounded-lg ring-2 ring-ring ring-offset-2 ring-offset-background",
+        )}
+        data-config-highlighted={highlighted ? "true" : undefined}
+        data-config-path={path}
         data-slot="config-group"
       >
         <div className="flex min-w-0 flex-col gap-1">
           <div
             data-slot="config-group-heading"
-            className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
+            className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5"
           >
             <h2 id={`${id}-heading`} className="text-sm font-medium">
               {label}
             </h2>
-            <code className="min-w-0 max-w-full break-all text-xs text-muted-foreground">
+            <code className="ml-auto min-w-0 max-w-full break-all text-right text-xs text-muted-foreground">
               {path}
             </code>
           </div>
@@ -149,6 +159,7 @@ export function ConfigField({
                 disabled={disabled}
                 fieldErrors={fieldErrors}
                 defaultProviderLabel={defaultProviderLabel}
+                targetPath={targetPath}
               />
             );
           })}
@@ -267,21 +278,25 @@ export function ConfigField({
   return (
     <Field
       orientation={node.type === "bool" ? "horizontal" : "vertical"}
-      className={
-        node.type === "bool"
-          ? "flex-wrap items-start justify-between gap-x-4 gap-y-2"
-          : undefined
-      }
+      className={cn(
+        "scroll-mt-4 transition-shadow motion-reduce:transition-none",
+        node.type === "bool" &&
+          "flex-wrap items-start justify-between gap-x-4 gap-y-2",
+        highlighted &&
+          "rounded-lg ring-2 ring-ring ring-offset-2 ring-offset-background",
+      )}
+      data-config-highlighted={highlighted ? "true" : undefined}
+      data-config-path={path}
       data-disabled={disabled ? true : undefined}
       data-invalid={error ? true : undefined}
     >
       <FieldContent className="min-w-0">
         <div
           data-slot="config-field-heading"
-          className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
+          className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5"
         >
           <FieldLabel htmlFor={id}>{label}</FieldLabel>
-          <code className="min-w-0 max-w-full break-all text-xs text-muted-foreground">
+          <code className="ml-auto min-w-0 max-w-full break-all text-right text-xs text-muted-foreground">
             {path}
           </code>
         </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { StickyNote, Plus, Search, Tag, Trash2, Archive, Pencil, X } from "lucide-react";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
@@ -11,11 +11,14 @@ import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/la
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Checkbox } from "@/components/ui/checkbox";
+import { selectionStateVariants } from "@/components/ui/selection-state";
 import { dashboardLocale, formatDashboardDate } from "@/lib/i18n";
 import { Textarea } from "@/components/ui/textarea";
+import type { EntityNavigationTarget } from "@/types";
 
 interface NotesPageProps {
   showToast: (msg: string, isError?: boolean) => void;
+  navigationTarget?: EntityNavigationTarget | null;
 }
 
 interface Note {
@@ -33,7 +36,7 @@ interface Note {
 const NOTE_STATUS_LABELS: Record<string, string> = {};
 const EDIT_NOTE_LABELS: Record<string, string> = {};
 
-export function NotesPage({ showToast }: NotesPageProps) {
+export function NotesPage({ showToast, navigationTarget }: NotesPageProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
 
@@ -53,6 +56,7 @@ export function NotesPage({ showToast }: NotesPageProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editField, setEditField] = useState("title");
   const [editData, setEditData] = useState<Record<string, string>>({});
+  const detailRequestRef = useRef(0);
 
   const fetchNotes = useCallback(async () => {
     setLoading(true);
@@ -68,13 +72,23 @@ export function NotesPage({ showToast }: NotesPageProps) {
 
   useEffect(() => { fetchNotes(); }, [fetchNotes]);
 
-  const fetchDetail = async (id: string) => {
+  const fetchDetail = useCallback(async (id: string) => {
+    const requestId = ++detailRequestRef.current;
     try {
       const res = unwrapApiData(await apiRequest(`notes/detail?note_id=${id}`));
+      if (requestId !== detailRequestRef.current) return;
       setDetail((res.note ?? res) as Note);
       setEditData({});
-    } catch (e) { showToast(String(e), true); }
-  };
+    } catch (e) {
+      if (requestId !== detailRequestRef.current) return;
+      showToast(String(e), true);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!navigationTarget) return;
+    void fetchDetail(navigationTarget.id);
+  }, [fetchDetail, navigationTarget?.id, navigationTarget?.requestId]);
 
   const createNote = async () => {
     try {
@@ -182,9 +196,9 @@ export function NotesPage({ showToast }: NotesPageProps) {
          notes.length === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">{t("table.noData")}</p> : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {notes.map((n) => (
-              <div key={getNoteId(n)} className={cn(
+              <div key={getNoteId(n)} data-state={selected.has(getNoteId(n)) ? "selected" : undefined} className={cn(
                 "cursor-pointer rounded-lg border bg-card p-4 text-card-foreground transition-colors hover:bg-muted/30",
-                selected.has(getNoteId(n)) && "border-primary bg-primary/5"
+                selectionStateVariants({ kind: "row", selected: selected.has(getNoteId(n)) }),
               )}>
                 <div className="flex items-start gap-3">
                   <Checkbox className="mt-1" aria-label={t("notes.selectNote", n.title)}

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EN_MAP } from "../mock";
@@ -27,6 +27,16 @@ interface BridgeMock {
 
 function ok<T>(data: T) {
   return { status: "ok", data };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, reject, resolve };
 }
 
 describe("MemoryPage", () => {
@@ -171,6 +181,9 @@ describe("MemoryPage", () => {
     await waitFor(() => {
       expect(screen.getByText("1 selected")).toBeTruthy();
     });
+    expect(
+      screen.getByText("Alpha memory").closest('[data-state="selected"]'),
+    ).toBeTruthy();
 
     fireEvent.click(screen.getAllByRole("checkbox")[2]);
 
@@ -256,5 +269,112 @@ describe("MemoryPage", () => {
     await waitFor(() => {
       expect(screen.queryByText("Memory Detail")).toBeNull();
     });
+  });
+
+  it("opens the exact memory detail for each navigation target request", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/memories") {
+        return Promise.resolve(ok({ items: [], total: 0 }));
+      }
+      if (path === "page/memory/detail") {
+        return Promise.resolve(ok({
+          memory: {
+            id: params.id,
+            content: "Target memory body",
+            type: "fact",
+            importance: 0.8,
+            status: "active",
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const { rerender } = render(
+      <MemoryPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, id: "memory-search-target" }}
+      />,
+    );
+
+    expect(await screen.findByText("Target memory body")).toBeTruthy();
+    expect(bridge.apiGet).toHaveBeenCalledWith("page/memory/detail", {
+      id: "memory-search-target",
+    });
+
+    rerender(
+      <MemoryPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 2, id: "memory-search-target" }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(bridge.apiGet.mock.calls.filter(
+        ([path]) => path === "page/memory/detail",
+      )).toHaveLength(2);
+    });
+  });
+
+  it("keeps the newest memory detail when an older target resolves last", async () => {
+    const staleDetail = deferred<ReturnType<typeof ok>>();
+    const staleError = deferred<ReturnType<typeof ok>>();
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/memories") {
+        return Promise.resolve(ok({ items: [], total: 0 }));
+      }
+      if (path === "page/memory/detail" && params.id === "memory-old") {
+        return staleDetail.promise;
+      }
+      if (path === "page/memory/detail" && params.id === "memory-error") {
+        return staleError.promise;
+      }
+      if (path === "page/memory/detail" && params.id === "memory-new") {
+        return Promise.resolve(ok({
+          memory: {
+            id: "memory-new",
+            content: "Newest memory detail",
+            status: "active",
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const view = render(
+      <MemoryPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, id: "memory-old" }}
+      />,
+    );
+    view.rerender(
+      <MemoryPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 2, id: "memory-error" }}
+      />,
+    );
+    view.rerender(
+      <MemoryPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 3, id: "memory-new" }}
+      />,
+    );
+
+    expect(await screen.findByText("Newest memory detail")).toBeTruthy();
+    await act(async () => {
+      staleDetail.resolve(ok({
+        memory: {
+          id: "memory-old",
+          content: "Stale memory detail",
+          status: "active",
+        },
+      }));
+      staleError.reject(new Error("stale memory failure"));
+      await Promise.allSettled([staleDetail.promise, staleError.promise]);
+    });
+
+    expect(screen.getByText("Newest memory detail")).toBeTruthy();
+    expect(screen.queryByText("Stale memory detail")).toBeNull();
+    expect(showToast).not.toHaveBeenCalled();
   });
 });

@@ -115,22 +115,32 @@ describe("TimelinePage", () => {
 
     expect(await screen.findByText("Within the day window")).toBeTruthy();
     expect(screen.queryByText("Only visible in the month window")).toBeNull();
+    const dayMemory = screen.getByRole("button", { name: /Within the day window/ });
+    const detailId = dayMemory.getAttribute("aria-controls");
+    expect(dayMemory.getAttribute("aria-expanded")).toBe("false");
+    expect(detailId).toBe("timeline-detail-mem-day");
 
     fireEvent.click(screen.getByRole("button", { name: "Month" }));
 
     expect(await screen.findByText("Only visible in the month window")).toBeTruthy();
     expect(screen.getByText("2 items")).toBeTruthy();
 
-    fireEvent.click(screen.getByText("Within the day window"));
+    fireEvent.click(dayMemory);
 
     expect(await screen.findByText("0.91")).toBeTruthy();
     expect(screen.getByText("Fact memory")).toBeTruthy();
+    expect(dayMemory.getAttribute("aria-expanded")).toBe("true");
+    expect(dayMemory.className).toContain(
+      "shadow-[inset_2px_0_0_var(--selection-indicator)]",
+    );
+    expect(document.getElementById(detailId ?? "")).toBeTruthy();
 
-    fireEvent.click(screen.getByText("Within the day window"));
+    fireEvent.click(dayMemory);
 
     await waitFor(() => {
       expect(screen.queryByText("0.91")).toBeNull();
     });
+    expect(dayMemory.getAttribute("aria-expanded")).toBe("false");
 
     fireEvent.click(screen.getByRole("button", { name: "Day" }));
 
@@ -138,6 +148,46 @@ describe("TimelinePage", () => {
       expect(screen.queryByText("Only visible in the month window")).toBeNull();
     });
     expect(screen.getByText("1 items")).toBeTruthy();
+  });
+
+  it("uses collision-free controls ids for punctuated memory identifiers", async () => {
+    bridge.apiGet.mockResolvedValue(ok({
+      items: [
+        {
+          id: "memory/a",
+          content: "Slash memory",
+          importance: 0.7,
+          type: "fact",
+          created_at: "2026-06-28T10:00:00Z",
+        },
+        {
+          id: "memory?a",
+          content: "Query memory",
+          importance: 0.6,
+          type: "fact",
+          created_at: "2026-06-28T09:00:00Z",
+        },
+      ],
+    }));
+
+    render(<TimelinePage showToast={showToast} />);
+
+    const slashButton = await screen.findByRole("button", { name: /Slash memory/ });
+    const queryButton = screen.getByRole("button", { name: /Query memory/ });
+    const slashDetailId = slashButton.getAttribute("aria-controls");
+    const queryDetailId = queryButton.getAttribute("aria-controls");
+
+    expect(slashDetailId).not.toBe(queryDetailId);
+
+    fireEvent.click(slashButton);
+    expect(slashButton.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById(slashDetailId ?? "")).toBeTruthy();
+
+    fireEvent.click(queryButton);
+    expect(slashButton.getAttribute("aria-expanded")).toBe("false");
+    expect(queryButton.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById(slashDetailId ?? "")).toBeNull();
+    expect(document.getElementById(queryDetailId ?? "")).toBeTruthy();
   });
 
   it("shows a toast and falls back to the empty state when memory loading fails", async () => {
