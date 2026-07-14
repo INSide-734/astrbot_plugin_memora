@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import time
-from collections.abc import Callable, Mapping
-from typing import Any
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any, TypeVar
+
+from astrbot.api import logger
 
 from ..api.editing_utils import finite_float, required_text
 from ..base.entity_editing import (
@@ -39,6 +43,7 @@ _BATCH_ACTION_CHANGES: dict[str, dict[str, bool]] = {
     "unset_global": {"is_global": False},
 }
 _BATCH_ACTIONS = frozenset({"delete", *_BATCH_ACTION_CHANGES})
+_MutationResult = TypeVar("_MutationResult")
 
 
 class JargonAdminService:
@@ -62,9 +67,11 @@ class JargonAdminService:
         """校验并严格创建管理员词条。"""
 
         meaning = self._validated_new_meaning(fields)
-        created = await self._store.create_strict(meaning)
-        self._invalidate(created.group_id)
-        return created
+        return await self._run_mutation(
+            self._store.create_strict(meaning),
+            group_id=meaning.group_id,
+            operation="create",
+        )
 
     async def update(
         self,
@@ -82,14 +89,16 @@ class JargonAdminService:
             expected_revision, field="expected_revision", maximum=256
         )
         normalized_changes = self._validated_changes(changes)
-        updated = await self._store.update_if_revision(
-            normalized_term,
-            normalized_group,
-            normalized_changes,
-            expected_revision=revision,
+        return await self._run_mutation(
+            self._store.update_if_revision(
+                normalized_term,
+                normalized_group,
+                normalized_changes,
+                expected_revision=revision,
+            ),
+            group_id=normalized_group,
+            operation="update",
         )
-        self._invalidate(updated.group_id)
-        return updated
 
     async def delete(
         self,
@@ -105,13 +114,15 @@ class JargonAdminService:
         revision = required_text(
             expected_revision, field="expected_revision", maximum=256
         )
-        deleted = await self._store.delete_if_revision(
-            normalized_term,
-            normalized_group,
-            expected_revision=revision,
+        return await self._run_mutation(
+            self._store.delete_if_revision(
+                normalized_term,
+                normalized_group,
+                expected_revision=revision,
+            ),
+            group_id=normalized_group,
+            operation="delete",
         )
-        self._invalidate(normalized_group)
-        return deleted
 
     async def batch(self, *, action: Any, items: Any) -> dict[str, Any]:
         """逐项分派安全批量动作，并保留独立、稳定的失败结果。"""
@@ -156,9 +167,47 @@ class JargonAdminService:
             "failures": failures,
         }
 
-    def _invalidate(self, group_id: str) -> None:
-        if self._invalidate_group is not None:
+    async def _run_mutation(
+        self,
+        mutation: Awaitable[_MutationResult],
+        *,
+        group_id: str,
+        operation: str,
+    ) -> _MutationResult:
+        """得到确定写入结果并在已提交时失效缓存。"""
+
+        task = asyncio.ensure_future(mutation)
+        try:
+            result = await asyncio.shield(task)
+        except asyncio.CancelledError as cancellation:
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+            try:
+                result = task.result()
+            except BaseException:
+                raise cancellation from None
+            self._invalidate(group_id, operation=operation)
+            raise cancellation
+        self._invalidate(group_id, operation=operation)
+        return result
+
+    def _invalidate(self, group_id: str, *, operation: str) -> None:
+        if self._invalidate_group is None:
+            return
+        try:
             self._invalidate_group(group_id)
+        except Exception as exc:
+            group_ref = hashlib.sha256(group_id.encode("utf-8")).hexdigest()[:12]
+            logger.warning(
+                "[JargonAdmin] cache_invalidation_failed "
+                "operation=%s group_ref=%s error_class=%s",
+                operation,
+                group_ref,
+                type(exc).__name__,
+            )
 
     @staticmethod
     def _validated_changes(changes: Any) -> dict[str, Any]:

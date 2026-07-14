@@ -10,10 +10,9 @@ import asyncio
 import json
 import math
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from typing import Any
-
-import aiosqlite
 
 from astrbot.api import logger
 
@@ -85,7 +84,6 @@ _STRICT_UPDATE_FIELDS = frozenset(
         "is_jargon",
         "is_confirmed",
         "is_global",
-        "is_complete",
     }
 )
 
@@ -111,9 +109,9 @@ class JargonStore(BaseStore):
 
     async def _create_tables(self) -> None:
         """创建表结构。"""
-        await self._execute(_JARGON_TABLE_SQL)
-        await self._execute(_JARGON_TERM_INDEX)
-        await self._commit()
+        async with self._write_transaction():
+            await self._execute(_JARGON_TABLE_SQL)
+            await self._execute(_JARGON_TERM_INDEX)
 
     async def initialize(self) -> None:
         """打开连接并创建表（幂等）。"""
@@ -194,39 +192,48 @@ class JargonStore(BaseStore):
         except BaseException:
             pass
 
-    async def create_strict(self, meaning: JargonMeaning) -> JargonMeaning:
-        """在现有连接的单个事务中严格创建新词条。"""
+    @asynccontextmanager
+    async def _write_transaction(self) -> AsyncIterator[None]:
+        """在共享写锁内执行一个完整事务。"""
 
         async with self._write_lock:
             try:
                 await self._execute("BEGIN IMMEDIATE")
-                try:
-                    await self._execute(
-                        """INSERT INTO jargon_terms
-                        (term, group_id, meaning, confidence, is_jargon,
-                         is_confirmed, is_global, is_complete, count,
-                         last_inference_count, context_examples, created_at,
-                         updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        self._meaning_values(meaning),
-                    )
-                except aiosqlite.IntegrityError as exc:
-                    raise EntityAlreadyExistsError("黑话词条已存在") from exc
-                row = await self._fetch_one(
-                    "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
-                    (meaning.term, meaning.group_id),
-                )
-                if row is None:
-                    raise RuntimeError("严格创建后无法读取黑话词条")
-                created = self._row_to_meaning(row)
+                yield
                 await self._commit()
-                return created
             except BaseException:
                 try:
                     await self._rollback_safely()
                 except BaseException:
                     pass
                 raise
+
+    async def create_strict(self, meaning: JargonMeaning) -> JargonMeaning:
+        """在现有连接的单个事务中严格创建新词条。"""
+
+        async with self._write_transaction():
+            existing = await self._fetch_one(
+                "SELECT 1 AS found FROM jargon_terms WHERE term = ? AND group_id = ?",
+                (meaning.term, meaning.group_id),
+            )
+            if existing is not None:
+                raise EntityAlreadyExistsError("黑话词条已存在")
+            await self._execute(
+                """INSERT INTO jargon_terms
+                (term, group_id, meaning, confidence, is_jargon,
+                 is_confirmed, is_global, is_complete, count,
+                 last_inference_count, context_examples, created_at,
+                 updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                self._meaning_values(meaning),
+            )
+            row = await self._fetch_one(
+                "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
+                (meaning.term, meaning.group_id),
+            )
+            if row is None:
+                raise RuntimeError("严格创建后无法读取黑话词条")
+            return self._row_to_meaning(row)
 
     async def update_if_revision(
         self,
@@ -244,56 +251,46 @@ class JargonStore(BaseStore):
         if not changes:
             raise EntityValidationError({"changes": "不能为空"})
 
-        async with self._write_lock:
-            try:
-                await self._execute("BEGIN IMMEDIATE")
-                row = await self._fetch_one(
-                    "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
-                    (term, group_id),
-                )
-                if row is None:
-                    raise EntityNotFoundError("黑话词条不存在")
-                current = self._row_to_meaning(row)
-                current_payload = _meaning_revision_payload(current)
-                current_revision = compute_entity_revision(current_payload)
-                if current_revision != expected_revision:
-                    raise EditConflictError(current_payload, current_revision)
+        async with self._write_transaction():
+            row = await self._fetch_one(
+                "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
+                (term, group_id),
+            )
+            if row is None:
+                raise EntityNotFoundError("黑话词条不存在")
+            current = self._row_to_meaning(row)
+            current_payload = _meaning_revision_payload(current)
+            current_revision = compute_entity_revision(current_payload)
+            if current_revision != expected_revision:
+                raise EditConflictError(current_payload, current_revision)
 
-                persisted_changes = dict(changes)
-                next_confirmed = bool(
-                    persisted_changes.get("is_confirmed", current.is_confirmed)
-                )
-                persisted_changes["is_complete"] = next_confirmed or current.count >= 100
-                persisted_changes["updated_at"] = max(
-                    time.time(), math.nextafter(current.updated_at, math.inf)
-                )
-                columns = list(persisted_changes)
-                values = [
-                    int(value) if column.startswith("is_") else value
-                    for column, value in persisted_changes.items()
-                ]
-                assignments = ", ".join(column + " = ?" for column in columns)
-                await self._execute(
-                    "UPDATE jargon_terms SET "
-                    + assignments
-                    + " WHERE term = ? AND group_id = ?",
-                    tuple(values) + (term, group_id),
-                )
-                updated_row = await self._fetch_one(
-                    "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
-                    (term, group_id),
-                )
-                if updated_row is None:
-                    raise EntityNotFoundError("黑话词条不存在")
-                updated = self._row_to_meaning(updated_row)
-                await self._commit()
-                return updated
-            except BaseException:
-                try:
-                    await self._rollback_safely()
-                except BaseException:
-                    pass
-                raise
+            persisted_changes = dict(changes)
+            next_confirmed = bool(
+                persisted_changes.get("is_confirmed", current.is_confirmed)
+            )
+            persisted_changes["is_complete"] = next_confirmed or current.count >= 100
+            persisted_changes["updated_at"] = max(
+                time.time(), math.nextafter(current.updated_at, math.inf)
+            )
+            columns = list(persisted_changes)
+            values = [
+                int(value) if column.startswith("is_") else value
+                for column, value in persisted_changes.items()
+            ]
+            assignments = ", ".join(column + " = ?" for column in columns)
+            await self._execute(
+                "UPDATE jargon_terms SET "
+                + assignments
+                + " WHERE term = ? AND group_id = ?",
+                tuple(values) + (term, group_id),
+            )
+            updated_row = await self._fetch_one(
+                "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
+                (term, group_id),
+            )
+            if updated_row is None:
+                raise EntityNotFoundError("黑话词条不存在")
+            return self._row_to_meaning(updated_row)
 
     async def delete_if_revision(
         self,
@@ -304,66 +301,57 @@ class JargonStore(BaseStore):
     ) -> bool:
         """在单个锁定事务中比较修订版本并删除词条。"""
 
-        async with self._write_lock:
-            try:
-                await self._execute("BEGIN IMMEDIATE")
-                row = await self._fetch_one(
-                    "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
-                    (term, group_id),
-                )
-                if row is None:
-                    raise EntityNotFoundError("黑话词条不存在")
-                current = self._row_to_meaning(row)
-                current_payload = _meaning_revision_payload(current)
-                current_revision = compute_entity_revision(current_payload)
-                if current_revision != expected_revision:
-                    raise EditConflictError(current_payload, current_revision)
+        async with self._write_transaction():
+            row = await self._fetch_one(
+                "SELECT * FROM jargon_terms WHERE term = ? AND group_id = ?",
+                (term, group_id),
+            )
+            if row is None:
+                raise EntityNotFoundError("黑话词条不存在")
+            current = self._row_to_meaning(row)
+            current_payload = _meaning_revision_payload(current)
+            current_revision = compute_entity_revision(current_payload)
+            if current_revision != expected_revision:
+                raise EditConflictError(current_payload, current_revision)
 
-                cursor = await self._execute(
-                    "DELETE FROM jargon_terms WHERE term = ? AND group_id = ?",
-                    (term, group_id),
-                )
-                if cursor.rowcount != 1:
-                    raise EntityNotFoundError("黑话词条不存在")
-                await self._commit()
-                return True
-            except BaseException:
-                try:
-                    await self._rollback_safely()
-                except BaseException:
-                    pass
-                raise
+            cursor = await self._execute(
+                "DELETE FROM jargon_terms WHERE term = ? AND group_id = ?",
+                (term, group_id),
+            )
+            if cursor.rowcount != 1:
+                raise EntityNotFoundError("黑话词条不存在")
+            return True
 
     async def upsert(self, meaning: JargonMeaning) -> None:
         """插入或更新黑话含义（INSERT OR REPLACE）。
 
         使用 term + group_id 作为唯一键。
         """
-        ctx_json = self._serialize_context(meaning.context_examples)
-        row = {
-            "term": meaning.term,
-            "group_id": meaning.group_id,
-            "meaning": meaning.meaning,
-            "confidence": meaning.confidence,
-            "is_jargon": int(meaning.is_jargon),
-            "is_confirmed": int(meaning.is_confirmed),
-            "is_global": int(meaning.is_global),
-            "is_complete": int(meaning.is_complete),
-            "count": meaning.count,
-            "last_inference_count": meaning.last_inference_count,
-            "context_examples": ctx_json,
-            "created_at": meaning.created_at or time.time(),
-            "updated_at": time.time(),
-        }
-        await self._execute(
-            """INSERT OR REPLACE INTO jargon_terms
-            (term, group_id, meaning, confidence, is_jargon, is_confirmed,
-             is_global, is_complete, count, last_inference_count,
-             context_examples, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            tuple(row.values()),
-        )
-        await self._commit()
+        async with self._write_transaction():
+            ctx_json = self._serialize_context(meaning.context_examples)
+            row = {
+                "term": meaning.term,
+                "group_id": meaning.group_id,
+                "meaning": meaning.meaning,
+                "confidence": meaning.confidence,
+                "is_jargon": int(meaning.is_jargon),
+                "is_confirmed": int(meaning.is_confirmed),
+                "is_global": int(meaning.is_global),
+                "is_complete": int(meaning.is_complete),
+                "count": meaning.count,
+                "last_inference_count": meaning.last_inference_count,
+                "context_examples": ctx_json,
+                "created_at": meaning.created_at or time.time(),
+                "updated_at": time.time(),
+            }
+            await self._execute(
+                """INSERT OR REPLACE INTO jargon_terms
+                (term, group_id, meaning, confidence, is_jargon, is_confirmed,
+                 is_global, is_complete, count, last_inference_count,
+                 context_examples, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                tuple(row.values()),
+            )
 
     async def get_by_term(
         self, term: str, group_id: str
@@ -437,11 +425,11 @@ class JargonStore(BaseStore):
             group_id: 群组 ID。
             confirmed: True 确认，False 取消确认。
         """
-        await self._execute(
-            "UPDATE jargon_terms SET is_confirmed = ? WHERE term = ? AND group_id = ?",
-            (int(confirmed), term, group_id),
-        )
-        await self._commit()
+        async with self._write_transaction():
+            await self._execute(
+                "UPDATE jargon_terms SET is_confirmed = ? WHERE term = ? AND group_id = ?",
+                (int(confirmed), term, group_id),
+            )
         action = "确认" if confirmed else "取消确认"
         logger.info(
             f"[JargonStore] {action} jargon: term={term}, group={group_id}"
@@ -454,11 +442,11 @@ class JargonStore(BaseStore):
             term: 黑话词条。
             group_id: 群组 ID。
         """
-        await self._execute(
-            "DELETE FROM jargon_terms WHERE term = ? AND group_id = ?",
-            (term, group_id),
-        )
-        await self._commit()
+        async with self._write_transaction():
+            await self._execute(
+                "DELETE FROM jargon_terms WHERE term = ? AND group_id = ?",
+                (term, group_id),
+            )
         logger.info(f"[JargonStore] 已删除 jargon: term={term}, group={group_id}")
 
     # ---- 统计 -------------------------------------------------------------------
