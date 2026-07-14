@@ -1085,8 +1085,15 @@ class PluginPageApi(
         except AttributeError:
             has_pending = False
         except Exception as exc:
-            logger.error(f"[页面接口] 检查恢复维护状态失败：{exc}", exc_info=True)
-            return error_response(f"维护状态检查失败: {exc}")
+            logger.error(
+                "[页面接口] operation=%s error_class=%s",
+                "maintenance_write_guard",
+                type(exc).__name__,
+            )
+            return error_response(
+                "维护状态检查失败，请稍后重试。",
+                code="maintenance_guard_failed",
+            )
         if not has_pending:
             return None
         pending_files = []

@@ -6,7 +6,7 @@ import json
 import re
 from types import SimpleNamespace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -593,10 +593,12 @@ class TestMaintenanceWriteGuard:
 
         result = api._maintenance_write_guard()
 
-        assert result is not None
-        assert result["status"] == "error"
-        assert "维护状态检查失败" in result["message"]
-        assert "status broken" in result["message"]
+        assert result == {
+            "status": "error",
+            "message": "维护状态检查失败，请稍后重试。",
+            "code": "maintenance_guard_failed",
+        }
+        assert "status broken" not in str(result)
 
     def test_pending_restore_without_listing_support_still_returns_guard(self) -> None:
         class BackupManagerStub:
@@ -1272,6 +1274,42 @@ class TestMaintenanceWriteGuardCoverage:
         assert "备份恢复" in result["message"]
         if blocked_attr == "_backfill_scheduler":
             plugin._backfill_scheduler.start.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_guard_check_failure_is_redacted_before_profile_create(self) -> None:
+        secret = r"guard-secret C:\private\pending_restore.db"
+        backup_manager = MagicMock()
+        backup_manager.has_pending_restores.side_effect = RuntimeError(secret)
+        plugin = SimpleNamespace(_backup_manager=backup_manager)
+        api = PluginPageApi(plugin)
+        api._ensure_plugin_ready = AsyncMock(
+            side_effect=AssertionError("engine lookup must not run")
+        )
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            side_effect=AssertionError("JSON parsing must not run")
+        )
+
+        with (
+            patch("core.page_api.logger.error") as log_error,
+            patch("core.api.profile_api.request", request_mock),
+        ):
+            result = await api.create_profile()
+
+        assert result == {
+            "status": "error",
+            "message": "维护状态检查失败，请稍后重试。",
+            "code": "maintenance_guard_failed",
+        }
+        log_error.assert_called_once_with(
+            "[页面接口] operation=%s error_class=%s",
+            "maintenance_write_guard",
+            "RuntimeError",
+        )
+        assert secret not in str(result)
+        assert secret not in str(log_error.call_args_list)
+        request_mock.get_json.assert_not_awaited()
+        api._ensure_plugin_ready.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
