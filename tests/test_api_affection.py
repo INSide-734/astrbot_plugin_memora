@@ -231,6 +231,60 @@ class TestAffectionEditing:
         )
 
     @pytest.mark.asyncio
+    async def test_batch_delete_rejects_invalid_items_and_continues_to_later_valid_item(self):
+        stub = _make_editing_stub()
+        stub.batch_affection_users = AffectionApiMixin.batch_affection_users.__get__(stub)
+        manager = stub.plugin._affection_manager
+        manager.delete_user_affection_manual = AsyncMock(return_value=True)
+        payload = {
+            "action": "delete",
+            "items": [
+                {
+                    "identity": {"group_id": "g1", "user_id": "unknown-field"},
+                    "expected_revision": "rev-unknown",
+                    "unexpected": "forbidden",
+                },
+                "not-an-object",
+                {"identity": "not-an-object", "expected_revision": "rev-malformed"},
+                {
+                    "identity": {"group_id": "g1", "user_id": "valid"},
+                    "expected_revision": "rev-valid",
+                },
+            ],
+        }
+
+        with patch("core.api.affection_api.request", _request_json(payload)):
+            result = await stub.batch_affection_users()
+
+        assert result["data"] == {
+            "total": 4,
+            "succeeded_count": 1,
+            "failed_count": 3,
+            "succeeded_ids": [{"group_id": "g1", "user_id": "valid"}],
+            "failures": [
+                {
+                    "identity": {"item_index": 0},
+                    "code": "validation_error",
+                    "message": "请求包含不支持的字段",
+                    "field_errors": {"unexpected": "字段不可写"},
+                },
+                {
+                    "identity": {"item_index": 1},
+                    "code": "invalid_request",
+                    "message": "请求体必须是 JSON 对象",
+                },
+                {
+                    "identity": {"item_index": 2},
+                    "code": "invalid_request",
+                    "message": "请求体必须是 JSON 对象",
+                },
+            ],
+        }
+        manager.delete_user_affection_manual.assert_awaited_once_with(
+            "g1", "valid", expected_revision="rev-valid"
+        )
+
+    @pytest.mark.asyncio
     async def test_batch_delete_enforces_100_item_cap(self):
         stub = _make_editing_stub()
         stub.batch_affection_users = AffectionApiMixin.batch_affection_users.__get__(stub)
@@ -333,13 +387,13 @@ class TestAffectionEditing:
         manager.delete_user_affection_manual = AsyncMock(return_value=True)
         manager.revision_for_affection = MagicMock(return_value="rev-current")
 
-        with patch("core.api.affection_api.request", _request_json({"group_id": "g1", "user_id": "alice", "score": 42})):
+        with patch("core.api.affection_api.request", _request_json({"group_id": "g1", "user_id": "alice", "affection_score": 42})):
             created = await stub.create_affection_user()
         assert created["data"]["entity"]["interaction_count"] == 5
         assert created["data"]["revision"] == "rev-current"
         manager.create_user_affection_manual.assert_awaited_once_with("g1", "alice", 42)
 
-        with patch("core.api.affection_api.request", _request_json({"identity": {"group_id": "g1", "user_id": "alice"}, "changes": {"score": 55}, "expected_revision": "rev-current"})):
+        with patch("core.api.affection_api.request", _request_json({"identity": {"group_id": "g1", "user_id": "alice"}, "changes": {"affection_score": 55}, "expected_revision": "rev-current"})):
             updated = await stub.update_affection_user()
         assert updated["data"]["revision"] == "rev-current"
         manager.update_user_affection_manual.assert_awaited_once_with("g1", "alice", 55, expected_revision="rev-current")
@@ -350,17 +404,40 @@ class TestAffectionEditing:
         manager.delete_user_affection_manual.assert_awaited_once_with("g1", "alice", expected_revision="rev-current")
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("score", [True, 1.5, -101, 101])
-    async def test_score_rejects_non_integer_or_out_of_range_values(self, score):
+    @pytest.mark.parametrize("affection_score", [True, 1.5, -101, 101])
+    async def test_affection_score_rejects_non_integer_or_out_of_range_values(self, affection_score):
         stub = _make_editing_stub()
         stub.create_affection_user = AffectionApiMixin.create_affection_user.__get__(stub)
 
-        with patch("core.api.affection_api.request", _request_json({"group_id": "g1", "user_id": "alice", "score": score})):
+        with patch("core.api.affection_api.request", _request_json({"group_id": "g1", "user_id": "alice", "affection_score": affection_score})):
             result = await stub.create_affection_user()
 
         assert result["code"] == "validation_error"
-        assert "score" in result["field_errors"]
+        assert "affection_score" in result["field_errors"]
         stub.plugin._affection_manager.create_user_affection_manual.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("handler_name", ["create_affection_user", "update_affection_user"])
+    async def test_legacy_score_is_rejected_as_non_contract_field(self, handler_name):
+        stub = _make_editing_stub()
+        setattr(stub, handler_name, getattr(AffectionApiMixin, handler_name).__get__(stub))
+        payload = {"group_id": "g1", "user_id": "alice", "score": 42}
+        if handler_name.startswith("update"):
+            payload = {
+                "identity": {"group_id": "g1", "user_id": "alice"},
+                "changes": {"score": 42},
+                "expected_revision": "rev-current",
+            }
+
+        with patch("core.api.affection_api.request", _request_json(payload)):
+            result = await getattr(stub, handler_name)()
+
+        assert result["code"] == "validation_error"
+        assert result["field_errors"] == {"score": "字段不可写"}
+        if handler_name.startswith("update"):
+            stub.plugin._affection_manager.update_user_affection_manual.assert_not_called()
+        else:
+            stub.plugin._affection_manager.create_user_affection_manual.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("read_only", ["interaction_count", "last_interaction"])
@@ -368,7 +445,7 @@ class TestAffectionEditing:
         stub = _make_editing_stub()
         stub.create_affection_user = AffectionApiMixin.create_affection_user.__get__(stub)
 
-        with patch("core.api.affection_api.request", _request_json({"group_id": "g1", "user_id": "alice", "score": 1, read_only: 0})):
+        with patch("core.api.affection_api.request", _request_json({"group_id": "g1", "user_id": "alice", "affection_score": 1, read_only: 0})):
             result = await stub.create_affection_user()
 
         assert result["code"] == "validation_error"
@@ -385,7 +462,7 @@ class TestAffectionEditing:
         manager.delete_user_affection_manual = AsyncMock(side_effect=EditConflictError(current, "rev-new"))
         payload = {"identity": {"group_id": "g1", "user_id": "alice"}, "expected_revision": "rev-old"}
         if handler_name.startswith("update"):
-            payload["changes"] = {"score": 11}
+            payload["changes"] = {"affection_score": 11}
 
         with patch("core.api.affection_api.request", _request_json(payload)):
             result = await getattr(stub, handler_name)()
@@ -427,12 +504,70 @@ class TestAffectionEditing:
         assert {"mood_type", "intensity"} <= set(invalid["field_errors"])
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "intensity,duration_hours",
+        [(0.1, 0.25), (1.0, 168.0)],
+    )
+    async def test_mood_set_accepts_page_api_boundaries(self, intensity, duration_hours):
+        stub = _make_editing_stub()
+        stub.set_affection_mood = AffectionApiMixin.set_affection_mood.__get__(stub)
+        manager = stub.plugin._affection_manager
+        manager.set_mood = AsyncMock(return_value=_make_mood())
+        payload = {
+            "group_id": "g1",
+            "mood_type": "happy",
+            "intensity": intensity,
+            "duration_hours": duration_hours,
+        }
+
+        with patch("core.api.affection_api.request", _request_json(payload)):
+            result = await stub.set_affection_mood()
+
+        assert result["status"] == "ok"
+        manager.set_mood.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "intensity,duration_hours,error_field",
+        [
+            (0.09, 1.0, "intensity"),
+            (0.0, 1.0, "intensity"),
+            (-0.1, 1.0, "intensity"),
+            (1.01, 1.0, "intensity"),
+            (0.5, 0.24, "duration_hours"),
+            (0.5, 0.0, "duration_hours"),
+            (0.5, -1.0, "duration_hours"),
+            (0.5, 168.01, "duration_hours"),
+        ],
+    )
+    async def test_mood_set_rejects_out_of_range_page_api_values(
+        self, intensity, duration_hours, error_field
+    ):
+        stub = _make_editing_stub()
+        stub.set_affection_mood = AffectionApiMixin.set_affection_mood.__get__(stub)
+        manager = stub.plugin._affection_manager
+        manager.set_mood = AsyncMock()
+        payload = {
+            "group_id": "g1",
+            "mood_type": "happy",
+            "intensity": intensity,
+            "duration_hours": duration_hours,
+        }
+
+        with patch("core.api.affection_api.request", _request_json(payload)):
+            result = await stub.set_affection_mood()
+
+        assert result["code"] == "validation_error"
+        assert error_field in result["field_errors"]
+        manager.set_mood.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_write_guard_runs_before_json_parsing_and_logs_identity_without_content(self):
         stub = _make_editing_stub()
         stub.create_affection_user = AffectionApiMixin.create_affection_user.__get__(stub)
         blocked = {"status": "error", "code": "maintenance_in_progress"}
         stub._maintenance_write_guard.return_value = blocked
-        request_mock = _request_json({"group_id": "g1", "user_id": "secret-user", "score": 1})
+        request_mock = _request_json({"group_id": "g1", "user_id": "secret-user", "affection_score": 1})
         with patch("core.api.affection_api.request", request_mock):
             result = await stub.create_affection_user()
         assert result is blocked
@@ -441,7 +576,7 @@ class TestAffectionEditing:
         stub._maintenance_write_guard.return_value = None
         stub.plugin._affection_manager.create_user_affection_manual = AsyncMock(return_value=_make_user("alice", "g1"))
         stub.plugin._affection_manager.revision_for_affection = MagicMock(return_value="rev-1")
-        with patch("core.api.affection_api.logger.info") as logged, patch("core.api.affection_api.request", _request_json({"group_id": "g1", "user_id": "alice", "score": 1})):
+        with patch("core.api.affection_api.logger.info") as logged, patch("core.api.affection_api.request", _request_json({"group_id": "g1", "user_id": "alice", "affection_score": 1})):
             await stub.create_affection_user()
         rendered = str(logged.call_args_list)
         assert "create" in rendered and "g1" in rendered and "alice" in rendered
