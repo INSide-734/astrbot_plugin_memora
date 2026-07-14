@@ -91,6 +91,18 @@ class AffectionStore(BaseStore):
                 await self._rollback_safely()
                 raise
 
+    @asynccontextmanager
+    async def _read_snapshot(self) -> AsyncIterator[None]:
+        """在当前连接上提供与写入协调的一致读取快照。"""
+        async with self._write_lock:
+            try:
+                await self._execute("BEGIN")
+                yield
+                await self._commit()
+            except BaseException:
+                await self._rollback_safely()
+                raise
+
     @staticmethod
     def _revision_payload(record: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -235,14 +247,41 @@ class AffectionStore(BaseStore):
         self, group_id: str, limit: int, offset: int
     ) -> tuple[list[dict], int]:
         """按稳定顺序分页返回群组好感度记录与总数。"""
-        total = await self.get_user_count(group_id)
-        rows = await self._fetch_all(
-            """SELECT * FROM user_affection WHERE group_id = ?
-               ORDER BY affection_score DESC, user_id ASC, group_id ASC
-               LIMIT ? OFFSET ?""",
-            (group_id, limit, offset),
-        )
-        return rows, total
+        async with self._read_snapshot():
+            total = await self._fetch_scalar(
+                "SELECT COUNT(*) FROM user_affection WHERE group_id = ?",
+                (group_id,),
+            )
+            rows = await self._fetch_all(
+                """SELECT * FROM user_affection WHERE group_id = ?
+                   ORDER BY affection_score DESC, user_id ASC, group_id ASC
+                   LIMIT ? OFFSET ?""",
+                (group_id, limit, offset),
+            )
+            return rows, int(total or 0)
+
+    async def redistribute_affection_if_revision(
+        self,
+        group_id: str,
+        user_id: str,
+        new_score: int,
+        *,
+        expected_revision: str,
+    ) -> bool:
+        """仅当候选记录仍是读到的版本时，安全应用一次分数削减。"""
+        async with self._write_transaction():
+            current = await self.get_affection(group_id, user_id)
+            if current is None:
+                return False
+            current_revision = compute_entity_revision(self._revision_payload(current))
+            if current_revision != expected_revision:
+                return False
+            await self._execute(
+                "UPDATE user_affection SET affection_score = ? "
+                "WHERE user_id = ? AND group_id = ?",
+                (new_score, user_id, group_id),
+            )
+            return True
 
     async def get_top_users(
         self, group_id: str, limit: int = 10
@@ -323,12 +362,17 @@ class AffectionStore(BaseStore):
 
     async def get_active_mood(self, group_id: str) -> dict | None:
         """若最近一次情绪尚未过期，则返回该情绪。"""
+        records = await self.get_active_moods(group_id)
+        return records[0] if records else None
+
+    async def get_active_moods(self, group_id: str) -> list[dict]:
+        """返回全部未过期情绪，供上层跳过损坏的历史行。"""
         now = time.time()
-        return await self._fetch_one(
+        return await self._fetch_all(
             """SELECT * FROM bot_mood
                WHERE group_id = ?
                  AND (start_time + duration_hours * 3600) > ?
-               ORDER BY start_time DESC, id DESC LIMIT 1""",
+               ORDER BY start_time DESC, id DESC""",
             (group_id, now),
         )
 
