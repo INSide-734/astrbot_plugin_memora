@@ -90,6 +90,9 @@ def _make_stub(*, has_filter=True, has_store=True, has_miner=False,
             JargonApiMixin._is_closed_jargon_store
         )
         _find_open_jargon_store = JargonApiMixin._find_open_jargon_store
+        _close_unpublished_jargon_store = staticmethod(
+            JargonApiMixin._close_unpublished_jargon_store
+        )
         _get_jargon_store_locked = JargonApiMixin._get_jargon_store_locked
         _get_jargon_store = JargonApiMixin._get_jargon_store
         _get_current_jargon_query_service = (
@@ -188,14 +191,51 @@ class TestJargonCandidates:
     async def test_skips_malformed_candidate_items(self) -> None:
         broken = MagicMock()
         type(broken).term = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken candidate")))
-        cands = [_make_jargon_candidate("破防", "g1"), broken, _make_jargon_candidate("躺平", "g1")]
+        cands = [_make_jargon_candidate("破防", "g1"), broken]
         stub = _make_stub(candidates=cands)
         mock_req = _make_mock_request(group_id="g1", limit="10")
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.get_jargon_candidates()
         assert result["status"] == "ok"
-        assert result["data"]["total"] == 3
-        assert [item["term"] for item in result["data"]["candidates"]] == ["破防", "躺平"]
+        assert result["data"]["total"] == 1
+        assert [item["term"] for item in result["data"]["candidates"]] == ["破防"]
+        assert "revision" not in result["data"]["candidates"][0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_source", ["filter_resolution", "read"])
+    async def test_outer_failure_is_fully_redacted(
+        self,
+        failure_source: str,
+    ) -> None:
+        path_secret = "C:/secret/candidate-store-4f87.db"
+        group_secret = "candidate-group-secret-5a98"
+        exception_secret = "candidate-exception-secret-6ba9"
+        stub = _make_stub()
+        failure = RuntimeError(path_secret + group_secret + exception_secret)
+        if failure_source == "filter_resolution":
+            stub._get_jargon_filter = MagicMock(side_effect=failure)
+        else:
+            stub.plugin._jargon_filter.get_candidates = MagicMock(
+                side_effect=failure
+            )
+        mock_req = _make_mock_request(group_id=group_secret, limit="10")
+
+        with (
+            patch("core.api.jargon_api.request", mock_req),
+            patch("core.api.jargon_api.logger") as logged,
+        ):
+            result = await stub.get_jargon_candidates()
+
+        rendered = json.dumps(result, ensure_ascii=False) + str(logged.method_calls)
+        assert result["code"] == "internal_error"
+        assert "exc_info" not in rendered
+        logged.error.assert_called_once_with(
+            "[黑话接口] operation=%s error_class=%s",
+            "list_candidates",
+            "RuntimeError",
+        )
+        for secret in (path_secret, group_secret, exception_secret):
+            assert secret not in rendered
 
     @pytest.mark.asyncio
     async def test_tolerates_malformed_candidate_container(self) -> None:
@@ -414,6 +454,208 @@ class TestJargonAdminServiceResolution:
         finally:
             for store in created_stores:
                 await store.close()
+
+    @pytest.mark.asyncio
+    async def test_failed_unpublished_store_is_closed_before_original_error(
+        self,
+        tmp_path,
+    ) -> None:
+        failure = RuntimeError("initialize-secret-ordinary-7cb0")
+        created_stores = []
+
+        class FailingStore:
+            def __init__(self, db_path: str) -> None:
+                self.db_path = db_path
+                self.resource = None
+                self.close_calls = 0
+                created_stores.append(self)
+
+            async def initialize(self) -> None:
+                self.resource = object()
+                raise failure
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                self.resource = None
+
+        plugin = SimpleNamespace(
+            data_dir=tmp_path,
+            initializer=SimpleNamespace(jargon_query_service=None),
+        )
+        api = JargonApiMixin()
+        api.plugin = plugin
+
+        with patch("core.jargon.jargon_store.JargonStore", FailingStore):
+            with pytest.raises(RuntimeError) as caught:
+                await api._get_jargon_store()
+
+        store = created_stores[0]
+        assert caught.value is failure
+        assert store.close_calls == 1
+        assert store.resource is None
+        assert not hasattr(plugin, "_jargon_store")
+
+    @pytest.mark.asyncio
+    async def test_cancelled_unpublished_store_finishes_cleanup_before_propagating(
+        self,
+        tmp_path,
+    ) -> None:
+        initialize_started = asyncio.Event()
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+        created_stores = []
+
+        class CancelledStore:
+            def __init__(self, db_path: str) -> None:
+                self.db_path = db_path
+                self.resource = None
+                self.close_calls = 0
+                created_stores.append(self)
+
+            async def initialize(self) -> None:
+                self.resource = object()
+                initialize_started.set()
+                await asyncio.Event().wait()
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                close_started.set()
+                await release_close.wait()
+                self.resource = None
+
+        plugin = SimpleNamespace(
+            data_dir=tmp_path,
+            initializer=SimpleNamespace(jargon_query_service=None),
+        )
+        api = JargonApiMixin()
+        api.plugin = plugin
+        close_waiter = asyncio.create_task(close_started.wait())
+        with patch("core.jargon.jargon_store.JargonStore", CancelledStore):
+            resolver = asyncio.create_task(api._get_jargon_store())
+            await initialize_started.wait()
+            resolver.cancel()
+            done, _ = await asyncio.wait(
+                {resolver, close_waiter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            try:
+                assert close_waiter in done
+                resolver.cancel()
+                release_close.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await resolver
+            finally:
+                release_close.set()
+                if not close_waiter.done():
+                    close_waiter.cancel()
+                await asyncio.gather(resolver, close_waiter, return_exceptions=True)
+
+        store = created_stores[0]
+        assert store.close_calls == 1
+        assert store.resource is None
+        assert not hasattr(plugin, "_jargon_store")
+
+    @pytest.mark.asyncio
+    async def test_cleanup_failure_never_replaces_initialization_failure(
+        self,
+        tmp_path,
+    ) -> None:
+        initialize_failure = RuntimeError("original-initialize-secret-8dc1")
+        cleanup_failure = RuntimeError("cleanup-secret-9ed2")
+        created_stores = []
+
+        class CleanupFailingStore:
+            def __init__(self, db_path: str) -> None:
+                self.db_path = db_path
+                self.close_calls = 0
+                created_stores.append(self)
+
+            async def initialize(self) -> None:
+                raise initialize_failure
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                raise cleanup_failure
+
+        api = JargonApiMixin()
+        api.plugin = SimpleNamespace(
+            data_dir=tmp_path,
+            initializer=SimpleNamespace(jargon_query_service=None),
+        )
+        with patch("core.jargon.jargon_store.JargonStore", CleanupFailingStore):
+            with pytest.raises(RuntimeError) as caught:
+                await api._get_jargon_store()
+
+        assert caught.value is initialize_failure
+        assert created_stores[0].close_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_after_failure_publishes_one_fresh_store_and_service(
+        self,
+        tmp_path,
+    ) -> None:
+        failure = RuntimeError("retry-initialize-secret-af03")
+        created_stores = []
+        initialize_calls = 0
+
+        class RetryStore:
+            def __init__(self, db_path: str) -> None:
+                self.db_path = db_path
+                self.connection = None
+                self._initialized = False
+                self._write_lock = asyncio.Lock()
+                self.close_calls = 0
+                created_stores.append(self)
+
+            async def initialize(self) -> None:
+                nonlocal initialize_calls
+                initialize_calls += 1
+                self.connection = object()
+                if initialize_calls == 1:
+                    raise failure
+                self._initialized = True
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                self.connection = None
+
+        plugin = SimpleNamespace(
+            data_dir=tmp_path,
+            initializer=SimpleNamespace(jargon_query_service=None),
+        )
+        api = JargonApiMixin()
+        api.plugin = plugin
+        resolution_lock = api._get_jargon_resolution_lock()
+        with patch("core.jargon.jargon_store.JargonStore", RetryStore):
+            first = await api._get_jargon_admin_service()
+            second = await api._get_jargon_admin_service()
+            third = await api._get_jargon_admin_service()
+
+        try:
+            assert first is None
+            assert second is third is plugin._jargon_admin_service
+            assert second._store is plugin._jargon_store is created_stores[1]
+            assert initialize_calls == 2
+            assert len(created_stores) == 2
+            assert plugin._jargon_resolution_lock is resolution_lock
+            assert created_stores[0].close_calls == 1
+            assert created_stores[0].connection is None
+            assert created_stores[1].close_calls == 0
+        finally:
+            await created_stores[1].close()
+
+    @pytest.mark.asyncio
+    async def test_existing_store_is_returned_without_ownership_cleanup(self) -> None:
+        existing = SimpleNamespace(close=AsyncMock())
+        api = JargonApiMixin()
+        api.plugin = SimpleNamespace(
+            initializer=SimpleNamespace(jargon_store=existing)
+        )
+
+        resolved = await api._get_jargon_store()
+
+        assert resolved is existing
+        existing.close.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_reuses_one_service_store_and_real_query_invalidator(
@@ -1064,6 +1306,122 @@ class TestJargonStats:
         assert result["data"]["store_confirmed"] == 3
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_source", ["filter_resolution", "read"])
+    async def test_outer_failure_is_fully_redacted(
+        self,
+        failure_source: str,
+    ) -> None:
+        path_secret = "C:/secret/jargon-stats-bf14.db"
+        group_secret = "stats-group-secret-c025"
+        exception_secret = "stats-exception-secret-d136"
+        stub = _make_stub()
+        failure = RuntimeError(path_secret + group_secret + exception_secret)
+        if failure_source == "filter_resolution":
+            stub._get_jargon_filter = MagicMock(side_effect=failure)
+        else:
+            stub.plugin._jargon_filter.get_stats = MagicMock(side_effect=failure)
+        mock_req = _make_mock_request(group_id=group_secret)
+
+        with (
+            patch("core.api.jargon_api.request", mock_req),
+            patch("core.api.jargon_api.logger") as logged,
+        ):
+            result = await stub.get_jargon_stats()
+
+        rendered = json.dumps(result, ensure_ascii=False) + str(logged.method_calls)
+        assert result["code"] == "internal_error"
+        assert "exc_info" not in rendered
+        logged.error.assert_called_once_with(
+            "[黑话接口] operation=%s error_class=%s",
+            "read_stats",
+            "RuntimeError",
+        )
+        for secret in (path_secret, group_secret, exception_secret):
+            assert secret not in rendered
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_point", ["total", "confirmed"])
+    async def test_store_supplement_failure_is_redacted_best_effort(
+        self,
+        failure_point: str,
+    ) -> None:
+        path_secret = "C:/secret/jargon-supplement-e247.db"
+        group_secret = "supplement-group-secret-f358"
+        exception_secret = "supplement-exception-secret-0469"
+        stub = _make_stub()
+        stub.plugin._jargon_filter.get_stats = MagicMock(
+            return_value=SimpleNamespace(
+                group_id=group_secret,
+                total_terms=7,
+                candidate_count=2,
+                top_candidates=[],
+            )
+        )
+        store = stub.plugin._jargon_store
+        failure = RuntimeError(path_secret + group_secret + exception_secret)
+        if failure_point == "total":
+            store.count_by_group = AsyncMock(side_effect=failure)
+        else:
+            store.count_by_group = AsyncMock(return_value=7)
+            store.count_confirmed = AsyncMock(side_effect=failure)
+        mock_req = _make_mock_request(group_id=group_secret)
+
+        with (
+            patch("core.api.jargon_api.request", mock_req),
+            patch("core.api.jargon_api.logger") as logged,
+        ):
+            result = await stub.get_jargon_stats()
+
+        assert result["status"] == "ok"
+        assert result["data"]["group_id"] == group_secret
+        assert "store_total" not in result["data"]
+        assert "store_confirmed" not in result["data"]
+        rendered_log = str(logged.method_calls)
+        assert "exc_info" not in rendered_log
+        logged.debug.assert_called_once_with(
+            "[黑话接口] operation=%s error_class=%s",
+            "stats_store_supplement",
+            "RuntimeError",
+        )
+        for secret in (path_secret, group_secret, exception_secret):
+            assert secret not in rendered_log
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("read_path", ["candidates", "stats", "supplement"])
+    async def test_read_boundaries_do_not_swallow_cancellation(
+        self,
+        read_path: str,
+    ) -> None:
+        stub = _make_stub()
+        if read_path == "candidates":
+            stub.plugin._jargon_filter.get_candidates = MagicMock(
+                side_effect=asyncio.CancelledError()
+            )
+            handler = stub.get_jargon_candidates
+        else:
+            stub.plugin._jargon_filter.get_stats = MagicMock(
+                return_value=SimpleNamespace(
+                    group_id="g1",
+                    total_terms=1,
+                    candidate_count=0,
+                    top_candidates=[],
+                )
+            )
+            if read_path == "stats":
+                stub.plugin._jargon_filter.get_stats = MagicMock(
+                    side_effect=asyncio.CancelledError()
+                )
+            else:
+                stub.plugin._jargon_store.count_by_group = AsyncMock(
+                    side_effect=asyncio.CancelledError()
+                )
+            handler = stub.get_jargon_stats
+
+        with patch("core.api.jargon_api.request", _make_mock_request(group_id="g1")):
+            with pytest.raises(asyncio.CancelledError):
+                await handler()
+
+    @pytest.mark.asyncio
     async def test_requires_group_id(self) -> None:
         stub = _make_stub()
         mock_req = _make_mock_request()
@@ -1120,7 +1478,8 @@ class TestJargonStats:
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.get_jargon_stats()
         assert result["status"] == "error"
-        assert "获取黑话统计失败" in result["message"]
+        assert result["code"] == "internal_error"
+        assert result["message"] == "黑话操作失败"
 
 
 # ---------------------------------------------------------------------------

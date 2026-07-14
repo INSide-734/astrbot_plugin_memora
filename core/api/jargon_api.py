@@ -286,6 +286,26 @@ class JargonApiMixin:
             return store, closed_db_path
         return None, closed_db_path
 
+    @staticmethod
+    async def _close_unpublished_jargon_store(store: Any) -> None:
+        """将 cleanup 跑到确定结束，并隐藏 cleanup 自身的失败。"""
+
+        try:
+            close_task = asyncio.ensure_future(store.close())
+        except BaseException:
+            return
+        while not close_task.done():
+            try:
+                await asyncio.shield(close_task)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                continue
+        try:
+            close_task.result()
+        except BaseException:
+            pass
+
     async def _get_jargon_store_locked(self, plugin: Any) -> Any | None:
         """在调用方已经持有解析锁时解析或初始化 store。"""
 
@@ -310,7 +330,11 @@ class JargonApiMixin:
             return None
 
         store = JargonStore(db_path)
-        await store.initialize()
+        try:
+            await store.initialize()
+        except BaseException:
+            await self._close_unpublished_jargon_store(store)
+            raise
         plugin._jargon_store = store
         logger.info("[黑话接口] 已惰性创建黑话存储实例")
         return store
@@ -484,16 +508,14 @@ class JargonApiMixin:
             group_id (str, 必填): 群组标识。
             limit (int, 可选): 返回上限，默认 20，最大 100。
         """
-        jf = self._get_jargon_filter()
-        if jf is None:
-            return error_response("黑话统计过滤器不可用")
-
-        args = request.args
-        group_id, err = self._require_group_id(args)
-        if err:
-            return err
-
         try:
+            jf = self._get_jargon_filter()
+            if jf is None:
+                return error_response("黑话统计过滤器不可用")
+            args = request.args
+            group_id, err = self._require_group_id(args)
+            if err:
+                return err
             limit = _parse_limit(args.get("limit", 20), default=20, maximum=100)
             candidates = jf.get_candidates(group_id, limit=limit)
             candidates = _safe_list_items(candidates)
@@ -504,12 +526,11 @@ class JargonApiMixin:
             ]
             return ok_response({
                 "candidates": serialized_candidates,
-                "total": len(candidates),
+                "total": len(serialized_candidates),
                 "group_id": group_id,
             })
-        except Exception as e:
-            logger.error(f"[黑话接口] 获取候选词失败: {e}", exc_info=True)
-            return error_response(f"获取黑话候选词失败：{e}")
+        except Exception as exc:
+            return _exception_response(exc, operation="list_candidates")
 
     # ------------------------------------------------------------------
     # GET /meanings
@@ -682,16 +703,14 @@ class JargonApiMixin:
         查询参数:
             group_id (str, 必填): 群组标识。
         """
-        jf = self._get_jargon_filter()
-        if jf is None:
-            return error_response("黑话统计过滤器不可用")
-
-        args = request.args
-        group_id, err = self._require_group_id(args)
-        if err:
-            return err
-
         try:
+            jf = self._get_jargon_filter()
+            if jf is None:
+                return error_response("黑话统计过滤器不可用")
+            args = request.args
+            group_id, err = self._require_group_id(args)
+            if err:
+                return err
             stats = jf.get_stats(group_id)
             top_candidates = _safe_list_items(getattr(stats, "top_candidates", []))
             serialized_candidates = [
@@ -712,20 +731,22 @@ class JargonApiMixin:
             store = await self._get_jargon_store()
             if store is not None:
                 try:
-                    result["store_total"] = await store.count_by_group(group_id)
-                    result["store_confirmed"] = await store.count_confirmed(group_id)
+                    store_total = await store.count_by_group(group_id)
+                    store_confirmed = await store.count_confirmed(group_id)
+                    result.update(
+                        store_total=store_total,
+                        store_confirmed=store_confirmed,
+                    )
                 except Exception as exc:
                     logger.debug(
-                        "[黑话接口] 为群组=%s 补充存储统计失败: %s",
-                        group_id,
-                        exc,
-                        exc_info=True,
+                        "[黑话接口] operation=%s error_class=%s",
+                        "stats_store_supplement",
+                        type(exc).__name__,
                     )
 
             return ok_response(result)
-        except Exception as e:
-            logger.error(f"[黑话接口] 获取黑话统计失败: {e}", exc_info=True)
-            return error_response(f"获取黑话统计失败：{e}")
+        except Exception as exc:
+            return _exception_response(exc, operation="read_stats")
 
     # ------------------------------------------------------------------
     # POST /confirm
