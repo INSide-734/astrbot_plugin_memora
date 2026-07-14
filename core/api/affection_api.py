@@ -27,12 +27,13 @@ from .editing_utils import (
 from .response_utils import error_response, ok_response
 
 
-_CREATE_FIELDS = frozenset({"group_id", "user_id", "score"})
+_CREATE_FIELDS = frozenset({"group_id", "user_id", "affection_score"})
 _UPDATE_FIELDS = frozenset({"identity", "changes", "expected_revision"})
 _DELETE_FIELDS = frozenset({"identity", "expected_revision"})
 _IDENTITY_FIELDS = frozenset({"group_id", "user_id"})
-_EDITABLE_FIELDS = frozenset({"score"})
+_EDITABLE_FIELDS = frozenset({"affection_score"})
 _BATCH_FIELDS = frozenset({"action", "items", "params"})
+_BATCH_ITEM_FIELDS = frozenset({"identity", "expected_revision"})
 _BATCH_ACTIONS = frozenset({"delete"})
 _MAX_BATCH_ITEMS = 100
 _MAX_PAGE_SIZE = 100
@@ -348,7 +349,12 @@ class AffectionApiMixin:
                 return unknown
             group_id = required_text(payload.get("group_id"), field="group_id")
             user_id = required_text(payload.get("user_id"), field="user_id")
-            score = bounded_int(payload.get("score"), field="score", minimum=-100, maximum=100)
+            score = bounded_int(
+                payload.get("affection_score"),
+                field="affection_score",
+                minimum=-100,
+                maximum=100,
+            )
             manager = self._get_affection_manager()
             if manager is None:
                 return _component_unavailable()
@@ -385,7 +391,12 @@ class AffectionApiMixin:
             unknown = reject_unknown_fields(changes, _EDITABLE_FIELDS)
             if unknown:
                 return unknown
-            score = bounded_int(changes.get("score"), field="changes.score", minimum=-100, maximum=100)
+            score = bounded_int(
+                changes.get("affection_score"),
+                field="changes.affection_score",
+                minimum=-100,
+                maximum=100,
+            )
             revision, error = _parse_revision(payload.get("expected_revision"))
             if error:
                 return error
@@ -476,15 +487,23 @@ class AffectionApiMixin:
             failures: list[dict[str, Any]] = []
             for index, item in enumerate(items):
                 identity_ref: dict[str, Any] = {"item_index": index}
-                identity, item_error = _parse_identity(
-                    item.get("identity") if isinstance(item, Mapping) else None
-                )
+                item_payload, item_error = require_object(item)
+                if item_error:
+                    failures.append(_batch_failure(identity_ref, item_error))
+                    continue
+                unknown = reject_unknown_fields(item_payload, _BATCH_ITEM_FIELDS)
+                if unknown:
+                    failures.append(_batch_failure(identity_ref, unknown))
+                    continue
+                identity, item_error = _parse_identity(item_payload.get("identity"))
                 if identity is not None:
                     identity_ref = identity
                 if item_error:
                     failures.append(_batch_failure(identity_ref, item_error))
                     continue
-                revision, revision_error = _parse_revision(item.get("expected_revision"))
+                revision, revision_error = _parse_revision(
+                    item_payload.get("expected_revision")
+                )
                 if revision_error:
                     failures.append(_batch_failure(identity_ref, revision_error))
                     continue
@@ -553,6 +572,8 @@ class AffectionApiMixin:
             except EntityValidationError as exc:
                 errors.update(exc.field_errors)
                 intensity = None
+            if intensity is not None and not 0.1 <= intensity <= 1.0:
+                errors["intensity"] = "必须在 0.1 到 1.0 之间"
             try:
                 duration_hours = finite_float(
                     payload.get("duration_hours"), field="duration_hours"
@@ -560,6 +581,8 @@ class AffectionApiMixin:
             except EntityValidationError as exc:
                 errors.update(exc.field_errors)
                 duration_hours = None
+            if duration_hours is not None and not 0.25 <= duration_hours <= 168.0:
+                errors["duration_hours"] = "必须在 0.25 到 168.0 之间"
             description = payload.get("description")
             if description is not None and not isinstance(description, str):
                 errors["description"] = "必须为字符串"
