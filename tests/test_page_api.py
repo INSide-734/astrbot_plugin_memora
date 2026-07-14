@@ -1147,6 +1147,28 @@ class TestRegisterRoutes:
         assert apply_metadata["write_guard"] is True
         assert all(not path.startswith("/Memora/page") for path in metadata)
 
+    def test_social_write_routes_register_all_prefixes_as_post_only(self) -> None:
+        plugin = MagicMock()
+        api = PluginPageApi(plugin)
+
+        api.register_routes()
+
+        registered = {
+            (call.args[0], tuple(call.args[2])): call.args[1]
+            for call in plugin.context.register_web_api.call_args_list
+        }
+        prefixes = (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES)
+        handlers = {
+            "/social/create": api.create_social_relation,
+            "/social/update": api.update_social_relation,
+            "/social/delete": api.delete_social_relation,
+            "/social/batch": api.batch_social_relations,
+        }
+        for prefix in prefixes:
+            for suffix, handler in handlers.items():
+                assert registered[(f"{prefix}{suffix}", ("POST",))] == handler
+                assert (f"{prefix}{suffix}", ("GET",)) not in registered
+
     def test_route_metadata_declares_risk_auth_and_guards_for_post_routes(self) -> None:
         """Plugin-side route metadata is available for audit and frontend contracts."""
         plugin = MagicMock()

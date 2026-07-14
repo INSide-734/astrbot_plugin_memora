@@ -701,6 +701,30 @@ class PluginPageApi(
             ["GET"],
             "页面接口：社交关系列表",
         )
+        register(
+            f"{PAGE_API_PREFIX}/social/create",
+            self.create_social_relation,
+            ["POST"],
+            "页面接口：创建社交关系",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/social/update",
+            self.update_social_relation,
+            ["POST"],
+            "页面接口：更新社交关系",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/social/delete",
+            self.delete_social_relation,
+            ["POST"],
+            "页面接口：删除社交关系",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/social/batch",
+            self.batch_social_relations,
+            ["POST"],
+            "页面接口：批量编辑社交关系",
+        )
 
         # ---- 表达模式 ----
         register(
