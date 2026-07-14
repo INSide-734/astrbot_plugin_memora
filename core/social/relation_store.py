@@ -99,6 +99,124 @@ class RelationStore(BaseStore):
 
     # ---- CRUD -----------------------------------------------------------
 
+    async def get_or_create_relation(
+        self, rel: SocialRelation
+    ) -> SocialRelation:
+        """仅在缺失时插入自动关系，并返回数据库中的当前记录。"""
+        identity = (
+            rel.from_user,
+            rel.to_user,
+            rel.relation_type,
+            rel.group_id,
+        )
+        async with self._connect() as db:
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                await db.execute(
+                    """
+                    INSERT INTO "social_relations"
+                        (from_user, to_user, relation_type, strength, frequency,
+                         last_interaction, group_id, tags_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(from_user, to_user, relation_type, group_id)
+                    DO NOTHING
+                    """,
+                    (
+                        rel.from_user,
+                        rel.to_user,
+                        rel.relation_type,
+                        rel.strength,
+                        rel.frequency,
+                        rel.last_interaction,
+                        rel.group_id,
+                        json.dumps(rel.tags, ensure_ascii=False),
+                    ),
+                )
+                cursor = await db.execute(
+                    """
+                    SELECT *
+                    FROM "social_relations"
+                    WHERE from_user = ?
+                      AND to_user = ?
+                      AND relation_type = ?
+                      AND group_id = ?
+                    """,
+                    identity,
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    raise RuntimeError("自动关系创建后无法读取")
+                current = SocialRelation.from_row(self._row_to_dict(row))
+                await db.commit()
+                return current
+            except BaseException:
+                await db.rollback()
+                raise
+
+    async def apply_automatic_delta_if_exists(
+        self,
+        identity: tuple[str, str, str, str],
+        *,
+        delta: float,
+        difficulty: float,
+    ) -> tuple[SocialRelation, SocialRelation] | None:
+        """锁内重读关系并仅更新自动学习拥有的互动字段。"""
+        async with self._connect() as db:
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                cursor = await db.execute(
+                    """
+                    SELECT *
+                    FROM "social_relations"
+                    WHERE from_user = ?
+                      AND to_user = ?
+                      AND relation_type = ?
+                      AND group_id = ?
+                    """,
+                    identity,
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    await db.commit()
+                    return None
+
+                current = SocialRelation.from_row(self._row_to_dict(row))
+                actual_delta = delta * (1.0 - difficulty)
+                updated = SocialRelation(
+                    from_user=current.from_user,
+                    to_user=current.to_user,
+                    relation_type=current.relation_type,
+                    strength=max(
+                        0.0,
+                        min(1.0, current.strength + actual_delta),
+                    ),
+                    frequency=current.frequency + 1,
+                    last_interaction=time.time(),
+                    group_id=current.group_id,
+                    tags=list(current.tags),
+                )
+                await db.execute(
+                    """
+                    UPDATE "social_relations"
+                    SET strength = ?, frequency = ?, last_interaction = ?
+                    WHERE from_user = ?
+                      AND to_user = ?
+                      AND relation_type = ?
+                      AND group_id = ?
+                    """,
+                    (
+                        updated.strength,
+                        updated.frequency,
+                        updated.last_interaction,
+                        *identity,
+                    ),
+                )
+                await db.commit()
+                return current, updated
+            except BaseException:
+                await db.rollback()
+                raise
+
     async def create_relation_strict(
         self, rel: SocialRelation
     ) -> SocialRelation:
@@ -125,7 +243,11 @@ class RelationStore(BaseStore):
                 )
                 await db.commit()
             except aiosqlite.IntegrityError as exc:
+                await db.rollback()
                 raise EntityAlreadyExistsError("社交关系已存在") from exc
+            except BaseException:
+                await db.rollback()
+                raise
         return rel
 
     async def update_relation_if_revision(
@@ -215,7 +337,7 @@ class RelationStore(BaseStore):
             except aiosqlite.IntegrityError as exc:
                 await db.rollback()
                 raise EntityAlreadyExistsError("社交关系已存在") from exc
-            except Exception:
+            except BaseException:
                 await db.rollback()
                 raise
 
@@ -265,7 +387,7 @@ class RelationStore(BaseStore):
                 )
                 await db.commit()
                 return True
-            except Exception:
+            except BaseException:
                 await db.rollback()
                 raise
 

@@ -8,6 +8,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
@@ -881,7 +882,6 @@ class TestRelationManagerManualCrud:
             ({"from_user": "   "}, "from_user"),
             ({"from_user": "a" * 129}, "from_user"),
             ({"to_user": "alice"}, "to_user"),
-            ({"group_id": ""}, "group_id"),
             ({"relation_type": "unknown"}, "relation_type"),
             ({"strength": True}, "strength"),
             ({"strength": float("inf")}, "strength"),
@@ -908,3 +908,337 @@ class TestRelationManagerManualCrud:
             await manager.create_manual_relation(**values)
 
         assert expected_field in caught.value.field_errors
+
+
+class TestRelationManagerAutomaticConcurrency:
+    """自动学习必须基于锁内最新记录更新，而不是回写陈旧对象。"""
+
+    @pytest.mark.asyncio
+    async def test_stale_automatic_delta_uses_latest_admin_values(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+        await manager._store.upsert_relation(
+            SocialRelation(
+                from_user="alice",
+                to_user="bob",
+                relation_type="colleague",
+                strength=0.2,
+                frequency=2,
+                last_interaction=100.0,
+                group_id="g1",
+                tags=["stale"],
+            )
+        )
+        stale = await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        )
+        assert stale is not None
+
+        await manager._store.upsert_relation(
+            SocialRelation(
+                from_user="alice",
+                to_user="bob",
+                relation_type="colleague",
+                strength=0.5,
+                frequency=7,
+                last_interaction=200.0,
+                group_id="g1",
+                tags=["automatic-latest"],
+            )
+        )
+        latest = await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        )
+        assert latest is not None
+        await manager.update_manual_relation(
+            identity=("alice", "bob", "colleague", "g1"),
+            relation_type="colleague",
+            strength=0.7,
+            tags=["admin"],
+            expected_revision=manager.revision_for(latest),
+        )
+
+        updated = await manager._apply_delta(stale, 0.2, "new-message")
+
+        stored = await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        )
+        assert stored is not None
+        assert stored.strength == pytest.approx(0.78)
+        assert stored.frequency == 8
+        assert stored.last_interaction > 200.0
+        assert stored.tags == ["admin"]
+        assert updated == stored
+
+    @pytest.mark.asyncio
+    async def test_stale_automatic_delta_does_not_recreate_migrated_key(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+        created = await manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="g1",
+            relation_type="colleague",
+            strength=0.4,
+            tags=["before"],
+        )
+        stale = await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        )
+        assert stale is not None
+        migrated = await manager.update_manual_relation(
+            identity=("alice", "bob", "colleague", "g1"),
+            relation_type="best_friend",
+            strength=0.8,
+            tags=["admin-migrated"],
+            expected_revision=manager.revision_for(created),
+        )
+
+        result = await manager._apply_delta(stale, 0.2, "late-message")
+
+        assert result is stale
+        assert await manager._store.get_relation(
+            "alice", "bob", "colleague", "g1"
+        ) is None
+        assert await manager._store.get_relation(
+            "alice", "bob", "best_friend", "g1"
+        ) == migrated
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_racing_admin_create_preserves_admin_row(
+        self, tmp_db_path
+    ):
+        class PausingRelationStore(RelationStore):
+            def __init__(self, db_path: str) -> None:
+                super().__init__(db_path)
+                self.missing_read = asyncio.Event()
+                self.resume_read = asyncio.Event()
+                self._pause_once = True
+
+            async def get_relation(
+                self,
+                from_user: str,
+                to_user: str,
+                relation_type: str,
+                group_id: str,
+            ) -> SocialRelation | None:
+                relation = await super().get_relation(
+                    from_user, to_user, relation_type, group_id
+                )
+                if relation is None and self._pause_once:
+                    self._pause_once = False
+                    self.missing_read.set()
+                    await self.resume_read.wait()
+                return relation
+
+        store = PausingRelationStore(tmp_db_path)
+        await store.initialize()
+        automatic_manager = RelationManager(store)
+        admin_manager = RelationManager(store)
+        automatic_task = asyncio.create_task(
+            automatic_manager.get_or_create(
+                "alice", "bob", "g1", relation_type="colleague"
+            )
+        )
+        await store.missing_read.wait()
+        admin = await admin_manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="g1",
+            relation_type="colleague",
+            strength=0.8,
+            tags=["admin"],
+        )
+        store.resume_read.set()
+
+        automatic_result = await automatic_task
+        stored = await store.get_relation("alice", "bob", "colleague", "g1")
+        assert automatic_result == admin
+        assert stored == admin
+
+
+class TestRelationStorePooledTransactions:
+    """连接池复用前必须清理失败写入留下的事务。"""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_strict_create_rolls_back_size_one_pool(
+        self, tmp_db_path
+    ):
+        await RelationStore.close_pool()
+        store = await _create_store(tmp_db_path)
+        await RelationStore.init_pool(tmp_db_path, pool_size=1)
+        manager = RelationManager(store)
+        try:
+            created = await manager.create_manual_relation(
+                from_user="alice",
+                to_user="bob",
+                group_id="g1",
+                relation_type="colleague",
+                strength=0.4,
+                tags=["first"],
+            )
+            with pytest.raises(EntityAlreadyExistsError):
+                await manager.create_manual_relation(
+                    from_user="alice",
+                    to_user="bob",
+                    group_id="g1",
+                    relation_type="colleague",
+                    strength=0.9,
+                    tags=["duplicate"],
+                )
+
+            assert RelationStore._pool is not None
+            async with RelationStore._pool.acquire() as connection:
+                assert connection.in_transaction is False
+
+            updated = await manager.update_manual_relation(
+                identity=("alice", "bob", "colleague", "g1"),
+                relation_type="colleague",
+                strength=0.8,
+                tags=["updated"],
+                expected_revision=manager.revision_for(created),
+            )
+            assert updated.strength == 0.8
+        finally:
+            await RelationStore.close_pool()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_revision_update_rolls_back_pooled_transaction(
+        self, tmp_db_path, monkeypatch
+    ):
+        await RelationStore.close_pool()
+        store = await _create_store(tmp_db_path)
+        await RelationStore.init_pool(tmp_db_path, pool_size=1)
+        manager = RelationManager(store)
+        try:
+            created = await manager.create_manual_relation(
+                from_user="alice",
+                to_user="bob",
+                group_id="g1",
+                relation_type="colleague",
+                strength=0.4,
+                tags=[],
+            )
+
+            def cancel_revision(_entity):
+                raise asyncio.CancelledError()
+
+            monkeypatch.setattr(
+                "core.social.relation_store.compute_entity_revision",
+                cancel_revision,
+            )
+            with pytest.raises(asyncio.CancelledError):
+                await store.update_relation_if_revision(
+                    ("alice", "bob", "colleague", "g1"),
+                    relation_type="colleague",
+                    strength=0.8,
+                    tags=[],
+                    expected_revision=manager.revision_for(created),
+                )
+
+            assert RelationStore._pool is not None
+            async with RelationStore._pool.acquire() as connection:
+                assert connection.in_transaction is False
+        finally:
+            await RelationStore.close_pool()
+
+
+class TestRelationManagerLocatorValidation:
+    """已有行 locator 只校验形状，不套用创建阶段的业务限制。"""
+
+    @pytest.mark.asyncio
+    async def test_manual_create_allows_empty_group_id(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+
+        created = await manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="",
+            relation_type="colleague",
+            strength=0.4,
+            tags=[],
+        )
+
+        assert created.group_id == ""
+
+    @pytest.mark.asyncio
+    async def test_empty_group_id_automatic_row_can_be_updated_and_deleted(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+        automatic = await manager.get_or_create(
+            "alice", "bob", "", relation_type="colleague"
+        )
+
+        updated = await manager.update_manual_relation(
+            identity=("alice", "bob", "colleague", ""),
+            relation_type="best_friend",
+            strength=0.8,
+            tags=["admin"],
+            expected_revision=manager.revision_for(automatic),
+        )
+        assert updated.group_id == ""
+        assert updated.relation_type == "best_friend"
+
+        assert await manager.delete_manual_relation(
+            identity=("alice", "bob", "best_friend", ""),
+            expected_revision=manager.revision_for(updated),
+        ) is True
+        assert await manager._store.get_relation(
+            "alice", "bob", "best_friend", ""
+        ) is None
+
+    @pytest.mark.asyncio
+    async def test_legacy_locator_can_be_revision_checked_deleted(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+        legacy = SocialRelation(
+            from_user="legacy",
+            to_user="legacy",
+            relation_type="legacy_unknown",
+            strength=0.3,
+            frequency=4,
+            last_interaction=123.0,
+            group_id="",
+            tags=["legacy"],
+        )
+        await manager._store.upsert_relation(legacy)
+
+        assert await manager.delete_manual_relation(
+            identity=("legacy", "legacy", "legacy_unknown", ""),
+            expected_revision=manager.revision_for(legacy),
+        ) is True
+        assert await manager._store.get_relation(
+            "legacy", "legacy", "legacy_unknown", ""
+        ) is None
+
+    @pytest.mark.asyncio
+    async def test_create_still_rejects_equal_users_and_unknown_type(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+
+        with pytest.raises(EntityValidationError) as equal_error:
+            await manager.create_manual_relation(
+                from_user="alice",
+                to_user="alice",
+                group_id="",
+                relation_type="colleague",
+                strength=0.4,
+                tags=[],
+            )
+        assert "to_user" in equal_error.value.field_errors
+
+        with pytest.raises(EntityValidationError) as type_error:
+            await manager.create_manual_relation(
+                from_user="alice",
+                to_user="bob",
+                group_id="",
+                relation_type="legacy_unknown",
+                strength=0.4,
+                tags=[],
+            )
+        assert "relation_type" in type_error.value.field_errors

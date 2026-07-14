@@ -93,19 +93,13 @@ class RelationManager:
         normalized_identity, identity_errors = self._normalize_identity(identity)
         errors = dict(identity_errors)
         if normalized_identity is not None:
-            from_user, to_user, current_type, group_id = normalized_identity
             errors.update(
-                self._validate_manual_fields(
-                    from_user,
-                    to_user,
-                    group_id,
+                self._validate_editable_fields(
                     relation_type,
                     strength,
                     tags,
                 )
             )
-            if get_relation_category(current_type) is None:
-                errors["identity.relation_type"] = "不支持的关系类型"
         self._validate_expected_revision(expected_revision, errors)
         if errors or normalized_identity is None:
             raise EntityValidationError(errors)
@@ -125,18 +119,6 @@ class RelationManager:
     ) -> bool:
         """按修订版本删除管理员指定的关系。"""
         normalized_identity, errors = self._normalize_identity(identity)
-        if normalized_identity is not None:
-            from_user, to_user, relation_type, group_id = normalized_identity
-            errors.update(
-                self._validate_manual_fields(
-                    from_user,
-                    to_user,
-                    group_id,
-                    relation_type,
-                    0.0,
-                    [],
-                )
-            )
         self._validate_expected_revision(expected_revision, errors)
         if errors or normalized_identity is None:
             raise EntityValidationError(errors)
@@ -170,8 +152,7 @@ class RelationManager:
             group_id=group_id,
             tags=list(_DEFAULT_TAGS),
         )
-        await self._store.upsert_relation(rel)
-        return rel
+        return await self._store.get_or_create_relation(rel)
 
     async def update_relation(self, change: RelationChange) -> SocialRelation:
         """应用带难度门控的关系强度更新。"""
@@ -290,7 +271,12 @@ class RelationManager:
         errors: dict[str, str] = {}
         cls._validate_identifier(from_user, "from_user", errors)
         cls._validate_identifier(to_user, "to_user", errors)
-        cls._validate_identifier(group_id, "group_id", errors)
+        cls._validate_bounded_string(
+            group_id,
+            "group_id",
+            errors,
+            allow_empty=True,
+        )
 
         if (
             isinstance(from_user, str)
@@ -300,6 +286,22 @@ class RelationManager:
         ):
             errors["to_user"] = "不能与 from_user 相同"
 
+        errors.update(
+            cls._validate_editable_fields(
+                relation_type,
+                strength,
+                tags,
+            )
+        )
+        return errors
+
+    @staticmethod
+    def _validate_editable_fields(
+        relation_type: Any,
+        strength: Any,
+        tags: Any,
+    ) -> dict[str, str]:
+        errors: dict[str, str] = {}
         if (
             not isinstance(relation_type, str)
             or get_relation_category(relation_type) is None
@@ -338,11 +340,26 @@ class RelationManager:
         field: str,
         errors: dict[str, str],
     ) -> None:
+        RelationManager._validate_bounded_string(
+            value,
+            field,
+            errors,
+            allow_empty=False,
+        )
+
+    @staticmethod
+    def _validate_bounded_string(
+        value: Any,
+        field: str,
+        errors: dict[str, str],
+        *,
+        allow_empty: bool,
+    ) -> None:
         if not isinstance(value, str):
             errors[field] = "必须为字符串"
             return
         normalized = value.strip()
-        if not normalized:
+        if not normalized and not allow_empty:
             errors[field] = "不能为空"
         elif len(normalized) > 128:
             errors[field] = "文本过长"
@@ -356,18 +373,33 @@ class RelationManager:
         if not isinstance(identity, tuple) or len(identity) != 4:
             return None, {"identity": "必须包含四个标识字段"}
         from_user, to_user, relation_type, group_id = identity
-        cls._validate_identifier(from_user, "identity.from_user", errors)
-        cls._validate_identifier(to_user, "identity.to_user", errors)
-        cls._validate_identifier(group_id, "identity.group_id", errors)
-        if not all(isinstance(value, str) for value in identity):
-            errors.setdefault("identity", "标识字段必须为字符串")
-            return None, errors
-        return (
-            from_user.strip(),
-            to_user.strip(),
+        cls._validate_bounded_string(
+            from_user,
+            "identity.from_user",
+            errors,
+            allow_empty=False,
+        )
+        cls._validate_bounded_string(
+            to_user,
+            "identity.to_user",
+            errors,
+            allow_empty=False,
+        )
+        cls._validate_bounded_string(
             relation_type,
-            group_id.strip(),
-        ), errors
+            "identity.relation_type",
+            errors,
+            allow_empty=False,
+        )
+        cls._validate_bounded_string(
+            group_id,
+            "identity.group_id",
+            errors,
+            allow_empty=True,
+        )
+        if errors or not all(isinstance(value, str) for value in identity):
+            return None, errors
+        return identity, errors
 
     @staticmethod
     def _validate_expected_revision(
@@ -384,25 +416,37 @@ class RelationManager:
         reason: str,
     ) -> SocialRelation:
         """计算门控增量、裁剪强度、持久化并返回更新后的关系。"""
-        difficulty = get_difficulty(rel.relation_type)
-        actual_delta = delta * (1.0 - difficulty)
+        result = await self._store.apply_automatic_delta_if_exists(
+            (
+                rel.from_user,
+                rel.to_user,
+                rel.relation_type,
+                rel.group_id,
+            ),
+            delta=delta,
+            difficulty=get_difficulty(rel.relation_type),
+        )
+        if result is None:
+            logger.debug(
+                "[RelationManager] 跳过已不存在的关系自动更新: %s → %s [%s]",
+                rel.from_user,
+                rel.to_user,
+                rel.relation_type,
+            )
+            return rel
 
-        old_strength = rel.strength
-        new_strength = max(0.0, min(1.0, old_strength + actual_delta))
-
-        rel.strength = new_strength
-        rel.frequency += 1
-        rel.last_interaction = time.time()
-
-        await self._store.upsert_relation(rel)
+        current, updated = result
+        actual_delta = delta * (1.0 - get_difficulty(rel.relation_type))
+        old_strength = current.strength
+        new_strength = updated.strength
 
         if abs(new_strength - old_strength) > 0.001:
             logger.debug(
                 "[RelationManager] %s → %s [%s] strength %.3f → %.3f "
                 "(raw_delta=%.3f, actual=%.3f, reason=%s)",
-                rel.from_user,
-                rel.to_user,
-                rel.relation_type,
+                updated.from_user,
+                updated.to_user,
+                updated.relation_type,
                 old_strength,
                 new_strength,
                 delta,
@@ -410,7 +454,7 @@ class RelationManager:
                 reason,
             )
 
-        return rel
+        return updated
 
 
 __all__ = ["RelationManager"]
