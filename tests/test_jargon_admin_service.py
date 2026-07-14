@@ -9,6 +9,7 @@ from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import aiosqlite
 import pytest
 
 from core.base.entity_editing import (
@@ -45,6 +46,28 @@ async def _create(service: Any, **overrides: Any) -> JargonMeaning:
     }
     fields.update(overrides)
     return await service.create(**fields)
+
+
+def _install_commit_gate(
+    store: JargonStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[asyncio.Event, asyncio.Event]:
+    original_commit = store._commit
+    commit_entered = asyncio.Event()
+    release_commit = asyncio.Event()
+
+    async def commit_survives_caller_cancellation() -> None:
+        commit_entered.set()
+        try:
+            await asyncio.shield(release_commit.wait())
+        except asyncio.CancelledError:
+            await release_commit.wait()
+            await original_commit()
+            raise
+        await original_commit()
+
+    monkeypatch.setattr(store, "_commit", commit_survives_caller_cancellation)
+    return commit_entered, release_commit
 
 
 @pytest.mark.asyncio
@@ -139,6 +162,52 @@ async def test_duplicate_create_is_strict_and_does_not_invalidate(
 
 
 @pytest.mark.asyncio
+async def test_store_maps_real_duplicate_key_to_already_exists(
+    tmp_db_path: str,
+) -> None:
+    store = await _store(tmp_db_path)
+    meaning = JargonMeaning(
+        term="duplicate",
+        group_id="g1",
+        meaning="first",
+        created_at=1.0,
+        updated_at=1.0,
+    )
+    try:
+        await store.create_strict(meaning)
+        with pytest.raises(EntityAlreadyExistsError):
+            await store.create_strict(replace(meaning, meaning="second"))
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_store_does_not_misclassify_non_unique_integrity_failure(
+    tmp_db_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = await _store(tmp_db_path)
+    try:
+        monkeypatch.setattr(
+            store,
+            "_rollback_safely",
+            AsyncMock(side_effect=RuntimeError("rollback failure")),
+        )
+        invalid = JargonMeaning(
+            term=None,  # type: ignore[arg-type]
+            group_id="g1",
+            meaning="invalid",
+            created_at=1.0,
+            updated_at=1.0,
+        )
+        with pytest.raises(aiosqlite.IntegrityError) as caught:
+            await store.create_strict(invalid)
+        assert "NOT NULL" in str(caught.value)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_partial_update_derives_complete_and_refreshes_updated_at(
     tmp_db_path: str,
 ) -> None:
@@ -216,6 +285,57 @@ async def test_delete_is_revisioned_and_invalidates_once(tmp_db_path: str) -> No
         ) is True
         assert await store.get_by_term("灰度", "g1") is None
         assert invalidated == ["g1"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "update", "delete"])
+async def test_invalidation_failure_does_not_reverse_committed_mutation(
+    tmp_db_path: str,
+    caplog: pytest.LogCaptureFixture,
+    operation: str,
+) -> None:
+    store = await _store(tmp_db_path)
+    secret = "invalidation-secret-value"
+    group_id = "sensitive-group-id"
+
+    def failing_invalidator(_group_id: str) -> None:
+        raise RuntimeError(secret)
+
+    try:
+        service = _service_class()(store)
+        if operation == "create":
+            service = _service_class()(store, failing_invalidator)
+            result = await _create(service, group_id=group_id)
+            assert isinstance(result, JargonMeaning)
+            assert await store.get_by_term("灰度", group_id) == result
+        else:
+            created = await _create(service, group_id=group_id)
+            service = _service_class()(store, failing_invalidator)
+            if operation == "update":
+                result = await service.update(
+                    term="灰度",
+                    group_id=group_id,
+                    changes={"meaning": "committed update"},
+                    expected_revision=service.revision_for(created),
+                )
+                assert isinstance(result, JargonMeaning)
+                assert await store.get_by_term("灰度", group_id) == result
+            else:
+                result = await service.delete(
+                    term="灰度",
+                    group_id=group_id,
+                    expected_revision=service.revision_for(created),
+                )
+                assert result is True
+                assert await store.get_by_term("灰度", group_id) is None
+
+        assert "cache_invalidation_failed" in caplog.text
+        assert "RuntimeError" in caplog.text
+        assert operation in caplog.text
+        assert secret not in caplog.text
+        assert group_id not in caplog.text
     finally:
         await store.close()
 
@@ -404,7 +524,7 @@ async def test_store_revision_compare_includes_read_only_state(
             await store.update_if_revision(
                 "灰度",
                 "g1",
-                {"meaning": "local", "is_complete": False},
+                {"meaning": "local"},
                 expected_revision=revision,
             )
     finally:
@@ -426,6 +546,27 @@ async def test_store_rejects_read_only_update_even_when_called_directly(
                 {"count": 99},
                 expected_revision=service.revision_for(created),
             )
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_store_rejects_direct_is_complete_update(
+    tmp_db_path: str,
+) -> None:
+    store = await _store(tmp_db_path)
+    try:
+        service = _service_class()(store)
+        created = await _create(service)
+        with pytest.raises(EntityValidationError) as caught:
+            await store.update_if_revision(
+                "灰度",
+                "g1",
+                {"is_complete": True},
+                expected_revision=service.revision_for(created),
+            )
+        assert caught.value.field_errors == {"is_complete": "字段不可写"}
+        assert await store.get_by_term("灰度", "g1") == created
     finally:
         await store.close()
 
@@ -465,6 +606,135 @@ async def test_same_revision_concurrency_allows_exactly_one_writer(
         assert invalidated == ["g1"]
         current = await store.get_by_term("灰度", "g1")
         assert current is not None and current.meaning == winners[0].meaning
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("writer_name", ["upsert", "confirm", "delete"])
+async def test_legacy_writer_cannot_enter_admin_transaction(
+    tmp_db_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+    writer_name: str,
+) -> None:
+    store = await _store(tmp_db_path)
+    try:
+        service = _service_class()(store)
+        created = await _create(service)
+        revision = service.revision_for(created)
+        admin_read = asyncio.Event()
+        release_admin = asyncio.Event()
+        writer_started = asyncio.Event()
+        writer_entered_connection = asyncio.Event()
+        completed: list[str] = []
+
+        original_fetch = store._fetch_one
+        original_execute = store._execute
+        fetch_count = 0
+        writer_task: asyncio.Task[None] | None = None
+
+        async def gated_fetch(sql: str, params: tuple = ()):
+            nonlocal fetch_count
+            row = await original_fetch(sql, params)
+            fetch_count += 1
+            if fetch_count == 1:
+                admin_read.set()
+                await release_admin.wait()
+            return row
+
+        async def observed_execute(sql: str, params: tuple = ()):
+            if asyncio.current_task() is writer_task:
+                writer_entered_connection.set()
+            return await original_execute(sql, params)
+
+        monkeypatch.setattr(store, "_fetch_one", gated_fetch)
+        monkeypatch.setattr(store, "_execute", observed_execute)
+
+        async def run_admin() -> None:
+            await service.update(
+                term="灰度",
+                group_id="g1",
+                changes={"meaning": "administrator"},
+                expected_revision=revision,
+            )
+            completed.append("admin")
+
+        async def run_writer() -> None:
+            writer_started.set()
+            if writer_name == "upsert":
+                await store.upsert(replace(created, meaning="automatic"))
+            elif writer_name == "confirm":
+                await store.confirm("灰度", "g1", confirmed=True)
+            else:
+                await store.delete("灰度", "g1")
+            completed.append("writer")
+
+        admin_task = asyncio.create_task(run_admin())
+        await admin_read.wait()
+        writer_task = asyncio.create_task(run_writer())
+        await writer_started.wait()
+        try:
+            assert writer_entered_connection.is_set() is False
+        finally:
+            release_admin.set()
+            await asyncio.gather(admin_task, writer_task, return_exceptions=True)
+
+        assert writer_entered_connection.is_set() is True
+        assert completed == ["admin", "writer"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "update", "delete"])
+async def test_cancelled_mutation_resolves_commit_then_invalidates(
+    tmp_db_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    store = await _store(tmp_db_path)
+    invalidated: list[str] = []
+    try:
+        setup = _service_class()(store)
+        created: JargonMeaning | None = None
+        if operation != "create":
+            created = await _create(setup)
+
+        commit_entered, release_commit = _install_commit_gate(store, monkeypatch)
+        service = _service_class()(store, invalidated.append)
+        if operation == "create":
+            mutation = _create(service)
+        elif operation == "update":
+            assert created is not None
+            mutation = service.update(
+                term="灰度",
+                group_id="g1",
+                changes={"meaning": "committed after cancellation"},
+                expected_revision=service.revision_for(created),
+            )
+        else:
+            assert created is not None
+            mutation = service.delete(
+                term="灰度",
+                group_id="g1",
+                expected_revision=service.revision_for(created),
+            )
+
+        task = asyncio.create_task(mutation)
+        await commit_entered.wait()
+        task.cancel()
+        release_commit.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        current = await store.get_by_term("灰度", "g1")
+        if operation == "delete":
+            assert current is None
+        else:
+            assert current is not None
+            if operation == "update":
+                assert current.meaning == "committed after cancellation"
+        assert invalidated == ["g1"]
     finally:
         await store.close()
 
@@ -535,7 +805,7 @@ async def test_rollback_failure_never_replaces_original_error(
             await store.update_if_revision(
                 "灰度",
                 "g1",
-                {"meaning": "must roll back", "is_complete": False},
+                {"meaning": "must roll back"},
                 expected_revision=service.revision_for(created),
             )
     finally:
@@ -627,6 +897,75 @@ async def test_batch_keeps_item_failures_independent_ordered_and_json_safe(
         json.dumps(result, allow_nan=False)
         assert await store.get_by_term("first", "g1") is not None
         assert await store.get_by_term("second", "g1") is None
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_batch_reports_success_when_post_commit_invalidation_fails(
+    tmp_db_path: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = await _store(tmp_db_path)
+    secret = "batch-invalidation-secret"
+
+    def failing_invalidator(_group_id: str) -> None:
+        raise RuntimeError(secret)
+
+    try:
+        setup = _service_class()(store)
+        created = await _create(setup)
+        service = _service_class()(store, failing_invalidator)
+        result = await service.batch(
+            action="delete",
+            items=[
+                {
+                    "identity": {"term": "灰度", "group_id": "g1"},
+                    "expected_revision": service.revision_for(created),
+                }
+            ],
+        )
+
+        assert result["succeeded_count"] == 1
+        assert result["failed_count"] == 0
+        assert await store.get_by_term("灰度", "g1") is None
+        assert "RuntimeError" in caplog.text
+        assert secret not in caplog.text
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_batch_propagates_cancellation_after_committed_item_invalidation(
+    tmp_db_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = await _store(tmp_db_path)
+    invalidated: list[str] = []
+    try:
+        setup = _service_class()(store)
+        created = await _create(setup)
+        commit_entered, release_commit = _install_commit_gate(store, monkeypatch)
+        service = _service_class()(store, invalidated.append)
+        task = asyncio.create_task(
+            service.batch(
+                action="delete",
+                items=[
+                    {
+                        "identity": {"term": "灰度", "group_id": "g1"},
+                        "expected_revision": service.revision_for(created),
+                    }
+                ],
+            )
+        )
+        await commit_entered.wait()
+        task.cancel()
+        release_commit.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert await store.get_by_term("灰度", "g1") is None
+        assert invalidated == ["g1"]
     finally:
         await store.close()
 
