@@ -1149,6 +1149,45 @@ class TestRelationManagerLocatorValidation:
     """已有行 locator 只校验形状，不套用创建阶段的业务限制。"""
 
     @pytest.mark.asyncio
+    async def test_padded_locator_targets_canonical_stripped_row(
+        self, tmp_db_path
+    ):
+        manager = await _create_manager(tmp_db_path)
+        created = await manager.create_manual_relation(
+            from_user="alice",
+            to_user="bob",
+            group_id="",
+            relation_type="colleague",
+            strength=0.4,
+            tags=["before"],
+        )
+
+        padded_identity = (" alice ", " bob ", "colleague", " \t ")
+        updated = await manager.update_manual_relation(
+            identity=padded_identity,
+            relation_type="best_friend",
+            strength=0.8,
+            tags=["after"],
+            expected_revision=manager.revision_for(created),
+        )
+
+        assert updated.from_user == "alice"
+        assert updated.to_user == "bob"
+        assert updated.group_id == ""
+        assert updated.relation_type == "best_friend"
+        assert await manager._store.get_relation(
+            "alice", "bob", "colleague", ""
+        ) is None
+
+        assert await manager.delete_manual_relation(
+            identity=(" alice ", " bob ", "best_friend", "   "),
+            expected_revision=manager.revision_for(updated),
+        ) is True
+        assert await manager._store.get_relation(
+            "alice", "bob", "best_friend", ""
+        ) is None
+
+    @pytest.mark.asyncio
     async def test_manual_create_allows_empty_group_id(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
 

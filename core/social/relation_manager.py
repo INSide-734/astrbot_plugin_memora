@@ -399,7 +399,12 @@ class RelationManager:
         )
         if errors or not all(isinstance(value, str) for value in identity):
             return None, errors
-        return identity, errors
+        return (
+            from_user.strip(),
+            to_user.strip(),
+            relation_type,
+            group_id.strip(),
+        ), errors
 
     @staticmethod
     def _validate_expected_revision(
