@@ -7,7 +7,40 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
+from ..base.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    EntityValidationError,
+)
+from .editing_utils import (
+    conflict_error,
+    entity_ok,
+    reject_unknown_fields,
+    require_object,
+    required_text,
+)
 from .response_utils import error_response, ok_response
+
+
+_CREATE_FIELDS = frozenset(
+    {
+        "term",
+        "group_id",
+        "meaning",
+        "confidence",
+        "is_jargon",
+        "is_confirmed",
+        "is_global",
+    }
+)
+_UPDATE_FIELDS = frozenset({"identity", "changes", "expected_revision"})
+_DELETE_FIELDS = frozenset({"identity", "expected_revision"})
+_IDENTITY_FIELDS = frozenset({"term", "group_id"})
+_EDITABLE_FIELDS = frozenset(
+    {"meaning", "confidence", "is_jargon", "is_confirmed", "is_global"}
+)
+_BATCH_FIELDS = frozenset({"action", "items"})
 
 
 def _parse_limit(raw_value: Any, *, default: int, maximum: int) -> int:
@@ -34,6 +67,7 @@ def _meaning_to_dict(meaning: Any) -> dict[str, Any]:
         "is_complete": meaning.is_complete,
         "count": meaning.count,
         "last_inference_count": meaning.last_inference_count,
+        "context_examples": list(meaning.context_examples or []),
         "created_at": meaning.created_at,
         "updated_at": meaning.updated_at,
     }
@@ -74,6 +108,85 @@ def _safe_list_items(items: Any) -> list[Any]:
         return list(items or [])
     except Exception:
         return []
+
+
+def _validation_error(exc: EntityValidationError) -> dict[str, Any]:
+    return error_response(
+        "黑话数据校验失败",
+        code="validation_error",
+        field_errors=exc.field_errors,
+    )
+
+
+def _component_unavailable() -> dict[str, Any]:
+    return error_response("黑话管理服务不可用", code="component_unavailable")
+
+
+def _exception_response(exc: Exception, *, operation: str) -> dict[str, Any]:
+    """映射领域异常，并对未知异常隐藏请求和异常文本。"""
+
+    if isinstance(exc, EntityValidationError):
+        return _validation_error(exc)
+    if isinstance(exc, EntityAlreadyExistsError):
+        return error_response("黑话词条已存在", code="already_exists")
+    if isinstance(exc, EntityNotFoundError):
+        return error_response("黑话词条不存在", code="not_found")
+    if isinstance(exc, EditConflictError):
+        return conflict_error(
+            exc.current_entity,
+            current_revision=exc.current_revision,
+        )
+    logger.error(
+        "[黑话接口] operation=%s error_class=%s",
+        operation,
+        type(exc).__name__,
+    )
+    return error_response("黑话操作失败", code="internal_error")
+
+
+def _parse_identity(value: Any) -> tuple[dict[str, str] | None, dict | None]:
+    identity, error = require_object(value)
+    if error:
+        return None, error
+    unknown = reject_unknown_fields(identity, _IDENTITY_FIELDS)
+    if unknown:
+        return None, unknown
+    try:
+        normalized = {
+            "term": required_text(
+                identity.get("term"), field="identity.term", maximum=128
+            ),
+            "group_id": required_text(
+                identity.get("group_id"), field="identity.group_id", maximum=128
+            ),
+        }
+    except EntityValidationError as exc:
+        return None, _validation_error(exc)
+    return normalized, None
+
+
+def _parse_revision(value: Any) -> tuple[str | None, dict | None]:
+    try:
+        return (
+            required_text(value, field="expected_revision", maximum=256),
+            None,
+        )
+    except EntityValidationError as exc:
+        return None, _validation_error(exc)
+
+
+def _parse_changes(value: Any) -> tuple[dict[str, Any] | None, dict | None]:
+    changes, error = require_object(value)
+    if error:
+        return None, error
+    unknown = reject_unknown_fields(changes, _EDITABLE_FIELDS)
+    if unknown:
+        return None, unknown
+    if not changes:
+        return None, _validation_error(
+            EntityValidationError({"changes": "不能为空"})
+        )
+    return changes, None
 
 
 class JargonApiMixin:
@@ -158,6 +271,55 @@ class JargonApiMixin:
         plugin._jargon_store = store
         logger.info("[黑话接口] 已惰性创建黑话存储实例，路径=%s", db_path)
         return store
+
+    async def _get_jargon_admin_service(self) -> Any | None:
+        """解析并在插件上缓存唯一的 ``JargonAdminService``。"""
+
+        plugin = getattr(self, "plugin", None)
+        if plugin is None:
+            logger.warning(
+                "[黑话接口] operation=resolve_service unavailable=plugin"
+            )
+            return None
+        cached = getattr(plugin, "_jargon_admin_service", None)
+        if cached is not None:
+            return cached
+
+        try:
+            store = await self._get_jargon_store()
+            if store is None:
+                logger.warning(
+                    "[黑话接口] operation=resolve_service unavailable=store"
+                )
+                return None
+
+            initializer = getattr(plugin, "initializer", None)
+            query_service = (
+                getattr(plugin, "_jargon_query", None)
+                or getattr(plugin, "jargon_query", None)
+                or getattr(plugin, "jargon_query_service", None)
+            )
+            if query_service is None and initializer is not None:
+                query_service = (
+                    getattr(initializer, "_jargon_query", None)
+                    or getattr(initializer, "jargon_query", None)
+                    or getattr(initializer, "jargon_query_service", None)
+                )
+            invalidator = getattr(query_service, "invalidate_group", None)
+            if not callable(invalidator):
+                invalidator = None
+
+            from ..jargon.jargon_admin_service import JargonAdminService
+
+            service = JargonAdminService(store, invalidator)
+            plugin._jargon_admin_service = service
+            return service
+        except Exception as exc:
+            logger.error(
+                "[黑话接口] operation=resolve_service error_class=%s",
+                type(exc).__name__,
+            )
+            return None
 
     async def _get_jargon_miner(self) -> Any | None:
         """惰性解析或创建 ``JargonMiner``。
@@ -281,9 +443,12 @@ class JargonApiMixin:
             confirmed_only (bool, 可选): 是否仅返回已确认条目，
                 默认 true。
         """
+        service = await self._get_jargon_admin_service()
+        if service is None:
+            return _component_unavailable()
         store = await self._get_jargon_store()
         if store is None:
-            return error_response("黑话存储不可用")
+            return _component_unavailable()
 
         args = request.args
         group_id, err = self._require_group_id(args)
@@ -294,11 +459,16 @@ class JargonApiMixin:
             confirmed_only = args.get("confirmed_only", "true").lower() != "false"
             meanings = await store.list_by_group(group_id, confirmed_only=confirmed_only)
             meanings = _safe_list_items(meanings)
-            serialized_meanings = [
-                item
-                for item in (_safe_meaning_to_dict(m) for m in meanings)
-                if item is not None
-            ]
+            serialized_meanings = []
+            for meaning in meanings:
+                item = _safe_meaning_to_dict(meaning)
+                if item is None:
+                    continue
+                try:
+                    item["revision"] = service.revision_for(meaning)
+                except Exception:
+                    continue
+                serialized_meanings.append(item)
             return ok_response({
                 "meanings": serialized_meanings,
                 "total": len(meanings),
@@ -307,6 +477,121 @@ class JargonApiMixin:
         except Exception as e:
             logger.error(f"[黑话接口] 获取黑话释义失败: {e}", exc_info=True)
             return error_response(f"获取黑话释义失败：{e}")
+
+    # ------------------------------------------------------------------
+    # POST /create, /update, /delete, /batch
+    # ------------------------------------------------------------------
+
+    async def create_jargon(self):
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        try:
+            payload, error = require_object(await request.get_json(silent=True))
+            if error:
+                return error
+            unknown = reject_unknown_fields(payload, _CREATE_FIELDS)
+            if unknown:
+                return unknown
+            service = await self._get_jargon_admin_service()
+            if service is None:
+                return _component_unavailable()
+            meaning = await service.create(**payload)
+            return entity_ok(
+                _meaning_to_dict(meaning),
+                revision=service.revision_for(meaning),
+            )
+        except Exception as exc:
+            return _exception_response(exc, operation="create")
+
+    async def update_jargon(self):
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        try:
+            payload, error = require_object(await request.get_json(silent=True))
+            if error:
+                return error
+            unknown = reject_unknown_fields(payload, _UPDATE_FIELDS)
+            if unknown:
+                return unknown
+            identity, error = _parse_identity(payload.get("identity"))
+            if error:
+                return error
+            changes, error = _parse_changes(payload.get("changes"))
+            if error:
+                return error
+            revision, error = _parse_revision(payload.get("expected_revision"))
+            if error:
+                return error
+            service = await self._get_jargon_admin_service()
+            if service is None:
+                return _component_unavailable()
+            meaning = await service.update(
+                term=identity["term"],
+                group_id=identity["group_id"],
+                changes=changes,
+                expected_revision=revision,
+            )
+            return entity_ok(
+                _meaning_to_dict(meaning),
+                revision=service.revision_for(meaning),
+            )
+        except Exception as exc:
+            return _exception_response(exc, operation="update")
+
+    async def delete_jargon(self):
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        try:
+            payload, error = require_object(await request.get_json(silent=True))
+            if error:
+                return error
+            unknown = reject_unknown_fields(payload, _DELETE_FIELDS)
+            if unknown:
+                return unknown
+            identity, error = _parse_identity(payload.get("identity"))
+            if error:
+                return error
+            revision, error = _parse_revision(payload.get("expected_revision"))
+            if error:
+                return error
+            service = await self._get_jargon_admin_service()
+            if service is None:
+                return _component_unavailable()
+            deleted = await service.delete(
+                term=identity["term"],
+                group_id=identity["group_id"],
+                expected_revision=revision,
+            )
+            if not deleted:
+                raise EntityNotFoundError("黑话词条不存在")
+            return ok_response({"deleted": True, "identity": identity})
+        except Exception as exc:
+            return _exception_response(exc, operation="delete")
+
+    async def batch_jargon(self):
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        try:
+            payload, error = require_object(await request.get_json(silent=True))
+            if error:
+                return error
+            unknown = reject_unknown_fields(payload, _BATCH_FIELDS)
+            if unknown:
+                return unknown
+            service = await self._get_jargon_admin_service()
+            if service is None:
+                return _component_unavailable()
+            result = await service.batch(
+                action=payload.get("action"),
+                items=payload.get("items"),
+            )
+            return ok_response(result)
+        except Exception as exc:
+            return _exception_response(exc, operation="batch")
 
     # ------------------------------------------------------------------
     # GET /stats

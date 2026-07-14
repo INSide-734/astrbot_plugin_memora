@@ -666,6 +666,30 @@ class PluginPageApi(
             "页面接口：黑话统计",
         )
         register(
+            f"{PAGE_API_PREFIX}/jargon/create",
+            self.create_jargon,
+            ["POST"],
+            "页面接口：创建黑话",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/jargon/update",
+            self.update_jargon,
+            ["POST"],
+            "页面接口：更新黑话",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/jargon/delete",
+            self.delete_jargon,
+            ["POST"],
+            "页面接口：删除黑话",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/jargon/batch",
+            self.batch_jargon,
+            ["POST"],
+            "页面接口：批量处理黑话",
+        )
+        register(
             f"{PAGE_API_PREFIX}/jargon/confirm",
             self.confirm_jargon,
             ["POST"],

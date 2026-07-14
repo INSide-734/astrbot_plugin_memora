@@ -1223,6 +1223,38 @@ class TestRegisterRoutes:
         assert create["risk"] == "write"
         assert create["write_guard"] is True
 
+    def test_jargon_write_routes_register_all_prefixes_as_post_only(self) -> None:
+        plugin = MagicMock()
+        api = PluginPageApi(plugin)
+
+        api.register_routes()
+
+        registered = {
+            (call.args[0], tuple(call.args[2])): call.args[1]
+            for call in plugin.context.register_web_api.call_args_list
+        }
+        handlers = {
+            "/jargon/create": api.create_jargon,
+            "/jargon/update": api.update_jargon,
+            "/jargon/delete": api.delete_jargon,
+            "/jargon/batch": api.batch_jargon,
+        }
+        for prefix in (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES):
+            for suffix, handler in handlers.items():
+                assert registered[(f"{prefix}{suffix}", ("POST",))] == handler
+                assert (f"{prefix}{suffix}", ("GET",)) not in registered
+
+        metadata = {item["path"]: item for item in api.get_route_metadata()}
+        for suffix in handlers:
+            route = metadata[f"{PAGE_API_PREFIX}{suffix}"]
+            assert route["methods"] == ["POST"]
+            assert route["auth"] == "admin"
+            assert route["write_guard"] is True
+        assert metadata[f"{PAGE_API_PREFIX}/jargon/create"]["risk"] == "write"
+        assert metadata[f"{PAGE_API_PREFIX}/jargon/update"]["risk"] == "write"
+        assert metadata[f"{PAGE_API_PREFIX}/jargon/delete"]["risk"] == "destructive"
+        assert metadata[f"{PAGE_API_PREFIX}/jargon/batch"]["risk"] == "write"
+
     def test_route_metadata_declares_risk_auth_and_guards_for_post_routes(self) -> None:
         """Plugin-side route metadata is available for audit and frontend contracts."""
         plugin = MagicMock()
