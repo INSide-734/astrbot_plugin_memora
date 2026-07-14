@@ -158,6 +158,32 @@ class TestAffectionEditing:
         manager.update_user_affection_manual.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_batch_delete_rejects_forbidden_score_params_without_mutating(self):
+        stub = _make_editing_stub()
+        stub.batch_affection_users = AffectionApiMixin.batch_affection_users.__get__(stub)
+        manager = stub.plugin._affection_manager
+        manager.delete_user_affection_manual = AsyncMock()
+        manager.update_user_affection_manual = AsyncMock()
+        payload = {
+            "action": "delete",
+            "items": [
+                {
+                    "identity": {"group_id": "g1", "user_id": "alice"},
+                    "expected_revision": "rev-1",
+                }
+            ],
+            "params": {"score": 42},
+        }
+
+        with patch("core.api.affection_api.request", _request_json(payload)):
+            result = await stub.batch_affection_users()
+
+        assert result["code"] == "validation_error"
+        assert result["field_errors"] == {"score": "字段不可写"}
+        manager.delete_user_affection_manual.assert_not_awaited()
+        manager.update_user_affection_manual.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_batch_delete_continues_after_conflict_and_returns_partial_result(self):
         stub = _make_editing_stub()
         stub.batch_affection_users = AffectionApiMixin.batch_affection_users.__get__(stub)
