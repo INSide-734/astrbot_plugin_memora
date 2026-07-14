@@ -1,68 +1,186 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-type Theme = "light" | "dark";
+export type Theme = "light" | "dark";
+
+const THEME_STORAGE_KEY = "memora_theme";
+const THEME_OVERRIDE_KEY = "memora_theme_override";
+const THEME_TRANSITION_CLASS = "theme-transitioning";
+const THEME_TRANSITION_FALLBACK_MS = 220;
+const THEME_TRANSITION_SENTINELS = ["--background", "--sidebar"] as const;
+
+function isTheme(value: unknown): value is Theme {
+  return value === "light" || value === "dark";
+}
+
+function readStoredTheme(): Theme | null {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    return isTheme(stored) ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasManualOverride(): boolean {
+  try {
+    return localStorage.getItem(THEME_OVERRIDE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function readBridgeTheme(): Theme | null {
+  try {
+    const context = window.AstrBotPluginPage?.getContext?.();
+    return typeof context?.isDark === "boolean"
+      ? context.isDark ? "dark" : "light"
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 function readTheme(): Theme {
-  // 1. Prioritize documentElement data-theme or class (AstrBot host set theme directly on iframe element)
+  const storedTheme = readStoredTheme();
+  if (hasManualOverride() && storedTheme) return storedTheme;
+
   if (typeof document !== "undefined") {
-    const htmlAttr = document.documentElement.getAttribute("data-theme");
-    if (htmlAttr === "dark" || htmlAttr === "light") return htmlAttr;
+    const htmlTheme = document.documentElement.getAttribute("data-theme");
+    if (isTheme(htmlTheme)) return htmlTheme;
     if (document.documentElement.classList.contains("dark")) return "dark";
   }
-  // 2. Try bridge context
+
+  return readBridgeTheme() ?? storedTheme ?? "light";
+}
+
+function applyDocumentTheme(theme: Theme) {
+  const root = document.documentElement;
+  if (root.getAttribute("data-theme") !== theme) {
+    root.setAttribute("data-theme", theme);
+  }
+  root.classList.toggle("dark", theme === "dark");
+}
+
+function persistTheme(theme: Theme, manual: boolean) {
   try {
-    const bridge = window.AstrBotPluginPage;
-    if (bridge) {
-      const ctx = bridge.getContext();
-      if (ctx && typeof ctx.isDark === "boolean") return ctx.isDark ? "dark" : "light";
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+    if (manual) localStorage.setItem(THEME_OVERRIDE_KEY, "1");
+  } catch {
+    // Theme switching remains usable when storage is unavailable.
+  }
+}
+
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  } catch {
+    return false;
+  }
+}
+
+function themeFromMutation(records: MutationRecord[]): Theme | null {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const attributeName = records[index].attributeName;
+    if (attributeName === "data-theme") {
+      const value = document.documentElement.getAttribute("data-theme");
+      if (isTheme(value)) return value;
     }
-  } catch { /* bridge not ready */ }
-  // 3. Try localStorage fallback
-  try {
-    const stored = localStorage.getItem("memora_theme");
-    if (stored === "dark" || stored === "light") return stored;
-  } catch { /* localStorage unavailable */ }
-  return "light";
+    if (attributeName === "class") {
+      return document.documentElement.classList.contains("dark") ? "dark" : "light";
+    }
+  }
+  return null;
 }
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(readTheme);
+  const committedThemeRef = useRef(theme);
+  const pendingThemeRef = useRef<Theme | null>(null);
+  const manualOverrideRef = useRef(hasManualOverride());
+  const animationFrameRef = useRef<number | null>(null);
+  const cleanupTimerRef = useRef<number | null>(null);
+  const transitionListenerCleanupRef = useRef<(() => void) | null>(null);
 
-  // Sync state changes to DOM and localStorage
-  useEffect(() => {
-    const currentAttr = document.documentElement.getAttribute("data-theme");
-    if (currentAttr !== theme) {
-      document.documentElement.setAttribute("data-theme", theme);
-    }
-    if (theme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-    try { localStorage.setItem("memora_theme", theme); } catch { /* ignore */ }
-  }, [theme]);
+  const commitTheme = useCallback((nextTheme: Theme, manual: boolean) => {
+    committedThemeRef.current = nextTheme;
+    pendingThemeRef.current = null;
+    if (manual) manualOverrideRef.current = true;
+    applyDocumentTheme(nextTheme);
+    persistTheme(nextTheme, manual);
+    setThemeState((currentTheme) => (
+      currentTheme === nextTheme ? currentTheme : nextTheme
+    ));
+  }, []);
 
-  // Listen to DOM attribute changes (AstrBot host changing data-theme/class directly on html)
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      const currentAttr = document.documentElement.getAttribute("data-theme");
-      const hasDarkClass = document.documentElement.classList.contains("dark");
-      
-      let targetTheme: Theme = "light";
-      if (currentAttr === "dark" || hasDarkClass) {
-        targetTheme = "dark";
-      } else if (currentAttr === "light") {
-        targetTheme = "light";
-      } else {
-        // Fallback to localStorage
-        try {
-          const stored = localStorage.getItem("memora_theme");
-          if (stored === "dark" || stored === "light") {
-            targetTheme = stored;
-          }
-        } catch {}
+  const cancelScheduledTransition = useCallback((removeClass: boolean) => {
+    if (animationFrameRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (cleanupTimerRef.current !== null) {
+      window.clearTimeout(cleanupTimerRef.current);
+      cleanupTimerRef.current = null;
+    }
+    transitionListenerCleanupRef.current?.();
+    transitionListenerCleanupRef.current = null;
+    if (removeClass) {
+      document.documentElement.classList.remove(THEME_TRANSITION_CLASS);
+    }
+  }, []);
+
+  const armTransitionCleanup = useCallback(() => {
+    const root = document.documentElement;
+    const pendingProperties = new Set<string>(THEME_TRANSITION_SENTINELS);
+
+    const detachListener = () => {
+      root.removeEventListener("transitionend", handleTransitionEnd);
+    };
+    const finishTransition = () => {
+      if (cleanupTimerRef.current !== null) {
+        window.clearTimeout(cleanupTimerRef.current);
+        cleanupTimerRef.current = null;
       }
-      setThemeState((prev) => (prev !== targetTheme ? targetTheme : prev));
+      transitionListenerCleanupRef.current?.();
+      transitionListenerCleanupRef.current = null;
+      animationFrameRef.current = window.requestAnimationFrame(() => {
+        animationFrameRef.current = null;
+        root.classList.remove(THEME_TRANSITION_CLASS);
+      });
+    };
+    function handleTransitionEnd(event: Event) {
+      if (
+        event.target !== root
+        || !pendingProperties.delete((event as TransitionEvent).propertyName)
+      ) {
+        return;
+      }
+      if (pendingProperties.size === 0) finishTransition();
+    }
+
+    root.addEventListener("transitionend", handleTransitionEnd);
+    transitionListenerCleanupRef.current = detachListener;
+    cleanupTimerRef.current = window.setTimeout(
+      finishTransition,
+      THEME_TRANSITION_FALLBACK_MS,
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    applyDocumentTheme(committedThemeRef.current);
+    persistTheme(committedThemeRef.current, false);
+  }, []);
+
+  useEffect(() => {
+    const observer = new MutationObserver((records) => {
+      if (manualOverrideRef.current) {
+        applyDocumentTheme(committedThemeRef.current);
+        return;
+      }
+
+      const observedTheme = themeFromMutation(records);
+      if (observedTheme && observedTheme !== committedThemeRef.current) {
+        commitTheme(observedTheme, false);
+      }
     });
 
     observer.observe(document.documentElement, {
@@ -71,25 +189,59 @@ export function useTheme() {
     });
 
     return () => observer.disconnect();
-  }, []);
+  }, [commitTheme]);
 
-  // Listen to bridge context changes
   useEffect(() => {
     const bridge = window.AstrBotPluginPage;
     if (!bridge || typeof bridge.onContextChange !== "function") return;
-    const handler = (ctx: { isDark?: boolean }) => {
-      if (typeof ctx?.isDark === "boolean") {
-        setThemeState(ctx.isDark ? "dark" : "light");
+
+    const handler = (context: { isDark?: boolean }) => {
+      if (manualOverrideRef.current || typeof context?.isDark !== "boolean") return;
+      commitTheme(context.isDark ? "dark" : "light", false);
+    };
+
+    try {
+      bridge.onContextChange(handler);
+    } catch {
+      return;
+    }
+
+    return () => {
+      try {
+        bridge.offContextChange?.(handler);
+      } catch {
+        // Bridge teardown must not block dashboard unmounting.
       }
     };
-    bridge.onContextChange(handler);
-    return () => { bridge.offContextChange(handler); };
-  }, []);
+  }, [commitTheme]);
+
+  useEffect(() => () => {
+    cancelScheduledTransition(true);
+  }, [cancelScheduledTransition]);
 
   const toggleTheme = useCallback(() => {
-    setThemeState((prev) => (prev === "light" ? "dark" : "light"));
-  }, []);
+    const baseTheme = pendingThemeRef.current ?? committedThemeRef.current;
+    const nextTheme: Theme = baseTheme === "light" ? "dark" : "light";
+    pendingThemeRef.current = nextTheme;
+    manualOverrideRef.current = true;
+    cancelScheduledTransition(false);
+
+    if (prefersReducedMotion()) {
+      document.documentElement.classList.remove(THEME_TRANSITION_CLASS);
+      commitTheme(nextTheme, true);
+      return;
+    }
+
+    document.documentElement.classList.add(THEME_TRANSITION_CLASS);
+    animationFrameRef.current = window.requestAnimationFrame(() => {
+      animationFrameRef.current = null;
+      commitTheme(nextTheme, true);
+      animationFrameRef.current = window.requestAnimationFrame(() => {
+        animationFrameRef.current = null;
+        armTransitionCleanup();
+      });
+    });
+  }, [armTransitionCleanup, cancelScheduledTransition, commitTheme]);
 
   return { theme, toggleTheme };
 }
-

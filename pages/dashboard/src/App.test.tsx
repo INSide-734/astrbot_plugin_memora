@@ -5,7 +5,18 @@ vi.mock("@/pages/GraphPage", () => ({
   GraphPage: () => <div>Graph Page</div>,
 }));
 vi.mock("@/pages/MemoryPage", () => ({
-  MemoryPage: () => <div>Memory Page</div>,
+  MemoryPage: ({ navigationTarget }: {
+    navigationTarget?: { requestId: number; id: string } | null;
+  }) => (
+    <div>
+      <p>Memory Page</p>
+      <output data-testid="memory-navigation-target">
+        {navigationTarget
+          ? `${navigationTarget.requestId}:${navigationTarget.id}`
+          : "none"}
+      </output>
+    </div>
+  ),
 }));
 vi.mock("@/pages/RecallPage", () => ({
   RecallPage: () => <div>Recall Page</div>,
@@ -18,9 +29,15 @@ vi.mock("@/pages/ConfigPage", async () => {
 
   return {
     ConfigPage: ({
+      navigationTarget,
       onDirtyChange,
       showToast,
     }: {
+      navigationTarget?: {
+        requestId: number;
+        path: string;
+        query: string;
+      } | null;
       onDirtyChange?: (dirty: boolean) => void;
       showToast?: (
         message: string,
@@ -31,6 +48,11 @@ vi.mock("@/pages/ConfigPage", async () => {
       return (
         <div>
           <p>Config Page</p>
+          <output data-testid="config-navigation-target">
+            {navigationTarget
+              ? `${navigationTarget.requestId}:${navigationTarget.path}:${navigationTarget.query}`
+              : "none"}
+          </output>
           <span data-testid="config-dirty-callback-stability">
             {initialDirtyCallback.current === onDirtyChange
               ? "stable"
@@ -65,10 +87,32 @@ vi.mock("@/pages/ProfilesPage", () => ({
   ProfilesPage: () => <div>Profiles Page</div>,
 }));
 vi.mock("@/pages/KnowledgePage", () => ({
-  KnowledgePage: () => <div>Knowledge Page</div>,
+  KnowledgePage: ({ navigationTarget }: {
+    navigationTarget?: { requestId: number; id: string } | null;
+  }) => (
+    <div>
+      <p>Knowledge Page</p>
+      <output data-testid="knowledge-navigation-target">
+        {navigationTarget
+          ? `${navigationTarget.requestId}:${navigationTarget.id}`
+          : "none"}
+      </output>
+    </div>
+  ),
 }));
 vi.mock("@/pages/NotesPage", () => ({
-  NotesPage: () => <div>Notes Page</div>,
+  NotesPage: ({ navigationTarget }: {
+    navigationTarget?: { requestId: number; id: string } | null;
+  }) => (
+    <div>
+      <p>Notes Page</p>
+      <output data-testid="notes-navigation-target">
+        {navigationTarget
+          ? `${navigationTarget.requestId}:${navigationTarget.id}`
+          : "none"}
+      </output>
+    </div>
+  ),
 }));
 vi.mock("@/pages/LearningPage", () => ({
   LearningPage: () => <div>Learning Page</div>,
@@ -120,6 +164,16 @@ async function traverseHistory(action: () => void) {
   });
 }
 
+async function selectGlobalSearchOption(
+  query: string,
+  optionName: RegExp,
+): Promise<void> {
+  fireEvent.click(screen.getByRole("button", { name: "Search..." }));
+  const input = await screen.findByRole("combobox", { name: "Global search" });
+  fireEvent.change(input, { target: { value: query } });
+  fireEvent.click(await screen.findByRole("option", { name: optionName }));
+}
+
 describe("App", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -133,12 +187,72 @@ describe("App", () => {
       offContextChange: vi.fn(),
       subscribeSSE: vi.fn().mockReturnValue("sub-1"),
       unsubscribeSSE: vi.fn(),
-      apiGet: vi.fn((path: string) => Promise.resolve({
-        status: "ok",
-        data: path === "page/memories"
-          ? [{ id: "memory-1", content: "Search memory result", importance: 0.8 }]
-          : [],
-      })),
+      apiGet: vi.fn((path: string) => {
+        if (path === "page/config/schema") {
+          return Promise.resolve({
+            status: "ok",
+            data: {
+              plugin_name: "astrbot_plugin_memora",
+              schema: {
+                provider_settings: {
+                  type: "object",
+                  description: "Provider settings",
+                  items: {
+                    llm_provider_id: {
+                      type: "string",
+                      description: "LLM provider",
+                      hint: "Provider used for memory extraction",
+                      default: "",
+                    },
+                  },
+                },
+              },
+              provider_options: { llm: [], embedding: [] },
+              capabilities: { hot_reload: true },
+            },
+          });
+        }
+        if (path === "page/memories") {
+          return Promise.resolve({
+            status: "ok",
+            data: {
+              items: [{
+                id: "memory-1",
+                content: "Search memory result",
+                importance: 0.8,
+              }],
+              total: 1,
+            },
+          });
+        }
+        if (path === "page/knowledge/search") {
+          return Promise.resolve({
+            status: "ok",
+            data: {
+              entries: [{
+                entry_id: "knowledge-1",
+                title: "Search knowledge result",
+                category: "fact",
+              }],
+              total: 1,
+            },
+          });
+        }
+        if (path === "page/notes/search") {
+          return Promise.resolve({
+            status: "ok",
+            data: {
+              notes: [{
+                note_id: "note-1",
+                title: "Search note result",
+                status: "active",
+              }],
+              total: 1,
+            },
+          });
+        }
+        return Promise.reject(new Error(`Unexpected GET endpoint: ${path}`));
+      }),
     };
 
     Object.defineProperty(window, "AstrBotPluginPage", {
@@ -264,15 +378,130 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Search..." }));
     fireEvent.change(
-      screen.getByPlaceholderText("Search memories, knowledge, notes..."),
+      screen.getByRole("combobox", { name: "Global search" }),
       { target: { value: "memory" } },
     );
-    fireEvent.click(await screen.findByText("Search memory result"));
+    fireEvent.click(await screen.findByRole("option", {
+      name: /Search memory result/,
+    }));
 
     expect(await screen.findByRole("dialog", {
       name: "Leave configuration without saving?",
     })).toBeTruthy();
     expect(window.location.hash).toBe("#/config");
+  });
+
+  it("passes a configuration search target across page navigation", async () => {
+    window.history.replaceState({}, "", "#/preview");
+    render(<App />);
+    expect(await screen.findByText("Preview Page")).toBeTruthy();
+
+    await selectGlobalSearchOption("LLM provider", /LLM provider/);
+
+    await waitFor(() => expect(window.location.hash).toBe("#/config"));
+    expect(await screen.findByText("Config Page")).toBeTruthy();
+    expect(screen.getByTestId("config-navigation-target").textContent)
+      .toContain("provider_settings.llm_provider_id:LLM provider");
+  });
+
+  it("updates a configuration target on the current page without pushing history", async () => {
+    window.history.replaceState({}, "", "#/config");
+    const pushSpy = vi.spyOn(window.history, "pushState");
+    render(<App />);
+    expect(await screen.findByText("Config Page")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("make-config-dirty"));
+    pushSpy.mockClear();
+
+    await selectGlobalSearchOption("LLM provider", /LLM provider/);
+
+    expect(pushSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", {
+      name: "Leave configuration without saving?",
+    })).toBeNull();
+    expect(screen.getByTestId("config-navigation-target").textContent)
+      .toContain("provider_settings.llm_provider_id:LLM provider");
+  });
+
+  it.each([
+    {
+      query: "memory",
+      option: /Search memory result/,
+      hash: "#/memory",
+      page: "Memory Page",
+      targetTestId: "memory-navigation-target",
+      id: "memory-1",
+    },
+    {
+      query: "knowledge",
+      option: /Search knowledge result/,
+      hash: "#/knowledge",
+      page: "Knowledge Page",
+      targetTestId: "knowledge-navigation-target",
+      id: "knowledge-1",
+    },
+    {
+      query: "note",
+      option: /Search note result/,
+      hash: "#/notes",
+      page: "Notes Page",
+      targetTestId: "notes-navigation-target",
+      id: "note-1",
+    },
+  ])("passes the exact $page entity target from global search", async ({
+    query,
+    option,
+    hash,
+    page,
+    targetTestId,
+    id,
+  }) => {
+    window.history.replaceState({}, "", "#/preview");
+    render(<App />);
+    expect(await screen.findByText("Preview Page")).toBeTruthy();
+
+    await selectGlobalSearchOption(query, option);
+
+    await waitFor(() => expect(window.location.hash).toBe(hash));
+    expect(await screen.findByText(page)).toBeTruthy();
+    expect(screen.getByTestId(targetTestId).textContent).toMatch(
+      new RegExp(`^\\d+:${id}$`),
+    );
+  });
+
+  it("preserves an entity search target through the dirty-config discard guard", async () => {
+    window.history.replaceState({}, "", "#/config");
+    render(<App />);
+    expect(await screen.findByText("Config Page")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("make-config-dirty"));
+
+    await selectGlobalSearchOption("memory", /Search memory result/);
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Discard changes and leave",
+    }));
+
+    await waitFor(() => expect(window.location.hash).toBe("#/memory"));
+    expect(await screen.findByText("Memory Page")).toBeTruthy();
+    expect(screen.getByTestId("memory-navigation-target").textContent)
+      .toMatch(/^\d+:memory-1$/);
+  });
+
+  it("clears a one-shot entity target when browser history reopens the page", async () => {
+    window.history.replaceState({}, "", "#/preview");
+    render(<App />);
+    expect(await screen.findByText("Preview Page")).toBeTruthy();
+
+    await selectGlobalSearchOption("memory", /Search memory result/);
+    expect(await screen.findByText("Memory Page")).toBeTruthy();
+    expect(screen.getByTestId("memory-navigation-target").textContent)
+      .toMatch(/^\d+:memory-1$/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+    expect(await screen.findByText("Notes Page")).toBeTruthy();
+    await traverseHistory(() => window.history.back());
+
+    expect(await screen.findByText("Memory Page")).toBeTruthy();
+    expect(screen.getByTestId("memory-navigation-target").textContent)
+      .toBe("none");
   });
 
   it("captures dirty direct hash navigation and synchronously restores #/config", async () => {

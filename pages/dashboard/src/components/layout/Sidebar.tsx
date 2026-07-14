@@ -1,45 +1,24 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
-  BarChart3,
-  BookOpen,
   Brain,
-  BrainCircuit,
   ChevronDown,
-  Clock,
-  GitGraph,
-  Heart,
   Languages,
-  LayoutDashboard,
-  MessageCircleCode,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  ScrollText,
-  Search,
-  Settings,
-  StickyNote,
   Sun,
-  UserRound,
-  UsersRound,
   X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
+import { selectionStateVariants } from "@/components/ui/selection-state";
 import { useI18n } from "@/hooks/useI18n";
+import {
+  localizeDashboardNavigation,
+  type NavigationGroupId,
+} from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import type { PageId } from "@/types";
-
-interface NavItem {
-  id: PageId;
-  label: string;
-  icon: ReactNode;
-}
-
-interface NavGroup {
-  id: "overview" | "memory" | "insights" | "relationships" | "system";
-  label: string;
-  items: NavItem[];
-}
 
 interface StreamEvent {
   event: string;
@@ -78,7 +57,7 @@ export function Sidebar({
 }: SidebarProps) {
   const { t, currentLang } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
-  const [openGroups, setOpenGroups] = useState<Record<NavGroup["id"], boolean>>({
+  const [openGroups, setOpenGroups] = useState<Record<NavigationGroupId, boolean>>({
     overview: true,
     memory: true,
     insights: true,
@@ -90,51 +69,7 @@ export function Sidebar({
 
   const langLabel = { zh: "ZH", en: "EN", ru: "RU" }[currentLang()] ?? currentLang().toUpperCase();
 
-  const groups: NavGroup[] = [
-    {
-      id: "overview",
-      label: t("nav.groupOverview"),
-      items: [{ id: "preview", label: t("nav.preview"), icon: <LayoutDashboard /> }],
-    },
-    {
-      id: "memory",
-      label: t("nav.groupMemory"),
-      items: [
-        { id: "graph", label: t("nav.graph"), icon: <GitGraph /> },
-        { id: "memory", label: t("nav.memory"), icon: <ScrollText /> },
-        { id: "timeline", label: t("nav.timeline"), icon: <Clock /> },
-        { id: "recall", label: t("nav.recall"), icon: <Search /> },
-        { id: "knowledge", label: t("nav.knowledge"), icon: <BookOpen /> },
-        { id: "notes", label: t("nav.notes"), icon: <StickyNote /> },
-      ],
-    },
-    {
-      id: "insights",
-      label: t("nav.groupInsights"),
-      items: [
-        { id: "intelligence", label: t("nav.intelligence"), icon: <BrainCircuit /> },
-        { id: "learning", label: t("nav.learning"), icon: <Brain /> },
-        { id: "jargon", label: t("nav.jargon"), icon: <MessageCircleCode /> },
-      ],
-    },
-    {
-      id: "relationships",
-      label: t("nav.groupRelationships"),
-      items: [
-        { id: "profiles", label: t("nav.profiles"), icon: <UserRound /> },
-        { id: "affection", label: t("nav.affection"), icon: <Heart /> },
-        { id: "social", label: t("nav.social"), icon: <UsersRound /> },
-      ],
-    },
-    {
-      id: "system",
-      label: t("nav.groupSystem"),
-      items: [
-        { id: "system", label: t("nav.system"), icon: <BarChart3 /> },
-        { id: "config", label: t("nav.config"), icon: <Settings /> },
-      ],
-    },
-  ];
+  const groups = localizeDashboardNavigation(t);
   const navigationToggleLabel = collapsed
     ? t("sidebar.expandNavigation")
     : t("sidebar.collapseNavigation");
@@ -150,26 +85,35 @@ export function Sidebar({
     if (dx < -SWIPE_THRESHOLD && Math.abs(dx) > dy) onCloseMobile?.();
   }, [onCloseMobile]);
 
-  const renderItem = (item: NavItem) => (
-    <button
-      key={item.id}
-      type="button"
-      aria-label={item.label}
-      aria-current={currentPage === item.id ? "page" : undefined}
-      title={collapsed ? item.label : undefined}
-      onClick={() => onNavigate(item.id)}
-      className={cn(
-        "flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-        collapsed && "justify-center px-0",
-        currentPage === item.id
-          ? "bg-sidebar-primary text-sidebar-primary-foreground"
-          : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-      )}
-    >
-      <span className="flex size-4 shrink-0 items-center justify-center [&_svg]:size-4">{item.icon}</span>
-      {!collapsed ? <span className="min-w-0 truncate">{item.label}</span> : null}
-    </button>
-  );
+  const renderItem = (item: (typeof groups)[number]["items"][number]) => {
+    const ItemIcon = item.icon;
+
+    return (
+      <button
+        key={item.id}
+        type="button"
+        aria-label={item.label}
+        aria-current={currentPage === item.id ? "page" : undefined}
+        title={collapsed ? item.label : undefined}
+        onClick={() => onNavigate(item.id)}
+        className={cn(
+          "flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+          collapsed && "justify-center px-0",
+          selectionStateVariants({
+            kind: "navigation",
+            selected: currentPage === item.id,
+          }),
+          currentPage !== item.id &&
+            "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+        )}
+      >
+        <span className="flex size-4 shrink-0 items-center justify-center [&_svg]:size-4">
+          <ItemIcon />
+        </span>
+        {!collapsed ? <span className="min-w-0 truncate">{item.label}</span> : null}
+      </button>
+    );
+  };
 
   return (
     <>
@@ -268,7 +212,30 @@ export function Sidebar({
             onClick={onToggleTheme}
             className={cn("flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground", collapsed && "justify-center px-0")}
           >
-            {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
+            <span
+              data-slot="theme-icon"
+              className="relative size-4 shrink-0"
+              aria-hidden="true"
+            >
+              <Sun
+                data-theme-icon="sun"
+                className={cn(
+                  "absolute inset-0 size-4 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
+                  theme === "dark"
+                    ? "rotate-0 scale-100 opacity-100"
+                    : "-rotate-90 scale-75 opacity-0",
+                )}
+              />
+              <Moon
+                data-theme-icon="moon"
+                className={cn(
+                  "absolute inset-0 size-4 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
+                  theme === "light"
+                    ? "rotate-0 scale-100 opacity-100"
+                    : "rotate-90 scale-75 opacity-0",
+                )}
+              />
+            </span>
             {!collapsed ? <span>{t("header.theme")}</span> : null}
           </button>
           <button

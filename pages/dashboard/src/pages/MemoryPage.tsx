@@ -10,12 +10,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { Badge } from "@/components/ui/Badge";
 import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { Checkbox } from "@/components/ui/checkbox";
+import { selectionStateVariants } from "@/components/ui/selection-state";
 import { Textarea } from "@/components/ui/textarea";
 import { dashboardLocale, formatDashboardDate, formatDashboardNumber, translateEnum } from "@/lib/i18n";
-import type { MemoryItem } from "@/types";
+import type { EntityNavigationTarget, MemoryItem } from "@/types";
 
 interface MemoryPageProps {
   showToast: (msg: string, isError?: boolean) => void;
+  navigationTarget?: EntityNavigationTarget | null;
 }
 
 const ROW_HEIGHT = 56;
@@ -24,7 +26,7 @@ const SCROLL_BUFFER = 15;
 const STATUS_LABELS: Record<string, string> = {};
 const EDIT_FIELD_LABELS: Record<string, string> = {};
 
-export function MemoryPage({ showToast }: MemoryPageProps) {
+export function MemoryPage({ showToast, navigationTarget }: MemoryPageProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
 
@@ -50,6 +52,7 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
   const [editData, setEditData] = useState<Record<string, string>>({});
   const [editField, setEditField] = useState("content");
   const [editReason, setEditReason] = useState("");
+  const detailRequestRef = useRef(0);
 
   const fetchMemories = useCallback(async () => {
     setLoading(true);
@@ -73,14 +76,22 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
 
   useEffect(() => { fetchMemories(); }, [fetchMemories]);
 
-  const fetchDetail = async (id: string) => {
+  const fetchDetail = useCallback(async (id: string) => {
+    const requestId = ++detailRequestRef.current;
     try {
       const res = unwrapApiData(await apiRequest(`memory/detail?id=${id}`));
+      if (requestId !== detailRequestRef.current) return;
       setDetail((res.memory ?? res) as MemoryItem);
     } catch (e) {
+      if (requestId !== detailRequestRef.current) return;
       showToast(String(e), true);
     }
-  };
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!navigationTarget) return;
+    void fetchDetail(navigationTarget.id);
+  }, [fetchDetail, navigationTarget?.id, navigationTarget?.requestId]);
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -174,7 +185,11 @@ export function MemoryPage({ showToast }: MemoryPageProps) {
         style={{ position: "absolute", top: 0, left: 0, width: "100%", height: size, transform: `translateY(${start}px)` }}
       >
         <div
-          className="grid cursor-pointer items-center border-b text-sm transition-colors hover:bg-muted/50"
+          data-state={selected.has(m.id) ? "selected" : undefined}
+          className={cn(
+            "grid cursor-pointer items-center border-b text-sm hover:bg-muted/50",
+            selectionStateVariants({ kind: "row", selected: selected.has(m.id) }),
+          )}
           style={{ gridTemplateColumns: GRID_COLS }}
           onClick={() => fetchDetail(m.id)}
         >

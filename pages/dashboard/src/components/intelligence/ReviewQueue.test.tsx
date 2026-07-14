@@ -124,6 +124,26 @@ describe("ReviewQueue", () => {
     });
   });
 
+  it("moves the shared current-item treatment with the detail selection", async () => {
+    render(<ReviewQueue showToast={() => undefined} />);
+
+    const firstItem = await screen.findByRole("button", {
+      name: /mem-duplicate-1/,
+    });
+    const secondItem = screen.getByRole("button", { name: /mem-stale-1/ });
+
+    expect(firstItem.getAttribute("aria-current")).toBe("true");
+    expect(firstItem.className).toContain(
+      "shadow-[inset_2px_0_0_var(--selection-indicator)]",
+    );
+    expect(secondItem.hasAttribute("aria-current")).toBe(false);
+
+    fireEvent.click(secondItem);
+
+    expect(secondItem.getAttribute("aria-current")).toBe("true");
+    expect(firstItem.hasAttribute("aria-current")).toBe(false);
+  });
+
   it("renders fixed review chrome from dashboard i18n", async () => {
     bridge.getLocale.mockReturnValue("zh-CN");
 

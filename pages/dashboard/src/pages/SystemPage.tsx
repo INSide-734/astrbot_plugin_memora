@@ -11,6 +11,8 @@ import { DelegationTab } from "@/components/system/DelegationTab";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
+import { selectionStateVariants } from "@/components/ui/selection-state";
+import { cn } from "@/lib/utils";
 
 interface SystemPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -628,9 +630,12 @@ export function SystemPage({ showToast }: SystemPageProps) {
                 return (
                 <div
                   key={i}
-                  className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors ${
-                    isSelected ? "bg-[var(--color-accent)]/10" : "hover:bg-[var(--color-surface-secondary)]"
-                  }`}
+                  data-state={isSelected ? "selected" : undefined}
+                  className={cn(
+                    "flex items-center justify-between rounded-lg px-3 py-2 text-sm",
+                    selectionStateVariants({ kind: "row", selected: isSelected }),
+                    !isSelected && "hover:bg-[var(--color-surface-secondary)]",
+                  )}
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <Checkbox

@@ -133,9 +133,17 @@ describe("PreviewPage", () => {
     const statsCallsBefore = bridge.apiGet.mock.calls.filter(([path]) => path === "page/stats").length;
 
     fireEvent.click(screen.getByRole("button", { name: "7 days" }));
-    expect(screen.getByRole("button", { name: "7 days" }).getAttribute("aria-pressed")).toBe("true");
+    const sevenDayButton = screen.getByRole("button", { name: "7 days" });
+    expect(sevenDayButton.getAttribute("aria-pressed")).toBe("true");
+    expect(sevenDayButton.className).toContain("bg-[var(--selection-surface)]");
+    expect(sevenDayButton.className).toContain(
+      "shadow-[inset_0_-2px_0_var(--selection-indicator)]",
+    );
     fireEvent.click(screen.getByRole("button", { name: "90 days" }));
-    expect(screen.getByRole("button", { name: "90 days" }).getAttribute("aria-pressed")).toBe("true");
+    const ninetyDayButton = screen.getByRole("button", { name: "90 days" });
+    expect(ninetyDayButton.getAttribute("aria-pressed")).toBe("true");
+    expect(ninetyDayButton.className).toContain("bg-[var(--selection-surface)]");
+    expect(sevenDayButton.className).not.toContain("bg-primary");
 
     expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/stats")).toHaveLength(statsCallsBefore);
   });

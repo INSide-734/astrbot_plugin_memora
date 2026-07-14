@@ -5,6 +5,7 @@ export type PageId =
   | "jargon" | "affection" | "social" | "intelligence";
 
 export * from "./intelligence";
+export * from "./navigation";
 
 export interface MemoryItem {
   id: string;

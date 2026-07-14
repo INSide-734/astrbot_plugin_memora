@@ -174,11 +174,13 @@ describe("ProfilesPage", () => {
     expect(await screen.findByText("Alice")).toBeTruthy();
     expect(screen.getByText("Bob")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Select profile Alice" }));
+    const aliceCheckbox = screen.getByRole("checkbox", { name: "Select profile Alice" });
+    fireEvent.click(aliceCheckbox);
 
     await waitFor(() => {
       expect(screen.getByText("1 selected")).toBeTruthy();
     });
+    expect(aliceCheckbox.closest("tr")?.getAttribute("data-state")).toBe("selected");
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select profile Bob" }));
 

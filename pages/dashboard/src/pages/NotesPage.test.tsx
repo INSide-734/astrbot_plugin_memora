@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EN_MAP } from "../mock";
@@ -14,6 +14,16 @@ interface BridgeMock {
 
 function ok<T>(data: T) {
   return { status: "ok", data };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, reject, resolve };
 }
 
 describe("NotesPage", () => {
@@ -148,6 +158,11 @@ describe("NotesPage", () => {
     await waitFor(() => {
       expect(screen.getByText((content) => content.includes("2 selected"))).toBeTruthy();
     });
+    expect(
+      screen.getByRole("checkbox", { name: "Select note Alpha note" })
+        .closest("[data-state]")
+        ?.getAttribute("data-state"),
+    ).toBe("selected");
 
     fireEvent.click(screen.getByRole("button", { name: /archive|common\.archive/i }));
 
@@ -235,6 +250,122 @@ describe("NotesPage", () => {
       });
     });
     expect(showToast).toHaveBeenCalledWith("Note archived");
+  });
+
+  it("opens the exact note detail for each navigation target request", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/notes") {
+        return Promise.resolve(ok({ notes: [], total: 0 }));
+      }
+      if (path === "page/notes/detail") {
+        return Promise.resolve(ok({
+          note: {
+            note_id: params.note_id,
+            title: "Search target note",
+            content: "Note target body",
+            status: "active",
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const { rerender } = render(
+      <NotesPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, id: "note-search-target" }}
+      />,
+    );
+
+    expect(await screen.findByRole("dialog", {
+      name: "Search target note",
+    })).toBeTruthy();
+    expect(bridge.apiGet).toHaveBeenCalledWith("page/notes/detail", {
+      note_id: "note-search-target",
+    });
+
+    rerender(
+      <NotesPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 2, id: "note-search-target" }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(bridge.apiGet.mock.calls.filter(
+        ([path]) => path === "page/notes/detail",
+      )).toHaveLength(2);
+    });
+  });
+
+  it("keeps the newest note detail when an older target resolves last", async () => {
+    const staleDetail = deferred<ReturnType<typeof ok>>();
+    const staleError = deferred<ReturnType<typeof ok>>();
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/notes") {
+        return Promise.resolve(ok({ notes: [], total: 0 }));
+      }
+      if (path === "page/notes/detail" && params.note_id === "note-old") {
+        return staleDetail.promise;
+      }
+      if (path === "page/notes/detail" && params.note_id === "note-error") {
+        return staleError.promise;
+      }
+      if (path === "page/notes/detail" && params.note_id === "note-new") {
+        return Promise.resolve(ok({
+          note: {
+            note_id: "note-new",
+            title: "Newest note detail",
+            content: "Newest note body",
+            status: "active",
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const view = render(
+      <NotesPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, id: "note-old" }}
+      />,
+    );
+    view.rerender(
+      <NotesPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 2, id: "note-error" }}
+      />,
+    );
+    view.rerender(
+      <NotesPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 3, id: "note-new" }}
+      />,
+    );
+
+    expect(await screen.findByRole("dialog", {
+      name: "Newest note detail",
+    })).toBeTruthy();
+    await act(async () => {
+      staleDetail.resolve(ok({
+        note: {
+          note_id: "note-old",
+          title: "Stale note detail",
+          content: "Stale note body",
+          status: "active",
+        },
+      }));
+      staleError.reject(new Error("stale note failure"));
+      await Promise.allSettled([staleDetail.promise, staleError.promise]);
+    });
+
+    expect(screen.getByRole("dialog", {
+      name: "Newest note detail",
+    })).toBeTruthy();
+    expect(screen.queryByRole("dialog", {
+      name: "Stale note detail",
+    })).toBeNull();
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   it("creates a new note from the modal and normalizes comma-separated tags", async () => {

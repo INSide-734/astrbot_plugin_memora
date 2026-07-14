@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Filter, RefreshCw, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
+import { selectionStateVariants } from "@/components/ui/selection-state";
 import {
   Select,
   SelectContent,
@@ -12,6 +13,7 @@ import {
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { dashboardLocale, translateEnum } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 import type {
   ReviewAction,
   ReviewActionValue,
@@ -336,10 +338,13 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
                   <button
                     key={item.item_id}
                     type="button"
+                    aria-current={selected ? "true" : undefined}
                     onClick={() => setSelectedId(item.item_id)}
-                    className={`block w-full px-4 py-3 text-left transition-colors ${
-                      selected ? "bg-[var(--color-accent)]/10" : "hover:bg-[var(--color-surface)]"
-                    }`}
+                    className={cn(
+                      "block w-full px-4 py-3 text-left",
+                      selectionStateVariants({ kind: "current-item", selected }),
+                      !selected && "hover:bg-[var(--color-surface)]",
+                    )}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>

@@ -5,6 +5,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Registered semantic colors interpolate once on <html>. Descendants consume
+   the same animated values, which keeps dense pages in a single paint phase. */
+@property --background { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --card { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --card-foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --popover { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --popover-foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --primary { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --primary-foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --secondary { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --secondary-foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --muted { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --muted-foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --accent { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --accent-foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --destructive { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --border { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --input { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --ring { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --chart-1 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --chart-2 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --chart-3 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --chart-4 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --chart-5 { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --selection-surface { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --selection-border { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --selection-indicator { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --selection-foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --sidebar { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --sidebar-foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --sidebar-primary { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --sidebar-primary-foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --sidebar-accent { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --sidebar-accent-foreground { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --sidebar-border { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --sidebar-ring { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --color-success { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --color-warning { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --shadow-surface-color { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --shadow-elevated-color { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --shadow-modal-color { syntax: "<color>"; inherits: true; initial-value: transparent; }
+
 /* Legacy aliases remain during the staged page migration. New code uses the
    shadcn semantic tokens below directly. */
 
@@ -23,18 +66,21 @@
   --color-success: oklch(0.56 0.15 150);
   --color-warning: oklch(0.68 0.16 75);
   --color-danger: var(--destructive);
-  --shadow-surface: 0 1px 2px rgb(0 0 0 / 0.04);
-  --shadow-elevated: 0 8px 24px rgb(0 0 0 / 0.1);
-  --shadow-modal: 0 20px 48px rgb(0 0 0 / 0.18);
+  --shadow-surface-color: rgb(0 0 0 / 0.04);
+  --shadow-elevated-color: rgb(0 0 0 / 0.1);
+  --shadow-modal-color: rgb(0 0 0 / 0.18);
+  --shadow-surface: 0 1px 2px var(--shadow-surface-color);
+  --shadow-elevated: 0 8px 24px var(--shadow-elevated-color);
+  --shadow-modal: 0 20px 48px var(--shadow-modal-color);
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
   --color-success: oklch(0.68 0.14 150);
   --color-warning: oklch(0.76 0.14 75);
-  --shadow-surface: 0 1px 2px rgb(0 0 0 / 0.3);
-  --shadow-elevated: 0 8px 24px rgb(0 0 0 / 0.32);
-  --shadow-modal: 0 20px 48px rgb(0 0 0 / 0.48);
+  --shadow-surface-color: rgb(0 0 0 / 0.3);
+  --shadow-elevated-color: rgb(0 0 0 / 0.32);
+  --shadow-modal-color: rgb(0 0 0 / 0.48);
 }
 
 @layer base {
@@ -70,6 +116,10 @@
     --popover-foreground: oklch(0.145 0 0);
     --primary: oklch(0.205 0 0);
     --primary-foreground: oklch(0.985 0 0);
+    --selection-surface: color-mix(in oklch, var(--primary) 6%, transparent);
+    --selection-border: color-mix(in oklch, var(--primary) 28%, transparent);
+    --selection-indicator: var(--primary);
+    --selection-foreground: var(--foreground);
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: oklch(0.205 0 0);
     --muted: oklch(0.97 0 0);
@@ -105,6 +155,8 @@
     --popover-foreground: oklch(0.985 0 0);
     --primary: oklch(0.922 0 0);
     --primary-foreground: oklch(0.205 0 0);
+    --selection-surface: color-mix(in oklch, var(--primary) 10%, transparent);
+    --selection-border: color-mix(in oklch, var(--primary) 24%, transparent);
     --secondary: oklch(0.269 0 0);
     --secondary-foreground: oklch(0.985 0 0);
     --muted: oklch(0.269 0 0);
@@ -135,6 +187,42 @@
   }
   html {
     font-family: var(--font-sans);
+  }
+}
+
+/* Theme tokens transition as one root animation. Per-element paint transitions
+   are paused so inherited colors cannot spawn thousands of trailing updates. */
+html.theme-transitioning {
+  transition-property:
+    --background, --foreground, --card, --card-foreground,
+    --popover, --popover-foreground, --primary, --primary-foreground,
+    --secondary, --secondary-foreground, --muted, --muted-foreground,
+    --accent, --accent-foreground, --destructive, --border, --input, --ring,
+    --chart-1, --chart-2, --chart-3, --chart-4, --chart-5,
+    --selection-surface, --selection-border, --selection-indicator, --selection-foreground,
+    --sidebar, --sidebar-foreground, --sidebar-primary, --sidebar-primary-foreground,
+    --sidebar-accent, --sidebar-accent-foreground, --sidebar-border, --sidebar-ring,
+    --color-success, --color-warning,
+    --shadow-surface-color, --shadow-elevated-color, --shadow-modal-color;
+  transition-duration: 200ms;
+  transition-timing-function: ease-out;
+}
+
+html.theme-transitioning body,
+html.theme-transitioning body *:not(canvas) {
+  transition-property: none !important;
+}
+
+html.theme-transitioning [data-theme-icon] {
+  transition-property: opacity, transform !important;
+  transition-duration: 200ms !important;
+  transition-timing-function: ease-out !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transitioning,
+  html.theme-transitioning [data-theme-icon] {
+    transition-duration: 0.01ms !important;
   }
 }
 

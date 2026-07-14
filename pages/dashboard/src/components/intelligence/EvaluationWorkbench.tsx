@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClipboardList, Loader2, Play, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { selectionStateVariants } from "@/components/ui/selection-state";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { dashboardLocale, formatDashboardNumber, formatDashboardPercent, translateEnum } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 import type {
   EvaluationDataset,
   EvaluationReport,
@@ -201,13 +204,19 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
                 ) : datasets.map((dataset) => (
                   <label
                     key={dataset.name}
-                    className="flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--color-border-light)] bg-[var(--color-surface)] p-3 transition-colors hover:border-[var(--color-border)]"
+                    data-selected={selectedDatasets.includes(dataset.name) ? "true" : undefined}
+                    className={cn(
+                      "flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--color-border-light)] bg-[var(--color-surface)] p-3 hover:border-[var(--color-border)]",
+                      selectionStateVariants({
+                        kind: "surface",
+                        selected: selectedDatasets.includes(dataset.name),
+                      }),
+                    )}
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       className="mt-0.5"
                       checked={selectedDatasets.includes(dataset.name)}
-                      onChange={() => toggleDataset(dataset.name)}
+                      onCheckedChange={() => toggleDataset(dataset.name)}
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium text-[var(--text-primary)]">{dataset.name}</span>
@@ -250,11 +259,20 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
                 <p className="mb-1 text-xs font-medium text-[var(--text-secondary)]">{t("intelligence.evaluation.variants")}</p>
                 <div className="flex flex-wrap gap-2">
                   {variantOptions.map((variant) => (
-                    <label key={variant.value} className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-xs text-[var(--text-secondary)]">
-                      <input
-                        type="checkbox"
+                    <label
+                      key={variant.value}
+                      data-selected={selectedVariants.includes(variant.value) ? "true" : undefined}
+                      className={cn(
+                        "inline-flex h-8 cursor-pointer items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-xs text-[var(--text-secondary)]",
+                        selectionStateVariants({
+                          kind: "surface",
+                          selected: selectedVariants.includes(variant.value),
+                        }),
+                      )}
+                    >
+                      <Checkbox
                         checked={selectedVariants.includes(variant.value)}
-                        onChange={() => toggleVariant(variant.value)}
+                        onCheckedChange={() => toggleVariant(variant.value)}
                       />
                       {translateEnum(t, "intelligence.evaluation.variant", variant.value, variant.label)}
                     </label>

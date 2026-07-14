@@ -165,6 +165,69 @@ describe("EvaluationWorkbench", () => {
     });
   });
 
+  it("synchronizes checkbox labels without false presence or duplicate toggles", async () => {
+    render(<EvaluationWorkbench showToast={() => undefined} />);
+
+    const datasetCheckbox = await screen.findByRole("checkbox", {
+      name: /private_basic/,
+    });
+    const datasetSurface = datasetCheckbox.closest("label");
+    expect(datasetCheckbox.getAttribute("data-slot")).toBe("checkbox");
+    expect(datasetSurface?.getAttribute("data-selected")).toBe("true");
+    expect(datasetSurface?.className).toContain(
+      "shadow-[inset_0_0_0_1px_var(--selection-border)]",
+    );
+
+    fireEvent.click(screen.getByText("private_basic"));
+    expect(datasetCheckbox.getAttribute("aria-checked")).toBe("false");
+    expect(datasetSurface?.hasAttribute("data-selected")).toBe(false);
+
+    fireEvent.click(screen.getByText("private_basic"));
+    expect(datasetCheckbox.getAttribute("aria-checked")).toBe("true");
+    expect(datasetSurface?.getAttribute("data-selected")).toBe("true");
+
+    const graphVariant = screen.getByRole("checkbox", { name: "Graph off" });
+    const graphSurface = graphVariant.closest("label");
+    expect(graphVariant.getAttribute("data-slot")).toBe("checkbox");
+    expect(graphSurface?.getAttribute("data-selected")).toBe("true");
+
+    fireEvent.click(screen.getByText("Graph off"));
+
+    expect(graphVariant.getAttribute("aria-checked")).toBe("false");
+    expect(graphSurface?.hasAttribute("data-selected")).toBe(false);
+    expect(screen.getByRole("checkbox", { name: "Baseline" })).toBeTruthy();
+  });
+
+  it("keeps the final variant selected and preserves it in the evaluation payload", async () => {
+    bridge.apiPost.mockResolvedValueOnce({ status: "error", message: "stop after payload capture" });
+    render(<EvaluationWorkbench showToast={() => undefined} />);
+
+    await screen.findByText("private_basic");
+    fireEvent.click(screen.getByText("Graph off"));
+    fireEvent.click(screen.getByText("Topic off"));
+
+    const baseline = screen.getByRole("checkbox", { name: "Baseline" });
+    const baselineSurface = baseline.closest("label");
+    expect(baseline.getAttribute("aria-checked")).toBe("true");
+    expect(baselineSurface?.getAttribute("data-selected")).toBe("true");
+
+    fireEvent.click(screen.getByText("Baseline"));
+
+    expect(baseline.getAttribute("aria-checked")).toBe("true");
+    expect(baselineSurface?.getAttribute("data-selected")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: /^run$/i }));
+    await waitFor(() => {
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/evaluation/run", {
+        datasets: ["private_basic"],
+        k: 5,
+        variants: ["baseline"],
+        baseline: "baseline",
+        save_report: true,
+      });
+    });
+  });
+
   it("renders fixed evaluation workbench chrome from dashboard i18n", async () => {
     bridge.getLocale.mockReturnValue("zh-CN");
 

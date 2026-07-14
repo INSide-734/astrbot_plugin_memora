@@ -66,6 +66,20 @@ describe("Sidebar", () => {
     expect(props.onNavigate).toHaveBeenCalledWith("knowledge");
   });
 
+  it("uses the shared navigation selection treatment for the current page", () => {
+    renderSidebar({ currentPage: "graph" });
+
+    const currentItem = screen.getByRole("button", { name: "Knowledge Graph" });
+    const otherItem = screen.getByRole("button", { name: "Memories" });
+
+    expect(currentItem.getAttribute("aria-current")).toBe("page");
+    expect(currentItem.classList.contains("border-primary")).toBe(true);
+    expect(currentItem.classList.contains("bg-primary")).toBe(true);
+    expect(currentItem.classList.contains("text-primary-foreground")).toBe(true);
+    expect(otherItem.hasAttribute("aria-current")).toBe(false);
+    expect(otherItem.classList.contains("border-primary")).toBe(false);
+  });
+
   it("marks unread realtime events as seen when the badge is clicked", () => {
     const { props } = renderSidebar();
 
@@ -82,6 +96,29 @@ describe("Sidebar", () => {
 
     expect(props.onToggleTheme).toHaveBeenCalledTimes(1);
     expect(props.onCycleLanguage).toHaveBeenCalledTimes(1);
+  });
+
+  it("crossfades both theme icons inside a stable motion-safe slot", () => {
+    const { props, rerender } = renderSidebar({ theme: "light" });
+    const themeButton = screen.getByRole("button", { name: "Theme" });
+    const iconSlot = themeButton.querySelector('[data-slot="theme-icon"]');
+    const sun = themeButton.querySelector('[data-theme-icon="sun"]');
+    const moon = themeButton.querySelector('[data-theme-icon="moon"]');
+
+    expect(iconSlot).not.toBeNull();
+    expect(sun).not.toBeNull();
+    expect(moon).not.toBeNull();
+    expect(iconSlot?.getAttribute("class") ?? "").toContain("size-4");
+    expect(iconSlot?.getAttribute("class") ?? "").toContain("relative");
+    expect(sun?.getAttribute("class") ?? "").toContain("opacity-0");
+    expect(moon?.getAttribute("class") ?? "").toContain("opacity-100");
+    expect(sun?.getAttribute("class") ?? "").toContain("duration-200");
+    expect(sun?.getAttribute("class") ?? "").toContain("motion-reduce:transition-none");
+
+    rerender(<Sidebar {...props} theme="dark" />);
+
+    expect(sun?.getAttribute("class") ?? "").toContain("opacity-100");
+    expect(moon?.getAttribute("class") ?? "").toContain("opacity-0");
   });
 
   it("closes the mobile menu from the close button and backdrop", () => {
