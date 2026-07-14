@@ -615,6 +615,34 @@ class TestMaintenanceWriteGuard:
         assert result["status"] == "error"
         assert "待恢复文件=[]" in result["message"]
 
+    def test_pending_restore_listing_failure_is_redacted_and_still_blocks(
+        self,
+    ) -> None:
+        secret = r"pending-list-secret C:\private\restore.queue"
+        backup_manager = MagicMock()
+        backup_manager.has_pending_restores.return_value = True
+        backup_manager.list_pending_restores.side_effect = RuntimeError(secret)
+        api = PluginPageApi(SimpleNamespace(_backup_manager=backup_manager))
+
+        with patch("core.page_api.logger.debug") as log_debug:
+            result = api._maintenance_write_guard()
+
+        assert result == {
+            "status": "error",
+            "message": (
+                "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。"
+                " 待恢复文件=[]"
+            ),
+        }
+        assert secret not in str(result)
+        assert all(secret not in str(arg) for arg in log_debug.call_args.args)
+        assert log_debug.call_args.kwargs == {}
+        log_debug.assert_called_once_with(
+            "[页面接口] operation=%s error_class=%s",
+            "maintenance_write_guard_list_pending",
+            "RuntimeError",
+        )
+
 
 # ---------------------------------------------------------------------------
 # _get_memory_record tests
