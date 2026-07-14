@@ -1100,7 +1100,11 @@ class PluginPageApi(
         try:
             pending_files = backup_manager.list_pending_restores()
         except Exception as exc:
-            logger.debug("[页面接口] 获取待恢复文件列表失败: %s", exc, exc_info=True)
+            logger.debug(
+                "[页面接口] operation=%s error_class=%s",
+                "maintenance_write_guard_list_pending",
+                type(exc).__name__,
+            )
             pending_files = []
         return error_response(
             "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。"
