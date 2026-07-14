@@ -242,6 +242,12 @@ class PluginPageApi(
             "页面接口：画像详情",
         )
         register(
+            f"{PAGE_API_PREFIX}/profiles/create",
+            self.create_profile,
+            ["POST"],
+            "页面接口：创建画像",
+        )
+        register(
             f"{PAGE_API_PREFIX}/profiles/update",
             self.update_profile,
             ["POST"],

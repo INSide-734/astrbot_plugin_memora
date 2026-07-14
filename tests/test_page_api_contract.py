@@ -168,3 +168,18 @@ def test_social_write_contract_is_post_only_under_every_page_prefix() -> None:
         ):
             assert (f"{prefix}{suffix}", ("POST",)) in registered
             assert (f"{prefix}{suffix}", ("GET",)) not in registered
+
+
+def test_profile_create_contract_is_post_only_under_every_page_prefix() -> None:
+    plugin = MagicMock()
+    api = PluginPageApi(plugin)
+    api.register_routes()
+
+    registered = {
+        (call.args[0], tuple(call.args[2]))
+        for call in plugin.context.register_web_api.call_args_list
+    }
+    for prefix in (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES):
+        path = f"{prefix}/profiles/create"
+        assert (path, ("POST",)) in registered
+        assert (path, ("GET",)) not in registered
