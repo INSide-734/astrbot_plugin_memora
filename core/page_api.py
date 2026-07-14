@@ -723,6 +723,54 @@ class PluginPageApi(
             ["GET"],
             "页面接口：好感度状态",
         )
+        register(
+            f"{PAGE_API_PREFIX}/affection/users",
+            self.list_affection_users,
+            ["GET"],
+            "页面接口：好感度用户列表",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/users/create",
+            self.create_affection_user,
+            ["POST"],
+            "页面接口：创建好感度用户",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/users/update",
+            self.update_affection_user,
+            ["POST"],
+            "页面接口：更新好感度用户",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/users/delete",
+            self.delete_affection_user,
+            ["POST"],
+            "页面接口：删除好感度用户",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/users/batch",
+            self.batch_affection_users,
+            ["POST"],
+            "页面接口：批量处理好感度用户",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/mood/set",
+            self.set_affection_mood,
+            ["POST"],
+            "页面接口：设置好感度情绪",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/mood/reset",
+            self.reset_affection_mood,
+            ["POST"],
+            "页面接口：重置好感度情绪",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/moods/history",
+            self.get_affection_mood_history,
+            ["GET"],
+            "页面接口：好感度情绪历史",
+        )
 
         # ---- 社交关系 ----
         register(
