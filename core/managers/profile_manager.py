@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -93,18 +92,17 @@ class ProfileManager:
         display_name: str | None = None,
         preferences: dict[str, Any] | UserPreferences | None = None,
     ) -> UserProfile | None:
-        profile = await self.get_profile(user_id)
-        if profile is None:
-            return None
-        if display_name is not None:
-            profile.display_name = display_name.strip()
+        normalized_preferences: UserPreferences | None = None
         if preferences is not None:
             if isinstance(preferences, UserPreferences):
-                profile.preferences = preferences
+                normalized_preferences = preferences
             else:
-                profile.preferences = UserPreferences.from_dict(preferences)
-        await self._store.update_profile(profile)
-        return await self.get_profile(user_id) or profile
+                normalized_preferences = UserPreferences.from_dict(preferences)
+        return await self._store.update_profile_fields_atomic(
+            user_id,
+            display_name=display_name.strip() if display_name is not None else None,
+            preferences=normalized_preferences,
+        )
 
     async def delete_profile(self, user_id: str) -> bool:
         return await self._store.delete_profile(user_id)
@@ -126,17 +124,13 @@ class ProfileManager:
         return await self.get_profile(user_id)
 
     async def ingest_tags(self, user_id: str, tags: list[UserTag]) -> UserProfile:
-        profile = await self.ensure_profile(user_id)
-        new_count = 0
-        for tag in tags:
-            if profile.upsert_tag(tag):
-                new_count += 1
-            await self._store.add_tag(user_id, tag)
+        ensured = await self.ensure_profile(user_id)
+        profile, new_count = await self._store.upsert_tags_atomic(user_id, tags)
+        profile = profile or ensured
         if new_count:
             logger.debug(
                 f"[Profile] {user_id}: +{new_count} new tags, total={len(profile.tags)}"
             )
-        await self._store.update_profile(profile)
         return profile
 
     async def get_tag_weights(self, user_id: str) -> dict[str, float]:
@@ -146,13 +140,8 @@ class ProfileManager:
         return profile.get_weight_vector()
 
     async def decay_and_clean(self, user_id: str) -> int:
-        profile = await self.get_profile(user_id)
-        if profile is None:
-            return 0
-        profile.decay_tags()
-        removed = profile.remove_stale_tags(min_confidence=0.1)
+        removed = await self._store.decay_and_clean_tags_atomic(user_id)
         if removed:
-            await self._store.update_profile(profile)
             logger.debug(f"[Profile] {user_id}: removed {removed} stale tags")
         return removed
 
@@ -185,35 +174,17 @@ class ProfileManager:
         return {"scanned": scanned, "removed": removed_total, "failed": failed}
 
     async def record_message(self, user_id: str, message_length: int = 0) -> None:
-        profile = await self.ensure_profile(user_id)
-        profile.total_messages += 1
-        profile.last_seen_at = time.time()
-        if message_length > 0 and profile.preferences.avg_reply_length > 0:
-            alpha = 0.1
-            profile.preferences.avg_reply_length = int(
-                (1 - alpha) * profile.preferences.avg_reply_length
-                + alpha * message_length
-            )
-        else:
-            profile.preferences.avg_reply_length = message_length
-        await self._store.update_profile(profile)
+        await self.ensure_profile(user_id)
+        await self._store.record_message_atomic(
+            user_id,
+            message_length=message_length,
+        )
 
     async def update_preferences(
         self, user_id: str, preferences_update: dict[str, Any]
     ) -> None:
-        profile = await self.ensure_profile(user_id)
-        prefs = profile.preferences
-        if "reply_style" in preferences_update:
-            prefs.reply_style = str(preferences_update["reply_style"])
-        if "preferred_topics" in preferences_update:
-            for t in preferences_update["preferred_topics"] or []:
-                if t not in prefs.preferred_topics:
-                    prefs.preferred_topics.append(t)
-        if "avoided_topics" in preferences_update:
-            for t in preferences_update["avoided_topics"] or []:
-                if t not in prefs.avoided_topics:
-                    prefs.avoided_topics.append(t)
-        await self._store.update_profile(profile)
+        await self.ensure_profile(user_id)
+        await self._store.merge_preferences_atomic(user_id, preferences_update)
 
     async def get_profile_count(self) -> int:
         _, total = await self._store.list_profiles(limit=1)
@@ -293,48 +264,56 @@ class ProfileManager:
         if not isinstance(value, list):
             raise EntityValidationError({"tags": "必须为数组"})
         normalized: list[UserTag] = []
+        seen: set[tuple[str, str]] = set()
         for index, item in enumerate(value):
-            prefix = "tags." + str(index)
-            if not isinstance(item, Mapping):
-                raise EntityValidationError({prefix: "必须为对象"})
-            category = item.get("category", TagCategory.CUSTOM.value)
-            if not isinstance(category, str):
-                raise EntityValidationError({prefix + ".category": "不支持的标签分类"})
-            try:
-                normalized_category = TagCategory(category.strip())
-            except ValueError as exc:
+            tag = cls._normalize_manual_tag(item, index)
+            identity = (tag.category.value, tag.value)
+            if identity in seen:
                 raise EntityValidationError(
-                    {prefix + ".category": "不支持的标签分类"}
-                ) from exc
-            tag_value = cls._normalize_text(
-                item.get("value"),
-                prefix + ".value",
-                allow_empty=False,
-            )
-            confidence = item.get("confidence", 0.5)
-            if isinstance(confidence, bool) or not isinstance(
-                confidence, (int, float)
-            ):
-                raise EntityValidationError({prefix + ".confidence": "必须为数字"})
-            normalized_confidence = float(confidence)
-            if not math.isfinite(normalized_confidence):
-                raise EntityValidationError(
-                    {prefix + ".confidence": "必须为有限数字"}
+                    {"tags." + str(index) + ".value": "标签重复"}
                 )
-            if not 0.0 <= normalized_confidence <= 1.0:
-                raise EntityValidationError(
-                    {prefix + ".confidence": "必须在 0.0 到 1.0 之间"}
-                )
-            normalized.append(
-                UserTag.from_dict(
-                    {
-                        "category": normalized_category.value,
-                        "value": tag_value,
-                        "confidence": normalized_confidence,
-                    }
-                )
-            )
+            seen.add(identity)
+            normalized.append(tag)
         return normalized
+
+    @classmethod
+    def _normalize_manual_tag(cls, item: Any, index: int) -> UserTag:
+        prefix = "tags." + str(index)
+        if not isinstance(item, Mapping):
+            raise EntityValidationError({prefix: "必须为对象"})
+        category = item.get("category", TagCategory.CUSTOM.value)
+        if not isinstance(category, str):
+            raise EntityValidationError({prefix + ".category": "不支持的标签分类"})
+        try:
+            normalized_category = TagCategory(category.strip())
+        except ValueError as exc:
+            raise EntityValidationError(
+                {prefix + ".category": "不支持的标签分类"}
+            ) from exc
+        tag_value = cls._normalize_text(
+            item.get("value"),
+            prefix + ".value",
+            allow_empty=False,
+        )
+        confidence = item.get("confidence", 0.5)
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+            raise EntityValidationError({prefix + ".confidence": "必须为数字"})
+        normalized_confidence = float(confidence)
+        if not math.isfinite(normalized_confidence):
+            raise EntityValidationError(
+                {prefix + ".confidence": "必须为有限数字"}
+            )
+        if not 0.0 <= normalized_confidence <= 1.0:
+            raise EntityValidationError(
+                {prefix + ".confidence": "必须在 0.0 到 1.0 之间"}
+            )
+        return UserTag.from_dict(
+            {
+                "category": normalized_category.value,
+                "value": tag_value,
+                "confidence": normalized_confidence,
+            }
+        )
 
     @staticmethod
     def _normalize_string_list(value: Any, field: str) -> list[str]:

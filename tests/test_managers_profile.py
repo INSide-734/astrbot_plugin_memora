@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from core.base.entity_editing import EntityValidationError
+from core.base.entity_editing import EntityValidationError, compute_entity_revision
 from core.managers.profile_manager import ProfileManager
 from core.models.user_profile import (
     TagCategory,
@@ -13,6 +13,7 @@ from core.models.user_profile import (
     UserProfile,
     UserTag,
 )
+from core.storage.profile_store import ProfileStore
 
 
 # ---------------------------------------------------------------------------
@@ -93,10 +94,16 @@ class TestTouch:
 class TestProfileWriteHelpers:
     @pytest.mark.asyncio
     async def test_update_profile_fields_converts_preferences_dict(self) -> None:
-        profile = UserProfile(user_id="user1", display_name="Old")
+        profile = UserProfile(
+            user_id="user1",
+            display_name="New",
+            preferences=UserPreferences(
+                reply_style="formal",
+                preferred_topics=["ai"],
+            ),
+        )
         store = MagicMock()
-        store.get_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.update_profile_fields_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
 
         result = await mgr.update_profile_fields(
@@ -110,7 +117,12 @@ class TestProfileWriteHelpers:
         assert isinstance(profile.preferences, UserPreferences)
         assert profile.preferences.reply_style == "formal"
         assert profile.preferences.preferred_topics == ["ai"]
-        store.update_profile.assert_called_once_with(profile)
+        store.update_profile_fields_atomic.assert_awaited_once()
+        args = store.update_profile_fields_atomic.await_args
+        assert args.args == ("user1",)
+        assert args.kwargs["display_name"] == "New"
+        assert args.kwargs["preferences"].reply_style == "formal"
+        assert args.kwargs["preferences"].preferred_topics == ["ai"]
 
     @pytest.mark.asyncio
     async def test_delete_profile_delegates(self) -> None:
@@ -388,6 +400,33 @@ class TestProfileManualAdminCRUD:
         store.create_profile_strict.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_manual_profile_rejects_normalized_duplicate_tags(self) -> None:
+        store = MagicMock()
+        store.create_profile_strict = AsyncMock()
+        mgr = ProfileManager(profile_store=store)
+
+        with pytest.raises(EntityValidationError) as raised:
+            await mgr.create_profile_manual(
+                user_id="user-1",
+                preferences={},
+                tags=[
+                    {
+                        "category": " interest ",
+                        "value": " Python ",
+                        "confidence": 0.8,
+                    },
+                    {
+                        "category": "interest",
+                        "value": "Python",
+                        "confidence": 0.9,
+                    },
+                ],
+            )
+
+        assert raised.value.field_errors == {"tags.1.value": "标签重复"}
+        store.create_profile_strict.assert_not_awaited()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("user_id", [None, 1, True, "", "   ", "x" * 129])
     async def test_create_profile_manual_rejects_invalid_user_id(self, user_id) -> None:
         store = MagicMock()
@@ -476,8 +515,7 @@ class TestIngestTags:
         profile = UserProfile(user_id="user1")
         store = MagicMock()
         store.get_or_create_profile = AsyncMock(return_value=profile)
-        store.add_tag = AsyncMock()
-        store.update_profile = AsyncMock()
+        store.upsert_tags_atomic = AsyncMock(return_value=(profile, 2))
         mgr = ProfileManager(profile_store=store)
         tags = [
             UserTag(category=TagCategory.INTEREST, value="coffee", confidence=0.8),
@@ -485,39 +523,92 @@ class TestIngestTags:
         ]
         result = await mgr.ingest_tags("user1", tags)
         assert result is profile
-        assert store.add_tag.call_count == 2
-        store.update_profile.assert_called_once_with(profile)
+        store.upsert_tags_atomic.assert_awaited_once_with("user1", tags)
 
     @pytest.mark.asyncio
     async def test_ingest_existing_tag_updates_confidence(self) -> None:
-        profile = UserProfile(user_id="user1")
-        existing_tag = UserTag(
+        initial = UserProfile(user_id="user1")
+        initial.tags.append(UserTag(
             category=TagCategory.INTEREST, value="coffee", confidence=0.5
-        )
-        profile.tags.append(existing_tag)
+        ))
+        profile = UserProfile(user_id="user1")
+        profile.tags.append(UserTag(
+            category=TagCategory.INTEREST,
+            value="coffee",
+            confidence=0.9,
+            occurrence_count=2,
+        ))
         store = MagicMock()
-        store.get_or_create_profile = AsyncMock(return_value=profile)
-        store.add_tag = AsyncMock()
-        store.update_profile = AsyncMock()
+        store.get_or_create_profile = AsyncMock(return_value=initial)
+        store.upsert_tags_atomic = AsyncMock(return_value=(profile, 0))
         mgr = ProfileManager(profile_store=store)
         new_tag = UserTag(
             category=TagCategory.INTEREST, value="coffee", confidence=0.9
         )
-        await mgr.ingest_tags("user1", [new_tag])
+        result = await mgr.ingest_tags("user1", [new_tag])
         # Existing tag confidence should be updated to 0.9
-        assert profile.tags[0].confidence == 0.9
-        assert profile.tags[0].occurrence_count == 2
+        assert result.tags[0].confidence == 0.9
+        assert result.tags[0].occurrence_count == 2
 
     @pytest.mark.asyncio
     async def test_ingest_empty_tags(self) -> None:
         profile = UserProfile(user_id="user1")
         store = MagicMock()
         store.get_or_create_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.upsert_tags_atomic = AsyncMock(return_value=(profile, 0))
         mgr = ProfileManager(profile_store=store)
         await mgr.ingest_tags("user1", [])
-        store.add_tag.assert_not_called()
-        store.update_profile.assert_called_once()
+        store.upsert_tags_atomic.assert_awaited_once_with("user1", [])
+
+    @pytest.mark.asyncio
+    async def test_ingest_tags_does_not_restore_stale_admin_fields(
+        self, tmp_db_path
+    ) -> None:
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "interleaved-user",
+            display_name="Before admin",
+            preferences=UserPreferences(reply_style="casual"),
+        )
+        mgr = ProfileManager(profile_store=store)
+        original_ensure = mgr.ensure_profile
+
+        async def ensure_then_admin_update(user_id):
+            stale_snapshot = await original_ensure(user_id)
+            current = await store.get_profile(user_id)
+            assert current is not None
+            await store.replace_editable_fields(
+                user_id,
+                display_name="Admin name",
+                preferences=UserPreferences(
+                    reply_style="formal",
+                    preferred_topics=["admin-topic"],
+                ),
+                tags=current.tags,
+                expected_revision=compute_entity_revision(current.to_dict()),
+            )
+            return stale_snapshot
+
+        with patch.object(mgr, "ensure_profile", new=ensure_then_admin_update):
+            result = await mgr.ingest_tags(
+                "interleaved-user",
+                [
+                    UserTag(
+                        category=TagCategory.INTEREST,
+                        value="automatic-tag",
+                        confidence=0.8,
+                    )
+                ],
+            )
+
+        persisted = await store.get_profile("interleaved-user")
+        assert persisted is not None
+        assert result.display_name == "Admin name"
+        assert persisted.display_name == "Admin name"
+        assert persisted.preferences.reply_style == "formal"
+        assert persisted.preferences.preferred_topics == ["admin-topic"]
+        assert "automatic-tag" in [tag.value for tag in persisted.tags]
 
 
 # ---------------------------------------------------------------------------
@@ -564,48 +655,28 @@ class TestDecayAndClean:
 
     @pytest.mark.asyncio
     async def test_decay_removes_stale_tags(self) -> None:
-        profile = UserProfile(user_id="user1")
-        profile.tags = [
-            UserTag(
-                category=TagCategory.INTEREST,
-                value="old_topic",
-                confidence=0.05,  # below 0.1 min
-            ),
-            UserTag(
-                category=TagCategory.HABIT,
-                value="strong",
-                confidence=0.9,
-            ),
-        ]
         store = MagicMock()
-        store.get_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.decay_and_clean_tags_atomic = AsyncMock(return_value=1)
         mgr = ProfileManager(profile_store=store)
         removed = await mgr.decay_and_clean("user1")
         assert removed == 1
-        assert len(profile.tags) == 1
-        assert profile.tags[0].value == "strong"
+        store.decay_and_clean_tags_atomic.assert_awaited_once_with("user1")
 
     @pytest.mark.asyncio
     async def test_decay_no_profile(self) -> None:
         store = MagicMock()
-        store.get_profile = AsyncMock(return_value=None)
+        store.decay_and_clean_tags_atomic = AsyncMock(return_value=0)
         mgr = ProfileManager(profile_store=store)
         assert await mgr.decay_and_clean("unknown") == 0
 
     @pytest.mark.asyncio
     async def test_decay_no_removals(self) -> None:
-        profile = UserProfile(user_id="user1")
-        profile.tags = [
-            UserTag(category=TagCategory.INTEREST, value="strong", confidence=0.5),
-        ]
         store = MagicMock()
-        store.get_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.decay_and_clean_tags_atomic = AsyncMock(return_value=0)
         mgr = ProfileManager(profile_store=store)
         removed = await mgr.decay_and_clean("user1")
         assert removed == 0
-        store.update_profile.assert_not_called()  # no change → no update
+        store.decay_and_clean_tags_atomic.assert_awaited_once_with("user1")
 
 
 # ---------------------------------------------------------------------------
@@ -620,11 +691,12 @@ class TestRecordMessage:
         profile = UserProfile(user_id="user1")
         store = MagicMock()
         store.get_or_create_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.record_message_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.record_message("user1", message_length=50)
-        assert profile.total_messages == 1
-        assert profile.last_seen_at > 0
+        store.record_message_atomic.assert_awaited_once_with(
+            "user1", message_length=50
+        )
 
     @pytest.mark.asyncio
     async def test_record_message_ema_avg_length(self) -> None:
@@ -632,21 +704,24 @@ class TestRecordMessage:
         profile.preferences.avg_reply_length = 100
         store = MagicMock()
         store.get_or_create_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.record_message_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.record_message("user1", message_length=200)
-        # EMA: 0.9 * 100 + 0.1 * 200 = 90 + 20 = 110
-        assert profile.preferences.avg_reply_length == 110
+        store.record_message_atomic.assert_awaited_once_with(
+            "user1", message_length=200
+        )
 
     @pytest.mark.asyncio
     async def test_record_message_first_time_sets_length(self) -> None:
         profile = UserProfile(user_id="user1")
         store = MagicMock()
         store.get_or_create_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.record_message_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.record_message("user1", message_length=80)
-        assert profile.preferences.avg_reply_length == 80  # direct set (no EMA)
+        store.record_message_atomic.assert_awaited_once_with(
+            "user1", message_length=80
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -661,10 +736,12 @@ class TestUpdatePreferences:
         profile = UserProfile(user_id="user1")
         store = MagicMock()
         store.get_or_create_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.merge_preferences_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.update_preferences("user1", {"reply_style": "formal"})
-        assert profile.preferences.reply_style == "formal"
+        store.merge_preferences_atomic.assert_awaited_once_with(
+            "user1", {"reply_style": "formal"}
+        )
 
     @pytest.mark.asyncio
     async def test_update_preferred_topics_dedup(self) -> None:
@@ -672,34 +749,38 @@ class TestUpdatePreferences:
         profile.preferences.preferred_topics = ["coffee"]
         store = MagicMock()
         store.get_or_create_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.merge_preferences_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.update_preferences(
             "user1", {"preferred_topics": ["coffee", "tea"]}
         )
-        assert profile.preferences.preferred_topics == ["coffee", "tea"]
+        store.merge_preferences_atomic.assert_awaited_once_with(
+            "user1", {"preferred_topics": ["coffee", "tea"]}
+        )
 
     @pytest.mark.asyncio
     async def test_update_avoided_topics(self) -> None:
         profile = UserProfile(user_id="user1")
         store = MagicMock()
         store.get_or_create_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.merge_preferences_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.update_preferences(
             "user1", {"avoided_topics": ["politics"]}
         )
-        assert "politics" in profile.preferences.avoided_topics
+        store.merge_preferences_atomic.assert_awaited_once_with(
+            "user1", {"avoided_topics": ["politics"]}
+        )
 
     @pytest.mark.asyncio
     async def test_update_empty_preferences(self) -> None:
         profile = UserProfile(user_id="user1")
         store = MagicMock()
         store.get_or_create_profile = AsyncMock(return_value=profile)
-        store.update_profile = AsyncMock()
+        store.merge_preferences_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.update_preferences("user1", {})
-        store.update_profile.assert_called_once()
+        store.merge_preferences_atomic.assert_awaited_once_with("user1", {})
 
 
 # ---------------------------------------------------------------------------

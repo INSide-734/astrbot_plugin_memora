@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import aiosqlite
 
 from core.base.entity_editing import (
     EditConflictError,
@@ -36,9 +37,18 @@ class _FatalProfileStoreError(BaseException):
 class _RollbackTrackingConnection:
     """委托给真实连接，同时记录回滚并可在画像删除前注入故障。"""
 
-    def __init__(self, db, *, delete_failure=None):
+    def __init__(
+        self,
+        db,
+        *,
+        delete_failure=None,
+        commit_failure=None,
+        rollback_failures=None,
+    ):
         self._db = db
         self._delete_failure = delete_failure
+        self._commit_failure = commit_failure
+        self._rollback_failures = list(rollback_failures or [])
         self.rollback_calls = 0
 
     async def execute(self, sql, *args, **kwargs):
@@ -51,18 +61,34 @@ class _RollbackTrackingConnection:
 
     async def rollback(self):
         self.rollback_calls += 1
+        if self._rollback_failures:
+            raise self._rollback_failures.pop(0)
         return await self._db.rollback()
+
+    async def commit(self):
+        if self._commit_failure is not None:
+            raise self._commit_failure
+        return await self._db.commit()
 
     def __getattr__(self, name):
         return getattr(self._db, name)
 
 
 @asynccontextmanager
-async def _tracked_connection(original_connect, trackers, *, delete_failure=None):
+async def _tracked_connection(
+    original_connect,
+    trackers,
+    *,
+    delete_failure=None,
+    commit_failure=None,
+    rollback_failures=None,
+):
     async with original_connect() as db:
         tracker = _RollbackTrackingConnection(
             db,
             delete_failure=delete_failure,
+            commit_failure=commit_failure,
+            rollback_failures=rollback_failures,
         )
         trackers.append(tracker)
         yield tracker
@@ -409,6 +435,25 @@ class TestProfileStoreAtomicAdminCRUD:
         assert after.to_dict() == before.to_dict()
 
     @pytest.mark.asyncio
+    async def test_create_profile_strict_tag_integrity_error_is_not_profile_duplicate(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        duplicate_tags = [
+            _make_tag(value="duplicate-tag"),
+            _make_tag(value="duplicate-tag"),
+        ]
+
+        with pytest.raises(aiosqlite.IntegrityError):
+            await store.create_profile_strict(
+                "tag-integrity",
+                tags=duplicate_tags,
+            )
+
+        assert await store.get_profile("tag-integrity") is None
+
+    @pytest.mark.asyncio
     async def test_create_profile_strict_rolls_back_tag_write_failure(
         self, tmp_db_path
     ):
@@ -496,6 +541,47 @@ class TestProfileStoreAtomicAdminCRUD:
         assert updated.tags[0].occurrence_count == 1
         assert updated.tags[0].created_at == updated.tags[0].last_seen_at
         assert updated.tags[0].created_at > 2.0
+
+    @pytest.mark.asyncio
+    async def test_equal_confidence_tags_have_stable_order_and_revision(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "stable-order",
+            tags=[
+                _make_tag(
+                    category=TagCategory.INTEREST,
+                    value="zeta",
+                    confidence=0.8,
+                ),
+                _make_tag(
+                    category=TagCategory.HABIT,
+                    value="alpha",
+                    confidence=0.8,
+                ),
+            ],
+        )
+
+        public_profile = await store.get_profile("stable-order")
+        direct_tags = await store._get_tags("stable-order")
+        async with store._connect() as db:
+            bound_profile = await store._get_profile_with_db(db, "stable-order")
+
+        assert public_profile is not None
+        assert bound_profile is not None
+        expected = [("habit", "alpha"), ("interest", "zeta")]
+        assert [
+            (tag.category.value, tag.value) for tag in public_profile.tags
+        ] == expected
+        assert [(tag.category.value, tag.value) for tag in direct_tags] == expected
+        assert [
+            (tag.category.value, tag.value) for tag in bound_profile.tags
+        ] == expected
+        assert compute_entity_revision(
+            public_profile.to_dict()
+        ) == compute_entity_revision(bound_profile.to_dict())
 
     @pytest.mark.asyncio
     async def test_replace_editable_fields_preserves_read_only_profile_state(
@@ -767,3 +853,269 @@ class TestProfileStoreAtomicAdminCRUD:
             expected_revision=compute_entity_revision(after.to_dict()),
         )
         assert await store.get_profile("fatal-delete") is None
+
+    @pytest.mark.asyncio
+    async def test_original_fatal_error_survives_transient_rollback_failure(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "rollback-retry",
+            display_name="Remote",
+            tags=[_make_tag(value="remote-tag")],
+        )
+        before = await store.get_profile("rollback-retry")
+        assert before is not None
+
+        original_failure = _FatalProfileStoreError("original fatal failure")
+        rollback_failure = RuntimeError("transient rollback failure")
+        trackers = []
+        original_connect = store._connect
+
+        def tracked_connect():
+            return _tracked_connection(
+                original_connect,
+                trackers,
+                rollback_failures=[rollback_failure],
+            )
+
+        async def fail_during_tag_replacement(db, user_id, tags, now):
+            await db.execute(
+                "DELETE FROM user_tags WHERE user_id = ?",
+                (user_id,),
+            )
+            raise original_failure
+
+        with (
+            patch.object(store, "_connect", new=tracked_connect),
+            patch.object(
+                store,
+                "_replace_tags_with_db",
+                new=fail_during_tag_replacement,
+            ),
+        ):
+            with pytest.raises(_FatalProfileStoreError) as raised:
+                await store.replace_editable_fields(
+                    "rollback-retry",
+                    display_name="Local",
+                    preferences=UserPreferences(reply_style="formal"),
+                    tags=[_make_tag(value="local-tag")],
+                    expected_revision=compute_entity_revision(before.to_dict()),
+                )
+
+        assert raised.value is original_failure
+        assert trackers[0].rollback_calls == 2
+        after = await store.get_profile("rollback-retry")
+        assert after is not None
+        assert after.to_dict() == before.to_dict()
+        await store.touch("rollback-retry")
+
+    @pytest.mark.asyncio
+    async def test_commit_error_survives_transient_rollback_failure(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "commit-rollback",
+            display_name="Remote",
+            tags=[_make_tag(value="remote-tag")],
+        )
+        before = await store.get_profile("commit-rollback")
+        assert before is not None
+
+        commit_failure = RuntimeError("commit failed")
+        rollback_failure = RuntimeError("transient rollback failure")
+        trackers = []
+        original_connect = store._connect
+
+        def tracked_connect():
+            return _tracked_connection(
+                original_connect,
+                trackers,
+                commit_failure=commit_failure,
+                rollback_failures=[rollback_failure],
+            )
+
+        with patch.object(store, "_connect", new=tracked_connect):
+            with pytest.raises(RuntimeError) as raised:
+                await store.replace_editable_fields(
+                    "commit-rollback",
+                    display_name="Local",
+                    preferences=UserPreferences(reply_style="formal"),
+                    tags=[_make_tag(value="local-tag")],
+                    expected_revision=compute_entity_revision(before.to_dict()),
+                )
+
+        assert raised.value is commit_failure
+        assert trackers[0].rollback_calls == 2
+        after = await store.get_profile("commit-rollback")
+        assert after is not None
+        assert after.to_dict() == before.to_dict()
+        await store.touch("commit-rollback")
+
+
+class TestProfileStoreAutomaticWrites:
+    """自动学习写入只修改各自拥有的字段。"""
+
+    @pytest.mark.asyncio
+    async def test_update_profile_fields_atomic_preserves_unowned_state(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        profile = await store.create_profile_strict(
+            "field-update",
+            display_name="Old",
+            preferences=UserPreferences(
+                reply_style="formal",
+                preferred_topics=["graphs"],
+            ),
+            tags=[_make_tag(value="stable-tag")],
+        )
+        profile.total_messages = 12
+        profile.total_sessions = 4
+        profile.last_seen_at += 100
+        await store.update_profile(profile)
+        before = await store.get_profile("field-update")
+        assert before is not None
+
+        updated = await store.update_profile_fields_atomic(
+            "field-update",
+            display_name="New",
+        )
+
+        assert updated is not None
+        assert updated.display_name == "New"
+        assert updated.preferences.to_dict() == before.preferences.to_dict()
+        assert updated.total_messages == before.total_messages
+        assert updated.total_sessions == before.total_sessions
+        assert updated.first_seen_at == before.first_seen_at
+        assert updated.last_seen_at == before.last_seen_at
+        assert [tag.to_dict() for tag in updated.tags] == [
+            tag.to_dict() for tag in before.tags
+        ]
+
+    @pytest.mark.asyncio
+    async def test_record_message_atomic_uses_latest_counter_and_preferences(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        profile = await store.create_profile_strict(
+            "record-atomic",
+            display_name="Admin",
+            preferences=UserPreferences(
+                reply_style="formal",
+                preferred_topics=["graphs"],
+                avg_reply_length=100,
+            ),
+        )
+        profile.total_messages = 10
+        await store.update_profile(profile)
+
+        updated = await store.record_message_atomic(
+            "record-atomic",
+            message_length=200,
+        )
+
+        assert updated is not None
+        assert updated.total_messages == 11
+        assert updated.display_name == "Admin"
+        assert updated.preferences.reply_style == "formal"
+        assert updated.preferences.preferred_topics == ["graphs"]
+        assert updated.preferences.avg_reply_length == 110
+
+    @pytest.mark.asyncio
+    async def test_merge_preferences_atomic_preserves_unrelated_latest_fields(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "merge-preferences",
+            display_name="Admin",
+            preferences=UserPreferences(
+                reply_style="formal",
+                preferred_topics=["coffee"],
+                avoided_topics=["spoilers"],
+                active_hours=[9, 20],
+                avg_reply_length=80,
+                interaction_frequency=0.4,
+            ),
+        )
+
+        updated = await store.merge_preferences_atomic(
+            "merge-preferences",
+            {"preferred_topics": ["coffee", "tea"]},
+        )
+
+        assert updated is not None
+        assert updated.display_name == "Admin"
+        assert updated.preferences.to_dict() == {
+            "reply_style": "formal",
+            "preferred_topics": ["coffee", "tea"],
+            "avoided_topics": ["spoilers"],
+            "active_hours": [9, 20],
+            "avg_reply_length": 80,
+            "interaction_frequency": 0.4,
+        }
+
+    @pytest.mark.asyncio
+    async def test_decay_tags_atomic_preserves_profile_fields_and_tag_metadata(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        profile = await store.create_profile_strict(
+            "decay-atomic",
+            display_name="Admin",
+            preferences=UserPreferences(reply_style="formal"),
+        )
+        profile.total_messages = 7
+        profile.total_sessions = 2
+        await store.update_profile(profile)
+        reference_time = 1_000_000.0
+        await store.add_tag(
+            "decay-atomic",
+            UserTag(
+                category=TagCategory.INTEREST,
+                value="remove-me",
+                confidence=0.05,
+                source="auto",
+                created_at=reference_time,
+                last_seen_at=reference_time,
+                occurrence_count=3,
+            ),
+        )
+        await store.add_tag(
+            "decay-atomic",
+            UserTag(
+                category=TagCategory.HABIT,
+                value="keep-me",
+                confidence=0.9,
+                source="manual",
+                created_at=reference_time,
+                last_seen_at=reference_time,
+                occurrence_count=5,
+            ),
+        )
+        before = await store.get_profile("decay-atomic")
+        assert before is not None
+
+        removed = await store.decay_and_clean_tags_atomic(
+            "decay-atomic",
+            reference_time=reference_time,
+        )
+
+        after = await store.get_profile("decay-atomic")
+        assert after is not None
+        assert removed == 1
+        assert after.display_name == before.display_name
+        assert after.preferences.to_dict() == before.preferences.to_dict()
+        assert after.total_messages == before.total_messages
+        assert after.total_sessions == before.total_sessions
+        assert [tag.value for tag in after.tags] == ["keep-me"]
+        assert after.tags[0].source == "manual"
+        assert after.tags[0].occurrence_count == 5
