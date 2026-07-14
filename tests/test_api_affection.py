@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -133,6 +133,134 @@ def _make_editing_stub():
 
 
 class TestAffectionEditing:
+    @pytest.mark.asyncio
+    async def test_batch_affection_users_rejects_set_score(self):
+        stub = _make_editing_stub()
+        stub.batch_affection_users = AffectionApiMixin.batch_affection_users.__get__(stub)
+        manager = stub.plugin._affection_manager
+        manager.update_user_affection_manual = AsyncMock()
+        payload = {
+            "action": "set_score",
+            "items": [
+                {
+                    "identity": {"group_id": "g1", "user_id": "alice"},
+                    "expected_revision": "rev-1",
+                }
+            ],
+            "params": {"score": 42},
+        }
+
+        with patch("core.api.affection_api.request", _request_json(payload)):
+            result = await stub.batch_affection_users()
+
+        assert result["code"] == "validation_error"
+        assert result["field_errors"] == {"action": "仅支持 delete"}
+        manager.update_user_affection_manual.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_batch_delete_continues_after_conflict_and_returns_partial_result(self):
+        stub = _make_editing_stub()
+        stub.batch_affection_users = AffectionApiMixin.batch_affection_users.__get__(stub)
+        manager = stub.plugin._affection_manager
+        current = {"group_id": "g1", "user_id": "bob", "affection_score": 5}
+        manager.delete_user_affection_manual = AsyncMock(
+            side_effect=[True, EditConflictError(current, "rev-current"), True]
+        )
+        payload = {
+            "action": "delete",
+            "items": [
+                {"identity": {"group_id": "g1", "user_id": "alice"}, "expected_revision": "rev-alice"},
+                {"identity": {"group_id": "g1", "user_id": "bob"}, "expected_revision": "rev-bob"},
+                {"identity": {"group_id": "g1", "user_id": "carol"}, "expected_revision": "rev-carol"},
+            ],
+        }
+
+        with patch("core.api.affection_api.request", _request_json(payload)):
+            result = await stub.batch_affection_users()
+
+        assert result["data"] == {
+            "total": 3,
+            "succeeded_count": 2,
+            "failed_count": 1,
+            "succeeded_ids": [
+                {"group_id": "g1", "user_id": "alice"},
+                {"group_id": "g1", "user_id": "carol"},
+            ],
+            "failures": [
+                {
+                    "identity": {"group_id": "g1", "user_id": "bob"},
+                    "code": "edit_conflict",
+                    "message": "记录已被后台更新，请检查最新数据",
+                    "current_entity": current,
+                    "current_revision": "rev-current",
+                }
+            ],
+        }
+        manager.delete_user_affection_manual.assert_has_awaits(
+            [
+                call("g1", "alice", expected_revision="rev-alice"),
+                call("g1", "bob", expected_revision="rev-bob"),
+                call("g1", "carol", expected_revision="rev-carol"),
+            ]
+        )
+
+    @pytest.mark.asyncio
+    async def test_batch_delete_enforces_100_item_cap(self):
+        stub = _make_editing_stub()
+        stub.batch_affection_users = AffectionApiMixin.batch_affection_users.__get__(stub)
+        payload = {
+            "action": "delete",
+            "items": [
+                {
+                    "identity": {"group_id": "g1", "user_id": f"user-{index}"},
+                    "expected_revision": "rev-1",
+                }
+                for index in range(101)
+            ],
+        }
+
+        with patch("core.api.affection_api.request", _request_json(payload)):
+            result = await stub.batch_affection_users()
+
+        assert result["code"] == "validation_error"
+        assert result["field_errors"] == {"items": "项目数量必须在 1 到 100 之间"}
+        stub.plugin._affection_manager.delete_user_affection_manual.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_batch_delete_runs_guard_before_parsing_and_redacts_revisions_from_logs(self):
+        stub = _make_editing_stub()
+        stub.batch_affection_users = AffectionApiMixin.batch_affection_users.__get__(stub)
+        blocked = {"status": "error", "code": "maintenance_in_progress"}
+        stub._maintenance_write_guard.return_value = blocked
+        request_mock = _request_json({"action": "delete", "items": []})
+
+        with patch("core.api.affection_api.request", request_mock):
+            result = await stub.batch_affection_users()
+
+        assert result is blocked
+        request_mock.get_json.assert_not_awaited()
+
+        stub._maintenance_write_guard.return_value = None
+        stub.plugin._affection_manager.delete_user_affection_manual = AsyncMock(return_value=True)
+        payload = {
+            "action": "delete",
+            "items": [
+                {
+                    "identity": {"group_id": "g1", "user_id": "alice"},
+                    "expected_revision": "revision-secret",
+                }
+            ],
+        }
+        with patch("core.api.affection_api.logger.info") as logged, patch(
+            "core.api.affection_api.request", _request_json(payload)
+        ):
+            result = await stub.batch_affection_users()
+
+        assert result["status"] == "ok"
+        rendered = str(logged.call_args_list)
+        assert "batch_delete" in rendered and "g1" in rendered and "alice" in rendered
+        assert "revision-secret" not in rendered
+
     @pytest.mark.asyncio
     async def test_list_affection_users_requires_group_and_returns_real_pagination(self):
         stub = _make_editing_stub()

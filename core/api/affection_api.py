@@ -33,7 +33,7 @@ _DELETE_FIELDS = frozenset({"identity", "expected_revision"})
 _IDENTITY_FIELDS = frozenset({"group_id", "user_id"})
 _EDITABLE_FIELDS = frozenset({"score"})
 _BATCH_FIELDS = frozenset({"action", "items", "params"})
-_BATCH_ACTIONS = frozenset({"delete", "set_score"})
+_BATCH_ACTIONS = frozenset({"delete"})
 _MAX_BATCH_ITEMS = 100
 _MAX_PAGE_SIZE = 100
 
@@ -459,20 +459,16 @@ class AffectionApiMixin:
                 return unknown
             action = required_text(payload.get("action"), field="action")
             if action not in _BATCH_ACTIONS:
-                raise EntityValidationError({"action": "仅支持 delete 或 set_score"})
+                raise EntityValidationError({"action": "仅支持 delete"})
             items = payload.get("items")
             if not isinstance(items, list) or not 1 <= len(items) <= _MAX_BATCH_ITEMS:
                 raise EntityValidationError({"items": "项目数量必须在 1 到 100 之间"})
             params, error = require_object(payload.get("params", {}))
             if error:
                 return error
-            allowed_params = frozenset() if action == "delete" else frozenset({"score"})
-            unknown = reject_unknown_fields(params, allowed_params)
+            unknown = reject_unknown_fields(params, frozenset())
             if unknown:
                 return unknown
-            score = None
-            if action == "set_score":
-                score = bounded_int(params.get("score"), field="params.score", minimum=-100, maximum=100)
             manager = self._get_affection_manager()
             if manager is None:
                 return _component_unavailable()
@@ -493,25 +489,16 @@ class AffectionApiMixin:
                     failures.append(_batch_failure(identity_ref, revision_error))
                     continue
                 try:
-                    if action == "delete":
-                        deleted = await manager.delete_user_affection_manual(
-                            identity["group_id"],
-                            identity["user_id"],
-                            expected_revision=revision,
-                        )
-                        if not deleted:
-                            raise EntityNotFoundError("好感度记录不存在")
-                    else:
-                        await manager.update_user_affection_manual(
-                            identity["group_id"],
-                            identity["user_id"],
-                            score,
-                            expected_revision=revision,
-                        )
+                    deleted = await manager.delete_user_affection_manual(
+                        identity["group_id"],
+                        identity["user_id"],
+                        expected_revision=revision,
+                    )
+                    if not deleted:
+                        raise EntityNotFoundError("好感度记录不存在")
                     succeeded_ids.append(identity)
                     logger.info(
-                        "[好感度 API] action=batch_%s group_id=%s user_id=%s",
-                        action,
+                        "[好感度 API] action=batch_delete group_id=%s user_id=%s",
                         identity["group_id"],
                         identity["user_id"],
                     )
@@ -523,8 +510,7 @@ class AffectionApiMixin:
                         )
                     )
             logger.info(
-                "[好感度 API] action=batch_%s succeeded_count=%s failed_count=%s",
-                action,
+                "[好感度 API] action=batch_delete succeeded_count=%s failed_count=%s",
                 len(succeeded_ids),
                 len(failures),
             )
