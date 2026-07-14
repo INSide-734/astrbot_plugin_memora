@@ -10,6 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.api.profile_api import ProfileApiMixin
+from core.base.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    EntityValidationError,
+)
 
 
 def _mock_request(**args):
@@ -26,6 +32,25 @@ def _make_mixin(*, profile_manager_available: bool = True,
                 plugin_ready: bool = True):
     """Create a ProfileApiMixin stub."""
 
+    engine = MagicMock(spec=[])
+    profile_manager = None
+    if profile_manager_available:
+        profile_manager = MagicMock()
+        profile_manager.list_profiles = AsyncMock(
+            return_value=(profiles_list or [], profiles_total))
+        profile_manager.get_profile = AsyncMock(return_value=detail_profile)
+        profile_manager.create_profile_manual = AsyncMock(
+            return_value=detail_profile)
+        profile_manager.update_profile_manual = AsyncMock(
+            return_value=detail_profile)
+        profile_manager.delete_profile_manual = AsyncMock(return_value=True)
+        profile_manager.revision_for = MagicMock(return_value="rev-profile")
+        profile_manager.update_profile_fields = AsyncMock(return_value=detail_profile)
+        profile_manager.delete_profile = AsyncMock(return_value=True)
+        profile_manager.add_tag = AsyncMock(return_value=detail_profile)
+        profile_manager.remove_tag = AsyncMock(return_value=detail_profile)
+        engine.profile_manager = profile_manager
+
     class Stub:
         list_profiles = ProfileApiMixin.list_profiles
         get_profile_detail = ProfileApiMixin.get_profile_detail
@@ -33,38 +58,41 @@ def _make_mixin(*, profile_manager_available: bool = True,
         delete_profile = ProfileApiMixin.delete_profile
         batch_delete_profiles = ProfileApiMixin.batch_delete_profiles
         manage_profile_tags = ProfileApiMixin.manage_profile_tags
+        _update_profile_envelope = ProfileApiMixin._update_profile_envelope
+        _delete_profile_envelope = ProfileApiMixin._delete_profile_envelope
+        _legacy_batch_delete_profiles = ProfileApiMixin._legacy_batch_delete_profiles
+        _batch_profile_actions = ProfileApiMixin._batch_profile_actions
+
+        async def create_profile(self):
+            return await ProfileApiMixin.create_profile(self)
 
         async def _ensure_plugin_ready(self):
             if not plugin_ready:
                 return None, {"status": "error", "message": "plugin not ready"}
-            if profile_manager_available:
-                engine = MagicMock()
-                engine.profile_manager = MagicMock()
-                engine.profile_manager.list_profiles = AsyncMock(
-                    return_value=(profiles_list or [], profiles_total))
-                engine.profile_manager.get_profile = AsyncMock(
-                    return_value=detail_profile)
-                engine.profile_manager.update_profile_fields = AsyncMock(
-                    return_value=detail_profile)
-                engine.profile_manager.delete_profile = AsyncMock(return_value=True)
-                engine.profile_manager.add_tag = AsyncMock(return_value=detail_profile)
-                engine.profile_manager.remove_tag = AsyncMock(
-                    return_value=detail_profile)
-            else:
-                engine = MagicMock(spec=[])  # no auto-attrs → getattr returns default
             return {"memory_engine": engine}, None
 
-    return Stub()
+    stub = Stub()
+    stub.profile_manager = profile_manager
+    return stub
 
 
-def _make_profile(user_id="u1", display_name="Test User"):
+def _make_profile(
+    user_id="u1",
+    display_name="Test User",
+    *,
+    preferences=None,
+    tags=None,
+):
+    preferences = preferences or {}
+    tags = tags or []
     p = MagicMock()
     p.to_dict.return_value = {
         "user_id": user_id, "display_name": display_name,
-        "preferences": {}, "tags": [], "interests": []}
+        "preferences": preferences, "tags": tags, "interests": []}
     p.user_id = user_id
     p.display_name = display_name
-    p.preferences = {}
+    p.preferences = preferences
+    p.tags = tags
     return p
 
 
@@ -577,3 +605,649 @@ class TestProfileEdgeCases:
             mixin = _make_mixin(plugin_ready=False)
             result = await mixin.delete_profile()
         assert result["status"] == "error"
+
+
+def _complete_profile_payload(user_id: str = "u1") -> dict:
+    return {
+        "user_id": user_id,
+        "display_name": "Alice",
+        "preferences": {
+            "reply_style": "formal",
+            "preferred_topics": ["graphs"],
+            "avoided_topics": [],
+            "active_hours": [9, 10],
+        },
+        "tags": [
+            {
+                "category": "interest",
+                "value": "graphs",
+                "confidence": 0.9,
+            }
+        ],
+    }
+
+
+def _update_envelope(user_id: str = "u1") -> dict:
+    payload = _complete_profile_payload(user_id)
+    return {
+        "identity": {"user_id": payload.pop("user_id")},
+        "changes": payload,
+        "expected_revision": "rev-old",
+    }
+
+
+class TestRevisionedProfileApi:
+    @pytest.mark.asyncio
+    async def test_create_profile_returns_complete_entity_and_revision(self) -> None:
+        profile = _make_profile("u1", "Alice")
+        mixin = _make_mixin(detail_profile=profile)
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=_complete_profile_payload())
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.create_profile()
+
+        assert result == {
+            "status": "ok",
+            "data": {"entity": profile.to_dict.return_value, "revision": "rev-profile"},
+        }
+        mixin.profile_manager.create_profile_manual.assert_awaited_once_with(
+            **_complete_profile_payload()
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failure", "code"),
+        [
+            (EntityAlreadyExistsError("duplicate"), "already_exists"),
+            (EntityValidationError({"user_id": "不能为空"}), "validation_error"),
+            (EntityNotFoundError("missing"), "not_found"),
+        ],
+    )
+    async def test_create_maps_domain_errors(self, failure, code: str) -> None:
+        mixin = _make_mixin(detail_profile=_make_profile())
+        mixin.profile_manager.create_profile_manual.side_effect = failure
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=_complete_profile_payload())
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.create_profile()
+
+        assert result["status"] == "error"
+        assert result["code"] == code
+        if code == "validation_error":
+            assert result["field_errors"] == {"user_id": "不能为空"}
+
+    @pytest.mark.asyncio
+    async def test_create_missing_manager_is_stable_component_error(self) -> None:
+        mixin = _make_mixin(profile_manager_available=False)
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=_complete_profile_payload())
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.create_profile()
+
+        assert result["code"] == "component_unavailable"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {**_complete_profile_payload(), "message_count": 99},
+            {
+                **_complete_profile_payload(),
+                "preferences": {"reply_style": "formal", "last_updated": 1},
+            },
+            {
+                **_complete_profile_payload(),
+                "tags": [
+                    {
+                        "category": "interest",
+                        "value": "private-value",
+                        "confidence": 0.9,
+                        "source": "readonly-source",
+                    }
+                ],
+            },
+        ],
+    )
+    async def test_create_rejects_read_only_fields_at_every_level(
+        self, payload: dict
+    ) -> None:
+        mixin = _make_mixin(detail_profile=_make_profile())
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.create_profile()
+
+        assert result["code"] == "validation_error"
+        mixin.profile_manager.create_profile_manual.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payload", [None, [], True, "profile"])
+    async def test_create_requires_json_object(self, payload) -> None:
+        mixin = _make_mixin(detail_profile=_make_profile())
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.create_profile()
+
+        assert result["status"] == "error"
+        mixin.profile_manager.create_profile_manual.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_list_and_detail_include_manager_revisions(self) -> None:
+        profile = _make_profile("u1", "Alice")
+        mixin = _make_mixin(
+            profiles_list=[profile], profiles_total=1, detail_profile=profile
+        )
+        with patch("core.api.profile_api.request", _mock_request()):
+            listed = await mixin.list_profiles()
+        with patch("core.api.profile_api.request", _mock_request(user_id="u1")):
+            detail = await mixin.get_profile_detail()
+
+        assert listed["data"]["profiles"][0]["revision"] == "rev-profile"
+        assert detail["data"]["revision"] == "rev-profile"
+        assert mixin.profile_manager.revision_for.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_revisioned_update_uses_manual_replacement(self) -> None:
+        profile = _make_profile("u1", "Alice")
+        mixin = _make_mixin(detail_profile=profile)
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=_update_envelope())
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.update_profile()
+
+        assert result["data"]["revision"] == "rev-profile"
+        mixin.profile_manager.update_profile_manual.assert_awaited_once_with(
+            user_id="u1",
+            display_name="Alice",
+            preferences=_complete_profile_payload()["preferences"],
+            tags=_complete_profile_payload()["tags"],
+            expected_revision="rev-old",
+        )
+        mixin.profile_manager.update_profile_fields.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_revisioned_update_returns_conflict_snapshot(self) -> None:
+        current = _make_profile("u1", "Current").to_dict.return_value
+        mixin = _make_mixin(detail_profile=_make_profile())
+        mixin.profile_manager.update_profile_manual.side_effect = EditConflictError(
+            current, "rev-current"
+        )
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=_update_envelope())
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.update_profile()
+
+        assert result["code"] == "edit_conflict"
+        assert result["data"] == {
+            "current_entity": current,
+            "current_revision": "rev-current",
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {**_update_envelope(), "user_id": "legacy-fallback"},
+            {**_update_envelope(), "unexpected": True},
+            {**_update_envelope(), "identity": {"user_id": "u1", "name": "x"}},
+            {**_update_envelope(), "identity": {"user_id": True}},
+            {**_update_envelope(), "changes": {"message_count": 1}},
+            {
+                **_update_envelope(),
+                "changes": {
+                    **_update_envelope()["changes"],
+                    "preferences": {"reply_style": "formal", "updated_at": 1},
+                },
+            },
+            {
+                **_update_envelope(),
+                "changes": {
+                    **_update_envelope()["changes"],
+                    "tags": [
+                        {
+                            "category": "interest",
+                            "value": "graphs",
+                            "confidence": 0.9,
+                            "created_at": 1,
+                        }
+                    ],
+                },
+            },
+            {**_update_envelope(), "expected_revision": None},
+        ],
+    )
+    async def test_revisioned_update_strictly_rejects_malformed_envelopes(
+        self, payload: dict
+    ) -> None:
+        mixin = _make_mixin(detail_profile=_make_profile())
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.update_profile()
+
+        assert result["code"] == "validation_error"
+        mixin.profile_manager.update_profile_manual.assert_not_awaited()
+        mixin.profile_manager.update_profile_fields.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_revisioned_delete_returns_identity_envelope(self) -> None:
+        mixin = _make_mixin()
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            return_value={
+                "identity": {"user_id": "u1"},
+                "expected_revision": "rev-old",
+            }
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.delete_profile()
+
+        assert result == {
+            "status": "ok",
+            "data": {"deleted": True, "identity": {"user_id": "u1"}},
+        }
+        mixin.profile_manager.delete_profile_manual.assert_awaited_once_with(
+            "u1", expected_revision="rev-old"
+        )
+        mixin.profile_manager.delete_profile.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failure", "code"),
+        [
+            (EntityNotFoundError("missing"), "not_found"),
+            (
+                EditConflictError(
+                    _make_profile("u1", "Current").to_dict.return_value,
+                    "rev-current",
+                ),
+                "edit_conflict",
+            ),
+        ],
+    )
+    async def test_revisioned_delete_maps_not_found_and_conflict(
+        self, failure, code: str
+    ) -> None:
+        mixin = _make_mixin()
+        mixin.profile_manager.delete_profile_manual.side_effect = failure
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            return_value={
+                "identity": {"user_id": "u1"},
+                "expected_revision": "rev-old",
+            }
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.delete_profile()
+
+        assert result["code"] == code
+        if code == "edit_conflict":
+            assert result["data"]["current_revision"] == "rev-current"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"identity": {"user_id": "u1"}},
+            {"identity": {"user_id": "u1", "extra": 1}, "expected_revision": "r"},
+            {"identity": "u1", "expected_revision": "r"},
+            {"identity": {"user_id": True}, "expected_revision": "r"},
+            {
+                "identity": {"user_id": "u1"},
+                "expected_revision": "r",
+                "user_id": "legacy-fallback",
+            },
+        ],
+    )
+    async def test_malformed_revisioned_delete_never_falls_back_to_legacy(
+        self, payload: dict
+    ) -> None:
+        mixin = _make_mixin()
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.delete_profile()
+
+        assert result["code"] == "validation_error"
+        mixin.profile_manager.delete_profile_manual.assert_not_awaited()
+        mixin.profile_manager.delete_profile.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "method_name",
+        ["create_profile", "update_profile", "delete_profile", "batch_delete_profiles"],
+    )
+    async def test_maintenance_guard_runs_before_json_and_engine_lookup(
+        self, method_name: str
+    ) -> None:
+        blocked = {"status": "error", "code": "maintenance"}
+        mixin = _make_mixin()
+        mixin._maintenance_write_guard = MagicMock(return_value=blocked)
+        mixin._ensure_plugin_ready = AsyncMock(
+            side_effect=AssertionError("engine lookup must not run")
+        )
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            side_effect=AssertionError("JSON parsing must not run")
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await getattr(mixin, method_name)()
+
+        assert result is blocked
+        mixin._maintenance_write_guard.assert_called_once_with()
+        request_mock.get_json.assert_not_awaited()
+        mixin._ensure_plugin_ready.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unexpected_failure_is_redacted_from_response_and_logs(self) -> None:
+        mixin = _make_mixin(detail_profile=_make_profile())
+        mixin.profile_manager.create_profile_manual.side_effect = RuntimeError(
+            "exception-secret"
+        )
+        payload = _complete_profile_payload()
+        payload["display_name"] = "free-text-secret"
+        payload["preferences"]["reply_style"] = "preference-secret"
+        payload["tags"][0]["value"] = "tag-secret"
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with (
+            patch("core.api.profile_api.request", request_mock),
+            patch("core.api.profile_api.logger.error") as log_error,
+        ):
+            result = await mixin.create_profile()
+
+        assert result["code"] == "internal_error"
+        rendered = str(result) + str(log_error.call_args_list)
+        for secret in (
+            "exception-secret",
+            "free-text-secret",
+            "preference-secret",
+            "tag-secret",
+        ):
+            assert secret not in rendered
+
+
+class TestRevisionedProfileBatch:
+    def _request(self, action: str, *, items=None, params=None):
+        request_mock = _mock_request()
+        payload = {
+            "action": action,
+            "items": items
+            or [{"identity": {"user_id": "u1"}, "expected_revision": "rev-old"}],
+        }
+        if params is not None:
+            payload["params"] = params
+        request_mock.get_json = AsyncMock(return_value=payload)
+        return request_mock
+
+    @pytest.mark.asyncio
+    async def test_batch_delete_uses_each_items_revision(self) -> None:
+        mixin = _make_mixin()
+        request_mock = self._request(
+            "delete",
+            items=[
+                {"identity": {"user_id": "u1"}, "expected_revision": "r1"},
+                {"identity": {"user_id": "u2"}, "expected_revision": "r2"},
+            ],
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.batch_delete_profiles()
+
+        assert result["data"] == {
+            "total": 2,
+            "succeeded_count": 2,
+            "failed_count": 0,
+            "succeeded_ids": [{"user_id": "u1"}, {"user_id": "u2"}],
+            "failures": [],
+        }
+        assert mixin.profile_manager.delete_profile_manual.await_args_list[0].args == (
+            "u1",
+        )
+        assert mixin.profile_manager.delete_profile_manual.await_args_list[1].kwargs == {
+            "expected_revision": "r2"
+        }
+        mixin.profile_manager.delete_profile.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("action", "current_tags", "expected_tags"),
+        [
+            (
+                "tags_add",
+                [],
+                [{"category": "interest", "value": "graphs", "confidence": 0.9}],
+            ),
+            (
+                "tags_add",
+                [{"category": "interest", "value": "graphs", "confidence": 0.9}],
+                [{"category": "interest", "value": "graphs", "confidence": 0.9}],
+            ),
+            (
+                "tags_remove",
+                [
+                    {"category": "interest", "value": "graphs", "confidence": 0.9},
+                    {"category": "custom", "value": "keep", "confidence": 0.5},
+                ],
+                [{"category": "custom", "value": "keep", "confidence": 0.5}],
+            ),
+            (
+                "tags_remove",
+                [{"category": "custom", "value": "keep", "confidence": 0.5}],
+                [{"category": "custom", "value": "keep", "confidence": 0.5}],
+            ),
+        ],
+    )
+    async def test_batch_tag_actions_are_idempotent_revisioned_replacements(
+        self, action: str, current_tags: list[dict], expected_tags: list[dict]
+    ) -> None:
+        preferences = _complete_profile_payload()["preferences"]
+        current = _make_profile(
+            "u1", "Alice", preferences=preferences, tags=current_tags
+        )
+        mixin = _make_mixin(detail_profile=current)
+        request_mock = self._request(
+            action,
+            params={
+                "tag": {
+                    "category": "interest",
+                    "value": "graphs",
+                    "confidence": 0.9,
+                }
+            },
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.batch_delete_profiles()
+
+        assert result["data"]["succeeded_count"] == 1
+        mixin.profile_manager.update_profile_manual.assert_awaited_once_with(
+            user_id="u1",
+            display_name="Alice",
+            preferences=preferences,
+            tags=expected_tags,
+            expected_revision="rev-old",
+        )
+        mixin.profile_manager.add_tag.assert_not_awaited()
+        mixin.profile_manager.remove_tag.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_batch_preserves_partial_failure_and_input_order(self) -> None:
+        mixin = _make_mixin()
+        mixin.profile_manager.delete_profile_manual.side_effect = [
+            EntityNotFoundError("missing-secret"),
+            True,
+            EditConflictError(_make_profile("u3").to_dict.return_value, "r-current"),
+        ]
+        request_mock = self._request(
+            "delete",
+            items=[
+                {"identity": {"user_id": "u1"}, "expected_revision": "r1"},
+                {"identity": {"user_id": "u2"}, "expected_revision": "r2"},
+                {"identity": {"user_id": "u3"}, "expected_revision": "r3"},
+            ],
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.batch_delete_profiles()
+
+        assert result["data"]["succeeded_ids"] == [{"user_id": "u2"}]
+        assert [failure["identity"] for failure in result["data"]["failures"]] == [
+            {"user_id": "u1"},
+            {"user_id": "u3"},
+        ]
+        assert [failure["code"] for failure in result["data"]["failures"]] == [
+            "not_found",
+            "edit_conflict",
+        ]
+        assert result["data"]["failures"][1]["current_revision"] == "r-current"
+
+    @pytest.mark.asyncio
+    async def test_batch_invalid_item_does_not_stop_valid_item(self) -> None:
+        mixin = _make_mixin()
+        request_mock = self._request(
+            "delete",
+            items=[
+                {"identity": {"user_id": True}, "expected_revision": "r1"},
+                {"identity": {"user_id": "u2"}, "expected_revision": "r2"},
+            ],
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.batch_delete_profiles()
+
+        assert result["data"]["succeeded_ids"] == [{"user_id": "u2"}]
+        assert result["data"]["failures"][0]["identity"] == {"item_index": 0}
+        assert result["data"]["failures"][0]["code"] == "validation_error"
+
+    @pytest.mark.asyncio
+    async def test_batch_cap_is_checked_before_manager_lookup_or_mutation(self) -> None:
+        mixin = _make_mixin()
+        mixin._ensure_plugin_ready = AsyncMock(
+            side_effect=AssertionError("manager lookup must not run")
+        )
+        request_mock = self._request(
+            "delete",
+            items=[
+                {"identity": {"user_id": f"u{i}"}, "expected_revision": "r"}
+                for i in range(101)
+            ],
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.batch_delete_profiles()
+
+        assert result["code"] == "validation_error"
+        mixin._ensure_plugin_ready.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("payload", "item_failure"),
+        [
+            ({"action": "unknown", "items": []}, False),
+            ({"action": "delete", "items": "bad"}, False),
+            ({"action": "delete", "items": [], "params": {"tag": {}}}, False),
+            (
+                {
+                    "action": "tags_add",
+                    "items": [
+                        {"identity": {"user_id": "u1"}, "expected_revision": "r"}
+                    ],
+                    "params": {"tags": []},
+                },
+                False,
+            ),
+            (
+                {
+                    "action": "tags_add",
+                    "items": [
+                        {
+                            "identity": {"user_id": "u1", "extra": 1},
+                            "expected_revision": "r",
+                        }
+                    ],
+                    "params": {
+                        "tag": {
+                            "category": "interest",
+                            "value": "graphs",
+                            "confidence": 0.9,
+                        }
+                    },
+                },
+                True,
+            ),
+            (
+                {
+                    "action": "delete",
+                    "items": [
+                        {
+                            "identity": {"user_id": "u1"},
+                            "expected_revision": "r",
+                            "extra": 1,
+                        }
+                    ],
+                },
+                True,
+            ),
+            ({"action": "delete", "items": [], "extra": 1}, False),
+        ],
+    )
+    async def test_batch_strictly_validates_action_items_and_params(
+        self, payload: dict, item_failure: bool
+    ) -> None:
+        mixin = _make_mixin()
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.batch_delete_profiles()
+
+        if item_failure:
+            assert result["data"]["failed_count"] == 1
+        else:
+            assert result["status"] == "error"
+        mixin.profile_manager.delete_profile_manual.assert_not_awaited()
+        mixin.profile_manager.update_profile_manual.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_batch_manager_unavailable_is_stable_component_error(self) -> None:
+        mixin = _make_mixin(profile_manager_available=False)
+        request_mock = self._request("delete")
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.batch_delete_profiles()
+
+        assert result["code"] == "component_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_legacy_action_delete_batch_response_remains_compatible(self) -> None:
+        mixin = _make_mixin()
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            return_value={"action": "delete", "user_ids": ["u1", "u2"]}
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.batch_delete_profiles()
+
+        assert result["data"] == {
+            "deleted_count": 2,
+            "failed_count": 0,
+            "total": 2,
+            "failed_ids": [],
+        }
+        assert mixin.profile_manager.delete_profile.await_count == 2

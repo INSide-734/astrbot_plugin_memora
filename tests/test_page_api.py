@@ -1169,6 +1169,28 @@ class TestRegisterRoutes:
                 assert registered[(f"{prefix}{suffix}", ("POST",))] == handler
                 assert (f"{prefix}{suffix}", ("GET",)) not in registered
 
+    def test_profile_create_registers_all_prefixes_as_post_only(self) -> None:
+        plugin = MagicMock()
+        api = PluginPageApi(plugin)
+
+        api.register_routes()
+
+        registered = {
+            (call.args[0], tuple(call.args[2])): call.args[1]
+            for call in plugin.context.register_web_api.call_args_list
+        }
+        for prefix in (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES):
+            path = f"{prefix}/profiles/create"
+            assert registered[(path, ("POST",))] == api.create_profile
+            assert (path, ("GET",)) not in registered
+
+        metadata = {item["path"]: item for item in api.get_route_metadata()}
+        create = metadata[f"{PAGE_API_PREFIX}/profiles/create"]
+        assert create["methods"] == ["POST"]
+        assert create["auth"] == "admin"
+        assert create["risk"] == "write"
+        assert create["write_guard"] is True
+
     def test_route_metadata_declares_risk_auth_and_guards_for_post_routes(self) -> None:
         """Plugin-side route metadata is available for audit and frontend contracts."""
         plugin = MagicMock()
