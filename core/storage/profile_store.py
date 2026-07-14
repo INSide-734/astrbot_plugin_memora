@@ -128,25 +128,27 @@ class ProfileStore(BaseStore):
         async with self._connect() as db:
             try:
                 await db.execute("BEGIN IMMEDIATE")
-                try:
-                    await db.execute(
-                        """INSERT INTO user_profiles
-                           (user_id, display_name, preferences_json,
-                            total_messages, total_sessions, first_seen_at,
-                            last_seen_at, created_at, updated_at)
-                           VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)""",
-                        (
-                            user_id,
-                            display_name,
-                            self._to_json(normalized_preferences.to_dict()),
-                            now,
-                            now,
-                            now,
-                            now,
-                        ),
-                    )
-                except aiosqlite.IntegrityError as exc:
-                    raise EntityAlreadyExistsError("用户画像已存在") from exc
+                cursor = await db.execute(
+                    "SELECT 1 FROM user_profiles WHERE user_id = ?", (user_id,)
+                )
+                if await cursor.fetchone() is not None:
+                    raise EntityAlreadyExistsError("用户画像已存在")
+                await db.execute(
+                    """INSERT INTO user_profiles
+                       (user_id, display_name, preferences_json,
+                        total_messages, total_sessions, first_seen_at,
+                        last_seen_at, created_at, updated_at)
+                       VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)""",
+                    (
+                        user_id,
+                        display_name,
+                        self._to_json(normalized_preferences.to_dict()),
+                        now,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
                 await self._replace_tags_with_db(db, user_id, tags or [], now)
                 created = await self._get_profile_with_db(db, user_id)
                 if created is None:

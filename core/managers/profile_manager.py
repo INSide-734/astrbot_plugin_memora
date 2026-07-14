@@ -8,7 +8,11 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..base.entity_editing import EntityValidationError, compute_entity_revision
+from ..base.entity_editing import (
+    EntityNotFoundError,
+    EntityValidationError,
+    compute_entity_revision,
+)
 from ..models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
 from ..storage.profile_store import ProfileStore
 
@@ -124,9 +128,10 @@ class ProfileManager:
         return await self.get_profile(user_id)
 
     async def ingest_tags(self, user_id: str, tags: list[UserTag]) -> UserProfile:
-        ensured = await self.ensure_profile(user_id)
+        await self.ensure_profile(user_id)
         profile, new_count = await self._store.upsert_tags_atomic(user_id, tags)
-        profile = profile or ensured
+        if profile is None:
+            raise EntityNotFoundError("画像不存在")
         if new_count:
             logger.debug(
                 f"[Profile] {user_id}: +{new_count} new tags, total={len(profile.tags)}"
