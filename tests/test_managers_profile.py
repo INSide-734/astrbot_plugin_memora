@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from core.base.entity_editing import EntityValidationError, compute_entity_revision
+from core.base.entity_editing import (
+    EntityNotFoundError,
+    EntityValidationError,
+    compute_entity_revision,
+)
 from core.managers.profile_manager import ProfileManager
 from core.models.user_profile import (
     TagCategory,
@@ -609,6 +613,31 @@ class TestIngestTags:
         assert persisted.preferences.reply_style == "formal"
         assert persisted.preferences.preferred_topics == ["admin-topic"]
         assert "automatic-tag" in [tag.value for tag in persisted.tags]
+
+    @pytest.mark.asyncio
+    async def test_ingest_tags_does_not_return_profile_deleted_after_ensure(
+        self, tmp_db_path
+    ) -> None:
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict("deleted-during-ingest")
+        mgr = ProfileManager(profile_store=store)
+        original_ensure = mgr.ensure_profile
+
+        async def ensure_then_delete(user_id):
+            stale_snapshot = await original_ensure(user_id)
+            assert await store.delete_profile(user_id) is True
+            return stale_snapshot
+
+        with patch.object(mgr, "ensure_profile", new=ensure_then_delete):
+            with pytest.raises(EntityNotFoundError, match="画像不存在"):
+                await mgr.ingest_tags(
+                    "deleted-during-ingest",
+                    [_manager_tag(value="must-not-persist")],
+                )
+
+        assert await store.get_profile("deleted-during-ingest") is None
+        assert await store._get_tags("deleted-during-ingest") == []
 
 
 # ---------------------------------------------------------------------------

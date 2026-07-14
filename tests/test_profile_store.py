@@ -435,6 +435,25 @@ class TestProfileStoreAtomicAdminCRUD:
         assert after.to_dict() == before.to_dict()
 
     @pytest.mark.asyncio
+    async def test_create_profile_strict_preserves_non_unique_integrity_error(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+
+        with pytest.raises(aiosqlite.IntegrityError) as exc_info:
+            await store.create_profile_strict(None)
+
+        assert not isinstance(exc_info.value, EntityAlreadyExistsError)
+        async with store._connect() as db:
+            cursor = await db.execute("SELECT COUNT(*) FROM user_profiles")
+            assert (await cursor.fetchone())[0] == 0
+            assert db.in_transaction is False
+
+        created = await store.create_profile_strict("usable-after-integrity-error")
+        assert created.user_id == "usable-after-integrity-error"
+
+    @pytest.mark.asyncio
     async def test_create_profile_strict_tag_integrity_error_is_not_profile_duplicate(
         self, tmp_db_path
     ):
