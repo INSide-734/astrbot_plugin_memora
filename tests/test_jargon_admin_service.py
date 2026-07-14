@@ -70,6 +70,39 @@ def _install_commit_gate(
     return commit_entered, release_commit
 
 
+class _ReleaseOnContentionLock:
+    """测试锁：第二个等待者到达时释放 gated query read。"""
+
+    def __init__(self, release_query: asyncio.Event) -> None:
+        self._lock = asyncio.Lock()
+        self._release_query = release_query
+
+    async def __aenter__(self):
+        if self._lock.locked():
+            self._release_query.set()
+        await self._lock.acquire()
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback) -> None:
+        self._lock.release()
+
+
+async def _invoke_query_path(query: JargonQueryService, path: str) -> Any:
+    if path == "query":
+        return await query.query("灰度", "g1")
+    if path == "check_and_explain":
+        return await query.check_and_explain("采用灰度方案", "g1")
+    return await query.get_group_jargon("g1")
+
+
+def _assert_query_meaning(result: Any, path: str, expected: str) -> None:
+    if path == "check_and_explain":
+        assert isinstance(result, str)
+        assert expected in result
+        return
+    assert result[0]["meaning"] == expected
+
+
 @pytest.mark.asyncio
 async def test_store_exposes_strict_create_before_service_wiring(
     tmp_db_path: str,
@@ -1015,4 +1048,163 @@ async def test_invalidate_group_is_synchronous_and_exactly_scoped(
         assert query._cache.get("query:g10:term") == ["g10"]
         assert query._cache.get("group:other") == ["other"]
     finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    ["query", "check_and_explain", "get_group_jargon"],
+)
+async def test_query_first_cache_population_is_cleared_by_following_write(
+    tmp_db_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    store = await _store(tmp_db_path)
+    release_query = asyncio.Event()
+    db_read_complete = asyncio.Event()
+    try:
+        setup = _service_class()(store)
+        created = await _create(
+            setup,
+            meaning="old meaning",
+            is_jargon=True,
+            is_confirmed=True,
+        )
+        query = JargonQueryService(store)
+        read_method_name = "search" if path == "query" else "list_by_group"
+        original_read = getattr(store, read_method_name)
+
+        async def gated_read(*args, **kwargs):
+            result = await original_read(*args, **kwargs)
+            db_read_complete.set()
+            await release_query.wait()
+            return result
+
+        monkeypatch.setattr(store, read_method_name, gated_read)
+        store._write_lock = _ReleaseOnContentionLock(release_query)  # type: ignore[assignment]
+
+        query_task = asyncio.create_task(_invoke_query_path(query, path))
+        await db_read_complete.wait()
+
+        def invalidate_then_release(group_id: str) -> None:
+            query.invalidate_group(group_id)
+            release_query.set()
+
+        admin = _service_class()(store, invalidate_then_release)
+        await admin.update(
+            term="灰度",
+            group_id="g1",
+            changes={"meaning": "new meaning"},
+            expected_revision=admin.revision_for(created),
+        )
+        first_result = await query_task
+        _assert_query_meaning(first_result, path, "old meaning")
+
+        second_result = await _invoke_query_path(query, path)
+        _assert_query_meaning(second_result, path, "new meaning")
+    finally:
+        release_query.set()
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "outcome"),
+    [
+        ("query", "commit"),
+        ("query", "rollback"),
+        ("check_and_explain", "commit"),
+        ("check_and_explain", "rollback"),
+        ("get_group_jargon", "commit"),
+        ("get_group_jargon", "rollback"),
+    ],
+)
+async def test_query_cannot_read_inside_writer_transaction(
+    tmp_db_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    outcome: str,
+) -> None:
+    store = await _store(tmp_db_path)
+    release_writer = asyncio.Event()
+    update_executed = asyncio.Event()
+    query_started = asyncio.Event()
+    query_entered_read = asyncio.Event()
+    admin_task: asyncio.Task[JargonMeaning] | None = None
+    query_task: asyncio.Task[Any] | None = None
+    try:
+        setup = _service_class()(store)
+        created = await _create(
+            setup,
+            meaning="old meaning",
+            is_jargon=True,
+            is_confirmed=True,
+        )
+        original_execute = store._execute
+        original_fetch = store._fetch_one
+        fetch_count = 0
+
+        async def gated_execute(sql: str, params: tuple = ()):
+            result = await original_execute(sql, params)
+            if sql.startswith("UPDATE jargon_terms SET "):
+                update_executed.set()
+                await release_writer.wait()
+            return result
+
+        async def maybe_fail_readback(sql: str, params: tuple = ()):
+            nonlocal fetch_count
+            fetch_count += 1
+            if outcome == "rollback" and fetch_count == 2:
+                raise RuntimeError("force rollback")
+            return await original_fetch(sql, params)
+
+        read_method_name = "search" if path == "query" else "list_by_group"
+        original_read = getattr(store, read_method_name)
+
+        async def observed_read(*args, **kwargs):
+            query_entered_read.set()
+            return await original_read(*args, **kwargs)
+
+        monkeypatch.setattr(store, "_execute", gated_execute)
+        monkeypatch.setattr(store, "_fetch_one", maybe_fail_readback)
+        monkeypatch.setattr(store, read_method_name, observed_read)
+
+        admin = _service_class()(store)
+        admin_task = asyncio.create_task(
+            admin.update(
+                term="灰度",
+                group_id="g1",
+                changes={"meaning": "new meaning"},
+                expected_revision=admin.revision_for(created),
+            )
+        )
+        await update_executed.wait()
+
+        async def run_query() -> Any:
+            query_started.set()
+            return await _invoke_query_path(JargonQueryService(store), path)
+
+        query_task = asyncio.create_task(run_query())
+        await query_started.wait()
+        try:
+            assert query_entered_read.is_set() is False
+        finally:
+            release_writer.set()
+
+        if outcome == "commit":
+            await admin_task
+            expected = "new meaning"
+        else:
+            with pytest.raises(RuntimeError, match="force rollback"):
+                await admin_task
+            expected = "old meaning"
+        result = await query_task
+        _assert_query_meaning(result, path, expected)
+    finally:
+        release_writer.set()
+        pending = [task for task in (admin_task, query_task) if task is not None]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         await store.close()
