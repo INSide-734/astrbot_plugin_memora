@@ -1,9 +1,17 @@
 """测试 ProfileStore — user profiles and tags CRUD."""
 
+import asyncio
 import time
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from core.base.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    compute_entity_revision,
+)
 from core.models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
 from core.storage.profile_store import ProfileStore
 
@@ -295,3 +303,320 @@ class TestProfileStoreEdgeCases:
 
         page3, total = await store.list_profiles(limit=2, offset=4)
         assert len(page3) == 1
+
+
+class TestProfileStoreAtomicAdminCRUD:
+    """管理员画像写入必须严格、原子并执行修订版本检查。"""
+
+    @pytest.mark.asyncio
+    async def test_create_profile_strict_returns_complete_profile(self, tmp_db_path):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        preferences = UserPreferences(
+            reply_style="formal",
+            preferred_topics=["graphs"],
+            active_hours=[9, 10],
+        )
+        tag = UserTag(
+            category=TagCategory.INTEREST,
+            value="Python",
+            confidence=0.9,
+            source="client",
+            created_at=1.0,
+            last_seen_at=2.0,
+            occurrence_count=99,
+        )
+
+        profile = await store.create_profile_strict(
+            "strict-user",
+            display_name="Strict",
+            preferences=preferences,
+            tags=[tag],
+        )
+
+        assert profile.user_id == "strict-user"
+        assert profile.display_name == "Strict"
+        assert profile.preferences.to_dict() == preferences.to_dict()
+        assert len(profile.tags) == 1
+        assert profile.tags[0].source == "manual"
+        assert profile.tags[0].occurrence_count == 1
+        assert profile.tags[0].created_at == profile.tags[0].last_seen_at
+        assert profile.tags[0].created_at > 2.0
+        assert profile.first_seen_at == profile.last_seen_at
+        assert profile.created_at == profile.updated_at
+
+    @pytest.mark.asyncio
+    async def test_create_profile_strict_duplicate_preserves_existing(self, tmp_db_path):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "duplicate-user",
+            display_name="Remote",
+            tags=[_make_tag(value="remote-tag")],
+        )
+        before = await store.get_profile("duplicate-user")
+        assert before is not None
+
+        with pytest.raises(EntityAlreadyExistsError, match="用户画像已存在"):
+            await store.create_profile_strict(
+                "duplicate-user",
+                display_name="Local",
+                tags=[_make_tag(value="local-tag")],
+            )
+
+        after = await store.get_profile("duplicate-user")
+        assert after is not None
+        assert after.to_dict() == before.to_dict()
+
+    @pytest.mark.asyncio
+    async def test_create_profile_strict_rolls_back_tag_write_failure(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+
+        with patch.object(
+            store,
+            "_replace_tags_with_db",
+            new=AsyncMock(side_effect=RuntimeError("tag write failed")),
+            create=True,
+        ):
+            with pytest.raises(RuntimeError, match="tag write failed"):
+                await store.create_profile_strict(
+                    "atomic-create", tags=[_make_tag(value="tag")]
+                )
+
+        assert await store.get_profile("atomic-create") is None
+        created = await store.create_profile_strict("atomic-create")
+        assert created.user_id == "atomic-create"
+
+    @pytest.mark.asyncio
+    async def test_create_profile_strict_rolls_back_cancelled_tag_write(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+
+        with patch.object(
+            store,
+            "_replace_tags_with_db",
+            new=AsyncMock(side_effect=asyncio.CancelledError()),
+            create=True,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await store.create_profile_strict(
+                    "cancelled-create", tags=[_make_tag(value="tag")]
+                )
+
+        assert await store.get_profile("cancelled-create") is None
+        created = await store.create_profile_strict("cancelled-create")
+        assert created.user_id == "cancelled-create"
+
+    @pytest.mark.asyncio
+    async def test_replace_editable_fields_forces_manual_tag_metadata(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "replace-user",
+            display_name="Old",
+            tags=[_make_tag(value="old")],
+        )
+        current = await store.get_profile("replace-user")
+        assert current is not None
+
+        updated = await store.replace_editable_fields(
+            "replace-user",
+            display_name="New",
+            preferences=UserPreferences(
+                reply_style="formal",
+                preferred_topics=["databases"],
+                avoided_topics=["spoilers"],
+                active_hours=[8, 20],
+            ),
+            tags=[
+                UserTag(
+                    category=TagCategory.KNOWLEDGE,
+                    value="SQLite",
+                    confidence=0.95,
+                    source="untrusted",
+                    created_at=1.0,
+                    last_seen_at=2.0,
+                    occurrence_count=42,
+                )
+            ],
+            expected_revision=compute_entity_revision(current.to_dict()),
+        )
+
+        assert updated.display_name == "New"
+        assert updated.preferences.reply_style == "formal"
+        assert [tag.value for tag in updated.tags] == ["SQLite"]
+        assert updated.tags[0].source == "manual"
+        assert updated.tags[0].occurrence_count == 1
+        assert updated.tags[0].created_at == updated.tags[0].last_seen_at
+        assert updated.tags[0].created_at > 2.0
+
+    @pytest.mark.asyncio
+    async def test_replace_editable_fields_preserves_read_only_profile_state(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        profile = await store.create_profile_strict("preserved-user")
+        profile.total_messages = 17
+        profile.total_sessions = 4
+        profile.last_seen_at = profile.last_seen_at + 50
+        await store.update_profile(profile)
+        current = await store.get_profile("preserved-user")
+        assert current is not None
+        read_only = (
+            current.total_messages,
+            current.total_sessions,
+            current.first_seen_at,
+            current.last_seen_at,
+            current.created_at,
+        )
+
+        updated = await store.replace_editable_fields(
+            "preserved-user",
+            display_name="Editable",
+            preferences=UserPreferences(reply_style="concise"),
+            tags=[],
+            expected_revision=compute_entity_revision(current.to_dict()),
+        )
+
+        assert (
+            updated.total_messages,
+            updated.total_sessions,
+            updated.first_seen_at,
+            updated.last_seen_at,
+            updated.created_at,
+        ) == read_only
+        assert updated.updated_at >= current.updated_at
+
+    @pytest.mark.asyncio
+    async def test_replace_stale_revision_preserves_remote_entity_and_tags(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "stale-replace",
+            display_name="Remote",
+            tags=[_make_tag(value="remote")],
+        )
+        remote = await store.get_profile("stale-replace")
+        assert remote is not None
+
+        with pytest.raises(EditConflictError) as raised:
+            await store.replace_editable_fields(
+                "stale-replace",
+                display_name="Local",
+                preferences=UserPreferences(reply_style="local"),
+                tags=[_make_tag(value="local")],
+                expected_revision="stale",
+            )
+
+        after = await store.get_profile("stale-replace")
+        assert after is not None
+        assert after.to_dict() == remote.to_dict()
+        assert raised.value.current_entity == remote.to_dict()
+        assert raised.value.current_revision == compute_entity_revision(remote.to_dict())
+
+    @pytest.mark.asyncio
+    async def test_replace_missing_profile_raises_not_found(self, tmp_db_path):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+
+        with pytest.raises(EntityNotFoundError, match="画像不存在"):
+            await store.replace_editable_fields(
+                "missing",
+                display_name="Missing",
+                preferences=UserPreferences(),
+                tags=[],
+                expected_revision="revision",
+            )
+
+    @pytest.mark.asyncio
+    async def test_replace_tag_failure_rolls_back_profile_and_tags(self, tmp_db_path):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "replace-failure",
+            display_name="Remote",
+            tags=[_make_tag(value="remote")],
+        )
+        before = await store.get_profile("replace-failure")
+        assert before is not None
+
+        with patch.object(
+            store,
+            "_replace_tags_with_db",
+            new=AsyncMock(side_effect=RuntimeError("replacement failed")),
+        ):
+            with pytest.raises(RuntimeError, match="replacement failed"):
+                await store.replace_editable_fields(
+                    "replace-failure",
+                    display_name="Local",
+                    preferences=UserPreferences(reply_style="local"),
+                    tags=[_make_tag(value="local")],
+                    expected_revision=compute_entity_revision(before.to_dict()),
+                )
+
+        after = await store.get_profile("replace-failure")
+        assert after is not None
+        assert after.to_dict() == before.to_dict()
+
+    @pytest.mark.asyncio
+    async def test_delete_profile_if_revision_succeeds(self, tmp_db_path):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "delete-user", tags=[_make_tag(value="delete-me")]
+        )
+        current = await store.get_profile("delete-user")
+        assert current is not None
+
+        deleted = await store.delete_profile_if_revision(
+            "delete-user",
+            expected_revision=compute_entity_revision(current.to_dict()),
+        )
+
+        assert deleted is True
+        assert await store.get_profile("delete-user") is None
+
+    @pytest.mark.asyncio
+    async def test_delete_profile_if_revision_missing_raises_not_found(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+
+        with pytest.raises(EntityNotFoundError, match="画像不存在"):
+            await store.delete_profile_if_revision(
+                "missing", expected_revision="revision"
+            )
+
+    @pytest.mark.asyncio
+    async def test_delete_stale_revision_preserves_profile_and_tags(self, tmp_db_path):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "stale-delete",
+            display_name="Remote",
+            tags=[_make_tag(value="remote")],
+        )
+        remote = await store.get_profile("stale-delete")
+        assert remote is not None
+
+        with pytest.raises(EditConflictError) as raised:
+            await store.delete_profile_if_revision(
+                "stale-delete", expected_revision="stale"
+            )
+
+        after = await store.get_profile("stale-delete")
+        assert after is not None
+        assert after.to_dict() == remote.to_dict()
+        assert raised.value.current_entity == remote.to_dict()
+        assert raised.value.current_revision == compute_entity_revision(remote.to_dict())
