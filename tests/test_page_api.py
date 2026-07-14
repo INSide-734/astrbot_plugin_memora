@@ -1255,6 +1255,36 @@ class TestRegisterRoutes:
         assert metadata[f"{PAGE_API_PREFIX}/jargon/delete"]["risk"] == "destructive"
         assert metadata[f"{PAGE_API_PREFIX}/jargon/batch"]["risk"] == "write"
 
+    def test_affection_editing_routes_register_all_prefixes_with_expected_methods(self) -> None:
+        plugin = MagicMock()
+        api = PluginPageApi(plugin)
+
+        api.register_routes()
+
+        registered = {
+            (call.args[0], tuple(call.args[2])): call.args[1]
+            for call in plugin.context.register_web_api.call_args_list
+        }
+        handlers = {
+            "/affection/users": ("GET", api.list_affection_users),
+            "/affection/users/create": ("POST", api.create_affection_user),
+            "/affection/users/update": ("POST", api.update_affection_user),
+            "/affection/users/delete": ("POST", api.delete_affection_user),
+            "/affection/users/batch": ("POST", api.batch_affection_users),
+            "/affection/mood/set": ("POST", api.set_affection_mood),
+            "/affection/mood/reset": ("POST", api.reset_affection_mood),
+            "/affection/moods/history": ("GET", api.get_affection_mood_history),
+        }
+        for prefix in (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES):
+            for suffix, (method, handler) in handlers.items():
+                assert registered[(f"{prefix}{suffix}", (method,))] == handler
+                other_method = "POST" if method == "GET" else "GET"
+                assert (f"{prefix}{suffix}", (other_method,)) not in registered
+
+        metadata = {item["path"]: item for item in api.get_route_metadata()}
+        assert metadata[f"{PAGE_API_PREFIX}/affection/users/delete"]["risk"] == "destructive"
+        assert metadata[f"{PAGE_API_PREFIX}/affection/mood/reset"]["write_guard"] is True
+
     def test_route_metadata_declares_risk_auth_and_guards_for_post_routes(self) -> None:
         """Plugin-side route metadata is available for audit and frontend contracts."""
         plugin = MagicMock()

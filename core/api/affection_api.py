@@ -2,12 +2,40 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from astrbot.api import logger
 from quart import request
 
+from ..affection.models import MoodType
+from ..base.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    EntityValidationError,
+)
+from .editing_utils import (
+    bounded_int,
+    conflict_error,
+    entity_ok,
+    finite_float,
+    reject_unknown_fields,
+    require_object,
+    required_text,
+)
 from .response_utils import error_response, ok_response
+
+
+_CREATE_FIELDS = frozenset({"group_id", "user_id", "score"})
+_UPDATE_FIELDS = frozenset({"identity", "changes", "expected_revision"})
+_DELETE_FIELDS = frozenset({"identity", "expected_revision"})
+_IDENTITY_FIELDS = frozenset({"group_id", "user_id"})
+_EDITABLE_FIELDS = frozenset({"score"})
+_BATCH_FIELDS = frozenset({"action", "items", "params"})
+_BATCH_ACTIONS = frozenset({"delete", "set_score"})
+_MAX_BATCH_ITEMS = 100
+_MAX_PAGE_SIZE = 100
 
 
 def _affection_user_to_dict(user: Any) -> dict[str, Any]:
@@ -29,6 +57,8 @@ def _mood_to_dict(mood: Any) -> dict[str, Any]:
         "mood_type": getattr(mood, "mood_type", None).value if hasattr(getattr(mood, "mood_type", None), "value") else str(getattr(mood, "mood_type", "NEUTRAL")),
         "intensity": getattr(mood, "intensity", 0.0),
         "description": getattr(mood, "description", ""),
+        "start_time": getattr(mood, "start_time", 0.0),
+        "duration_hours": getattr(mood, "duration_hours", 4.0),
         "is_active": getattr(mood, "is_active", lambda: False)() if callable(getattr(mood, "is_active", None)) else False,
     }
 
@@ -45,6 +75,96 @@ def _safe_mood_to_dict(mood: Any) -> dict[str, Any] | None:
         return _mood_to_dict(mood)
     except Exception:
         return None
+
+
+def _validation_error(exc: EntityValidationError) -> dict[str, Any]:
+    return error_response(
+        "好感度校验失败",
+        code="validation_error",
+        field_errors=exc.field_errors,
+    )
+
+
+def _component_unavailable() -> dict[str, Any]:
+    return error_response("好感度管理器不可用", code="component_unavailable")
+
+
+def _exception_response(exc: Exception, *, operation: str) -> dict[str, Any]:
+    if isinstance(exc, EntityValidationError):
+        return _validation_error(exc)
+    if isinstance(exc, EntityAlreadyExistsError):
+        return error_response("好感度记录已存在", code="already_exists")
+    if isinstance(exc, EntityNotFoundError):
+        return error_response("好感度记录不存在", code="not_found")
+    if isinstance(exc, EditConflictError):
+        return conflict_error(
+            exc.current_entity,
+            current_revision=exc.current_revision,
+        )
+    logger.error(
+        "[好感度 API] action=%s error_class=%s",
+        operation,
+        type(exc).__name__,
+    )
+    return error_response("好感度操作失败", code="internal_error")
+
+
+def _parse_identity(value: Any) -> tuple[dict[str, str] | None, dict | None]:
+    identity, error = require_object(value)
+    if error:
+        return None, error
+    unknown = reject_unknown_fields(identity, _IDENTITY_FIELDS)
+    if unknown:
+        return None, unknown
+    try:
+        return {
+            "group_id": required_text(identity.get("group_id"), field="identity.group_id"),
+            "user_id": required_text(identity.get("user_id"), field="identity.user_id"),
+        }, None
+    except EntityValidationError as exc:
+        return None, _validation_error(exc)
+
+
+def _parse_revision(value: Any) -> tuple[str | None, dict | None]:
+    try:
+        return required_text(value, field="expected_revision", maximum=256), None
+    except EntityValidationError as exc:
+        return None, _validation_error(exc)
+
+
+def _parse_query_int(
+    value: Any,
+    *,
+    field: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> tuple[int | None, dict | None]:
+    if value is None or value == "":
+        return default, None
+    try:
+        return bounded_int(int(value), field=field, minimum=minimum, maximum=maximum), None
+    except (TypeError, ValueError):
+        return None, _validation_error(EntityValidationError({field: "必须为整数"}))
+    except EntityValidationError as exc:
+        return None, _validation_error(exc)
+
+
+def _batch_failure(identity: Mapping[str, Any], error: Mapping[str, Any]) -> dict[str, Any]:
+    failure: dict[str, Any] = {
+        "identity": dict(identity),
+        "code": error.get("code", "internal_error"),
+        "message": error.get("message", "好感度操作失败"),
+    }
+    if error.get("field_errors"):
+        failure["field_errors"] = dict(error["field_errors"])
+    data = error.get("data")
+    if isinstance(data, Mapping):
+        if isinstance(data.get("current_entity"), Mapping):
+            failure["current_entity"] = dict(data["current_entity"])
+        if data.get("current_revision") is not None:
+            failure["current_revision"] = data["current_revision"]
+    return failure
 
 
 class AffectionApiMixin:
@@ -170,6 +290,358 @@ class AffectionApiMixin:
         except Exception as e:
             logger.error(f"[AffectionApi] 获取好感度状态失败: {e}", exc_info=True)
             return error_response(f"获取好感度状态失败: {e}")
+
+    async def list_affection_users(self):
+        manager = self._get_affection_manager()
+        if manager is None:
+            return _component_unavailable()
+        try:
+            group_id = required_text(request.args.get("group_id"), field="group_id")
+            limit, error = _parse_query_int(
+                request.args.get("limit"),
+                field="limit",
+                default=50,
+                minimum=1,
+                maximum=_MAX_PAGE_SIZE,
+            )
+            if error:
+                return error
+            offset, error = _parse_query_int(
+                request.args.get("offset"),
+                field="offset",
+                default=0,
+                minimum=0,
+                maximum=1_000_000,
+            )
+            if error:
+                return error
+            users, total = await manager.list_user_affections(group_id, limit, offset)
+            serialized = []
+            for user in users:
+                entity = _safe_affection_user_to_dict(user)
+                if entity is None:
+                    continue
+                entity["revision"] = manager.revision_for_affection(user)
+                serialized.append(entity)
+            return ok_response(
+                {
+                    "group_id": group_id,
+                    "users": serialized,
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                }
+            )
+        except Exception as exc:
+            return _exception_response(exc, operation="list_users")
+
+    async def create_affection_user(self):
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        try:
+            payload, error = require_object(await request.get_json(silent=True))
+            if error:
+                return error
+            unknown = reject_unknown_fields(payload, _CREATE_FIELDS)
+            if unknown:
+                return unknown
+            group_id = required_text(payload.get("group_id"), field="group_id")
+            user_id = required_text(payload.get("user_id"), field="user_id")
+            score = bounded_int(payload.get("score"), field="score", minimum=-100, maximum=100)
+            manager = self._get_affection_manager()
+            if manager is None:
+                return _component_unavailable()
+            user = await manager.create_user_affection_manual(group_id, user_id, score)
+            logger.info(
+                "[好感度 API] action=create group_id=%s user_id=%s",
+                group_id,
+                user_id,
+            )
+            return entity_ok(
+                _affection_user_to_dict(user),
+                revision=manager.revision_for_affection(user),
+            )
+        except Exception as exc:
+            return _exception_response(exc, operation="create")
+
+    async def update_affection_user(self):
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        try:
+            payload, error = require_object(await request.get_json(silent=True))
+            if error:
+                return error
+            unknown = reject_unknown_fields(payload, _UPDATE_FIELDS)
+            if unknown:
+                return unknown
+            identity, error = _parse_identity(payload.get("identity"))
+            if error:
+                return error
+            changes, error = require_object(payload.get("changes"))
+            if error:
+                return error
+            unknown = reject_unknown_fields(changes, _EDITABLE_FIELDS)
+            if unknown:
+                return unknown
+            score = bounded_int(changes.get("score"), field="changes.score", minimum=-100, maximum=100)
+            revision, error = _parse_revision(payload.get("expected_revision"))
+            if error:
+                return error
+            manager = self._get_affection_manager()
+            if manager is None:
+                return _component_unavailable()
+            user = await manager.update_user_affection_manual(
+                identity["group_id"],
+                identity["user_id"],
+                score,
+                expected_revision=revision,
+            )
+            logger.info(
+                "[好感度 API] action=update group_id=%s user_id=%s",
+                identity["group_id"],
+                identity["user_id"],
+            )
+            return entity_ok(
+                _affection_user_to_dict(user),
+                revision=manager.revision_for_affection(user),
+            )
+        except Exception as exc:
+            return _exception_response(exc, operation="update")
+
+    async def delete_affection_user(self):
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        try:
+            payload, error = require_object(await request.get_json(silent=True))
+            if error:
+                return error
+            unknown = reject_unknown_fields(payload, _DELETE_FIELDS)
+            if unknown:
+                return unknown
+            identity, error = _parse_identity(payload.get("identity"))
+            if error:
+                return error
+            revision, error = _parse_revision(payload.get("expected_revision"))
+            if error:
+                return error
+            manager = self._get_affection_manager()
+            if manager is None:
+                return _component_unavailable()
+            deleted = await manager.delete_user_affection_manual(
+                identity["group_id"],
+                identity["user_id"],
+                expected_revision=revision,
+            )
+            if not deleted:
+                raise EntityNotFoundError("好感度记录不存在")
+            logger.info(
+                "[好感度 API] action=delete group_id=%s user_id=%s",
+                identity["group_id"],
+                identity["user_id"],
+            )
+            return ok_response({"deleted": True, "identity": identity})
+        except Exception as exc:
+            return _exception_response(exc, operation="delete")
+
+    async def batch_affection_users(self):
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        try:
+            payload, error = require_object(await request.get_json(silent=True))
+            if error:
+                return error
+            unknown = reject_unknown_fields(payload, _BATCH_FIELDS)
+            if unknown:
+                return unknown
+            action = required_text(payload.get("action"), field="action")
+            if action not in _BATCH_ACTIONS:
+                raise EntityValidationError({"action": "仅支持 delete 或 set_score"})
+            items = payload.get("items")
+            if not isinstance(items, list) or not 1 <= len(items) <= _MAX_BATCH_ITEMS:
+                raise EntityValidationError({"items": "项目数量必须在 1 到 100 之间"})
+            params, error = require_object(payload.get("params", {}))
+            if error:
+                return error
+            allowed_params = frozenset() if action == "delete" else frozenset({"score"})
+            unknown = reject_unknown_fields(params, allowed_params)
+            if unknown:
+                return unknown
+            score = None
+            if action == "set_score":
+                score = bounded_int(params.get("score"), field="params.score", minimum=-100, maximum=100)
+            manager = self._get_affection_manager()
+            if manager is None:
+                return _component_unavailable()
+            succeeded_ids: list[dict[str, str]] = []
+            failures: list[dict[str, Any]] = []
+            for index, item in enumerate(items):
+                identity_ref: dict[str, Any] = {"item_index": index}
+                identity, item_error = _parse_identity(
+                    item.get("identity") if isinstance(item, Mapping) else None
+                )
+                if identity is not None:
+                    identity_ref = identity
+                if item_error:
+                    failures.append(_batch_failure(identity_ref, item_error))
+                    continue
+                revision, revision_error = _parse_revision(item.get("expected_revision"))
+                if revision_error:
+                    failures.append(_batch_failure(identity_ref, revision_error))
+                    continue
+                try:
+                    if action == "delete":
+                        deleted = await manager.delete_user_affection_manual(
+                            identity["group_id"],
+                            identity["user_id"],
+                            expected_revision=revision,
+                        )
+                        if not deleted:
+                            raise EntityNotFoundError("好感度记录不存在")
+                    else:
+                        await manager.update_user_affection_manual(
+                            identity["group_id"],
+                            identity["user_id"],
+                            score,
+                            expected_revision=revision,
+                        )
+                    succeeded_ids.append(identity)
+                    logger.info(
+                        "[好感度 API] action=batch_%s group_id=%s user_id=%s",
+                        action,
+                        identity["group_id"],
+                        identity["user_id"],
+                    )
+                except Exception as exc:
+                    failures.append(
+                        _batch_failure(
+                            identity_ref,
+                            _exception_response(exc, operation=f"batch_{action}_item"),
+                        )
+                    )
+            logger.info(
+                "[好感度 API] action=batch_%s succeeded_count=%s failed_count=%s",
+                action,
+                len(succeeded_ids),
+                len(failures),
+            )
+            return ok_response(
+                {
+                    "total": len(items),
+                    "succeeded_count": len(succeeded_ids),
+                    "failed_count": len(failures),
+                    "succeeded_ids": succeeded_ids,
+                    "failures": failures,
+                }
+            )
+        except Exception as exc:
+            return _exception_response(exc, operation="batch")
+
+    async def set_affection_mood(self):
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        try:
+            payload, error = require_object(await request.get_json(silent=True))
+            if error:
+                return error
+            unknown = reject_unknown_fields(
+                payload,
+                frozenset({"group_id", "mood_type", "intensity", "duration_hours", "description"}),
+            )
+            if unknown:
+                return unknown
+            group_id = required_text(payload.get("group_id"), field="group_id")
+            errors: dict[str, str] = {}
+            raw_mood_type = payload.get("mood_type")
+            try:
+                mood_type = MoodType(required_text(raw_mood_type, field="mood_type"))
+            except (EntityValidationError, ValueError):
+                errors["mood_type"] = "不支持的情绪类型"
+                mood_type = None
+            try:
+                intensity = finite_float(payload.get("intensity"), field="intensity")
+            except EntityValidationError as exc:
+                errors.update(exc.field_errors)
+                intensity = None
+            try:
+                duration_hours = finite_float(
+                    payload.get("duration_hours"), field="duration_hours"
+                )
+            except EntityValidationError as exc:
+                errors.update(exc.field_errors)
+                duration_hours = None
+            description = payload.get("description")
+            if description is not None and not isinstance(description, str):
+                errors["description"] = "必须为字符串"
+            if errors:
+                raise EntityValidationError(errors)
+            manager = self._get_affection_manager()
+            if manager is None:
+                return _component_unavailable()
+            mood = await manager.set_mood(
+                group_id,
+                mood_type,
+                intensity,
+                duration_hours,
+                description,
+            )
+            logger.info("[好感度 API] action=set_mood group_id=%s", group_id)
+            return ok_response(_mood_to_dict(mood))
+        except Exception as exc:
+            return _exception_response(exc, operation="set_mood")
+
+    async def reset_affection_mood(self):
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        try:
+            payload, error = require_object(await request.get_json(silent=True))
+            if error:
+                return error
+            unknown = reject_unknown_fields(payload, frozenset({"group_id"}))
+            if unknown:
+                return unknown
+            group_id = required_text(payload.get("group_id"), field="group_id")
+            manager = self._get_affection_manager()
+            if manager is None:
+                return _component_unavailable()
+            mood = await manager.reset_mood(group_id)
+            logger.info("[好感度 API] action=reset_mood group_id=%s", group_id)
+            return ok_response(_mood_to_dict(mood))
+        except Exception as exc:
+            return _exception_response(exc, operation="reset_mood")
+
+    async def get_affection_mood_history(self):
+        manager = self._get_affection_manager()
+        if manager is None:
+            return _component_unavailable()
+        try:
+            group_id = required_text(request.args.get("group_id"), field="group_id")
+            limit, error = _parse_query_int(
+                request.args.get("limit"),
+                field="limit",
+                default=20,
+                minimum=1,
+                maximum=_MAX_PAGE_SIZE,
+            )
+            if error:
+                return error
+            history = await manager.get_mood_history(group_id, limit)
+            return ok_response(
+                {
+                    "group_id": group_id,
+                    "limit": limit,
+                    "history": [
+                        item for mood in history if (item := _safe_mood_to_dict(mood)) is not None
+                    ],
+                }
+            )
+        except Exception as exc:
+            return _exception_response(exc, operation="mood_history")
 
 
 __all__ = ["AffectionApiMixin"]

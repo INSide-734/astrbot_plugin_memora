@@ -211,3 +211,42 @@ def test_jargon_write_contract_is_post_only_under_every_page_prefix() -> None:
         "batch_jargon",
     ):
         assert callable(getattr(api, method_name))
+
+
+def test_affection_editing_contract_uses_read_only_history_and_post_only_mutations() -> None:
+    plugin = MagicMock()
+    api = PluginPageApi(plugin)
+    api.register_routes()
+
+    registered = {
+        (call.args[0], tuple(call.args[2]))
+        for call in plugin.context.register_web_api.call_args_list
+    }
+    get_routes = ("/affection/users", "/affection/moods/history")
+    post_routes = (
+        "/affection/users/create",
+        "/affection/users/update",
+        "/affection/users/delete",
+        "/affection/users/batch",
+        "/affection/mood/set",
+        "/affection/mood/reset",
+    )
+    for prefix in (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES):
+        for suffix in get_routes:
+            assert (f"{prefix}{suffix}", ("GET",)) in registered
+            assert (f"{prefix}{suffix}", ("POST",)) not in registered
+        for suffix in post_routes:
+            assert (f"{prefix}{suffix}", ("POST",)) in registered
+            assert (f"{prefix}{suffix}", ("GET",)) not in registered
+
+    for method_name in (
+        "list_affection_users",
+        "create_affection_user",
+        "update_affection_user",
+        "delete_affection_user",
+        "batch_affection_users",
+        "set_affection_mood",
+        "reset_affection_mood",
+        "get_affection_mood_history",
+    ):
+        assert callable(getattr(api, method_name))
