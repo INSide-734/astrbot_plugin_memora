@@ -198,14 +198,21 @@ class JargonQueryService:
             logger.debug("[JargonQuery] 已清除全部缓存")
             return
 
-        # 清除特定群组相关缓存
-        keys_to_remove = []
-        for key in list(self._cache._store.keys()):
-            if group_id in key:
-                keys_to_remove.append(key)
-        for key in keys_to_remove:
-            del self._cache._store[key]
+        self.invalidate_group(group_id)
         logger.debug(f"[JargonQuery] 已清除群 {group_id} 缓存")
+
+    def invalidate_group(self, group_id: str) -> None:
+        """同步清除且仅清除指定群组的所有查询缓存。"""
+
+        prefixes = (f"query:{group_id}:", f"explain:{group_id}:")
+        exact = f"group:{group_id}"
+        keys = [
+            key
+            for key in self._cache._store
+            if key == exact or key.startswith(prefixes)
+        ]
+        for key in keys:
+            self._cache._store.pop(key, None)
 
     # ------------------------------------------------------------------
     # 内部方法
