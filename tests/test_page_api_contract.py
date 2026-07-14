@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from core.page_api import PAGE_API_PREFIX, PluginPageApi
+from core.page_api import PAGE_API_ALIAS_PREFIXES, PAGE_API_PREFIX, PluginPageApi
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DASHBOARD_SRC = REPO_ROOT / "pages" / "dashboard" / "src"
@@ -148,3 +148,23 @@ def test_dashboard_critical_system_endpoints_are_covered() -> None:
         "Critical dashboard endpoints were not detected in frontend source:\n"
         + "\n".join(missing)
     )
+
+
+def test_social_write_contract_is_post_only_under_every_page_prefix() -> None:
+    plugin = MagicMock()
+    api = PluginPageApi(plugin)
+    api.register_routes()
+
+    registered = {
+        (call.args[0], tuple(call.args[2]))
+        for call in plugin.context.register_web_api.call_args_list
+    }
+    for prefix in (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES):
+        for suffix in (
+            "/social/create",
+            "/social/update",
+            "/social/delete",
+            "/social/batch",
+        ):
+            assert (f"{prefix}{suffix}", ("POST",)) in registered
+            assert (f"{prefix}{suffix}", ("GET",)) not in registered
