@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -26,6 +27,45 @@ def _make_tag(category=TagCategory.INTEREST, value="编程", confidence=0.8):
         last_seen_at=time.time(),
         occurrence_count=1,
     )
+
+
+class _FatalProfileStoreError(BaseException):
+    """用于验证非取消 fatal 异常回滚的测试异常。"""
+
+
+class _RollbackTrackingConnection:
+    """委托给真实连接，同时记录回滚并可在画像删除前注入故障。"""
+
+    def __init__(self, db, *, delete_failure=None):
+        self._db = db
+        self._delete_failure = delete_failure
+        self.rollback_calls = 0
+
+    async def execute(self, sql, *args, **kwargs):
+        normalized_sql = " ".join(sql.split()).upper()
+        if self._delete_failure is not None and normalized_sql.startswith(
+            "DELETE FROM USER_PROFILES"
+        ):
+            raise self._delete_failure
+        return await self._db.execute(sql, *args, **kwargs)
+
+    async def rollback(self):
+        self.rollback_calls += 1
+        return await self._db.rollback()
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+
+@asynccontextmanager
+async def _tracked_connection(original_connect, trackers, *, delete_failure=None):
+    async with original_connect() as db:
+        tracker = _RollbackTrackingConnection(
+            db,
+            delete_failure=delete_failure,
+        )
+        trackers.append(tracker)
+        yield tracker
 
 
 class TestProfileStoreCRUD:
@@ -620,3 +660,110 @@ class TestProfileStoreAtomicAdminCRUD:
         assert after.to_dict() == remote.to_dict()
         assert raised.value.current_entity == remote.to_dict()
         assert raised.value.current_revision == compute_entity_revision(remote.to_dict())
+
+    @pytest.mark.asyncio
+    async def test_replace_rolls_back_non_cancellation_base_exception(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "fatal-replace",
+            display_name="Remote",
+            tags=[_make_tag(value="remote-tag")],
+        )
+        before = await store.get_profile("fatal-replace")
+        assert before is not None
+
+        failure = _FatalProfileStoreError("fatal tag replacement")
+        trackers = []
+        original_connect = store._connect
+
+        def tracked_connect():
+            return _tracked_connection(original_connect, trackers)
+
+        async def fail_during_tag_replacement(db, user_id, tags, now):
+            await db.execute(
+                "DELETE FROM user_tags WHERE user_id = ?",
+                (user_id,),
+            )
+            raise failure
+
+        with (
+            patch.object(store, "_connect", new=tracked_connect),
+            patch.object(
+                store,
+                "_replace_tags_with_db",
+                new=fail_during_tag_replacement,
+            ),
+        ):
+            with pytest.raises(_FatalProfileStoreError) as raised:
+                await store.replace_editable_fields(
+                    "fatal-replace",
+                    display_name="Local",
+                    preferences=UserPreferences(reply_style="formal"),
+                    tags=[_make_tag(value="local-tag")],
+                    expected_revision=compute_entity_revision(before.to_dict()),
+                )
+
+        assert raised.value is failure
+        assert len(trackers) == 1
+        assert trackers[0].rollback_calls == 1
+        after = await store.get_profile("fatal-replace")
+        assert after is not None
+        assert after.to_dict() == before.to_dict()
+
+        recovered = await store.replace_editable_fields(
+            "fatal-replace",
+            display_name="Recovered",
+            preferences=UserPreferences(reply_style="concise"),
+            tags=[_make_tag(value="recovered-tag")],
+            expected_revision=compute_entity_revision(after.to_dict()),
+        )
+        assert recovered.display_name == "Recovered"
+        assert [tag.value for tag in recovered.tags] == ["recovered-tag"]
+
+    @pytest.mark.asyncio
+    async def test_delete_rolls_back_non_cancellation_base_exception(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+        await store.create_profile_strict(
+            "fatal-delete",
+            display_name="Remote",
+            tags=[_make_tag(value="remote-tag")],
+        )
+        before = await store.get_profile("fatal-delete")
+        assert before is not None
+
+        failure = _FatalProfileStoreError("fatal profile deletion")
+        trackers = []
+        original_connect = store._connect
+
+        def tracked_connect():
+            return _tracked_connection(
+                original_connect,
+                trackers,
+                delete_failure=failure,
+            )
+
+        with patch.object(store, "_connect", new=tracked_connect):
+            with pytest.raises(_FatalProfileStoreError) as raised:
+                await store.delete_profile_if_revision(
+                    "fatal-delete",
+                    expected_revision=compute_entity_revision(before.to_dict()),
+                )
+
+        assert raised.value is failure
+        assert len(trackers) == 1
+        assert trackers[0].rollback_calls == 1
+        after = await store.get_profile("fatal-delete")
+        assert after is not None
+        assert after.to_dict() == before.to_dict()
+
+        assert await store.delete_profile_if_revision(
+            "fatal-delete",
+            expected_revision=compute_entity_revision(after.to_dict()),
+        )
+        assert await store.get_profile("fatal-delete") is None
