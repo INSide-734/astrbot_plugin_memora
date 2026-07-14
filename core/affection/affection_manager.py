@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
 import random
 import time
 from typing import Any, Protocol
 
 from astrbot.api import logger
 
+from ..base.entity_editing import EntityValidationError, compute_entity_revision
 from .models import (
     AffectionLevel,
     BotMood,
@@ -161,6 +164,7 @@ class AffectionManager:
 
         # 内存中的情绪缓存：group_id -> BotMood
         self._mood_cache: dict[str, BotMood] = {}
+        self._mood_lock = asyncio.Lock()
 
     # ---- 对外 API --------------------------------------------------------------------
 
@@ -249,26 +253,140 @@ class AffectionManager:
 
     async def set_mood(
         self,
-        group_id: str,
-        mood_type: MoodType,
-        intensity: float = 0.5,
-        duration_hours: float = 4.0,
+        group_id: Any,
+        mood_type: Any,
+        intensity: Any = 0.5,
+        duration_hours: Any = 4.0,
+        description: Any = None,
     ) -> BotMood:
         """显式设置某个群组的 Bot 情绪。"""
-        description = _random_mood_description(mood_type)
-        mood = BotMood(
-            mood_type=mood_type,
-            intensity=max(0.1, min(1.0, intensity)),
-            description=description,
-            start_time=time.time(),
-            duration_hours=duration_hours,
+        normalized_group_id = self._normalize_identity(group_id, "group_id")
+        errors: dict[str, str] = {}
+        if not isinstance(mood_type, MoodType):
+            errors["mood_type"] = "不支持的情绪类型"
+        normalized_intensity = self._normalize_finite_float(
+            intensity, "intensity", errors
         )
-        await self._store.save_bot_mood(
-            group_id, mood_type.value, mood.intensity,
-            mood.description, mood.duration_hours,
+        normalized_duration = self._normalize_finite_float(
+            duration_hours, "duration_hours", errors
         )
-        self._mood_cache[group_id] = mood
-        return mood
+        if description is not None and not isinstance(description, str):
+            errors["description"] = "必须为字符串"
+        if errors:
+            raise EntityValidationError(errors)
+
+        resolved_description = (
+            description.strip()
+            if isinstance(description, str) and description.strip()
+            else _random_mood_description(mood_type)
+        )
+        resolved_intensity = max(0.1, min(1.0, normalized_intensity))
+        resolved_duration = max(0.25, min(168.0, normalized_duration))
+        async with self._mood_lock:
+            mood = BotMood(
+                mood_type=mood_type,
+                intensity=resolved_intensity,
+                description=resolved_description,
+                start_time=time.time(),
+                duration_hours=resolved_duration,
+            )
+            await self._store.save_bot_mood(
+                normalized_group_id,
+                mood_type.value,
+                mood.intensity,
+                mood.description,
+                mood.duration_hours,
+            )
+            self._mood_cache[normalized_group_id] = mood
+            return mood
+
+    async def reset_mood(self, group_id: Any) -> BotMood:
+        """将群组情绪重置为默认平静状态，并保留一条新的历史记录。"""
+        return await self.set_mood(
+            group_id,
+            self.DEFAULT_MOOD,
+            self.DEFAULT_INTENSITY,
+        )
+
+    async def get_mood_history(self, group_id: Any, limit: Any = 20) -> list[BotMood]:
+        """返回按最新优先排序的已持久化情绪历史。"""
+        normalized_group_id = self._normalize_identity(group_id, "group_id")
+        normalized_limit = self._normalize_pagination(limit, "limit", minimum=1)
+        records = await self._store.get_mood_history(
+            normalized_group_id, limit=normalized_limit
+        )
+        return [self._mood_from_record(record) for record in records]
+
+    @staticmethod
+    def revision_for_affection(value: UserAffection) -> str:
+        """返回完整持久化好感度字段的规范修订版本。"""
+        return compute_entity_revision(
+            {
+                "user_id": value.user_id,
+                "group_id": value.group_id,
+                "affection_score": value.affection_score,
+                "interaction_count": value.interaction_count,
+                "last_interaction": value.last_interaction,
+            }
+        )
+
+    async def create_user_affection_manual(
+        self, group_id: Any, user_id: Any, score: Any
+    ) -> UserAffection:
+        """创建管理员好感度记录，初始互动字段保持为零。"""
+        normalized_group_id = self._normalize_identity(group_id, "group_id")
+        normalized_user_id = self._normalize_identity(user_id, "user_id")
+        normalized_score = self._normalize_score(score)
+        record = await self._store.create_affection_strict(
+            normalized_group_id, normalized_user_id, normalized_score
+        )
+        return self._affection_from_record(record)
+
+    async def update_user_affection_manual(
+        self,
+        group_id: Any,
+        user_id: Any,
+        score: Any,
+        *,
+        expected_revision: Any,
+    ) -> UserAffection:
+        """按修订版本只更新管理员可写的好感度分数。"""
+        normalized_group_id = self._normalize_identity(group_id, "group_id")
+        normalized_user_id = self._normalize_identity(user_id, "user_id")
+        normalized_score = self._normalize_score(score)
+        normalized_revision = self._normalize_revision(expected_revision)
+        record = await self._store.update_affection_if_revision(
+            normalized_group_id,
+            normalized_user_id,
+            normalized_score,
+            expected_revision=normalized_revision,
+        )
+        return self._affection_from_record(record)
+
+    async def delete_user_affection_manual(
+        self, group_id: Any, user_id: Any, *, expected_revision: Any
+    ) -> bool:
+        """按修订版本删除管理员好感度记录。"""
+        normalized_group_id = self._normalize_identity(group_id, "group_id")
+        normalized_user_id = self._normalize_identity(user_id, "user_id")
+        normalized_revision = self._normalize_revision(expected_revision)
+        return await self._store.delete_affection_if_revision(
+            normalized_group_id,
+            normalized_user_id,
+            expected_revision=normalized_revision,
+        )
+
+    async def list_user_affections(
+        self, group_id: Any, limit: Any = 50, offset: Any = 0
+    ) -> tuple[list[UserAffection], int]:
+        """分页列出群组用户好感度，使用稳定的存储排序。"""
+        normalized_group_id = self._normalize_identity(group_id, "group_id")
+        normalized_limit = self._normalize_pagination(limit, "limit", minimum=1)
+        normalized_offset = self._normalize_pagination(offset, "offset", minimum=0)
+        records, total = await self._store.list_affections(
+            normalized_group_id, normalized_limit, normalized_offset
+        )
+        return [self._affection_from_record(record) for record in records], total
 
     async def get_group_affection_status(self, group_id: str) -> dict[str, Any]:
         """获取群组级别的好感度与情绪概览。"""
@@ -294,6 +412,10 @@ class AffectionManager:
         record = await self._store.get_affection(group_id, user_id)
         if record is None:
             return None
+        return self._affection_from_record(record)
+
+    @staticmethod
+    def _affection_from_record(record: dict[str, Any]) -> UserAffection:
         return UserAffection(
             user_id=record["user_id"],
             group_id=record["group_id"],
@@ -301,6 +423,80 @@ class AffectionManager:
             interaction_count=record["interaction_count"],
             last_interaction=record["last_interaction"],
         )
+
+    @staticmethod
+    def _mood_from_record(record: dict[str, Any]) -> BotMood:
+        return BotMood(
+            mood_type=MoodType(record["mood_type"]),
+            intensity=record["intensity"],
+            description=record["description"],
+            start_time=record["start_time"],
+            duration_hours=record["duration_hours"],
+        )
+
+    @staticmethod
+    def _normalize_identity(value: Any, field: str) -> str:
+        if not isinstance(value, str):
+            raise EntityValidationError({field: "必须为字符串"})
+        normalized = value.strip()
+        if not normalized:
+            raise EntityValidationError({field: "不能为空"})
+        if len(normalized) > 128:
+            raise EntityValidationError({field: "文本过长"})
+        return normalized
+
+    def _normalize_score(self, value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise EntityValidationError({"score": "必须为整数"})
+        if not self._min_affection <= value <= self._max_affection:
+            raise EntityValidationError(
+                {
+                    "score": "必须在 "
+                    + str(self._min_affection)
+                    + " 到 "
+                    + str(self._max_affection)
+                    + " 之间"
+                }
+            )
+        return value
+
+    @staticmethod
+    def _normalize_revision(value: Any) -> str:
+        if not isinstance(value, str):
+            raise EntityValidationError({"expected_revision": "必须为字符串"})
+        normalized = value.strip()
+        if not normalized:
+            raise EntityValidationError({"expected_revision": "不能为空"})
+        if len(normalized) > 256:
+            raise EntityValidationError({"expected_revision": "文本过长"})
+        return normalized
+
+    @staticmethod
+    def _normalize_finite_float(
+        value: Any, field: str, errors: dict[str, str]
+    ) -> float:
+        if isinstance(value, bool):
+            errors[field] = "必须为数字"
+            return 0.0
+        try:
+            normalized = float(value)
+        except (TypeError, ValueError):
+            errors[field] = "必须为数字"
+            return 0.0
+        if not math.isfinite(normalized):
+            errors[field] = "必须为有限数字"
+        return normalized
+
+    @staticmethod
+    def _normalize_pagination(value: Any, field: str, *, minimum: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise EntityValidationError({field: "必须为整数"})
+        maximum = 100 if field == "limit" else 100000
+        if not minimum <= value <= maximum:
+            raise EntityValidationError(
+                {field: "必须在 " + str(minimum) + " 到 " + str(maximum) + " 之间"}
+            )
+        return value
 
     # ---- 内部：情绪生命周期 ------------------------------------------------------
 
@@ -314,13 +510,7 @@ class AffectionManager:
         # 尝试从存储层读取
         record = await self._store.get_active_mood(group_id)
         if record:
-            mood = BotMood(
-                mood_type=MoodType(record["mood_type"]),
-                intensity=record["intensity"],
-                description=record["description"],
-                start_time=record["start_time"],
-                duration_hours=record["duration_hours"],
-            )
+            mood = self._mood_from_record(record)
             if mood.is_active():
                 self._mood_cache[group_id] = mood
                 return mood

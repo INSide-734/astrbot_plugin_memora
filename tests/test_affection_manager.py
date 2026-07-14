@@ -7,11 +7,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
 import time
 from unittest.mock import AsyncMock
 
+import aiosqlite
 import pytest
 
+from core.base.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    EntityValidationError,
+)
 from core.affection.models import (
     AffectionLevel,
     BotMood,
@@ -23,6 +32,371 @@ from core.affection.models import (
 )
 from core.affection.affection_store import AffectionStore
 from core.affection.affection_manager import AffectionManager
+
+
+# ============================================================================
+# 管理员好感度与情绪操作测试
+# ============================================================================
+
+
+class TestAffectionAdminOperations:
+    """管理员操作不得伪造自动互动字段，且必须可并发安全地编辑。"""
+
+    @pytest.mark.asyncio
+    async def test_manual_affection_create_has_no_fake_interaction(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            created = await manager.create_user_affection_manual(
+                group_id="g1", user_id="alice", score=30
+            )
+            assert created.affection_score == 30
+            assert created.interaction_count == 0
+            assert created.last_interaction == 0.0
+            assert created.level is AffectionLevel.WARM
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_manual_affection_create_rejects_duplicate_identity(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            await manager.create_user_affection_manual("g1", "alice", 10)
+            with pytest.raises(EntityAlreadyExistsError):
+                await manager.create_user_affection_manual("g1", "alice", 20)
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_manual_affection_validation_rejects_bad_identity_score_and_revision(
+        self, tmp_db_path
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            for kwargs, field in (
+                ({"group_id": "", "user_id": "alice", "score": 10}, "group_id"),
+                ({"group_id": "g1", "user_id": " ", "score": 10}, "user_id"),
+                ({"group_id": "g1", "user_id": "alice", "score": True}, "score"),
+                ({"group_id": "g1", "user_id": "alice", "score": 101}, "score"),
+            ):
+                with pytest.raises(EntityValidationError) as exc_info:
+                    await manager.create_user_affection_manual(**kwargs)
+                assert field in exc_info.value.field_errors
+
+            with pytest.raises(EntityValidationError) as exc_info:
+                await manager.update_user_affection_manual(
+                    "g1", "alice", 10, expected_revision=" "
+                )
+            assert "expected_revision" in exc_info.value.field_errors
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_manual_score_update_preserves_interaction_fields_and_revision(
+        self, tmp_db_path
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            before = await manager.create_user_affection_manual("g1", "alice", 10)
+            before_revision = manager.revision_for_affection(before)
+            updated = await manager.update_user_affection_manual(
+                "g1", "alice", 70, expected_revision=before_revision
+            )
+            assert updated.level is AffectionLevel.FRIENDLY
+            assert updated.interaction_count == before.interaction_count
+            assert updated.last_interaction == before.last_interaction
+            assert manager.revision_for_affection(updated) != before_revision
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_manual_update_and_delete_distinguish_not_found_from_conflict(
+        self, tmp_db_path
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            with pytest.raises(EntityNotFoundError):
+                await manager.update_user_affection_manual(
+                    "g1", "missing", 10, expected_revision="revision"
+                )
+
+            created = await manager.create_user_affection_manual("g1", "alice", 10)
+            revision = manager.revision_for_affection(created)
+            updated = await manager.update_user_affection_manual(
+                "g1", "alice", 20, expected_revision=revision
+            )
+            with pytest.raises(EditConflictError) as exc_info:
+                await manager.delete_user_affection_manual(
+                    "g1", "alice", expected_revision=revision
+                )
+            assert exc_info.value.current_entity["affection_score"] == 20
+            assert exc_info.value.current_revision == manager.revision_for_affection(updated)
+
+            assert await manager.delete_user_affection_manual(
+                "g1", "alice", expected_revision=exc_info.value.current_revision
+            )
+            with pytest.raises(EntityNotFoundError):
+                await manager.delete_user_affection_manual(
+                    "g1", "alice", expected_revision="revision"
+                )
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_list_user_affections_is_paginated_and_deterministic(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            for user_id, score in (("zoe", 10), ("alice", 30), ("bob", 30)):
+                await manager.create_user_affection_manual("g1", user_id, score)
+            users, total = await manager.list_user_affections("g1", limit=2, offset=1)
+            assert total == 3
+            assert [user.user_id for user in users] == ["bob", "zoe"]
+            with pytest.raises(EntityValidationError):
+                await manager.list_user_affections("g1", limit=True, offset=0)
+            with pytest.raises(EntityValidationError):
+                await manager.list_user_affections("g1", limit=1, offset=-1)
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_same_revision_concurrent_admin_updates_have_one_winner(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            created = await manager.create_user_affection_manual("g1", "alice", 10)
+            revision = manager.revision_for_affection(created)
+            results = await asyncio.gather(
+                manager.update_user_affection_manual(
+                    "g1", "alice", 20, expected_revision=revision
+                ),
+                manager.update_user_affection_manual(
+                    "g1", "alice", 30, expected_revision=revision
+                ),
+                return_exceptions=True,
+            )
+            assert sum(isinstance(result, UserAffection) for result in results) == 1
+            assert sum(isinstance(result, EditConflictError) for result in results) == 1
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_automatic_writer_cannot_interleave_admin_revision_transaction(
+        self, tmp_db_path, monkeypatch
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            created = await manager.create_user_affection_manual("g1", "alice", 10)
+            revision = manager.revision_for_affection(created)
+            automatic_insert_started = asyncio.Event()
+            release_automatic_insert = asyncio.Event()
+            original_execute = store._execute
+
+            async def gated_execute(sql, params=()):
+                if "ON CONFLICT(user_id, group_id) DO UPDATE" in sql:
+                    automatic_insert_started.set()
+                    await release_automatic_insert.wait()
+                return await original_execute(sql, params)
+
+            monkeypatch.setattr(store, "_execute", gated_execute)
+            automatic = asyncio.create_task(store.upsert_affection("g1", "alice", 1))
+            await automatic_insert_started.wait()
+            admin = asyncio.create_task(
+                manager.update_user_affection_manual(
+                    "g1", "alice", 20, expected_revision=revision
+                )
+            )
+            await asyncio.sleep(0)
+            assert not admin.done()
+            release_automatic_insert.set()
+            await automatic
+            with pytest.raises(EditConflictError):
+                await admin
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_store_preserves_original_write_failure_when_rollback_fails(
+        self, tmp_db_path, monkeypatch
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            created = await manager.create_user_affection_manual("g1", "alice", 10)
+            original_execute = store._execute
+
+            async def failing_execute(sql, params=()):
+                if sql.startswith("UPDATE user_affection"):
+                    raise RuntimeError("write failure")
+                return await original_execute(sql, params)
+
+            async def failing_rollback():
+                raise RuntimeError("rollback failure")
+
+            monkeypatch.setattr(store, "_execute", failing_execute)
+            monkeypatch.setattr(store.connection, "rollback", failing_rollback)
+            with pytest.raises(RuntimeError, match="write failure"):
+                await manager.update_user_affection_manual(
+                    "g1",
+                    "alice",
+                    20,
+                    expected_revision=manager.revision_for_affection(created),
+                )
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_strict_create_does_not_misclassify_unrelated_integrity_error(
+        self, tmp_db_path, monkeypatch
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            original_execute = store._execute
+
+            async def failing_execute(sql, params=()):
+                if sql.startswith("INSERT INTO user_affection"):
+                    raise aiosqlite.IntegrityError("foreign key failed")
+                return await original_execute(sql, params)
+
+            monkeypatch.setattr(store, "_execute", failing_execute)
+            with pytest.raises(aiosqlite.IntegrityError, match="foreign key failed"):
+                await store.create_affection_strict("g1", "alice", 10)
+        finally:
+            await store.close()
+
+
+class TestMoodAdminOperations:
+    """情绪写入必须验证输入、追加历史，并在提交后更新缓存。"""
+
+    @pytest.mark.asyncio
+    async def test_set_mood_normalizes_inputs_and_appends_history(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            mood = await manager.set_mood(
+                "g1", MoodType.HAPPY, intensity=9, duration_hours=0, description="  Happy  "
+            )
+            assert mood.intensity == 1.0
+            assert mood.duration_hours == 0.25
+            assert mood.description == "Happy"
+            history = await manager.get_mood_history("g1", limit=10)
+            assert len(history) == 1
+            assert history[0].description == "Happy"
+            assert history[0].mood_type is MoodType.HAPPY
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_set_mood_rejects_invalid_type_nonfinite_values_and_description(
+        self, tmp_db_path
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            for mood_type, intensity, duration, description, field in (
+                ("happy", 0.5, 4.0, None, "mood_type"),
+                (MoodType.HAPPY, math.nan, 4.0, None, "intensity"),
+                (MoodType.HAPPY, 0.5, math.inf, None, "duration_hours"),
+                (MoodType.HAPPY, 0.5, 4.0, 1, "description"),
+            ):
+                with pytest.raises(EntityValidationError) as exc_info:
+                    await manager.set_mood(
+                        "g1", mood_type, intensity, duration, description
+                    )
+                assert field in exc_info.value.field_errors
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_reset_mood_appends_calm_history(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            await manager.set_mood("g1", MoodType.HAPPY, intensity=0.8, description="Happy")
+            reset = await manager.reset_mood("g1")
+            history = await manager.get_mood_history("g1", limit=10)
+            assert reset.mood_type is MoodType.CALM
+            assert reset.intensity == manager.DEFAULT_INTENSITY
+            assert len(history) == 2
+            assert [mood.mood_type for mood in history] == [MoodType.CALM, MoodType.HAPPY]
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_failed_mood_persist_does_not_change_cache(self, tmp_db_path, monkeypatch):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            initial = await manager.set_mood("g1", MoodType.HAPPY, description="Initial")
+
+            async def fail_save(*args, **kwargs):
+                raise RuntimeError("storage unavailable")
+
+            monkeypatch.setattr(store, "save_bot_mood", fail_save)
+            with pytest.raises(RuntimeError, match="storage unavailable"):
+                await manager.set_mood("g1", MoodType.SAD, description="Failed")
+            assert manager._mood_cache["g1"] is initial
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_mood_sets_leave_cache_at_latest_persisted_mood(
+        self, tmp_db_path, monkeypatch
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            first_persisted = asyncio.Event()
+            release_first = asyncio.Event()
+            original_save = store.save_bot_mood
+            call_count = 0
+
+            async def delayed_first_save(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                row_id = await original_save(*args, **kwargs)
+                if call_count == 1:
+                    first_persisted.set()
+                    await release_first.wait()
+                return row_id
+
+            monkeypatch.setattr(store, "save_bot_mood", delayed_first_save)
+            first = asyncio.create_task(
+                manager.set_mood("g1", MoodType.HAPPY, description="First")
+            )
+            await first_persisted.wait()
+            second = asyncio.create_task(
+                manager.set_mood("g1", MoodType.SAD, description="Second")
+            )
+            await asyncio.sleep(0)
+            release_first.set()
+            await asyncio.gather(first, second)
+            latest = await store.get_latest_mood("g1")
+            assert latest is not None
+            assert manager._mood_cache["g1"].mood_type.value == latest["mood_type"]
+            assert manager._mood_cache["g1"].description == latest["description"]
+        finally:
+            await store.close()
 
 
 # ============================================================================
