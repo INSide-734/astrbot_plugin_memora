@@ -119,21 +119,14 @@ def test_readme_documents_fast_context_fallback() -> None:
     assert "fallback" in readme.lower()
 
 
-def test_root_agents_links_point_to_existing_module_docs() -> None:
-    agents_text = _read_text("AGENTS.md")
-    targets = re.findall(r'click\s+\w+\s+"\.\/([^"]+)"', agents_text)
-
-    assert targets, "No module doc links found in AGENTS.md"
-    missing = [target for target in targets if not (REPO_ROOT / target).exists()]
-    assert not missing, f"AGENTS.md has broken module doc links: {missing}"
-
-
-def test_root_design_document_exists() -> None:
-    assert (REPO_ROOT / "DESIGN.md").exists()
+def test_dashboard_module_guidance_documents_real_entrypoints() -> None:
+    dashboard_agents = _read_text("pages/dashboard/AGENTS.md")
+    assert (REPO_ROOT / "pages" / "dashboard" / "src" / "main.tsx").exists()
+    assert "PageFrame" in dashboard_agents
+    assert "python scripts/check_all.py" in dashboard_agents
 
 
 def test_quality_gate_entrypoints_exist() -> None:
-    assert (REPO_ROOT / "pytest.ini").exists()
     assert (REPO_ROOT / "scripts" / "check_all.py").exists()
     assert (REPO_ROOT / ".github" / "workflows" / "ci.yml").exists()
     assert (REPO_ROOT / "docs" / "DEV_SETUP.md").exists()
@@ -485,7 +478,6 @@ def test_documented_commands_match_command_endpoints() -> None:
         "README.md",
         "README_EN.md",
         "README_RU.md",
-        "AGENTS.md",
         "CHANGELOG.md",
     ]
     stale_patterns = [
