@@ -49,7 +49,7 @@ export function EditFormLayout({
         <div ref={alertRef} role="alert" tabIndex={-1} className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
           <p className="font-medium">{summaryLabel}</p>
           <ul className="mt-1 list-disc pl-5">
-            {formErrors.map((error) => <li key={error}>{error}</li>)}
+            {formErrors.map((error, index) => <li key={`${error}-${index}`}>{error}</li>)}
             {errors.map(([name, message]) => <li key={name}><a href={`#${errorId(prefix, name)}`}>{message}</a></li>)}
           </ul>
         </div>

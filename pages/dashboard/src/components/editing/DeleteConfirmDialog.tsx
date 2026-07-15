@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import {
@@ -39,9 +39,17 @@ export function DeleteConfirmDialog({
 }: DeleteConfirmDialogProps) {
   const [confirmation, setConfirmation] = useState("");
   const confirmationSatisfied = !confirmationRequirement || confirmation === confirmationRequirement.expectedText;
+  const handleCancel = () => {
+    setConfirmation("");
+    onCancel();
+  };
+
+  useEffect(() => {
+    if (!open) setConfirmation("");
+  }, [open]);
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onCancel()}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && handleCancel()}>
       <DialogContent showCloseButton={false} className="min-w-0 sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -54,7 +62,7 @@ export function DeleteConfirmDialog({
           </label>
         ) : null}
         <DialogFooter className="rounded-b-lg sm:flex-wrap">
-          <Button type="button" variant="outline" onClick={onCancel}>
+          <Button type="button" variant="outline" onClick={handleCancel}>
             {cancelLabel}
           </Button>
           <Button type="button" variant="destructive" disabled={!confirmationSatisfied} onClick={onConfirm}>

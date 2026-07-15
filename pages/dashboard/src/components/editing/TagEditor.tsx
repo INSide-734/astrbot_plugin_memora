@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/Input";
 
 export interface TagEditorProps {
   label: string;
+  getRemoveLabel: (tag: string) => string;
   values: readonly string[];
   onChange: (values: string[]) => void;
   maxCount?: number;
@@ -15,7 +16,7 @@ export interface TagEditorProps {
   disabled?: boolean;
 }
 
-export function TagEditor({ label, values, onChange, maxCount, onLimitReached, disabled = false }: TagEditorProps) {
+export function TagEditor({ label, getRemoveLabel, values, onChange, maxCount, onLimitReached, disabled = false }: TagEditorProps) {
   const [pending, setPending] = useState("");
   const addPending = () => {
     const tag = pending.trim();
@@ -45,7 +46,7 @@ export function TagEditor({ label, values, onChange, maxCount, onLimitReached, d
         {values.map((tag) => (
           <Badge key={tag} variant="secondary" className="gap-0.5 pr-0.5">
             {tag}
-            <Button type="button" variant="ghost" size="icon-xs" className="size-5 rounded-full" aria-label={`${label}: remove ${tag}`} disabled={disabled} onClick={() => onChange(values.filter((value) => value !== tag))}>
+            <Button type="button" variant="ghost" size="icon-xs" className="size-5 rounded-full" aria-label={getRemoveLabel(tag)} disabled={disabled} onClick={() => onChange(values.filter((value) => value !== tag))}>
               <X aria-hidden="true" />
             </Button>
           </Badge>

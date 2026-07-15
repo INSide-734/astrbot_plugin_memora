@@ -22,7 +22,7 @@ This module supplies the reusable, controlled editing surface for Memora Dashboa
 - A save shortcut is deliberately narrow: `Ctrl+Enter` and `Meta+Enter` submit only a dirty, valid, idle form. There is no delete keyboard shortcut.
 - Use `EditFormLayout` around domain inputs after a failed validation attempt. Pass each input to `registerField(name, element)` and attach `getFieldError(name)?.id` to that input's `aria-describedby`. Set `focusInvalid` for the failed submission render.
 - Use `DeleteConfirmDialog.confirmationRequirement` for cross-group or large-batch deletion. Ordinary single-record deletion omits it and remains a one-step explicit destructive action.
-- `TagEditor` treats values as exact strings after trimming the pending input. It ignores empty and duplicate entries, removes the last tag with Backspace only while the input is empty, and calls `onLimitReached` when its configured limit is reached.
+- `TagEditor` requires `getRemoveLabel(tag)` to provide the translated accessible name for each remove button. It treats values as exact strings after trimming the pending input, ignores empty and duplicate entries, removes the last tag with Backspace only while the input is empty, and calls `onLimitReached` when its configured limit is reached.
 
 ## Translated-label contract
 
@@ -32,7 +32,7 @@ These components do not look up domain i18n keys. Every visible title, descripti
 
 - Every Sheet and Dialog composes the existing Base UI primitive with a `Title` and `Description`, giving it an accessible name and description.
 - Error summaries use a focusable `role="alert"`; field error IDs can be referenced by form controls through `aria-describedby`.
-- Tags use an accessible input label, dedicated remove button names, and standard Enter/Backspace behavior.
+- Tags use a caller-provided translated input label and remove-button label builder, plus standard Enter/Backspace behavior.
 - Editor surfaces divide into fixed headers, `min-h-0 flex-1 overflow-y-auto` form content, and border-top action areas. This keeps action controls reachable on narrow screens and allows long translated text or forms to scroll.
 
 ## Domain boundary
