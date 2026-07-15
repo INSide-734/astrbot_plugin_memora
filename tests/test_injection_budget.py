@@ -1,9 +1,9 @@
 """Behavioral contract tests for hard memory-injection budgets."""
 
-from core.utils.injection_budget import (
-    InjectionBudget,
-    select_memories_with_budget,
-)
+from core.injection.models import ContentLevel
+
+from core.utils.injection_budget import InjectionBudget, select_memories_with_budget
+from core.utils.memory_formatter import format_memories_for_injection
 
 
 def _memory(content: str, score: float = 1.0) -> dict:
@@ -35,3 +35,29 @@ def test_oversized_first_item_is_dropped_instead_of_forced_into_budget() -> None
 
     assert selected == []
     assert dropped == [oversized]
+
+
+def test_selection_reserves_exact_compact_wrapper_instead_of_fixed_allowance() -> None:
+    memory = _memory("complete compact entry")
+    field_limits = {
+        "memory_max_chars": 800,
+        "metadata_max_chars": 1,
+        "include_key_facts": False,
+        "include_topics": False,
+        "include_participants": False,
+        "compact_header": True,
+    }
+    complete_payload, _ = format_memories_for_injection(
+        [memory],
+        budget=InjectionBudget(total_chars=2400, **field_limits),
+        content_level=ContentLevel.COMPACT,
+    )
+
+    selected, dropped = select_memories_with_budget(
+        [memory],
+        InjectionBudget(total_chars=len(complete_payload), **field_limits),
+    )
+
+    assert complete_payload
+    assert selected == [memory]
+    assert dropped == []

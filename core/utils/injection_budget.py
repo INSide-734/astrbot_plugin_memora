@@ -113,8 +113,12 @@ def select_memories_with_budget(
     dropped: list[dict[str, Any]] = []
     running_chars = 0
 
-    # 给 header/footer 留 300 chars 余地
-    effective_budget = max(0, budget.total_chars - 300)
+    fixed_chars = (
+        len(format_compact_header()) + len(format_compact_footer())
+        if budget.compact_header
+        else len(format_full_header()) + len(format_full_footer())
+    )
+    effective_budget = max(0, budget.total_chars - fixed_chars)
 
     for mem in sorted_memories:
         content = str(mem.get("content", "") or "")
