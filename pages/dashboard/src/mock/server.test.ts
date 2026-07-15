@@ -285,7 +285,7 @@ describe("profile CRUD, structured fields, and compatibility", () => {
     const changes = {
       display_name: "Updated profile",
       preferences: { ...draft.preferences, preferred_topics: ["updated"] },
-      tags: [{ category: "skill", value: "vitest", confidence: 1 }],
+      tags: [{ category: "custom", value: "vitest", confidence: 1 }],
     };
     const updated = entityEnvelope(await post("profiles/update", { identity: { user_id: draft.user_id }, changes, expected_revision: created.revision }));
     expect(updated.entity).toMatchObject({ user_id: draft.user_id, ...changes });
@@ -716,6 +716,48 @@ describe("remaining Python mock API parity", () => {
     }
   });
 
+
+  it("rejects unknown legacy profile batch fields before deleting", async () => {
+    const draft = profileDraft("legacy-extra"); await post("profiles/create", draft);
+    expectValidation(await post("profiles/batch", { action: "delete", user_ids: [draft.user_id], extra: true }), { extra: "字段不可写" });
+    expect(okData(await get("profiles/detail", { user_id: draft.user_id }))).toMatchObject({ user_id: draft.user_id });
+  });
+
+  it("normalizes revisioned profile nested changes and rejects invalid updates without mutation", async () => {
+    const draft = profileDraft("nested-update"); const created = entityEnvelope(await post("profiles/create", draft));
+    const updated = entityEnvelope(await post("profiles/update", {
+      identity: { user_id: draft.user_id },
+      expected_revision: created.revision,
+      changes: {
+        preferences: { reply_style: " detailed ", preferred_topics: [" one ", "one", ""], avoided_topics: [" avoid "], active_hours: [8, 8, 23] },
+        tags: [{ value: " normalized ", confidence: 0.6 }],
+      },
+    }));
+    expect(updated.entity).toMatchObject({
+      preferences: { reply_style: "detailed", preferred_topics: ["one"], avoided_topics: ["avoid"], active_hours: [8, 23] },
+      tags: [{ category: "custom", value: "normalized", confidence: 0.6 }],
+    });
+    expectValidation(await post("profiles/update", {
+      identity: { user_id: draft.user_id },
+      expected_revision: updated.revision,
+      changes: {
+        preferences: { reply_style: " ", active_hours: [99] },
+        tags: [
+          { category: "invalid", value: "illegal", confidence: 0.5 },
+          { category: "custom", value: "same", confidence: "0.5" },
+          { category: " custom ", value: " same ", confidence: 0.7 },
+        ],
+      },
+    }), {
+      "changes.preferences.reply_style": "不能为空",
+      "changes.preferences.active_hours.0": "必须在 0 到 23 之间",
+      "changes.tags.0.category": "不支持的标签分类",
+      "changes.tags.1.confidence": "必须为数字",
+      "changes.tags.2.value": "标签重复",
+    });
+    const detail = okData(await get("profiles/detail", { user_id: draft.user_id }));
+    expect(detail).toMatchObject({ preferences: updated.entity.preferences, tags: updated.entity.tags, revision: updated.revision });
+  });
 
 describe("existing mutable editors accept full-form and legacy update requests", () => {
   it("mutates Memory through {changes} and legacy field/value against one state", async () => {
