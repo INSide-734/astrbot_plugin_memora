@@ -1,5 +1,7 @@
 // ApiResponse is declared globally in vite-env.d.ts
 
+import { ApiRequestError, type FieldErrors } from "@/types/editing";
+
 const ENDPOINT_PREFIX = "page";
 
 function localizedError(key: string, ...args: string[]): Error {
@@ -70,9 +72,13 @@ export function unwrapApiData<T = Record<string, unknown>>(response: ApiResponse
     return (response.data ?? {}) as T;
   }
   if (response?.status === "error") {
-    throw response.message
-      ? new Error(String(response.message))
-      : localizedError("error.requestFailed");
+    const data = recordValue(response.data);
+    throw new ApiRequestError(
+      response.message ? String(response.message) : localizedError("error.requestFailed").message,
+      response.code,
+      fieldErrors(response.field_errors) ?? fieldErrors(data.field_errors) ?? {},
+      data
+    );
   }
   // Guard: if the response doesn't match the expected envelope, throw instead
   // of silently casting — downstream components would receive wrong-shaped data.
@@ -80,6 +86,18 @@ export function unwrapApiData<T = Record<string, unknown>>(response: ApiResponse
     throw localizedError("error.unexpectedResponseType", typeof response);
   }
   return response as unknown as T;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function fieldErrors(value: unknown): FieldErrors | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as FieldErrors
+    : undefined;
 }
 
 export function normalizeImportance(value: number): number {

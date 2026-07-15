@@ -6,6 +6,7 @@ export type PageId =
 
 export * from "./intelligence";
 export * from "./navigation";
+export * from "./editing";
 
 export interface MemoryItem {
   id: string;
