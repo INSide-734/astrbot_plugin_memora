@@ -612,9 +612,9 @@ describe("remaining Python mock API parity", () => {
     }), {
       "preferences.read_only": "字段不可写",
       "preferences.reply_style": "必须为字符串",
-      "preferences.preferred_topics": "必须为字符串数组",
+      "preferences.preferred_topics.0": "必须为字符串",
       "preferences.avoided_topics": "必须为字符串数组",
-      "preferences.active_hours": "必须为 0 到 23 的整数数组",
+      "preferences.active_hours.0": "必须在 0 到 23 之间",
       "tags.0.source": "字段不可写",
       "tags.0.category": "不支持的标签分类",
       "tags.0.value": "不能为空",
@@ -656,6 +656,66 @@ describe("remaining Python mock API parity", () => {
     expectValidation(await post("profiles/batch", { action: "delete", user_ids: "not-a-list" }), { user_ids: "必须为数组" });
   });
 });
+  it("rejects unknown revisioned batch fields before mutating every repository", async () => {
+    const social = { ...socialIdentity("batch-extra"), strength: 0.4, tags: [] }; const socialCreated = entityEnvelope(await post("social/create", social));
+    const profile = profileDraft("batch-extra"); const profileCreated = entityEnvelope(await post("profiles/create", profile));
+    const jargon = jargonDraft("batch-extra"); const jargonCreated = entityEnvelope(await post("jargon/create", jargon));
+    const affection = affectionDraft("batch-extra"); const affectionCreated = entityEnvelope(await post("affection/users/create", affection));
+    const cases = [
+      ["social/batch", { action: "delete", items: [{ identity: socialIdentity("batch-extra"), expected_revision: socialCreated.revision }], params: {}, extra: true }],
+      ["profiles/batch", { action: "delete", items: [{ identity: { user_id: profile.user_id }, expected_revision: profileCreated.revision }], params: {}, extra: true }],
+      ["jargon/batch", { action: "delete", items: [{ identity: { term: jargon.term, group_id: jargon.group_id }, expected_revision: jargonCreated.revision }], extra: true }],
+      ["affection/users/batch", { action: "delete", items: [{ identity: { group_id: affection.group_id, user_id: affection.user_id }, expected_revision: affectionCreated.revision }], params: {}, extra: true }],
+    ] as const;
+    for (const [route, body] of cases) expectValidation(await post(route, body), { extra: "字段不可写" });
+    expect(okData(await get("social/relations", {})).relations).toEqual(expect.arrayContaining([expect.objectContaining(socialIdentity("batch-extra"))]));
+    expect(okData(await get("profiles/detail", { user_id: profile.user_id }))).toMatchObject({ user_id: profile.user_id });
+    expect(mockData.JARGON_MEANINGS).toEqual(expect.arrayContaining([expect.objectContaining({ term: jargon.term, group_id: jargon.group_id })]));
+    expect(okData(await get("affection/users", { group_id: affection.group_id, limit: "50", offset: "0" })).users).toEqual(expect.arrayContaining([expect.objectContaining({ user_id: affection.user_id })]));
+  });
+
+  it("matches ProfileManager nested normalization, limits, and duplicate rules", async () => {
+    const normalized = entityEnvelope(await post("profiles/create", {
+      user_id: "profile-manager-rules",
+      preferences: { reply_style: " detailed ", preferred_topics: [" topic ", "topic", "", "other"], avoided_topics: [" avoid ", "avoid"], active_hours: [9, 9, 23] },
+      tags: [{ value: " tag ", confidence: 0.6 }],
+    }));
+    expect(normalized.entity).toMatchObject({
+      preferences: { reply_style: "detailed", preferred_topics: ["topic", "other"], avoided_topics: ["avoid"], active_hours: [9, 23] },
+      tags: [{ category: "custom", value: "tag", confidence: 0.6 }],
+    });
+    expectValidation(await post("profiles/create", { user_id: "profile-empty-style", preferences: { reply_style: " " } }), { "preferences.reply_style": "不能为空" });
+    expectValidation(await post("profiles/create", { user_id: "profile-long-style", preferences: { reply_style: "x".repeat(129) } }), { "preferences.reply_style": "文本过长" });
+    expectValidation(await post("profiles/create", { user_id: "profile-topic-limit", preferences: { preferred_topics: ["x".repeat(65)] } }), { "preferences.preferred_topics.0": "文本过长" });
+    expectValidation(await post("profiles/create", { user_id: "profile-string-confidence", tags: [{ category: "custom", value: "tag", confidence: "0.5" }] }), { "tags.0.confidence": "必须为数字" });
+    expectValidation(await post("profiles/create", { user_id: "profile-duplicate-tags", tags: [{ category: " custom ", value: "same" }, { category: "custom", value: " same " }] }), { "tags.1.value": "标签重复" });
+  });
+
+  it("uses normalized affection identities for create, update, and delete", async () => {
+    const created = entityEnvelope(await post("affection/users/create", { group_id: " trimmed-group ", user_id: " trimmed-user ", affection_score: 12 }));
+    expect(created.entity).toMatchObject({ group_id: "trimmed-group", user_id: "trimmed-user" });
+    const updated = entityEnvelope(await post("affection/users/update", { identity: { group_id: "trimmed-group", user_id: "trimmed-user" }, changes: { affection_score: 13 }, expected_revision: created.revision }));
+    expect(updated.entity).toMatchObject({ group_id: "trimmed-group", user_id: "trimmed-user", affection_score: 13 });
+    expect(okData(await post("affection/users/delete", { identity: { group_id: "trimmed-group", user_id: "trimmed-user" }, expected_revision: updated.revision }))).toEqual({ deleted: true, identity: { group_id: "trimmed-group", user_id: "trimmed-user" } });
+  });
+
+  it("uses the backend-specific invalid-revision failure identity for every batch", async () => {
+    const socialIdentityValue = socialIdentity("revision-identity");
+    const profileIdentityValue = { user_id: "profile-revision-identity" };
+    const jargonIdentityValue = { term: "jargon-revision-identity", group_id: "group_001" };
+    const affectionIdentityValue = { group_id: "group_001", user_id: "affection-revision-identity" };
+    const bodies = [
+      ["social/batch", { action: "delete", params: {}, items: [{ identity: Object.fromEntries(Object.entries(socialIdentityValue).map(([key, value]) => [key, ` ${value} `])), expected_revision: " " }] }, socialIdentityValue],
+      ["profiles/batch", { action: "delete", params: {}, items: [{ identity: { user_id: ` ${profileIdentityValue.user_id} ` }, expected_revision: " " }] }, profileIdentityValue],
+      ["jargon/batch", { action: "delete", items: [{ identity: { term: ` ${jargonIdentityValue.term} `, group_id: ` ${jargonIdentityValue.group_id} ` }, expected_revision: " " }] }, { item_index: 0 }],
+      ["affection/users/batch", { action: "delete", params: {}, items: [{ identity: { group_id: ` ${affectionIdentityValue.group_id} `, user_id: ` ${affectionIdentityValue.user_id} ` }, expected_revision: " " }] }, affectionIdentityValue],
+    ] as const;
+    for (const [route, body, expectedIdentity] of bodies) {
+      const result = okData(await post(route, body));
+      expect(result.failures).toEqual([expect.objectContaining({ identity: expectedIdentity, code: "validation_error", field_errors: { expected_revision: "不能为空" } })]);
+    }
+  });
+
 
 describe("existing mutable editors accept full-form and legacy update requests", () => {
   it("mutates Memory through {changes} and legacy field/value against one state", async () => {

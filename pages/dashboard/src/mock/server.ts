@@ -131,14 +131,16 @@ function normalizeProfileTag(tag: unknown, field: string): { tag?: MutableRecord
   if (!tag || typeof tag !== "object" || Array.isArray(tag)) return { errors: { [field]: "必须为对象" } };
   const source = tag as MutableRecord;
   const errors = Object.fromEntries(Object.entries(unknownFieldErrors(source, ["category", "value", "confidence"])).map(([key, message]) => [`${field}.${key}`, message]));
-  const categoryError = textFieldError(source.category, 64); if (categoryError) errors[`${field}.category`] = categoryError;
-  const category = typeof source.category === "string" ? source.category.trim() : "";
-  if (!categoryError && !PROFILE_TAG_CATEGORIES.has(category)) errors[`${field}.category`] = "不支持的标签分类";
+  const rawCategory = source.category ?? "custom";
+  const category = typeof rawCategory === "string" ? rawCategory.trim() : "";
+  if (typeof rawCategory !== "string" || !PROFILE_TAG_CATEGORIES.has(category)) errors[`${field}.category`] = "不支持的标签分类";
   const valueError = textFieldError(source.value); if (valueError) errors[`${field}.value`] = valueError;
   const rawConfidence = source.confidence ?? 0.5;
-  const confidence = typeof rawConfidence === "boolean" ? Number.NaN : Number(rawConfidence);
-  if (!Number.isFinite(confidence)) errors[`${field}.confidence`] = "必须为有限数字";
-  else if (confidence < 0 || confidence > 1) errors[`${field}.confidence`] = "必须在 0.0 到 1.0 之间";
+  let confidence = Number.NaN;
+  if (typeof rawConfidence === "boolean" || typeof rawConfidence !== "number") errors[`${field}.confidence`] = "必须为数字";
+  else if (!Number.isFinite(rawConfidence)) errors[`${field}.confidence`] = "必须为有限数字";
+  else if (rawConfidence < 0 || rawConfidence > 1) errors[`${field}.confidence`] = "必须在 0.0 到 1.0 之间";
+  else confidence = rawConfidence;
   return { tag: { category, value: typeof source.value === "string" ? source.value.trim() : "", confidence }, errors };
 }
 
@@ -155,15 +157,33 @@ function normalizeProfilePreferences(value: unknown): { preferences?: MutableRec
   const errors = Object.fromEntries(Object.entries(unknownFieldErrors(source, ["reply_style", "preferred_topics", "avoided_topics", "active_hours"])).map(([key, message]) => [`preferences.${key}`, message]));
   const preferences: MutableRecord = {};
   if ("reply_style" in source) {
-    if (typeof source.reply_style !== "string") errors["preferences.reply_style"] = "必须为字符串"; else preferences.reply_style = source.reply_style.trim();
+    const error = textFieldError(source.reply_style); if (error) errors["preferences.reply_style"] = error; else preferences.reply_style = source.reply_style.trim();
   }
   for (const field of ["preferred_topics", "avoided_topics"]) if (field in source) {
-    if (!Array.isArray(source[field]) || source[field].some((item: unknown) => typeof item !== "string")) errors[`preferences.${field}`] = "必须为字符串数组";
-    else preferences[field] = source[field].map((item: string) => item.trim());
+    if (!Array.isArray(source[field])) errors[`preferences.${field}`] = "必须为字符串数组";
+    else {
+      const normalized: string[] = [];
+      for (const [index, item] of source[field].entries()) {
+        const itemField = `preferences.${field}.${index}`;
+        if (typeof item !== "string") errors[itemField] = "必须为字符串";
+        else { const text = item.trim(); if (text.length > 64) errors[itemField] = "文本过长"; else if (text && !normalized.includes(text)) normalized.push(text); }
+      }
+      if (normalized.length > 32) errors[`preferences.${field}`] = "项目过多";
+      preferences[field] = normalized;
+    }
   }
   if ("active_hours" in source) {
-    if (!Array.isArray(source.active_hours) || source.active_hours.some((hour: unknown) => !Number.isInteger(hour) || hour < 0 || hour > 23)) errors["preferences.active_hours"] = "必须为 0 到 23 的整数数组";
-    else preferences.active_hours = structuredClone(source.active_hours);
+    if (!Array.isArray(source.active_hours)) errors["preferences.active_hours"] = "必须为整数数组";
+    else {
+      const normalized: number[] = [];
+      for (const [index, hour] of source.active_hours.entries()) {
+        const itemField = `preferences.active_hours.${index}`;
+        if (typeof hour === "boolean" || !Number.isInteger(hour)) errors[itemField] = "必须为整数";
+        else if (hour < 0 || hour > 23) errors[itemField] = "必须在 0 到 23 之间";
+        else if (!normalized.includes(hour)) normalized.push(hour);
+      }
+      preferences.active_hours = normalized;
+    }
   }
   return { preferences, errors };
 }
@@ -172,14 +192,18 @@ function normalizeProfileTags(value: unknown): { tags?: MutableRecord[]; errors:
   if (value === undefined) return { tags: [], errors: {} };
   if (!Array.isArray(value)) return { errors: { tags: "必须为数组" } };
   if (value.length > 100) return { errors: { tags: "项目过多" } };
-  const tags: MutableRecord[] = []; const errors: Record<string, string> = {};
+  const tags: MutableRecord[] = []; const errors: Record<string, string> = {}; const identities = new Set<string>();
   for (const [index, item] of value.entries()) {
-    const normalized = normalizeProfileTag(item, `tags.${index}`); Object.assign(errors, normalized.errors); if (normalized.tag) tags.push(normalized.tag);
+    const normalized = normalizeProfileTag(item, `tags.${index}`); Object.assign(errors, normalized.errors);
+    if (normalized.tag) {
+      const identity = profileTagKey(normalized.tag); if (identities.has(identity)) errors[`tags.${index}.value`] = "标签重复"; else identities.add(identity);
+      tags.push(normalized.tag);
+    }
   }
   return { tags, errors };
 }
 
-function invalidRevisionedItem(item: unknown, index: number, identityFields: readonly string[], optionalIdentityFields: readonly string[] = []): MutableRecord | null {
+function invalidRevisionedItem(item: unknown, index: number, identityFields: readonly string[], optionalIdentityFields: readonly string[] = [], preserveRevisionIdentity = true): MutableRecord | null {
   if (!item || typeof item !== "object" || Array.isArray(item)) return { identity: { item_index: index }, code: "validation_error", message: "Validation failed", field_errors: { item: "必须为对象" } };
   const value = item as MutableRecord;
   const errors = unknownFieldErrors(value, ["identity", "expected_revision"]);
@@ -190,7 +214,8 @@ function invalidRevisionedItem(item: unknown, index: number, identityFields: rea
   const revisionError = revisionFieldError(value.expected_revision);
   if (revisionError) errors.expected_revision = revisionError; else value.expected_revision = value.expected_revision.trim();
   if (!Object.keys(errors).length) return null;
-  return { identity: identityMalformed ? { item_index: index } : structuredClone(value.identity), code: "validation_error", message: "Validation failed", field_errors: errors };
+  const keepIdentity = !identityMalformed && (!revisionError || preserveRevisionIdentity);
+  return { identity: keepIdentity ? structuredClone(value.identity) : { item_index: index }, code: "validation_error", message: "Validation failed", field_errors: errors };
 }
 
 function conflictFailure(identity: MutableRecord, current: MutableRecord, message: string): MutableRecord {
@@ -248,6 +273,7 @@ function batchResult(total: number, succeeded_ids: MutableRecord[], failures: Mu
 }
 
 function handleSocialBatch(body: MutableRecord): ApiResponse {
+  const topErrors = unknownFieldErrors(body, ["action", "items", "params"]); if (Object.keys(topErrors).length) return validation(topErrors);
   if (!["delete", "add_tags", "remove_tags"].includes(body.action)) return validation({ action: "仅支持 delete、add_tags 或 remove_tags" });
   const items = Array.isArray(body.items) ? body.items : [];
   if (items.length < 1 || items.length > 100) return validation({ items: "项目数量必须在 1 到 100 之间" });
@@ -330,6 +356,7 @@ function handleProfileBatch(body: MutableRecord): ApiResponse {
     for (const rawId of body.user_ids) { const userId = typeof rawId === "boolean" ? "" : String(rawId).trim(); const index = PROFILES.findIndex((profile) => profile.user_id === userId); if (!userId || index < 0) failed_ids.push(rawId); else { PROFILES.splice(index, 1); deleted_count += 1; } }
     return ok({ deleted_count, failed_count: failed_ids.length, total: body.user_ids.length, failed_ids });
   }
+  const topErrors = unknownFieldErrors(body, ["action", "items", "params"]); if (Object.keys(topErrors).length) return validation(topErrors);
   if (!["delete", "tags_add", "tags_remove"].includes(body.action)) return validation({ action: "仅支持 delete、tags_add 或 tags_remove" });
   if (body.params !== undefined && (!body.params || typeof body.params !== "object" || Array.isArray(body.params))) return validation({ params: "必须为对象" });
   const params = (body.params ?? {}) as MutableRecord;
@@ -388,12 +415,13 @@ function handleJargonDelete(body: MutableRecord): ApiResponse {
   JARGON_MEANINGS.splice(JARGON_MEANINGS.indexOf(current as any), 1); return ok({ deleted: true, identity: jargonIdentityOf(current) });
 }
 function handleJargonBatch(body: MutableRecord): ApiResponse {
+  const topErrors = unknownFieldErrors(body, ["action", "items"]); if (Object.keys(topErrors).length) return validation(topErrors);
   if (!["delete", "confirm", "unconfirm", "set_global", "unset_global"].includes(body.action)) return validation({ action: "不支持的批量操作" });
   const items = Array.isArray(body.items) ? body.items : [];
   if (items.length < 1 || items.length > 100) return validation({ items: "项目数量必须在 1 到 100 之间" });
   const succeeded: MutableRecord[] = []; const failures: MutableRecord[] = [];
   for (const [index, item] of items.entries()) {
-    const malformed = invalidRevisionedItem(item, index, ["term", "group_id"]); if (malformed) { failures.push(malformed); continue; }
+    const malformed = invalidRevisionedItem(item, index, ["term", "group_id"], [], false); if (malformed) { failures.push(malformed); continue; }
     const value = item as MutableRecord; const identity = structuredClone(value.identity); const current = findJargon(identity);
     if (!current) { failures.push({ identity, code: "not_found", message: "Jargon meaning not found" }); continue; }
     if (current.revision !== value.expected_revision) { failures.push(conflictFailure(identity, current, "Jargon meaning changed")); continue; }
@@ -414,10 +442,11 @@ function handleAffectionCreate(body: MutableRecord): ApiResponse {
   if (typeof body.affection_score === "boolean" || !Number.isInteger(body.affection_score)) errors.affection_score = "必须为整数";
   else if (body.affection_score < -100 || body.affection_score > 100) errors.affection_score = "必须在 -100 到 100 之间";
   if (Object.keys(errors).length) return validation(errors);
-  if (!AFFECTION_DATA[body.group_id]) AFFECTION_DATA[body.group_id] = { group_id: body.group_id, total_affection: 0, max_total_affection: 0, user_count: 0, top_users: [], current_mood: { mood_type: "NEUTRAL", intensity: 0, description: "", is_active: false } };
-  const group = AFFECTION_DATA[body.group_id]; if (findAffection(body)) return err("Affection user already exists", "already_exists");
+  const identity = { group_id: body.group_id.trim(), user_id: body.user_id.trim() };
+  if (!AFFECTION_DATA[identity.group_id]) AFFECTION_DATA[identity.group_id] = { group_id: identity.group_id, total_affection: 0, max_total_affection: 0, user_count: 0, top_users: [], current_mood: { mood_type: "NEUTRAL", intensity: 0, description: "", is_active: false } };
+  const group = AFFECTION_DATA[identity.group_id]; if (findAffection(identity)) return err("Affection user already exists", "already_exists");
   const score = body.affection_score; const level = affectionLevel(score);
-  const record: MutableRecord = { group_id: body.group_id.trim(), user_id: body.user_id.trim(), affection_score: score, affection_level: level, level_name: AFFECTION_LEVEL_NAMES[level], interaction_count: 0, last_interaction: 0, revision: revision() };
+  const record: MutableRecord = { ...identity, affection_score: score, affection_level: level, level_name: AFFECTION_LEVEL_NAMES[level], interaction_count: 0, last_interaction: 0, revision: revision() };
   group.top_users.push(record as any); group.user_count += 1; group.total_affection += score; group.max_total_affection = Math.max(group.max_total_affection, group.total_affection); return envelope(record);
 }
 function handleAffectionUpdate(body: MutableRecord): ApiResponse {
@@ -439,6 +468,7 @@ function handleAffectionDelete(body: MutableRecord): ApiResponse {
   group.top_users.splice(group.top_users.indexOf(current as any), 1); group.user_count = Math.max(0, group.user_count - 1); group.total_affection -= Number(current.affection_score); return ok({ deleted: true, identity: affectionIdentityOf(current) });
 }
 function handleAffectionBatch(body: MutableRecord): ApiResponse {
+  const topErrors = unknownFieldErrors(body, ["action", "items", "params"]); if (Object.keys(topErrors).length) return validation(topErrors);
   if (body.action !== "delete") return validation({ action: "仅支持 delete" });
   if (body.params !== undefined && (!body.params || typeof body.params !== "object" || Array.isArray(body.params))) return validation({ params: "必须为对象" });
   const params = (body.params ?? {}) as MutableRecord; const paramErrors = unknownFieldErrors(params, []); if (Object.keys(paramErrors).length) return validation(paramErrors);
