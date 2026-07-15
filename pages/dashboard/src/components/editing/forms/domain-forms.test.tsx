@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { KnowledgeForm } from "./KnowledgeForm";
 import { MemoryForm } from "./MemoryForm";
 import { NoteForm } from "./NoteForm";
+import { ProfileForm } from "./ProfileForm";
+import { SocialRelationForm } from "./SocialRelationForm";
 
 vi.mock("@/hooks/useI18n", () => ({
   useI18n: () => ({ t: (key: string) => ({
@@ -14,6 +16,8 @@ vi.mock("@/hooks/useI18n", () => ({
     "field.title": "Title",
     "table.category": "Category",
     "table.confidence": "Confidence",
+    "table.userId": "User ID",
+    "table.name": "Name",
     "field.tags": "Tags",
     "category.fact": "Fact",
     "category.concept": "Concept",
@@ -25,6 +29,25 @@ vi.mock("@/hooks/useI18n", () => ({
     "filter.statusDeleted": "Deleted",
     "edit.validationSummary": "Please correct the highlighted fields",
     "tags.remove": "Remove {0}",
+    "profile.replyStyle": "Reply style",
+    "profile.preferredTopics": "Preferred topics",
+    "profile.avoidedTopics": "Avoided topics",
+    "profile.activeHours": "Active hours",
+    "profile.activeHoursStart": "Active hours start",
+    "profile.activeHoursEnd": "Active hours end",
+    "profile.tagCategory": "Tag category",
+    "profile.tagValue": "Tag value",
+    "profile.tagConfidence": "Tag confidence",
+    "profile.addTag": "Add tag",
+    "profile.replyStyle.concise": "Concise",
+    "profile.replyStyle.casual": "Casual",
+    "profile.replyStyle.detailed": "Detailed",
+    "social.fromUser": "From user",
+    "social.toUser": "To user",
+    "social.groupId": "Group ID",
+    "social.relationType": "Relation type",
+    "social.strength": "Strength",
+    "relation.colleague": "Workmate",
   }[key] ?? key) }),
 }));
 
@@ -109,5 +132,73 @@ describe("domain editing forms", () => {
       if (label !== "Tags") expect(control.getAttribute("aria-describedby")).toBeTruthy();
       expect(screen.getAllByRole("alert").map((node) => node.textContent).join(" ")).toContain(message);
     }
+  });
+
+  it("keeps a profile user ID editable only while creating and renders structured preferences", () => {
+    const value = {
+      user_id: "alice",
+      display_name: "Alice",
+      preferences: { reply_style: "concise", preferred_topics: ["ops"], avoided_topics: ["spoilers"], active_hours: [9, 17] },
+      tags: [{ category: "interest", value: "testing", confidence: 0.8 }],
+    };
+    const { rerender } = render(<ProfileForm value={value} onChange={vi.fn()} fieldErrors={{}} mode="create" />);
+    expect(screen.getByLabelText("User ID")).toBeTruthy();
+    expect(screen.getByLabelText("Reply style")).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Preferred topics" })).toBeTruthy();
+    expect(screen.queryByLabelText(/preferences json/i)).toBeNull();
+
+    rerender(<ProfileForm value={value} onChange={vi.fn()} fieldErrors={{}} mode="edit" />);
+    expect(screen.getByLabelText("User ID")).toHaveProperty("disabled", true);
+  });
+
+  it("uses the shared Select with localized relation labels and an unknown-value fallback", () => {
+    const relationChange = vi.fn();
+    const { rerender } = render(<SocialRelationForm value={{ from_user: "alice", to_user: "bob", group_id: "group-1", relation_type: "colleague", strength: 0.5, tags: [] }} onChange={relationChange} fieldErrors={{}} mode="edit" />);
+    const relationType = screen.getByLabelText("Relation type");
+    expect(relationType.tagName).toBe("BUTTON");
+    expect(relationType.getAttribute("data-slot")).toBe("select-trigger");
+    fireEvent.click(relationType);
+    expect(screen.getByRole("option", { name: "Workmate" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("option", { name: "Workmate" }));
+    expect(relationChange).toHaveBeenCalledWith(expect.objectContaining({ relation_type: "colleague" }));
+    expect(screen.getByLabelText("From user")).toHaveProperty("disabled", true);
+
+    rerender(<SocialRelationForm value={{ from_user: "alice", to_user: "bob", group_id: "group-1", relation_type: "future_relation", strength: 0.5, tags: [] }} onChange={relationChange} fieldErrors={{}} mode="edit" />);
+    expect(screen.getByLabelText("Relation type").textContent).toContain("future_relation");
+  });
+
+  it("rejects out-of-range numeric input with accessible errors and clears them after valid correction", () => {
+    const profileChange = vi.fn();
+    render(<ProfileForm value={{ user_id: "alice", display_name: "Alice", preferences: { reply_style: "", preferred_topics: [], avoided_topics: [], active_hours: [] }, tags: [{ category: "interest", value: "ops", confidence: 0.8 }] }} onChange={profileChange} fieldErrors={{}} mode="edit" />);
+    const activeStart = screen.getByLabelText("Active hours start");
+    fireEvent.change(activeStart, { target: { value: "24" } });
+    expect(profileChange).not.toHaveBeenCalled();
+    expect(activeStart.getAttribute("aria-invalid")).toBe("true");
+    expect(activeStart.getAttribute("aria-describedby")).toBeTruthy();
+    expect(screen.getAllByRole("alert").map((node) => node.textContent).join(" ")).toMatch(/0.*23/);
+    fireEvent.change(activeStart, { target: { value: "9" } });
+    expect(profileChange).toHaveBeenCalledWith(expect.objectContaining({ preferences: expect.objectContaining({ active_hours: [9, 9] }) }));
+    expect(activeStart.getAttribute("aria-invalid")).toBe("false");
+
+    fireEvent.change(screen.getByLabelText("Tag confidence"), { target: { value: "1.2" } });
+    const confidence = screen.getByLabelText("Tag confidence");
+    expect(confidence.getAttribute("aria-invalid")).toBe("true");
+    expect(confidence.getAttribute("aria-describedby")).toBeTruthy();
+    expect(screen.getAllByRole("alert").map((node) => node.textContent).join(" ")).toMatch(/0.*1/);
+    fireEvent.change(confidence, { target: { value: "0.7" } });
+    expect(profileChange).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [{ category: "interest", value: "ops", confidence: 0.7 }] }));
+    expect(confidence.getAttribute("aria-invalid")).toBe("false");
+
+    const relationChange = vi.fn();
+    render(<SocialRelationForm value={{ from_user: "alice", to_user: "bob", group_id: "group-1", relation_type: "colleague", strength: 0.5, tags: [] }} onChange={relationChange} fieldErrors={{}} mode="edit" />);
+    const strength = screen.getByLabelText("Strength");
+    fireEvent.change(strength, { target: { value: "1.1" } });
+    expect(relationChange).not.toHaveBeenCalled();
+    expect(strength.getAttribute("aria-invalid")).toBe("true");
+    expect(strength.getAttribute("aria-describedby")).toBeTruthy();
+    expect(screen.getAllByRole("alert").map((node) => node.textContent).join(" ")).toMatch(/0.*1/);
+    fireEvent.change(strength, { target: { value: "0.8" } });
+    expect(relationChange).toHaveBeenCalledWith(expect.objectContaining({ strength: 0.8 }));
+    expect(strength.getAttribute("aria-invalid")).toBe("false");
   });
 });

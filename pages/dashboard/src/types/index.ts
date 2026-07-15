@@ -137,6 +137,31 @@ export interface SocialRelationEntry {
   category: string;
 }
 
+export interface ProfileDraft {
+  user_id: string;
+  display_name: string;
+  preferences: {
+    reply_style: string;
+    preferred_topics: string[];
+    avoided_topics: string[];
+    active_hours: number[];
+  };
+  tags: Array<{
+    category: string;
+    value: string;
+    confidence: number;
+  }>;
+}
+
+export interface SocialRelationDraft {
+  from_user: string;
+  to_user: string;
+  group_id: string;
+  relation_type: string;
+  strength: number;
+  tags: string[];
+}
+
 export interface QualityScoreEntry {
   atom_id: number;
   overall: number;
