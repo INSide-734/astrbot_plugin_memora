@@ -301,6 +301,60 @@ def test_auto_and_hybrid_tool_first_preflight_requires_both_tool_flags(
 
 
 @pytest.mark.parametrize(
+    "config",
+    [
+        InjectionRoutingConfig(
+            mode=RoutingMode.AUTO,
+            auto_fallback=PresetName.TOOL_FIRST,
+        ),
+        InjectionRoutingConfig(
+            mode=RoutingMode.HYBRID,
+            hybrid_base=PresetName.TOOL_FIRST,
+            hybrid_min=PresetName.TOOL_FIRST,
+            hybrid_max=PresetName.QUALITY,
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("signals", "expected_preset", "expected_reason"),
+    [
+        (
+            make_signals(
+                explicit_history_request=True,
+                context_headroom_chars=PRESETS[PresetName.QUALITY].memory_budget_chars,
+                tools_supported=True,
+                memory_tool_available=True,
+            ),
+            PresetName.QUALITY,
+            "AUTO_HISTORY_INTENT",
+        ),
+        (
+            make_signals(
+                context_headroom_chars=PRESETS[PresetName.BALANCED].memory_budget_chars - 1,
+                tools_supported=True,
+                memory_tool_available=True,
+            ),
+            PresetName.LOW_COST,
+            "AUTO_LOW_CONTEXT_HEADROOM",
+        ),
+    ],
+)
+def test_tool_first_preflight_preserves_higher_auto_precedence(
+    config: InjectionRoutingConfig,
+    signals: RequestSignals,
+    expected_preset: PresetName,
+    expected_reason: str,
+) -> None:
+    decision = InjectionStrategyRouter().route_preflight(config, signals)
+
+    assert decision.configured_preset is PresetName.TOOL_FIRST
+    assert decision.recommended_preset is expected_preset
+    assert decision.resolved_preset is expected_preset
+    assert decision.skip_passive_recall is False
+    assert decision.reason_codes == (expected_reason,)
+
+
+@pytest.mark.parametrize(
     "overrides",
     [
         {"query_intent": ""},

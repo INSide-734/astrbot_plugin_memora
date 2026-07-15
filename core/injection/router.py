@@ -51,31 +51,73 @@ class InjectionStrategyRouter:
         """Choose the safe plan available before passive recall runs."""
 
         configured = _configured_preset(config)
-        reasons = (
-            ("MANUAL_SELECTED",)
-            if config.mode is RoutingMode.MANUAL
-            else ()
-        )
-        if configured is PresetName.TOOL_FIRST:
-            if _memory_tool_is_usable(signals):
+        if config.mode is RoutingMode.MANUAL:
+            if configured is PresetName.TOOL_FIRST:
+                if _memory_tool_is_usable(signals):
+                    return _make_decision(
+                        config,
+                        recommended=configured,
+                        resolved=configured,
+                        skip_passive_recall=True,
+                        reasons=("MANUAL_SELECTED",),
+                    )
                 return _make_decision(
                     config,
-                    recommended=configured,
-                    resolved=configured,
-                    skip_passive_recall=True,
-                    reasons=reasons,
+                    recommended=PresetName.LOW_COST,
+                    resolved=PresetName.LOW_COST,
+                    skip_passive_recall=False,
+                    reasons=("PROVIDER_TOOL_UNAVAILABLE",),
                 )
             return _make_decision(
                 config,
-                recommended=PresetName.LOW_COST,
-                resolved=PresetName.LOW_COST,
+                recommended=configured,
+                resolved=configured,
                 skip_passive_recall=False,
-                reasons=("PROVIDER_TOOL_UNAVAILABLE",),
+                reasons=("MANUAL_SELECTED",),
             )
+
+        recommended = configured
+        resolved = configured
+        reasons: tuple[str, ...] = ()
+        if configured is PresetName.TOOL_FIRST and _signals_are_valid(signals):
+            auto_recommended, auto_reason = _route_auto(signals)
+            if auto_reason in {
+                "AUTO_HISTORY_INTENT",
+                "AUTO_LOW_CONTEXT_HEADROOM",
+            }:
+                recommended = auto_recommended
+                resolved = auto_recommended
+                reasons = (auto_reason,)
+
+        if config.mode is RoutingMode.HYBRID:
+            minimum = PRESETS[config.hybrid_min]
+            maximum = PRESETS[config.hybrid_max]
+            resolved_rank = PRESETS[resolved].rank
+            if resolved_rank < minimum.rank:
+                resolved = minimum.name
+                reasons += ("HYBRID_CLAMPED_MIN",)
+            elif resolved_rank > maximum.rank:
+                resolved = maximum.name
+                reasons += ("HYBRID_CLAMPED_MAX",)
+
+        if resolved is PresetName.TOOL_FIRST:
+            if _memory_tool_is_usable(signals):
+                return _make_decision(
+                    config,
+                    recommended=recommended,
+                    resolved=resolved,
+                    skip_passive_recall=True,
+                    reasons=reasons,
+                )
+            if recommended is PresetName.TOOL_FIRST:
+                recommended = PresetName.LOW_COST
+            resolved = PresetName.LOW_COST
+            reasons += ("PROVIDER_TOOL_UNAVAILABLE",)
+
         return _make_decision(
             config,
-            recommended=configured,
-            resolved=configured,
+            recommended=recommended,
+            resolved=resolved,
             skip_passive_recall=False,
             reasons=reasons,
         )
