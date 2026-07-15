@@ -5,6 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from core.injection.models import ContentLevel
+from core.utils.injection_budget import InjectionBudget, InjectionStats
+
 from core.utils.memory_formatter import (
     format_memories_for_fake_tool_call,
     format_memories_for_fake_tool_call_deepseek_v4,
@@ -263,3 +266,182 @@ class TestFormatMemoriesForFakeToolCallDeepSeekV4:
         assert "deepseek query" in result
 
 
+
+def _rich_memory(index: int) -> dict:
+    return {
+        "content": f"<entry-{index}>Complete memory {index}.</entry-{index}>",
+        "score": 1.0 - index / 100,
+        "timestamp": 1_700_000_000.0 + index,
+        "metadata": {
+            "importance": 0.8,
+            "topics": [f"topic-{index}"],
+            "participants": [f"person-{index}"],
+            "key_facts": [f"fact-{index}"],
+            "create_time": 1_700_000_000.0 + index,
+        },
+    }
+
+
+def _budget(level: ContentLevel, total_chars: int, **overrides) -> InjectionBudget:
+    values = {
+        "total_chars": total_chars,
+        "memory_max_chars": 800,
+        "metadata_max_chars": 300,
+        "include_key_facts": True,
+        "include_topics": True,
+        "include_participants": True,
+        "compact_header": level is not ContentLevel.DETAILED,
+    }
+    values.update(overrides)
+    return InjectionBudget(**values)
+
+
+class TestBudgetedInjectionFormatting:
+    def test_budgeted_call_returns_text_and_stats(self):
+        result = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert isinstance(result, tuple)
+        text, stats = result
+        assert isinstance(text, str)
+        assert isinstance(stats, InjectionStats)
+        assert stats.chars == len(text)
+
+    def test_none_content_level_returns_empty_payload(self):
+        text, stats = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(ContentLevel.NONE, 2400),
+            content_level=ContentLevel.NONE,
+        )
+
+        assert text == ""
+        assert stats.chars == 0
+        assert stats.memory_count == 0
+
+    def test_facts_prefers_key_facts_and_excludes_other_metadata(self):
+        text, _ = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(ContentLevel.FACTS, 800),
+            content_level=ContentLevel.FACTS,
+        )
+
+        assert "fact-0" in text
+        assert "Complete memory 0." not in text
+        assert "topic-0" not in text
+        assert "person-0" not in text
+
+    def test_compact_obeys_metadata_flags(self):
+        text, _ = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(
+                ContentLevel.COMPACT,
+                1200,
+                include_key_facts=False,
+                include_topics=True,
+                include_participants=False,
+            ),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "topic-0" in text
+        assert "fact-0" not in text
+        assert "person-0" not in text
+
+    def test_detailed_may_emit_all_supported_metadata(self):
+        text, _ = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(ContentLevel.DETAILED, 2400),
+            content_level=ContentLevel.DETAILED,
+        )
+
+        assert "Memory write time:" in text
+        assert "topic-0" in text
+        assert "person-0" in text
+        assert "fact-0" in text
+
+    @pytest.mark.parametrize("hard_cap", [0, 1, 64, 100, 800, 1200, 2400])
+    @pytest.mark.parametrize("candidate_count", [0, 1, 2, 10])
+    @pytest.mark.parametrize("level", list(ContentLevel))
+    def test_every_payload_respects_hard_cap_and_contains_only_complete_entries(
+        self,
+        hard_cap,
+        candidate_count,
+        level,
+    ):
+        memories = [_rich_memory(index) for index in range(candidate_count)]
+
+        text, stats = format_memories_for_injection(
+            memories,
+            budget=_budget(level, hard_cap),
+            content_level=level,
+        )
+
+        assert len(text) <= hard_cap
+        assert stats.chars == len(text)
+        if level is ContentLevel.NONE or candidate_count == 0:
+            assert text == ""
+        for index in range(candidate_count):
+            assert text.count(f"<entry-{index}>") == text.count(f"</entry-{index}>")
+
+    @pytest.mark.parametrize("hard_cap", [1, 64, 100])
+    def test_no_complete_entry_fitting_returns_empty_not_wrapper_only(self, hard_cap):
+        text, stats = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(ContentLevel.DETAILED, hard_cap),
+            content_level=ContentLevel.DETAILED,
+        )
+
+        assert text == ""
+        assert stats.chars == 0
+        assert stats.memory_count == 0
+
+    def test_hard_cap_counts_every_wrapper_and_separator_character(self):
+        complete, _ = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(ContentLevel.DETAILED, 2400),
+            content_level=ContentLevel.DETAILED,
+        )
+
+        too_small, stats = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(ContentLevel.DETAILED, len(complete) - 1),
+            content_level=ContentLevel.DETAILED,
+        )
+
+        assert too_small == ""
+        assert stats.chars == 0
+
+    def test_safety_boundaries_are_never_partially_sliced(self):
+        text, _ = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(ContentLevel.DETAILED, 2400),
+            content_level=ContentLevel.DETAILED,
+        )
+
+        assert text.count("--- BEGIN HISTORICAL MEMORY REFERENCE ---") == 1
+        assert text.count("--- END HISTORICAL MEMORY REFERENCE ---") == 1
+        assert text.count("--- BEGIN REMINDER ---") == 1
+        assert text.count("--- END REMINDER ---") == 1
+
+    def test_rebuilding_drops_last_complete_entry_without_slicing_boundaries(self):
+        first_only, _ = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(ContentLevel.COMPACT, 2400),
+            content_level=ContentLevel.COMPACT,
+        )
+        exact_cap = len(first_only)
+
+        rebuilt, stats = format_memories_for_injection(
+            [_rich_memory(0), _rich_memory(1)],
+            budget=_budget(ContentLevel.COMPACT, exact_cap),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert rebuilt == first_only
+        assert "<entry-0>Complete memory 0.</entry-0>" in rebuilt
+        assert "<entry-1>" not in rebuilt
+        assert stats.memory_count == 1
+        assert len(rebuilt) <= exact_cap

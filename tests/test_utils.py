@@ -301,6 +301,8 @@ class TestInjectionAdapter:
 # ---------------------------------------------------------------------------
 # memory_formatter tests
 # ---------------------------------------------------------------------------
+from core.utils.injection_budget import InjectionBudget, InjectionStats
+
 from core.utils.memory_formatter import (
     format_memories_for_fake_tool_call,
     format_memories_for_fake_tool_call_deepseek_v4,
@@ -312,6 +314,24 @@ class TestFormatMemoriesForInjection:
     def test_empty_list_returns_empty_string(self) -> None:
         result = format_memories_for_injection([])
         assert result == ""
+
+    def test_legacy_call_without_budget_returns_string(self) -> None:
+        result = format_memories_for_injection(
+            [{"content": "legacy", "score": 1.0, "metadata": {}}]
+        )
+
+        assert isinstance(result, str)
+
+    def test_call_with_budget_returns_text_and_stats_tuple(self) -> None:
+        result = format_memories_for_injection(
+            [{"content": "budgeted", "score": 1.0, "metadata": {}}],
+            InjectionBudget(total_chars=800),
+        )
+
+        assert isinstance(result, tuple)
+        text, stats = result
+        assert isinstance(text, str)
+        assert isinstance(stats, InjectionStats)
 
     def test_returns_formatted_string_with_header_and_footer(self) -> None:
         memories: list[dict[str, Any]] = [
