@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EN_MAP } from "../mock";
+import { ApiRequestError } from "@/types/editing";
 import { KnowledgePage } from "./KnowledgePage";
 
 interface BridgeMock {
@@ -264,7 +265,7 @@ describe("KnowledgePage", () => {
     expect(showToast).toHaveBeenCalledWith(EN_MAP["toast.batchDeleted"].replace("{0}", "2"));
   });
 
-  it("opens detail, updates an entry, and supports deleting it from the detail panel", async () => {
+  it("opens detail, submits full knowledge changes, and confirms deletion", async () => {
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/knowledge") {
         return Promise.resolve(ok({
@@ -306,7 +307,14 @@ describe("KnowledgePage", () => {
 
     const drawer = await screen.findByRole("dialog", { name: "Gamma entry" });
 
-    fireEvent.change(within(drawer).getByPlaceholderText("New title"), {
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    expect(within(drawer).queryByLabelText("Choose field to edit")).toBeNull();
+    expect(within(drawer).getByLabelText("Title")).toBeTruthy();
+    expect(within(drawer).getByLabelText("Content")).toBeTruthy();
+    expect(within(drawer).getByLabelText("Category")).toBeTruthy();
+    expect(within(drawer).getByLabelText("Confidence")).toBeTruthy();
+
+    fireEvent.change(within(drawer).getByLabelText("Title"), {
       target: { value: "Renamed entry" },
     });
     fireEvent.click(within(drawer).getByRole("button", { name: /^save$/i }));
@@ -314,16 +322,20 @@ describe("KnowledgePage", () => {
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/knowledge/update", {
         entry_id: "kb-9",
-        field: "title",
-        value: "Renamed entry",
+        changes: {
+          title: "Renamed entry",
+          content: "Original knowledge body",
+          category: "concept",
+          confidence: 0.73,
+          tags: [],
+        },
       });
     });
     expect(showToast).toHaveBeenCalledWith("Entry updated");
 
-    fireEvent.click(await screen.findByText("Gamma entry"));
     const reopenedDrawer = await screen.findByRole("dialog", { name: "Gamma entry" });
-
     fireEvent.click(within(reopenedDrawer).getByRole("button", { name: /^delete$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /confirm|delete/i }));
 
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/knowledge/delete", {
@@ -376,6 +388,57 @@ describe("KnowledgePage", () => {
       expect(bridge.apiGet.mock.calls.filter(
         ([path]) => path === "page/knowledge/detail",
       )).toHaveLength(2);
+    });
+  });
+
+  it("keeps a dirty knowledge draft on a same-entity navigation intent while clean intents refetch", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/knowledge") return Promise.resolve(ok({ entries: [], total: 0 }));
+      if (path === "page/knowledge/detail") {
+        return Promise.resolve(ok({
+          entry: {
+            entry_id: params.entry_id,
+            title: "Original navigation knowledge",
+            content: "Original knowledge content",
+            category: "fact",
+            confidence: 0.8,
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const view = render(
+      <KnowledgePage
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, id: "knowledge-same-target" }}
+      />,
+    );
+    const drawer = await screen.findByRole("dialog", { name: "Original navigation knowledge" });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(drawer).getByLabelText("Title"), {
+      target: { value: "Dirty navigation knowledge" },
+    });
+
+    view.rerender(
+      <KnowledgePage
+        showToast={showToast}
+        navigationTarget={{ requestId: 2, id: "knowledge-same-target" }}
+      />,
+    );
+
+    expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/knowledge/detail")).toHaveLength(1);
+    expect((within(drawer).getByLabelText("Title") as HTMLInputElement).value).toBe("Dirty navigation knowledge");
+
+    fireEvent.click(within(drawer).getByRole("button", { name: /^cancel$/i }));
+    view.rerender(
+      <KnowledgePage
+        showToast={showToast}
+        navigationTarget={{ requestId: 3, id: "knowledge-same-target" }}
+      />,
+    );
+    await waitFor(() => {
+      expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/knowledge/detail")).toHaveLength(2);
     });
   });
 
@@ -459,13 +522,9 @@ describe("KnowledgePage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /new entry/i }));
 
-    const modalTitle = await screen.findByText("New Knowledge Entry");
-    const modal = modalTitle.closest("div")?.parentElement;
-    if (!modal) throw new Error("expected create modal");
-
-    const inputs = within(modal).getAllByRole("textbox");
-    fireEvent.change(inputs[0], { target: { value: "Fresh knowledge" } });
-    fireEvent.change(inputs[1], { target: { value: "Created from modal flow" } });
+    const modal = await screen.findByRole("dialog", { name: "New Knowledge Entry" });
+    fireEvent.change(within(modal).getByLabelText("Title"), { target: { value: "Fresh knowledge" } });
+    fireEvent.change(within(modal).getByLabelText("Content"), { target: { value: "Created from modal flow" } });
     fireEvent.click(within(modal).getByRole("button", { name: /^create$/i }));
 
     await waitFor(() => {
@@ -473,8 +532,372 @@ describe("KnowledgePage", () => {
         title: "Fresh knowledge",
         content: "Created from modal flow",
         category: "fact",
+        confidence: 0,
+        tags: [],
       });
     });
     expect(showToast).toHaveBeenCalledWith("Entry created");
+  });
+
+  it("keeps a dirty knowledge edit until a different row selection is discarded", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/knowledge") {
+        return Promise.resolve(ok({
+          entries: [
+            { entry_id: "kb-1", title: "First entry", category: "fact", confidence: 0.8 },
+            { entry_id: "kb-2", title: "Second entry", category: "concept", confidence: 0.6 },
+          ],
+        }));
+      }
+      if (path === "page/knowledge/detail") {
+        return Promise.resolve(ok({
+          entry: {
+            entry_id: params.entry_id,
+            title: params.entry_id === "kb-1" ? "First entry" : "Second entry",
+            content: params.entry_id === "kb-1" ? "First detail" : "Second detail",
+            category: "fact",
+            confidence: 0.8,
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<KnowledgePage showToast={showToast} />);
+
+    const firstEntryButton = await screen.findByRole("button", { name: "Open knowledge entry First entry" });
+    const secondEntryButton = screen.getByRole("button", { name: "Open knowledge entry Second entry" });
+    fireEvent.click(firstEntryButton);
+    const firstDrawer = await screen.findByRole("dialog", { name: "First entry" });
+    fireEvent.click(within(firstDrawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(firstDrawer).getByLabelText("Title"), {
+      target: { value: "Unsaved first title" },
+    });
+
+    fireEvent.click(secondEntryButton);
+
+    expect(bridge.apiGet).not.toHaveBeenCalledWith("page/knowledge/detail", { entry_id: "kb-2" });
+    expect(await screen.findByRole("dialog", { name: /leave configuration without saving/i })).toBeTruthy();
+    expect((within(firstDrawer).getByLabelText("Title") as HTMLInputElement).value).toBe("Unsaved first title");
+
+    fireEvent.click(screen.getByRole("button", { name: /keep editing/i }));
+    expect((within(firstDrawer).getByLabelText("Title") as HTMLInputElement).value).toBe("Unsaved first title");
+
+    fireEvent.click(secondEntryButton);
+    fireEvent.click(await screen.findByRole("button", { name: /discard changes and leave/i }));
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge/detail", { entry_id: "kb-2" });
+    });
+    const secondDrawer = await screen.findByRole("dialog", { name: "Second entry" });
+    expect(within(secondDrawer).getByText("Second detail")).toBeTruthy();
+    expect(within(secondDrawer).getByRole("button", { name: /^edit$/i })).toBeTruthy();
+    expect(within(secondDrawer).queryByRole("button", { name: /^save$/i })).toBeNull();
+
+    const detailRequestsBeforeCurrentSelection = bridge.apiGet.mock.calls.filter(
+      ([path]) => path === "page/knowledge/detail",
+    ).length;
+    fireEvent.click(secondEntryButton);
+    expect(bridge.apiGet.mock.calls.filter(
+      ([path]) => path === "page/knowledge/detail",
+    )).toHaveLength(detailRequestsBeforeCurrentSelection);
+    expect(screen.queryByRole("dialog", { name: /leave configuration without saving/i })).toBeNull();
+  });
+
+  it("restores the knowledge edit baseline when Cancel is followed by another Edit", async () => {
+    const onDirtyChange = vi.fn();
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/knowledge") {
+        return Promise.resolve(ok({
+          entries: [{ entry_id: "kb-cancel", title: "Baseline title", category: "fact", confidence: 0.8 }],
+        }));
+      }
+      if (path === "page/knowledge/detail") {
+        return Promise.resolve(ok({
+          entry: {
+            entry_id: params.entry_id,
+            title: "Baseline title",
+            content: "Baseline content",
+            category: "fact",
+            confidence: 0.8,
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<KnowledgePage showToast={showToast} onDirtyChange={onDirtyChange} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open knowledge entry Baseline title" }));
+    const drawer = await screen.findByRole("dialog", { name: "Baseline title" });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(drawer).getByLabelText("Title"), {
+      target: { value: "Discarded title" },
+    });
+    await waitFor(() => {
+      expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    });
+
+    fireEvent.click(within(drawer).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => {
+      expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+
+    expect((within(drawer).getByLabelText("Title") as HTMLInputElement).value).toBe("Baseline title");
+    expect(screen.queryByDisplayValue("Discarded title")).toBeNull();
+  });
+
+  it("reports the logical OR of independent knowledge edit and create dirty owners", async () => {
+    const onDirtyChange = vi.fn();
+    bridge.apiPost.mockResolvedValue(ok({}));
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/knowledge") {
+        return Promise.resolve(ok({
+          entries: [{ entry_id: "kb-owners", title: "Owner baseline", category: "fact", confidence: 0.8 }],
+        }));
+      }
+      if (path === "page/knowledge/detail") {
+        return Promise.resolve(ok({
+          entry: {
+            entry_id: params.entry_id,
+            title: "Owner baseline",
+            content: "Owner content",
+            category: "fact",
+            confidence: 0.8,
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const firstView = render(<KnowledgePage showToast={showToast} onDirtyChange={onDirtyChange} />);
+    const firstCreateButton = await screen.findByRole("button", { name: /new entry/i });
+    fireEvent.click(screen.getByRole("button", { name: "Open knowledge entry Owner baseline" }));
+    const firstDrawer = await screen.findByRole("dialog", { name: "Owner baseline" });
+    fireEvent.click(within(firstDrawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(firstDrawer).getByLabelText("Title"), { target: { value: "Dirty edit" } });
+    await waitFor(() => {
+      expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    });
+
+    onDirtyChange.mockClear();
+    fireEvent.click(firstCreateButton);
+    const cleanCreateDialog = await screen.findByRole("dialog", { name: "New Knowledge Entry" });
+    fireEvent.click(within(cleanCreateDialog).getByRole("button", { name: /^cancel$/i }));
+    expect(onDirtyChange).not.toHaveBeenCalled();
+    expect((within(firstDrawer).getByLabelText("Title") as HTMLInputElement).value).toBe("Dirty edit");
+
+    fireEvent.click(within(firstDrawer).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => {
+      expect(onDirtyChange).toHaveBeenCalledTimes(1);
+      expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    });
+    firstView.unmount();
+    expect(onDirtyChange).toHaveBeenCalledTimes(2);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+
+    onDirtyChange.mockClear();
+    const secondView = render(<KnowledgePage showToast={showToast} onDirtyChange={onDirtyChange} />);
+    const secondCreateButton = await screen.findByRole("button", { name: /new entry/i });
+    fireEvent.click(screen.getByRole("button", { name: "Open knowledge entry Owner baseline" }));
+    const cleanDrawer = await screen.findByRole("dialog", { name: "Owner baseline" });
+    const cleanSheetClose = within(cleanDrawer).getByRole("button", { name: "Close" });
+    fireEvent.click(secondCreateButton);
+    const dirtyCreateDialog = await screen.findByRole("dialog", { name: "New Knowledge Entry" });
+    fireEvent.change(within(dirtyCreateDialog).getByLabelText("Title"), { target: { value: "Dirty create" } });
+    await waitFor(() => {
+      expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    });
+
+    onDirtyChange.mockClear();
+    fireEvent.click(cleanSheetClose);
+    expect(onDirtyChange).not.toHaveBeenCalled();
+    expect((within(dirtyCreateDialog).getByLabelText("Title") as HTMLInputElement).value).toBe("Dirty create");
+
+    fireEvent.click(within(dirtyCreateDialog).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => {
+      expect(onDirtyChange).toHaveBeenCalledTimes(1);
+      expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    });
+    secondView.unmount();
+    expect(onDirtyChange).toHaveBeenCalledTimes(2);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("keeps a rejected knowledge update open with structured field and form errors", async () => {
+    const validationError = new ApiRequestError("Update rejected by the server", "validation_failed", {
+      title: "A unique title is required",
+    });
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/knowledge") {
+        return Promise.resolve(ok({
+          entries: [{ entry_id: "kb-update-error", title: "Original title", category: "fact", confidence: 0.8 }],
+        }));
+      }
+      if (path === "page/knowledge/detail") {
+        return Promise.resolve(ok({
+          entry: {
+            entry_id: params.entry_id,
+            title: "Original title",
+            content: "Original content",
+            category: "fact",
+            confidence: 0.8,
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockRejectedValue(validationError);
+
+    render(<KnowledgePage showToast={showToast} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open knowledge entry Original title" }));
+    const drawer = await screen.findByRole("dialog", { name: "Original title" });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(drawer).getByLabelText("Title"), { target: { value: "Rejected title" } });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(within(drawer).getAllByText("A unique title is required").length).toBeGreaterThan(0);
+      expect(within(drawer).getByText("Update rejected by the server").closest('[role="alert"]')).toBeTruthy();
+    }, { timeout: 5000 });
+    const title = within(drawer).getByLabelText("Title") as HTMLInputElement;
+    expect(title.value).toBe("Rejected title");
+    expect(title.getAttribute("aria-invalid")).toBe("true");
+    expect(title.getAttribute("aria-describedby")).toBeTruthy();
+    expect(title.disabled).toBe(false);
+    expect(within(drawer).getByRole("button", { name: /^save$/i })).toBeTruthy();
+    expect(showToast).not.toHaveBeenCalledWith("Entry updated");
+  });
+
+  it("keeps a rejected knowledge create open with structured field and form errors", async () => {
+    const validationError = new ApiRequestError("Create rejected by the server", "validation_failed", {
+      title: "A title with this value already exists",
+    });
+    bridge.apiGet.mockResolvedValue(ok({ entries: [] }));
+    bridge.apiPost.mockRejectedValue(validationError);
+
+    render(<KnowledgePage showToast={showToast} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /new entry/i }));
+    const dialog = await screen.findByRole("dialog", { name: "New Knowledge Entry" });
+    fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Rejected entry" } });
+    fireEvent.change(within(dialog).getByLabelText("Content"), { target: { value: "Rejected content" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^create$/i }));
+
+    await waitFor(() => {
+      expect(within(dialog).getAllByText("A title with this value already exists").length).toBeGreaterThan(0);
+      expect(within(dialog).getByText("Create rejected by the server").closest('[role="alert"]')).toBeTruthy();
+    }, { timeout: 5000 });
+    const title = within(dialog).getByLabelText("Title") as HTMLInputElement;
+    expect(title.value).toBe("Rejected entry");
+    expect(title.getAttribute("aria-invalid")).toBe("true");
+    expect(title.getAttribute("aria-describedby")).toBeTruthy();
+    expect(title.disabled).toBe(false);
+    expect(within(dialog).getByRole("button", { name: /^create$/i })).toBeTruthy();
+    expect(showToast).not.toHaveBeenCalledWith("Entry created");
+  });
+
+  it("locks a pending knowledge create until one successful request closes and resets it", async () => {
+    const onDirtyChange = vi.fn();
+    const createRequest = deferred<ReturnType<typeof ok>>();
+    bridge.apiGet.mockResolvedValue(ok({ entries: [] }));
+    bridge.apiPost.mockReturnValue(createRequest.promise);
+
+    render(<KnowledgePage showToast={showToast} onDirtyChange={onDirtyChange} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /new entry/i }));
+    const dialog = await screen.findByRole("dialog", { name: "New Knowledge Entry" });
+    fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Pending entry" } });
+    fireEvent.change(within(dialog).getByLabelText("Content"), { target: { value: "Pending content" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^create$/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^create$/i }));
+
+    await waitFor(() => {
+      expect(bridge.apiPost).toHaveBeenCalledTimes(1);
+    });
+    const title = within(dialog).getByLabelText("Title") as HTMLInputElement;
+    expect(title.disabled).toBe(true);
+    expect((within(dialog).getByRole("button", { name: /^cancel$/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(dialog).getByRole("button", { name: "Close" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(dialog).getByRole("button", { name: /saving/i }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.getByRole("dialog", { name: "New Knowledge Entry" })).toBeTruthy();
+
+    await act(async () => {
+      createRequest.resolve(ok({}));
+      await createRequest.promise;
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "New Knowledge Entry" })).toBeNull();
+      expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    });
+    expect(bridge.apiPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("locks a pending knowledge update until it completes", async () => {
+    const updateRequest = deferred<ReturnType<typeof ok>>();
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/knowledge") {
+        return Promise.resolve(ok({
+          entries: [{ entry_id: "kb-pending-update", title: "Pending original", category: "fact", confidence: 0.8 }],
+        }));
+      }
+      if (path === "page/knowledge/detail") {
+        return Promise.resolve(ok({
+          entry: {
+            entry_id: params.entry_id,
+            title: "Pending original",
+            content: "Pending original content",
+            category: "fact",
+            confidence: 0.8,
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockReturnValue(updateRequest.promise);
+
+    render(<KnowledgePage showToast={showToast} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open knowledge entry Pending original" }));
+    const drawer = await screen.findByRole("dialog", { name: "Pending original" });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(drawer).getByLabelText("Title"), { target: { value: "Pending update" } });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^save$/i }));
+    fireEvent.click(within(drawer).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(bridge.apiPost).toHaveBeenCalledTimes(1);
+    });
+    expect((within(drawer).getByLabelText("Title") as HTMLInputElement).disabled).toBe(true);
+    expect((within(drawer).getByRole("button", { name: /^cancel$/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(drawer).getByRole("button", { name: "Close" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(drawer).getByRole("button", { name: /saving/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => {
+      updateRequest.resolve(ok({}));
+      await updateRequest.promise;
+    });
+    await waitFor(() => {
+      expect(within(drawer).getByRole("button", { name: /^edit$/i })).toBeTruthy();
+      expect(within(drawer).queryByRole("button", { name: /^save$/i })).toBeNull();
+    });
+    expect(bridge.apiPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets a discarded create draft before reopening", async () => {
+    const onDirtyChange = vi.fn();
+    bridge.apiGet.mockResolvedValue(ok({ entries: [] }));
+    render(<KnowledgePage showToast={showToast} onDirtyChange={onDirtyChange} />);
+    fireEvent.click(await screen.findByRole("button", { name: /new entry/i }));
+    const dialog = await screen.findByRole("dialog", { name: "New Knowledge Entry" });
+    fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "discard me" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard changes and leave" }));
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByRole("button", { name: /new entry/i }));
+    expect((await screen.findByRole("textbox", { name: "Title" }) as HTMLInputElement).value).toBe("");
   });
 });

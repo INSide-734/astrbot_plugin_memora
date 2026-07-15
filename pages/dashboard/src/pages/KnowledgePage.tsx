@@ -13,11 +13,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { dashboardLocale, formatDashboardDate, formatDashboardNumber } from "@/lib/i18n";
 import { Textarea } from "@/components/ui/textarea";
+import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
+import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
+import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
+import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
+import { KnowledgeForm, type KnowledgeDraft } from "@/components/editing/forms/KnowledgeForm";
+import { ApiRequestError, BULK_CONFIRMATION_THRESHOLD, type FieldErrors } from "@/types/editing";
 import type { EntityNavigationTarget } from "@/types";
 
 interface KnowledgePageProps {
   showToast: (msg: string, isError?: boolean) => void;
   navigationTarget?: EntityNavigationTarget | null;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface KnowledgeEntry {
@@ -36,7 +43,17 @@ const CAT_LABELS: Record<string, string> = {};
 const EDIT_KB_LABELS: Record<string, string> = {};
 const PAGE_SIZE = 100;
 
-export function KnowledgePage({ showToast, navigationTarget }: KnowledgePageProps) {
+function submissionError(error: unknown): { fieldErrors: FieldErrors; formError: string } {
+  if (error instanceof ApiRequestError) {
+    return { fieldErrors: error.fieldErrors, formError: error.message };
+  }
+  return {
+    fieldErrors: {},
+    formError: error instanceof Error ? error.message : "Request failed",
+  };
+}
+
+export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: KnowledgePageProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
 
@@ -57,10 +74,22 @@ export function KnowledgePage({ showToast, navigationTarget }: KnowledgePageProp
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<KnowledgeEntry | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [newEntry, setNewEntry] = useState({ title: "", content: "", category: "fact" });
+  const [newEntry, setNewEntry] = useState<KnowledgeDraft>({ title: "", content: "", category: "fact", confidence: 0, tags: [] });
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [editField, setEditField] = useState("title");
-  const [editData, setEditData] = useState<Record<string, string>>({});
+  const [editDraft, setEditDraft] = useState<KnowledgeDraft>({ title: "", content: "", category: "fact", confidence: 0, tags: [] });
+  const [editMode, setEditMode] = useState(false);
+  const [editDirty, setEditDirty] = useState(false);
+  const [createDirty, setCreateDirty] = useState(false);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [editFieldErrors, setEditFieldErrors] = useState<FieldErrors>({});
+  const [createFieldErrors, setCreateFieldErrors] = useState<FieldErrors>({});
+  const [editFormError, setEditFormError] = useState<string | null>(null);
+  const [createFormError, setCreateFormError] = useState<string | null>(null);
+  const [pendingClose, setPendingClose] = useState<"edit" | "create" | "selection" | null>(null);
+  const [pendingSelection, setPendingSelection] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const detailRequestRef = useRef(0);
 
   const fetchEntries = useCallback(async () => {
@@ -100,8 +129,13 @@ export function KnowledgePage({ showToast, navigationTarget }: KnowledgePageProp
     try {
       const res = unwrapApiData(await apiRequest(`knowledge/detail?entry_id=${id}`));
       if (requestId !== detailRequestRef.current) return;
-      setDetail((res.entry ?? res) as KnowledgeEntry);
-      setEditData({});
+      const entry = (res.entry ?? res) as KnowledgeEntry;
+      setDetail(entry);
+      setEditDraft({ title: entry.title ?? "", content: entry.content ?? "", category: entry.category ?? "fact", confidence: Number(entry.confidence ?? 0), tags: (entry as KnowledgeEntry & { tags?: string[] }).tags ?? [] });
+      setEditMode(false);
+      setEditDirty(false);
+      setEditFieldErrors({});
+      setEditFormError(null);
     } catch (e) {
       if (requestId !== detailRequestRef.current) return;
       showToast(String(e), true);
@@ -110,23 +144,39 @@ export function KnowledgePage({ showToast, navigationTarget }: KnowledgePageProp
 
   useEffect(() => {
     if (!navigationTarget) return;
+    if ((editDirty || createDirty) && navigationTarget.id === (detail?.entry_id ?? detail?.id)) return;
     void fetchDetail(navigationTarget.id);
   }, [fetchDetail, navigationTarget?.id, navigationTarget?.requestId]);
 
   const createEntry = async () => {
+    if (createSubmitting) return;
+    setCreateSubmitting(true);
+    setCreateFieldErrors({});
+    setCreateFormError(null);
     try {
-      await apiRequest("knowledge/create", { method: "POST", body: newEntry });
+      await unwrapApiData(await apiRequest("knowledge/create", { method: "POST", body: newEntry }));
       showToast(t("toast.entryCreated"));
       setShowCreate(false);
-      setNewEntry({ title: "", content: "", category: "fact" });
+      setNewEntry({ title: "", content: "", category: "fact", confidence: 0, tags: [] });
+      setCreateDirty(false);
+      setCreateFieldErrors({});
+      setCreateFormError(null);
       fetchEntries();
-    } catch (e) { showToast(String(e), true); }
+    } catch (error) {
+      const next = submissionError(error);
+      setCreateFieldErrors(next.fieldErrors);
+      setCreateFormError(next.formError);
+      throw error;
+    } finally {
+      setCreateSubmitting(false);
+    }
   };
 
   const deleteEntry = async (id: string) => {
     try {
       await apiRequest("knowledge/delete", { method: "POST", body: { entry_id: id } });
       showToast(t("toast.entryDeleted"));
+      setDeleteOpen(false);
       setDetail(null);
       fetchEntries();
     } catch (e) { showToast(String(e), true); }
@@ -134,15 +184,67 @@ export function KnowledgePage({ showToast, navigationTarget }: KnowledgePageProp
 
   const saveEdit = async () => {
     if (!detail) return;
+    if (editSubmitting) return;
+    setEditSubmitting(true);
+    setEditFieldErrors({});
+    setEditFormError(null);
     try {
-      await apiRequest("knowledge/update", {
+      await unwrapApiData(await apiRequest("knowledge/update", {
         method: "POST",
-        body: { entry_id: detail.entry_id ?? detail.id, field: editField, value: editData[editField] ?? "" },
-      });
+        body: { entry_id: detail.entry_id ?? detail.id, changes: editDraft },
+      }));
       showToast(t("toast.entryUpdated"));
-      setDetail(null);
+      setEditDirty(false);
+      setEditMode(false);
+      setEditFieldErrors({});
+      setEditFormError(null);
       fetchEntries();
-    } catch (e) { showToast(String(e), true); }
+    } catch (error) {
+      const next = submissionError(error);
+      setEditFieldErrors(next.fieldErrors);
+      setEditFormError(next.formError);
+      throw error;
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    onDirtyChange?.(editDirty || createDirty);
+  }, [createDirty, editDirty, onDirtyChange]);
+
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  const updateEditDraft = (next: KnowledgeDraft) => {
+    setEditDraft(next);
+    setEditFieldErrors({});
+    setEditFormError(null);
+    const baseline = detail ? { title: detail.title ?? "", content: detail.content ?? "", category: detail.category ?? "fact", confidence: Number(detail.confidence ?? 0), tags: (detail as KnowledgeEntry & { tags?: string[] }).tags ?? [] } : next;
+    setEditDirty(JSON.stringify(next) !== JSON.stringify(baseline));
+  };
+
+  const updateNewEntry = (next: KnowledgeDraft) => {
+    setNewEntry(next);
+    setCreateFieldErrors({});
+    setCreateFormError(null);
+    setCreateDirty(JSON.stringify(next) !== JSON.stringify({ title: "", content: "", category: "fact", confidence: 0, tags: [] }));
+  };
+
+  const resetNewEntry = () => {
+    setNewEntry({ title: "", content: "", category: "fact", confidence: 0, tags: [] });
+    setCreateDirty(false);
+    setCreateFieldErrors({});
+    setCreateFormError(null);
+  };
+
+  const requestDetail = (id: string) => {
+    if (id === (detail?.entry_id ?? detail?.id)) return;
+    if (editDirty || createDirty) {
+      setPendingSelection(id);
+      setPendingClose("selection");
+      return;
+    }
+    void fetchDetail(id);
   };
 
   const toggleSelect = (id: string) => {
@@ -158,7 +260,7 @@ export function KnowledgePage({ showToast, navigationTarget }: KnowledgePageProp
     else { setSelected(new Set(entries.map((e) => e.entry_id ?? e.id ?? ""))); }
   };
 
-  const batchDelete = async () => {
+  const executeBatchDelete = async () => {
     if (!selected.size) return;
     try {
       await apiRequest("knowledge/batch", { method: "POST", body: { entry_ids: Array.from(selected), action: "delete" } });
@@ -166,6 +268,14 @@ export function KnowledgePage({ showToast, navigationTarget }: KnowledgePageProp
       setSelected(new Set());
       fetchEntries();
     } catch (e) { showToast(String(e), true); }
+  };
+
+  const batchDelete = () => {
+    if (selected.size >= BULK_CONFIRMATION_THRESHOLD) {
+      setBatchDeleteOpen(true);
+      return;
+    }
+    void executeBatchDelete();
   };
 
   const getEntryId = (e: KnowledgeEntry) => e.entry_id ?? e.id ?? "";
@@ -219,12 +329,12 @@ export function KnowledgePage({ showToast, navigationTarget }: KnowledgePageProp
             <TableBody>
               {entries.map((e) => (
                 <TableRow key={getEntryId(e)} data-state={selected.has(getEntryId(e)) ? "selected" : undefined} className="cursor-pointer text-sm"
-                  onClick={() => fetchDetail(getEntryId(e))}>
+                  onClick={() => requestDetail(getEntryId(e))}>
                   <TableCell className="px-4" onClick={(ev) => ev.stopPropagation()}>
                     <Checkbox aria-label={t("kb.selectEntry", e.title)} checked={selected.has(getEntryId(e))} onCheckedChange={() => toggleSelect(getEntryId(e))} />
                   </TableCell>
                   <TableCell className="px-4 font-medium">
-                    <Button variant="link" className="h-auto p-0 font-medium" aria-label={t("kb.openEntry", e.title)} onClick={(event) => { event.stopPropagation(); fetchDetail(getEntryId(e)); }}>{e.title}</Button>
+                    <Button variant="link" className="h-auto p-0 font-medium" aria-label={t("kb.openEntry", e.title)} onClick={(event) => { event.stopPropagation(); requestDetail(getEntryId(e)); }}>{e.title}</Button>
                   </TableCell>
                   <TableCell><Badge variant="secondary">{CAT_LABELS[e.category ?? "fact"] ?? e.category ?? t("category.fact")}</Badge></TableCell>
                   <TableCell className="text-xs tabular-nums">{formatDashboardNumber(e.confidence ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
@@ -251,100 +361,11 @@ export function KnowledgePage({ showToast, navigationTarget }: KnowledgePageProp
         </PageToolbar>
       )}
 
-      {/* Detail panel */}
-      <Sheet open={detail !== null} onOpenChange={(open) => { if (!open) setDetail(null); }}>
-        {detail && (
-        <SheetContent>
-          <SheetHeader>
-            <SheetTitle>{detail.title}</SheetTitle>
-            <SheetDescription>{CAT_LABELS[detail.category ?? "fact"] ?? detail.category ?? t("category.fact")}</SheetDescription>
-          </SheetHeader>
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.category")}</label><p className="text-sm">{CAT_LABELS[detail.category ?? "fact"] ?? detail.category ?? t("category.fact")}</p></div>
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.confidence")}</label><p className="text-sm">{formatDashboardNumber(detail.confidence ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.accessCount")}</label><p className="text-sm">{detail.access_count ?? 0}</p></div>
-            </div>
-            {detail.content && (
-              <div><label className="text-xs font-medium text-muted-foreground">{t("detail.content")}</label><p className="mt-1 whitespace-pre-wrap text-sm">{detail.content}</p></div>
-            )}
-
-            {/* Edit form */}
-            <div className="flex flex-col gap-3 border-t pt-4">
-              <h4 className="text-sm font-semibold">{t("detail.edit")}</h4>
-              <Select value={editField} onValueChange={(v) => v && setEditField(v)}>
-                <SelectTrigger><span>{EDIT_KB_LABELS[editField] ?? editField}</span></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="title">{t("field.title")}</SelectItem>
-                  <SelectItem value="content">{t("field.content")}</SelectItem>
-                  <SelectItem value="category">{t("table.category")}</SelectItem>
-                  <SelectItem value="confidence">{t("table.confidence")}</SelectItem>
-                </SelectContent>
-              </Select>
-              {editField === "title" && (
-                <Input placeholder={t("placeholder.newTitle")} value={editData.title ?? ""}
-                  onChange={(e) => setEditData({ ...editData, title: e.target.value })} />
-              )}
-              {editField === "content" && (
-                <Textarea
-                  rows={4} placeholder={t("placeholder.newContent")} value={editData.content ?? ""}
-                  onChange={(e) => setEditData({ ...editData, content: e.target.value })} />
-              )}
-              {editField === "category" && (
-                <Select value={editData.category ?? (detail.category ?? "fact")} onValueChange={(v) => v && setEditData({ ...editData, category: v })}>
-                  <SelectTrigger><span>{CAT_LABELS[editData.category ?? detail.category ?? "fact"]}</span></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="fact">{t("category.fact")}</SelectItem>
-                    <SelectItem value="concept">{t("category.concept")}</SelectItem>
-                    <SelectItem value="rule">{t("category.rule")}</SelectItem>
-                    <SelectItem value="event">{t("category.event")}</SelectItem>
-                    <SelectItem value="procedure">{t("category.procedure")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              )}
-              {editField === "confidence" && (
-                <Input type="number" min="0" max="1" step="0.01" placeholder="0.00-1.00"
-                  value={editData.confidence ?? String(detail.confidence ?? 0)}
-                  onChange={(e) => setEditData({ ...editData, confidence: e.target.value })} />
-              )}
-            </div>
-          </div>
-          <SheetFooter>
-            <Button variant="secondary" size="sm" onClick={() => setDetail(null)}>{t("common.cancel")}</Button>
-            <Button variant="destructive" size="sm" onClick={() => deleteEntry(detail.entry_id ?? detail.id ?? "")}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button>
-            <Button size="sm" onClick={saveEdit}><Pencil data-icon="inline-start" />{t("common.save")}</Button>
-          </SheetFooter>
-        </SheetContent>
-        )}
-      </Sheet>
-
-      {/* Create modal */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="sm:max-w-lg" showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle>{t("detail.newEntry")}</DialogTitle>
-          </DialogHeader>
-            <div className="flex flex-col gap-4">
-              <Input placeholder={t("placeholder.title")} value={newEntry.title} onChange={(e) => setNewEntry({ ...newEntry, title: e.target.value })} />
-              <Textarea className="resize-none" rows={4}
-                placeholder={t("placeholder.contentHint")} value={newEntry.content} onChange={(e) => setNewEntry({ ...newEntry, content: e.target.value })} />
-              <Select value={newEntry.category} onValueChange={(v) => v && setNewEntry({ ...newEntry, category: v })}>
-                <SelectTrigger><span>{CAT_LABELS[newEntry.category] ?? newEntry.category}</span></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="fact">{t("category.fact")}</SelectItem>
-                  <SelectItem value="concept">{t("category.concept")}</SelectItem>
-                  <SelectItem value="rule">{t("category.rule")}</SelectItem>
-                  <SelectItem value="event">{t("category.event")}</SelectItem>
-                  <SelectItem value="procedure">{t("category.procedure")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-              <DialogFooter>
-                <Button variant="secondary" size="sm" onClick={() => setShowCreate(false)}>{t("common.cancel")}</Button>
-                <Button size="sm" onClick={createEntry}>{t("detail.create")}</Button>
-              </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) { if (editDirty) setPendingClose("edit"); else setDetail(null); } }} title={detail?.title ?? ""} description={detail ? (CAT_LABELS[detail.category ?? "fact"] ?? detail.category ?? "") : ""} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave onBeginEdit={() => { setEditFieldErrors({}); setEditFormError(null); setEditMode(true); }} onCancel={() => { if (detail) setEditDraft({ title: detail.title ?? "", content: detail.content ?? "", category: detail.category ?? "fact", confidence: Number(detail.confidence ?? 0), tags: (detail as KnowledgeEntry & { tags?: string[] }).tags ?? [] }); setEditFieldErrors({}); setEditFormError(null); setEditMode(false); setEditDirty(false); }} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: t("common.saving") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><p>{detail.content}</p><p>{t("table.category")}: {CAT_LABELS[detail.category ?? "fact"] ?? detail.category}</p><p>{t("table.confidence")}: {formatDashboardNumber(detail.confidence ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p><Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<>{editFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{editFormError}</div> : null}<KnowledgeForm value={editDraft} onChange={updateEditDraft} fieldErrors={editFieldErrors} disabled={editSubmitting} mode="edit" /></>} />
+      <EntityCreateDialog open={showCreate} onOpenChange={(open) => { if (!open) { if (createDirty) setPendingClose("create"); else { resetNewEntry(); setShowCreate(false); } } }} title={t("detail.newEntry")} description={t("detail.newEntry")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(newEntry.title.trim())} onCancel={() => { resetNewEntry(); setShowCreate(false); }} onSubmit={createEntry} labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: t("detail.create"), submitting: t("common.saving") }} form={<>{createFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{createFormError}</div> : null}<KnowledgeForm value={newEntry} onChange={updateNewEntry} fieldErrors={createFieldErrors} disabled={createSubmitting} mode="create" /></>} />
+      <UnsavedChangesDialog open={pendingClose !== null} title={t("config.unsaved.title")} description={t("config.unsaved.description")} keepEditingLabel={t("config.unsaved.keepEditing")} discardLabel={t("config.unsaved.discard")} onKeepEditing={() => { setPendingClose(null); setPendingSelection(null); }} onDiscard={() => { if (pendingClose === "selection" && pendingSelection) { setEditDirty(false); resetNewEntry(); setEditMode(false); setShowCreate(false); void fetchDetail(pendingSelection); } else if (pendingClose === "edit") { setEditDirty(false); setEditMode(false); setDetail(null); } else { resetNewEntry(); setShowCreate(false); } setPendingSelection(null); setPendingClose(null); }} />
+      <DeleteConfirmDialog open={deleteOpen} title={t("common.delete")} description={detail?.title ?? ""} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} onCancel={() => setDeleteOpen(false)} onConfirm={() => detail && void deleteEntry(detail.entry_id ?? detail.id ?? "")} />
+      <DeleteConfirmDialog open={batchDeleteOpen} title={t("filter.deleteSelected")} description={t("filter.deleteSelected")} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} confirmationRequirement={{ label: t("filter.deleteSelected"), expectedText: String(selected.size) }} onCancel={() => setBatchDeleteOpen(false)} onConfirm={() => { setBatchDeleteOpen(false); void executeBatchDelete(); }} />
     </PageFrame>
   );
 }

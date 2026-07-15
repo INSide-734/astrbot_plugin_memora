@@ -14,11 +14,18 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { selectionStateVariants } from "@/components/ui/selection-state";
 import { dashboardLocale, formatDashboardDate } from "@/lib/i18n";
 import { Textarea } from "@/components/ui/textarea";
+import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
+import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
+import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
+import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
+import { NoteForm, type NoteDraft } from "@/components/editing/forms/NoteForm";
+import { ApiRequestError, BULK_CONFIRMATION_THRESHOLD, type FieldErrors } from "@/types/editing";
 import type { EntityNavigationTarget } from "@/types";
 
 interface NotesPageProps {
   showToast: (msg: string, isError?: boolean) => void;
   navigationTarget?: EntityNavigationTarget | null;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface Note {
@@ -36,7 +43,17 @@ interface Note {
 const NOTE_STATUS_LABELS: Record<string, string> = {};
 const EDIT_NOTE_LABELS: Record<string, string> = {};
 
-export function NotesPage({ showToast, navigationTarget }: NotesPageProps) {
+function submissionError(error: unknown): { fieldErrors: FieldErrors; formError: string } {
+  if (error instanceof ApiRequestError) {
+    return { fieldErrors: error.fieldErrors, formError: error.message };
+  }
+  return {
+    fieldErrors: {},
+    formError: error instanceof Error ? error.message : "Request failed",
+  };
+}
+
+export function NotesPage({ showToast, navigationTarget, onDirtyChange }: NotesPageProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
 
@@ -52,10 +69,22 @@ export function NotesPage({ showToast, navigationTarget }: NotesPageProps) {
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<Note | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [newNote, setNewNote] = useState({ title: "", content: "", tags: "" });
+  const [newNote, setNewNote] = useState<NoteDraft>({ title: "", content: "", tags: [], status: "active" });
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [editField, setEditField] = useState("title");
-  const [editData, setEditData] = useState<Record<string, string>>({});
+  const [editDraft, setEditDraft] = useState<NoteDraft>({ title: "", content: "", tags: [], status: "active" });
+  const [editMode, setEditMode] = useState(false);
+  const [editDirty, setEditDirty] = useState(false);
+  const [createDirty, setCreateDirty] = useState(false);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [editFieldErrors, setEditFieldErrors] = useState<FieldErrors>({});
+  const [createFieldErrors, setCreateFieldErrors] = useState<FieldErrors>({});
+  const [editFormError, setEditFormError] = useState<string | null>(null);
+  const [createFormError, setCreateFormError] = useState<string | null>(null);
+  const [pendingClose, setPendingClose] = useState<"edit" | "create" | "selection" | null>(null);
+  const [pendingSelection, setPendingSelection] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const detailRequestRef = useRef(0);
 
   const fetchNotes = useCallback(async () => {
@@ -77,8 +106,13 @@ export function NotesPage({ showToast, navigationTarget }: NotesPageProps) {
     try {
       const res = unwrapApiData(await apiRequest(`notes/detail?note_id=${id}`));
       if (requestId !== detailRequestRef.current) return;
-      setDetail((res.note ?? res) as Note);
-      setEditData({});
+      const note = (res.note ?? res) as Note;
+      setDetail(note);
+      setEditDraft({ title: note.title ?? "", content: note.content ?? "", tags: note.tags ?? [], status: note.status ?? "active" });
+      setEditMode(false);
+      setEditDirty(false);
+      setEditFieldErrors({});
+      setEditFormError(null);
     } catch (e) {
       if (requestId !== detailRequestRef.current) return;
       showToast(String(e), true);
@@ -87,26 +121,42 @@ export function NotesPage({ showToast, navigationTarget }: NotesPageProps) {
 
   useEffect(() => {
     if (!navigationTarget) return;
+    if ((editDirty || createDirty) && navigationTarget.id === (detail?.note_id ?? detail?.id)) return;
     void fetchDetail(navigationTarget.id);
   }, [fetchDetail, navigationTarget?.id, navigationTarget?.requestId]);
 
   const createNote = async () => {
+    if (createSubmitting) return;
+    setCreateSubmitting(true);
+    setCreateFieldErrors({});
+    setCreateFormError(null);
     try {
-      await apiRequest("notes/create", {
+      await unwrapApiData(await apiRequest("notes/create", {
         method: "POST",
-        body: { ...newNote, tags: newNote.tags.split(",").map((t) => t.trim()).filter(Boolean) },
-      });
+        body: newNote,
+      }));
       showToast(t("toast.noteCreated"));
       setShowCreate(false);
-      setNewNote({ title: "", content: "", tags: "" });
+      setNewNote({ title: "", content: "", tags: [], status: "active" });
+      setCreateDirty(false);
+      setCreateFieldErrors({});
+      setCreateFormError(null);
       fetchNotes();
-    } catch (e) { showToast(String(e), true); }
+    } catch (error) {
+      const next = submissionError(error);
+      setCreateFieldErrors(next.fieldErrors);
+      setCreateFormError(next.formError);
+      throw error;
+    } finally {
+      setCreateSubmitting(false);
+    }
   };
 
   const deleteNote = async (id: string) => {
     try {
       await apiRequest("notes/delete", { method: "POST", body: { note_id: id } });
       showToast(t("toast.noteDeleted"));
+      setDeleteOpen(false);
       setDetail(null);
       fetchNotes();
     } catch (e) { showToast(String(e), true); }
@@ -123,16 +173,68 @@ export function NotesPage({ showToast, navigationTarget }: NotesPageProps) {
 
   const saveEdit = async () => {
     if (!detail) return;
+    if (editSubmitting) return;
+    setEditSubmitting(true);
+    setEditFieldErrors({});
+    setEditFormError(null);
     const noteId = detail.note_id ?? detail.id ?? "";
     try {
-      await apiRequest("notes/update", {
+      await unwrapApiData(await apiRequest("notes/update", {
         method: "POST",
-        body: { note_id: noteId, field: editField, value: editData[editField] ?? "" },
-      });
+        body: { note_id: noteId, changes: editDraft },
+      }));
       showToast(t("toast.noteUpdated"));
-      setDetail(null);
+      setEditDirty(false);
+      setEditMode(false);
+      setEditFieldErrors({});
+      setEditFormError(null);
       fetchNotes();
-    } catch (e) { showToast(String(e), true); }
+    } catch (error) {
+      const next = submissionError(error);
+      setEditFieldErrors(next.fieldErrors);
+      setEditFormError(next.formError);
+      throw error;
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    onDirtyChange?.(editDirty || createDirty);
+  }, [createDirty, editDirty, onDirtyChange]);
+
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  const updateEditDraft = (next: NoteDraft) => {
+    setEditDraft(next);
+    setEditFieldErrors({});
+    setEditFormError(null);
+    const baseline = detail ? { title: detail.title ?? "", content: detail.content ?? "", tags: detail.tags ?? [], status: detail.status ?? "active" } : next;
+    setEditDirty(JSON.stringify(next) !== JSON.stringify(baseline));
+  };
+
+  const updateNewNote = (next: NoteDraft) => {
+    setNewNote(next);
+    setCreateFieldErrors({});
+    setCreateFormError(null);
+    setCreateDirty(JSON.stringify(next) !== JSON.stringify({ title: "", content: "", tags: [], status: "active" }));
+  };
+
+  const resetNewNote = () => {
+    setNewNote({ title: "", content: "", tags: [], status: "active" });
+    setCreateDirty(false);
+    setCreateFieldErrors({});
+    setCreateFormError(null);
+  };
+
+  const requestDetail = (id: string) => {
+    if (id === (detail?.note_id ?? detail?.id)) return;
+    if (editDirty || createDirty) {
+      setPendingSelection(id);
+      setPendingClose("selection");
+      return;
+    }
+    void fetchDetail(id);
   };
 
   const toggleSelect = (id: string) => {
@@ -148,7 +250,7 @@ export function NotesPage({ showToast, navigationTarget }: NotesPageProps) {
     else { setSelected(new Set(notes.map((n) => n.note_id ?? n.id ?? ""))); }
   };
 
-  const batchAction = async (action: "delete" | "archive") => {
+  const executeBatchAction = async (action: "delete" | "archive") => {
     if (!selected.size) return;
     try {
       await apiRequest("notes/batch", { method: "POST", body: { note_ids: Array.from(selected), action } });
@@ -156,6 +258,14 @@ export function NotesPage({ showToast, navigationTarget }: NotesPageProps) {
       setSelected(new Set());
       fetchNotes();
     } catch (e) { showToast(String(e), true); }
+  };
+
+  const batchAction = (action: "delete" | "archive") => {
+    if (action === "delete" && selected.size >= BULK_CONFIRMATION_THRESHOLD) {
+      setBatchDeleteOpen(true);
+      return;
+    }
+    void executeBatchAction(action);
   };
 
   const getNoteId = (n: Note) => n.note_id ?? n.id ?? "";
@@ -210,11 +320,11 @@ export function NotesPage({ showToast, navigationTarget }: NotesPageProps) {
                     role="button"
                     tabIndex={0}
                     aria-label={t("notes.openNote", n.title)}
-                    onClick={() => fetchDetail(getNoteId(n))}
+                    onClick={() => requestDetail(getNoteId(n))}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") return;
                       event.preventDefault();
-                      fetchDetail(getNoteId(n));
+                      requestDetail(getNoteId(n));
                     }}
                   >
                     <h3 className="text-sm font-semibold truncate">{n.title}</h3>
@@ -247,81 +357,12 @@ export function NotesPage({ showToast, navigationTarget }: NotesPageProps) {
         </PageToolbar>
       )}
 
-      {/* Detail panel */}
-      <Sheet open={detail !== null} onOpenChange={(open) => { if (!open) setDetail(null); }}>
-        {detail && (
-        <SheetContent>
-          <SheetHeader>
-            <SheetTitle>{detail.title}</SheetTitle>
-            <SheetDescription>{t("detail.updated")}: {formatDashboardDate(detail.updated_at ?? detail.created_at, locale)}</SheetDescription>
-          </SheetHeader>
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
-            <div className="flex items-center gap-2">
-              <Badge variant={detail.status === "active" ? "default" : "secondary"}>{NOTE_STATUS_LABELS[detail.status ?? "active"] ?? detail.status ?? t("status.active")}</Badge>
-              <span className="text-xs text-muted-foreground">v{detail.version ?? 1}</span>
-            </div>
-            {detail.tags && detail.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {detail.tags.map((t) => <Badge key={t} variant="secondary"><Tag size={10} /> {t}</Badge>)}
-              </div>
-            )}
-            {detail.content && (
-              <div><label className="text-xs font-medium text-muted-foreground">{t("detail.content")}</label><p className="mt-1 whitespace-pre-wrap text-sm">{detail.content}</p></div>
-            )}
+      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) { if (editDirty) setPendingClose("edit"); else setDetail(null); } }} title={detail?.title ?? ""} description={detail ? `${t("detail.updated")}: ${formatDashboardDate(detail.updated_at ?? detail.created_at, locale)}` : ""} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave onBeginEdit={() => { setEditFieldErrors({}); setEditFormError(null); setEditMode(true); }} onCancel={() => { if (detail) setEditDraft({ title: detail.title ?? "", content: detail.content ?? "", tags: detail.tags ?? [], status: detail.status ?? "active" }); setEditFieldErrors({}); setEditFormError(null); setEditMode(false); setEditDirty(false); }} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: t("common.saving") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><p className="whitespace-pre-wrap">{detail.content}</p><p>{(detail.tags ?? []).join(", ")}</p><p>v{detail.version ?? 1}</p>{detail.status !== "archived" ? <Button variant="secondary" size="sm" onClick={() => void archiveNote(detail.note_id ?? detail.id ?? "")}><Archive data-icon="inline-start" />{t("common.archive")}</Button> : null}<Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<>{editFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{editFormError}</div> : null}<NoteForm value={editDraft} onChange={updateEditDraft} fieldErrors={editFieldErrors} disabled={editSubmitting} mode="edit" /></>} />
 
-            {/* Edit form */}
-            <div className="flex flex-col gap-3 border-t pt-4">
-              <h4 className="text-sm font-semibold">{t("detail.edit")}</h4>
-              <Select value={editField} onValueChange={(v) => v && setEditField(v)}>
-                <SelectTrigger><span>{EDIT_NOTE_LABELS[editField] ?? editField}</span></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="title">{t("field.title")}</SelectItem>
-                  <SelectItem value="content">{t("field.content")}</SelectItem>
-                  <SelectItem value="tags">{t("field.tags")}</SelectItem>
-                </SelectContent>
-              </Select>
-              {editField === "title" && (
-                <Input placeholder={t("placeholder.newTitle")} value={editData.title ?? ""}
-                  onChange={(e) => setEditData({ ...editData, title: e.target.value })} />
-              )}
-              {editField === "content" && (
-                <Textarea
-                  rows={6} placeholder={t("placeholder.newContent")} value={editData.content ?? ""}
-                  onChange={(e) => setEditData({ ...editData, content: e.target.value })} />
-              )}
-              {editField === "tags" && (
-                <Input placeholder={t("placeholder.tagsComma")} value={editData.tags ?? (detail.tags ?? []).join(", ")}
-                  onChange={(e) => setEditData({ ...editData, tags: e.target.value })} />
-              )}
-            </div>
-          </div>
-          <SheetFooter>
-            <Button variant="destructive" size="sm" onClick={() => deleteNote(detail.note_id ?? detail.id ?? "")}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button>
-            {detail.status !== "archived" && (
-              <Button variant="secondary" size="sm" onClick={() => archiveNote(detail.note_id ?? detail.id ?? "")}><Archive data-icon="inline-start" />{t("common.archive")}</Button>
-            )}
-            <Button size="sm" onClick={saveEdit}><Pencil data-icon="inline-start" />{t("common.save")}</Button>
-          </SheetFooter>
-        </SheetContent>
-        )}
-      </Sheet>
-
-      {/* Create modal */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="sm:max-w-lg" showCloseButton={false}>
-          <DialogHeader><DialogTitle>{t("detail.newNote")}</DialogTitle></DialogHeader>
-            <div className="flex flex-col gap-4">
-              <Input placeholder={t("placeholder.title")} value={newNote.title} onChange={(e) => setNewNote({ ...newNote, title: e.target.value })} />
-              <Textarea className="resize-none" rows={6}
-                placeholder={t("placeholder.contentHint")} value={newNote.content} onChange={(e) => setNewNote({ ...newNote, content: e.target.value })} />
-              <Input placeholder={t("placeholder.tagsComma")} value={newNote.tags} onChange={(e) => setNewNote({ ...newNote, tags: e.target.value })} />
-            </div>
-              <DialogFooter>
-                <Button variant="secondary" size="sm" onClick={() => setShowCreate(false)}>{t("common.cancel")}</Button>
-                <Button size="sm" onClick={createNote}>{t("detail.create")}</Button>
-              </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EntityCreateDialog open={showCreate} onOpenChange={(open) => { if (!open) { if (createDirty) setPendingClose("create"); else { resetNewNote(); setShowCreate(false); } } }} title={t("detail.newNote")} description={t("detail.newNote")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(newNote.title.trim())} onCancel={() => { resetNewNote(); setShowCreate(false); }} onSubmit={createNote} labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: t("detail.create"), submitting: t("common.saving") }} form={<>{createFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{createFormError}</div> : null}<NoteForm value={newNote} onChange={updateNewNote} fieldErrors={createFieldErrors} disabled={createSubmitting} mode="create" /></>} />
+      <UnsavedChangesDialog open={pendingClose !== null} title={t("config.unsaved.title")} description={t("config.unsaved.description")} keepEditingLabel={t("config.unsaved.keepEditing")} discardLabel={t("config.unsaved.discard")} onKeepEditing={() => { setPendingClose(null); setPendingSelection(null); }} onDiscard={() => { if (pendingClose === "selection" && pendingSelection) { setEditDirty(false); resetNewNote(); setEditMode(false); setShowCreate(false); void fetchDetail(pendingSelection); } else if (pendingClose === "edit") { setEditDirty(false); setEditMode(false); setDetail(null); } else { resetNewNote(); setShowCreate(false); } setPendingSelection(null); setPendingClose(null); }} />
+      <DeleteConfirmDialog open={deleteOpen} title={t("common.delete")} description={detail?.title ?? ""} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} onCancel={() => setDeleteOpen(false)} onConfirm={() => detail && void deleteNote(detail.note_id ?? detail.id ?? "")} />
+      <DeleteConfirmDialog open={batchDeleteOpen} title={t("filter.deleteSelected")} description={t("filter.deleteSelected")} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} confirmationRequirement={{ label: t("filter.deleteSelected"), expectedText: String(selected.size) }} onCancel={() => setBatchDeleteOpen(false)} onConfirm={() => { setBatchDeleteOpen(false); void executeBatchAction("delete"); }} />
     </PageFrame>
   );
 }

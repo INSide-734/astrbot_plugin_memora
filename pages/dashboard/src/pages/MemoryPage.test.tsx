@@ -202,7 +202,7 @@ describe("MemoryPage", () => {
     expect(showToast).toHaveBeenCalledWith(EN_MAP["toast.batchArchived"].replace("{0}", "2"));
   });
 
-  it("opens memory detail, saves edits, closes the drawer, and refreshes memories", async () => {
+  it("opens memory detail, saves a full changes object, and keeps the sheet open in view mode", async () => {
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/memories") {
         return Promise.resolve(ok({
@@ -249,7 +249,14 @@ describe("MemoryPage", () => {
     if (!drawer) throw new Error("expected detail drawer");
     expect(within(drawer).getByText(new Date("2026-06-28T12:00:00Z").toLocaleDateString("en-US"))).toBeTruthy();
 
-    fireEvent.change(within(drawer).getByPlaceholderText("New content..."), {
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    expect(within(drawer).queryByLabelText("Choose field to edit")).toBeNull();
+    expect(within(drawer).getByLabelText("Content")).toBeTruthy();
+    expect(within(drawer).getByLabelText("Importance")).toBeTruthy();
+    expect(within(drawer).getByLabelText("Type")).toBeTruthy();
+    expect(within(drawer).getByLabelText("Status")).toBeTruthy();
+
+    fireEvent.change(within(drawer).getByLabelText("Content"), {
       target: { value: "Rewritten content" },
     });
     fireEvent.change(within(drawer).getByPlaceholderText("Reason"), {
@@ -260,15 +267,136 @@ describe("MemoryPage", () => {
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/memory/update", {
         memory_id: "mem-9",
-        field: "content",
-        value: "Rewritten content",
+        changes: {
+          content: "Rewritten content",
+          importance: 0.9,
+          type: "fact",
+          status: "active",
+        },
         reason: "Fix incorrect wording",
       });
     });
     expect(showToast).toHaveBeenCalledWith("Edit successful");
-    await waitFor(() => {
-      expect(screen.queryByText("Memory Detail")).toBeNull();
+    expect(await screen.findByText("Memory Detail")).toBeTruthy();
+    expect(within(drawer).getByRole("button", { name: /^edit$/i })).toBeTruthy();
+  });
+
+  it("keeps a dirty memory edit until local selection changes are discarded", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/memories") {
+        return Promise.resolve(ok({
+          items: [
+            { id: "mem-1", summary: "First memory", type: "fact", importance: 0.8, status: "active" },
+            { id: "mem-2", summary: "Second memory", type: "fact", importance: 0.4, status: "active" },
+          ],
+          total: 2,
+        }));
+      }
+      if (path === "page/memory/detail") {
+        return Promise.resolve(ok({
+          memory: {
+            id: params.id,
+            content: params.id === "mem-1" ? "First detail" : "Second detail",
+            type: "fact",
+            importance: 0.8,
+            status: "active",
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
     });
+
+    render(<MemoryPage showToast={showToast} />);
+
+    fireEvent.click(await screen.findByText("First memory"));
+    const detailTitle = await screen.findByText("Memory Detail");
+    const drawer = detailTitle.closest("div")?.parentElement;
+    if (!drawer) throw new Error("expected detail drawer");
+
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(drawer).getByLabelText("Content"), {
+      target: { value: "Unsaved first detail" },
+    });
+
+    fireEvent.click(screen.getByText("Second memory"));
+
+    expect(bridge.apiGet).not.toHaveBeenCalledWith("page/memory/detail", { id: "mem-2" });
+    expect(await screen.findByRole("dialog", { name: /leave configuration without saving/i })).toBeTruthy();
+    expect((within(drawer).getByLabelText("Content") as HTMLTextAreaElement).value).toBe("Unsaved first detail");
+
+    fireEvent.click(screen.getByRole("button", { name: /keep editing/i }));
+    expect((within(drawer).getByLabelText("Content") as HTMLTextAreaElement).value).toBe("Unsaved first detail");
+    expect(screen.queryByRole("dialog", { name: /leave configuration without saving/i })).toBeNull();
+
+    fireEvent.click(screen.getByText("Second memory"));
+    fireEvent.click(await screen.findByRole("button", { name: /discard changes and leave/i }));
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/memory/detail", { id: "mem-2" });
+    });
+    expect(await screen.findByText("Second detail")).toBeTruthy();
+    expect(within(drawer).getByRole("button", { name: /^edit$/i })).toBeTruthy();
+    expect(within(drawer).queryByRole("button", { name: /^save$/i })).toBeNull();
+
+    const detailRequestsBeforeCurrentSelection = bridge.apiGet.mock.calls.filter(
+      ([path]) => path === "page/memory/detail",
+    ).length;
+    fireEvent.click(screen.getByText("Second memory"));
+    expect(bridge.apiGet.mock.calls.filter(
+      ([path]) => path === "page/memory/detail",
+    )).toHaveLength(detailRequestsBeforeCurrentSelection);
+    expect(screen.queryByRole("dialog", { name: /leave configuration without saving/i })).toBeNull();
+  });
+
+  it("loads the replacement memory into the open sheet when an update returns new_memory_id", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/memories") {
+        return Promise.resolve(ok({
+          items: [{ id: "mem-old", summary: "Old memory", type: "fact", importance: 0.8, status: "active" }],
+          total: 1,
+        }));
+      }
+      if (path === "page/memory/detail") {
+        const isReplacement = params.id === "mem-new";
+        return Promise.resolve(ok({
+          memory: {
+            id: params.id,
+            content: isReplacement ? "Replacement detail" : "Old detail",
+            summary: isReplacement ? "Replacement memory" : "Old memory",
+            type: "fact",
+            importance: 0.8,
+            status: "active",
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockResolvedValue(ok({ new_memory_id: "mem-new" }));
+
+    render(<MemoryPage showToast={showToast} />);
+
+    fireEvent.click(await screen.findByText("Old memory"));
+    const detailTitle = await screen.findByText("Memory Detail");
+    const drawer = detailTitle.closest("div")?.parentElement;
+    if (!drawer) throw new Error("expected detail drawer");
+
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(drawer).getByLabelText("Content"), {
+      target: { value: "Replacement request content" },
+    });
+    fireEvent.click(within(drawer).getByRole("button", { name: /save/i }));
+
+    await waitFor(() => {
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/memory/update", expect.objectContaining({
+        memory_id: "mem-old",
+      }));
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/memory/detail", { id: "mem-new" });
+    });
+    expect(await screen.findByText("Replacement detail")).toBeTruthy();
+    expect(within(drawer).getByText("Memory Detail")).toBeTruthy();
+    expect(within(drawer).getByText("mem-new")).toBeTruthy();
+    expect(within(drawer).getByRole("button", { name: /^edit$/i })).toBeTruthy();
+    expect(within(drawer).queryByRole("button", { name: /^save$/i })).toBeNull();
   });
 
   it("opens the exact memory detail for each navigation target request", async () => {
@@ -313,6 +441,59 @@ describe("MemoryPage", () => {
       expect(bridge.apiGet.mock.calls.filter(
         ([path]) => path === "page/memory/detail",
       )).toHaveLength(2);
+    });
+  });
+
+  it("keeps a dirty memory draft on a same-entity navigation intent while clean intents refetch", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/memories") return Promise.resolve(ok({ items: [], total: 0 }));
+      if (path === "page/memory/detail") {
+        return Promise.resolve(ok({
+          memory: {
+            id: params.id,
+            content: "Original navigation memory",
+            type: "fact",
+            importance: 0.8,
+            status: "active",
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    const view = render(
+      <MemoryPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, id: "memory-same-target" }}
+      />,
+    );
+    const detailTitle = await screen.findByText("Memory Detail");
+    const drawer = detailTitle.closest("div")?.parentElement;
+    if (!drawer) throw new Error("expected detail drawer");
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(drawer).getByLabelText("Content"), {
+      target: { value: "Dirty navigation memory" },
+    });
+
+    view.rerender(
+      <MemoryPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 2, id: "memory-same-target" }}
+      />,
+    );
+
+    expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/memory/detail")).toHaveLength(1);
+    expect((within(drawer).getByLabelText("Content") as HTMLTextAreaElement).value).toBe("Dirty navigation memory");
+
+    fireEvent.click(within(drawer).getByRole("button", { name: /^cancel$/i }));
+    view.rerender(
+      <MemoryPage
+        showToast={showToast}
+        navigationTarget={{ requestId: 3, id: "memory-same-target" }}
+      />,
+    );
+    await waitFor(() => {
+      expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/memory/detail")).toHaveLength(2);
     });
   });
 
