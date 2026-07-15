@@ -3,5 +3,19 @@
 from .atom_store import AtomStore
 from .conversation_store import ConversationStore
 from .graph_store import GraphStore
+from .injection_decision_store import (
+    CleanupResult,
+    DecisionPage,
+    DecisionQuery,
+    InjectionDecisionStore,
+)
 
-__all__ = ["AtomStore", "ConversationStore", "GraphStore"]
+__all__ = [
+    "AtomStore",
+    "CleanupResult",
+    "ConversationStore",
+    "DecisionPage",
+    "DecisionQuery",
+    "GraphStore",
+    "InjectionDecisionStore",
+]
