@@ -6,89 +6,90 @@
 
 from typing import Any
 
+from ..injection.models import DeliveryMode
+
 
 class InjectionAdapter:
-    """根据 Provider/模型自动选择记忆注入策略的适配层。"""
+    """Resolve delivery compatibility and conservative Provider capabilities."""
 
-    # 已废弃的注入方式 → 自动回退到的推荐方式
-    _DEPRECATED_MODES: dict[str, str] = {
-        "system_prompt": "extra_user_content",
-    }
-
-    # 降级规则表：按 provider_type / model_name 匹配，执行注入方式降级
-    _RULES: list[dict[str, Any]] = [
+    _GEMINI_PROVIDER_TYPES = frozenset({"googlegenai_chat_completion"})
+    _TOOL_PROVIDER_TYPES = frozenset(
         {
-            "provider_types": ["googlegenai_chat_completion"],
-            "model_patterns": ["gemini"],
-            "downgrades": {"fake_tool_call": "user_message_before"},
-        },
-    ]
+            "openai_chat_completion",
+            "anthropic_chat_completion",
+            "deepseek_chat_completion",
+            "googlegenai_chat_completion",
+        }
+    )
 
-    def resolve(self, provider: Any, configured_mode: str) -> tuple[str, str | None]:
-        """
-        根据当前 Provider 解析最终使用的注入模式。
+    def resolve(
+        self,
+        provider: Any,
+        configured_mode: DeliveryMode | str,
+    ) -> tuple[DeliveryMode, str | None]:
+        """Return a supported delivery mode without ever accepting System Prompt."""
 
-        Args:
-            provider: AstrBot 的 provider 实例
-            configured_mode: 用户在配置中指定的注入方式
+        mode = DeliveryMode(configured_mode)
+        if mode is DeliveryMode.AUTO:
+            return DeliveryMode.EXTRA_USER_CONTENT, None
+        if mode not in {
+            DeliveryMode.FAKE_TOOL_CALL,
+            DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4,
+        }:
+            return mode, None
 
-        Returns:
-            (resolved_mode, fallback_reason)
-            - resolved_mode: 实际使用的注入方式
-            - fallback_reason: 降级原因描述；未降级时为 None
-        """
-        # 检查是否为已废弃的注入方式
-        if configured_mode in self._DEPRECATED_MODES:
-            fallback = self._DEPRECATED_MODES[configured_mode]
-            reason = (
-                f"{configured_mode} 已废弃（严重破坏 LLM 前缀缓存），"
-                f"自动回退至 {fallback}"
+        provider_type, model_name, tools_supported = self.capabilities(provider)
+        if self._is_gemini(provider_type, model_name):
+            return (
+                DeliveryMode.USER_MESSAGE_BEFORE,
+                f"{mode.value} is not fully compatible with Gemini "
+                f"(type={provider_type}, model={model_name})",
             )
-            return fallback, reason
+        if not tools_supported:
+            return (
+                DeliveryMode.EXTRA_USER_CONTENT,
+                f"Unknown Provider cannot safely use {mode.value}; "
+                "using extra_user_content",
+            )
+        return mode, None
 
-        if configured_mode != "fake_tool_call":
-            return configured_mode, None
+    def capabilities(self, provider: Any) -> tuple[str, str, bool]:
+        """Return Provider identity and conservative synthetic-tool support."""
 
         try:
             provider_type, model_name = self._extract_provider_info(provider)
-        except Exception:
-            return configured_mode, None
-
-        for rule in self._RULES:
-            if self._matches_rule(rule, provider_type, model_name):
-                downgrade = rule["downgrades"].get(configured_mode)
-                if downgrade:
-                    reason = (
-                        f"fake_tool_call is not fully compatible with "
-                        f"Gemini (type={provider_type}, model={model_name})"
-                    )
-                    return downgrade, reason
-
-        return configured_mode, None
+        except (AttributeError, TypeError, ValueError):
+            return "", "", False
+        tools_supported = provider_type in self._TOOL_PROVIDER_TYPES
+        return provider_type, model_name, tools_supported
 
     @staticmethod
     def _extract_provider_info(provider: Any) -> tuple[str, str]:
-        """从 provider 对象中提取 provider_type 和 model_name。"""
-        provider_type = ""
-        model_name = ""
-
         if provider is None:
-            return provider_type, model_name
-
+            return "", ""
         config = getattr(provider, "provider_config", {})
-        provider_type = str(config.get("type", "")) if isinstance(config, dict) else ""
-        raw_model = provider.get_model() if hasattr(provider, "get_model") else ""
+        provider_type = (
+            str(config.get("type", "")) if isinstance(config, dict) else ""
+        )
+        get_model = getattr(provider, "get_model", None)
+        raw_model = get_model() if callable(get_model) else ""
         model_name = str(raw_model) if raw_model is not None else ""
-
         return provider_type, model_name
+
+    @classmethod
+    def _is_gemini(cls, provider_type: str, model_name: str) -> bool:
+        return (
+            provider_type in cls._GEMINI_PROVIDER_TYPES
+            or "gemini" in model_name.casefold()
+        )
 
     @staticmethod
     def _matches_rule(
         rule: dict[str, Any], provider_type: str, model_name: str
     ) -> bool:
-        """判断当前 provider 是否命中某条降级规则。"""
-        type_match = provider_type in rule.get("provider_types", [])
-        model_match = any(
-            pat.lower() in model_name.lower() for pat in rule.get("model_patterns", [])
+        """Retain the table-rule predicate for callers outside the executor."""
+
+        return provider_type in rule.get("provider_types", []) or any(
+            str(pattern).casefold() in model_name.casefold()
+            for pattern in rule.get("model_patterns", [])
         )
-        return type_match or model_match
