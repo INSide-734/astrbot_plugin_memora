@@ -20,6 +20,7 @@ import core.injection as injection
 import core.injection.executor as executor_module
 import core.injection.models as model_module
 import core.injection.presets as preset_module
+import core.injection.recorder as recorder_module
 import core.injection.router as router_module
 
 
@@ -30,6 +31,7 @@ def test_package_exports_are_exact_and_identity_preserving() -> None:
         "InjectionDecision",
         "InjectionDecisionRecord",
         "InjectionExecutionResult",
+        "InjectionDecisionRecorder",
         "InjectionOutcome",
         "InjectionStrategyPreset",
         "InjectionExecutionContext",
@@ -59,6 +61,7 @@ def test_package_exports_are_exact_and_identity_preserving() -> None:
         "RequestSignals",
         "RoutingMode",
     }
+    recorder_exports = {"InjectionDecisionRecorder"}
     executor_exports = {
         "InjectionExecutionContext",
         "InjectionExecutor",
@@ -74,6 +77,8 @@ def test_package_exports_are_exact_and_identity_preserving() -> None:
         assert getattr(injection, name) is getattr(model_module, name)
     for name in executor_exports:
         assert getattr(injection, name) is getattr(executor_module, name)
+    for name in recorder_exports:
+        assert getattr(injection, name) is getattr(recorder_module, name)
     for name in preset_exports:
         assert getattr(injection, name) is getattr(preset_module, name)
     for name in router_exports:

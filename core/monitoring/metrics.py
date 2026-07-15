@@ -182,6 +182,93 @@ SUMMARY_BATCH_COUNT = Histogram(
     registry=REGISTRY,
 )
 
+# --- 注入决策与异步记录器 ---
+
+INJECTION_DECISIONS_TOTAL = Counter(
+    "memora_injection_decisions_total",
+    "Injection decisions by routing mode, resolved preset, and outcome.",
+    labelnames=["routing_mode", "resolved_preset", "outcome"],
+    registry=REGISTRY,
+)
+
+INJECTION_PROVIDER_FALLBACK_TOTAL = Counter(
+    "memora_injection_provider_fallback_total",
+    "Provider delivery fallback count by reason.",
+    labelnames=["reason"],
+    registry=REGISTRY,
+)
+
+INJECTION_DECISION_QUEUE_SECONDS = Histogram(
+    "memora_injection_decision_queue_seconds",
+    "Time spent enqueueing a sanitized injection decision.",
+    registry=REGISTRY,
+)
+
+INJECTION_DECISION_RECORD_FAILURES_TOTAL = Counter(
+    "memora_injection_decision_record_failures_total",
+    "Decision persistence failures by stable error code.",
+    labelnames=["error_code"],
+    registry=REGISTRY,
+)
+
+INJECTION_DECISION_RECORD_DROPPED_TOTAL = Counter(
+    "memora_injection_decision_record_dropped_total",
+    "Oldest queued decisions dropped after bounded queue overflow.",
+    registry=REGISTRY,
+)
+
+INJECTION_PRESET_TRANSITIONS_TOTAL = Counter(
+    "memora_injection_preset_transitions_total",
+    "Configured, recommended, and resolved preset transitions.",
+    labelnames=["configured", "recommended", "resolved"],
+    registry=REGISTRY,
+)
+
+INJECTION_HYBRID_CLAMP_TOTAL = Counter(
+    "memora_injection_hybrid_clamp_total",
+    "Hybrid preset clamps by boundary.",
+    labelnames=["boundary"],
+    registry=REGISTRY,
+)
+
+INJECTION_SKIP_TOTAL = Counter(
+    "memora_injection_skip_total",
+    "Skipped or empty injections by stable reason code.",
+    labelnames=["reason"],
+    registry=REGISTRY,
+)
+
+INJECTION_PAYLOAD_CHARS = Histogram(
+    "memora_injection_payload_chars",
+    "Actual protected injection payload characters.",
+    registry=REGISTRY,
+)
+
+INJECTION_CANDIDATE_RETENTION_RATIO = Histogram(
+    "memora_injection_candidate_retention_ratio",
+    "Selected candidates divided by available candidates.",
+    registry=REGISTRY,
+)
+
+INJECTION_BUDGET_DROP_RATIO = Histogram(
+    "memora_injection_budget_drop_ratio",
+    "Budget-dropped candidates divided by available candidates.",
+    registry=REGISTRY,
+)
+
+INJECTION_TRUNCATION_RATIO = Histogram(
+    "memora_injection_truncation_ratio",
+    "Truncated candidates divided by selected candidates.",
+    registry=REGISTRY,
+)
+
+INJECTION_STAGE_SECONDS = Histogram(
+    "memora_injection_stage_seconds",
+    "Injection decision, format, and request-mutation duration.",
+    labelnames=["stage"],
+    registry=REGISTRY,
+)
+
 # ---------------------------------------------------------------------------
 # 公共辅助函数
 # ---------------------------------------------------------------------------
