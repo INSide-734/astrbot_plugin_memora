@@ -63,7 +63,7 @@ class InjectionStrategyRouter:
                     )
                 return _make_decision(
                     config,
-                    recommended=recommended,
+                    recommended=PresetName.LOW_COST,
                     resolved=PresetName.LOW_COST,
                     skip_passive_recall=False,
                     reasons=("PROVIDER_TOOL_UNAVAILABLE",),
@@ -82,7 +82,7 @@ class InjectionStrategyRouter:
             recommended=configured,
             resolved=configured,
             skip_passive_recall=False,
-            reasons=("AUTO_FALLBACK",),
+            reasons=(),
         )
 
     def route_final(
@@ -130,6 +130,9 @@ class InjectionStrategyRouter:
                 resolved = maximum.name
                 reasons += ("HYBRID_CLAMPED_MAX",)
 
+        if resolved is PresetName.TOOL_FIRST and not _memory_tool_is_usable(signals):
+            resolved = PresetName.LOW_COST
+            reasons += ("PROVIDER_TOOL_UNAVAILABLE",)
         return _make_decision(
             config,
             recommended=recommended,
@@ -207,7 +210,7 @@ def _signals_are_valid(signals: RequestSignals) -> bool:
         signals.candidate_redundancy,
     )
     return all(
-        type(value) in (int, float) and isfinite(value) and 0.0 <= value <= 1.0
+        type(value) in (int, float) and 0.0 <= value <= 1.0 and isfinite(value)
         for value in bounded_values
     )
 

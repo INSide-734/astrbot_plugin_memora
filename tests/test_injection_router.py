@@ -76,6 +76,8 @@ def test_manual_tool_first_preflight_requires_both_tool_flags(
         ),
     )
 
+    assert decision.configured_preset is PresetName.TOOL_FIRST
+    assert decision.recommended_preset is expected_preset
     assert decision.resolved_preset is expected_preset
     assert decision.skip_passive_recall is skip
     expected_reason = "MANUAL_SELECTED" if skip else "PROVIDER_TOOL_UNAVAILABLE"
@@ -210,7 +212,7 @@ def test_auto_and_hybrid_preflight_never_skip_or_emit_manual(mode: RoutingMode) 
     )
 
     assert decision.skip_passive_recall is False
-    assert "MANUAL_SELECTED" not in decision.reason_codes
+    assert decision.reason_codes == ()
 
 
 @pytest.mark.parametrize(
@@ -245,6 +247,58 @@ def test_invalid_signals_resolve_to_configured_auto_fallback(
             auto_fallback=PresetName.QUALITY,
         ),
         make_signals(**overrides),
+    )
+
+    assert decision.configured_preset is PresetName.QUALITY
+    assert decision.recommended_preset is PresetName.QUALITY
+    assert decision.resolved_preset is PresetName.QUALITY
+    assert decision.reason_codes == ("AUTO_FALLBACK",)
+
+
+def test_invalid_auto_tool_first_fallback_downgrades_without_usable_tool() -> None:
+    decision = InjectionStrategyRouter().route_final(
+        InjectionRoutingConfig(
+            mode=RoutingMode.AUTO,
+            auto_fallback=PresetName.TOOL_FIRST,
+        ),
+        make_signals(query_intent=""),
+    )
+
+    assert decision.configured_preset is PresetName.TOOL_FIRST
+    assert decision.recommended_preset is PresetName.TOOL_FIRST
+    assert decision.resolved_preset is PresetName.LOW_COST
+    assert decision.reason_codes == (
+        "AUTO_FALLBACK",
+        "PROVIDER_TOOL_UNAVAILABLE",
+    )
+
+
+def test_hybrid_tool_first_clamp_downgrades_without_usable_tool() -> None:
+    decision = InjectionStrategyRouter().route_final(
+        InjectionRoutingConfig(
+            mode=RoutingMode.HYBRID,
+            hybrid_min=PresetName.TOOL_FIRST,
+            hybrid_max=PresetName.TOOL_FIRST,
+        ),
+        make_signals(),
+    )
+
+    assert decision.recommended_preset is PresetName.LOW_COST
+    assert decision.resolved_preset is PresetName.LOW_COST
+    assert decision.reason_codes == (
+        "AUTO_FALLBACK",
+        "HYBRID_CLAMPED_MAX",
+        "PROVIDER_TOOL_UNAVAILABLE",
+    )
+
+
+def test_huge_confidence_is_invalid_without_raising() -> None:
+    decision = InjectionStrategyRouter().route_final(
+        InjectionRoutingConfig(
+            mode=RoutingMode.AUTO,
+            auto_fallback=PresetName.QUALITY,
+        ),
+        make_signals(top_confidence=10**1000),
     )
 
     assert decision.configured_preset is PresetName.QUALITY
