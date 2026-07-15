@@ -106,20 +106,42 @@ export function useEntityEditor<T extends object>(
   const stateRef = useRef(state);
   const mountedRef = useRef(true);
   const submittingRef = useRef(false);
+  const generationRef = useRef(0);
+  const submitRef = useRef(options.submit);
   const dirtyCallbackRef = useRef(options.onDirtyChange);
+  const lastNotifiedDirtyRef = useRef<boolean | null>(null);
   stateRef.current = state;
+  submitRef.current = options.submit;
   dirtyCallbackRef.current = options.onDirtyChange;
 
   const isDirty = state.dirtyFields.size > 0;
 
   useEffect(() => {
-    options.onDirtyChange?.(isDirty);
-  }, [isDirty, options.onDirtyChange]);
+    if (lastNotifiedDirtyRef.current === isDirty) return;
+    lastNotifiedDirtyRef.current = isDirty;
+    dirtyCallbackRef.current?.(isDirty);
+  }, [isDirty]);
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    dirtyCallbackRef.current?.(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      dirtyCallbackRef.current?.(false);
+    };
   }, []);
+
+  useEffect(() => {
+    const current = stateRef.current;
+    if (
+      !mountedRef.current ||
+      (current.revision === options.revision && valuesEqual(current.baseline, options.entity))
+    ) {
+      return;
+    }
+    generationRef.current += 1;
+    submittingRef.current = false;
+    setState(initialData(options.entity, options.revision));
+  }, [options.entity, options.revision]);
 
   const beginEdit = useCallback(() => {
     setState((previous) => ({
@@ -164,7 +186,7 @@ export function useEntityEditor<T extends object>(
     if (submittingRef.current || current.dirtyFields.size === 0) return false;
 
     submittingRef.current = true;
-    const submittedDraft = cloneValue(current.draft);
+    const generation = generationRef.current;
     setState((previous) => ({
       ...previous,
       isSubmitting: true,
@@ -173,8 +195,9 @@ export function useEntityEditor<T extends object>(
     }));
 
     try {
-      const saved = await options.submit(submittedDraft, current.revision);
-      if (!mountedRef.current) return true;
+      const submittedDraft = cloneValue(current.draft);
+      const saved = await submitRef.current(submittedDraft, current.revision);
+      if (!mountedRef.current || generation !== generationRef.current) return false;
       setState((previous) => ({
         ...previous,
         baseline: cloneValue(saved.entity),
@@ -189,7 +212,7 @@ export function useEntityEditor<T extends object>(
       }));
       return true;
     } catch (error) {
-      if (!mountedRef.current) return false;
+      if (!mountedRef.current || generation !== generationRef.current) return false;
       const apiError = error instanceof ApiRequestError ? error : null;
       const remote = apiError && (apiError.code === "conflict" || apiError.code === "edit_conflict")
         ? conflictEnvelope<T>(apiError)
@@ -203,9 +226,9 @@ export function useEntityEditor<T extends object>(
       }));
       return false;
     } finally {
-      submittingRef.current = false;
+      if (generation === generationRef.current) submittingRef.current = false;
     }
-  }, [options]);
+  }, []);
 
   const loadRemote = useCallback(() => {
     setState((previous) => {
@@ -216,6 +239,7 @@ export function useEntityEditor<T extends object>(
         baseline,
         draft: cloneValue(baseline),
         revision: previous.conflict.revision,
+        mode: "view",
         dirtyFields: new Set(),
         fieldErrors: {},
         formError: null,

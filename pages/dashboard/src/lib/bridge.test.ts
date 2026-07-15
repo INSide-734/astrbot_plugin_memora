@@ -147,6 +147,51 @@ describe("bridge", () => {
     );
   });
 
+  it("drops malformed top-level field error values", () => {
+    let error: unknown;
+    try {
+      unwrapApiData({
+        status: "error",
+        field_errors: {
+          name: "名称不能为空",
+          nested: { message: "无效" },
+          entries: ["无效"],
+          count: 3,
+        },
+      } as unknown as ApiResponse);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect((error as ApiRequestError).fieldErrors).toEqual({
+      name: "名称不能为空",
+    });
+  });
+
+  it("drops malformed data field error values", () => {
+    let error: unknown;
+    try {
+      unwrapApiData({
+        status: "error",
+        data: {
+          field_errors: {
+            tags: "标签不合法",
+            nested: { message: "无效" },
+            entries: ["无效"],
+          },
+        },
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect((error as ApiRequestError).fieldErrors).toEqual({
+      tags: "标签不合法",
+    });
+  });
+
   it("throws on non-object responses", () => {
     expect(() => unwrapApiData("bad" as unknown as ApiResponse)).toThrow(
       "响应类型异常：string"
