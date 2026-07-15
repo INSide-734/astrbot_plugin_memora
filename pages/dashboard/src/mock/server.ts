@@ -3,6 +3,7 @@
 // ================================================================
 import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_DATASETS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS } from "./data";
 import { createMockConfigServer } from "./configServer";
+import type { MockProfile, MockProfilePreferences, MockProfileTag } from "./data";
 
 type ApiResponse = { status: string; data?: unknown; message?: string; code?: string; field_errors?: Record<string, string> };
 
@@ -12,14 +13,16 @@ const configServer = createMockConfigServer({
 });
 
 function ok(data: unknown): ApiResponse {
-  return { status: "ok", data };
+  return { status: "ok", data: structuredClone(data) };
 }
 
 function err(message: string, code?: string, data?: unknown, field_errors?: Record<string, string>): ApiResponse {
-  return { status: "error", message, ...(code ? { code } : {}), ...(data === undefined ? {} : { data }), ...(field_errors ? { field_errors } : {}) };
+  return { status: "error", message, ...(code ? { code } : {}), ...(data === undefined ? {} : { data: structuredClone(data) }), ...(field_errors ? { field_errors: structuredClone(field_errors) } : {}) };
 }
 
 type MutableRecord = Record<string, any>;
+interface ProfileCreateRequest extends Record<string, unknown> { user_id?: unknown; display_name?: unknown; preferences?: unknown; tags?: unknown }
+interface ProfileChanges extends Record<string, unknown> { display_name?: unknown; preferences?: unknown; tags?: unknown }
 const MOCK_BACKUPS: Array<Record<string, unknown>> = [
   { name: "v2.3.0", directory: "/backups/v2.3.0", file_count: 6, plugin_version: "2.3.0", backup_timestamp: "2026-06-01T10:00:00Z", files: ["memora.db", "conversations.db"] },
   { name: "manual_20260613_120000", directory: "/backups/manual_20260613_120000", file_count: 6, plugin_version: "2.4.2", backup_timestamp: "2026-06-13T12:00:00Z", files: ["memora.db", "conversations.db"] },
@@ -60,6 +63,10 @@ export function resetMockServerState(): void {
   Object.assign(REVIEW_ACTIONS, seeds.REVIEW_ACTIONS);
   nextEntityRevision = 1;
   moodHistory.splice(0);
+  configServer.controls.reset();
+  _topicSegConfig = structuredClone(INITIAL_TOPIC_SEG_CONFIG);
+  if (_backfillTimer !== null) { clearInterval(_backfillTimer); _backfillTimer = null; }
+  _backfillState = structuredClone(INITIAL_BACKFILL_STATE);
   for (const record of PROFILES) (record as MutableRecord).revision = revision();
   for (const record of SOCIAL_RELATIONS) (record as MutableRecord).revision = revision();
   for (const record of JARGON_MEANINGS) (record as MutableRecord).revision = revision();
@@ -68,7 +75,6 @@ export function resetMockServerState(): void {
   }
 }
 
-resetMockServerState();
 
 function validateText(body: MutableRecord, fields: readonly string[]): ApiResponse | null {
   for (const field of fields) {
@@ -275,7 +281,9 @@ function batchResult(total: number, succeeded_ids: MutableRecord[], failures: Mu
 function handleSocialBatch(body: MutableRecord): ApiResponse {
   const topErrors = unknownFieldErrors(body, ["action", "items", "params"]); if (Object.keys(topErrors).length) return validation(topErrors);
   if (!["delete", "add_tags", "remove_tags"].includes(body.action)) return validation({ action: "仅支持 delete、add_tags 或 remove_tags" });
-  const items = Array.isArray(body.items) ? body.items : [];
+  if (!Array.isArray(body.items)) return validation({ items: "必须为数组" });
+  if (body.params !== undefined && (!body.params || typeof body.params !== "object" || Array.isArray(body.params))) return validation({ params: "必须为对象" });
+  const items = body.items;
   if (items.length < 1 || items.length > 100) return validation({ items: "项目数量必须在 1 到 100 之间" });
   const params = body.params && typeof body.params === "object" && !Array.isArray(body.params) ? body.params : {};
   const paramErrors = unknownFieldErrors(params, body.action === "delete" ? [] : ["tags"]);
@@ -297,16 +305,16 @@ function handleSocialBatch(body: MutableRecord): ApiResponse {
   return batchResult(items.length, succeeded, failures);
 }
 
-function handleProfileCreate(body: MutableRecord): ApiResponse {
+function handleProfileCreate(body: ProfileCreateRequest): ApiResponse {
   const errors = unknownFieldErrors(body, ["user_id", "display_name", "preferences", "tags"]);
   const userError = textFieldError(body.user_id); if (userError) errors.user_id = userError;
-  if (body.display_name !== undefined && typeof body.display_name !== "string") errors.display_name = "必须为字符串";
+  if (body.display_name !== undefined) { const error = optionalTextFieldError(body.display_name); if (error) errors.display_name = error; }
   const normalizedPreferences = normalizeProfilePreferences(body.preferences); Object.assign(errors, normalizedPreferences.errors);
   const normalizedTags = normalizeProfileTags(body.tags); Object.assign(errors, normalizedTags.errors);
   if (Object.keys(errors).length) return validation(errors);
-  const userId = body.user_id.trim(); if (PROFILES.some((item) => item.user_id === userId)) return err("Profile already exists", "already_exists");
-  const record: MutableRecord = { user_id: userId, display_name: body.display_name?.trim() ?? "", preferences: normalizedPreferences.preferences, tags: normalizedTags.tags, message_count: 0, last_active: "", revision: revision() };
-  PROFILES.push(record as any); return envelope(record);
+  const userId = String(body.user_id).trim(); if (PROFILES.some((item) => item.user_id === userId)) return err("Profile already exists", "already_exists");
+  const record: MockProfile = { user_id: userId, display_name: typeof body.display_name === "string" ? body.display_name.trim() : "", preferences: normalizedPreferences.preferences as MockProfilePreferences, tags: normalizedTags.tags as MockProfileTag[], message_count: 0, last_active: "", revision: revision() };
+  PROFILES.push(record); return envelope(record);
 }
 
 function handleProfileUpdate(body: MutableRecord): ApiResponse {
@@ -322,10 +330,11 @@ function handleProfileUpdate(body: MutableRecord): ApiResponse {
     current.revision = revision();
     return ok(withoutRevision(current));
   }
-  const changes = body.changes;
+  const changes = body.changes as ProfileChanges;
   if (!changes || typeof changes !== "object" || Array.isArray(changes)) return validation({ changes: "必须为对象" });
   const errors = unknownFieldErrors(changes, ["display_name", "preferences", "tags"]);
   const normalizedChanges = structuredClone(changes);
+  if ("display_name" in changes) { const error = optionalTextFieldError(changes.display_name); if (error) errors["changes.display_name"] = error; else normalizedChanges.display_name = typeof changes.display_name === "string" ? changes.display_name.trim() : ""; }
   if ("preferences" in changes) { const normalized = normalizeProfilePreferences(changes.preferences, "changes.preferences"); Object.assign(errors, normalized.errors); normalizedChanges.preferences = normalized.preferences; }
   if ("tags" in changes) { const normalized = normalizeProfileTags(changes.tags, "changes.tags"); Object.assign(errors, normalized.errors); normalizedChanges.tags = normalized.tags; }
   if (Object.keys(errors).length) return validation(errors);
@@ -445,7 +454,7 @@ function handleAffectionCreate(body: MutableRecord): ApiResponse {
   else if (body.affection_score < -100 || body.affection_score > 100) errors.affection_score = "必须在 -100 到 100 之间";
   if (Object.keys(errors).length) return validation(errors);
   const identity = { group_id: body.group_id.trim(), user_id: body.user_id.trim() };
-  if (!AFFECTION_DATA[identity.group_id]) AFFECTION_DATA[identity.group_id] = { group_id: identity.group_id, total_affection: 0, max_total_affection: 0, user_count: 0, top_users: [], current_mood: { mood_type: "NEUTRAL", intensity: 0, description: "", is_active: false } };
+  if (!AFFECTION_DATA[identity.group_id]) AFFECTION_DATA[identity.group_id] = { group_id: identity.group_id, total_affection: 0, max_total_affection: 0, user_count: 0, top_users: [], current_mood: { mood_type: "NEUTRAL", intensity: 0, duration_hours: 4, description: "", start_time: Date.now() / 1000, is_active: false } };
   const group = AFFECTION_DATA[identity.group_id]; if (findAffection(identity)) return err("Affection user already exists", "already_exists");
   const score = body.affection_score; const level = affectionLevel(score);
   const record: MutableRecord = { ...identity, affection_score: score, affection_level: level, level_name: AFFECTION_LEVEL_NAMES[level], interaction_count: 0, last_interaction: 0, revision: revision() };
@@ -498,11 +507,11 @@ function handleMoodSet(body: MutableRecord): ApiResponse {
   const group = AFFECTION_DATA[body.group_id];
   if (!group) return notFound("Affection group not found");
   const mood = { mood_type: String(body.mood_type), intensity: body.intensity, duration_hours: body.duration_hours, description: String(body.description ?? ""), start_time: Date.now() / 1000, is_active: true };
-  group.current_mood = structuredClone(mood) as any;
+  group.current_mood = structuredClone(mood);
   moodHistory.push({ group_id: body.group_id, ...structuredClone(mood) });
   return ok(mood);
 }
-function handleMoodReset(body: MutableRecord): ApiResponse { const group = AFFECTION_DATA[body.group_id]; if (!group) return notFound("Affection group not found"); const mood = { mood_type: "calm", intensity: 0.5, duration_hours: 4, description: "Default calm mood", start_time: Date.now() / 1000, is_active: true }; group.current_mood = structuredClone(mood) as any; moodHistory.push({ group_id: body.group_id, ...structuredClone(mood) }); return ok(mood); }
+function handleMoodReset(body: MutableRecord): ApiResponse { const group = AFFECTION_DATA[body.group_id]; if (!group) return notFound("Affection group not found"); const mood = { mood_type: "calm", intensity: 0.5, duration_hours: 4, description: "Default calm mood", start_time: Date.now() / 1000, is_active: true }; group.current_mood = structuredClone(mood); moodHistory.push({ group_id: body.group_id, ...structuredClone(mood) }); return ok(mood); }
 
 // Simulate network latency (80-250ms)
 function delay(): Promise<void> {
@@ -1131,6 +1140,7 @@ function handleExportMemories(body: Record<string, unknown>): ApiResponse {
 // ---- Main router ----
 
 export async function handleApiGet(path: string, params: Record<string, string> = {}): Promise<ApiResponse> {
+  params = structuredClone(params);
   await delay();
   const p = path.replace(/^page\/?/, "");
   const configResponse = configServer.handleGet(p, params);
@@ -1196,6 +1206,7 @@ export async function handleApiGet(path: string, params: Record<string, string> 
 }
 
 export async function handleApiPost(path: string, body: unknown = {}): Promise<ApiResponse> {
+  body = structuredClone(body);
   await delay();
   if (!body || typeof body !== "object" || Array.isArray(body)) return err("请求体必须为 JSON 对象", "invalid_request");
   const p = path.replace(/^page\/?/, "");
@@ -1210,7 +1221,7 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   if (p === "social/update") return handleSocialUpdate(data);
   if (p === "social/delete") return handleSocialDelete(data);
   if (p === "social/batch") return handleSocialBatch(data);
-  if (p === "profiles/create") return handleProfileCreate(data);
+  if (p === "profiles/create") return handleProfileCreate(data as ProfileCreateRequest);
   if (p === "profiles/update") return handleProfileUpdate(data);
   if (p === "memories/batch") return handleMemoryBatch(data);
   if (p === "knowledge/create") return handleKnowledgeCreate(data);
@@ -1270,7 +1281,7 @@ interface TopicSegConfig {
   strategy_d: { stage1_max_topics: number; enable_parallel_stage2: boolean };
 }
 
-let _topicSegConfig: TopicSegConfig = {
+const INITIAL_TOPIC_SEG_CONFIG: TopicSegConfig = {
   enabled: true,
   strategy: "a_b_hybrid",
   available_strategies: [
@@ -1284,11 +1295,14 @@ let _topicSegConfig: TopicSegConfig = {
   strategy_c: { topic_shift_threshold: 0.3, min_chunk_size: 2 },
   strategy_d: { stage1_max_topics: 5, enable_parallel_stage2: true },
 };
+let _topicSegConfig: TopicSegConfig = structuredClone(INITIAL_TOPIC_SEG_CONFIG);
 
-let _backfillState: { status: "idle" | "running" | "completed" | "failed"; processed: number; total: number; errors: number; job_id: string; started_at: number } = {
-  status: "idle", processed: 0, total: 0, errors: 0,
-  job_id: "", started_at: 0,
-};
+type BackfillState = { status: "idle" | "running" | "completed" | "failed"; processed: number; total: number; errors: number; job_id: string; started_at: number };
+const INITIAL_BACKFILL_STATE: BackfillState = { status: "idle", processed: 0, total: 0, errors: 0, job_id: "", started_at: 0 };
+let _backfillState: BackfillState = structuredClone(INITIAL_BACKFILL_STATE);
+let _backfillTimer: ReturnType<typeof setInterval> | null = null;
+
+resetMockServerState();
 
 function handleTopicSegConfigGet() {
   return ok(_topicSegConfig);
@@ -1316,13 +1330,14 @@ function handleBackfillStart() {
     job_id: `bf_${Date.now()}`, started_at: Date.now(),
   };
   // Simulate async progress
-  const iv = setInterval(() => {
-    if (_backfillState.status !== "running") { clearInterval(iv); return; }
+  _backfillTimer = setInterval(() => {
+    if (_backfillState.status !== "running") { if (_backfillTimer !== null) clearInterval(_backfillTimer); _backfillTimer = null; return; }
     _backfillState.processed += 100;
     if (_backfillState.processed >= _backfillState.total) {
       _backfillState.processed = _backfillState.total;
       _backfillState.status = "completed";
-      clearInterval(iv);
+      if (_backfillTimer !== null) clearInterval(_backfillTimer);
+      _backfillTimer = null;
     }
   }, 2000);
   return ok({ job_id: _backfillState.job_id, message: "回填任务已启动" });

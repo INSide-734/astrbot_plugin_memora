@@ -131,6 +131,8 @@ export interface BotMoodStatus {
   intensity: number;
   description: string;
   is_active: boolean;
+  duration_hours: number;
+  start_time: number;
 }
 
 export interface MoodDraft {
