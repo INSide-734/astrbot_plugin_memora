@@ -33,6 +33,42 @@ const status = (overrides: Record<string, unknown> = {}) => ({
   top_users: [user()], ...overrides,
 });
 
+const AFFECTION_SENTINELS: Record<string, string> = {
+  "affection.newUser": "新建好感用户哨兵",
+  "affection.createUserDescription": "创建好感用户说明哨兵",
+  "detail.create": "创建好感动作哨兵",
+  "detail.edit": "编辑好感动作哨兵",
+  "common.save": "保存好感动作哨兵",
+  "common.delete": "删除好感动作哨兵",
+  "common.close": "关闭好感动作哨兵",
+  "common.cancel": "取消好感动作哨兵",
+  "affection.userId": "用户字段哨兵",
+  "affection.groupId": "群组字段哨兵",
+  "affection.score": "好感分数字段哨兵",
+  "affection.scoreRange": "好感分数范围哨兵",
+  "affection.scoreInteger": "好感分数整数哨兵",
+  "affection.conflictTitle": "好感冲突哨兵",
+  "affection.conflictDescription": "远端好感已变更哨兵",
+  "config.conflict.loadRemote": "加载远端好感哨兵",
+  "affection.reapplyLocal": "重用本地好感哨兵",
+  "config.unsaved.title": "未保存好感哨兵",
+  "config.unsaved.description": "丢弃好感草稿哨兵",
+  "config.unsaved.keepEditing": "继续编辑好感哨兵",
+  "config.unsaved.discard": "放弃好感草稿哨兵",
+  "affection.moodTitle": "情绪编辑哨兵",
+  "affection.setMoodDescription": "设置情绪说明哨兵",
+  "affection.setMood": "设置情绪动作哨兵",
+  "affection.moodType": "情绪类型字段哨兵",
+  "affection.moodIntensity": "情绪强度字段哨兵",
+  "affection.moodDuration": "情绪时长字段哨兵",
+  "affection.moodDescription": "情绪描述字段哨兵",
+  "affection.intensityRange": "情绪强度范围哨兵",
+  "affection.durationRange": "情绪时长范围哨兵",
+  "affection.restoreDefaultMood": "恢复默认情绪哨兵",
+  "affection.restoreDefaultMoodDescription": "恢复默认情绪说明哨兵",
+  "affection.restoreDefaultMoodAction": "确认恢复默认情绪哨兵",
+};
+
 describe("AffectionPage", () => {
   let bridge: BridgeMock;
   let showToast: ReturnType<typeof vi.fn>;
@@ -605,5 +641,69 @@ describe("AffectionPage", () => {
     const moodDialog = editor(/mood/i); fireEvent.change(within(moodDialog).getByLabelText("Description"), { target: { value: "keep mood" } });
     fireEvent.click(within(moodDialog).getByRole("button", { name: /set|save/i }));
     expect(await screen.findByText("offline")).toBeTruthy(); expect(within(moodDialog).getByDisplayValue("keep mood")).toBeTruthy();
+  });
+
+  it("consumes non-English translations in affection create and range validation UI", async () => {
+    bridge.t.mockImplementation((key: string) => AFFECTION_SENTINELS[key] ?? key);
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: AFFECTION_SENTINELS["affection.newUser"] }));
+    const createDialog = editor(AFFECTION_SENTINELS["affection.newUser"]);
+    expect(within(createDialog).getByText(AFFECTION_SENTINELS["affection.createUserDescription"])).toBeTruthy();
+    expect(within(createDialog).getByRole("button", { name: AFFECTION_SENTINELS["detail.create"] })).toBeTruthy();
+    expect(within(createDialog).getByLabelText(AFFECTION_SENTINELS["affection.userId"])).toBeTruthy();
+    expect(within(createDialog).getByLabelText(AFFECTION_SENTINELS["affection.groupId"])).toBeTruthy();
+    const score = within(createDialog).getByLabelText(AFFECTION_SENTINELS["affection.score"]);
+    fireEvent.change(score, { target: { value: "101" } });
+    expect(within(createDialog).getAllByText(AFFECTION_SENTINELS["affection.scoreRange"]).length).toBeGreaterThan(0);
+  });
+
+  it("consumes non-English translations for affection edit, conflict, and delete actions", async () => {
+    bridge.t.mockImplementation((key: string) => AFFECTION_SENTINELS[key] ?? key);
+    await renderLoaded();
+    bridge.apiPost.mockResolvedValueOnce({
+      status: "error",
+      code: "edit_conflict",
+      message: "Concurrent update",
+      data: { current_entity: user({ affection_score: 55 }), current_revision: "rev-remote" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: `${AFFECTION_SENTINELS["detail.edit"]} alice` }));
+    const sheet = editor(/alice/);
+    fireEvent.click(within(sheet).getByRole("button", { name: AFFECTION_SENTINELS["detail.edit"] }));
+    fireEvent.change(within(sheet).getByLabelText(AFFECTION_SENTINELS["affection.score"]), { target: { value: "77" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: AFFECTION_SENTINELS["common.save"] }));
+
+    const conflict = await screen.findByRole("dialog", { name: AFFECTION_SENTINELS["affection.conflictTitle"] });
+    expect(within(conflict).getByText(AFFECTION_SENTINELS["affection.conflictDescription"])).toBeTruthy();
+    expect(within(conflict).getByRole("button", { name: AFFECTION_SENTINELS["config.conflict.loadRemote"] })).toBeTruthy();
+    expect(within(conflict).getByRole("button", { name: AFFECTION_SENTINELS["affection.reapplyLocal"] })).toBeTruthy();
+    fireEvent.click(within(conflict).getByRole("button", { name: AFFECTION_SENTINELS["config.conflict.loadRemote"] }));
+    fireEvent.click(screen.getByRole("button", { name: `${AFFECTION_SENTINELS["common.delete"]} alice` }));
+    expect(await screen.findByRole("dialog", { name: AFFECTION_SENTINELS["common.delete"] })).toBeTruthy();
+  });
+
+  it("consumes non-English mood field, range, and reset translations", async () => {
+    bridge.t.mockImplementation((key: string) => AFFECTION_SENTINELS[key] ?? key);
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: AFFECTION_SENTINELS["affection.moodTitle"] }));
+    const moodDialog = editor(AFFECTION_SENTINELS["affection.moodTitle"]);
+    expect(within(moodDialog).getByText(AFFECTION_SENTINELS["affection.setMoodDescription"])).toBeTruthy();
+    expect(within(moodDialog).getByLabelText(AFFECTION_SENTINELS["affection.moodType"])).toBeTruthy();
+    expect(within(moodDialog).getByLabelText(AFFECTION_SENTINELS["affection.moodDescription"])).toBeTruthy();
+    const intensity = within(moodDialog).getByLabelText(AFFECTION_SENTINELS["affection.moodIntensity"]);
+    fireEvent.change(intensity, { target: { value: "0" } });
+    expect(within(moodDialog).getAllByText(AFFECTION_SENTINELS["affection.intensityRange"]).length).toBeGreaterThan(0);
+    const duration = within(moodDialog).getByLabelText(AFFECTION_SENTINELS["affection.moodDuration"]);
+    fireEvent.change(duration, { target: { value: "169" } });
+    expect(within(moodDialog).getAllByText(AFFECTION_SENTINELS["affection.durationRange"]).length).toBeGreaterThan(0);
+    expect(within(moodDialog).getByRole("button", { name: AFFECTION_SENTINELS["affection.setMood"] })).toBeTruthy();
+    fireEvent.click(within(moodDialog).getByRole("button", { name: AFFECTION_SENTINELS["common.cancel"] }));
+
+    fireEvent.click(screen.getByRole("button", { name: AFFECTION_SENTINELS["affection.restoreDefaultMood"] }));
+    const reset = editor(AFFECTION_SENTINELS["affection.restoreDefaultMood"]);
+    expect(within(reset).getByText(AFFECTION_SENTINELS["affection.restoreDefaultMoodDescription"])).toBeTruthy();
+    expect(within(reset).getByRole("button", { name: AFFECTION_SENTINELS["affection.restoreDefaultMoodAction"] })).toBeTruthy();
   });
 });

@@ -477,7 +477,7 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
     });
     setSelected(new Set(failedIds));
     const failedCount = response.failed_count;
-    showToast(label("profiles.batchPartialFailure", `${failedCount} profile operation failed`), true);
+    showToast(label("profiles.batchPartialFailure", `${failedCount} profile operation failed`, String(failedCount)), true);
     return true;
   };
 

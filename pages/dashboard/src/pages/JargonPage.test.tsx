@@ -17,6 +17,31 @@ function ok<T>(data: T) {
   return { status: "ok", data };
 }
 
+const JARGON_SENTINELS: Record<string, string> = {
+  "jargon.newJargon": "新建黑话哨兵",
+  "jargon.createDescription": "创建黑话说明哨兵",
+  "detail.create": "创建动作哨兵",
+  "detail.edit": "编辑动作哨兵",
+  "common.save": "保存动作哨兵",
+  "common.delete": "删除动作哨兵",
+  "common.close": "关闭动作哨兵",
+  "common.cancel": "取消动作哨兵",
+  "jargon.conflictTitle": "黑话冲突哨兵",
+  "jargon.conflictDescription": "远端黑话已变更哨兵",
+  "config.conflict.loadRemote": "加载远端哨兵",
+  "jargon.reapplyLocal": "重用本地哨兵",
+  "config.unsaved.title": "未保存黑话哨兵",
+  "config.unsaved.description": "丢弃黑话草稿哨兵",
+  "config.unsaved.keepEditing": "继续编辑哨兵",
+  "config.unsaved.discard": "放弃草稿哨兵",
+  "jargon.term": "术语字段哨兵",
+  "jargon.groupId": "群组字段哨兵",
+  "jargon.meaning": "含义字段哨兵",
+  "table.confidence": "置信度字段哨兵",
+  "jargon.meaningRequired": "含义必填哨兵",
+  "jargon.confidenceRange": "置信度范围哨兵",
+};
+
 describe("JargonPage", () => {
   let bridge: BridgeMock;
   let showToast: ReturnType<typeof vi.fn>;
@@ -693,5 +718,56 @@ describe("JargonPage", () => {
     expect(bridge.apiPost).toHaveBeenCalledTimes(1);
     expect((screen.getByRole("button", { name: /^confirm selected$/i }) as HTMLButtonElement).disabled).toBe(true);
     request.resolve(ok({ results: [{ identity: { term: "term", group_id: "g1" }, ok: true }] }));
+  });
+
+  it("consumes non-English translations in the jargon create form and unsaved decision", async () => {
+    configureCrudData([fullMeaning("term")]);
+    bridge.t.mockImplementation((key: string) => JARGON_SENTINELS[key] ?? key);
+    await openMeaningsContext();
+
+    fireEvent.click(await screen.findByRole("button", { name: JARGON_SENTINELS["jargon.newJargon"] }));
+    const createDialog = screen.getByRole("dialog", { name: JARGON_SENTINELS["jargon.newJargon"] });
+    expect(within(createDialog).getByText(JARGON_SENTINELS["jargon.createDescription"])).toBeTruthy();
+    expect(within(createDialog).getByRole("button", { name: JARGON_SENTINELS["detail.create"] })).toBeTruthy();
+
+    const termField = within(createDialog).getByLabelText(JARGON_SENTINELS["jargon.term"]);
+    expect(within(createDialog).getByLabelText(JARGON_SENTINELS["jargon.groupId"])).toBeTruthy();
+    const meaningField = within(createDialog).getByLabelText(JARGON_SENTINELS["jargon.meaning"]);
+    const confidenceField = within(createDialog).getByLabelText(JARGON_SENTINELS["table.confidence"]);
+    fireEvent.change(termField, { target: { value: "草稿" } });
+    fireEvent.change(meaningField, { target: { value: "临时含义" } });
+    fireEvent.change(meaningField, { target: { value: "" } });
+    expect(within(createDialog).getAllByText(JARGON_SENTINELS["jargon.meaningRequired"]).length).toBeGreaterThan(0);
+    fireEvent.change(confidenceField, { target: { value: "2" } });
+    expect(within(createDialog).getAllByText(JARGON_SENTINELS["jargon.confidenceRange"]).length).toBeGreaterThan(0);
+
+    fireEvent.click(within(createDialog).getByRole("button", { name: JARGON_SENTINELS["common.close"] }));
+    const unsaved = await screen.findByRole("dialog", { name: JARGON_SENTINELS["config.unsaved.title"] });
+    expect(within(unsaved).getByText(JARGON_SENTINELS["config.unsaved.description"])).toBeTruthy();
+    expect(within(unsaved).getByRole("button", { name: JARGON_SENTINELS["config.unsaved.keepEditing"] })).toBeTruthy();
+    expect(within(unsaved).getByRole("button", { name: JARGON_SENTINELS["config.unsaved.discard"] })).toBeTruthy();
+  });
+
+  it("consumes non-English translations for jargon edit, conflict, and delete actions", async () => {
+    configureCrudData([fullMeaning("term")]);
+    bridge.t.mockImplementation((key: string) => JARGON_SENTINELS[key] ?? key);
+    bridge.apiPost.mockRejectedValueOnce(new ApiRequestError("stale", "edit_conflict", {}, {
+      current_entity: fullMeaning("term", "rev-remote"),
+      current_revision: "rev-remote",
+    }));
+    await openMeaningsContext();
+
+    fireEvent.click(screen.getByRole("button", { name: "view term" }));
+    fireEvent.click(screen.getByRole("button", { name: JARGON_SENTINELS["detail.edit"] }));
+    fireEvent.change(screen.getByLabelText(JARGON_SENTINELS["jargon.meaning"]), { target: { value: "本地草稿" } });
+    fireEvent.click(screen.getByRole("button", { name: JARGON_SENTINELS["common.save"] }));
+
+    const conflict = await screen.findByRole("dialog", { name: JARGON_SENTINELS["jargon.conflictTitle"] });
+    expect(within(conflict).getByText(JARGON_SENTINELS["jargon.conflictDescription"])).toBeTruthy();
+    expect(within(conflict).getByRole("button", { name: JARGON_SENTINELS["config.conflict.loadRemote"] })).toBeTruthy();
+    expect(within(conflict).getByRole("button", { name: JARGON_SENTINELS["jargon.reapplyLocal"] })).toBeTruthy();
+    fireEvent.click(within(conflict).getByRole("button", { name: JARGON_SENTINELS["config.conflict.loadRemote"] }));
+    fireEvent.click(screen.getByRole("button", { name: JARGON_SENTINELS["common.delete"] }));
+    expect(await screen.findByRole("dialog", { name: JARGON_SENTINELS["common.delete"] })).toBeTruthy();
   });
 });
