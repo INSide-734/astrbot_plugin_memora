@@ -13,6 +13,7 @@ from .models import (
     RoutingMode,
 )
 from .presets import PRESETS, get_preset, resolve_preset
+from .router import InjectionRoutingConfig, InjectionStrategyRouter
 
 __all__ = [
     "ContentLevel",
@@ -21,6 +22,8 @@ __all__ = [
     "InjectionDecisionRecord",
     "InjectionExecutionResult",
     "InjectionOutcome",
+    "InjectionRoutingConfig",
+    "InjectionStrategyRouter",
     "InjectionStrategyPreset",
     "PRESETS",
     "PresetName",
