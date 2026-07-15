@@ -41,7 +41,7 @@ All dialogs and the Sheet render existing Base UI title and description primitiv
 
 ## Tag rules
 
-The pending input is local transient UI state; `values` remains caller-controlled. Enter trims and proposes a tag. Empty strings and exact duplicates are ignored. Backspace removes the last current tag only when the input is empty. A configured maximum blocks additional additions and invokes `onLimitReached` so the caller can present localized feedback. The component never normalizes existing caller values or sends API requests.
+The pending input is local transient UI state; `values` remains caller-controlled. Enter trims and proposes a tag. Empty strings and exact duplicates are ignored. Backspace removes the last current tag only when the input is empty. A configured maximum blocks additional additions and invokes `onLimitReached` so the caller can present localized feedback. `getRemoveLabel(tag)` is required so each remove button has a caller-owned translated accessible name; the generic module has no hard-coded action text. The component never normalizes existing caller values or sends API requests.
 
 ## Responsive layout
 
@@ -56,9 +56,11 @@ Editor surfaces use three flex regions: a shrink-to-content header, `min-h-0 fle
 | Require translated labels as props | Avoids domain i18n coupling and makes each action precise in context. | Call sites provide more labels. |
 | Use exact confirmation text only for higher-impact deletes | Ordinary deletion remains fast while cross-group or large-batch operations gain an intentional checkpoint. | A caller must decide when its operation meets the higher-impact threshold. |
 | Scope keyboard saving to explicit modifier Enter | Supports efficient editing without hijacking normal typing or creating a destructive shortcut. | Users still activate standard buttons for other actions. |
+| Reset destructive confirmation on every close | A prior acknowledgement must not authorize a later deletion session. | Users re-enter the phrase after reopening. |
 
 ## Change history
 
 | Date | Change |
 | --- | --- |
 | 2026-07-15 | Added the first shared controlled editing components for the unified CRUD dashboard work. |
+| 2026-07-15 | Required caller-provided tag remove labels and reset destructive confirmation phrases between sessions. |

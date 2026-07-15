@@ -9,6 +9,7 @@ import { EntityCreateDialog } from "./EntityCreateDialog";
 import { EntityEditorSheet } from "./EntityEditorSheet";
 import { TagEditor } from "./TagEditor";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
+import { Button } from "@/components/ui/Button";
 
 afterEach(cleanup);
 
@@ -138,6 +139,22 @@ describe("EntityEditorSheet", () => {
     expect(screen.getByRole("dialog", { name: "Profile" })).toBeTruthy();
   });
 
+  it("blocks a second save while an asynchronous save request is pending", async () => {
+    let resolveSave!: () => void;
+    const onSave = vi.fn(() => new Promise<void>((resolve) => {
+      resolveSave = resolve;
+    }));
+    render(<EditorHarness initialMode="edit" onSave={onSave} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(onSave).toHaveBeenCalledOnce();
+
+    resolveSave();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
   it("saves from Ctrl+Enter or Meta+Enter only when dirty, valid, and idle", async () => {
     const onSave = vi.fn();
     const { unmount } = render(<EditorHarness onSave={onSave} />);
@@ -182,6 +199,16 @@ describe("EditFormLayout", () => {
     expect(screen.getAllByRole("alert")[0].getAttribute("tabindex")).toBe("-1");
     expect(screen.getAllByText("Name is required").find((element) => element.id)?.id).toContain("error-name");
     expect(document.activeElement).toBe(screen.getByLabelText("Name"));
+  });
+
+  it("keeps repeated form-level errors as separate summary entries", () => {
+    render(
+      <EditFormLayout summaryLabel="Fix the following errors" formErrors={["Save failed", "Save failed"]}>
+        {() => <input aria-label="Name" />}
+      </EditFormLayout>,
+    );
+
+    expect(screen.getAllByText("Save failed")).toHaveLength(2);
   });
 });
 
@@ -247,6 +274,36 @@ describe("shared dialogs", () => {
     fireEvent.change(screen.getByLabelText("Type DELETE"), { target: { value: "DELETE" } });
     expect(confirm).toHaveProperty("disabled", false);
   });
+
+  it("requires a fresh exact confirmation phrase after a mounted dialog is closed and reopened", () => {
+    function DeleteHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <Button type="button" onClick={() => setOpen(true)}>Reopen delete</Button>
+          <DeleteConfirmDialog
+            open={open}
+            title="Delete memories?"
+            description="This cannot be undone."
+            cancelLabel="Cancel"
+            confirmLabel="Delete memories"
+            confirmationRequirement={{ label: "Type DELETE", expectedText: "DELETE" }}
+            onCancel={() => setOpen(false)}
+            onConfirm={vi.fn()}
+          />
+        </>
+      );
+    }
+
+    render(<DeleteHarness />);
+    fireEvent.change(screen.getByLabelText("Type DELETE"), { target: { value: "DELETE" } });
+    expect(screen.getByRole("button", { name: "Delete memories" })).toHaveProperty("disabled", false);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Delete memories?" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reopen delete" }));
+    expect(screen.getByRole("button", { name: "Delete memories" })).toHaveProperty("disabled", true);
+  });
 });
 
 describe("EntityCreateDialog and TagEditor", () => {
@@ -295,6 +352,36 @@ describe("EntityCreateDialog and TagEditor", () => {
     expect(screen.getByDisplayValue("Draft")).toBeTruthy();
   });
 
+  it("blocks a second create submission while an asynchronous request is pending", async () => {
+    let resolveSubmit!: () => void;
+    const onSubmit = vi.fn(() => new Promise<void>((resolve) => {
+      resolveSubmit = resolve;
+    }));
+    render(
+      <EntityCreateDialog
+        open
+        onOpenChange={vi.fn()}
+        title="Create note"
+        description="Add a new note."
+        isDirty
+        isSubmitting={false}
+        canSubmit
+        onCancel={vi.fn()}
+        onSubmit={onSubmit}
+        form={<input aria-label="Title" value="Draft" readOnly />}
+        labels={{ close: "Close", cancel: "Cancel", submit: "Create", submitting: "Creating…" }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(onSubmit).toHaveBeenCalledOnce();
+
+    resolveSubmit();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
   it("adds tags with Enter, removes the last with Backspace, filters duplicates, and reports its limit", () => {
     const onChange = vi.fn();
     const onLimitReached = vi.fn();
@@ -303,6 +390,7 @@ describe("EntityCreateDialog and TagEditor", () => {
       return (
         <TagEditor
           label="Tags"
+          getRemoveLabel={(tag) => `Remove tag ${tag}`}
           values={values}
           onChange={(next) => {
             onChange(next);
@@ -316,6 +404,7 @@ describe("EntityCreateDialog and TagEditor", () => {
     render(<TagHarness />);
 
     const input = screen.getByRole("textbox", { name: "Tags" });
+    expect(screen.getByRole("button", { name: "Remove tag one" })).toBeTruthy();
     fireEvent.change(input, { target: { value: " two " } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onChange).toHaveBeenLastCalledWith(["one", "two"]);
