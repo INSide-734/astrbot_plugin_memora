@@ -417,7 +417,7 @@ export default function App() {
                     onDirtyChange={handleCurrentPageDirtyChange}
                   />
                 )}
-                {currentPage === "profiles" && <ProfilesPage showToast={showToast} />}
+                {currentPage === "profiles" && <ProfilesPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
                 {currentPage === "knowledge" && (
                   <KnowledgePage
                     showToast={showToast}
@@ -435,7 +435,7 @@ export default function App() {
                 {currentPage === "learning" && <LearningPage showToast={showToast} />}
                 {currentPage === "jargon" && <JargonPage showToast={showToast} />}
                 {currentPage === "affection" && <AffectionPage showToast={showToast} />}
-                {currentPage === "social" && <SocialPage showToast={showToast} />}
+                {currentPage === "social" && <SocialPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
                 {currentPage === "intelligence" && <IntelligencePage showToast={showToast} />}
                 </Suspense>
               </motion.div>
