@@ -57,9 +57,12 @@ export function EntityEditorSheet({
   const requestSave = () => {
     if (mode !== "edit" || !isDirty || !canSave || isSubmitting || saveInFlight.current) return;
     saveInFlight.current = true;
-    Promise.resolve(onSave()).finally(() => {
-      saveInFlight.current = false;
-    });
+    Promise.resolve()
+      .then(() => onSave())
+      .catch(() => undefined)
+      .finally(() => {
+        saveInFlight.current = false;
+      });
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {

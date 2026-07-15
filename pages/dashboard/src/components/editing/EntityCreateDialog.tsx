@@ -49,9 +49,12 @@ export function EntityCreateDialog({
   const requestSubmit = () => {
     if (!isDirty || !canSubmit || isSubmitting || submitInFlight.current) return;
     submitInFlight.current = true;
-    Promise.resolve(onSubmit()).finally(() => {
-      submitInFlight.current = false;
-    });
+    Promise.resolve()
+      .then(() => onSubmit())
+      .catch(() => undefined)
+      .finally(() => {
+        submitInFlight.current = false;
+      });
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {

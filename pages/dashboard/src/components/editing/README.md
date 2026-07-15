@@ -18,11 +18,11 @@ This module supplies the reusable, controlled editing surface for Memora Dashboa
 
 - All surfaces are controlled. The caller owns `open`, draft values, dirty state, submission state, validation state, and the actual data request.
 - `EntityEditorSheet` starts in the caller-selected `view` or `edit` mode. Its close request is sent through `onOpenChange(false)` so the owning page can open `UnsavedChangesDialog` when the draft is dirty.
-- A caller must set `isSubmitting` while its request is outstanding. The Sheet and Dialog disable action and close controls in that state; the components also suppress an immediate duplicate invocation.
+- A caller must set `isSubmitting` while its request is outstanding. The Sheet and Dialog disable action and close controls in that state; the components also suppress an immediate duplicate invocation. If a save or submit callback throws or rejects, the component consumes that transport-level failure, resets its internal duplicate guard, and leaves error presentation to the caller-owned state.
 - A save shortcut is deliberately narrow: `Ctrl+Enter` and `Meta+Enter` submit only a dirty, valid, idle form. There is no delete keyboard shortcut.
-- Use `EditFormLayout` around domain inputs after a failed validation attempt. Pass each input to `registerField(name, element)` and attach `getFieldError(name)?.id` to that input's `aria-describedby`. Set `focusInvalid` for the failed submission render.
+- Use `EditFormLayout` around domain inputs after a failed validation attempt. Pass each input to `registerField(name, element)` and attach `getFieldError(name)?.id` to that input's `aria-describedby`. Set `focusInvalid` for the failed submission render; it focuses only when validation becomes active, the first invalid field changes, or form-only errors replace field errors, rather than stealing focus on equivalent rerenders.
 - Use `DeleteConfirmDialog.confirmationRequirement` for cross-group or large-batch deletion. Ordinary single-record deletion omits it and remains a one-step explicit destructive action.
-- `TagEditor` requires `getRemoveLabel(tag)` to provide the translated accessible name for each remove button. It treats values as exact strings after trimming the pending input, ignores empty and duplicate entries, removes the last tag with Backspace only while the input is empty, and calls `onLimitReached` when its configured limit is reached.
+- `TagEditor` requires `getRemoveLabel(tag)` to provide the translated accessible name for each remove button. It treats values as exact strings after trimming the pending input, ignores new empty and duplicate entries, preserves any duplicate values the caller already supplies, removes exactly the selected tag occurrence, removes the last tag with Backspace only while the input is empty, and calls `onLimitReached` when its configured limit is reached.
 
 ## Translated-label contract
 
