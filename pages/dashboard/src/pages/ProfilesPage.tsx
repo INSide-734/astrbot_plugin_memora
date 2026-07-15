@@ -204,7 +204,7 @@ function hasProfileRevision(profile: Profile | undefined): profile is Profile & 
 }
 
 function profileTagTotal(profile: Profile): number {
-  return profile.tag_count ?? (profile.tags?.filter((tag) => typeof tag.name === "string").length ?? 0);
+  return profile.tag_count ?? (profile.tags?.filter((tag) => typeof tag.value === "string" || typeof tag.name === "string").length ?? 0);
 }
 
 export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {

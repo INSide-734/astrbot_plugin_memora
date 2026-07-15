@@ -103,6 +103,26 @@ describe("ProfilesPage", () => {
     expect(screen.queryByRole("toolbar")).toBeNull();
   });
 
+  it("counts canonical tags without tag_count", async () => {
+    bridge.apiGet.mockResolvedValue(ok({
+      total: 1,
+      profiles: [{
+        user_id: "canonical",
+        display_name: "Canonical",
+        tags: [
+          { category: "interest", value: "testing", confidence: 0.9 },
+          { category: "custom", value: "graphs", confidence: 0.8 },
+        ],
+        top_interests: [],
+        last_seen: "2026-06-28T12:00:00Z",
+      }],
+    }));
+    render(<ProfilesPage showToast={showToast} />);
+    const row = (await screen.findByText("Canonical")).closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("2")).toBeTruthy();
+  });
+
   it("pages through profile results using backend offsets", async () => {
     bridge.apiGet.mockImplementation((_path: string, params: Record<string, string>) => Promise.resolve(ok({
       total: 201,
@@ -349,7 +369,7 @@ describe("ProfilesPage", () => {
       });
     });
     expect(await screen.findByText("Alice")).toBeTruthy();
-    expect(screen.getByText("1", { selector: ".text-lg.font-bold.tabular-nums" })).toBeTruthy();
+    expect(screen.getAllByText("1", { selector: ".text-lg.font-bold.tabular-nums" })).toHaveLength(2);
     expect(await screen.findByRole("dialog", { name: "Profile: Alice" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^save$/i })).toBeNull();
   });

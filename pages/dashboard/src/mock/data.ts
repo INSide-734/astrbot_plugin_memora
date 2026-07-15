@@ -117,7 +117,7 @@ export const GRAPH_EDGES = [
 
 export type MockProfileTagCategory = "interest" | "personality" | "habit" | "relation" | "knowledge" | "preference" | "custom";
 export interface MockProfileTag { category: MockProfileTagCategory; value: string; confidence: number }
-export interface MockProfilePreferences { reply_style: string; preferred_topics: string[]; avoided_topics: string[]; active_hours: number[] }
+export interface MockProfilePreferences { reply_style?: string; preferred_topics?: string[]; avoided_topics?: string[]; active_hours?: number[] }
 export interface MockProfile {
   user_id: string;
   display_name: string;
