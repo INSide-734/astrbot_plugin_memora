@@ -37,6 +37,7 @@ const profileDraft = (suffix: string) => ({
   },
   tags: [{ category: "interest", value: `tag-${suffix}`, confidence: 0.9 }],
 });
+const minimalPreferences: mockData.MockProfilePreferences = {};
 const jargonDraft = (suffix: string) => ({
   term: `task17-jargon-${suffix}`,
   group_id: "group_001",
@@ -757,6 +758,17 @@ describe("remaining Python mock API parity", () => {
     });
     const detail = okData(await get("profiles/detail", { user_id: draft.user_id }));
     expect(detail).toMatchObject({ preferences: updated.entity.preferences, tags: updated.entity.tags, revision: updated.revision });
+  });
+
+  it("keeps minimal create and partial preference updates partial", async () => {
+    const created = entityEnvelope(await post("profiles/create", { user_id: "profile-partial-typing", preferences: minimalPreferences }));
+    expect(created.entity.preferences).toEqual({});
+    const updated = entityEnvelope(await post("profiles/update", {
+      identity: { user_id: "profile-partial-typing" },
+      changes: { preferences: { reply_style: " concise " } },
+      expected_revision: created.revision,
+    }));
+    expect(updated.entity.preferences).toEqual({ reply_style: "concise" });
   });
 
   it("uses canonical editable profile seeds for display-name-only round trips", async () => {

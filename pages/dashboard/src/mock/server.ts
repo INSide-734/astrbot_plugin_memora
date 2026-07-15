@@ -3,7 +3,7 @@
 // ================================================================
 import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_DATASETS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS } from "./data";
 import { createMockConfigServer } from "./configServer";
-import type { MockProfile, MockProfilePreferences, MockProfileTag } from "./data";
+import type { MockProfile, MockProfilePreferences, MockProfileTag, MockProfileTagCategory } from "./data";
 
 type ApiResponse = { status: string; data?: unknown; message?: string; code?: string; field_errors?: Record<string, string> };
 
@@ -131,15 +131,19 @@ function revisionedRequestErrors(body: MutableRecord, allowedTop: readonly strin
   return errors;
 }
 
-const PROFILE_TAG_CATEGORIES = new Set(["interest", "personality", "habit", "relation", "knowledge", "preference", "custom"]);
+const PROFILE_TAG_CATEGORIES = new Set<MockProfileTagCategory>(["interest", "personality", "habit", "relation", "knowledge", "preference", "custom"]);
 
-function normalizeProfileTag(tag: unknown, field: string): { tag?: MutableRecord; errors: Record<string, string> } {
+function isMockProfileTagCategory(value: string): value is MockProfileTagCategory {
+  return PROFILE_TAG_CATEGORIES.has(value as MockProfileTagCategory);
+}
+
+function normalizeProfileTag(tag: unknown, field: string): { tag?: MockProfileTag; errors: Record<string, string> } {
   if (!tag || typeof tag !== "object" || Array.isArray(tag)) return { errors: { [field]: "必须为对象" } };
   const source = tag as MutableRecord;
   const errors = Object.fromEntries(Object.entries(unknownFieldErrors(source, ["category", "value", "confidence"])).map(([key, message]) => [`${field}.${key}`, message]));
   const rawCategory = source.category ?? "custom";
   const category = typeof rawCategory === "string" ? rawCategory.trim() : "";
-  if (typeof rawCategory !== "string" || !PROFILE_TAG_CATEGORIES.has(category)) errors[`${field}.category`] = "不支持的标签分类";
+  if (typeof rawCategory !== "string" || !isMockProfileTagCategory(category)) errors[`${field}.category`] = "不支持的标签分类";
   const valueError = textFieldError(source.value); if (valueError) errors[`${field}.value`] = valueError;
   const rawConfidence = source.confidence ?? 0.5;
   let confidence = Number.NaN;
@@ -147,7 +151,7 @@ function normalizeProfileTag(tag: unknown, field: string): { tag?: MutableRecord
   else if (!Number.isFinite(rawConfidence)) errors[`${field}.confidence`] = "必须为有限数字";
   else if (rawConfidence < 0 || rawConfidence > 1) errors[`${field}.confidence`] = "必须在 0.0 到 1.0 之间";
   else confidence = rawConfidence;
-  return { tag: { category, value: typeof source.value === "string" ? source.value.trim() : "", confidence }, errors };
+  return { tag: { category: isMockProfileTagCategory(category) ? category : "custom", value: typeof source.value === "string" ? source.value.trim() : "", confidence }, errors };
 }
 
 function profileTagErrors(tag: unknown): Record<string, string> {
@@ -156,16 +160,16 @@ function profileTagErrors(tag: unknown): Record<string, string> {
   return normalized.errors;
 }
 
-function normalizeProfilePreferences(value: unknown, field = "preferences"): { preferences?: MutableRecord; errors: Record<string, string> } {
+function normalizeProfilePreferences(value: unknown, field = "preferences"): { preferences?: MockProfilePreferences; errors: Record<string, string> } {
   if (value === undefined) return { preferences: {}, errors: {} };
   if (!value || typeof value !== "object" || Array.isArray(value)) return { errors: { [field]: "必须为对象" } };
   const source = value as MutableRecord;
   const errors = Object.fromEntries(Object.entries(unknownFieldErrors(source, ["reply_style", "preferred_topics", "avoided_topics", "active_hours"])).map(([key, message]) => [`${field}.${key}`, message]));
-  const preferences: MutableRecord = {};
+  const preferences: MockProfilePreferences = {};
   if ("reply_style" in source) {
     const error = textFieldError(source.reply_style); if (error) errors[`${field}.reply_style`] = error; else preferences.reply_style = source.reply_style.trim();
   }
-  for (const listField of ["preferred_topics", "avoided_topics"]) if (listField in source) {
+  for (const listField of ["preferred_topics", "avoided_topics"] as const) if (listField in source) {
     if (!Array.isArray(source[listField])) errors[`${field}.${listField}`] = "必须为字符串数组";
     else {
       const normalized: string[] = [];
@@ -194,11 +198,11 @@ function normalizeProfilePreferences(value: unknown, field = "preferences"): { p
   return { preferences, errors };
 }
 
-function normalizeProfileTags(value: unknown, field = "tags"): { tags?: MutableRecord[]; errors: Record<string, string> } {
+function normalizeProfileTags(value: unknown, field = "tags"): { tags?: MockProfileTag[]; errors: Record<string, string> } {
   if (value === undefined) return { tags: [], errors: {} };
   if (!Array.isArray(value)) return { errors: { [field]: "必须为数组" } };
   if (value.length > 100) return { errors: { [field]: "项目过多" } };
-  const tags: MutableRecord[] = []; const errors: Record<string, string> = {}; const identities = new Set<string>();
+  const tags: MockProfileTag[] = []; const errors: Record<string, string> = {}; const identities = new Set<string>();
   for (const [index, item] of value.entries()) {
     const normalized = normalizeProfileTag(item, `${field}.${index}`); Object.assign(errors, normalized.errors);
     if (normalized.tag) {
@@ -313,7 +317,7 @@ function handleProfileCreate(body: ProfileCreateRequest): ApiResponse {
   const normalizedTags = normalizeProfileTags(body.tags); Object.assign(errors, normalizedTags.errors);
   if (Object.keys(errors).length) return validation(errors);
   const userId = String(body.user_id).trim(); if (PROFILES.some((item) => item.user_id === userId)) return err("Profile already exists", "already_exists");
-  const record: MockProfile = { user_id: userId, display_name: typeof body.display_name === "string" ? body.display_name.trim() : "", preferences: normalizedPreferences.preferences as MockProfilePreferences, tags: normalizedTags.tags as MockProfileTag[], message_count: 0, last_active: "", revision: revision() };
+  const record: MockProfile = { user_id: userId, display_name: typeof body.display_name === "string" ? body.display_name.trim() : "", preferences: normalizedPreferences.preferences ?? {}, tags: normalizedTags.tags ?? [], message_count: 0, last_active: "", revision: revision() };
   PROFILES.push(record); return envelope(record);
 }
 
