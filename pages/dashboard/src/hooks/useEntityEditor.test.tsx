@@ -476,4 +476,87 @@ describe("useEntityEditor", () => {
     await act(async () => { await expect(hook.result.current.save()).resolves.toBe(true); });
     expect(submit).toHaveBeenCalledTimes(1);
   });
+
+  it("invalidates a pending save on cancel so a newer save controls the editor", async () => {
+    const oldRequest = deferred<EntityEnvelope<Draft>>();
+    const newRequest = deferred<EntityEnvelope<Draft>>();
+    const submit = vi.fn()
+      .mockImplementationOnce(() => oldRequest.promise)
+      .mockImplementationOnce(() => newRequest.promise);
+    const hook = renderEditor(submit);
+
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "旧草稿");
+    });
+    let oldSave!: Promise<boolean>;
+    act(() => { oldSave = hook.result.current.save(); });
+
+    act(() => hook.result.current.cancel());
+    expect(hook.result.current).toMatchObject({
+      mode: "view",
+      draft: INITIAL,
+      isDirty: false,
+      isSubmitting: false,
+    });
+
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "新草稿");
+    });
+    let newSave!: Promise<boolean>;
+    act(() => { newSave = hook.result.current.save(); });
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.isSubmitting).toBe(true);
+
+    oldRequest.resolve({ entity: { name: "旧保存", tags: ["alpha"] }, revision: "rev-old" });
+    await act(async () => { await expect(oldSave).resolves.toBe(false); });
+    expect(hook.result.current).toMatchObject({
+      mode: "edit",
+      draft: { name: "新草稿", tags: ["alpha"] },
+      revision: "rev-1",
+      isDirty: true,
+      isSubmitting: true,
+    });
+
+    newRequest.resolve({ entity: { name: "新草稿", tags: ["alpha"] }, revision: "rev-2" });
+    await act(async () => { await expect(newSave).resolves.toBe(true); });
+    expect(hook.result.current).toMatchObject({
+      mode: "view",
+      draft: { name: "新草稿", tags: ["alpha"] },
+      revision: "rev-2",
+      isSubmitting: false,
+    });
+  });
+
+  it("invalidates a pending save when a local edit supersedes its draft", async () => {
+    const request = deferred<EntityEnvelope<Draft>>();
+    const submit = vi.fn(() => request.promise);
+    const hook = renderEditor(submit);
+
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "已提交草稿");
+    });
+    let save!: Promise<boolean>;
+    act(() => { save = hook.result.current.save(); });
+
+    act(() => hook.result.current.setField("name", "较新本地编辑"));
+    expect(hook.result.current).toMatchObject({
+      mode: "edit",
+      draft: { name: "较新本地编辑", tags: ["alpha"] },
+      isDirty: true,
+      isSubmitting: false,
+    });
+
+    request.resolve({ entity: { name: "已提交草稿", tags: ["alpha"] }, revision: "rev-2" });
+    await act(async () => { await expect(save).resolves.toBe(false); });
+    expect(hook.result.current).toMatchObject({
+      mode: "edit",
+      draft: { name: "较新本地编辑", tags: ["alpha"] },
+      revision: "rev-1",
+      isDirty: true,
+      isSubmitting: false,
+    });
+  });
 });
