@@ -90,45 +90,107 @@ function textFieldError(value: unknown, maximum = 128): string | null {
   return null;
 }
 
+function optionalTextFieldError(value: unknown, maximum = 128): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== "string") return "必须为字符串";
+  if (value.trim().length > maximum) return "文本过长";
+  return null;
+}
+
 function revisionFieldError(value: unknown): string | null {
-  if (value === undefined || value === null || value === "") return "不能为空";
+  if (value === undefined || value === null || value === "" || (typeof value === "string" && !value.trim())) return "不能为空";
   return textFieldError(value, 256);
 }
 
-function revisionedRequestErrors(body: MutableRecord, allowedTop: readonly string[], identityFields: readonly string[]): Record<string, string> {
-  const errors = unknownFieldErrors(body, allowedTop);
-  if (!body.identity || typeof body.identity !== "object" || Array.isArray(body.identity)) errors.identity = "必须为对象";
-  else {
-    Object.assign(errors, unknownFieldErrors(body.identity, identityFields));
-    for (const field of identityFields) { const error = textFieldError(body.identity[field]); if (error) errors[`identity.${field}`] = error; }
+function normalizeIdentity(value: unknown, identityFields: readonly string[], optionalFields: readonly string[] = []): { identity?: MutableRecord; errors: Record<string, string> } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { errors: { identity: "必须为对象" } };
+  const source = value as MutableRecord;
+  const errors = unknownFieldErrors(source, identityFields);
+  const identity: MutableRecord = {};
+  for (const field of identityFields) {
+    const error = optionalFields.includes(field) ? optionalTextFieldError(source[field]) : textFieldError(source[field]);
+    if (error) errors[`identity.${field}`] = error;
+    else identity[field] = typeof source[field] === "string" ? source[field].trim() : "";
   }
-  const revisionError = revisionFieldError(body.expected_revision); if (revisionError) errors.expected_revision = revisionError;
+  return { identity, errors };
+}
+
+function revisionedRequestErrors(body: MutableRecord, allowedTop: readonly string[], identityFields: readonly string[], optionalIdentityFields: readonly string[] = []): Record<string, string> {
+  const errors = unknownFieldErrors(body, allowedTop);
+  const normalized = normalizeIdentity(body.identity, identityFields, optionalIdentityFields);
+  Object.assign(errors, normalized.errors);
+  if (normalized.identity && !Object.keys(normalized.errors).length) body.identity = normalized.identity;
+  const revisionError = revisionFieldError(body.expected_revision);
+  if (revisionError) errors.expected_revision = revisionError; else body.expected_revision = body.expected_revision.trim();
   return errors;
+}
+
+const PROFILE_TAG_CATEGORIES = new Set(["interest", "personality", "habit", "relation", "knowledge", "preference", "custom"]);
+
+function normalizeProfileTag(tag: unknown, field: string): { tag?: MutableRecord; errors: Record<string, string> } {
+  if (!tag || typeof tag !== "object" || Array.isArray(tag)) return { errors: { [field]: "必须为对象" } };
+  const source = tag as MutableRecord;
+  const errors = Object.fromEntries(Object.entries(unknownFieldErrors(source, ["category", "value", "confidence"])).map(([key, message]) => [`${field}.${key}`, message]));
+  const categoryError = textFieldError(source.category, 64); if (categoryError) errors[`${field}.category`] = categoryError;
+  const category = typeof source.category === "string" ? source.category.trim() : "";
+  if (!categoryError && !PROFILE_TAG_CATEGORIES.has(category)) errors[`${field}.category`] = "不支持的标签分类";
+  const valueError = textFieldError(source.value); if (valueError) errors[`${field}.value`] = valueError;
+  const rawConfidence = source.confidence ?? 0.5;
+  const confidence = typeof rawConfidence === "boolean" ? Number.NaN : Number(rawConfidence);
+  if (!Number.isFinite(confidence)) errors[`${field}.confidence`] = "必须为有限数字";
+  else if (confidence < 0 || confidence > 1) errors[`${field}.confidence`] = "必须在 0.0 到 1.0 之间";
+  return { tag: { category, value: typeof source.value === "string" ? source.value.trim() : "", confidence }, errors };
 }
 
 function profileTagErrors(tag: unknown): Record<string, string> {
-  if (!tag || typeof tag !== "object" || Array.isArray(tag)) return { "params.tag": "必须为对象" };
-  const value = tag as MutableRecord;
-  const errors = Object.fromEntries(Object.entries(unknownFieldErrors(value, ["category", "value", "confidence"])).map(([key, message]) => [`params.tag.${key}`, message]));
-  const categoryError = textFieldError(value.category, 64); if (categoryError) errors["params.tag.category"] = categoryError;
-  else if (!["interest", "personality", "habit", "relation", "knowledge", "preference", "custom"].includes(value.category)) errors["params.tag.category"] = "不支持的标签分类";
-  const valueError = textFieldError(value.value); if (valueError) errors["params.tag.value"] = valueError;
-  if (typeof value.confidence === "boolean" || typeof value.confidence !== "number" || !Number.isFinite(value.confidence)) errors["params.tag.confidence"] = "必须为数字";
-  else if (value.confidence < 0 || value.confidence > 1) errors["params.tag.confidence"] = "必须在 0.0 到 1.0 之间";
-  return errors;
+  const normalized = normalizeProfileTag(tag, "params.tag");
+  if (normalized.tag && tag && typeof tag === "object" && !Array.isArray(tag) && !Object.keys(normalized.errors).length) Object.assign(tag, normalized.tag);
+  return normalized.errors;
 }
 
-function invalidRevisionedItem(item: unknown, index: number, identityFields: readonly string[]): MutableRecord | null {
+function normalizeProfilePreferences(value: unknown): { preferences?: MutableRecord; errors: Record<string, string> } {
+  if (value === undefined) return { preferences: {}, errors: {} };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { errors: { preferences: "必须为对象" } };
+  const source = value as MutableRecord;
+  const errors = Object.fromEntries(Object.entries(unknownFieldErrors(source, ["reply_style", "preferred_topics", "avoided_topics", "active_hours"])).map(([key, message]) => [`preferences.${key}`, message]));
+  const preferences: MutableRecord = {};
+  if ("reply_style" in source) {
+    if (typeof source.reply_style !== "string") errors["preferences.reply_style"] = "必须为字符串"; else preferences.reply_style = source.reply_style.trim();
+  }
+  for (const field of ["preferred_topics", "avoided_topics"]) if (field in source) {
+    if (!Array.isArray(source[field]) || source[field].some((item: unknown) => typeof item !== "string")) errors[`preferences.${field}`] = "必须为字符串数组";
+    else preferences[field] = source[field].map((item: string) => item.trim());
+  }
+  if ("active_hours" in source) {
+    if (!Array.isArray(source.active_hours) || source.active_hours.some((hour: unknown) => !Number.isInteger(hour) || hour < 0 || hour > 23)) errors["preferences.active_hours"] = "必须为 0 到 23 的整数数组";
+    else preferences.active_hours = structuredClone(source.active_hours);
+  }
+  return { preferences, errors };
+}
+
+function normalizeProfileTags(value: unknown): { tags?: MutableRecord[]; errors: Record<string, string> } {
+  if (value === undefined) return { tags: [], errors: {} };
+  if (!Array.isArray(value)) return { errors: { tags: "必须为数组" } };
+  if (value.length > 100) return { errors: { tags: "项目过多" } };
+  const tags: MutableRecord[] = []; const errors: Record<string, string> = {};
+  for (const [index, item] of value.entries()) {
+    const normalized = normalizeProfileTag(item, `tags.${index}`); Object.assign(errors, normalized.errors); if (normalized.tag) tags.push(normalized.tag);
+  }
+  return { tags, errors };
+}
+
+function invalidRevisionedItem(item: unknown, index: number, identityFields: readonly string[], optionalIdentityFields: readonly string[] = []): MutableRecord | null {
   if (!item || typeof item !== "object" || Array.isArray(item)) return { identity: { item_index: index }, code: "validation_error", message: "Validation failed", field_errors: { item: "必须为对象" } };
   const value = item as MutableRecord;
   const errors = unknownFieldErrors(value, ["identity", "expected_revision"]);
-  if (!value.identity || typeof value.identity !== "object" || Array.isArray(value.identity)) errors.identity = "必须为对象";
-  else {
-    Object.assign(errors, unknownFieldErrors(value.identity, identityFields));
-    for (const field of identityFields) { const error = textFieldError(value.identity[field]); if (error) errors[`identity.${field}`] = error; }
-  }
-  const revisionError = revisionFieldError(value.expected_revision); if (revisionError) errors.expected_revision = revisionError;
-  return Object.keys(errors).length ? { identity: { item_index: index }, code: "validation_error", message: "Validation failed", field_errors: errors } : null;
+  const normalized = normalizeIdentity(value.identity, identityFields, optionalIdentityFields);
+  Object.assign(errors, normalized.errors);
+  const identityMalformed = Object.keys(normalized.errors).length > 0;
+  if (normalized.identity && !identityMalformed) value.identity = normalized.identity;
+  const revisionError = revisionFieldError(value.expected_revision);
+  if (revisionError) errors.expected_revision = revisionError; else value.expected_revision = value.expected_revision.trim();
+  if (!Object.keys(errors).length) return null;
+  return { identity: identityMalformed ? { item_index: index } : structuredClone(value.identity), code: "validation_error", message: "Validation failed", field_errors: errors };
 }
 
 function conflictFailure(identity: MutableRecord, current: MutableRecord, message: string): MutableRecord {
@@ -138,12 +200,13 @@ function conflictFailure(identity: MutableRecord, current: MutableRecord, messag
 function handleSocialCreate(body: MutableRecord): ApiResponse {
   const errors = unknownFieldErrors(body, ["from_user", "to_user", "group_id", "relation_type", "strength", "tags"]);
   for (const field of ["from_user", "to_user", "relation_type"]) { const error = textFieldError(body[field]); if (error) errors[field] = error; }
-  if (typeof body.group_id !== "string") errors.group_id = "必须为字符串"; else if (body.group_id.length > 128) errors.group_id = "文本过长";
+  const groupError = optionalTextFieldError(body.group_id); if (groupError) errors.group_id = groupError;
   if (typeof body.strength !== "number" || !Number.isFinite(body.strength) || body.strength < 0 || body.strength > 1) errors.strength = "必须在 0.0 到 1.0 之间";
   if (!Array.isArray(body.tags) || body.tags.some((tag: unknown) => typeof tag !== "string")) errors.tags = "必须为字符串数组";
   if (Object.keys(errors).length) return validation(errors);
-  if (SOCIAL_RELATIONS.some((item) => identityKey(item) === identityKey(body))) return err("Relation already exists", "already_exists");
-  const record: MutableRecord = { from_user: body.from_user.trim(), to_user: body.to_user.trim(), group_id: body.group_id.trim(), relation_type: body.relation_type.trim(), strength: body.strength, tags: structuredClone(body.tags), category: socialCategory(body.relation_type), frequency: 0, last_interaction: 0, revision: revision() };
+  const normalized = { from_user: body.from_user.trim(), to_user: body.to_user.trim(), group_id: body.group_id?.trim() ?? "", relation_type: body.relation_type.trim() };
+  if (SOCIAL_RELATIONS.some((item) => identityKey(item) === identityKey(normalized))) return err("Relation already exists", "already_exists");
+  const record: MutableRecord = { ...normalized, strength: body.strength, tags: body.tags.map((tag: string) => tag.trim()), category: socialCategory(normalized.relation_type), frequency: 0, last_interaction: 0, revision: revision() };
   SOCIAL_RELATIONS.push(record as any); return envelope(record);
 }
 
@@ -152,7 +215,7 @@ function findSocial(identity: MutableRecord): MutableRecord | undefined {
 }
 
 function handleSocialUpdate(body: MutableRecord): ApiResponse {
-  const requestErrors = revisionedRequestErrors(body, ["identity", "changes", "expected_revision"], ["from_user", "to_user", "group_id", "relation_type"]);
+  const requestErrors = revisionedRequestErrors(body, ["identity", "changes", "expected_revision"], ["from_user", "to_user", "group_id", "relation_type"], ["group_id"]);
   if (Object.keys(requestErrors).length) return validation(requestErrors);
   const changes = body.changes;
   if (!changes || typeof changes !== "object" || Array.isArray(changes)) return validation({ changes: "必须为对象" });
@@ -170,7 +233,7 @@ function handleSocialUpdate(body: MutableRecord): ApiResponse {
 }
 
 function handleSocialDelete(body: MutableRecord): ApiResponse {
-  const requestErrors = revisionedRequestErrors(body, ["identity", "expected_revision"], ["from_user", "to_user", "group_id", "relation_type"]);
+  const requestErrors = revisionedRequestErrors(body, ["identity", "expected_revision"], ["from_user", "to_user", "group_id", "relation_type"], ["group_id"]);
   if (Object.keys(requestErrors).length) return validation(requestErrors);
   const index = SOCIAL_RELATIONS.findIndex((item) => identityKey(item) === identityKey(body.identity ?? {}));
   if (index < 0) return notFound("Relation not found");
@@ -195,7 +258,7 @@ function handleSocialBatch(body: MutableRecord): ApiResponse {
   const succeeded: MutableRecord[] = [];
   const failures: MutableRecord[] = [];
   for (const [index, item] of items.entries()) {
-    const malformed = invalidRevisionedItem(item, index, ["from_user", "to_user", "group_id", "relation_type"]);
+    const malformed = invalidRevisionedItem(item, index, ["from_user", "to_user", "group_id", "relation_type"], ["group_id"]);
     if (malformed) { failures.push(malformed); continue; }
     const value = item as MutableRecord; const identity = structuredClone(value.identity); const current = findSocial(identity);
     if (!current) { failures.push({ identity, code: "not_found", message: "Relation not found" }); continue; }
@@ -212,11 +275,11 @@ function handleProfileCreate(body: MutableRecord): ApiResponse {
   const errors = unknownFieldErrors(body, ["user_id", "display_name", "preferences", "tags"]);
   const userError = textFieldError(body.user_id); if (userError) errors.user_id = userError;
   if (body.display_name !== undefined && typeof body.display_name !== "string") errors.display_name = "必须为字符串";
-  if (!body.preferences || typeof body.preferences !== "object" || Array.isArray(body.preferences)) errors.preferences = "必须为对象";
-  if (!Array.isArray(body.tags)) errors.tags = "必须为数组";
+  const normalizedPreferences = normalizeProfilePreferences(body.preferences); Object.assign(errors, normalizedPreferences.errors);
+  const normalizedTags = normalizeProfileTags(body.tags); Object.assign(errors, normalizedTags.errors);
   if (Object.keys(errors).length) return validation(errors);
-  if (PROFILES.some((item) => item.user_id === body.user_id)) return err("Profile already exists", "already_exists");
-  const record: MutableRecord = { user_id: body.user_id.trim(), display_name: body.display_name ?? "", preferences: structuredClone(body.preferences), tags: structuredClone(body.tags), message_count: 0, last_active: "", revision: revision() };
+  const userId = body.user_id.trim(); if (PROFILES.some((item) => item.user_id === userId)) return err("Profile already exists", "already_exists");
+  const record: MutableRecord = { user_id: userId, display_name: body.display_name?.trim() ?? "", preferences: normalizedPreferences.preferences, tags: normalizedTags.tags, message_count: 0, last_active: "", revision: revision() };
   PROFILES.push(record as any); return envelope(record);
 }
 
@@ -259,6 +322,7 @@ function handleProfileDelete(body: MutableRecord): ApiResponse {
 const profileTagKey = (tag: MutableRecord) => `${String(tag.category ?? "")}\u0000${String(tag.value ?? tag.name ?? "")}`;
 
 function handleProfileBatch(body: MutableRecord): ApiResponse {
+  if ("user_ids" in body && !Array.isArray(body.user_ids)) return validation({ user_ids: "必须为数组" });
   if (Array.isArray(body.user_ids)) {
     if (body.action !== undefined && body.action !== "delete") return validation({ action: "仅支持 delete" });
     if (body.user_ids.length < 1 || body.user_ids.length > 100) return validation({ user_ids: "项目数量必须在 1 到 100 之间" });
@@ -290,13 +354,17 @@ function handleProfileBatch(body: MutableRecord): ApiResponse {
 function findJargon(identity: MutableRecord): MutableRecord | undefined { return JARGON_MEANINGS.find((item) => item.term === identity.term && item.group_id === identity.group_id) as MutableRecord | undefined; }
 function handleJargonCreate(body: MutableRecord): ApiResponse {
   const errors = unknownFieldErrors(body, ["term", "group_id", "meaning", "confidence", "is_jargon", "is_confirmed", "is_global"]);
-  for (const field of ["term", "group_id", "meaning"]) { const error = textFieldError(body[field]); if (error) errors[field] = error; }
-  if (typeof body.confidence !== "number" || !Number.isFinite(body.confidence) || body.confidence < 0 || body.confidence > 1) errors.confidence = "必须在 0.0 到 1.0 之间";
-  for (const field of ["is_jargon", "is_confirmed", "is_global"]) if (typeof body[field] !== "boolean") errors[field] = "必须为布尔值";
+  for (const field of ["term", "group_id"]) { const error = textFieldError(body[field]); if (error) errors[field] = error; }
+  const meaningError = textFieldError(body.meaning, 4096); if (meaningError) errors.meaning = meaningError;
+  if (body.confidence === undefined || body.confidence === null || body.confidence === "") errors.confidence = "不能为空";
+  else if (typeof body.confidence === "boolean" || typeof body.confidence !== "number") errors.confidence = "必须为数字";
+  else if (!Number.isFinite(body.confidence)) errors.confidence = "必须为有限数字";
+  else if (body.confidence < 0 || body.confidence > 1) errors.confidence = "必须在 0.0 到 1.0 之间";
+  for (const field of ["is_jargon", "is_confirmed", "is_global"]) if (body[field] !== undefined && typeof body[field] !== "boolean") errors[field] = "必须为布尔值";
   if (Object.keys(errors).length) return validation(errors);
-  if (findJargon(body)) return err("Jargon meaning already exists", "already_exists");
-  const now = Date.now() / 1000;
-  const record: MutableRecord = { term: body.term.trim(), group_id: body.group_id.trim(), meaning: body.meaning.trim(), confidence: body.confidence, is_jargon: body.is_jargon, is_confirmed: body.is_confirmed, is_global: body.is_global, is_complete: true, count: 0, last_inference_count: 0, created_at: now, updated_at: now, revision: revision() };
+  const normalized = { term: body.term.trim(), group_id: body.group_id.trim() }; if (findJargon(normalized)) return err("Jargon meaning already exists", "already_exists");
+  const now = Date.now() / 1000; const isConfirmed = body.is_confirmed ?? true;
+  const record: MutableRecord = { ...normalized, meaning: body.meaning.trim(), confidence: body.confidence, is_jargon: body.is_jargon ?? true, is_confirmed: isConfirmed, is_global: body.is_global ?? false, is_complete: isConfirmed, count: 0, last_inference_count: 0, created_at: now, updated_at: now, revision: revision() };
   JARGON_MEANINGS.push(record as any); return envelope(record);
 }
 function handleJargonUpdate(body: MutableRecord): ApiResponse {
@@ -1097,6 +1165,7 @@ export async function handleApiGet(path: string, params: Record<string, string> 
 
 export async function handleApiPost(path: string, body: unknown = {}): Promise<ApiResponse> {
   await delay();
+  if (!body || typeof body !== "object" || Array.isArray(body)) return err("请求体必须为 JSON 对象", "invalid_request");
   const p = path.replace(/^page\/?/, "");
   const configResponse = configServer.handlePost(p, body);
   if (configResponse) return configResponse;
