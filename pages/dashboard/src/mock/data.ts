@@ -115,38 +115,48 @@ export const GRAPH_EDGES = [
   { source: "n2", target: "n13", type: "mentioned_in", weight: 2 },
 ];
 
-export const PROFILES = [
+export type MockProfileTagCategory = "interest" | "personality" | "habit" | "relation" | "knowledge" | "preference" | "custom";
+export interface MockProfileTag { category: MockProfileTagCategory; value: string; confidence: number }
+export interface MockProfilePreferences { reply_style: string; preferred_topics: string[]; avoided_topics: string[]; active_hours: number[] }
+export interface MockProfile {
+  user_id: string;
+  display_name: string;
+  tags: MockProfileTag[];
+  preferences: MockProfilePreferences;
+  message_count: number;
+  last_active: string;
+  revision?: string;
+}
+
+export const PROFILES: MockProfile[] = [
   {
     user_id: "user_001", display_name: "张三",
     tags: [
-      { name: "Python 开发者", category: "skill", confidence: 0.95 },
-      { name: "后端工程师", category: "role", confidence: 0.9 },
-      { name: "咖啡爱好者", category: "preference", confidence: 0.85 },
-      { name: "技术分享者", category: "trait", confidence: 0.8 },
-      { name: "爵士乐迷", category: "preference", confidence: 0.75 },
+      { value: "Python 开发者", category: "knowledge", confidence: 0.95 },
+      { value: "后端工程师", category: "custom", confidence: 0.9 },
+      { value: "咖啡爱好者", category: "preference", confidence: 0.85 },
     ],
-    preferences: { work_style: "安静环境", code_review: "严格", learning: "实践优先" },
+    preferences: { reply_style: "concise", preferred_topics: ["Python", "后端开发"], avoided_topics: [], active_hours: [9, 17] },
     message_count: 342,
     last_active: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
   },
   {
     user_id: "user_002", display_name: "李四",
     tags: [
-      { name: "前端开发者", category: "role", confidence: 0.9 },
-      { name: "React 专家", category: "skill", confidence: 0.88 },
-      { name: "开源贡献者", category: "trait", confidence: 0.7 },
+      { value: "React 专家", category: "knowledge", confidence: 0.88 },
+      { value: "开源贡献者", category: "custom", confidence: 0.7 },
     ],
-    preferences: { code_style: "函数式", testing: "TDD 拥护者" },
+    preferences: { reply_style: "detailed", preferred_topics: ["React", "测试"], avoided_topics: [], active_hours: [10, 18] },
     message_count: 156,
     last_active: new Date(Date.now() - 8 * 3600 * 1000).toISOString(),
   },
   {
     user_id: "user_003", display_name: "王五",
     tags: [
-      { name: "全栈工程师", category: "role", confidence: 0.92 },
-      { name: "Rust 学习者", category: "skill", confidence: 0.6 },
+      { value: "全栈工程师", category: "custom", confidence: 0.92 },
+      { value: "Rust 学习者", category: "interest", confidence: 0.6 },
     ],
-    preferences: { architecture: "微服务", database: "PostgreSQL" },
+    preferences: { reply_style: "casual", preferred_topics: ["Rust", "架构"], avoided_topics: [], active_hours: [8, 20] },
     message_count: 89,
     last_active: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
   },
@@ -198,7 +208,7 @@ export const AFFECTION_DATA: Record<string, {
   max_total_affection: number;
   user_count: number;
   top_users: Array<{ user_id: string; group_id: string; affection_score: number; affection_level: string; level_name: string; interaction_count: number; last_interaction: number }>;
-  current_mood: { mood_type: string; intensity: number; description: string; is_active: boolean };
+  current_mood: { mood_type: string; intensity: number; duration_hours: number; description: string; start_time: number; is_active: boolean };
 }> = {
   "group_001": {
     group_id: "group_001",
@@ -212,7 +222,7 @@ export const AFFECTION_DATA: Record<string, {
       { user_id: "user_004", group_id: "group_001", affection_score: 28, affection_level: "WARM", level_name: "温暖", interaction_count: 42, last_interaction: Date.now() / 1000 - 86400 },
       { user_id: "user_005", group_id: "group_001", affection_score: 12, affection_level: "NEUTRAL", level_name: "中立", interaction_count: 28, last_interaction: Date.now() / 1000 - 172800 },
     ],
-    current_mood: { mood_type: "PLAYFUL", intensity: 0.72, description: "感受到群友的活跃互动，Bot 心情愉快且调皮", is_active: true },
+    current_mood: { mood_type: "PLAYFUL", intensity: 0.72, duration_hours: 8, description: "感受到群友的活跃互动，Bot 心情愉快且调皮", start_time: Date.now() / 1000 - 3600, is_active: true },
   },
   "group_002": {
     group_id: "group_002",
@@ -224,7 +234,7 @@ export const AFFECTION_DATA: Record<string, {
       { user_id: "user_007", group_id: "group_002", affection_score: 38, affection_level: "WARM", level_name: "温暖", interaction_count: 55, last_interaction: Date.now() / 1000 - 14400 },
       { user_id: "user_008", group_id: "group_002", affection_score: 15, affection_level: "NEUTRAL", level_name: "中立", interaction_count: 32, last_interaction: Date.now() / 1000 - 43200 },
     ],
-    current_mood: { mood_type: "CURIOUS", intensity: 0.55, description: "对新话题产生兴趣，正在积极了解群友讨论的内容", is_active: true },
+    current_mood: { mood_type: "CURIOUS", intensity: 0.55, duration_hours: 6, description: "对新话题产生兴趣，正在积极了解群友讨论的内容", start_time: Date.now() / 1000 - 1800, is_active: true },
   },
 };
 

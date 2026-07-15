@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as mockData from "./data";
 import * as mockServer from "./server";
@@ -130,7 +130,7 @@ describe("mutable mock reset and revision allocator", () => {
     const baseline = structuredClone(references);
 
     mockData.MEMORIES[0].summary = "contaminated";
-    (mockData.PROFILES[0].preferences as JsonObject).reply_style = "contaminated";
+    (mockData.PROFILES[0].preferences as unknown as JsonObject).reply_style = "contaminated";
     mockData.KNOWLEDGE_ENTRIES[0].title = "contaminated";
     mockData.NOTES[0].tags.push("contaminated");
     mockData.JARGON_MEANINGS[0].meaning = "contaminated";
@@ -147,7 +147,7 @@ describe("mutable mock reset and revision allocator", () => {
     expect(mockData.SOCIAL_RELATIONS).toBe(references.social);
     expect(references).toEqual(baseline);
 
-    (mockData.PROFILES[0].preferences as JsonObject).reply_style = "second contamination";
+    (mockData.PROFILES[0].preferences as unknown as JsonObject).reply_style = "second contamination";
     reset();
     expect(references).toEqual(baseline);
   });
@@ -757,6 +757,66 @@ describe("remaining Python mock API parity", () => {
     });
     const detail = okData(await get("profiles/detail", { user_id: draft.user_id }));
     expect(detail).toMatchObject({ preferences: updated.entity.preferences, tags: updated.entity.tags, revision: updated.revision });
+  });
+
+  it("uses canonical editable profile seeds for display-name-only round trips", async () => {
+    const seeded = (okData(await get("profiles", { limit: "1", offset: "0" })).profiles as JsonObject[])[0];
+    expect(seeded.preferences).toEqual(expect.objectContaining({ reply_style: expect.any(String), preferred_topics: expect.any(Array), avoided_topics: expect.any(Array), active_hours: expect.any(Array) }));
+    expect(Object.keys(seeded.preferences as JsonObject).sort()).toEqual(["active_hours", "avoided_topics", "preferred_topics", "reply_style"]);
+    expect(seeded.tags).toEqual(expect.arrayContaining([expect.objectContaining({ category: expect.stringMatching(/^(interest|personality|habit|relation|knowledge|preference|custom)$/), value: expect.any(String), confidence: expect.any(Number) })]));
+    const updated = entityEnvelope(await post("profiles/update", { identity: { user_id: seeded.user_id }, changes: { display_name: " Renamed Seed " }, expected_revision: seeded.revision }));
+    expect(updated.entity).toMatchObject({ user_id: seeded.user_id, display_name: "Renamed Seed", preferences: seeded.preferences, tags: seeded.tags });
+  });
+
+  it("snapshots request boundaries and clones nested response data", async () => {
+    vi.useFakeTimers();
+    try {
+      const params = { group_id: "group_001" }; const pendingGet = get("social/relations", params); params.group_id = "group_002";
+      await vi.runAllTimersAsync(); const first = okData(await pendingGet); expect((first.relations as JsonObject[]).every((item) => item.group_id === "group_001")).toBe(true);
+      const body = { ...socialIdentity("boundary"), strength: 0.4, tags: [" original "] }; const original = structuredClone(body); const pendingPost = post("social/create", body); body.from_user = "mutated"; body.tags[0] = "mutated";
+      await vi.runAllTimersAsync(); expect(entityEnvelope(await pendingPost).entity).toMatchObject({ from_user: original.from_user, tags: ["original"] });
+    } finally { vi.useRealTimers(); }
+    const profiles = okData(await get("profiles", { limit: "1", offset: "0" })).profiles as JsonObject[];
+    ((profiles[0].preferences as JsonObject).preferred_topics as unknown[]).push("caller mutation");
+    const reread = (okData(await get("profiles", { limit: "1", offset: "0" })).profiles as JsonObject[])[0];
+    expect((reread.preferences as JsonObject).preferred_topics).not.toContain("caller mutation");
+    const updateBody = { identity: { user_id: ` ${String(reread.user_id)} ` }, changes: { display_name: " boundary " }, expected_revision: ` ${String(reread.revision)} ` }; const snapshot = structuredClone(updateBody);
+    await post("profiles/update", updateBody); expect(updateBody).toEqual(snapshot);
+  });
+
+  it("resets config-adjacent state and prevents stale backfill timers from contaminating reset", async () => {
+    vi.useFakeTimers();
+    try {
+      const update = post("config/topic-segmentation", { strategy: "d", strategy_b: { max_clusters: 99 } }); await vi.runAllTimersAsync(); await update;
+      const start = post("backfill/start", {}); await vi.runAllTimersAsync(); await start;
+      requireReset()(); await vi.advanceTimersByTimeAsync(30_000);
+      const topicPending = get("config/topic-segmentation", {}); const backfillPending = get("backfill/status", {}); await vi.runAllTimersAsync();
+      expect(okData(await topicPending)).toMatchObject({ strategy: "a_b_hybrid", strategy_b: { max_clusters: 5 } });
+      expect(okData(await backfillPending)).toMatchObject({ status: "idle", processed: 0, total: 0, job_id: "" });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("rejects malformed social batch params and items without deleting", async () => {
+    const draft = { ...socialIdentity("malformed-batch"), strength: 0.4, tags: [] }; const created = entityEnvelope(await post("social/create", draft));
+    const item = { identity: socialIdentity("malformed-batch"), expected_revision: created.revision };
+    expectValidation(await post("social/batch", { action: "delete", items: [item], params: [] }), { params: "必须为对象" });
+    expectValidation(await post("social/batch", { action: "delete", items: {}, params: {} }), { items: "必须为数组" });
+    expect(okData(await get("social/relations", {})).relations).toEqual(expect.arrayContaining([expect.objectContaining(socialIdentity("malformed-batch"))]));
+  });
+
+  it("round-trips non-default mood duration and start time through affection status", async () => {
+    const set = okData(await post("affection/mood/set", { group_id: "group_001", mood_type: "happy", intensity: 0.6, duration_hours: 12.5, description: "long mood" }));
+    expect(set).toMatchObject({ duration_hours: 12.5, start_time: expect.any(Number) });
+    expect(okData(await get("affection/status", { group_id: "group_001" })).current_mood).toEqual(set);
+  });
+
+  it("strictly validates and trims profile display names without mutation", async () => {
+    expectValidation(await post("profiles/create", { user_id: "display-create", display_name: 1 }), { display_name: "必须为字符串" });
+    expectValidation(await post("profiles/create", { user_id: "display-long", display_name: "x".repeat(129) }), { display_name: "文本过长" });
+    const draft = profileDraft("display-update"); const created = entityEnvelope(await post("profiles/create", draft));
+    expectValidation(await post("profiles/update", { identity: { user_id: draft.user_id }, changes: { display_name: "x".repeat(129) }, expected_revision: created.revision }), { "changes.display_name": "文本过长" });
+    expectValidation(await post("profiles/update", { identity: { user_id: draft.user_id }, changes: { display_name: 1 }, expected_revision: created.revision }), { "changes.display_name": "必须为字符串" });
+    expect(okData(await get("profiles/detail", { user_id: draft.user_id }))).toMatchObject({ display_name: draft.display_name, revision: created.revision });
   });
 
 describe("existing mutable editors accept full-form and legacy update requests", () => {

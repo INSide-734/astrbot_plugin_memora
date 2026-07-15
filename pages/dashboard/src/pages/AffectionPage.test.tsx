@@ -29,7 +29,7 @@ const user = (overrides: Record<string, unknown> = {}) => ({
 });
 const status = (overrides: Record<string, unknown> = {}) => ({
   group_id: "group-1", total_affection: 48, max_total_affection: 100, user_count: 2,
-  current_mood: { mood_type: "happy", intensity: 0.5, description: "Upbeat", is_active: true },
+  current_mood: { mood_type: "happy", intensity: 0.5, duration_hours: 12.5, start_time: 100, description: "Upbeat", is_active: true },
   top_users: [user()], ...overrides,
 });
 
@@ -434,6 +434,7 @@ describe("AffectionPage", () => {
     await renderLoaded(); bridge.apiPost.mockResolvedValue(ok({ mood_type: "happy", intensity: 0.5, duration_hours: 4, description: "..." }));
     fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
     const dialog = editor(/mood/i);
+    expect((within(dialog).getByLabelText(/duration/i) as HTMLInputElement).value).toBe("12.5");
     fireEvent.click(within(dialog).getByRole("combobox", { name: /mood type/i }));
     fireEvent.click(await within(dialog).findByRole("option", { name: /happy/i }));
     fireEvent.change(within(dialog).getByLabelText("Intensity"), { target: { value: "0" } });
