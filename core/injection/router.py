@@ -230,7 +230,10 @@ def _make_decision(
         if config.delivery_override is DeliveryMode.AUTO
         else config.delivery_override
     )
-    if config.invalid_config_fallback:
+    if (
+        config.invalid_config_fallback
+        and "INVALID_CONFIG_FALLBACK" not in reasons
+    ):
         reasons += ("INVALID_CONFIG_FALLBACK",)
 
     return InjectionDecision(
@@ -251,7 +254,7 @@ def _make_decision(
         include_topics=preset.include_topics,
         include_participants=preset.include_participants,
         compact_header=preset.compact_header,
-        reason_codes=tuple(dict.fromkeys(reasons)),
+        reason_codes=reasons,
     )
 
 
