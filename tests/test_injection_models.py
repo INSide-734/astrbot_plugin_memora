@@ -19,6 +19,7 @@ from core.injection.models import (
 import core.injection as injection
 import core.injection.models as model_module
 import core.injection.presets as preset_module
+import core.injection.router as router_module
 
 
 def test_package_exports_are_exact_and_identity_preserving() -> None:
@@ -30,6 +31,8 @@ def test_package_exports_are_exact_and_identity_preserving() -> None:
         "InjectionExecutionResult",
         "InjectionOutcome",
         "InjectionStrategyPreset",
+        "InjectionRoutingConfig",
+        "InjectionStrategyRouter",
         "PRESETS",
         "PresetName",
         "RequestSignals",
@@ -52,10 +55,13 @@ def test_package_exports_are_exact_and_identity_preserving() -> None:
         "RoutingMode",
     }
     preset_exports = {"PRESETS", "get_preset", "resolve_preset"}
+    router_exports = {"InjectionRoutingConfig", "InjectionStrategyRouter"}
     for name in model_exports:
         assert getattr(injection, name) is getattr(model_module, name)
     for name in preset_exports:
         assert getattr(injection, name) is getattr(preset_module, name)
+    for name in router_exports:
+        assert getattr(injection, name) is getattr(router_module, name)
 
 
 def test_request_signals_are_immutable_and_slotted() -> None:
