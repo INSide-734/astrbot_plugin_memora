@@ -4,7 +4,7 @@ from types import MappingProxyType
 
 import pytest
 
-from core.injection.models import ContentLevel, PresetName
+from core.injection.models import ContentLevel, DeliveryMode, InjectionStrategyPreset, PresetName
 from core.injection.presets import PRESETS, get_preset, resolve_preset
 
 
@@ -20,6 +20,102 @@ def test_builtin_preset_gradient_is_locked() -> None:
     assert get_preset(PresetName.LOW_COST).content_level is ContentLevel.FACTS
     assert get_preset(PresetName.BALANCED).memory_budget_chars == 1200
     assert get_preset(PresetName.QUALITY).max_memories == 6
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            PresetName.TOOL_FIRST,
+            InjectionStrategyPreset(
+                name=PresetName.TOOL_FIRST,
+                rank=0,
+                auto_inject=False,
+                memory_budget_chars=0,
+                max_memories=0,
+                content_level=ContentLevel.NONE,
+                cost_penalty_weight=1.0,
+                minimum_utility=1.0,
+                allow_tool_fallback=True,
+                preferred_delivery=DeliveryMode.EXTRA_USER_CONTENT,
+                memory_max_chars=0,
+                metadata_max_chars=0,
+                include_key_facts=False,
+                include_topics=False,
+                include_participants=False,
+                compact_header=True,
+            ),
+        ),
+        (
+            PresetName.LOW_COST,
+            InjectionStrategyPreset(
+                name=PresetName.LOW_COST,
+                rank=1,
+                auto_inject=True,
+                memory_budget_chars=800,
+                max_memories=2,
+                content_level=ContentLevel.FACTS,
+                cost_penalty_weight=0.30,
+                minimum_utility=0.45,
+                allow_tool_fallback=True,
+                preferred_delivery=DeliveryMode.EXTRA_USER_CONTENT,
+                memory_max_chars=180,
+                metadata_max_chars=80,
+                include_key_facts=True,
+                include_topics=False,
+                include_participants=False,
+                compact_header=True,
+            ),
+        ),
+        (
+            PresetName.BALANCED,
+            InjectionStrategyPreset(
+                name=PresetName.BALANCED,
+                rank=2,
+                auto_inject=True,
+                memory_budget_chars=1200,
+                max_memories=4,
+                content_level=ContentLevel.COMPACT,
+                cost_penalty_weight=0.18,
+                minimum_utility=0.30,
+                allow_tool_fallback=True,
+                preferred_delivery=DeliveryMode.EXTRA_USER_CONTENT,
+                memory_max_chars=300,
+                metadata_max_chars=180,
+                include_key_facts=True,
+                include_topics=True,
+                include_participants=False,
+                compact_header=True,
+            ),
+        ),
+        (
+            PresetName.QUALITY,
+            InjectionStrategyPreset(
+                name=PresetName.QUALITY,
+                rank=3,
+                auto_inject=True,
+                memory_budget_chars=2400,
+                max_memories=6,
+                content_level=ContentLevel.DETAILED,
+                cost_penalty_weight=0.08,
+                minimum_utility=0.20,
+                allow_tool_fallback=True,
+                preferred_delivery=DeliveryMode.EXTRA_USER_CONTENT,
+                memory_max_chars=800,
+                metadata_max_chars=300,
+                include_key_facts=True,
+                include_topics=True,
+                include_participants=True,
+                compact_header=False,
+            ),
+        ),
+    ],
+)
+def test_builtin_presets_match_complete_dataclass_values(
+    name: PresetName,
+    expected: InjectionStrategyPreset,
+) -> None:
+    assert PRESETS[name] == expected
 
 
 def test_builtin_registry_is_read_only() -> None:
@@ -96,6 +192,27 @@ def test_length_overrides_are_clamped_to_global_hard_caps() -> None:
 
     assert resolved.memory_max_chars == 2000
     assert resolved.metadata_max_chars == 500
+
+def test_negative_numeric_overrides_clamp_to_one() -> None:
+    budget_resolved = resolve_preset(
+        PresetName.BALANCED,
+        overrides_enabled=True,
+        budget_chars=-1,
+    )
+    memory_resolved = resolve_preset(
+        PresetName.BALANCED,
+        overrides_enabled=True,
+        memory_max_chars=-1,
+    )
+    metadata_resolved = resolve_preset(
+        PresetName.BALANCED,
+        overrides_enabled=True,
+        metadata_max_chars=-1,
+    )
+
+    assert budget_resolved.memory_budget_chars == 1
+    assert memory_resolved.memory_max_chars == 1
+    assert metadata_resolved.metadata_max_chars == 1
 
 
 def test_boolean_flags_apply_only_to_returned_copy() -> None:

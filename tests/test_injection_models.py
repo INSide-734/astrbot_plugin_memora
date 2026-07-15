@@ -16,6 +16,45 @@ from core.injection.models import (
     RequestSignals,
     RoutingMode,
 )
+import core.injection as injection
+import core.injection.models as model_module
+import core.injection.presets as preset_module
+
+def test_package_exports_are_exact_and_identity_preserving() -> None:
+    expected = {
+        "ContentLevel",
+        "DeliveryMode",
+        "InjectionDecision",
+        "InjectionDecisionRecord",
+        "InjectionExecutionResult",
+        "InjectionOutcome",
+        "InjectionStrategyPreset",
+        "PRESETS",
+        "PresetName",
+        "RequestSignals",
+        "RoutingMode",
+        "get_preset",
+        "resolve_preset",
+    }
+    assert set(injection.__all__) == expected
+
+    model_exports = {
+        "ContentLevel",
+        "DeliveryMode",
+        "InjectionDecision",
+        "InjectionDecisionRecord",
+        "InjectionExecutionResult",
+        "InjectionOutcome",
+        "InjectionStrategyPreset",
+        "PresetName",
+        "RequestSignals",
+        "RoutingMode",
+    }
+    preset_exports = {"PRESETS", "get_preset", "resolve_preset"}
+    for name in model_exports:
+        assert getattr(injection, name) is getattr(model_module, name)
+    for name in preset_exports:
+        assert getattr(injection, name) is getattr(preset_module, name)
 
 
 def test_request_signals_are_immutable_and_slotted() -> None:

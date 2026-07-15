@@ -8,6 +8,14 @@ from typing import Mapping
 
 from .models import ContentLevel, InjectionStrategyPreset, PresetName
 
+_BUDGET_CAPS: Mapping[PresetName, int] = MappingProxyType(
+    {
+        PresetName.LOW_COST: 1_200,
+        PresetName.BALANCED: 2_400,
+        PresetName.QUALITY: 10_000,
+    }
+)
+
 
 PRESETS: Mapping[PresetName, InjectionStrategyPreset] = MappingProxyType(
     {
@@ -103,11 +111,6 @@ def resolve_preset(
     if not overrides_enabled or base.name is PresetName.TOOL_FIRST:
         return base
 
-    budget_caps = {
-        PresetName.LOW_COST: 1_200,
-        PresetName.BALANCED: 2_400,
-        PresetName.QUALITY: 10_000,
-    }
     resolved_budget = base.memory_budget_chars if budget_chars == 0 else budget_chars
     resolved_participants = (
         False
@@ -116,7 +119,7 @@ def resolve_preset(
     )
     return replace(
         base,
-        memory_budget_chars=min(max(1, resolved_budget), budget_caps[base.name]),
+        memory_budget_chars=min(max(1, resolved_budget), _BUDGET_CAPS[base.name]),
         memory_max_chars=(
             base.memory_max_chars
             if memory_max_chars == 0
