@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Filter, RefreshCw, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
@@ -137,6 +137,14 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const actionPromiseRef = useRef<Promise<void> | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const selectedIdRef = useRef("");
+  const detailRequestRef = useRef(0);
+  const [actionOwnerId, setActionOwnerId] = useState("");
+  const [activeAction, setActiveAction] = useState<ReviewActionValue | null>(null);
+  selectedIdRef.current = selectedId;
   const locale = dashboardLocale(currentLang());
   const statusLabel = (value: string) => translateEnum(t, "intelligence.review.status", value, value);
   const reasonLabel = (value: string) => translateEnum(t, "intelligence.review.reason", value, value);
@@ -162,9 +170,11 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
   }, [filters, showToast]);
 
   const loadDetail = useCallback(async (reviewId: string) => {
+    const requestId = ++detailRequestRef.current;
+    setSelectedItem(null);
+    setActions([]);
     if (!reviewId) {
-      setSelectedItem(null);
-      setActions([]);
+      setLoadingDetail(false);
       return;
     }
     setLoadingDetail(true);
@@ -172,12 +182,17 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
       const data = unwrapApiData<ReviewItemDetailResponse>(
         await apiRequest(`review/items/detail?review_id=${encodeURIComponent(reviewId)}`),
       );
+      if (detailRequestRef.current !== requestId || selectedIdRef.current !== reviewId) return;
       setSelectedItem(normalizeItem(data.item));
       setActions(Array.isArray(data.actions) ? data.actions : []);
     } catch (e) {
-      showToast(String(e), true);
+      if (detailRequestRef.current === requestId && selectedIdRef.current === reviewId) {
+        showToast(String(e), true);
+      }
     } finally {
-      setLoadingDetail(false);
+      if (detailRequestRef.current === requestId && selectedIdRef.current === reviewId) {
+        setLoadingDetail(false);
+      }
     }
   }, [showToast]);
 
@@ -217,46 +232,77 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
   const severityOptions = useMemo(() => uniqueSorted(items.map((item) => item.severity)), [items]);
 
   const runRefresh = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
+    setActionError(null);
     try {
       unwrapApiData(await apiRequest("review/refresh", { method: "POST", body: {} }));
       await loadItems();
       showToast(t("intelligence.review.toastRefreshed"));
     } catch (e) {
-      showToast(String(e), true);
+      const message = String(e);
+      setActionError(message);
+      showToast(message, true);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
-  const runAction = async (
+  const runAction = (
     action: ReviewActionValue,
     payload: Record<string, unknown> = {},
     confirmed = false,
-  ) => {
-    if (!selectedId) return;
+  ): Promise<void> => {
+    if (!selectedId || selectedItem?.item_id !== selectedId) return Promise.resolve();
+    if (actionPromiseRef.current) return actionPromiseRef.current;
+    if (submittingRef.current) return Promise.reject(new Error("Review operation already pending"));
+
+    const reviewId = selectedId;
+    const frozenPayload = { ...payload };
+    submittingRef.current = true;
     setSubmitting(true);
-    try {
-      const body: Record<string, unknown> = {
-        review_id: selectedId,
-        action,
-        payload,
-      };
-      if (confirmed === true) body.confirmed = true;
-      unwrapApiData(await apiRequest("review/action", { method: "POST", body }));
-      await Promise.all([loadItems(), loadDetail(selectedId)]);
-      showToast(t("intelligence.review.toastActionSubmitted", actionLabel(action)));
-    } catch (e) {
-      showToast(String(e), true);
-      throw e;
-    } finally {
-      setSubmitting(false);
-    }
+    setActionOwnerId(reviewId);
+    setActiveAction(action);
+    setActionError(null);
+
+    const operation = (async () => {
+      try {
+        const body: Record<string, unknown> = {
+          review_id: reviewId,
+          action,
+          payload: frozenPayload,
+        };
+        if (confirmed === true) body.confirmed = true;
+        unwrapApiData(await apiRequest("review/action", { method: "POST", body }));
+        await loadItems();
+        if (selectedIdRef.current === reviewId) {
+          await loadDetail(reviewId);
+        }
+        showToast(t("intelligence.review.toastActionSubmitted", actionLabel(action)));
+      } catch (e) {
+        const message = String(e);
+        setActionError(message);
+        showToast(message, true);
+        throw e;
+      } finally {
+        submittingRef.current = false;
+        actionPromiseRef.current = null;
+        setSubmitting(false);
+        setActiveAction(null);
+      }
+    })();
+
+    actionPromiseRef.current = operation;
+    return operation;
   };
 
   const updateFilter = (key: keyof FilterState, value: string) => {
     setFilters((current) => ({ ...current, [key]: value }));
   };
+
+  const actionFeedbackVisible = actionOwnerId === selectedId;
 
   return (
     <section className="space-y-4">
@@ -373,13 +419,18 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
           </div>
         </div>
 
-        <ReviewItemDetail
-          item={selectedItem}
-          actions={actions}
-          loading={loadingDetail}
-          submitting={submitting}
-          onAction={runAction}
-        />
+        <section aria-label={t("intelligence.review.memoryReview")} className="min-w-0 space-y-4">
+          {actionFeedbackVisible && actionError ? <p role="alert" className="text-sm text-destructive">{actionError}</p> : null}
+          {actionFeedbackVisible && submitting ? <p className="text-sm text-muted-foreground">{t("common.loading")}</p> : null}
+          <ReviewItemDetail
+            item={selectedItem}
+            actions={actions}
+            loading={loadingDetail}
+            submitting={actionFeedbackVisible && submitting}
+            activeAction={actionFeedbackVisible ? activeAction : null}
+            onAction={runAction}
+          />
+        </section>
       </div>
     </section>
   );

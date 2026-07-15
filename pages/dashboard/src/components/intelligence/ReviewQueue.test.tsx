@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ReviewQueue } from "./ReviewQueue";
@@ -13,6 +13,40 @@ interface BridgeMock {
 
 function ok<T>(data: T) {
   return { status: "ok", data };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function reviewDetail(itemId: string, memoryId: string, action = "flagged") {
+  return ok({
+    item: {
+      item_id: itemId,
+      memory_id: memoryId,
+      reasons: ["duplicate"],
+      severity: "medium",
+      status: "open",
+      content_preview: `${memoryId} content`,
+      metadata: {},
+      created_at: 1783150200,
+      updated_at: 1783150200,
+    },
+    actions: [{
+      action_id: `action-${itemId}`,
+      item_id: itemId,
+      action,
+      actor_id: null,
+      payload: {},
+      created_at: 1783150200,
+    }],
+  });
 }
 
 async function waitForDetailReady() {
@@ -309,25 +343,143 @@ describe("ReviewQueue", () => {
     expect(showToast).toHaveBeenCalledWith("Review action submitted: Edit action");
   });
 
-  it("shows backend error envelopes through toast", async () => {
+  it("guards same-tick review actions and preserves draft confirmation after failure", async () => {
     const showToast = vi.fn();
-    bridge.apiPost.mockResolvedValueOnce({ status: "error", message: "merge target missing" });
+    let resolveAction!: (value: { status: "error"; message: string }) => void;
+    bridge.apiPost.mockReturnValueOnce(new Promise((resolve) => { resolveAction = resolve; }));
 
     render(<ReviewQueue showToast={showToast} />);
 
     expect(await screen.findByText("mem-duplicate-1")).toBeTruthy();
     await waitForDetailReady();
-    fireEvent.change(screen.getByPlaceholderText("target_memory_id"), {
-      target: { value: "mem-target-9" },
-    });
+    const draft = screen.getByPlaceholderText("target_memory_id") as HTMLInputElement;
+    fireEvent.change(draft, { target: { value: "mem-target-9" } });
     fireEvent.click(screen.getByRole("button", { name: /Merge|合并/i }));
     const confirmBar = screen.getByText(/Confirm merge|确认合并/i).closest("div");
     if (!confirmBar) throw new Error("expected merge confirmation bar");
+    const confirm = within(confirmBar).getByRole("button", { name: /Confirm|确认/i });
+    act(() => {
+      confirm.click();
+      confirm.click();
+    });
+
+    expect(bridge.apiPost).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveProperty("disabled", true);
+    expect(within(screen.getByRole("region", { name: /Memory review|记忆复核|Ревью памяти/i })).getByText(/Loading|加载|Загрузка/i)).toBeTruthy();
+
+    await act(async () => { resolveAction({ status: "error", message: "merge target missing" }); });
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith("ApiRequestError: merge target missing", true));
+    expect(await screen.findByText(/Confirm merge|确认合并/i)).toBeTruthy();
+    expect(draft.value).toBe("mem-target-9");
+    expect(screen.getByRole("alert").textContent).toContain("ApiRequestError: merge target missing");
+  });
+
+  it("keeps pending and error feedback inside the stable memory review region", async () => {
+    let resolveAction!: (value: { status: "error"; message: string }) => void;
+    bridge.apiPost.mockReturnValueOnce(new Promise((resolve) => { resolveAction = resolve; }));
+
+    const { container } = render(<ReviewQueue showToast={() => undefined} />);
+    expect(await screen.findByText("mem-duplicate-1")).toBeTruthy();
+    await waitForDetailReady();
+    fireEvent.click(screen.getByRole("button", { name: /Archive|归档/i }));
+    const confirmBar = screen.getByText(/Confirm archive|确认归档/i).closest("div");
+    if (!confirmBar) throw new Error("expected archive confirmation bar");
     fireEvent.click(within(confirmBar).getByRole("button", { name: /Confirm|确认/i }));
 
-    await waitFor(() => {
-      expect(showToast).toHaveBeenCalledWith("Error: merge target missing", true);
+    const region = screen.getByRole("region", { name: /Memory review|记忆复核|Ревью памяти/i });
+    expect(within(region).getByText(/Loading|加载|Загрузка/i)).toBeTruthy();
+    expect(within(region).getAllByRole("button", { name: /Archive…|归档…|Архивировать…/i })).toHaveLength(2);
+    expect(within(region).getByRole("heading", { name: "mem-duplicate-1" })).toBeTruthy();
+    const grid = region.parentElement;
+    expect(grid).toBeTruthy();
+    expect(grid?.children).toHaveLength(2);
+    expect(grid).toBe(container.querySelector(".xl\\:grid-cols-\\[420px_1fr\\]"));
+
+    await act(async () => { resolveAction({ status: "error", message: "archive failed" }); });
+    await waitFor(() => expect(within(region).getByRole("alert").textContent).toContain("archive failed"));
+    expect(within(region).getByRole("heading", { name: "mem-duplicate-1" })).toBeTruthy();
+    expect(grid?.children).toHaveLength(2);
+  });
+
+  it("keeps only the latest selected detail when responses resolve out of order", async () => {
+    const detailA = deferred<ReturnType<typeof reviewDetail>>();
+    const detailB = deferred<ReturnType<typeof reviewDetail>>();
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/review/items") return Promise.resolve(ok({
+        items: [
+          { item_id: "review-a", memory_id: "memory-a", reasons: ["duplicate"], severity: "medium", status: "open", content_preview: "A", metadata: {}, created_at: 1, updated_at: 1 },
+          { item_id: "review-b", memory_id: "memory-b", reasons: ["stale"], severity: "low", status: "open", content_preview: "B", metadata: {}, created_at: 2, updated_at: 2 },
+        ], total: 2,
+      }));
+      if (path === "page/review/items/detail") return params.review_id === "review-a" ? detailA.promise : detailB.promise;
+      return Promise.resolve(ok({}));
     });
-    expect(screen.getByText(/Confirm merge|确认合并/i)).toBeTruthy();
+    render(<ReviewQueue showToast={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: /memory-b/ }));
+    await act(async () => { detailB.resolve(reviewDetail("review-b", "memory-b", "edited")); });
+    expect(await screen.findByRole("heading", { name: "memory-b" })).toBeTruthy();
+    expect(screen.getByText("edited")).toBeTruthy();
+    await act(async () => { detailA.resolve(reviewDetail("review-a", "memory-a")); });
+    expect(screen.getByRole("heading", { name: "memory-b" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "memory-a" })).toBe(null);
+    expect(screen.queryByText("flagged")).toBe(null);
+  });
+
+  it("clears the previous detail immediately and keeps it cleared when the new detail fails", async () => {
+    const detailB = deferred<ReturnType<typeof reviewDetail>>();
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/review/items") return Promise.resolve(ok({ items: [
+        { item_id: "review-a", memory_id: "memory-a", reasons: ["duplicate"], severity: "medium", status: "open", content_preview: "A", metadata: {}, created_at: 1, updated_at: 1 },
+        { item_id: "review-b", memory_id: "memory-b", reasons: ["stale"], severity: "low", status: "open", content_preview: "B", metadata: {}, created_at: 2, updated_at: 2 },
+      ], total: 2 }));
+      if (path === "page/review/items/detail") return params.review_id === "review-a" ? Promise.resolve(reviewDetail("review-a", "memory-a")) : detailB.promise;
+      return Promise.resolve(ok({}));
+    });
+    render(<ReviewQueue showToast={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "memory-a" })).toBeTruthy();
+    expect(screen.getByText("flagged")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /memory-b/ }));
+    expect(screen.queryByRole("heading", { name: "memory-a" })).toBe(null);
+    expect(screen.queryByText("flagged")).toBe(null);
+    await act(async () => { detailB.reject(new Error("detail b failed")); });
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "memory-a" })).toBe(null));
+    expect(screen.queryByText("flagged")).toBe(null);
+  });
+
+  it("never runs actions for a detail whose item id differs from the selected review", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/review/items") return Promise.resolve(ok({ items: [
+        { item_id: "review-b", memory_id: "memory-b", reasons: ["stale"], severity: "low", status: "open", content_preview: "B", metadata: {}, created_at: 2, updated_at: 2 },
+      ], total: 1 }));
+      if (path === "page/review/items/detail") return Promise.resolve(reviewDetail("review-a", "memory-a"));
+      return Promise.resolve(ok({}));
+    });
+    render(<ReviewQueue showToast={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "memory-a" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Edit|编辑/i }));
+    expect(bridge.apiPost).not.toHaveBeenCalled();
+  });
+
+  it("attributes pending and failed action feedback to the initiating review", async () => {
+    const action = deferred<{ status: "error"; message: string }>();
+    bridge.apiPost.mockReturnValueOnce(action.promise);
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/review/items") return Promise.resolve(ok({ items: [
+        { item_id: "review-a", memory_id: "memory-a", reasons: ["duplicate"], severity: "medium", status: "open", content_preview: "A", metadata: {}, created_at: 1, updated_at: 1 },
+        { item_id: "review-b", memory_id: "memory-b", reasons: ["stale"], severity: "low", status: "open", content_preview: "B", metadata: {}, created_at: 2, updated_at: 2 },
+      ], total: 2 }));
+      if (path === "page/review/items/detail") return Promise.resolve(params.review_id === "review-a" ? reviewDetail("review-a", "memory-a") : reviewDetail("review-b", "memory-b"));
+      return Promise.resolve(ok({}));
+    });
+    render(<ReviewQueue showToast={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "memory-a" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Edit|编辑/i }));
+    const region = screen.getByRole("region", { name: /Memory review|记忆复核|Ревью памяти/i });
+    expect(within(region).getByText(/Loading|加载|Загрузка/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /memory-b/ }));
+    expect(await screen.findByRole("heading", { name: "memory-b" })).toBeTruthy();
+    expect(within(region).queryByText(/Loading|加载|Загрузка/i)).toBe(null);
+    await act(async () => { action.resolve({ status: "error", message: "action a failed" }); });
+    await waitFor(() => expect(within(region).queryByRole("alert")).toBe(null));
   });
 });
