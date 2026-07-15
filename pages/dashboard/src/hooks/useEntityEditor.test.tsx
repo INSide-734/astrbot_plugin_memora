@@ -17,10 +17,12 @@ const INITIAL: Draft = { name: "初始名称", tags: ["alpha"] };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function renderEditor(
@@ -556,6 +558,51 @@ describe("useEntityEditor", () => {
       draft: { name: "较新本地编辑", tags: ["alpha"] },
       revision: "rev-1",
       isDirty: true,
+      isSubmitting: false,
+    });
+  });
+
+  it("ignores a superseded save rejection while a newer save is pending", async () => {
+    const oldRequest = deferred<EntityEnvelope<Draft>>();
+    const newRequest = deferred<EntityEnvelope<Draft>>();
+    const submit = vi.fn()
+      .mockImplementationOnce(() => oldRequest.promise)
+      .mockImplementationOnce(() => newRequest.promise);
+    const hook = renderEditor(submit);
+
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "旧草稿");
+    });
+    let oldSave!: Promise<boolean>;
+    act(() => { oldSave = hook.result.current.save(); });
+
+    act(() => hook.result.current.cancel());
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "新草稿");
+    });
+    let newSave!: Promise<boolean>;
+    act(() => { newSave = hook.result.current.save(); });
+    expect(hook.result.current.isSubmitting).toBe(true);
+
+    oldRequest.reject(new Error("旧请求失败"));
+    await act(async () => { await expect(oldSave).resolves.toBe(false); });
+    expect(hook.result.current).toMatchObject({
+      mode: "edit",
+      draft: { name: "新草稿", tags: ["alpha"] },
+      revision: "rev-1",
+      isDirty: true,
+      isSubmitting: true,
+    });
+
+    newRequest.resolve({ entity: { name: "新草稿", tags: ["alpha"] }, revision: "rev-2" });
+    await act(async () => { await expect(newSave).resolves.toBe(true); });
+    expect(hook.result.current).toMatchObject({
+      mode: "view",
+      draft: { name: "新草稿", tags: ["alpha"] },
+      revision: "rev-2",
+      isDirty: false,
       isSubmitting: false,
     });
   });
