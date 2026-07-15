@@ -142,15 +142,14 @@ class InjectionExecutor:
         delivery = decision.resolved_delivery
         fallback_applied = False
         provider = getattr(req, "provider", None)
-        if provider is not None:
-            try:
-                delivery, fallback_reason = self._adapter.resolve(provider, delivery)
-                fallback_applied = fallback_reason is not None
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                delivery = DeliveryMode.EXTRA_USER_CONTENT
-                fallback_applied = True
+        try:
+            delivery, fallback_reason = self._adapter.resolve(provider, delivery)
+            fallback_applied = fallback_reason is not None
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            delivery = DeliveryMode.EXTRA_USER_CONTENT
+            fallback_applied = True
 
         try:
             self._apply_delivery(req, delivery, protected_payload, context)
@@ -367,17 +366,29 @@ class InjectionExecutor:
         remaining = max(0, effective_budget - wrapper_chars)
         layers: list[str] = []
 
-        prospective_cap = min(max(0, context.prospective_budget_chars), remaining)
+        def available_for_layer() -> int:
+            separator_chars = 2 if layers else 0
+            return max(0, remaining - separator_chars)
+
+        def append_layer(layer: str) -> None:
+            nonlocal remaining
+            if layers:
+                remaining -= 2
+            layers.append(layer)
+            remaining -= len(layer)
+
+        prospective_cap = min(
+            max(0, context.prospective_budget_chars), available_for_layer()
+        )
         prospective = self._truncate(context.prospective_context, prospective_cap)
         if prospective:
-            layers.append(prospective)
-            remaining -= len(prospective)
+            append_layer(prospective)
 
         stats = InjectionStats()
         ordinary_cap = 0
         if decision.resolved_preset is not PresetName.TOOL_FIRST:
             ordinary_cap = min(
-                max(0, decision.memory_budget_chars - wrapper_chars), remaining
+                max(0, decision.memory_budget_chars), available_for_layer()
             )
         if selected and ordinary_cap > 0:
             formatted = format_memories_for_injection(
@@ -397,13 +408,14 @@ class InjectionExecutor:
             )
             memory_payload, stats = formatted
             if memory_payload:
-                layers.append(memory_payload)
-                remaining -= len(memory_payload)
+                append_layer(memory_payload)
 
-        cognitive_cap = min(max(0, context.cognitive_budget_chars), remaining)
+        cognitive_cap = min(
+            max(0, context.cognitive_budget_chars), available_for_layer()
+        )
         cognitive = self._truncate(context.cognitive_context, cognitive_cap)
         if cognitive:
-            layers.append(cognitive)
+            append_layer(cognitive)
 
         return "\n\n".join(layers), stats
 

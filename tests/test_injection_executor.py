@@ -59,6 +59,13 @@ def _request() -> MagicMock:
     return req
 
 
+def _tool_capable_provider() -> MagicMock:
+    provider = MagicMock()
+    provider.provider_config = {"type": "openai_chat_completion"}
+    provider.get_model.return_value = "gpt-4.1"
+    return provider
+
+
 def _decision(
     delivery: DeliveryMode = DeliveryMode.EXTRA_USER_CONTENT,
     *,
@@ -326,6 +333,7 @@ class _FailingAssignmentRequest:
 @pytest.mark.asyncio
 async def test_assignment_failure_rolls_back_all_request_fields() -> None:
     req = _FailingAssignmentRequest()
+    req.provider = _tool_capable_provider()
     snapshot = (
         req.prompt,
         deepcopy(req.contexts),
@@ -399,6 +407,137 @@ async def test_negative_layer_caps_contribute_zero_to_configured_budget() -> Non
     )
     assert result.configured_budget_chars == 1_200
     assert result.effective_budget_chars == 1_200
+
+
+@pytest.mark.asyncio
+async def test_auto_delivery_resolves_with_no_provider_to_temporary_extra_content() -> None:
+    req = _request()
+    decision = replace(_decision(), resolved_delivery=DeliveryMode.AUTO)
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        req,
+        decision,
+        _context([{"content": "AUTO_PAYLOAD", "score": 1.0, "metadata": {}}]),
+    )
+    assert result.outcome is InjectionOutcome.INJECTED
+    assert result.fallback_applied is False
+    assert len(req.extra_user_content_parts) == 1
+    assert req.contexts == [{"role": "user", "content": "older turn"}]
+    assert "AUTO_PAYLOAD" in _part_payload()
+
+
+@pytest.mark.asyncio
+async def test_no_provider_fake_tool_falls_back_to_extra_content_with_budgets() -> None:
+    req = _request()
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        req,
+        _decision(DeliveryMode.FAKE_TOOL_CALL),
+        _context([{"content": "FALLBACK_PAYLOAD", "score": 1.0, "metadata": {}}]),
+    )
+    assert result.outcome is InjectionOutcome.FALLBACK
+    assert result.fallback_applied is True
+    assert result.configured_budget_chars == 1_740
+    assert result.effective_budget_chars == 1_740
+    assert result.selected_count == 1
+    assert result.dropped_count == 0
+    assert result.actual_payload_chars == len(_part_payload())
+    assert "FALLBACK_PAYLOAD" in _part_payload()
+    assert len(req.extra_user_content_parts) == 1
+    assert req.contexts == [{"role": "user", "content": "older turn"}]
+
+
+@pytest.mark.asyncio
+async def test_exact_cap_charges_separator_between_prospective_and_cognitive() -> None:
+    baseline_req = _request()
+    baseline = await InjectionExecutor(InjectionAdapter()).execute(
+        baseline_req,
+        _decision(preset=PresetName.TOOL_FIRST),
+        _context(
+            [],
+            prospective_context="PROSPECTIVE_EXACT",
+            cognitive_context="COGNITIVE_EXACT",
+            prospective_budget_chars=240,
+            cognitive_budget_chars=240,
+        ),
+    )
+    exact_cap = baseline.actual_payload_chars - len("\n\n")
+
+    req = _request()
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        req,
+        _decision(preset=PresetName.TOOL_FIRST),
+        _context(
+            [],
+            prospective_context="PROSPECTIVE_EXACT",
+            cognitive_context="COGNITIVE_EXACT",
+            prospective_budget_chars=240,
+            cognitive_budget_chars=240,
+            context_headroom_chars=exact_cap,
+        ),
+    )
+    payload = _part_payload()
+    assert result.outcome is InjectionOutcome.INJECTED
+    assert 0 < result.actual_payload_chars <= exact_cap
+    assert "PROSPECTIVE_EXACT" in payload
+    assert "COGNITIVE_" in payload
+
+
+@pytest.mark.asyncio
+async def test_exact_cap_charges_both_three_layer_separators() -> None:
+    context = _context(
+        [{"content": "ORDINARY_EXACT", "score": 1.0, "metadata": {}}],
+        prospective_context="PROSPECTIVE_EXACT",
+        cognitive_context="COGNITIVE_EXACT_CONTEXT",
+        prospective_budget_chars=240,
+        cognitive_budget_chars=240,
+    )
+    baseline = await InjectionExecutor(InjectionAdapter()).execute(
+        _request(), _decision(), context
+    )
+    exact_cap = baseline.actual_payload_chars - 2 * len("\n\n")
+
+    req = _request()
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        req,
+        _decision(),
+        replace(context, context_headroom_chars=exact_cap),
+    )
+    payload = _part_payload()
+    assert result.outcome is InjectionOutcome.INJECTED
+    assert 0 < result.actual_payload_chars <= exact_cap
+    assert "PROSPECTIVE_EXACT" in payload
+    assert "ORDINARY_EXACT" in payload
+    assert "COGNITIVE_" in payload
+
+
+@pytest.mark.asyncio
+async def test_formatter_receives_full_ordinary_budget_before_cognitive_allocation(
+    monkeypatch,
+) -> None:
+    observed_budgets = []
+
+    def spy_formatter(memories, *, budget, content_level):
+        observed_budgets.append(budget.total_chars)
+        return "ORDINARY_FROM_SPY", InjectionStats(chars=17, memory_count=1)
+
+    monkeypatch.setattr(
+        "core.injection.executor.format_memories_for_injection", spy_formatter
+    )
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        _request(),
+        _decision(),
+        _context(
+            [{"content": "raw", "score": 1.0, "metadata": {}}],
+            cognitive_context="COGNITIVE_AFTER_MEMORY",
+            cognitive_budget_chars=300,
+            prospective_budget_chars=240,
+        ),
+    )
+    assert result.outcome is InjectionOutcome.INJECTED
+    assert observed_budgets == [1_200]
+    payload = _part_payload()
+    assert payload.index("ORDINARY_FROM_SPY") < payload.index(
+        "COGNITIVE_AFTER_MEMORY"
+    )
 
 
 @pytest.mark.asyncio
@@ -509,6 +648,11 @@ async def test_all_delivery_modes_mutate_only_their_designated_field(delivery) -
     original_contexts = deepcopy(req.contexts)
     original_parts = list(req.extra_user_content_parts)
     original_system = req.system_prompt
+    if delivery in {
+        DeliveryMode.FAKE_TOOL_CALL,
+        DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4,
+    }:
+        req.provider = _tool_capable_provider()
     result = await InjectionExecutor(InjectionAdapter()).execute(
         req,
         _decision(delivery),
@@ -562,6 +706,7 @@ async def test_fake_tool_deliveries_consume_verified_payload_not_raw_memories(
     monkeypatch, delivery
 ) -> None:
     req = _request()
+    req.provider = _tool_capable_provider()
     monkeypatch.setattr(
         "core.injection.executor.format_memories_for_injection",
         lambda *args, **kwargs: (
