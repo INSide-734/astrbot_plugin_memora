@@ -1,5 +1,6 @@
 """记忆注入策略的稳定公共接口。"""
 
+from .executor import InjectionExecutionContext, InjectionExecutor, candidate_utility
 from .models import (
     ContentLevel,
     DeliveryMode,
@@ -22,6 +23,8 @@ __all__ = [
     "InjectionDecisionRecord",
     "InjectionExecutionResult",
     "InjectionOutcome",
+    "InjectionExecutionContext",
+    "InjectionExecutor",
     "InjectionRoutingConfig",
     "InjectionStrategyRouter",
     "InjectionStrategyPreset",
@@ -31,4 +34,5 @@ __all__ = [
     "RoutingMode",
     "get_preset",
     "resolve_preset",
+    "candidate_utility",
 ]

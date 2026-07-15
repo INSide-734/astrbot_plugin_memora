@@ -220,82 +220,85 @@ class TestOperationContext:
 # ---------------------------------------------------------------------------
 # injection_adapter tests
 # ---------------------------------------------------------------------------
+from core.injection.models import DeliveryMode
 from core.utils.injection_adapter import InjectionAdapter
 
 
 class TestInjectionAdapter:
-    def test_no_downgrade_for_normal_mode(self) -> None:
-        adapter = InjectionAdapter()
-        provider = MagicMock()
-        mode, reason = adapter.resolve(provider, "extra_user_content")
-        assert mode == "extra_user_content"
+    def test_normal_delivery_is_preserved(self) -> None:
+        mode, reason = InjectionAdapter().resolve(
+            MagicMock(), DeliveryMode.EXTRA_USER_CONTENT
+        )
+        assert mode is DeliveryMode.EXTRA_USER_CONTENT
         assert reason is None
 
-    def test_deprecated_system_prompt_falls_back(self) -> None:
-        adapter = InjectionAdapter()
-        mode, reason = adapter.resolve(MagicMock(), "system_prompt")
-        assert mode == "extra_user_content"
-        assert "已废弃" in reason
-        assert "system_prompt" in reason
-        assert "extra_user_content" in reason
+    @pytest.mark.parametrize("configured", [DeliveryMode.AUTO, "auto"])
+    def test_auto_resolves_to_temporary_extra_user_content(self, configured) -> None:
+        mode, reason = InjectionAdapter().resolve(MagicMock(), configured)
+        assert mode is DeliveryMode.EXTRA_USER_CONTENT
+        assert reason is None
 
-    def test_fake_tool_call_no_downgrade_for_normal_provider(self) -> None:
-        adapter = InjectionAdapter()
+    def test_removed_system_prompt_delivery_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            InjectionAdapter().resolve(MagicMock(), "system_prompt")
+
+    def test_fake_tool_call_is_preserved_for_supported_provider(self) -> None:
         provider = MagicMock()
         provider.provider_config = {"type": "openai_chat_completion"}
         provider.get_model.return_value = "gpt-4"
-        mode, reason = adapter.resolve(provider, "fake_tool_call")
-        assert mode == "fake_tool_call"
+        mode, reason = InjectionAdapter().resolve(
+            provider, DeliveryMode.FAKE_TOOL_CALL
+        )
+        assert mode is DeliveryMode.FAKE_TOOL_CALL
         assert reason is None
 
-    def test_fake_tool_call_downgrades_for_gemini(self) -> None:
-        adapter = InjectionAdapter()
+    def test_fake_tool_call_downgrades_for_gemini_provider_type(self) -> None:
         provider = MagicMock()
         provider.provider_config = {"type": "googlegenai_chat_completion"}
         provider.get_model.return_value = "gemini-2.0-flash"
-        mode, reason = adapter.resolve(provider, "fake_tool_call")
-        assert mode == "user_message_before"
-        assert "fake_tool_call" in reason
+        mode, reason = InjectionAdapter().resolve(
+            provider, DeliveryMode.FAKE_TOOL_CALL
+        )
+        assert mode is DeliveryMode.USER_MESSAGE_BEFORE
+        assert reason is not None
         assert "Gemini" in reason
 
-    def test_fake_tool_call_downgrades_on_model_match_only(self) -> None:
-        adapter = InjectionAdapter()
+    def test_fake_tool_call_downgrades_on_gemini_model_match(self) -> None:
         provider = MagicMock()
-        provider.provider_config = {"type": "some_other_provider"}
+        provider.provider_config = {"type": "custom_provider"}
         provider.get_model.return_value = "gemini-pro"
-        mode, reason = adapter.resolve(provider, "fake_tool_call")
-        assert mode == "user_message_before"
+        mode, reason = InjectionAdapter().resolve(
+            provider, DeliveryMode.FAKE_TOOL_CALL
+        )
+        assert mode is DeliveryMode.USER_MESSAGE_BEFORE
         assert reason is not None
 
-    def test_extract_with_none_provider(self) -> None:
-        mode, reason = InjectionAdapter().resolve(None, "fake_tool_call")
-        assert mode == "fake_tool_call"
-        assert reason is None
+    @pytest.mark.parametrize("provider", [None, MagicMock(spec=[])])
+    def test_unknown_provider_uses_widest_compatible_delivery(self, provider) -> None:
+        mode, reason = InjectionAdapter().resolve(
+            provider, DeliveryMode.FAKE_TOOL_CALL
+        )
+        assert mode is DeliveryMode.EXTRA_USER_CONTENT
+        assert reason is not None
 
-    def test_extract_provider_info_without_config(self) -> None:
-        provider = MagicMock(spec=[])
-        provider_type, model_name = InjectionAdapter._extract_provider_info(provider)
+    @pytest.mark.parametrize("provider", [None, MagicMock(spec=[])])
+    def test_unknown_provider_capabilities_are_conservative(self, provider) -> None:
+        provider_type, model_name, tools_supported = InjectionAdapter().capabilities(
+            provider
+        )
         assert provider_type == ""
         assert model_name == ""
+        assert tools_supported is False
 
-    def test_extract_provider_info_without_get_model(self) -> None:
-        provider = MagicMock(spec=["provider_config"])
-        provider.provider_config = {"type": "test_type"}
-        provider_type, model_name = InjectionAdapter._extract_provider_info(provider)
-        assert provider_type == "test_type"
-        assert model_name == ""
-
-    def test_matches_rule_type_match(self) -> None:
-        rule = {"provider_types": ["googlegenai_chat_completion"], "model_patterns": []}
-        assert InjectionAdapter._matches_rule(rule, "googlegenai_chat_completion", "gpt-4")
-
-    def test_matches_rule_model_match(self) -> None:
-        rule = {"provider_types": [], "model_patterns": ["gemini"]}
-        assert InjectionAdapter._matches_rule(rule, "anything", "gemini-2.0-flash")
-
-    def test_matches_rule_no_match(self) -> None:
-        rule = {"provider_types": ["googlegenai_chat_completion"], "model_patterns": ["gemini"]}
-        assert not InjectionAdapter._matches_rule(rule, "openai", "gpt-4")
+    def test_capabilities_return_provider_identity_and_known_tool_support(self) -> None:
+        provider = MagicMock()
+        provider.provider_config = {"type": "openai_chat_completion"}
+        provider.get_model.return_value = "gpt-4.1"
+        assert InjectionAdapter().capabilities(provider) == (
+            "openai_chat_completion",
+            "gpt-4.1",
+            True,
+        )
 
 
 # ---------------------------------------------------------------------------
