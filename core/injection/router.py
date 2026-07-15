@@ -50,39 +50,34 @@ class InjectionStrategyRouter:
     ) -> InjectionDecision:
         """Choose the safe plan available before passive recall runs."""
 
-        if config.mode is RoutingMode.MANUAL:
-            recommended = config.manual_preset
-            if recommended is PresetName.TOOL_FIRST:
-                if _memory_tool_is_usable(signals):
-                    return _make_decision(
-                        config,
-                        recommended=recommended,
-                        resolved=recommended,
-                        skip_passive_recall=True,
-                        reasons=("MANUAL_SELECTED",),
-                    )
+        configured = _configured_preset(config)
+        reasons = (
+            ("MANUAL_SELECTED",)
+            if config.mode is RoutingMode.MANUAL
+            else ()
+        )
+        if configured is PresetName.TOOL_FIRST:
+            if _memory_tool_is_usable(signals):
                 return _make_decision(
                     config,
-                    recommended=PresetName.LOW_COST,
-                    resolved=PresetName.LOW_COST,
-                    skip_passive_recall=False,
-                    reasons=("PROVIDER_TOOL_UNAVAILABLE",),
+                    recommended=configured,
+                    resolved=configured,
+                    skip_passive_recall=True,
+                    reasons=reasons,
                 )
             return _make_decision(
                 config,
-                recommended=recommended,
-                resolved=recommended,
+                recommended=PresetName.LOW_COST,
+                resolved=PresetName.LOW_COST,
                 skip_passive_recall=False,
-                reasons=("MANUAL_SELECTED",),
+                reasons=("PROVIDER_TOOL_UNAVAILABLE",),
             )
-
-        configured = _configured_preset(config)
         return _make_decision(
             config,
             recommended=configured,
             resolved=configured,
             skip_passive_recall=False,
-            reasons=(),
+            reasons=reasons,
         )
 
     def route_final(
@@ -137,7 +132,7 @@ class InjectionStrategyRouter:
             config,
             recommended=recommended,
             resolved=resolved,
-            skip_passive_recall=False,
+            skip_passive_recall=resolved is PresetName.TOOL_FIRST,
             reasons=reasons,
         )
 

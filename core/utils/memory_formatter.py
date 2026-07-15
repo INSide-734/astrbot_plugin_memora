@@ -41,9 +41,10 @@ def format_memories_for_injection(
         return ("", stats) if budget is not None else ""
 
     use_budget = budget is not None
-    if use_budget and (
-        budget.total_chars <= 0 or content_level is ContentLevel.NONE
-    ):
+    if content_level is ContentLevel.NONE:
+        stats.dropped_by_budget = len(memories)
+        return ("", stats) if use_budget else ""
+    if use_budget and budget.total_chars <= 0:
         stats.dropped_by_budget = len(memories)
         return ("", stats)
 

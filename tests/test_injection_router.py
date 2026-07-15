@@ -193,6 +193,8 @@ def test_auto_routing_precedence(
 
     assert decision.resolved_preset is expected_preset
     assert decision.reason_codes == (expected_reason,)
+    if decision.resolved_preset is PresetName.TOOL_FIRST:
+        assert decision.skip_passive_recall is True
 
 
 def test_explicit_zero_headroom_is_not_replaced_by_default() -> None:
@@ -236,6 +238,7 @@ def test_auto_useful_candidates_require_all_three_conditions() -> None:
     assert below_threshold.resolved_preset is PresetName.LOW_COST
     assert zero_candidates.resolved_preset is PresetName.LOW_COST
     assert usable_tool.resolved_preset is PresetName.TOOL_FIRST
+    assert usable_tool.skip_passive_recall is True
     assert usable_tool.reason_codes == ("AUTO_MEMORY_UNCERTAIN",)
 
 
@@ -248,6 +251,53 @@ def test_auto_and_hybrid_preflight_never_skip_or_emit_manual(mode: RoutingMode) 
 
     assert decision.skip_passive_recall is False
     assert decision.reason_codes == ()
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        InjectionRoutingConfig(
+            mode=RoutingMode.AUTO,
+            auto_fallback=PresetName.TOOL_FIRST,
+        ),
+        InjectionRoutingConfig(
+            mode=RoutingMode.HYBRID,
+            hybrid_base=PresetName.TOOL_FIRST,
+            hybrid_min=PresetName.TOOL_FIRST,
+            hybrid_max=PresetName.QUALITY,
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("tools_supported", "memory_tool_available", "expected_preset", "skip"),
+    [
+        (False, False, PresetName.LOW_COST, False),
+        (False, True, PresetName.LOW_COST, False),
+        (True, False, PresetName.LOW_COST, False),
+        (True, True, PresetName.TOOL_FIRST, True),
+    ],
+)
+def test_auto_and_hybrid_tool_first_preflight_requires_both_tool_flags(
+    config: InjectionRoutingConfig,
+    tools_supported: bool,
+    memory_tool_available: bool,
+    expected_preset: PresetName,
+    skip: bool,
+) -> None:
+    decision = InjectionStrategyRouter().route_preflight(
+        config,
+        make_signals(
+            tools_supported=tools_supported,
+            memory_tool_available=memory_tool_available,
+        ),
+    )
+
+    assert decision.configured_preset is PresetName.TOOL_FIRST
+    assert decision.recommended_preset is expected_preset
+    assert decision.resolved_preset is expected_preset
+    assert decision.skip_passive_recall is skip
+    expected_reasons = () if skip else ("PROVIDER_TOOL_UNAVAILABLE",)
+    assert decision.reason_codes == expected_reasons
 
 
 @pytest.mark.parametrize(
@@ -474,5 +524,6 @@ def test_one_hundred_identical_calls_return_equal_frozen_decisions() -> None:
     decisions = [router.route_final(config, signals) for _ in range(100)]
 
     assert all(decision == decisions[0] for decision in decisions)
+    assert all(decision.skip_passive_recall is True for decision in decisions)
     with pytest.raises(FrozenInstanceError):
         decisions[0].resolved_preset = PresetName.QUALITY  # type: ignore[misc]
