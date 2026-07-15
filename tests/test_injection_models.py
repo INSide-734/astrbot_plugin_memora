@@ -1,0 +1,115 @@
+"""Tests for immutable memory-injection strategy models."""
+
+from dataclasses import FrozenInstanceError
+
+import pytest
+
+from core.injection.models import (
+    ContentLevel,
+    DeliveryMode,
+    InjectionDecision,
+    InjectionDecisionRecord,
+    InjectionExecutionResult,
+    InjectionOutcome,
+    InjectionStrategyPreset,
+    PresetName,
+    RequestSignals,
+    RoutingMode,
+)
+
+
+def test_request_signals_are_immutable_and_slotted() -> None:
+    signals = RequestSignals(query_intent="temporal", explicit_history_request=True)
+
+    with pytest.raises(FrozenInstanceError):
+        signals.query_intent = "default"  # type: ignore[misc]
+
+    assert not hasattr(signals, "__dict__")
+
+
+@pytest.mark.parametrize(
+    ("model", "attribute", "replacement"),
+    [
+        (
+            InjectionStrategyPreset(
+                name=PresetName.BALANCED,
+                rank=2,
+                auto_inject=True,
+                memory_budget_chars=1200,
+                max_memories=4,
+                content_level=ContentLevel.COMPACT,
+                cost_penalty_weight=0.18,
+                minimum_utility=0.30,
+            ),
+            "rank",
+            3,
+        ),
+        (
+            InjectionDecision(
+                routing_mode=RoutingMode.MANUAL,
+                configured_preset=PresetName.BALANCED,
+                recommended_preset=PresetName.BALANCED,
+                resolved_preset=PresetName.BALANCED,
+                content_level=ContentLevel.COMPACT,
+                memory_budget_chars=1200,
+                max_memories=4,
+                preferred_delivery=DeliveryMode.EXTRA_USER_CONTENT,
+                resolved_delivery=DeliveryMode.EXTRA_USER_CONTENT,
+                skip_passive_recall=False,
+                allow_tool_fallback=True,
+            ),
+            "skip_passive_recall",
+            True,
+        ),
+        (
+            InjectionExecutionResult(outcome=InjectionOutcome.INJECTED),
+            "outcome",
+            InjectionOutcome.ERROR,
+        ),
+        (
+            InjectionDecisionRecord(
+                decision_id="decision-1",
+                created_at_ms=1,
+                routing_mode="manual",
+                configured_preset="balanced",
+                recommended_preset="balanced",
+                resolved_preset="balanced",
+                preferred_delivery="extra_user_content",
+                resolved_delivery="extra_user_content",
+                fallback_applied=False,
+                outcome="injected",
+                primary_reason="manual_selection",
+            ),
+            "outcome",
+            "error",
+        ),
+    ],
+)
+def test_public_models_are_immutable_and_slotted(
+    model: object,
+    attribute: str,
+    replacement: object,
+) -> None:
+    with pytest.raises(FrozenInstanceError):
+        setattr(model, attribute, replacement)
+
+    assert not hasattr(model, "__dict__")
+
+
+def test_reason_codes_default_to_immutable_tuples() -> None:
+    decision = InjectionDecision(
+        routing_mode=RoutingMode.MANUAL,
+        configured_preset=PresetName.BALANCED,
+        recommended_preset=PresetName.BALANCED,
+        resolved_preset=PresetName.BALANCED,
+        content_level=ContentLevel.COMPACT,
+        memory_budget_chars=1200,
+        max_memories=4,
+        preferred_delivery=DeliveryMode.EXTRA_USER_CONTENT,
+        resolved_delivery=DeliveryMode.EXTRA_USER_CONTENT,
+        skip_passive_recall=False,
+        allow_tool_fallback=True,
+    )
+
+    assert decision.reason_codes == ()
+    assert isinstance(decision.reason_codes, tuple)
