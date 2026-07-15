@@ -194,3 +194,195 @@ async def test_close_timeout_cancels_stuck_worker(store, make_record) -> None:
     await asyncio.sleep(0)
     await recorder.close(timeout=0.01)
     assert recorder._worker is None
+
+
+@pytest.mark.asyncio
+async def test_record_during_blocked_cleanup_is_flushed_without_lost_wake(
+    store, make_record
+) -> None:
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    async def cleanup(retention_days, max_rows):
+        cleanup_started.set()
+        await release_cleanup.wait()
+        return 0
+
+    store.cleanup = AsyncMock(side_effect=cleanup)
+    recorder = InjectionDecisionRecorder(store, batch_size=1, flush_interval=86_400.0)
+    recorder.schedule_cleanup()
+    await recorder.start()
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+    recorder.record(make_record("during-cleanup"))
+    release_cleanup.set()
+    await recorder.wait_until_idle(timeout=1.0)
+    assert [row.decision_id for row in store.insert_many.await_args.args[0]] == [
+        "during-cleanup"
+    ]
+    await recorder.close(timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_scheduled_during_active_cleanup_preserves_new_limits(store) -> None:
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    calls: list[tuple[int, int]] = []
+
+    async def cleanup(retention_days, max_rows):
+        calls.append((retention_days, max_rows))
+        if len(calls) == 1:
+            cleanup_started.set()
+            await release_cleanup.wait()
+        return 0
+
+    store.cleanup = AsyncMock(side_effect=cleanup)
+    recorder = InjectionDecisionRecorder(store)
+    recorder.schedule_cleanup(retention_days=30, max_rows=100)
+    await recorder.start()
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+    recorder.schedule_cleanup(retention_days=7, max_rows=25)
+    release_cleanup.set()
+    await recorder.wait_until_idle(timeout=1.0)
+    assert calls == [(30, 100), (7, 25)]
+    await recorder.close(timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_requested_cleanup_runs_between_full_batches(store, make_record) -> None:
+    first_insert_started = asyncio.Event()
+    release_first_insert = asyncio.Event()
+    operations: list[str] = []
+
+    async def insert(rows):
+        operations.append("insert:" + ",".join(row.decision_id for row in rows))
+        if len(operations) == 1:
+            first_insert_started.set()
+            await release_first_insert.wait()
+        return len(rows)
+
+    async def cleanup(retention_days, max_rows):
+        operations.append("cleanup")
+        return 0
+
+    store.insert_many = AsyncMock(side_effect=insert)
+    store.cleanup = AsyncMock(side_effect=cleanup)
+    recorder = InjectionDecisionRecorder(store, batch_size=2, queue_capacity=6)
+    await recorder.start()
+    recorder.record(make_record("0"))
+    recorder.record(make_record("1"))
+    await asyncio.wait_for(first_insert_started.wait(), timeout=1.0)
+    for index in range(2, 6):
+        recorder.record(make_record(str(index)))
+    recorder.schedule_cleanup()
+    release_first_insert.set()
+    await recorder.wait_until_idle(timeout=1.0)
+    assert operations[:3] == ["insert:0,1", "cleanup", "insert:2,3"]
+    await recorder.close(timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_open_partial_batch_absorbs_later_rows_and_flushes_at_batch_size(
+    store, make_record
+) -> None:
+    recorder = InjectionDecisionRecorder(store, batch_size=50, flush_interval=86_400.0)
+    await recorder.start()
+    recorder.record(make_record("0"))
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if recorder.snapshot()["retained_size"] == 1:
+            break
+    assert recorder.snapshot()["retained_size"] == 1
+    for index in range(1, 50):
+        recorder.record(make_record(str(index)))
+    await recorder.wait_until_idle(timeout=1.0)
+    assert len(store.insert_many.await_args.args[0]) == 50
+    await recorder.close(timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_failed_retained_batch_counts_toward_capacity_and_evicts_global_oldest(
+    store, make_record
+) -> None:
+    failed = asyncio.Event()
+    retry_sleep = asyncio.Event()
+
+    async def insert(rows):
+        failed.set()
+        raise RuntimeError("locked")
+
+    async def sleep(delay):
+        await retry_sleep.wait()
+
+    store.insert_many = AsyncMock(side_effect=insert)
+    recorder = InjectionDecisionRecorder(
+        store,
+        batch_size=2,
+        queue_capacity=3,
+        retry_base_delay=5.0,
+        sleep=sleep,
+    )
+    await recorder.start()
+    recorder.record(make_record("oldest"))
+    recorder.record(make_record("second"))
+    await asyncio.wait_for(failed.wait(), timeout=1.0)
+    recorder.record(make_record("third"))
+    recorder.record(make_record("latest"))
+    await asyncio.sleep(0)
+    snapshot = recorder.snapshot()
+    assert snapshot["retained_size"] + snapshot["queue_size"] <= 3
+    assert recorder.queued_decision_ids() == ["second", "third", "latest"]
+    assert snapshot["dropped_total"] == 1
+    await recorder.close(timeout=0.01)
+
+
+@pytest.mark.asyncio
+async def test_very_large_retry_attempt_is_capped_and_does_not_kill_worker(
+    store, make_record
+) -> None:
+    recorder = InjectionDecisionRecorder(store, batch_size=1, retry_base_delay=0.001)
+    assert recorder._retry_delay(10**100) == 5.0
+    store.insert_many = AsyncMock(side_effect=RuntimeError("locked"))
+    await recorder.start()
+    recorder.record(make_record("retry"))
+    await asyncio.sleep(0.01)
+    assert recorder.snapshot()["running"] is True
+    await recorder.close(timeout=0.01)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["insert", "cleanup"])
+async def test_retry_deadline_is_sampled_after_slow_failed_io(
+    store, make_record, operation
+) -> None:
+    clock = [0.0]
+    observed_delays: list[float] = []
+    retry_waiting = asyncio.Event()
+    hold_sleep = asyncio.Event()
+
+    async def fail_after_time(*args):
+        clock[0] = 100.0
+        raise RuntimeError("slow failure")
+
+    async def sleep(delay):
+        observed_delays.append(delay)
+        retry_waiting.set()
+        await hold_sleep.wait()
+
+    recorder = InjectionDecisionRecorder(
+        store,
+        batch_size=1,
+        flush_interval=0.001,
+        retry_base_delay=0.05,
+        monotonic=lambda: clock[0],
+        sleep=sleep,
+    )
+    if operation == "insert":
+        store.insert_many = AsyncMock(side_effect=fail_after_time)
+        recorder.record(make_record("slow-insert"))
+    else:
+        store.cleanup = AsyncMock(side_effect=fail_after_time)
+        recorder.schedule_cleanup()
+    await recorder.start()
+    await asyncio.wait_for(retry_waiting.wait(), timeout=1.0)
+    assert observed_delays[0] == pytest.approx(0.05)
+    await recorder.close(timeout=0.01)
