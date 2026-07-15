@@ -584,6 +584,79 @@ describe("strict Python mutation contracts", () => {
   });
 });
 
+describe("remaining Python mock API parity", () => {
+  it("returns invalid_request for every non-object POST body", async () => {
+    for (const body of [null, [], "invalid", 17]) {
+      await expect(post("social/create", body)).resolves.toMatchObject({ status: "error", code: "invalid_request" });
+    }
+  });
+
+  it("defaults optional profile structures and strictly normalizes editable fields", async () => {
+    const minimal = entityEnvelope(await post("profiles/create", { user_id: " profile-minimal " }));
+    expect(minimal.entity).toMatchObject({ user_id: "profile-minimal", display_name: "", preferences: {}, tags: [] });
+    const normalized = entityEnvelope(await post("profiles/create", {
+      user_id: " profile-normalized ",
+      preferences: { reply_style: " concise ", preferred_topics: [" testing "], avoided_topics: [], active_hours: [0, 23] },
+      tags: [{ category: " custom ", value: " manual ", confidence: undefined }],
+    }));
+    expect(normalized.entity).toMatchObject({
+      user_id: "profile-normalized",
+      preferences: { reply_style: "concise", preferred_topics: ["testing"], avoided_topics: [], active_hours: [0, 23] },
+      tags: [{ category: "custom", value: "manual", confidence: 0.5 }],
+    });
+    const invalidId = "profile-invalid-fields";
+    expectValidation(await post("profiles/create", {
+      user_id: invalidId,
+      preferences: { reply_style: 1, preferred_topics: [true], avoided_topics: "none", active_hours: [24], read_only: true },
+      tags: [{ category: "invalid", value: "", confidence: Number.POSITIVE_INFINITY, source: "auto" }],
+    }), {
+      "preferences.read_only": "字段不可写",
+      "preferences.reply_style": "必须为字符串",
+      "preferences.preferred_topics": "必须为字符串数组",
+      "preferences.avoided_topics": "必须为字符串数组",
+      "preferences.active_hours": "必须为 0 到 23 的整数数组",
+      "tags.0.source": "字段不可写",
+      "tags.0.category": "不支持的标签分类",
+      "tags.0.value": "不能为空",
+      "tags.0.confidence": "必须为有限数字",
+    });
+    expect((okData(await get("profiles", { limit: "100", offset: "0" })).profiles as JsonObject[]).some((profile) => profile.user_id === invalidId)).toBe(false);
+  });
+
+  it("applies jargon create limits, defaults, and derived completeness", async () => {
+    const created = entityEnvelope(await post("jargon/create", { term: " defaults ", group_id: " group_001 ", meaning: " meaning ", confidence: 0.75 }));
+    expect(created.entity).toMatchObject({ term: "defaults", group_id: "group_001", meaning: "meaning", confidence: 0.75, is_jargon: true, is_confirmed: true, is_global: false, is_complete: true });
+    expectValidation(await post("jargon/create", { term: "missing-confidence", group_id: "group_001", meaning: "meaning" }), { confidence: "不能为空" });
+    expectValidation(await post("jargon/create", { term: "long-meaning", group_id: "group_001", meaning: "x".repeat(4097), confidence: Number.NaN }), { meaning: "文本过长", confidence: "必须为有限数字" });
+    const unconfirmed = entityEnvelope(await post("jargon/create", { term: "unconfirmed", group_id: "group_001", meaning: "meaning", confidence: 0.5, is_confirmed: false }));
+    expect(unconfirmed.entity).toMatchObject({ is_confirmed: false, is_complete: false });
+  });
+
+  it("normalizes revisioned identities and revisions while preserving parsed batch identities", async () => {
+    const identity = { ...socialIdentity("trimmed"), group_id: "" };
+    const created = entityEnvelope(await post("social/create", { ...identity, from_user: ` ${identity.from_user} `, to_user: ` ${identity.to_user} `, relation_type: ` ${identity.relation_type} `, strength: 0.4, tags: [] }));
+    const omittedGroup = socialIdentity("omitted-group"); delete (omittedGroup as Partial<typeof omittedGroup>).group_id;
+    const omittedCreated = entityEnvelope(await post("social/create", { ...omittedGroup, strength: 0.3, tags: [] }));
+    expect(omittedCreated.entity).toMatchObject({ ...omittedGroup, group_id: "" });
+    const spacedIdentity = Object.fromEntries(Object.entries(identity).map(([key, value]) => [key, ` ${value} `]));
+    const updated = entityEnvelope(await post("social/update", { identity: spacedIdentity, changes: { strength: 0.6 }, expected_revision: ` ${created.revision} ` }));
+    expect(updated.entity).toMatchObject({ ...identity, strength: 0.6 });
+    const revisionFailure = okData(await post("social/batch", { action: "delete", params: {}, items: [{ identity: spacedIdentity, expected_revision: "   " }] }));
+    expect(revisionFailure.failures).toEqual([expect.objectContaining({ identity, code: "validation_error", field_errors: { expected_revision: "不能为空" } })]);
+    const identityFailure = okData(await post("social/batch", { action: "delete", params: {}, items: [{ identity: { ...spacedIdentity, from_user: " " }, expected_revision: updated.revision }] }));
+    expect(identityFailure.failures).toEqual([expect.objectContaining({ identity: { item_index: 0 }, code: "validation_error" })]);
+  });
+
+  it("normalizes profile batch tags and rejects a present non-list legacy user_ids", async () => {
+    const draft = profileDraft("normalized-tag"); const created = entityEnvelope(await post("profiles/create", draft));
+    const result = okData(await post("profiles/batch", { action: "tags_add", items: [{ identity: { user_id: ` ${draft.user_id} ` }, expected_revision: ` ${created.revision} ` }], params: { tag: { category: " custom ", value: " normalized ", confidence: undefined } } }));
+    expect(result.succeeded_ids).toEqual([{ user_id: draft.user_id }]);
+    const detail = okData(await get("profiles/detail", { user_id: draft.user_id }));
+    expect(detail.tags).toEqual(expect.arrayContaining([{ category: "custom", value: "normalized", confidence: 0.5 }]));
+    expectValidation(await post("profiles/batch", { action: "delete", user_ids: "not-a-list" }), { user_ids: "必须为数组" });
+  });
+});
+
 describe("existing mutable editors accept full-form and legacy update requests", () => {
   it("mutates Memory through {changes} and legacy field/value against one state", async () => {
     const id = (okData(await get("memories", { page: "1", page_size: "1" })).items as JsonObject[])[0].id as string;
