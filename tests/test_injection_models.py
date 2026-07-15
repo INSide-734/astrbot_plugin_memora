@@ -17,6 +17,7 @@ from core.injection.models import (
     RoutingMode,
 )
 import core.injection as injection
+import core.injection.executor as executor_module
 import core.injection.models as model_module
 import core.injection.presets as preset_module
 import core.injection.router as router_module
@@ -31,12 +32,15 @@ def test_package_exports_are_exact_and_identity_preserving() -> None:
         "InjectionExecutionResult",
         "InjectionOutcome",
         "InjectionStrategyPreset",
+        "InjectionExecutionContext",
+        "InjectionExecutor",
         "InjectionRoutingConfig",
         "InjectionStrategyRouter",
         "PRESETS",
         "PresetName",
         "RequestSignals",
         "RoutingMode",
+        "candidate_utility",
         "get_preset",
         "resolve_preset",
     }
@@ -55,6 +59,11 @@ def test_package_exports_are_exact_and_identity_preserving() -> None:
         "RequestSignals",
         "RoutingMode",
     }
+    executor_exports = {
+        "InjectionExecutionContext",
+        "InjectionExecutor",
+        "candidate_utility",
+    }
     preset_exports = {"PRESETS", "get_preset", "resolve_preset"}
     router_exports = {"InjectionRoutingConfig", "InjectionStrategyRouter"}
     assert router_module.__all__ == [
@@ -63,6 +72,8 @@ def test_package_exports_are_exact_and_identity_preserving() -> None:
     ]
     for name in model_exports:
         assert getattr(injection, name) is getattr(model_module, name)
+    for name in executor_exports:
+        assert getattr(injection, name) is getattr(executor_module, name)
     for name in preset_exports:
         assert getattr(injection, name) is getattr(preset_module, name)
     for name in router_exports:

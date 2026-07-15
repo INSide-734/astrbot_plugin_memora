@@ -334,6 +334,9 @@ class _FailingAssignmentRequest:
 async def test_assignment_failure_rolls_back_all_request_fields() -> None:
     req = _FailingAssignmentRequest()
     req.provider = _tool_capable_provider()
+    original_prompt = req.prompt
+    original_contexts = req.contexts
+    original_extra_user_content_parts = req.extra_user_content_parts
     snapshot = (
         req.prompt,
         deepcopy(req.contexts),
@@ -347,6 +350,9 @@ async def test_assignment_failure_rolls_back_all_request_fields() -> None:
     assert result.outcome is InjectionOutcome.ERROR
     assert result.error_code == "MUTATION_FAILED"
     assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
+    assert req.prompt is original_prompt
+    assert req.contexts is original_contexts
+    assert req.extra_user_content_parts is original_extra_user_content_parts
     assert req.system_prompt == "stable-system-prefix"
     assert result.configured_budget_chars == 1_740
     assert result.effective_budget_chars == 1_740

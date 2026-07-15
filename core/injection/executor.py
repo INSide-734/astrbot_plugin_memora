@@ -14,9 +14,9 @@ from astrbot.core.agent.message import TextPart
 
 from ..base.constants import FAKE_TOOL_CALL_NAME
 from ..utils.injection_budget import InjectionBudget, InjectionStats
-from ..utils.memory_formatter import format_memories_for_injection
 from .models import (
     DeliveryMode,
+    ContentLevel,
     InjectionDecision,
     InjectionExecutionResult,
     InjectionOutcome,
@@ -437,8 +437,8 @@ class InjectionExecutor:
         context: InjectionExecutionContext,
     ) -> None:
         original_prompt = req.prompt
-        original_contexts = deepcopy(req.contexts)
-        original_parts = list(req.extra_user_content_parts)
+        original_contexts = req.contexts
+        original_parts = req.extra_user_content_parts
 
         prompt = original_prompt
         contexts = deepcopy(original_contexts)
@@ -513,3 +513,14 @@ class InjectionExecutor:
             req.contexts = original_contexts
             req.extra_user_content_parts = original_parts
             raise
+
+
+def format_memories_for_injection(
+    memories: list,
+    budget: InjectionBudget | None = None,
+    content_level: ContentLevel = ContentLevel.COMPACT,
+) -> str | tuple[str, InjectionStats]:
+    """Load the formatter on demand without creating an import cycle."""
+    from ..utils.memory_formatter import format_memories_for_injection as formatter
+
+    return formatter(memories, budget=budget, content_level=content_level)

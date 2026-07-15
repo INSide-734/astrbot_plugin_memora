@@ -22,6 +22,15 @@ class TestFormatMemoriesForInjection:
         """空 list returns empty string."""
         assert format_memories_for_injection([]) == ""
 
+    def test_none_content_level_without_budget_returns_empty_string(self):
+        assert (
+            format_memories_for_injection(
+                [{"content": "must not be formatted"}],
+                content_level=ContentLevel.NONE,
+            )
+            == ""
+        )
+
     def test_dict_based_memories(self):
         """格式化 memories passed as dicts (the normal path)."""
         memories = [
