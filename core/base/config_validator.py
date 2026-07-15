@@ -3,11 +3,14 @@ config_validator.py - 配置验证模块
 提供配置验证和默认值管理功能。
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from astrbot.api import logger
+
+
+PresetName = Literal["tool_first", "low_cost", "balanced", "quality"]
 
 
 class SessionManagerConfig(BaseModel):
@@ -52,17 +55,27 @@ class RecallEngineConfig(BaseModel):
         default=1.0, ge=0.0, le=10.0, description="重要性权重"
     )
     fallback_to_vector: bool = Field(default=True, description="是否启用向量检索回退")
-    injection_method: str = Field(
-        default="extra_user_content",
-        description=(
-            "记忆注入方式: "
-            "extra_user_content(推荐，临时消息追加到用户消息末尾，不影响前缀缓存且不污染对话历史), "
-            "user_message_before(用户消息前), "
-            "user_message_after(用户消息后), "
-            "fake_tool_call(伪造工具调用), "
-            "fake_tool_call_deepseek_v4(DeepSeek V4兼容伪工具转录), "
-            "system_prompt(已废弃，自动回退至extra_user_content)"
-        ),
+    injection_routing_mode: Literal["manual", "auto", "hybrid"] = "manual"
+    injection_manual_preset: PresetName = "balanced"
+    injection_auto_fallback_preset: PresetName = "balanced"
+    injection_hybrid_base_preset: PresetName = "balanced"
+    injection_hybrid_min_preset: PresetName = "low_cost"
+    injection_hybrid_max_preset: PresetName = "quality"
+    injection_delivery_override: Literal[
+        "auto",
+        "extra_user_content",
+        "user_message_before",
+        "user_message_after",
+        "fake_tool_call",
+        "fake_tool_call_deepseek_v4",
+    ] = "auto"
+    injection_preset_overrides_enabled: bool = False
+    injection_decision_retention_days: Literal[0, 7, 30, 90, 180] = 30
+    injection_decision_max_rows: int = Field(
+        default=100_000,
+        ge=1_000,
+        le=1_000_000,
+        description="注入决策记录最大保留行数",
     )
     auto_remove_injected: bool = Field(
         default=True, description="是否自动删除对话历史中已注入的记忆片段"
@@ -117,16 +130,22 @@ class RecallEngineConfig(BaseModel):
     )
     # === 注入预算 — 控制每轮请求中注入的记忆上下文总量 ===
     injection_budget_chars: int = Field(
-        default=1200, ge=0, le=10000,
-        description="总注入预算（字符数）。0 表示不限制"
+        default=0,
+        ge=0,
+        le=10000,
+        description="普通记忆预算覆盖；0 使用预设默认值",
     )
     injection_memory_max_chars: int = Field(
-        default=220, ge=0, le=2000,
-        description="单条记忆 content 最大字符数，超出截断"
+        default=0,
+        ge=0,
+        le=2000,
+        description="单条记忆长度覆盖；0 使用预设默认值",
     )
     injection_metadata_max_chars: int = Field(
-        default=180, ge=0, le=500,
-        description="单条记忆 metadata 最大字符数"
+        default=0,
+        ge=0,
+        le=500,
+        description="单条元数据长度覆盖；0 使用预设默认值",
     )
     injection_include_key_facts: bool = Field(
         default=True, description="是否在注入中显示 key_facts"
@@ -171,6 +190,18 @@ class RecallEngineConfig(BaseModel):
     interest_boost_enabled: bool = Field(
         default=True, description="是否启用兴趣记忆显著性"
     )
+
+    @model_validator(mode="after")
+    def validate_hybrid_order(self) -> "RecallEngineConfig":
+        """确保 Hybrid 策略的最小、基准和最大预设按等级递增。"""
+        ranks = {"tool_first": 0, "low_cost": 1, "balanced": 2, "quality": 3}
+        if not (
+            ranks[self.injection_hybrid_min_preset]
+            <= ranks[self.injection_hybrid_base_preset]
+            <= ranks[self.injection_hybrid_max_preset]
+        ):
+            raise ValueError("hybrid preset order must satisfy min <= base <= max")
+        return self
 
 
 class FusionStrategyConfig(BaseModel):
