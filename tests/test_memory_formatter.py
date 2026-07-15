@@ -333,6 +333,38 @@ class TestBudgetedInjectionFormatting:
         assert "topic-0" not in text
         assert "person-0" not in text
 
+    def test_facts_obeys_disabled_key_facts_flag_and_falls_back_to_content(self):
+        text, _ = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(
+                ContentLevel.FACTS,
+                800,
+                include_key_facts=False,
+            ),
+            content_level=ContentLevel.FACTS,
+        )
+
+        assert "fact-0" not in text
+        assert "Complete memory 0." in text
+
+    def test_facts_does_not_count_truncation_of_omitted_raw_content(self):
+        memory = _rich_memory(0)
+        memory["content"] = "raw content " * 100
+
+        text, stats = format_memories_for_injection(
+            [memory],
+            budget=_budget(
+                ContentLevel.FACTS,
+                800,
+                memory_max_chars=32,
+            ),
+            content_level=ContentLevel.FACTS,
+        )
+
+        assert "fact-0" in text
+        assert "raw content" not in text
+        assert stats.truncated_count == 0
+
     def test_compact_obeys_metadata_flags(self):
         text, _ = format_memories_for_injection(
             [_rich_memory(0)],
