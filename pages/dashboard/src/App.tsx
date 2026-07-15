@@ -433,8 +433,8 @@ export default function App() {
                   />
                 )}
                 {currentPage === "learning" && <LearningPage showToast={showToast} />}
-                {currentPage === "jargon" && <JargonPage showToast={showToast} />}
-                {currentPage === "affection" && <AffectionPage showToast={showToast} />}
+                {currentPage === "jargon" && <JargonPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
+                {currentPage === "affection" && <AffectionPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
                 {currentPage === "social" && <SocialPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
                 {currentPage === "intelligence" && <IntelligencePage showToast={showToast} />}
                 </Suspense>

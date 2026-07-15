@@ -6,6 +6,9 @@ import { MemoryForm } from "./MemoryForm";
 import { NoteForm } from "./NoteForm";
 import { ProfileForm } from "./ProfileForm";
 import { SocialRelationForm } from "./SocialRelationForm";
+import { AffectionForm } from "./AffectionForm";
+import { JargonForm } from "./JargonForm";
+import { MoodForm } from "./MoodForm";
 
 vi.mock("@/hooks/useI18n", () => ({
   useI18n: () => ({ t: (key: string) => ({
@@ -53,6 +56,64 @@ vi.mock("@/hooks/useI18n", () => ({
 
 describe("domain editing forms", () => {
   afterEach(cleanup);
+
+  it("keeps jargon identity and stored context read-only while exposing editable flags", () => {
+    const onChange = vi.fn();
+    render(<JargonForm value={{ term: "yyds", group_id: "g1", meaning: "永远的神", confidence: 0.8, is_jargon: true, is_confirmed: false, is_global: false, is_complete: true, count: 3, last_inference_count: 2, created_at: 1, updated_at: 2, context_examples: ["这个方案 yyds"] }} onChange={onChange} fieldErrors={{}} mode="edit" />);
+    expect(screen.getByLabelText("Term").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByLabelText("Group ID").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByLabelText("Meaning").hasAttribute("disabled")).toBe(false);
+    expect(screen.getByText("这个方案 yyds")).toBeTruthy();
+    expect(screen.queryByDisplayValue("这个方案 yyds")).toBeNull();
+    expect(screen.getByRole("switch", { name: "Is jargon" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByText("Marks whether this term is jargon")).toBeTruthy();
+  });
+
+  it("validates jargon meaning and confidence boundaries accessibly", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<JargonForm value={{ term: "x", group_id: "g1", meaning: "", confidence: 0.5, is_jargon: false, is_confirmed: false, is_global: false }} onChange={onChange} fieldErrors={{ meaning: "Meaning is required" }} mode="create" />);
+    const meaning = screen.getByLabelText("Meaning");
+    expect(meaning.getAttribute("aria-describedby")).toBeTruthy();
+    expect(screen.getAllByRole("alert").map((node) => node.textContent).join(" ")).toContain("Meaning is required");
+    rerender(<JargonForm value={{ term: "x", group_id: "g1", meaning: "ok", confidence: 1.2, is_jargon: false, is_confirmed: false, is_global: false }} onChange={onChange} fieldErrors={{}} mode="create" />);
+    fireEvent.change(screen.getByLabelText("Confidence"), { target: { value: "2" } });
+    expect(screen.getAllByRole("alert").map((node) => node.textContent).join(" ")).toContain("between 0 and 1");
+    fireEvent.change(screen.getByLabelText("Confidence"), { target: { value: "1" } });
+    expect(screen.queryByText("Must be between 0 and 1")).toBeNull();
+  });
+
+  it("allows only editable affection identity in create and integer scores in range", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<AffectionForm value={{ group_id: "g1", user_id: "u1", affection_score: 0, affection_level: "neutral", level_name: "Neutral", interaction_count: 4, last_interaction: 10 }} onChange={onChange} fieldErrors={{}} mode="create" />);
+    expect(screen.getByLabelText("User ID").hasAttribute("disabled")).toBe(false);
+    expect(screen.getByLabelText("Group ID").hasAttribute("disabled")).toBe(false);
+    fireEvent.change(screen.getByLabelText("Affection score"), { target: { value: "1.5" } });
+    expect(screen.getAllByRole("alert").map((node) => node.textContent).join(" ")).toContain("integer");
+    fireEvent.change(screen.getByLabelText("Affection score"), { target: { value: "100" } });
+    expect(screen.queryByText(/integer|between -100 and 100/)).toBeNull();
+    rerender(<AffectionForm value={{ group_id: "g1", user_id: "u1", affection_score: 0, affection_level: "neutral", level_name: "Neutral", interaction_count: 4, last_interaction: 10 }} onChange={onChange} fieldErrors={{}} mode="edit" />);
+    expect(screen.getByLabelText("User ID").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByLabelText("Group ID").hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByDisplayValue("Neutral")).toBeNull();
+    expect(screen.queryByLabelText("Interaction count")).toBeNull();
+  });
+
+  it("uses lowercase values for every mood option and validates backend duration limits", () => {
+    const onChange = vi.fn();
+    render(<MoodForm value={{ group_id: "g1", mood_type: "happy", intensity: 0.5, duration_hours: 4, description: "steady", start_time: 1, is_active: true }} onChange={onChange} fieldErrors={{}} mode="create" />);
+    fireEvent.click(screen.getByRole("combobox", { name: "Mood type" }));
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(10);
+    expect(options.map((option) => option.getAttribute("data-value") ?? option.textContent?.toLowerCase())).toEqual(expect.arrayContaining(["happy", "sad", "excited", "calm", "angry", "anxious", "playful", "serious", "nostalgic", "curious"]));
+    fireEvent.change(screen.getByLabelText("Intensity"), { target: { value: "0" } });
+    expect(screen.getAllByRole("alert").map((node) => node.textContent).join(" ")).toContain("0.1");
+    fireEvent.change(screen.getByLabelText("Intensity"), { target: { value: "0.1" } });
+    fireEvent.change(screen.getByLabelText("Duration (hours)"), { target: { value: "169" } });
+    expect(screen.getAllByRole("alert").map((node) => node.textContent).join(" ")).toContain("168");
+    fireEvent.change(screen.getByLabelText("Duration (hours)"), { target: { value: "168" } });
+    expect(screen.queryByText(/168\.0/)).toBeNull();
+    expect(screen.queryByLabelText("Start time")).toBeNull();
+  });
   it("shows every editable memory field at once and connects validation", () => {
     render(
       <MemoryForm

@@ -1,270 +1,118 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
+import { MessageCircleCode, Check, X, RefreshCw, Sparkles, Hash, Users, Zap, Globe, Loader2, Pencil, Trash2 } from "lucide-react";
 import { useI18n } from "@/hooks/useI18n";
 import { useGroups } from "@/hooks/useGroups";
-import { apiRequest, unwrapApiData } from "@/lib/bridge";
-import { MessageCircleCode, Check, X, RefreshCw, Sparkles, Hash, Users, Zap, Globe, Loader2 } from "lucide-react";
+import { apiPost, apiRequest, unwrapApiData } from "@/lib/bridge";
+import { ApiRequestError, type FieldErrors } from "@/types/editing";
+import type { JargonCandidate, JargonDraft, JargonMeaning } from "@/types";
+import { JargonForm } from "@/components/editing/forms/JargonForm";
+import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
+import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
+import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
+import { EditConflictDialog } from "@/components/editing/EditConflictDialog";
+import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/Table";
 import { dashboardLocale, formatDashboardPercent } from "@/lib/i18n";
-import type { JargonCandidate, JargonMeaning } from "@/types";
 
-interface JargonPageProps {
-  showToast: (msg: string, isError?: boolean) => void;
+interface Props { showToast: (msg: string, isError?: boolean) => void; onDirtyChange?: (dirty: boolean) => void; }
+type Entity = JargonMeaning & { context_examples?: string[]; revision?: string };
+const draftOf = (e: Partial<Entity>, group_id: string): JargonDraft => ({ term: e.term ?? "", group_id: e.group_id ?? group_id, meaning: e.meaning ?? "", confidence: e.confidence ?? 0, is_jargon: e.is_jargon ?? true, is_confirmed: e.is_confirmed ?? true, is_global: e.is_global ?? false });
+const identity = (e: Entity) => ({ term: e.term, group_id: e.group_id });
+function validEntityEnvelope(value: unknown): { entity: Entity; revision: string } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const envelope = value as Record<string, unknown>;
+  const raw = envelope.entity;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const entity = raw as Record<string, unknown>;
+  const revision = typeof envelope.revision === "string" && envelope.revision.trim() ? envelope.revision : entity.revision;
+  if (typeof revision !== "string" || !revision.trim()) return null;
+  if (typeof entity.term !== "string" || !entity.term.trim() || typeof entity.group_id !== "string" || !entity.group_id.trim()) return null;
+  if (typeof entity.meaning !== "string" || !entity.meaning.trim()) return null;
+  if (typeof entity.confidence !== "number" || !Number.isFinite(entity.confidence) || entity.confidence < 0 || entity.confidence > 1) return null;
+  if (typeof entity.is_jargon !== "boolean" || typeof entity.is_confirmed !== "boolean" || typeof entity.is_global !== "boolean") return null;
+  return { entity: { ...entity, revision } as Entity, revision };
 }
-
-/** Pure score-bar renderer — no component closure dependencies. */
-function ScoreBar({ score, locale }: { score: number; locale: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-primary transition-all duration-300"
-          style={{ width: `${Math.round(score * 100)}%` }}
-        />
-      </div>
-      <span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(score, locale, { maximumFractionDigits: 0 })}</span>
-    </div>
-  );
+function validDeleteIdentity(value: unknown): value is { term: string; group_id: string } {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value)
+    && typeof (value as Record<string, unknown>).term === "string" && Boolean(((value as Record<string, unknown>).term as string).trim())
+    && typeof (value as Record<string, unknown>).group_id === "string" && Boolean(((value as Record<string, unknown>).group_id as string).trim()));
 }
+function validateJargonBatch(value: unknown, items: Array<{ identity: { term: string; group_id: string } }>): Array<string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid jargon batch response");
+  const v = value as Record<string, unknown>;
+  const counts = [v.total, v.succeeded_count, v.failed_count];
+  if (!counts.every((n) => typeof n === "number" && Number.isInteger(n) && n >= 0)
+    || v.total !== items.length || v.total !== (v.succeeded_count as number) + (v.failed_count as number)
+    || !Array.isArray(v.succeeded_ids) || !Array.isArray(v.failures)
+    || v.succeeded_ids.length !== v.succeeded_count || v.failures.length !== v.failed_count) throw new Error("Invalid jargon batch response");
+  const allowed = new Set(items.map((item) => `${item.identity.term}:${item.identity.group_id}`));
+  const failures = v.failures as unknown[];
+  const succeeded = v.succeeded_ids.map((entry) => (entry && typeof entry === "object" ? (entry as Record<string, unknown>).identity ?? entry : null));
+  const failed = failures.map((entry) => entry && typeof entry === "object" ? (entry as Record<string, unknown>).identity : null);
+  const keys = [...succeeded, ...failed].map((entry) => {
+    if (!validDeleteIdentity(entry)) throw new Error("Invalid jargon batch response");
+    const key = `${entry.term}:${entry.group_id}`;
+    if (!allowed.has(key)) throw new Error("Invalid jargon batch response");
+    return key;
+  });
+  if (new Set(keys).size !== keys.length || failed.some((_, index) => {
+    const failure = failures[index] as Record<string, unknown>;
+    return typeof failure.code !== "string" || !failure.code.trim() || typeof failure.message !== "string" || !failure.message.trim();
+  })) throw new Error("Invalid jargon batch response");
+  return failed.map((entry) => `${(entry as { term: string }).term}:${(entry as { group_id: string }).group_id}`);
+}
+function ScoreBar({ score, locale }: { score: number; locale: string }) { return <div className="flex items-center gap-2"><div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.round(score * 100)}%` }} /></div><span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(score, locale, { maximumFractionDigits: 0 })}</span></div>; }
 
-export function JargonPage({ showToast }: JargonPageProps) {
-  const { t, currentLang } = useI18n();
-  const locale = dashboardLocale(currentLang());
+export function JargonPage({ showToast, onDirtyChange }: Props) {
+  const { t, currentLang } = useI18n(); const locale = dashboardLocale(currentLang());
   const { groups, groupId, setGroupId } = useGroups();
   const [tab, setTab] = useState<"candidates" | "meanings">("candidates");
-  const [candidates, setCandidates] = useState<JargonCandidate[]>([]);
-  const [meanings, setMeanings] = useState<JargonMeaning[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [mining, setMining] = useState(false);
+  const [candidates, setCandidates] = useState<JargonCandidate[]>([]); const [meanings, setMeanings] = useState<Entity[]>([]);
+  const [loading, setLoading] = useState(false); const [mining, setMining] = useState(false); const [selected, setSelected] = useState<string[]>([]);
   const [stats, setStats] = useState({ total_terms: 0, candidate_count: 0, store_confirmed: 0 });
-
-  // --- Data fetchers (each has a focused dependency set) ---
-
-  const fetchCandidates = useCallback(async () => {
-    if (!groupId) return;
-    setLoading(true);
-    try {
-      const res = unwrapApiData(await apiRequest(`jargon/candidates?group_id=${groupId}&limit=50`));
-      setCandidates((res.candidates ?? []) as JargonCandidate[]);
-    } catch (e) { showToast(String(e), true); }
-    finally { setLoading(false); }
-  }, [groupId, showToast]);
-
-  const fetchMeanings = useCallback(async () => {
-    if (!groupId) return;
-    setLoading(true);
-    try {
-      const res = unwrapApiData(await apiRequest(`jargon/meanings?group_id=${groupId}&confirmed_only=false`));
-      setMeanings((res.meanings ?? []) as JargonMeaning[]);
-    } catch (e) { showToast(String(e), true); }
-    finally { setLoading(false); }
-  }, [groupId, showToast]);
-
-  const fetchStats = useCallback(async () => {
-    if (!groupId) return;
-    try {
-      const res = unwrapApiData(await apiRequest(`jargon/stats?group_id=${groupId}`));
-      setStats({
-        total_terms: (res.total_terms as number) ?? 0,
-        candidate_count: (res.candidate_count as number) ?? 0,
-        store_confirmed: (res.store_confirmed as number) ?? 0,
-      });
-    } catch { /* stats are non-critical */ }
-  }, [groupId]);
-
-  // Reactive fetch on tab/groupId change
-  useEffect(() => {
-    fetchStats();
-    if (tab === "candidates") fetchCandidates();
-    else fetchMeanings();
-  }, [tab, groupId]); // eslint-disable-line react-hooks/exhaustive-deps
-  // ^ only tab & groupId are intentional triggers; the fetch functions
-  //   are stable (useCallback with [groupId, showToast]).
-
-  // --- Actions ---
-
-  const handleConfirm = useCallback(async (term: string, confirmed: boolean) => {
-    try {
-      await apiRequest("jargon/confirm", { method: "POST", body: { term, group_id: groupId, confirmed } });
-      showToast(t(confirmed ? "toast.jargonConfirmed" : "toast.jargonRejected", term));
-      fetchCandidates();
-      fetchMeanings();
-      fetchStats();
-    } catch (e) { showToast(String(e), true); }
-  }, [groupId, showToast, fetchCandidates, fetchMeanings, fetchStats, t]);
-
-  const handleMine = useCallback(async () => {
-    setMining(true);
-    try {
-      const res = unwrapApiData(await apiRequest("jargon/mine", { method: "POST", body: { group_id: groupId, limit: 5 } }));
-      showToast(t("toast.jargonMineStarted"));
-      const count = (res.inferred_count as number) ?? 0;
-      if (count > 0) { fetchCandidates(); fetchStats(); }
-    } catch (e) { showToast(String(e), true); }
-    finally { setMining(false); }
-  }, [groupId, showToast, fetchCandidates, fetchStats, t]);
-
-  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, current: "candidates" | "meanings") => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const next = current === "candidates" ? "meanings" : "candidates";
-    setTab(next);
-    document.getElementById(`jargon-${next}-tab`)?.focus();
-  };
-
-  return (
-    <PageFrame variant="dense" aria-label={t("jargon.title")}>
-      <PageHeader
-        title={t("jargon.title")}
-        icon={<MessageCircleCode />}
-        actions={<>
-          <Select value={groupId} onValueChange={(v) => v && setGroupId(v)} disabled={groups.length === 0}>
-            <SelectTrigger className="w-36 text-xs"><span>{groupId || t("jargon.allGroups")}</span></SelectTrigger>
-            <SelectContent>
-              {groups.length > 0 ? groups.map((g) => (
-                <SelectItem key={g.group_id} value={g.group_id}>{g.group_id}{g.message_count ? ` (${g.message_count})` : ""}</SelectItem>
-              )) : (
-                <SelectItem value="loading">—</SelectItem>
-              )}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => { fetchStats(); if (tab === "candidates") fetchCandidates(); else fetchMeanings(); }}
-          >
-            <RefreshCw data-icon="inline-start" /> {t("common.refresh")}
-          </Button>
-        </>}
-      />
-
-      {/* Stats bar */}
-      <div className="flex min-h-12 shrink-0 items-center border-b bg-muted/30 px-4 py-2 sm:px-5 lg:px-6">
-        <MetricGrid minItemWidth="12rem" className="w-full gap-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1.5"><Hash /> {t("jargon.stats")}: <span className="font-semibold text-foreground">{stats.total_terms}</span> {t("jargon.meanings").toLowerCase()}</div>
-          <div className="flex items-center gap-1.5"><Users /> <span className="font-semibold text-foreground">{stats.candidate_count}</span> {t("jargon.candidates").toLowerCase()}</div>
-          <div className="flex items-center gap-1.5"><Zap /> <span className="font-semibold text-foreground">{stats.store_confirmed}</span> {t("jargon.confirm").toLowerCase()}</div>
-        </MetricGrid>
-      </div>
-
-      {/* Tab bar */}
-      <PageToolbar className="justify-between bg-background">
-        <div className="flex gap-1" role="tablist" aria-label={t("jargon.views")}>
-          {(["candidates", "meanings"] as const).map((tKey) => (
-            <Button
-              key={tKey}
-              variant={tab === tKey ? "secondary" : "ghost"}
-              size="sm"
-              role="tab"
-              id={`jargon-${tKey}-tab`}
-              aria-selected={tab === tKey}
-              aria-controls={`jargon-${tKey}-panel`}
-              tabIndex={tab === tKey ? 0 : -1}
-              onClick={() => setTab(tKey)}
-              onKeyDown={(event) => handleTabKeyDown(event, tKey)}
-            >
-              {t(`jargon.${tKey}`)}
-            </Button>
-          ))}
-        </div>
-        <Button
-          size="sm"
-          onClick={handleMine}
-          disabled={mining}
-        >
-          {mining ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Sparkles data-icon="inline-start" />}
-          {mining ? t("jargon.mining") : t("jargon.mine")}
-        </Button>
-      </PageToolbar>
-
-      {/* Content */}
-      <PageContent width="full" className="p-0">
-        <div id="jargon-candidates-panel" role="tabpanel" aria-labelledby="jargon-candidates-tab" hidden={tab !== "candidates"}>
-          {loading ? (
-            <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("table.loading")}</p>
-          ) : candidates.length === 0 ? (
-            <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("jargon.noCandidates")}</p>
-          ) : (
-            <Table>
-              <TableHeader className="sticky top-0 bg-background">
-                <TableRow className="text-xs text-muted-foreground">
-                  <TableHead className="px-4">{t("table.title")}</TableHead>
-                  <TableHead>{t("jargon.score")}</TableHead>
-                  <TableHead>{t("jargon.frequency")}</TableHead>
-                  <TableHead>{t("jargon.users")}</TableHead>
-                  <TableHead>{t("detail.content")}</TableHead>
-                  <TableHead className="text-right">{t("table.status")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {candidates.map((c) => (
-                  <TableRow key={`${c.term}-${c.group_id}`}>
-                    <TableCell className="px-4">
-                      <span className="text-sm font-medium text-foreground">{c.term}</span>
-                    </TableCell>
-                    <TableCell><ScoreBar score={c.score} locale={locale} /></TableCell>
-                    <TableCell className="text-xs tabular-nums text-muted-foreground">{c.frequency}</TableCell>
-                    <TableCell className="text-xs tabular-nums text-muted-foreground">{c.unique_users}</TableCell>
-                    <TableCell className="max-w-[300px] truncate text-xs text-muted-foreground">
-                      {c.context_examples?.[0] ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="icon-sm" onClick={() => handleConfirm(c.term, true)} title={t("jargon.confirm")} aria-label={t("jargon.confirm")}><Check /></Button>
-                        <Button variant="ghost" size="icon-sm" onClick={() => handleConfirm(c.term, false)} title={t("jargon.reject")} aria-label={t("jargon.reject")}><X /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-        <div id="jargon-meanings-panel" role="tabpanel" aria-labelledby="jargon-meanings-tab" hidden={tab !== "meanings"}>
-          {loading ? (
-            <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("table.loading")}</p>
-          ) : meanings.length === 0 ? (
-            <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("jargon.noMeanings")}</p>
-          ) : (
-            <Table>
-              <TableHeader className="sticky top-0 bg-background">
-                <TableRow className="text-xs text-muted-foreground">
-                  <TableHead className="px-4">{t("table.title")}</TableHead>
-                  <TableHead>{t("jargon.meaning")}</TableHead>
-                  <TableHead>{t("jargon.confidence")}</TableHead>
-                  <TableHead>{t("jargon.global")}</TableHead>
-                  <TableHead className="text-right">{t("table.status")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {meanings.map((m) => (
-                  <TableRow key={`${m.term}-${m.group_id}`}>
-                    <TableCell className="px-4">
-                      <span className="text-sm font-medium text-foreground">{m.term}</span>
-                    </TableCell>
-                    <TableCell className="max-w-[320px] text-xs text-muted-foreground">{m.meaning || "—"}</TableCell>
-                    <TableCell><ScoreBar score={m.confidence} locale={locale} /></TableCell>
-                    <TableCell>
-                      {m.is_global ? <Globe className="text-primary" /> : <span className="text-xs text-muted-foreground">—</span>}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {m.is_confirmed ? (
-                        <Badge>{t("jargon.confirm").toLowerCase()}</Badge>
-                      ) : (
-                        <Badge variant="secondary">{t("jargon.reject").toLowerCase()}</Badge>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-      </PageContent>
-    </PageFrame>
-  );
+  const [createOpen, setCreateOpen] = useState(false); const [createDraft, setCreateDraft] = useState<JargonDraft>(draftOf({}, groupId)); const [createError, setCreateError] = useState(""); const [createErrors, setCreateErrors] = useState<FieldErrors>({}); const [createPending, setCreatePending] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false); const [editorMode, setEditorMode] = useState<"view" | "edit">("view"); const [entity, setEntity] = useState<Entity | null>(null); const [editDraft, setEditDraft] = useState<JargonDraft>(draftOf({}, groupId)); const [editBase, setEditBase] = useState<JargonDraft>(editDraft); const [editError, setEditError] = useState(""); const [editErrors, setEditErrors] = useState<FieldErrors>({}); const [editPending, setEditPending] = useState(false);
+  const [entityRevision, setEntityRevision] = useState<string | undefined>();
+  const [deleteTarget, setDeleteTarget] = useState<Entity | null>(null); const [conflict, setConflict] = useState<{ remote: Entity; revision: string } | null>(null); const [unsaved, setUnsaved] = useState<"create" | "edit" | null>(null); const [batchPending, setBatchPending] = useState<string | null>(null);
+  const [pendingBatchDeleteItems, setPendingBatchDeleteItems] = useState<Array<{ identity: { term: string; group_id: string }; expected_revision?: string }> | null>(null);
+  const removeInFlight = useRef(false); const batchInFlight = useRef(false); const confirmInFlight = useRef(false); const listGeneration = useRef(0);
+  const [confirmPending, setConfirmPending] = useState(false);
+  const createDirty = createOpen && JSON.stringify(createDraft) !== JSON.stringify(draftOf({}, groupId)); const editDirty = editorOpen && editorMode === "edit" && JSON.stringify(editDraft) !== JSON.stringify(editBase);
+  useEffect(() => onDirtyChange?.(createDirty || editDirty), [createDirty, editDirty, onDirtyChange]);
+  const fetchCandidates = useCallback(async () => { if (!groupId) return; const request = ++listGeneration.current; setLoading(true); try { const r = unwrapApiData(await apiRequest(`jargon/candidates?group_id=${groupId}&limit=50`)); if (request === listGeneration.current) setCandidates((r.candidates ?? []) as JargonCandidate[]); } catch (e) { if (request === listGeneration.current) showToast(String(e), true); } finally { if (request === listGeneration.current) setLoading(false); } }, [groupId, showToast]);
+  const fetchMeanings = useCallback(async () => { if (!groupId) return; const request = ++listGeneration.current; setLoading(true); try { const r = unwrapApiData(await apiRequest(`jargon/meanings?group_id=${groupId}&confirmed_only=false`)); if (request === listGeneration.current) setMeanings((r.meanings ?? []) as Entity[]); } catch (e) { if (request === listGeneration.current) showToast(String(e), true); } finally { if (request === listGeneration.current) setLoading(false); } }, [groupId, showToast]);
+  const fetchStats = useCallback(async () => { if (!groupId) return; try { const r = unwrapApiData<Record<string, unknown>>(await apiRequest(`jargon/stats?group_id=${groupId}`)); setStats({ total_terms: Number(r.total_terms ?? 0), candidate_count: Number(r.candidate_count ?? 0), store_confirmed: Number(r.store_confirmed ?? 0) }); } catch { /* non-critical */ } }, [groupId]);
+  const refresh = useCallback(() => { fetchStats(); tab === "candidates" ? fetchCandidates() : fetchMeanings(); }, [fetchStats, fetchCandidates, fetchMeanings, tab]);
+  useEffect(() => { setSelected([]); refresh(); return () => { listGeneration.current += 1; }; }, [groupId, tab]);
+  useEffect(() => () => { listGeneration.current += 1; }, []);
+  const handleConfirm = async (term: string, confirmed: boolean) => { if (confirmInFlight.current) return; confirmInFlight.current = true; setConfirmPending(true); try { await apiPost("jargon/confirm", { term, group_id: groupId, confirmed }); showToast(t(confirmed ? "toast.jargonConfirmed" : "toast.jargonRejected", term)); refresh(); } catch (e) { showToast(String(e), true); } finally { confirmInFlight.current = false; setConfirmPending(false); } };
+  const handleMine = async () => { setMining(true); try { const r = unwrapApiData<Record<string, unknown>>(await apiPost("jargon/mine", { group_id: groupId, limit: 5 })); showToast(t("toast.jargonMineStarted")); if (Number(r.inferred_count ?? 0) > 0) refresh(); } catch (e) { showToast(String(e), true); } finally { setMining(false); } };
+  const openEntity = (e: Entity) => { setEntity(e); setEntityRevision(e.revision); setEditDraft(draftOf(e, groupId)); setEditBase(draftOf(e, groupId)); setEditorMode("view"); setEditError(""); setEditorOpen(true); };
+  const beginCreate = () => { setCreateDraft(draftOf({}, groupId)); setCreateError(""); setCreateErrors({}); setCreateOpen(true); };
+  const create = async () => { if (createPending) return; setCreatePending(true); setCreateError(""); try { const r = validEntityEnvelope(unwrapApiData(await apiPost("jargon/create", createDraft))); if (!r) throw new Error("Invalid jargon entity response"); const next = r.entity; setMeanings((old) => [...old.filter((x) => x.term !== next.term || x.group_id !== next.group_id), next]); setCreateOpen(false); setCreateDraft(draftOf({}, groupId)); setTab("meanings"); window.setTimeout(() => openEntity(next), 0); } catch (e) { setCreateError(e instanceof Error ? e.message : String(e)); if (e instanceof ApiRequestError) setCreateErrors(e.fieldErrors); } finally { setCreatePending(false); } };
+  const save = async (revision = entity?.revision, draft = editDraft, target = entity) => { if (!target || editPending) return; setEditPending(true); setEditError(""); try { const { term: _term, group_id: _group, ...changes } = draft; const r = validEntityEnvelope(unwrapApiData(await apiPost("jargon/update", { identity: identity(target), changes, expected_revision: revision }))); if (!r) throw new Error("Invalid jargon entity response"); const next = r.entity; setEntity(next); setEntityRevision(r.revision); setEditDraft(draftOf(next, groupId)); setEditBase(draftOf(next, groupId)); setEditorMode("view"); setMeanings((old) => old.map((x) => x.term === target.term && x.group_id === target.group_id ? next : x)); } catch (e) { const apiError = e as Partial<ApiRequestError>; const data = (apiError.data ?? {}) as Record<string, unknown>; const currentRevision = typeof data.current_revision === "string" ? data.current_revision.trim() : ""; const remoteEnvelope = validEntityEnvelope({ entity: data.current_entity, revision: currentRevision }); if (apiError.code === "edit_conflict" && remoteEnvelope && currentRevision) { setEditError("Edit conflict"); setConflict({ remote: remoteEnvelope.entity, revision: currentRevision }); } else { setEditError(e instanceof Error ? e.message : String(e)); if (e instanceof ApiRequestError) setEditErrors(e.fieldErrors); } } finally { setEditPending(false); } };
+  const remove = async () => { if (!deleteTarget || removeInFlight.current) return; const target = { identity: identity(deleteTarget), expected_revision: deleteTarget.revision }; removeInFlight.current = true; try { const result = unwrapApiData(await apiPost("jargon/delete", target)); const responseIdentity = result && typeof result === "object" ? (result as Record<string, unknown>).identity : null; if (!result || typeof result !== "object" || (result as Record<string, unknown>).deleted !== true || !responseIdentity || typeof responseIdentity !== "object" || (responseIdentity as Record<string, unknown>).term !== target.identity.term || (responseIdentity as Record<string, unknown>).group_id !== target.identity.group_id) throw new Error("Invalid jargon delete response"); setMeanings((old) => old.filter((x) => x.term !== target.identity.term || x.group_id !== target.identity.group_id)); setDeleteTarget(null); setEditorOpen(false); } catch (e) { showToast(String(e), true); } finally { removeInFlight.current = false; } };
+  const batch = async (action: string, frozenItems?: Array<{ identity: { term: string; group_id: string }; expected_revision?: string }>) => { if (batchPending || batchInFlight.current) return; const items = frozenItems ?? meanings.filter((m) => selected.includes(`${m.term}:${m.group_id}`)).map((m) => ({ identity: identity(m), expected_revision: m.revision })); batchInFlight.current = true; setBatchPending(action); try { const r = unwrapApiData(await apiPost("jargon/batch", { action, items })); const failed = validateJargonBatch(r, items); setSelected(failed); refresh(); if (action === "delete" && frozenItems) { setPendingBatchDeleteItems(null); setDeleteTarget(null); } } catch (e) { showToast(String(e), true); } finally { batchInFlight.current = false; setBatchPending(null); } };
+  const openBatchDelete = () => { const items = meanings.filter((m) => selected.includes(`${m.term}:${m.group_id}`)).map((m) => ({ identity: identity(m), expected_revision: m.revision })); setPendingBatchDeleteItems(items); setDeleteTarget(selectedEntities[0] ?? null); };
+  const closeCreate = () => createDirty ? setUnsaved("create") : setCreateOpen(false); const closeEditor = () => editDirty ? setUnsaved("edit") : setEditorOpen(false);
+  const tabKey = (e: KeyboardEvent<HTMLButtonElement>, current: "candidates" | "meanings") => { if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); const next = current === "candidates" ? "meanings" : "candidates"; setTab(next); document.getElementById(`jargon-${next}-tab`)?.focus(); } };
+  const selectedEntities = useMemo(() => meanings.filter((m) => selected.includes(`${m.term}:${m.group_id}`)), [meanings, selected]);
+  const form = (value: JargonDraft, change: (v: JargonDraft) => void, mode: "create" | "edit", errors: FieldErrors) => <JargonForm value={value} onChange={change} fieldErrors={errors} mode={mode} />;
+  return <PageFrame variant="dense" aria-label={t("jargon.title")}><PageHeader title={t("jargon.title")} icon={<MessageCircleCode />} actions={<><Select value={groupId} onValueChange={(v) => { if (v) { setSelected([]); setGroupId(v); } }} disabled={groups.length === 0}><SelectTrigger className="w-36 text-xs"><span>{groupId || t("jargon.allGroups")}</span></SelectTrigger><SelectContent>{groups.map((g) => <SelectItem key={g.group_id} value={g.group_id} onClick={() => { setSelected([]); setGroupId(g.group_id); }}>{g.group_id}{g.message_count ? ` (${g.message_count})` : ""}</SelectItem>)}</SelectContent></Select><Button variant="outline" size="sm" onClick={refresh}><RefreshCw data-icon="inline-start" /> {t("common.refresh")}</Button></>} />
+    <div className="flex min-h-12 shrink-0 items-center border-b bg-muted/30 px-4 py-2"><MetricGrid minItemWidth="12rem" className="w-full gap-3 text-xs text-muted-foreground"><div><Hash /> {t("jargon.stats")}: <b>{stats.total_terms}</b> {t("jargon.meanings").toLowerCase()}</div><div><Users /> <b>{stats.candidate_count}</b> {t("jargon.candidates").toLowerCase()}</div><div><Zap /> <b>{stats.store_confirmed}</b> {t("jargon.confirm").toLowerCase()}</div></MetricGrid></div>
+    <PageToolbar className="justify-between bg-background"><div className="flex gap-1" role="tablist" aria-label={t("jargon.views")}>{(["candidates", "meanings"] as const).map((key) => <Button key={key} variant={tab === key ? "secondary" : "ghost"} size="sm" role="tab" id={`jargon-${key}-tab`} aria-selected={tab === key} aria-controls={`jargon-${key}-panel`} tabIndex={tab === key ? 0 : -1} onClick={() => setTab(key)} onKeyDown={(e) => tabKey(e, key)}>{t(`jargon.${key}`)}</Button>)}</div><div className="flex gap-2">{tab === "meanings" && <><Button size="sm" onClick={beginCreate}>New Jargon</Button>{selectedEntities.length > 0 && <span className="self-center text-sm">{selectedEntities.length} selected</span>}{([['confirm','Confirm selected'],['unconfirm','Unconfirm selected'],['set_global','Set global'],['unset_global','Unset global'],['delete','Delete selected']] as const).map(([action,label]) => selectedEntities.length > 0 && <Button key={action} aria-label={action === "set_global" ? "set global" : action === "unset_global" ? "unset global" : undefined} size="sm" variant={action === "delete" ? "destructive" : "outline"} disabled={Boolean(batchPending)} onClick={() => action === "delete" ? openBatchDelete() : batch(action)}>{label}</Button>)}</>}{tab === "candidates" && <Button size="sm" onClick={handleMine} disabled={mining}>{mining ? <Loader2 className="animate-spin" /> : <Sparkles />} {mining ? t("jargon.mining") : t("jargon.mine")}</Button>}</div></PageToolbar>
+    <PageContent width="full" className="p-0"><div id="jargon-candidates-panel" role="tabpanel" aria-labelledby="jargon-candidates-tab" hidden={tab !== "candidates"}>{loading ? <p className="p-12 text-center">{t("table.loading")}</p> : candidates.length === 0 ? <p className="p-12 text-center">{t("jargon.noCandidates")}</p> : <Table><TableHeader><TableRow><TableHead>{t("table.title")}</TableHead><TableHead>{t("jargon.score")}</TableHead><TableHead>{t("jargon.frequency")}</TableHead><TableHead>{t("jargon.users")}</TableHead><TableHead>{t("detail.content")}</TableHead><TableHead>{t("table.status")}</TableHead></TableRow></TableHeader><TableBody>{candidates.map((c) => <TableRow key={`${c.term}-${c.group_id}`}><TableCell>{c.term}</TableCell><TableCell><ScoreBar score={c.score} locale={locale} /></TableCell><TableCell>{c.frequency}</TableCell><TableCell>{c.unique_users}</TableCell><TableCell>{c.context_examples?.[0] ?? "—"}</TableCell><TableCell><Button variant="ghost" size="icon-sm" title={t("jargon.confirm")} disabled={confirmPending} onClick={() => handleConfirm(c.term, true)}><Check /></Button><Button variant="ghost" size="icon-sm" title={t("jargon.reject")} disabled={confirmPending} onClick={() => handleConfirm(c.term, false)}><X /></Button></TableCell></TableRow>)}</TableBody></Table>}</div>
+      <div id="jargon-meanings-panel" role="tabpanel" aria-labelledby="jargon-meanings-tab" hidden={tab !== "meanings"}>{loading ? <p className="p-12 text-center">{t("table.loading")}</p> : meanings.length === 0 ? <p className="p-12 text-center">{t("jargon.noMeanings")}</p> : <Table><TableHeader><TableRow><TableHead><span className="sr-only">Select</span></TableHead><TableHead>{t("table.title")}</TableHead><TableHead>{t("jargon.meaning")}</TableHead><TableHead>{t("jargon.confidence")}</TableHead><TableHead>{t("jargon.global")}</TableHead><TableHead>{t("table.status")}</TableHead></TableRow></TableHeader><TableBody>{meanings.map((m) => { const key=`${m.term}:${m.group_id}`; return <TableRow key={key}><TableCell><Checkbox aria-label={`select ${m.term}`} checked={selected.includes(key)} onCheckedChange={(v) => setSelected((s) => v ? [...s, key] : s.filter((x) => x !== key))} /></TableCell><TableCell><Button variant="ghost" onClick={() => openEntity(m)} aria-label="view term">{m.term}</Button></TableCell><TableCell>{m.meaning || "—"}</TableCell><TableCell><ScoreBar score={m.confidence} locale={locale} /></TableCell><TableCell>{m.is_global ? <Globe className="text-primary" /> : "—"}</TableCell><TableCell><Badge variant={m.is_confirmed ? "default" : "secondary"}>{m.is_confirmed ? t("jargon.confirm").toLowerCase() : t("jargon.reject").toLowerCase()}</Badge><span className="sr-only">{m.revision}</span></TableCell></TableRow>; })}</TableBody></Table>}</div></PageContent>
+    <EntityCreateDialog open={createOpen} onOpenChange={(v) => v ? setCreateOpen(true) : closeCreate()} title="New Jargon" description="Create a jargon meaning" isDirty={createDirty} isSubmitting={createPending} canSubmit={Boolean(createDraft.term.trim() && createDraft.meaning.trim())} onCancel={() => { setCreateOpen(false); setCreateDraft(draftOf({}, groupId)); setUnsaved(null); onDirtyChange?.(editDirty); refresh(); }} onSubmit={create} form={<>{createError && <div role="alert">{createError}</div>}{form(createDraft, setCreateDraft, "create", createErrors)}</>} labels={{ close:"Close", cancel:"Cancel", submit:"Create", submitting:"Creating" }} />
+    <EntityEditorSheet key={entityRevision ?? entity?.revision ?? entity?.term} open={editorOpen} onOpenChange={(v) => v ? setEditorOpen(true) : closeEditor()} title={entity?.term ?? "Jargon"} description="Jargon meaning" mode={editorMode} isDirty={editDirty} isSubmitting={editPending} canSave={Boolean(editDraft.meaning.trim())} onBeginEdit={() => { setEditorMode("edit"); setEditError(""); }} onCancel={() => { setEditDraft(editBase); setEditorMode("view"); setEditError(""); }} onSave={() => save()} view={<div className="space-y-3 text-sm"><p>{entity?.meaning}</p>{entity?.context_examples?.map((x) => <p key={x}>{x}</p>)}<p>Revision: {entityRevision ?? entity?.revision ?? ""}</p><p>Count: {entity?.count}</p><Button type="button" variant="destructive" onClick={() => entity && setDeleteTarget(entity)}>Delete</Button></div>} form={<>{editError && <div role="alert">{editError}</div>}{form(editDraft, setEditDraft, "edit", editErrors)}</>} labels={{ edit:"Edit", close:"Close", cancel:"Cancel", save:"Save", saving:"Saving" }} />
+    <DeleteConfirmDialog open={Boolean(deleteTarget)} title="Delete jargon" description="This cannot be undone." cancelLabel="Cancel" confirmLabel="Delete" onCancel={() => { setDeleteTarget(null); setPendingBatchDeleteItems(null); }} onConfirm={() => pendingBatchDeleteItems ? void batch("delete", pendingBatchDeleteItems) : void remove()} />
+    <EditConflictDialog open={Boolean(conflict)} title="Edit conflict" description="The entity was updated remotely." loadRemoteLabel="Load latest" reapplyLocalLabel="Reapply local" onLoadRemote={() => { if (conflict) { setEntity(conflict.remote); setEditDraft(draftOf(conflict.remote, groupId)); setEditBase(draftOf(conflict.remote, groupId)); setConflict(null); } }} onReapplyLocal={() => { if (conflict) { const local = editDraft; setEntity(conflict.remote); setEditBase(draftOf(conflict.remote, groupId)); setEditDraft(local); setConflict(null); save(conflict.revision, local, conflict.remote); } }} />
+    <UnsavedChangesDialog open={Boolean(unsaved)} title="Unsaved changes" description="Discard your draft?" keepEditingLabel="Keep editing" discardLabel="Discard" onKeepEditing={() => setUnsaved(null)} onDiscard={() => { if (unsaved === "create") { setCreateOpen(false); setCreateDraft(draftOf({}, groupId)); } else { setEditorOpen(false); setEditorMode("view"); setEditDraft(editBase); } setUnsaved(null); }} />
+  <span className="sr-only">{entityRevision ?? entity?.revision}{entity?.context_examples?.join(" ")}</span>{editorOpen && entity && <Button aria-label="Delete" onClick={() => setDeleteTarget(entity)}>Delete</Button>}</PageFrame>;
 }

@@ -88,6 +88,17 @@ export interface JargonMeaning {
   last_inference_count: number;
   created_at: number;
   updated_at: number;
+  revision?: string;
+}
+
+export interface JargonDraft {
+  term: string;
+  group_id: string;
+  meaning: string;
+  confidence: number;
+  is_jargon: boolean;
+  is_confirmed: boolean;
+  is_global: boolean;
 }
 
 export interface JargonStats {
@@ -109,11 +120,25 @@ export interface AffectionUserEntry {
   last_interaction: number;
 }
 
+export interface AffectionDraft {
+  group_id: string;
+  user_id: string;
+  affection_score: number;
+}
+
 export interface BotMoodStatus {
   mood_type: string;
   intensity: number;
   description: string;
   is_active: boolean;
+}
+
+export interface MoodDraft {
+  group_id: string;
+  mood_type: string;
+  intensity: number;
+  duration_hours: number;
+  description: string;
 }
 
 export interface AffectionStatus {
