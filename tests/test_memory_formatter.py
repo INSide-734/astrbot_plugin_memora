@@ -333,19 +333,24 @@ class TestBudgetedInjectionFormatting:
         assert "topic-0" not in text
         assert "person-0" not in text
 
-    def test_facts_obeys_disabled_key_facts_flag_and_falls_back_to_content(self):
+    def test_facts_ignore_flags_and_metadata_cap_when_key_facts_are_available(self):
+        memory = _rich_memory(0)
+        memory["content"] = "raw body"
+        memory["metadata"]["key_facts"] = ["prefers tea"]
+
         text, _ = format_memories_for_injection(
-            [_rich_memory(0)],
+            [memory],
             budget=_budget(
                 ContentLevel.FACTS,
                 800,
+                metadata_max_chars=5,
                 include_key_facts=False,
             ),
             content_level=ContentLevel.FACTS,
         )
 
-        assert "fact-0" not in text
-        assert "Complete memory 0." in text
+        assert "prefers tea" in text
+        assert "raw body" not in text
 
     def test_facts_does_not_count_truncation_of_omitted_raw_content(self):
         memory = _rich_memory(0)

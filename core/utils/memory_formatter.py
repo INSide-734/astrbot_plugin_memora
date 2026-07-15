@@ -140,12 +140,11 @@ def format_memories_for_injection(
             facts = [str(fact) for fact in key_facts if fact] if isinstance(key_facts, list) else []
 
             if use_budget and content_level is ContentLevel.FACTS:
-                if budget.include_key_facts and facts:
-                    append_metadata(f"Key facts: {'; '.join(facts)}")
-                if not metadata_parts:
-                    entry_parts.append(content)
-                else:
+                if facts:
+                    entry_parts.append(f"Key facts: {'; '.join(facts)}")
                     was_truncated = False
+                else:
+                    entry_parts.append(content)
             else:
                 if not use_budget or budget.include_topics:
                     topics = metadata.get("topics", [])
