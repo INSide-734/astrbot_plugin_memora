@@ -4,7 +4,12 @@ from types import MappingProxyType
 
 import pytest
 
-from core.injection.models import ContentLevel, DeliveryMode, InjectionStrategyPreset, PresetName
+from core.injection.models import (
+    ContentLevel,
+    DeliveryMode,
+    InjectionStrategyPreset,
+    PresetName,
+)
 from core.injection.presets import PRESETS, get_preset, resolve_preset
 
 
@@ -192,6 +197,7 @@ def test_length_overrides_are_clamped_to_global_hard_caps() -> None:
 
     assert resolved.memory_max_chars == 2000
     assert resolved.metadata_max_chars == 500
+
 
 def test_negative_numeric_overrides_clamp_to_one() -> None:
     budget_resolved = resolve_preset(
