@@ -18,7 +18,7 @@ from astrbot.api import logger
 class InjectionBudget:
     """注入预算配置 — 控制每轮请求中注入的记忆上下文总量。"""
 
-    # 总注入预算（字符数），0 表示不限制
+    # 总注入预算（字符数）；0 表示不允许自动注入
     total_chars: int = 1200
     # 单条记忆 content 最大字符数，超出的截断
     memory_max_chars: int = 220
@@ -100,7 +100,7 @@ def select_memories_with_budget(
     返回 (selected, dropped)。
     """
     if budget.total_chars <= 0:
-        return (memories, [])
+        return ([], list(memories))
 
     # 按分数降序排列（高分的优先保留）
     sorted_memories = sorted(
@@ -118,13 +118,14 @@ def select_memories_with_budget(
 
     for mem in sorted_memories:
         content = str(mem.get("content", "") or "")
-        # 估算单条记忆的字符开销
-        est_chars = min(len(content), budget.memory_max_chars)
-        # metadata 估算
-        est_chars += min(budget.metadata_max_chars, 180)
+        # Estimate the complete entry fields; zero per-field limits mean no
+        # truncation, not zero cost.
+        content_limit = budget.memory_max_chars if budget.memory_max_chars > 0 else len(content)
+        est_chars = min(len(content), content_limit)
+        metadata_limit = budget.metadata_max_chars if budget.metadata_max_chars > 0 else 180
+        est_chars += min(metadata_limit, 180)
 
-        if running_chars + est_chars <= effective_budget or not selected:
-            # 至少保留第一条（最高分），即使超预算
+        if running_chars + est_chars <= effective_budget:
             selected.append(mem)
             running_chars += est_chars
         else:

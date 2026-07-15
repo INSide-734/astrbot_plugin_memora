@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from astrbot.api import logger
+from ..injection.models import ContentLevel
 
 from .data_helpers import safe_parse_metadata, validate_timestamp
 from .injection_budget import (
@@ -25,28 +26,27 @@ from .injection_budget import (
 def format_memories_for_injection(
     memories: list,
     budget: InjectionBudget | None = None,
+    content_level: ContentLevel = ContentLevel.COMPACT,
 ) -> str | tuple[str, InjectionStats]:
-    """
-    将检索到的记忆列表格式化为单个字符串，以便注入到 System Prompt。
-    添加明确的说明文本，告知 LLM 这些是历史对话记忆。
+    """Format recalled memories for prompt injection.
 
-    Args:
-        memories: 记忆字典或对象列表。
-        budget: 注入预算配置。None 时使用完整格式（向后兼容）。
-
-    Returns:
-        如果 budget 为 None，返回纯字符串（向后兼容）。
-        如果 budget 不为 None，返回 (formatted_string, InjectionStats) 元组。
+    Calls without a budget retain the legacy string format. Budgeted calls return
+    text plus statistics and treat ``total_chars`` as a hard cap over the entire
+    payload, including wrappers, metadata, separators, and newlines.
     """
-    # 延迟导入避免循环依赖
     from ..base.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 
+    stats = InjectionStats()
     if not memories:
-        if budget is not None:
-            return ("", InjectionStats())
-        return ""
+        return ("", stats) if budget is not None else ""
 
     use_budget = budget is not None
+    if use_budget and (
+        budget.total_chars <= 0 or content_level is ContentLevel.NONE
+    ):
+        stats.dropped_by_budget = len(memories)
+        return ("", stats)
+
     if use_budget and budget.compact_header:
         header = format_compact_header()
         footer = format_compact_footer()
@@ -71,20 +71,13 @@ def format_memories_for_injection(
             f"{MEMORY_INJECTION_FOOTER}"
         )
 
-    stats = InjectionStats()
-    stats.header_chars = len(header)
-    stats.footer_chars = len(footer)
-
     logger.debug(
         f"[format_memories_for_injection] 记忆注入标记: 头部='{MEMORY_INJECTION_HEADER}', 尾部='{MEMORY_INJECTION_FOOTER}'"
     )
 
-    truncated_count = 0
-    formatted_entries = []
+    formatted_entries: list[tuple[str, bool]] = []
     for idx, mem in enumerate(memories, 1):
         try:
-            # 修复：memories 传入的是字典列表，不是对象
-            # 从字典中获取数据
             if isinstance(mem, dict):
                 content = mem.get("content", "Content missing")
                 score = mem.get("score", 0.0)
@@ -93,7 +86,6 @@ def format_memories_for_injection(
                 importance = metadata.get("importance", 0.5)
                 interaction_type = metadata.get("interaction_type", "Unknown")
             else:
-                # 如果是对象，尝试访问属性
                 content = getattr(mem, "content", "Content missing")
                 score = getattr(mem, "score", 0.0)
                 timestamp = getattr(mem, "timestamp", None)
@@ -108,7 +100,6 @@ def format_memories_for_injection(
                 importance = metadata.get("importance", 0.5)
                 interaction_type = metadata.get("interaction_type", "Unknown")
 
-            # 格式化时间戳
             time_str = ""
             if timestamp:
                 try:
@@ -117,119 +108,112 @@ def format_memories_for_injection(
                 except Exception:
                     logger.debug(f"记忆时间戳格式化失败 (timestamp={timestamp})")
 
-            # === 预算控制：截断 content ===
+            was_truncated = False
             if use_budget and budget.memory_max_chars > 0 and len(content) > budget.memory_max_chars:
                 content = truncate_preserving_sentence(content, budget.memory_max_chars)
-                truncated_count += 1
+                was_truncated = True
 
-            # 构建格式化的记忆条目（展示content和元数据信息）
-            time_part = f", Memory write time: {time_str}" if time_str else ""
+            include_time = not use_budget or content_level is ContentLevel.DETAILED
+            time_part = (
+                f", Memory write time: {time_str}"
+                if include_time and time_str
+                else ""
+            )
             entry_parts = [
                 f"记忆 #{idx} / Memory #{idx} (Importance: {importance:.2f}){time_part}"
             ]
 
-            # 添加元数据信息
-            metadata_parts = []
+            metadata_parts: list[str] = []
             metadata_chars = 0
 
-            # 添加主题
-            if use_budget and not budget.include_topics:
-                pass
-            else:
-                topics = metadata.get("topics", [])
-                if topics and isinstance(topics, list) and len(topics) > 0:
-                    topics_str = "、".join(str(t) for t in topics if t)
-                    if topics_str:
-                        topic_line = f"Topics: {topics_str}"
-                        if use_budget and budget.metadata_max_chars > 0:
-                            if metadata_chars + len(topic_line) <= budget.metadata_max_chars:
-                                metadata_parts.append(topic_line)
-                                metadata_chars += len(topic_line)
-                        else:
-                            metadata_parts.append(topic_line)
+            def append_metadata(line: str) -> None:
+                nonlocal metadata_chars
+                if use_budget and budget.metadata_max_chars > 0:
+                    separator_chars = 3 if metadata_parts else 0
+                    if metadata_chars + separator_chars + len(line) > budget.metadata_max_chars:
+                        return
+                    metadata_chars += separator_chars
+                metadata_parts.append(line)
+                metadata_chars += len(line)
 
-            # 添加参与者（仅群聊）
-            if use_budget and not budget.include_participants:
-                pass
-            else:
-                participants = metadata.get("participants", [])
-                if (
-                    participants
-                    and isinstance(participants, list)
-                    and len(participants) > 0
-                ):
-                    participants_str = "、".join(str(p) for p in participants if p)
-                    if participants_str:
-                        part_line = f"Participants: {participants_str}"
-                        if use_budget and budget.metadata_max_chars > 0:
-                            if metadata_chars + len(part_line) <= budget.metadata_max_chars:
-                                metadata_parts.append(part_line)
-                                metadata_chars += len(part_line)
-                        else:
-                            metadata_parts.append(part_line)
+            key_facts = metadata.get("key_facts", [])
+            facts = [str(fact) for fact in key_facts if fact] if isinstance(key_facts, list) else []
 
-            # 添加关键事实
-            if use_budget and not budget.include_key_facts:
-                pass
+            if use_budget and content_level is ContentLevel.FACTS:
+                if facts:
+                    append_metadata(f"Key facts: {'; '.join(facts)}")
+                if not metadata_parts:
+                    entry_parts.append(content)
             else:
-                key_facts = metadata.get("key_facts", [])
-                if key_facts and isinstance(key_facts, list) and len(key_facts) > 0:
-                    facts_str = "; ".join(str(f) for f in key_facts if f)
-                    if facts_str:
-                        fact_line = f"Key facts: {facts_str}"
-                        if use_budget and budget.metadata_max_chars > 0:
-                            if metadata_chars + len(fact_line) <= budget.metadata_max_chars:
-                                metadata_parts.append(fact_line)
-                                metadata_chars += len(fact_line)
-                        else:
-                            metadata_parts.append(fact_line)
+                if not use_budget or budget.include_topics:
+                    topics = metadata.get("topics", [])
+                    if isinstance(topics, list):
+                        topics_text = "、".join(str(topic) for topic in topics if topic)
+                        if topics_text:
+                            append_metadata(f"Topics: {topics_text}")
 
-            # 组装元数据行
+                if not use_budget or budget.include_participants:
+                    participants = metadata.get("participants", [])
+                    if isinstance(participants, list):
+                        participants_text = "、".join(
+                            str(participant) for participant in participants if participant
+                        )
+                        if participants_text:
+                            append_metadata(f"Participants: {participants_text}")
+
+                if (not use_budget or budget.include_key_facts) and facts:
+                    append_metadata(f"Key facts: {'; '.join(facts)}")
+
+                entry_parts.append(content)
+
             if metadata_parts:
-                entry_parts.append(" | ".join(metadata_parts))
-
-            # 添加记忆内容
-            entry_parts.append(content)
+                entry_parts.insert(1, " | ".join(metadata_parts))
 
             entry = "\n".join(entry_parts)
-            formatted_entries.append(entry)
-
+            formatted_entries.append((entry, was_truncated))
             logger.debug(
                 f"[format_memories_for_injection] 格式化记忆 #{idx}: 重要性={importance:.2f}, "
                 f"得分={score:.2f}, 类型={interaction_type}, 内容长度={len(content)}"
             )
         except Exception as e:
-            # 如果处理失败，则跳过此条记忆
             logger.warning(
                 f"[format_memories_for_injection] 格式化记忆时出错，跳过此记忆: {e}, "
                 f"记忆对象类型: {type(mem)}"
             )
-            continue
 
     if not formatted_entries:
         logger.debug("[format_memories_for_injection] 没有记忆需要格式化，返回空字符串")
-        if budget is not None:
-            return ("", stats)
-        return ""
+        return ("", stats) if use_budget else ""
 
-    body = "\n\n".join(formatted_entries)
+    if use_budget:
+        retained = formatted_entries.copy()
+        while retained:
+            body = "\n\n".join(entry for entry, _ in retained)
+            result = f"{header}{body}{footer}"
+            if len(result) <= budget.total_chars:
+                stats.chars = len(result)
+                stats.memory_count = len(retained)
+                stats.truncated_count = sum(truncated for _, truncated in retained)
+                stats.dropped_by_budget = len(formatted_entries) - len(retained)
+                stats.header_chars = len(header)
+                stats.footer_chars = len(footer)
+                return (result, stats)
+            retained.pop()
+
+        stats.dropped_by_budget = len(formatted_entries)
+        return ("", stats)
+
+    body = "\n\n".join(entry for entry, _ in formatted_entries)
     result = f"{header}{body}{footer}"
-
     stats.chars = len(result)
     stats.memory_count = len(formatted_entries)
-    stats.truncated_count = truncated_count
-
+    stats.truncated_count = sum(truncated for _, truncated in formatted_entries)
+    stats.header_chars = len(header)
+    stats.footer_chars = len(footer)
     logger.info(
         f"[format_memories_for_injection] 记忆格式化完成: 记忆条数={len(formatted_entries)}, "
         f"总长度={len(result)}"
     )
-    logger.debug(
-        f"[format_memories_for_injection] 包含标记验证: "
-        f"头部={MEMORY_INJECTION_HEADER in result}, 尾部={MEMORY_INJECTION_FOOTER in result}"
-    )
-
-    if budget is not None:
-        return (result, stats)
     return result
 
 
