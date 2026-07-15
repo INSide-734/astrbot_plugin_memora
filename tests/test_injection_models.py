@@ -20,6 +20,7 @@ import core.injection as injection
 import core.injection.models as model_module
 import core.injection.presets as preset_module
 
+
 def test_package_exports_are_exact_and_identity_preserving() -> None:
     expected = {
         "ContentLevel",
