@@ -1,8 +1,12 @@
 import { act, renderHook } from "@testing-library/react";
+import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiRequestError, type EntityEnvelope } from "@/types/editing";
-import { useEntityEditor } from "./useEntityEditor";
+import {
+  type UseEntityEditorOptions,
+  useEntityEditor,
+} from "./useEntityEditor";
 
 interface Draft {
   name: string;
@@ -31,6 +35,17 @@ function renderEditor(
       onDirtyChange,
     })
   );
+}
+
+function renderEditorWithProps(initialProps: UseEntityEditorOptions<Draft>) {
+  return renderHook(
+    (options: UseEntityEditorOptions<Draft>) => useEntityEditor<Draft>(options),
+    { initialProps }
+  );
+}
+
+function StrictModeWrapper({ children }: { children: ReactNode }) {
+  return <StrictMode>{children}</StrictMode>;
 }
 
 describe("useEntityEditor", () => {
@@ -171,6 +186,7 @@ describe("useEntityEditor", () => {
     act(() => hook.result.current.loadRemote());
 
     expect(hook.result.current).toMatchObject({
+      mode: "view",
       draft: remote.entity,
       revision: "rev-2",
       isDirty: false,
@@ -255,5 +271,209 @@ describe("useEntityEditor", () => {
     });
     hook.unmount();
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("settles successful and failed saves after StrictMode effect replay", async () => {
+    const submit = vi.fn()
+      .mockResolvedValueOnce({ entity: { name: "已保存", tags: ["alpha"] }, revision: "rev-2" })
+      .mockRejectedValueOnce(new ApiRequestError("校验失败", "validation_failed"));
+    const hook = renderHook(
+      () => useEntityEditor<Draft>({
+        entity: INITIAL,
+        revision: "rev-1",
+        submit,
+      }),
+      { wrapper: StrictModeWrapper }
+    );
+
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "已保存");
+    });
+    await act(async () => { await expect(hook.result.current.save()).resolves.toBe(true); });
+    expect(hook.result.current).toMatchObject({
+      mode: "view",
+      isSubmitting: false,
+      revision: "rev-2",
+    });
+
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "失败名称");
+    });
+    await act(async () => { await expect(hook.result.current.save()).resolves.toBe(false); });
+    expect(hook.result.current).toMatchObject({
+      mode: "edit",
+      isSubmitting: false,
+      formError: "校验失败",
+    });
+  });
+
+  it("rebases a clean editor to changed entity props", () => {
+    const submit = vi.fn();
+    const hook = renderEditorWithProps({
+      entity: INITIAL,
+      revision: "rev-1",
+      submit,
+    });
+
+    hook.rerender({
+      entity: { name: "服务端名称", tags: ["remote"] },
+      revision: "rev-2",
+      submit,
+    });
+
+    expect(hook.result.current).toMatchObject({
+      mode: "view",
+      draft: { name: "服务端名称", tags: ["remote"] },
+      revision: "rev-2",
+      isDirty: false,
+      fieldErrors: {},
+      formError: null,
+      conflict: null,
+    });
+  });
+
+  it("discards a dirty draft when changed entity props rebase it", () => {
+    const submit = vi.fn();
+    const hook = renderEditorWithProps({
+      entity: INITIAL,
+      revision: "rev-1",
+      submit,
+    });
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "本地名称");
+    });
+
+    hook.rerender({
+      entity: { name: "服务端名称", tags: ["remote"] },
+      revision: "rev-2",
+      submit,
+    });
+
+    expect(hook.result.current).toMatchObject({
+      mode: "view",
+      draft: { name: "服务端名称", tags: ["remote"] },
+      revision: "rev-2",
+      isDirty: false,
+    });
+  });
+
+  it("preserves equivalent props and uses the latest submit callback", async () => {
+    const firstSubmit = vi.fn();
+    const latestSubmit = vi.fn().mockResolvedValue({
+      entity: { name: "已保存", tags: ["alpha"] },
+      revision: "rev-2",
+    });
+    const hook = renderEditorWithProps({
+      entity: INITIAL,
+      revision: "rev-1",
+      submit: firstSubmit,
+    });
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "本地名称");
+    });
+    const save = hook.result.current.save;
+
+    hook.rerender({
+      entity: { name: "初始名称", tags: ["alpha"] },
+      revision: "rev-1",
+      submit: latestSubmit,
+    });
+    expect(hook.result.current).toMatchObject({ mode: "edit", isDirty: true });
+
+    await act(async () => { await expect(save()).resolves.toBe(true); });
+    expect(firstSubmit).not.toHaveBeenCalled();
+    expect(latestSubmit).toHaveBeenCalledWith(
+      { name: "本地名称", tags: ["alpha"] },
+      "rev-1"
+    );
+  });
+
+  it("ignores an old save result after a prop rebase", async () => {
+    const pending = deferred<EntityEnvelope<Draft>>();
+    const submit = vi.fn(() => pending.promise);
+    const hook = renderEditorWithProps({
+      entity: INITIAL,
+      revision: "rev-1",
+      submit,
+    });
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "旧保存");
+    });
+    let save!: Promise<boolean>;
+    act(() => { save = hook.result.current.save(); });
+
+    hook.rerender({
+      entity: { name: "新远端", tags: ["remote"] },
+      revision: "rev-2",
+      submit,
+    });
+    pending.resolve({ entity: { name: "旧保存", tags: ["alpha"] }, revision: "rev-old" });
+    await act(async () => { await expect(save).resolves.toBe(false); });
+
+    expect(hook.result.current).toMatchObject({
+      mode: "view",
+      draft: { name: "新远端", tags: ["remote"] },
+      revision: "rev-2",
+      isSubmitting: false,
+      isDirty: false,
+    });
+  });
+
+  it("does not repeat dirty notifications when only the callback identity changes", () => {
+    const firstCallback = vi.fn();
+    const latestCallback = vi.fn();
+    const submit = vi.fn();
+    const hook = renderEditorWithProps({
+      entity: INITIAL,
+      revision: "rev-1",
+      submit,
+      onDirtyChange: firstCallback,
+    });
+    firstCallback.mockClear();
+
+    hook.rerender({
+      entity: { name: "初始名称", tags: ["alpha"] },
+      revision: "rev-1",
+      submit,
+      onDirtyChange: latestCallback,
+    });
+    expect(firstCallback).not.toHaveBeenCalled();
+    expect(latestCallback).not.toHaveBeenCalled();
+
+    act(() => hook.result.current.setField("name", "本地名称"));
+    expect(latestCallback).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it("releases submission state when cloning the draft throws synchronously", async () => {
+    const submit = vi.fn().mockResolvedValue({
+      entity: { name: "已保存", tags: ["alpha"] },
+      revision: "rev-2",
+    });
+    const hook = renderEditor(submit);
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "待保存");
+    });
+    hook.result.current.draft.tags = new Proxy(["alpha"], {
+      get(target, property, receiver) {
+        if (property === "map") throw new Error("克隆失败");
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    await act(async () => { await expect(hook.result.current.save()).resolves.toBe(false); });
+    expect(hook.result.current).toMatchObject({
+      isSubmitting: false,
+      formError: "克隆失败",
+    });
+
+    hook.result.current.draft.tags = ["alpha"];
+    await act(async () => { await expect(hook.result.current.save()).resolves.toBe(true); });
+    expect(submit).toHaveBeenCalledTimes(1);
   });
 });

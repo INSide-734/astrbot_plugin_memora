@@ -73,10 +73,13 @@ export function unwrapApiData<T = Record<string, unknown>>(response: ApiResponse
   }
   if (response?.status === "error") {
     const data = recordValue(response.data);
+    const topLevelFieldErrors = fieldErrors(response.field_errors);
     throw new ApiRequestError(
       response.message ? String(response.message) : localizedError("error.requestFailed").message,
       response.code,
-      fieldErrors(response.field_errors) ?? fieldErrors(data.field_errors) ?? {},
+      Object.keys(topLevelFieldErrors ?? {}).length > 0
+        ? topLevelFieldErrors
+        : fieldErrors(data.field_errors) ?? {},
       data
     );
   }
@@ -95,9 +98,12 @@ function recordValue(value: unknown): Record<string, unknown> {
 }
 
 function fieldErrors(value: unknown): FieldErrors | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as FieldErrors
-    : undefined;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter(([, message]) => typeof message === "string")
+  );
 }
 
 export function normalizeImportance(value: number): number {
