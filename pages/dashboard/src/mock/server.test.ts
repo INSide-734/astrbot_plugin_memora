@@ -174,6 +174,25 @@ describe("mutable mock reset and revision allocator", () => {
     expect([repeatedProfiles[0].revision, repeatedSocial[0].revision, repeatedJargon[0].revision, repeatedAffection[0].revision]).toEqual(snapshot);
     expect(entityEnvelope(await post("profiles/create", profileDraft("allocator"))).revision).toBe(created.revision);
   });
+
+  it("resets evaluation, review, action, and backup repositories", async () => {
+    const reset = requireReset();
+    const reports = structuredClone(mockData.EVALUATION_REPORTS);
+    const reviewItems = structuredClone(mockData.REVIEW_ITEMS);
+    const reviewActions = structuredClone(mockData.REVIEW_ACTIONS);
+    const backups = structuredClone((okData(await get("backup/list")).backups as JsonObject[]));
+
+    mockData.EVALUATION_REPORTS.unshift({ report_id: "task17-contaminated" } as never);
+    mockData.REVIEW_ITEMS.splice(0, 1);
+    mockData.REVIEW_ACTIONS["task17-contaminated"] = [{ action: "delete" }] as never;
+    await post("backup/delete", { name: backups[0].name });
+    reset();
+
+    expect(mockData.EVALUATION_REPORTS).toEqual(reports);
+    expect(mockData.REVIEW_ITEMS).toEqual(reviewItems);
+    expect(mockData.REVIEW_ACTIONS).toEqual(reviewActions);
+    expect(okData(await get("backup/list")).backups).toEqual(backups);
+  });
 });
 
 describe("social CRUD and batch contracts", () => {
@@ -261,7 +280,7 @@ describe("profile CRUD, structured fields, and compatibility", () => {
     const all = okData(await get("profiles", { limit: "100", offset: "0" })).profiles as JsonObject[];
     expect(all).toContainEqual({ ...created.entity, revision: created.revision });
     const detail = okData(await get("profiles/detail", { user_id: draft.user_id }));
-    expect(detail).toEqual({ entity: created.entity, revision: created.revision });
+    expect(detail).toEqual({ ...created.entity, revision: created.revision });
 
     const changes = {
       display_name: "Updated profile",
@@ -283,7 +302,7 @@ describe("profile CRUD, structured fields, and compatibility", () => {
       params: { tag },
     }), [{ user_id: draft.user_id }], []);
     const detail = okData(await get("profiles/detail", { user_id: draft.user_id }));
-    const tags = (detail.entity as JsonObject).tags as JsonObject[];
+    const tags = detail.tags as JsonObject[];
     expect(tags).toEqual(action === "tags_add" ? [...draft.tags, tag] : []);
     expect(detail.revision).not.toBe(created.revision);
   });
@@ -296,8 +315,8 @@ describe("profile CRUD, structured fields, and compatibility", () => {
     await post("profiles/create", legacySingle);
     await post("profiles/create", legacyBatch);
     expectBatch(await post("profiles/batch", { action: "delete", items: [{ identity: { user_id: revisioned.user_id }, expected_revision: revision }], params: {} }), [{ user_id: revisioned.user_id }], []);
-    expect(okData(await post("profiles/delete", { user_id: legacySingle.user_id }))).toEqual({ deleted: true, identity: { user_id: legacySingle.user_id } });
-    expect(okData(await post("profiles/batch", { action: "delete", user_ids: [legacyBatch.user_id] }))).toEqual({ action: "delete", affected: 1 });
+    expect(okData(await post("profiles/delete", { user_id: legacySingle.user_id }))).toEqual({ deleted: true, user_id: legacySingle.user_id });
+    expect(okData(await post("profiles/batch", { action: "delete", user_ids: [legacyBatch.user_id] }))).toEqual({ deleted_count: 1, failed_count: 0, total: 1, failed_ids: [] });
     const users = (okData(await get("profiles", { limit: "100", offset: "0" })).profiles as JsonObject[]).map((item) => item.user_id);
     expect(users).not.toEqual(expect.arrayContaining([revisioned.user_id, legacySingle.user_id, legacyBatch.user_id]));
   });
@@ -389,7 +408,7 @@ describe("affection users and non-revisioned mood", () => {
     const secondOffset = allUsers.findIndex((user) => user.user_id === secondDraft.user_id);
     expect(new Set([createdOffset, secondOffset])).toEqual(new Set([0, 1]));
     const page = okData(await get("affection/users", { group_id: draft.group_id, limit: "1", offset: String(createdOffset) }));
-    expect(page).toEqual({ users: [{ ...created.entity, revision: created.revision }], total: 2, limit: 1, offset: createdOffset });
+    expect(page).toEqual({ group_id: draft.group_id, users: [{ ...created.entity, revision: created.revision }], total: 2, limit: 1, offset: createdOffset });
     expect(second.entity).toMatchObject(secondDraft);
     const updated = entityEnvelope(await post("affection/users/update", { identity, changes: { affection_score: 55 }, expected_revision: created.revision }));
     expect(updated.entity).toMatchObject({ ...identity, affection_score: 55 });
@@ -443,6 +462,83 @@ describe("affection users and non-revisioned mood", () => {
     expect(resetResult).toMatchObject({ mood_type: expect.any(String), intensity: expect.any(Number), duration_hours: expect.any(Number), description: expect.any(String) });
     expect(resetResult).not.toHaveProperty("revision");
     expect(entityEnvelope(await post("profiles/create", profileDraft("mood-sequence-before"))).revision).toBe(beforeProfile);
+  });
+});
+
+describe("Python-compatible validation and read envelopes", () => {
+  it("rejects affection batch actions and params before deleting anything", async () => {
+    const draft = affectionDraft("batch-validation");
+    const identity = { group_id: draft.group_id, user_id: draft.user_id };
+    const created = entityEnvelope(await post("affection/users/create", draft));
+    expectValidation(await post("affection/users/batch", { action: "set_score", items: [{ identity, expected_revision: created.revision }], params: { score: 5 } }), { action: "仅支持 delete" });
+    expectValidation(await post("affection/users/batch", { action: "delete", items: [{ identity, expected_revision: created.revision }], params: { score: 5 } }), { score: "字段不可写" });
+    expect((okData(await get("affection/users", { group_id: draft.group_id, limit: "50", offset: "0" })).users as JsonObject[])).toContainEqual({ ...created.entity, revision: created.revision });
+  });
+
+  it("rejects read-only, malformed, and out-of-range revisioned changes without mutation", async () => {
+    const socialId = socialIdentity("invalid-update");
+    const social = entityEnvelope(await post("social/create", { ...socialId, strength: 0.5, tags: [] }));
+    expectValidation(await post("social/update", { identity: socialId, changes: { from_user: "other", strength: 2 }, expected_revision: social.revision }), { from_user: "字段不可写", "changes.strength": "必须在 0.0 到 1.0 之间" });
+    const profile = profileDraft("invalid-update");
+    const profileCreated = entityEnvelope(await post("profiles/create", profile));
+    expectValidation(await post("profiles/update", { identity: { user_id: profile.user_id }, changes: { preferences: [] }, expected_revision: profileCreated.revision }), { "changes.preferences": "必须为对象" });
+    const jargon = jargonDraft("invalid-update");
+    const jargonCreated = entityEnvelope(await post("jargon/create", jargon));
+    expectValidation(await post("jargon/update", { identity: { term: jargon.term, group_id: jargon.group_id }, changes: { confidence: 2, is_global: "yes" }, expected_revision: jargonCreated.revision }), { "changes.confidence": "必须在 0.0 到 1.0 之间", "changes.is_global": "必须为布尔值" });
+    const affection = affectionDraft("invalid-update");
+    const affectionCreated = entityEnvelope(await post("affection/users/create", affection));
+    expectValidation(await post("affection/users/update", { identity: { group_id: affection.group_id, user_id: affection.user_id }, changes: { affection_score: 101, user_id: "other" }, expected_revision: affectionCreated.revision }), { user_id: "字段不可写", "changes.affection_score": "必须在 -100 到 100 之间" });
+  });
+
+  it("rejects invalid mood values without changing current mood or history", async () => {
+    const before = structuredClone(okData(await get("affection/status", { group_id: "group_001" })).current_mood);
+    expectValidation(await post("affection/mood/set", { group_id: "group_001", mood_type: "unknown", intensity: 0, duration_hours: 0, description: 42 }), { mood_type: "不支持的情绪类型", intensity: "必须在 0.1 到 1.0 之间", duration_hours: "必须在 0.25 到 168.0 之间", description: "必须为字符串" });
+    expect(okData(await get("affection/status", { group_id: "group_001" })).current_mood).toEqual(before);
+    expect(okData(await get("affection/moods/history", { group_id: "group_001", limit: "20" }))).toEqual({ group_id: "group_001", limit: 20, history: [] });
+  });
+
+  it("returns Python read envelopes and validates required pagination", async () => {
+    expectValidation(await get("affection/users", { limit: "50", offset: "0" }), { group_id: "不能为空" });
+    expectValidation(await get("affection/users", { group_id: "group_001", limit: "0", offset: "-1" }), { limit: "必须在 1 到 100 之间", offset: "必须在 0 到 1000000 之间" });
+    expect(okData(await get("affection/users", { group_id: "group_001", limit: "1", offset: "0" }))).toMatchObject({ group_id: "group_001", limit: 1, offset: 0, total: expect.any(Number) });
+    const profile = (okData(await get("profiles", { limit: "1", offset: "0" })).profiles as JsonObject[])[0];
+    expect(okData(await get("profiles/detail", { user_id: String(profile.user_id) }))).toEqual(profile);
+  });
+
+  it("keeps latest mood first and omits mock-only history totals", async () => {
+    await post("affection/mood/set", { group_id: "group_001", mood_type: "happy", intensity: 0.6, duration_hours: 1, description: "first" });
+    await post("affection/mood/set", { group_id: "group_001", mood_type: "calm", intensity: 0.7, duration_hours: 2, description: "latest" });
+    expect(okData(await get("affection/moods/history", { group_id: "group_001", limit: "1" }))).toEqual({ group_id: "group_001", limit: 1, history: [expect.objectContaining({ description: "latest" })] });
+  });
+
+  it("preserves legacy profile update, delete, and batch response shapes", async () => {
+    const updateDraft = profileDraft("legacy-update"); await post("profiles/create", updateDraft);
+    expect(okData(await post("profiles/update", { user_id: updateDraft.user_id, display_name: "Legacy updated", preferences: { reply_style: "brief" } }))).toMatchObject({ user_id: updateDraft.user_id, display_name: "Legacy updated", preferences: { reply_style: "brief" } });
+    const deleteDraft = profileDraft("legacy-delete-shape"); await post("profiles/create", deleteDraft);
+    expect(okData(await post("profiles/delete", { user_id: deleteDraft.user_id }))).toEqual({ deleted: true, user_id: deleteDraft.user_id });
+    const batchDraft = profileDraft("legacy-batch-shape"); await post("profiles/create", batchDraft);
+    expect(okData(await post("profiles/batch", { action: "delete", user_ids: [batchDraft.user_id, "missing"] }))).toEqual({ deleted_count: 1, failed_count: 1, total: 2, failed_ids: ["missing"] });
+  });
+});
+
+describe("Python-compatible batch failure envelopes", () => {
+  it("continues after malformed items and includes current state for conflicts", async () => {
+    const cases = [
+      { prefix: "social", create: () => post("social/create", { ...socialIdentity("batch-conflict"), strength: 0.5, tags: [] }), update: (r: string) => post("social/update", { identity: socialIdentity("batch-conflict"), changes: { strength: 0.6 }, expected_revision: r }), batch: (r: string) => post("social/batch", { action: "delete", items: [null, { identity: socialIdentity("batch-conflict"), expected_revision: r }], params: {} }), identity: socialIdentity("batch-conflict") },
+      { prefix: "profiles", create: () => post("profiles/create", profileDraft("batch-conflict")), update: (r: string) => post("profiles/update", { identity: { user_id: profileDraft("batch-conflict").user_id }, changes: { display_name: "current" }, expected_revision: r }), batch: (r: string) => post("profiles/batch", { action: "delete", items: [null, { identity: { user_id: profileDraft("batch-conflict").user_id }, expected_revision: r }], params: {} }), identity: { user_id: profileDraft("batch-conflict").user_id } },
+      { prefix: "jargon", create: () => post("jargon/create", jargonDraft("batch-conflict")), update: (r: string) => post("jargon/update", { identity: { term: jargonDraft("batch-conflict").term, group_id: "group_001" }, changes: { meaning: "current" }, expected_revision: r }), batch: (r: string) => post("jargon/batch", { action: "delete", items: [null, { identity: { term: jargonDraft("batch-conflict").term, group_id: "group_001" }, expected_revision: r }] }), identity: { term: jargonDraft("batch-conflict").term, group_id: "group_001" } },
+      { prefix: "affection", create: () => post("affection/users/create", affectionDraft("batch-conflict")), update: (r: string) => post("affection/users/update", { identity: { group_id: "group_001", user_id: affectionDraft("batch-conflict").user_id }, changes: { affection_score: 43 }, expected_revision: r }), batch: (r: string) => post("affection/users/batch", { action: "delete", items: [null, { identity: { group_id: "group_001", user_id: affectionDraft("batch-conflict").user_id }, expected_revision: r }], params: {} }), identity: { group_id: "group_001", user_id: affectionDraft("batch-conflict").user_id } },
+    ];
+    for (const item of cases) {
+      resetIfAvailable();
+      const created = entityEnvelope(await item.create());
+      const current = entityEnvelope(await item.update(created.revision));
+      const result = okData(await item.batch(created.revision));
+      expect(result.failures, item.prefix).toEqual([
+        expect.objectContaining({ identity: { item_index: 0 }, code: "validation_error", field_errors: expect.any(Object) }),
+        expect.objectContaining({ identity: item.identity, code: "edit_conflict", current_entity: current.entity, current_revision: current.revision }),
+      ]);
+    }
   });
 });
 
