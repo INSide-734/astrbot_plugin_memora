@@ -374,4 +374,24 @@ describe("EvaluationWorkbench", () => {
       });
     });
   });
+
+  it("guards same-tick evaluation runs and preserves selections after failure", async () => {
+    let resolveRun!: (value: { status: "error"; message: string }) => void;
+    bridge.apiPost.mockReturnValue(new Promise((resolve) => { resolveRun = resolve; }));
+    render(<EvaluationWorkbench showToast={() => undefined} />);
+
+    await screen.findByText("private_basic");
+    const run = screen.getByRole("button", { name: /^run$/i });
+    fireEvent.click(run);
+    fireEvent.click(run);
+
+    expect(bridge.apiPost).toHaveBeenCalledTimes(1);
+    expect(run).toHaveProperty("disabled", true);
+    expect(run.textContent?.toLowerCase()).toContain("running");
+
+    await act(async () => { resolveRun({ status: "error", message: "evaluation unavailable" }); });
+    expect(screen.getByRole("alert").textContent).toContain("evaluation unavailable");
+    expect(screen.getByRole("checkbox", { name: /private_basic/ }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("checkbox", { name: "Graph off" }).getAttribute("aria-checked")).toBe("true");
+  });
 });

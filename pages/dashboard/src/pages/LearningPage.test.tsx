@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LearningPage } from "./LearningPage";
@@ -15,10 +15,15 @@ function ok<T>(data: T) {
   return { status: "ok", data };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
 describe("LearningPage", () => {
   let bridge: BridgeMock;
   let showToast: ReturnType<typeof vi.fn>;
-  let confirmMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     bridge = {
@@ -29,16 +34,10 @@ describe("LearningPage", () => {
       t: vi.fn((key: string) => key),
     };
     showToast = vi.fn();
-    confirmMock = vi.fn();
 
     Object.defineProperty(window, "AstrBotPluginPage", {
       configurable: true,
       value: bridge,
-    });
-    Object.defineProperty(window, "confirm", {
-      configurable: true,
-      writable: true,
-      value: confirmMock,
     });
   });
 
@@ -170,16 +169,20 @@ describe("LearningPage", () => {
     expect(await screen.findByText("50.0%")).toBeTruthy();
     expect(screen.getByText("No expression patterns")).toBeTruthy();
 
-    confirmMock.mockReturnValueOnce(false);
     fireEvent.click(screen.getByRole("button", { name: /reset learning/i }));
 
-    expect(confirmMock).toHaveBeenCalledWith("Reset all learned parameters to defaults?");
+    const dialog = await screen.findByRole("dialog", { name: /reset learning/i });
+    expect(dialog.textContent).toContain("Reset all learned parameters to defaults?");
     expect(bridge.apiPost).not.toHaveBeenCalledWith("page/learning/reset", {});
 
-    confirmMock.mockReturnValueOnce(true);
-    fireEvent.click(screen.getByRole("button", { name: /reset learning/i }));
+    const confirm = within(dialog).getByRole("button", { name: /reset learning/i });
+    act(() => {
+      confirm.click();
+      confirm.click();
+    });
 
     await waitFor(() => {
+      expect(bridge.apiPost).toHaveBeenCalledTimes(1);
       expect(bridge.apiPost).toHaveBeenCalledWith("page/learning/reset", {});
     });
     expect(showToast).toHaveBeenCalledWith("Learning parameters reset!");
@@ -254,5 +257,77 @@ describe("LearningPage", () => {
     expect(screen.getByText("Closing")).toBeTruthy();
     expect(screen.getByText("55%")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
+  });
+
+  it("keeps learning stats and confirmation context when reset fails", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/groups") return Promise.resolve(ok({ groups: [] }));
+      if (path === "page/learning/status") return Promise.resolve(ok({ hit_rate: 0.5, avg_quality: 0.6, total_trials: 10, total_corrections: 2 }));
+      return Promise.resolve(ok({ patterns: [] }));
+    });
+    let resolveReset!: (value: { status: "error"; message: string }) => void;
+    bridge.apiPost.mockReturnValue(new Promise((resolve) => { resolveReset = resolve; }));
+
+    render(<LearningPage showToast={showToast} />);
+    expect(await screen.findByText("50.0%")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /reset learning/i }));
+    const dialog = await screen.findByRole("dialog", { name: /reset learning/i });
+    const confirm = within(dialog).getByRole("button", { name: /reset learning/i });
+    act(() => {
+      confirm.click();
+      confirm.click();
+    });
+    expect(confirm).toHaveProperty("disabled", true);
+    expect(confirm.textContent).toMatch(/reset learning…/i);
+
+    await act(async () => { resolveReset({ status: "error", message: "reset unavailable" }); });
+    await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("alert").textContent).toContain("reset unavailable");
+    expect(screen.getByRole("dialog", { name: /reset learning/i })).toBeTruthy();
+    expect(screen.getByText("50.0%")).toBeTruthy();
+  });
+
+  it("keeps the latest group expressions when responses resolve out of order", async () => {
+    const group1 = deferred<ReturnType<typeof ok<{ patterns: Array<Record<string, unknown>> }>>>();
+    const group2 = deferred<ReturnType<typeof ok<{ patterns: Array<Record<string, unknown>> }>>>();
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/groups") return Promise.resolve(ok({ groups: [{ group_id: "group-1", message_count: 1 }, { group_id: "group-2", message_count: 1 }] }));
+      if (path === "page/learning/status") return Promise.resolve(ok({ hit_rate: 0.5 }));
+      if (path === "page/expression/patterns") return params.group_id === "group-1" ? group1.promise : group2.promise;
+      return Promise.resolve(ok({}));
+    });
+    render(<LearningPage showToast={showToast} />);
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", { group_id: "group-1" }));
+    const input = document.querySelector('input[aria-hidden="true"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "group-2" } });
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", { group_id: "group-2" }));
+    await act(async () => { group2.resolve(ok({ patterns: [{ pattern_id: 2, group_id: "group-2", situation: "Second", expression: "group two latest", weight: 0.7, usage_count: 2 }] })); });
+    expect(await screen.findByText("group two latest")).toBeTruthy();
+    await act(async () => { group1.resolve(ok({ patterns: [{ pattern_id: 1, group_id: "group-1", situation: "First", expression: "group one stale", weight: 0.4, usage_count: 1 }] })); });
+    expect(screen.getByText("group two latest")).toBeTruthy();
+    expect(screen.queryByText("group one stale")).toBe(null);
+  });
+
+  it("ignores a stats response started before a successful reset refresh", async () => {
+    const staleStats = deferred<ReturnType<typeof ok<Record<string, number>>>>();
+    const freshStats = deferred<ReturnType<typeof ok<Record<string, number>>>>();
+    let statusCalls = 0;
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/groups") return Promise.resolve(ok({ groups: [] }));
+      if (path === "page/learning/status") return ++statusCalls === 1 ? staleStats.promise : freshStats.promise;
+      return Promise.resolve(ok({ patterns: [] }));
+    });
+    bridge.apiPost.mockResolvedValue(ok({}));
+    render(<LearningPage showToast={showToast} />);
+    fireEvent.click(screen.getByRole("button", { name: /reset learning/i }));
+    const dialog = await screen.findByRole("dialog", { name: /reset learning/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /reset learning/i }));
+    await waitFor(() => expect(statusCalls).toBe(2));
+    await act(async () => { staleStats.resolve(ok({ hit_rate: 0.5, avg_quality: 0.6, total_trials: 1, total_corrections: 0 })); });
+    expect(screen.queryByText("50.0%")).toBe(null);
+    expect(screen.getByText(/Loading|加载|Загрузка/i)).toBeTruthy();
+    await act(async () => { freshStats.resolve(ok({ hit_rate: 0.92, avg_quality: 0.95, total_trials: 2, total_corrections: 0 })); });
+    expect(await screen.findByText("92.0%")).toBeTruthy();
+    expect(screen.queryByText("50.0%")).toBe(null);
   });
 });

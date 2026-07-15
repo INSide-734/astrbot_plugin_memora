@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QualityMonitorTab } from "./QualityMonitorTab";
@@ -9,9 +9,16 @@ function ok<T>(data: T) {
 
 describe("QualityMonitorTab", () => {
   const timestamp = 1783150200;
+  let bridge: {
+    apiGet: ReturnType<typeof vi.fn>;
+    apiPost: ReturnType<typeof vi.fn>;
+    getLocale: ReturnType<typeof vi.fn>;
+    getI18n: ReturnType<typeof vi.fn>;
+    t: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
-    const bridge = {
+    bridge = {
       apiGet: vi.fn((path: string) => {
         if (path === "page/quality/stats") {
           return Promise.resolve(ok({
@@ -24,7 +31,7 @@ describe("QualityMonitorTab", () => {
             avg_overall: 0.8,
           }));
         }
-        if (path === "page/quality/recent") return Promise.resolve(ok({ scores: [] }));
+        if (path === "page/quality/recent") return Promise.resolve(ok({ scores: [{ atom_id: "atom-1", consistency: 0.8, coherence: 0.8, relevance: 0.8, freshness: 0.8, accuracy: 0.8, overall: 0.8 }] }));
         if (path === "page/quality/alerts") {
           return Promise.resolve(ok({ alerts: [
             { id: 1, level: "high", dimension: "accuracy", message: "message", suggestion: "suggestion", timestamp },
@@ -48,7 +55,7 @@ describe("QualityMonitorTab", () => {
   });
 
   it("localizes known alert enums and dates while preserving unknown values", async () => {
-    render(<QualityMonitorTab showToast={() => undefined} />);
+    render(<QualityMonitorTab showToast={() => undefined} onResetRequested={() => undefined} refreshToken={0} resetPending={false} />);
 
     expect(await screen.findByText("高")).toBeTruthy();
     expect(screen.getAllByText("准确性").length).toBeGreaterThan(0);
@@ -57,5 +64,27 @@ describe("QualityMonitorTab", () => {
     expect(screen.getAllByText(new Date(timestamp * 1000).toLocaleString("zh-CN")).length).toBe(2);
     expect(screen.queryByText("high")).toBe(null);
     expect(screen.queryByText("accuracy")).toBe(null);
+  });
+
+  it("delegates reset requests and refetches only when the parent refresh token advances", async () => {
+    const onResetRequested = vi.fn();
+    const { rerender } = render(
+      <QualityMonitorTab showToast={() => undefined} onResetRequested={onResetRequested} refreshToken={0} resetPending={false} />,
+    );
+
+    expect(await screen.findByText("atom-1")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /重置监控|Reset Monitor/i }));
+
+    expect(onResetRequested).toHaveBeenCalledTimes(1);
+    expect(bridge.apiPost).not.toHaveBeenCalled();
+    expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/quality/stats")).toHaveLength(1);
+
+    rerender(<QualityMonitorTab showToast={() => undefined} onResetRequested={onResetRequested} refreshToken={1} resetPending={false} />);
+
+    await waitFor(() => {
+      expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/quality/stats")).toHaveLength(2);
+      expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/quality/recent")).toHaveLength(2);
+      expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/quality/alerts")).toHaveLength(2);
+    });
   });
 });

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
+import { ActionConfirmDialog } from "./ActionConfirmDialog";
 import { EditConflictDialog } from "./EditConflictDialog";
 import { EditFormLayout } from "./EditFormLayout";
 import { EntityCreateDialog } from "./EntityCreateDialog";
@@ -302,6 +303,65 @@ describe("EditFormLayout", () => {
 });
 
 describe("shared dialogs", () => {
+  it("provides accessible action confirmation and guards synchronous duplicate confirms", async () => {
+    let rejectRequest!: (error: Error) => void;
+    const onConfirm = vi.fn(() => new Promise<void>((_, reject) => { rejectRequest = reject; }));
+    const onCancel = vi.fn();
+    render(
+      <ActionConfirmDialog
+        open
+        title="Delete backup?"
+        description="This cannot be undone."
+        cancelLabel="Cancel"
+        actionLabel="Delete backup"
+        pendingLabel="Deleting backup…"
+        pending={false}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Delete backup?", description: "This cannot be undone." })).toBeTruthy();
+    const confirm = screen.getByRole("button", { name: "Delete backup" });
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledOnce();
+    expect(confirm).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty("disabled", true);
+    fireEvent.keyDown(document, { key: "Escape" });
+    const backdrop = document.querySelector('[data-slot="dialog-overlay"]');
+    if (!backdrop) throw new Error("expected dialog backdrop");
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCancel).not.toHaveBeenCalled();
+
+    rejectRequest(new Error("request failed"));
+    await flushAsyncWork();
+    expect(screen.getByRole("dialog", { name: "Delete backup?" })).toBeTruthy();
+  });
+
+  it("renders a rejected action error inside the dialog and keeps the action context", () => {
+    render(
+      <ActionConfirmDialog
+        open
+        title="Reset learning?"
+        description="All learned data will be removed."
+        cancelLabel="Cancel"
+        actionLabel="Reset learning"
+        pendingLabel="Resetting learning…"
+        pending={false}
+        error="Reset failed"
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("alert").textContent).toContain("Reset failed");
+    expect(screen.getByRole("button", { name: "Reset learning" })).toBeTruthy();
+  });
+
   it("lets a conflict caller load remote values or reapply local values without saving", () => {
     const onLoadRemote = vi.fn();
     const onReapplyLocal = vi.fn();

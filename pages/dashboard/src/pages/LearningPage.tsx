@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Brain, RotateCw, MessageSquareText, ArrowRightLeft } from "lucide-react";
 import { useI18n } from "@/hooks/useI18n";
 import { useGroups } from "@/hooks/useGroups";
@@ -11,6 +11,7 @@ import { Progress } from "@/components/ui/Progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { dashboardLocale, formatDashboardDateTime, formatDashboardNumber, formatDashboardPercent, translateEnum } from "@/lib/i18n";
+import { ActionConfirmDialog } from "@/components/editing/ActionConfirmDialog";
 
 interface LearningPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -32,34 +33,74 @@ export function LearningPage({ showToast }: LearningPageProps) {
   const [loading, setLoading] = useState(false);
   const [expressionPatterns, setExpressionPatterns] = useState<Array<{ pattern_id: number; situation: string; expression: string; weight: number; usage_count: number; group_id: string }>>([]);
   const [exprLoading, setExprLoading] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetPending, setResetPending] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const resetPendingRef = useRef(false);
+  const statsRequestRef = useRef(0);
+  const expressionRequestRef = useRef(0);
 
   const fetchStats = useCallback(async () => {
+    const requestId = ++statsRequestRef.current;
     setLoading(true);
     try {
       const res = unwrapApiData(await apiRequest("learning/status"));
-      setStats(res as LearningStats);
-    } catch (e) { showToast(String(e), true); } finally { setLoading(false); }
+      if (statsRequestRef.current === requestId) {
+        setStats(res as LearningStats);
+      }
+    } catch (e) {
+      if (statsRequestRef.current === requestId) {
+        showToast(String(e), true);
+      }
+    } finally {
+      if (statsRequestRef.current === requestId) {
+        setLoading(false);
+      }
+    }
   }, [showToast]);
 
   const fetchExpressions = useCallback(async () => {
-    if (!groupId) return;
+    const requestId = ++expressionRequestRef.current;
+    if (!groupId) {
+      setExpressionPatterns([]);
+      setExprLoading(false);
+      return;
+    }
     setExprLoading(true);
     try {
       const res = unwrapApiData(await apiRequest(`expression/patterns?group_id=${groupId}`));
-      setExpressionPatterns((res.patterns ?? []) as Array<{ pattern_id: number; situation: string; expression: string; weight: number; usage_count: number; group_id: string }>);
-    } catch { /* silent */ }
-    finally { setExprLoading(false); }
+      if (expressionRequestRef.current === requestId) {
+        setExpressionPatterns((res.patterns ?? []) as Array<{ pattern_id: number; situation: string; expression: string; weight: number; usage_count: number; group_id: string }>);
+      }
+    } catch {
+      // Expression errors remain non-blocking for the learning overview.
+    } finally {
+      if (expressionRequestRef.current === requestId) {
+        setExprLoading(false);
+      }
+    }
   }, [groupId]);
 
   useEffect(() => { fetchStats(); fetchExpressions(); }, [fetchStats, fetchExpressions]);
 
   const resetLearning = async () => {
-    if (!confirm(t("learning.resetConfirm"))) return;
+    if (resetPendingRef.current) return;
+    resetPendingRef.current = true;
+    setResetPending(true);
+    setResetError(null);
     try {
-      await apiRequest("learning/reset", { method: "POST" });
+      unwrapApiData(await apiRequest("learning/reset", { method: "POST" }));
       showToast(t("learning.resetDone"));
-      fetchStats();
-    } catch (e) { showToast(String(e), true); }
+      setResetOpen(false);
+      await fetchStats();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setResetError(message);
+      showToast(message, true);
+    } finally {
+      resetPendingRef.current = false;
+      setResetPending(false);
+    }
   };
 
   const s = stats ?? {};
@@ -70,7 +111,20 @@ export function LearningPage({ showToast }: LearningPageProps) {
       <PageHeader
         title={t("nav.learning")}
         icon={<Brain />}
-        actions={<Button variant="secondary" size="sm" onClick={resetLearning}><RotateCw data-icon="inline-start" />{t("learning.reset")}</Button>}
+        actions={<Button variant="secondary" size="sm" onClick={() => { setResetError(null); setResetOpen(true); }} disabled={resetPending}><RotateCw data-icon="inline-start" />{resetPending ? `${t("learning.reset")}…` : t("learning.reset")}</Button>}
+      />
+      <ActionConfirmDialog
+        open={resetOpen}
+        title={t("learning.reset")}
+        description={t("learning.resetConfirm")}
+        cancelLabel={t("common.cancel")}
+        actionLabel={t("learning.reset")}
+        pendingLabel={`${t("learning.reset")}…`}
+        destructive
+        pending={resetPending}
+        error={resetError}
+        onCancel={() => setResetOpen(false)}
+        onConfirm={resetLearning}
       />
       <PageContent className="flex flex-col gap-6">
         {loading && !stats && <p className="text-center text-sm text-muted-foreground">{t("common.loading")}</p>}

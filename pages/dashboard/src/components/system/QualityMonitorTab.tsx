@@ -8,9 +8,12 @@ import type { QualityScoreEntry, QualityAlertEntry, QualityStats } from "@/types
 
 interface QualityMonitorTabProps {
   showToast: (msg: string, isError?: boolean) => void;
+  onResetRequested?: () => void;
+  refreshToken?: number;
+  resetPending?: boolean;
 }
 
-export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
+export function QualityMonitorTab({ showToast, onResetRequested, refreshToken = 0, resetPending = false }: QualityMonitorTabProps) {
   const { t, currentLang } = useI18n();
   const [stats, setStats] = useState<QualityStats | null>(null);
   const [scores, setScores] = useState<QualityScoreEntry[]>([]);
@@ -38,14 +41,20 @@ export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
     }
   }, []);
 
-  useEffect(() => { fetchQuality(); }, [fetchQuality]);
+  useEffect(() => { fetchQuality(); }, [fetchQuality, refreshToken]);
 
   const resetQuality = async () => {
+    if (onResetRequested) {
+      onResetRequested();
+      return;
+    }
     try {
       await apiRequest("quality/reset", { method: "POST" });
       showToast(t("toast.qualityReset"));
-      fetchQuality();
-    } catch (e) { showToast(String(e), true); }
+      void fetchQuality();
+    } catch (error) {
+      showToast(String(error), true);
+    }
   };
 
   if (loading) {
@@ -130,7 +139,7 @@ export function QualityMonitorTab({ showToast }: QualityMonitorTabProps) {
       <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
           <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-5 py-3">
             <span className="text-xs font-semibold text-[var(--text-primary)]">{t("quality.recent")}</span>
-            <Button variant="secondary" size="sm" onClick={resetQuality}>
+            <Button variant="secondary" size="sm" onClick={resetQuality} disabled={resetPending}>
               <RefreshCw size={12} className="mr-1" />{t("quality.reset")}
             </Button>
           </div>

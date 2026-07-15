@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/components/TopicSegmentationConfig", () => ({
@@ -243,10 +243,8 @@ describe("SystemPage", () => {
     expect(confirmMessage).toBeTruthy();
     expect(bridge.apiPost).not.toHaveBeenCalledWith("page/backup/restore", { name: "backup-alpha" });
 
-    const confirmBar = confirmMessage.closest("div");
-    if (!confirmBar) throw new Error("expected restore confirmation bar");
-
-    fireEvent.click(within(confirmBar).getByRole("button", { name: /restore backup/i }));
+    const confirmDialog = screen.getByRole("dialog", { name: "Restore Backup" });
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: /restore backup/i }));
 
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/backup/restore", { name: "backup-alpha" });
@@ -287,11 +285,12 @@ describe("SystemPage", () => {
 
     const confirmMessage = screen.getByText("Delete 2 backups? This cannot be undone.");
     expect(confirmMessage).toBeTruthy();
+    expect(bridge.apiPost).not.toHaveBeenCalledWith("page/backup/batch-delete", {
+      names: ["backup-a", "backup-b"],
+    });
 
-    const confirmBar = confirmMessage.closest("div");
-    if (!confirmBar) throw new Error("expected batch delete confirmation bar");
-
-    fireEvent.click(within(confirmBar).getByRole("button", { name: /delete selected/i }));
+    const confirmDialog = screen.getByRole("dialog", { name: "Delete Selected" });
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: /delete selected/i }));
 
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/backup/batch-delete", {
@@ -299,6 +298,87 @@ describe("SystemPage", () => {
       });
     });
     expect(showToast).toHaveBeenCalledWith("deleted 2 backups");
+  });
+
+  it("preserves other selected backups after an individual delete succeeds", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ total_memories: 2 }));
+      if (path === "page/backup/list") {
+        return Promise.resolve(ok({
+          backups: [
+            { name: "backup-a", file_count: 2 },
+            { name: "backup-b", file_count: 3 },
+          ],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockResolvedValue(ok({ message: "deleted backup-a" }));
+
+    render(<SystemPage showToast={showToast} />);
+    expect(await screen.findByText("backup-a")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /backup-b/i }));
+    const rowA = screen.getByText("backup-a").closest("div.flex.items-center.justify-between");
+    if (!rowA) throw new Error("expected backup-a row");
+    fireEvent.click(within(rowA as HTMLElement).getAllByRole("button")[1]);
+    const dialog = screen.getByRole("dialog", { name: /delete/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /delete/i }));
+
+    await waitFor(() => {
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/backup/delete", { name: "backup-a" });
+      expect(screen.getByText("1 selected")).toBeTruthy();
+    });
+    expect(screen.getByText("backup-b").closest('[data-state="selected"]')).toBeTruthy();
+    expect(screen.getByText("backup-a").closest('[data-state="selected"]')).toBeNull();
+  });
+
+  it("confirms purge while a non-overview system tab is active", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ total_memories: 1 }));
+      if (path === "page/backup/list") return Promise.resolve(ok({ backups: [] }));
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockResolvedValue(ok({ message: "purged" }));
+
+    render(<SystemPage showToast={showToast} />);
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/stats", {}));
+    fireEvent.click(screen.getByRole("tab", { name: /quality monitor/i }));
+    fireEvent.click(screen.getByRole("button", { name: /purge deleted/i }));
+
+    const dialog = screen.getByRole("dialog", { name: /purge deleted/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /purge deleted/i }));
+    await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith("page/system/purge", {}));
+  });
+
+  it("keeps command failure details and confirmation open without success cleanup", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ total_memories: 2 }));
+      if (path === "page/backup/list") return Promise.resolve(ok({ backups: [] }));
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockResolvedValue(ok({
+      stdout: "install output",
+      stderr: "dependency error",
+      exit_code: 9,
+      success: false,
+    }));
+
+    render(<SystemPage showToast={showToast} />);
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/stats", {}));
+    const statsFetches = bridge.apiGet.mock.calls.filter(([path]) => path === "page/stats").length;
+    const backupFetches = bridge.apiGet.mock.calls.filter(([path]) => path === "page/backup/list").length;
+
+    fireEvent.click(screen.getByRole("button", { name: /install dependencies/i }));
+    const dialog = screen.getByRole("dialog", { name: "Install Dependencies" });
+    fireEvent.click(within(dialog).getByRole("button", { name: /install dependencies/i }));
+
+    await waitFor(() => expect(within(dialog).getByRole("alert").textContent).toContain("Command failed (exit code: 9)"));
+    expect(screen.getByRole("dialog", { name: "Install Dependencies" })).toBeTruthy();
+    const commandOutput = document.querySelector("pre");
+    expect(commandOutput?.textContent).toContain("install output\n--- stderr ---\ndependency error");
+    expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/stats")).toHaveLength(statsFetches);
+    expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/backup/list")).toHaveLength(backupFetches);
   });
 
   it("requires confirmation before dashboard dependency install and build actions", async () => {
@@ -326,29 +406,30 @@ describe("SystemPage", () => {
     expect(installConfirm).toBeTruthy();
     expect(bridge.apiPost).not.toHaveBeenCalledWith("page/dashboard/install", {});
 
-    let confirmBar = installConfirm.closest("div");
-    if (!confirmBar) throw new Error("expected install confirmation bar");
-    fireEvent.click(within(confirmBar).getByRole("button", { name: /install dependencies/i }));
+    let confirmDialog = screen.getByRole("dialog", { name: "Install Dependencies" });
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: /install dependencies/i }));
 
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/dashboard/install", {});
     });
+    expect(screen.getByText("completed")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /build page/i }));
 
     const buildConfirm = screen.getByText("Build Dashboard production assets now?");
     expect(buildConfirm).toBeTruthy();
+    expect(bridge.apiPost).not.toHaveBeenCalledWith("page/dashboard/build", {});
 
-    confirmBar = buildConfirm.closest("div");
-    if (!confirmBar) throw new Error("expected build confirmation bar");
-    fireEvent.click(within(confirmBar).getByRole("button", { name: /build page/i }));
+    confirmDialog = screen.getByRole("dialog", { name: "Build Page" });
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: /build page/i }));
 
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/dashboard/build", {});
     });
   });
 
-  it("loads quality and delegation tabs and supports resetting quality monitoring", async () => {
+  it("confirms quality reset, guards duplicate submits, preserves errors, and refreshes quality data", async () => {
+    let resolveReset!: (value: { status: "error"; message: string }) => void;
     bridge.apiGet.mockImplementation((path: string) => {
       if (path === "page/stats") return Promise.resolve(ok({ total_memories: 5 }));
       if (path === "page/backup/list") return Promise.resolve(ok({ backups: [] }));
@@ -366,70 +447,147 @@ describe("SystemPage", () => {
       }
       if (path === "page/quality/recent") {
         return Promise.resolve(ok({
-          scores: [
-            {
-              atom_id: "atom-1",
-              consistency: 0.8,
-              coherence: 0.7,
-              relevance: 0.9,
-              freshness: 0.6,
-              accuracy: 0.5,
-              overall: 0.7,
-            },
-          ],
+          scores: [{
+            atom_id: "atom-1",
+            consistency: 0.8,
+            coherence: 0.7,
+            relevance: 0.9,
+            freshness: 0.6,
+            accuracy: 0.5,
+            overall: 0.7,
+          }],
         }));
       }
       if (path === "page/quality/alerts") {
         return Promise.resolve(ok({
-          alerts: [
-            {
-              id: 1,
-              level: "high",
-              dimension: "accuracy",
-              score: 0.4,
-              threshold: 0.5,
-              message: "Accuracy drift",
-              suggestion: "Review the latest imports",
-              timestamp: 1719571200,
-            },
-          ],
-        }));
-      }
-      if (path === "page/delegation/status") {
-        return Promise.resolve(ok({
-          self_learning_active: true,
-          self_learning_label: "Self Learning plugin",
-          chatplus_active: false,
-          delegated_jargon: true,
-          delegated_expression: false,
-          delegated_affection: true,
-          delegated_reply: false,
+          alerts: [{
+            id: 1,
+            level: "high",
+            dimension: "accuracy",
+            score: 0.4,
+            threshold: 0.5,
+            message: "Accuracy drift",
+            suggestion: "Review the latest imports",
+            timestamp: 1719571200,
+          }],
         }));
       }
       return Promise.resolve(ok({}));
     });
-    bridge.apiPost.mockResolvedValue(ok({}));
+    bridge.apiPost.mockImplementation((path: string) => {
+      if (path === "page/quality/reset") {
+        return new Promise((resolve) => { resolveReset = resolve; });
+      }
+      return Promise.resolve(ok({}));
+    });
 
     render(<SystemPage showToast={showToast} />);
-
     fireEvent.click(screen.getByRole("tab", { name: /quality monitor/i }));
 
     expect(await screen.findByText("Quality scoring paused: manual pause")).toBeTruthy();
     expect(screen.getByText("Accuracy drift")).toBeTruthy();
     expect(screen.getByText("atom-1")).toBeTruthy();
+    await waitFor(() => expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/quality/stats")).toHaveLength(1));
 
-    fireEvent.click(screen.getByRole("button", { name: /reset monitor/i }));
+    const resetTrigger = screen.getByRole("button", { name: /reset monitor/i });
+    fireEvent.click(resetTrigger);
+    expect(bridge.apiPost).not.toHaveBeenCalled();
 
-    await waitFor(() => {
-      expect(bridge.apiPost).toHaveBeenCalledWith("page/quality/reset", {});
-    });
+    const dialog = screen.getByRole("dialog", { name: "Reset Monitor" });
+    expect(within(dialog).getByText("Quality monitor reset")).toBeTruthy();
+    const cancel = within(dialog).getByRole("button", { name: /cancel/i });
+    const confirm = within(dialog).getByRole("button", { name: /reset monitor/i });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+
+    expect(bridge.apiPost).toHaveBeenCalledTimes(1);
+    expect(bridge.apiPost).toHaveBeenCalledWith("page/quality/reset", {});
+    expect(cancel).toHaveProperty("disabled", true);
+    expect(confirm).toHaveProperty("disabled", true);
+    expect(resetTrigger).toHaveProperty("disabled", true);
+
+    await act(async () => { resolveReset({ status: "error", message: "quality reset failed" }); });
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("quality reset failed"));
+    expect(screen.getByRole("dialog", { name: "Reset Monitor" })).toBeTruthy();
+
+    bridge.apiPost.mockResolvedValueOnce(ok({}));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Reset Monitor" })).getByRole("button", { name: /reset monitor/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reset Monitor" })).toBe(null));
+    await waitFor(() => expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/quality/stats")).toHaveLength(2));
     expect(showToast).toHaveBeenCalledWith("Quality monitor reset");
+  });
 
-    fireEvent.click(screen.getByRole("tab", { name: /companion plugins/i }));
+  it("keeps the frozen restore operation visible and locked when the request fails", async () => {
+    let resolveRestore!: (value: { status: "error"; message: string }) => void;
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ total_memories: 7 }));
+      if (path === "page/backup/list") return Promise.resolve(ok({ backups: [{ name: "backup-frozen", file_count: 2 }] }));
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockReturnValue(new Promise((resolve) => { resolveRestore = resolve; }));
 
-    expect(await screen.findByText("Self Learning plugin")).toBeTruthy();
-    expect(screen.getByText("Feature Delegation")).toBeTruthy();
-    expect(screen.getAllByText("Delegated").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Local").length).toBeGreaterThan(0);
+    render(<SystemPage showToast={showToast} />);
+    expect(await screen.findByText("backup-frozen")).toBeTruthy();
+    const trigger = screen.getByRole("button", { name: /restore backup/i });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Restore Backup" });
+    const confirm = within(dialog).getByRole("button", { name: /restore backup/i });
+    const cancel = within(dialog).getByRole("button", { name: /cancel/i });
+
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(bridge.apiPost).toHaveBeenCalledTimes(1);
+    expect(bridge.apiPost).toHaveBeenCalledWith("page/backup/restore", { name: "backup-frozen" });
+    expect(trigger).toHaveProperty("disabled", true);
+    expect(confirm).toHaveProperty("disabled", true);
+    expect(cancel).toHaveProperty("disabled", true);
+    expect(confirm.textContent).toMatch(/restore backup…/i);
+
+    await act(async () => { resolveRestore({ status: "error", message: "restore failed" }); });
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("restore failed"));
+    expect(screen.getByRole("dialog", { name: "Restore Backup" }).textContent).toContain("backup-frozen");
+    expect(screen.getAllByText("7").length).toBeGreaterThan(0);
+  });
+
+  it("keeps direct maintenance actions direct while confirming purge and individual delete", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ total_memories: 1 }));
+      if (path === "page/backup/list") return Promise.resolve(ok({ backups: [{ name: "backup-direct", file_count: 1 }] }));
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockResolvedValue(ok({ message: "done" }));
+    render(<SystemPage showToast={showToast} />);
+    expect(await screen.findByText("backup-direct")).toBeTruthy();
+
+    const rebuild = screen.getByRole("button", { name: /rebuild index/i });
+    const compact = screen.getByRole("button", { name: /compact/i });
+    const createBackup = screen.getAllByRole("button", { name: /create backup/i })[0];
+    fireEvent.click(rebuild);
+    fireEvent.click(compact);
+    fireEvent.click(createBackup);
+    fireEvent.click(screen.getByRole("button", { name: "JSONL" }));
+    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    await waitFor(() => {
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/system/rebuild", {});
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/system/compact", {});
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/backup/create", {});
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/export/memories", { format: "jsonl" });
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/export/memories", { format: "markdown" });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /purge deleted/i }));
+    expect(bridge.apiPost).not.toHaveBeenCalledWith("page/system/purge", {});
+    const purgeDialog = screen.getByRole("dialog", { name: /purge deleted/i });
+    fireEvent.click(within(purgeDialog).getByRole("button", { name: /purge deleted/i }));
+    await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith("page/system/purge", {}));
+
+    const row = screen.getByText("backup-direct").closest("div.flex.items-center.justify-between");
+    if (!row) throw new Error("expected backup row");
+    fireEvent.click(within(row as HTMLElement).getAllByRole("button")[1]);
+    expect(bridge.apiPost).not.toHaveBeenCalledWith("page/backup/delete", { name: "backup-direct" });
+    const deleteDialog = screen.getByRole("dialog", { name: /delete/i });
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: /delete/i }));
+    await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith("page/backup/delete", { name: "backup-direct" }));
   });
 });
