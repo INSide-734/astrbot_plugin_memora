@@ -442,6 +442,69 @@ class TestMemoryFullFormUpdate:
         assert log_error.call_args.args[1:] == (7, 8, "backend_cancelled", "CancelledError")
 
     @pytest.mark.asyncio
+    async def test_memory_full_form_preserves_terminal_add_caller_cancellation(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        original_shield = asyncio.shield
+        shield_calls = 0
+
+        async def cancel_after_completed_add(task):
+            nonlocal shield_calls
+            shield_calls += 1
+            result = await original_shield(task)
+            if shield_calls == 1:
+                raise asyncio.CancelledError
+            return result
+
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with (
+            patch("core.api.memory_write_api.request", request_mock),
+            patch("core.api.memory_write_api.asyncio.shield", cancel_after_completed_add),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await api.update_memory()
+
+        assert [call.args for call in engine.delete_memory.await_args_list] == [(8,)]
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_preserves_terminal_old_delete_caller_cancellation(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        original_shield = asyncio.shield
+        shield_calls = 0
+
+        async def cancel_after_completed_old_delete(task):
+            nonlocal shield_calls
+            shield_calls += 1
+            result = await original_shield(task)
+            if shield_calls == 2:
+                raise asyncio.CancelledError
+            return result
+
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with (
+            patch("core.api.memory_write_api.request", request_mock),
+            patch(
+                "core.api.memory_write_api.asyncio.shield",
+                cancel_after_completed_old_delete,
+            ),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await api.update_memory()
+
+        assert [call.args for call in engine.delete_memory.await_args_list] == [(7,)]
+
+    @pytest.mark.asyncio
     async def test_memory_full_form_cancellation_while_add_reconciles_cleanup_before_reraising(
         self,
     ) -> None:

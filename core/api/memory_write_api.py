@@ -428,6 +428,7 @@ class MemoryWriteApiMixin:
                 if task.done():
                     if task.cancelled():
                         raise _TaskTerminalCancelled(caller_cancelled)
+                    caller_cancelled = True
                     try:
                         return task.result(), caller_cancelled
                     except Exception as exc:
