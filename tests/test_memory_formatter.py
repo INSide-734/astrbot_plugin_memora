@@ -370,6 +370,27 @@ class TestBudgetedInjectionFormatting:
         assert "raw content" not in text
         assert stats.truncated_count == 0
 
+    def test_facts_without_key_facts_falls_back_to_truncated_body(self):
+        memory = _rich_memory(0)
+        memory["content"] = "fallback body " * 20
+        memory["metadata"]["key_facts"] = []
+
+        text, stats = format_memories_for_injection(
+            [memory],
+            budget=_budget(
+                ContentLevel.FACTS,
+                800,
+                memory_max_chars=32,
+            ),
+            content_level=ContentLevel.FACTS,
+        )
+
+        assert "fallback body" in text
+        assert "topic-0" not in text
+        assert "person-0" not in text
+        assert "Memory write time:" not in text
+        assert stats.truncated_count == 1
+
     def test_compact_obeys_metadata_flags(self):
         text, _ = format_memories_for_injection(
             [_rich_memory(0)],
@@ -435,6 +456,10 @@ class TestBudgetedInjectionFormatting:
         assert stats.chars == 0
         assert stats.memory_count == 0
 
+        assert stats.truncated_count == 0
+        assert stats.header_chars == 0
+        assert stats.footer_chars == 0
+        assert stats.dropped_by_budget == 1
     def test_hard_cap_counts_every_wrapper_and_separator_character(self):
         complete, _ = format_memories_for_injection(
             [_rich_memory(0)],
@@ -482,3 +507,33 @@ class TestBudgetedInjectionFormatting:
         assert "<entry-1>" not in rebuilt
         assert stats.memory_count == 1
         assert len(rebuilt) <= exact_cap
+
+    def test_rebuilding_excludes_dropped_tail_from_truncation_stats(self):
+        first = _rich_memory(0)
+        truncated_tail = _rich_memory(1)
+        truncated_tail["content"] = "tail content " * 100
+        budget = _budget(
+            ContentLevel.COMPACT,
+            2400,
+            memory_max_chars=60,
+        )
+        first_only, _ = format_memories_for_injection(
+            [first],
+            budget=budget,
+            content_level=ContentLevel.COMPACT,
+        )
+
+        rebuilt, stats = format_memories_for_injection(
+            [first, truncated_tail],
+            budget=_budget(
+                ContentLevel.COMPACT,
+                len(first_only),
+                memory_max_chars=60,
+            ),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert rebuilt == first_only
+        assert stats.memory_count == 1
+        assert stats.truncated_count == 0
+        assert stats.dropped_by_budget == 1
