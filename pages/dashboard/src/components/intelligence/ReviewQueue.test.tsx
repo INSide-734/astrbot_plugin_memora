@@ -478,6 +478,10 @@ describe("ReviewQueue", () => {
     expect(within(region).getByText(/Loading|加载|Загрузка/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /memory-b/ }));
     expect(await screen.findByRole("heading", { name: "memory-b" })).toBeTruthy();
+    const pendingItemButton = within(region).getByRole("button", { name: /Edit|编辑/i });
+    expect(pendingItemButton).toHaveProperty("disabled", true);
+    fireEvent.click(pendingItemButton);
+    expect(bridge.apiPost).toHaveBeenCalledTimes(1);
     expect(within(region).queryByText(/Loading|加载|Загрузка/i)).toBe(null);
     await act(async () => { action.resolve({ status: "error", message: "action a failed" }); });
     await waitFor(() => expect(within(region).queryByRole("alert")).toBe(null));

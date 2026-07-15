@@ -320,7 +320,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
   };
 
   const doRestoreBackup = async (backupName: string) => {
-    openOperation({ kind: "restore", title: t("system.restoreBackup"), description: t("system.restoreConfirm", backupName), endpoint: "backup/restore", body: { name: backupName }, successLabel: t("system.restoreSuccess"), destructive: false, actionLabel: t("system.restoreBackup"), pendingLabel: `${t("system.restoreBackup")}…` });
+    openOperation({ kind: "restore", title: t("system.restoreBackup"), description: t("system.restoreConfirm", backupName), endpoint: "backup/restore", body: { name: backupName }, successLabel: t("system.restoreSuccess"), destructive: true, actionLabel: t("system.restoreBackup"), pendingLabel: `${t("system.restoreBackup")}…` });
   };
 
 
