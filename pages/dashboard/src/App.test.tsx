@@ -5,8 +5,9 @@ vi.mock("@/pages/GraphPage", () => ({
   GraphPage: () => <div>Graph Page</div>,
 }));
 vi.mock("@/pages/MemoryPage", () => ({
-  MemoryPage: ({ navigationTarget }: {
+  MemoryPage: ({ navigationTarget, onDirtyChange }: {
     navigationTarget?: { requestId: number; id: string } | null;
+    onDirtyChange?: (dirty: boolean) => void;
   }) => (
     <div>
       <p>Memory Page</p>
@@ -15,6 +16,12 @@ vi.mock("@/pages/MemoryPage", () => ({
           ? `${navigationTarget.requestId}:${navigationTarget.id}`
           : "none"}
       </output>
+      <button type="button" data-testid="make-memory-dirty" onClick={() => onDirtyChange?.(true)}>
+        Make memory dirty
+      </button>
+      <button type="button" data-testid="make-memory-clean" onClick={() => onDirtyChange?.(false)}>
+        Mark memory clean
+      </button>
     </div>
   ),
 }));
@@ -389,6 +396,49 @@ describe("App", () => {
       name: "Leave configuration without saving?",
     })).toBeTruthy();
     expect(window.location.hash).toBe("#/config");
+  });
+
+  it("blocks dirty memory sidebar and same-page entity navigation, while preserving beforeunload protection", async () => {
+    window.history.replaceState({}, "", "#/memory");
+    const addEventListener = vi.spyOn(window, "addEventListener");
+    const removeEventListener = vi.spyOn(window, "removeEventListener");
+    const view = render(<App />);
+    expect(await screen.findByText("Memory Page")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("make-memory-dirty"));
+    expect(addEventListener.mock.calls.filter(([event]) => event === "beforeunload")).toHaveLength(1);
+    const dirtyEvent = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(dirtyEvent);
+    expect(dirtyEvent.defaultPrevented).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect(window.location.hash).toBe("#/memory");
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Search..." }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Global search" }), { target: { value: "memory" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Search memory result/ }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect(screen.getByTestId("memory-navigation-target").textContent).toBe("none");
+
+    fireEvent.click(screen.getByTestId("make-memory-clean"));
+    expect(removeEventListener.mock.calls.filter(([event]) => event === "beforeunload")).toHaveLength(1);
+    view.unmount();
+  });
+
+  it("allows a dirty same-page intent that keeps the current entity unchanged", async () => {
+    window.history.replaceState({}, "", "#/preview");
+    render(<App />);
+    expect(await screen.findByText("Preview Page")).toBeTruthy();
+    await selectGlobalSearchOption("memory", /Search memory result/);
+    expect(await screen.findByText("Memory Page")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("make-memory-dirty"));
+
+    await selectGlobalSearchOption("memory", /Search memory result/);
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByTestId("memory-navigation-target").textContent).toMatch(/^\d+:memory-1$/);
   });
 
   it("passes a configuration search target across page navigation", async () => {

@@ -960,7 +960,7 @@ describe("ConfigPage", () => {
     expect(secondProviderFocus).not.toHaveBeenCalled();
   });
 
-  it("reports dirty transitions and protects only dirty drafts from browser close", async () => {
+  it("reports dirty transitions while leaving browser-close protection to App", async () => {
     const onDirtyChange = vi.fn();
     const addListener = vi.spyOn(window, "addEventListener");
     const removeListener = vi.spyOn(window, "removeEventListener");
@@ -978,22 +978,18 @@ describe("ConfigPage", () => {
 
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
-    expect(
-      addListener.mock.calls.some(([type]) => type === "beforeunload"),
-    ).toBe(true);
+    expect(addListener.mock.calls.some(([type]) => type === "beforeunload")).toBe(false);
     const dirtyEvent = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(dirtyEvent);
-    expect(dirtyEvent.defaultPrevented).toBe(true);
+    expect(dirtyEvent.defaultPrevented).toBe(false);
 
     fireEvent.change(name, { target: { value: "Memora" } });
     await waitFor(() => expect(screen.getByText("Synced")).toBeTruthy());
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
-    expect(
-      removeListener.mock.calls.some(([type]) => type === "beforeunload"),
-    ).toBe(true);
+    expect(removeListener.mock.calls.some(([type]) => type === "beforeunload")).toBe(false);
   });
 
-  it("cleans dirty close protection and resets the parent dirty state on unmount", async () => {
+  it("resets the parent dirty state on unmount without owning browser-close protection", async () => {
     const onDirtyChange = vi.fn();
     const removeListener = vi.spyOn(window, "removeEventListener");
     const view = render(<ConfigPage onDirtyChange={onDirtyChange} />);
@@ -1006,9 +1002,7 @@ describe("ConfigPage", () => {
     view.unmount();
 
     expect(onDirtyChange.mock.calls).toEqual([[true], [false]]);
-    expect(
-      removeListener.mock.calls.some(([type]) => type === "beforeunload"),
-    ).toBe(true);
+    expect(removeListener.mock.calls.some(([type]) => type === "beforeunload")).toBe(false);
   });
 
   it("transfers dirty notification ownership when the callback changes", async () => {
