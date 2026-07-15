@@ -295,7 +295,7 @@ describe("profile CRUD, structured fields, and compatibility", () => {
   it.each(["tags_add", "tags_remove"] as const)("supports profile batch %s", async (action) => {
     const draft = profileDraft(action);
     const created = entityEnvelope(await post("profiles/create", draft));
-    const tag = action === "tags_add" ? { category: "skill", value: "new", confidence: 0.7 } : draft.tags[0];
+    const tag = action === "tags_add" ? { category: "custom", value: "new", confidence: 0.7 } : draft.tags[0];
     expectBatch(await post("profiles/batch", {
       action,
       items: [{ identity: { user_id: draft.user_id }, expected_revision: created.revision }],
@@ -539,6 +539,48 @@ describe("Python-compatible batch failure envelopes", () => {
         expect.objectContaining({ identity: item.identity, code: "edit_conflict", current_entity: current.entity, current_revision: current.revision }),
       ]);
     }
+  });
+});
+
+describe("strict Python mutation contracts", () => {
+  it("rejects unknown and malformed create fields without persisting read-only data", async () => {
+    expectValidation(await post("social/create", { ...socialIdentity("strict-create"), strength: 2, tags: [1], frequency: 99 }), { frequency: "字段不可写", strength: "必须在 0.0 到 1.0 之间", tags: "必须为字符串数组" });
+    expectValidation(await post("profiles/create", { ...profileDraft("strict-create"), preferences: [], message_count: 99 }), { message_count: "字段不可写", preferences: "必须为对象" });
+    expectValidation(await post("jargon/create", { ...jargonDraft("strict-create"), confidence: 2, is_global: "yes", count: 99 }), { count: "字段不可写", confidence: "必须在 0.0 到 1.0 之间", is_global: "必须为布尔值" });
+    expectValidation(await post("affection/users/create", { ...affectionDraft("strict-create"), affection_level: "CLOSE" }), { affection_level: "字段不可写" });
+  });
+
+  it("rejects invalid top-level identity and revision fields before lookup", async () => {
+    const cases = [
+      ["social/update", { identity: { ...socialIdentity("strict"), from_user: "x".repeat(129), extra: true }, changes: {}, expected_revision: "" }, { extra: "字段不可写", "identity.from_user": "文本过长", expected_revision: "不能为空" }],
+      ["profiles/delete", { identity: { user_id: "x".repeat(129), extra: true }, expected_revision: "r".repeat(257) }, { extra: "字段不可写", "identity.user_id": "文本过长", expected_revision: "文本过长" }],
+      ["jargon/update", { identity: { term: "", group_id: "group_001" }, changes: { meaning: "valid" } }, { "identity.term": "不能为空", expected_revision: "不能为空" }],
+      ["affection/users/delete", { identity: { group_id: true, user_id: "user" }, expected_revision: 1 }, { "identity.group_id": "必须为字符串", expected_revision: "必须为字符串" }],
+    ] as const;
+    for (const [route, body, errors] of cases) expectValidation(await post(route, body), errors);
+    expectValidation(await post("social/update", { identity: socialIdentity("strict"), changes: {}, expected_revision: "r", extra: true }), { extra: "字段不可写" });
+  });
+
+  it("validates batch item identity text and revision bounds with item-index failures", async () => {
+    const result = okData(await post("social/batch", { action: "delete", params: {}, items: [
+      { identity: { ...socialIdentity("blank"), from_user: "" }, expected_revision: "r" },
+      { identity: { ...socialIdentity("long"), to_user: "x".repeat(129) }, expected_revision: "r".repeat(257) },
+    ] }));
+    expect(result.failures).toEqual([
+      expect.objectContaining({ identity: { item_index: 0 }, code: "validation_error", field_errors: expect.objectContaining({ "identity.from_user": "不能为空" }) }),
+      expect.objectContaining({ identity: { item_index: 1 }, code: "validation_error", field_errors: expect.objectContaining({ "identity.to_user": "文本过长", expected_revision: "文本过长" }) }),
+    ]);
+  });
+
+  it("strictly validates profile batch params, legacy caps, and affection params objects", async () => {
+    const profile = profileDraft("strict-batch"); const created = entityEnvelope(await post("profiles/create", profile));
+    const item = { identity: { user_id: profile.user_id }, expected_revision: created.revision };
+    expectValidation(await post("profiles/batch", { action: "tags_add", items: [item], params: [] }), { params: "必须为对象" });
+    expectValidation(await post("profiles/batch", { action: "tags_add", items: [item], params: { extra: true } }), { extra: "字段不可写" });
+    expectValidation(await post("profiles/batch", { action: "tags_add", items: [item], params: { tag: { category: "invalid", value: "", confidence: 2, extra: true } } }), { "params.tag.extra": "字段不可写", "params.tag.category": "不支持的标签分类", "params.tag.value": "不能为空", "params.tag.confidence": "必须在 0.0 到 1.0 之间" });
+    expectValidation(await post("profiles/batch", { action: "delete", user_ids: [] }), { user_ids: "项目数量必须在 1 到 100 之间" });
+    expectValidation(await post("profiles/batch", { action: "delete", user_ids: Array.from({ length: 101 }, (_, index) => `u-${index}`) }), { user_ids: "项目数量必须在 1 到 100 之间" });
+    expectValidation(await post("affection/users/batch", { action: "delete", items: [item], params: [] }), { params: "必须为对象" });
   });
 });
 
