@@ -2,7 +2,12 @@
 
 from core.injection.models import ContentLevel
 
-from core.utils.injection_budget import InjectionBudget, select_memories_with_budget
+from core.utils.injection_budget import (
+    InjectionBudget,
+    format_full_footer,
+    format_full_header,
+    select_memories_with_budget,
+)
 from core.utils.memory_formatter import format_memories_for_injection
 
 
@@ -61,3 +66,35 @@ def test_selection_reserves_exact_compact_wrapper_instead_of_fixed_allowance() -
     assert complete_payload
     assert selected == [memory]
     assert dropped == []
+
+
+def test_selection_reserves_exact_full_wrapper() -> None:
+    memory = _memory("full wrapper entry")
+    field_limits = {
+        "memory_max_chars": 800,
+        "metadata_max_chars": 1,
+        "include_key_facts": False,
+        "include_topics": False,
+        "include_participants": False,
+        "compact_header": False,
+    }
+    fixed_chars = len(format_full_header()) + len(format_full_footer())
+    estimated_entry_chars = len(memory["content"]) + field_limits["metadata_max_chars"]
+
+    selected_at_wrapper, dropped_at_wrapper = select_memories_with_budget(
+        [memory],
+        InjectionBudget(total_chars=fixed_chars, **field_limits),
+    )
+    selected_at_threshold, dropped_at_threshold = select_memories_with_budget(
+        [memory],
+        InjectionBudget(
+            total_chars=fixed_chars + estimated_entry_chars,
+            **field_limits,
+        ),
+    )
+
+    assert selected_at_wrapper == []
+    assert dropped_at_wrapper == [memory]
+    assert selected_at_threshold == [memory]
+    assert dropped_at_threshold == []
+
