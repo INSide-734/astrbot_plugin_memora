@@ -355,6 +355,93 @@ class TestMemoryFullFormUpdate:
         assert "RuntimeError" in str(log_error.call_args_list)
 
     @pytest.mark.asyncio
+    async def test_memory_full_form_backend_add_cancellation_keeps_original(self) -> None:
+        api, engine = self._api_and_engine()
+
+        async def add_memory(**_kwargs):
+            raise asyncio.CancelledError
+
+        engine.add_memory = add_memory
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock), patch(
+            "core.api.memory_write_api.logger.error"
+        ) as log_error:
+            result = await api.update_memory()
+
+        assert result == {
+            "status": "error",
+            "message": "创建替换记忆失败",
+            "code": "replacement_failed",
+        }
+        engine.delete_memory.assert_not_awaited()
+        assert "New content" not in str(log_error.call_args_list)
+        assert "CancelledError" in str(log_error.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_backend_old_delete_cancellation_retains_replacement_for_repair(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        delete_calls: list[int] = []
+
+        async def delete_memory(memory_id):
+            delete_calls.append(memory_id)
+            assert memory_id == 7
+            raise asyncio.CancelledError
+
+        engine.delete_memory = delete_memory
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock), patch(
+            "core.api.memory_write_api.logger.error"
+        ) as log_error:
+            result = await api.update_memory()
+
+        assert result == {
+            "status": "error",
+            "message": "记忆替换状态待修复，请稍后检查",
+            "code": "repair_required",
+        }
+        assert delete_calls == [7]
+        assert log_error.call_args.args[1:] == (7, 8, "retained", "CancelledError")
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_backend_cleanup_cancellation_is_rollback_failure(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        delete_calls: list[int] = []
+
+        async def delete_memory(memory_id):
+            delete_calls.append(memory_id)
+            if memory_id == 7:
+                return False
+            assert memory_id == 8
+            raise asyncio.CancelledError
+
+        engine.delete_memory = delete_memory
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock), patch(
+            "core.api.memory_write_api.logger.error"
+        ) as log_error:
+            result = await api.update_memory()
+
+        assert result["code"] == "rollback_failed"
+        assert delete_calls == [7, 8]
+        assert log_error.call_args.args[1:] == (7, 8, "backend_cancelled", "CancelledError")
+
+    @pytest.mark.asyncio
     async def test_memory_full_form_cancellation_while_add_reconciles_cleanup_before_reraising(
         self,
     ) -> None:
