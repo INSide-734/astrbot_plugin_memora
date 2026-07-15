@@ -294,6 +294,63 @@ class TestKnowledgeValidation:
         assert mixin.engine.knowledge_manager.update_entry.await_args.args[0].title == "new title"
 
     @pytest.mark.asyncio
+    async def test_update_changes_valid_title_and_invalid_category_keeps_entry_unchanged(
+        self,
+    ) -> None:
+        entry = KnowledgeEntry(
+            title="old", content="body", category=KnowledgeType.FACT, confidence=0.8, tags=["old"]
+        )
+        mock_req = _make_mock_request()
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "entry_id": 2,
+                "changes": {"title": "new title", "category": "invalid"},
+            }
+        )
+        with patch("core.api.knowledge_api.request", mock_req):
+            mixin = _make_mixin(detail_entry=entry)
+            result = await mixin.update_knowledge_entry()
+        assert result["status"] == "error"
+        assert entry.title == "old"
+        assert entry.category is KnowledgeType.FACT
+        mixin.engine.knowledge_manager.update_entry.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("confidence", [True, float("nan"), float("inf"), -0.1, 1.1])
+    async def test_update_changes_rejects_invalid_confidence_without_mutating_entry(
+        self, confidence
+    ) -> None:
+        entry = KnowledgeEntry(
+            title="old", content="body", category=KnowledgeType.FACT, confidence=0.8, tags=["old"]
+        )
+        mock_req = _make_mock_request()
+        mock_req.get_json = AsyncMock(
+            return_value={"entry_id": 2, "changes": {"confidence": confidence}}
+        )
+        with patch("core.api.knowledge_api.request", mock_req):
+            mixin = _make_mixin(detail_entry=entry)
+            result = await mixin.update_knowledge_entry()
+        assert result["status"] == "error"
+        assert entry.confidence == 0.8
+        mixin.engine.knowledge_manager.update_entry.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_changes_rejects_malformed_tags_without_mutating_entry(self) -> None:
+        entry = KnowledgeEntry(
+            title="old", content="body", category=KnowledgeType.FACT, confidence=0.8, tags=["old"]
+        )
+        mock_req = _make_mock_request()
+        mock_req.get_json = AsyncMock(
+            return_value={"entry_id": 2, "changes": {"tags": ["valid", 3]}}
+        )
+        with patch("core.api.knowledge_api.request", mock_req):
+            mixin = _make_mixin(detail_entry=entry)
+            result = await mixin.update_knowledge_entry()
+        assert result["status"] == "error"
+        assert entry.tags == ["old"]
+        mixin.engine.knowledge_manager.update_entry.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_batch_requires_ids(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import contextlib
+import math
 from typing import Any
 
 from quart import request
@@ -75,6 +77,79 @@ def _normalize_tags(value: Any) -> list[str]:
     except TypeError:
         text = str(value).strip()
         return [text] if text else []
+
+
+def _changes_validation_error(field_errors: dict[str, str]):
+    return error_response(
+        "知识条目更新数据无效", code="validation_error", field_errors=field_errors
+    )
+
+
+def _knowledge_changes_candidate(entry: KnowledgeEntry, changes: Any):
+    if not isinstance(changes, dict):
+        return None, _changes_validation_error({"changes": "必须是对象"})
+    if not changes:
+        return None, _changes_validation_error({"changes": "不能为空"})
+    editable_fields = {"title", "content", "category", "confidence", "tags"}
+    unsupported = sorted(set(changes) - editable_fields)
+    if unsupported:
+        return None, _changes_validation_error(
+            {field: "字段不可写" for field in unsupported}
+        )
+
+    values: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    for field, value in changes.items():
+        if field in {"title", "content"}:
+            if not isinstance(value, str):
+                errors[field] = "必须为字符串"
+            elif not value.strip():
+                errors[field] = "不能为空"
+            else:
+                values[field] = value.strip()
+        elif field == "category":
+            if not isinstance(value, str):
+                errors[field] = "必须为字符串"
+            else:
+                try:
+                    values[field] = KnowledgeType(value.strip().lower())
+                except ValueError:
+                    errors[field] = "不支持的分类"
+        elif field == "confidence":
+            if isinstance(value, bool):
+                errors[field] = "必须为数字"
+            else:
+                try:
+                    confidence = float(value)
+                except (TypeError, ValueError):
+                    errors[field] = "必须为数字"
+                else:
+                    if not math.isfinite(confidence):
+                        errors[field] = "必须为有限数字"
+                    elif not 0.0 <= confidence <= 1.0:
+                        errors[field] = "必须在 0 到 1 之间"
+                    else:
+                        values[field] = confidence
+        else:
+            if isinstance(value, str):
+                values[field] = [item.strip() for item in value.split(",") if item.strip()]
+            elif isinstance(value, list):
+                normalized_tags: list[str] = []
+                for index, tag in enumerate(value):
+                    if not isinstance(tag, str):
+                        errors[f"tags.{index}"] = "必须为字符串"
+                    elif tag.strip():
+                        normalized_tags.append(tag.strip())
+                values[field] = normalized_tags
+            else:
+                errors[field] = "必须为字符串或字符串数组"
+    if errors:
+        return None, _changes_validation_error(errors)
+
+    candidate = copy.copy(entry)
+    for field, value in values.items():
+        setattr(candidate, field, value)
+    return candidate, None
 
 
 class KnowledgeApiMixin:
@@ -218,16 +293,15 @@ class KnowledgeApiMixin:
         if entry is None:
             return error_response("not found: 条目不存在")
         if "changes" in payload:
-            changes = payload["changes"]
-            if not isinstance(changes, dict):
-                return error_response("changes 必须是 JSON 对象")
-            if not changes:
-                return error_response("changes 不能为空")
-            editable_fields = {"title", "content", "category", "confidence", "tags"}
-            unsupported = sorted(set(changes) - editable_fields)
-            if unsupported:
-                return error_response(f"不支持的字段: {unsupported[0]}")
-            payload = changes
+            candidate, candidate_error = _knowledge_changes_candidate(
+                entry, payload["changes"]
+            )
+            if candidate_error:
+                return candidate_error
+            updated = await manager.update_entry(candidate)
+            if not updated:
+                return error_response("not found: 条目不存在")
+            return ok_response({"entry_id": entry_id})
         # field/value 模式（前端兼容）：{entry_id, field: "title"|"content"|..., value}
         field = str(payload.get("field", "")).strip()
         if field and "value" in payload:
