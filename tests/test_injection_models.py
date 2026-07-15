@@ -41,6 +41,7 @@ def test_package_exports_are_exact_and_identity_preserving() -> None:
         "resolve_preset",
     }
     assert set(injection.__all__) == expected
+    assert len(injection.__all__) == len(expected)
 
     model_exports = {
         "ContentLevel",
@@ -56,6 +57,10 @@ def test_package_exports_are_exact_and_identity_preserving() -> None:
     }
     preset_exports = {"PRESETS", "get_preset", "resolve_preset"}
     router_exports = {"InjectionRoutingConfig", "InjectionStrategyRouter"}
+    assert router_module.__all__ == [
+        "InjectionRoutingConfig",
+        "InjectionStrategyRouter",
+    ]
     for name in model_exports:
         assert getattr(injection, name) is getattr(model_module, name)
     for name in preset_exports:

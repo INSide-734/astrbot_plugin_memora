@@ -45,7 +45,17 @@ def test_routing_config_is_frozen_with_locked_defaults() -> None:
         hybrid_min=PresetName.LOW_COST,
         hybrid_max=PresetName.QUALITY,
         delivery_override=DeliveryMode.AUTO,
+        preset_overrides_enabled=False,
+        budget_chars=0,
+        memory_max_chars=0,
+        metadata_max_chars=0,
+        include_key_facts=True,
+        include_topics=True,
+        include_participants=False,
+        compact_header=True,
+        invalid_config_fallback=False,
     )
+    assert not hasattr(config, "__dict__")
     with pytest.raises(FrozenInstanceError):
         config.mode = RoutingMode.AUTO  # type: ignore[misc]
 
@@ -122,7 +132,27 @@ def test_manual_final_never_moves_for_candidate_or_headroom_signals() -> None:
             "AUTO_HISTORY_INTENT",
         ),
         (
+            make_signals(
+                query_intent="temporal",
+                explicit_history_request=True,
+                tools_supported=True,
+                memory_tool_available=True,
+                context_headroom_chars=2_400,
+            ),
+            PresetName.QUALITY,
+            "AUTO_HISTORY_INTENT",
+        ),
+        (
             make_signals(context_headroom_chars=1_199),
+            PresetName.LOW_COST,
+            "AUTO_LOW_CONTEXT_HEADROOM",
+        ),
+        (
+            make_signals(
+                tools_supported=True,
+                memory_tool_available=True,
+                context_headroom_chars=1_199,
+            ),
             PresetName.LOW_COST,
             "AUTO_LOW_CONTEXT_HEADROOM",
         ),
@@ -188,6 +218,10 @@ def test_auto_useful_candidates_require_all_three_conditions() -> None:
         config,
         make_signals(candidate_count=1, top_confidence=threshold - 0.01),
     )
+    zero_candidates = router.route_final(
+        config,
+        make_signals(candidate_count=0, top_confidence=threshold),
+    )
     usable_tool = router.route_final(
         config,
         make_signals(
@@ -200,6 +234,7 @@ def test_auto_useful_candidates_require_all_three_conditions() -> None:
 
     assert useful.resolved_preset is PresetName.BALANCED
     assert below_threshold.resolved_preset is PresetName.LOW_COST
+    assert zero_candidates.resolved_preset is PresetName.LOW_COST
     assert usable_tool.resolved_preset is PresetName.TOOL_FIRST
     assert usable_tool.reason_codes == ("AUTO_MEMORY_UNCERTAIN",)
 
@@ -220,6 +255,7 @@ def test_auto_and_hybrid_preflight_never_skip_or_emit_manual(mode: RoutingMode) 
     [
         {"query_intent": ""},
         {"query_intent": 7},
+        {"top_confidence": True},
         {"context_headroom_chars": True},
         {"candidate_count": True},
         {"estimated_payload_chars": True},
