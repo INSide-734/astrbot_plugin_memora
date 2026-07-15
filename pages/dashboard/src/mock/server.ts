@@ -4,7 +4,7 @@
 import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_DATASETS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS } from "./data";
 import { createMockConfigServer } from "./configServer";
 
-type ApiResponse = { status: string; data?: unknown; message?: string };
+type ApiResponse = { status: string; data?: unknown; message?: string; code?: string; field_errors?: Record<string, string> };
 
 const configServer = createMockConfigServer({
   disconnectDuringReload: true,
@@ -15,9 +15,261 @@ function ok(data: unknown): ApiResponse {
   return { status: "ok", data };
 }
 
-function err(message: string): ApiResponse {
-  return { status: "error", message };
+function err(message: string, code?: string, data?: unknown, field_errors?: Record<string, string>): ApiResponse {
+  return { status: "error", message, ...(code ? { code } : {}), ...(data === undefined ? {} : { data }), ...(field_errors ? { field_errors } : {}) };
 }
+
+type MutableRecord = Record<string, any>;
+const MUTABLE_SEEDS = structuredClone({ MEMORIES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_MEANINGS, AFFECTION_DATA, SOCIAL_RELATIONS });
+let nextEntityRevision = 1;
+const moodHistory: MutableRecord[] = [];
+const revision = () => `mock-entity-revision-${String(nextEntityRevision++).padStart(8, "0")}`;
+const withoutRevision = (value: MutableRecord): MutableRecord => {
+  const { revision: _revision, ...entity } = value;
+  return structuredClone(entity);
+};
+const envelope = (value: MutableRecord): ApiResponse => ok({ entity: withoutRevision(value), revision: value.revision });
+const validation = (field_errors: Record<string, string>): ApiResponse => err("Validation failed", "validation_error", undefined, field_errors);
+const notFound = (message: string): ApiResponse => err(message, "not_found");
+const identityKey = (identity: MutableRecord) => [identity.from_user, identity.to_user, identity.relation_type, identity.group_id].join("\u0000");
+const socialIdentityOf = (record: MutableRecord) => ({ from_user: record.from_user, to_user: record.to_user, relation_type: record.relation_type, group_id: record.group_id });
+const jargonIdentityOf = (record: MutableRecord) => ({ term: record.term, group_id: record.group_id });
+const affectionIdentityOf = (record: MutableRecord) => ({ user_id: record.user_id, group_id: record.group_id });
+const SOCIAL_CATEGORIES: Record<string, string> = {
+  parent_child: "blood", siblings: "blood", relatives: "blood",
+  neighbor: "geographic", fellow_town: "geographic", fellow_passenger: "geographic",
+  colleague: "career", mentor_mentee: "career", classmate: "career",
+  lover: "emotional", best_friend: "emotional", ambiguous: "emotional", rival: "emotional",
+  board_game_friend: "interest", gaming_teammate: "interest",
+  core_intimate: "intimacy", daily_normal: "intimacy", stranger: "intimacy", acquaintance: "intimacy", friend: "intimacy", close_friend: "intimacy", confidant: "intimacy",
+};
+const socialCategory = (relationType: string) => SOCIAL_CATEGORIES[relationType] ?? "intimacy";
+
+export function resetMockServerState(): void {
+  const seeds = structuredClone(MUTABLE_SEEDS);
+  for (const [target, source] of [[MEMORIES, seeds.MEMORIES], [PROFILES, seeds.PROFILES], [KNOWLEDGE_ENTRIES, seeds.KNOWLEDGE_ENTRIES], [NOTES, seeds.NOTES], [JARGON_MEANINGS, seeds.JARGON_MEANINGS], [SOCIAL_RELATIONS, seeds.SOCIAL_RELATIONS]] as Array<[any[], any[]]>) {
+    target.splice(0, target.length, ...source);
+  }
+  for (const key of Object.keys(AFFECTION_DATA)) delete AFFECTION_DATA[key];
+  Object.assign(AFFECTION_DATA, seeds.AFFECTION_DATA);
+  nextEntityRevision = 1;
+  moodHistory.splice(0);
+  for (const record of PROFILES) (record as MutableRecord).revision = revision();
+  for (const record of SOCIAL_RELATIONS) (record as MutableRecord).revision = revision();
+  for (const record of JARGON_MEANINGS) (record as MutableRecord).revision = revision();
+  for (const group of Object.values(AFFECTION_DATA)) {
+    for (const user of group.top_users) (user as MutableRecord).revision = revision();
+  }
+}
+
+resetMockServerState();
+
+function validateText(body: MutableRecord, fields: readonly string[]): ApiResponse | null {
+  for (const field of fields) {
+    if (!String(body[field] ?? "").trim()) return validation({ [field]: "必填字段" });
+    if (String(body[field]).length > 128) return validation({ [field]: "文本过长" });
+  }
+  return null;
+}
+
+function handleSocialCreate(body: MutableRecord): ApiResponse {
+  const invalid = validateText(body, ["from_user", "to_user", "relation_type", "group_id"]);
+  if (invalid) return invalid;
+  if (SOCIAL_RELATIONS.some((item) => identityKey(item) === identityKey(body))) return err("Relation already exists", "already_exists");
+  const record: MutableRecord = { ...structuredClone(body), category: body.category ?? socialCategory(body.relation_type), frequency: body.frequency ?? 0, last_interaction: body.last_interaction ?? 0, tags: body.tags ?? [], revision: revision() };
+  SOCIAL_RELATIONS.push(record as any);
+  return envelope(record);
+}
+
+function findSocial(identity: MutableRecord): MutableRecord | undefined {
+  return SOCIAL_RELATIONS.find((item) => identityKey(item) === identityKey(identity)) as MutableRecord | undefined;
+}
+
+function handleSocialUpdate(body: MutableRecord): ApiResponse {
+  const current = findSocial(body.identity ?? {});
+  if (!current) return notFound("Relation not found");
+  if (body.expected_revision !== current.revision) return err("Relation changed", "edit_conflict", { current_entity: withoutRevision(current), current_revision: current.revision });
+  const changes = structuredClone(body.changes ?? {});
+  Object.assign(current, changes, { ...(changes.relation_type ? { category: socialCategory(changes.relation_type) } : {}), revision: revision() });
+  return envelope(current);
+}
+
+function handleSocialDelete(body: MutableRecord): ApiResponse {
+  const index = SOCIAL_RELATIONS.findIndex((item) => identityKey(item) === identityKey(body.identity ?? {}));
+  if (index < 0) return notFound("Relation not found");
+  const current = SOCIAL_RELATIONS[index] as MutableRecord;
+  if (body.expected_revision !== current.revision) return err("Relation changed", "edit_conflict", { current_entity: withoutRevision(current), current_revision: current.revision });
+  SOCIAL_RELATIONS.splice(index, 1);
+  return ok({ deleted: true, identity: structuredClone(body.identity) });
+}
+
+function batchResult(total: number, succeeded_ids: MutableRecord[], failures: MutableRecord[]): ApiResponse {
+  return ok({ total, succeeded_count: succeeded_ids.length, failed_count: failures.length, succeeded_ids, failures });
+}
+
+function handleSocialBatch(body: MutableRecord): ApiResponse {
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (items.length < 1 || items.length > 100) return validation({ items: "项目数量必须在 1 到 100 之间" });
+  const succeeded: MutableRecord[] = [];
+  const failures: MutableRecord[] = [];
+  for (const item of items) {
+    const identity = structuredClone(item.identity ?? {});
+    const current = findSocial(identity);
+    if (!current) { failures.push({ identity, code: "not_found", message: "Relation not found" }); continue; }
+    if (item.expected_revision !== current.revision) { failures.push({ identity, code: "edit_conflict", message: "Relation changed" }); continue; }
+    if (body.action === "delete") SOCIAL_RELATIONS.splice(SOCIAL_RELATIONS.indexOf(current as any), 1);
+    else if (body.action === "add_tags") { current.tags = [...new Set([...(current.tags ?? []), ...(body.params?.tags ?? [])])]; current.revision = revision(); }
+    else if (body.action === "remove_tags") { const removed = new Set(body.params?.tags ?? []); current.tags = (current.tags ?? []).filter((tag: string) => !removed.has(tag)); current.revision = revision(); }
+    else { failures.push({ identity, code: "validation_error", message: "Unsupported action" }); continue; }
+    succeeded.push(identity);
+  }
+  return batchResult(items.length, succeeded, failures);
+}
+
+function handleProfileCreate(body: MutableRecord): ApiResponse {
+  const invalid = validateText(body, ["user_id"]); if (invalid) return invalid;
+  if (PROFILES.some((item) => item.user_id === body.user_id)) return err("Profile already exists", "already_exists");
+  const record: MutableRecord = { ...structuredClone(body), display_name: body.display_name ?? "", preferences: body.preferences ?? {}, tags: body.tags ?? [], message_count: body.message_count ?? 0, last_active: body.last_active ?? "", revision: revision() };
+  PROFILES.push(record as any); return envelope(record);
+}
+
+function handleProfileUpdate(body: MutableRecord): ApiResponse {
+  const userId = body.identity?.user_id ?? body.user_id;
+  const current = PROFILES.find((item) => item.user_id === userId) as MutableRecord | undefined;
+  if (!current) return notFound("Profile not found");
+  if (body.expected_revision !== current.revision) return err("Profile changed", "edit_conflict", { current_entity: withoutRevision(current), current_revision: current.revision });
+  Object.assign(current, structuredClone(body.changes ?? {}), { revision: revision() });
+  return envelope(current);
+}
+
+function handleProfileDelete(body: MutableRecord): ApiResponse {
+  const userId = body.identity?.user_id ?? body.user_id;
+  const identity = { user_id: userId };
+  const index = PROFILES.findIndex((item) => item.user_id === userId);
+  if (index < 0) return notFound("Profile not found");
+  const current = PROFILES[index] as MutableRecord;
+  if (body.expected_revision !== undefined && body.expected_revision !== current.revision) return err("Profile changed", "edit_conflict", { current_entity: withoutRevision(current), current_revision: current.revision });
+  PROFILES.splice(index, 1);
+  return ok({ deleted: true, identity });
+}
+
+const profileTagKey = (tag: MutableRecord) => `${String(tag.category ?? "")}\u0000${String(tag.value ?? tag.name ?? "")}`;
+
+function handleProfileBatch(body: MutableRecord): ApiResponse {
+  if (Array.isArray(body.user_ids)) {
+    for (const userId of body.user_ids) {
+      const index = PROFILES.findIndex((profile) => profile.user_id === userId);
+      if (index >= 0) PROFILES.splice(index, 1);
+    }
+    return ok({ action: body.action ?? "delete", affected: body.user_ids.length });
+  }
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (items.length < 1 || items.length > 100) return validation({ items: "项目数量必须在 1 到 100 之间" });
+  const succeeded: MutableRecord[] = [];
+  const failures: MutableRecord[] = [];
+  for (const item of items) {
+    const identity = structuredClone(item.identity ?? {});
+    const current = PROFILES.find((profile) => profile.user_id === identity.user_id) as MutableRecord | undefined;
+    if (!current) { failures.push({ identity, code: "not_found", message: "Profile not found" }); continue; }
+    if (current.revision !== item.expected_revision) { failures.push({ identity, code: "edit_conflict", message: "Profile changed" }); continue; }
+    if (body.action === "delete") PROFILES.splice(PROFILES.indexOf(current as any), 1);
+    else if (body.action === "tags_add") { const tag = structuredClone(body.params?.tag); if (!(current.tags ?? []).some((existing: MutableRecord) => profileTagKey(existing) === profileTagKey(tag))) current.tags = [...(current.tags ?? []), tag]; current.revision = revision(); }
+    else if (body.action === "tags_remove") { const key = profileTagKey(body.params?.tag ?? {}); current.tags = (current.tags ?? []).filter((tag: MutableRecord) => profileTagKey(tag) !== key); current.revision = revision(); }
+    else { failures.push({ identity, code: "validation_error", message: "Unsupported action" }); continue; }
+    succeeded.push(identity);
+  }
+  return batchResult(items.length, succeeded, failures);
+}
+
+function findJargon(identity: MutableRecord): MutableRecord | undefined { return JARGON_MEANINGS.find((item) => item.term === identity.term && item.group_id === identity.group_id) as MutableRecord | undefined; }
+function handleJargonCreate(body: MutableRecord): ApiResponse {
+  const invalid = validateText(body, ["term", "group_id", "meaning"]); if (invalid) return invalid;
+  if (findJargon(body)) return err("Jargon meaning already exists", "already_exists");
+  const now = Date.now() / 1000;
+  const record: MutableRecord = { ...structuredClone(body), confidence: Number(body.confidence ?? 0), is_jargon: body.is_jargon ?? true, is_confirmed: body.is_confirmed ?? false, is_global: body.is_global ?? false, is_complete: body.is_complete ?? true, count: body.count ?? 0, last_inference_count: body.last_inference_count ?? 0, created_at: body.created_at ?? now, updated_at: body.updated_at ?? now, revision: revision() };
+  JARGON_MEANINGS.push(record as any); return envelope(record);
+}
+function handleJargonUpdate(body: MutableRecord): ApiResponse {
+  const current = findJargon(body.identity ?? body); if (!current) return notFound("Jargon meaning not found");
+  if (body.expected_revision !== current.revision) return err("Jargon meaning changed", "edit_conflict", { current_entity: withoutRevision(current), current_revision: current.revision });
+  Object.assign(current, structuredClone(body.changes ?? {}), { updated_at: Date.now() / 1000, revision: revision() }); return envelope(current);
+}
+function handleJargonDelete(body: MutableRecord): ApiResponse {
+  const identity = body.identity ?? body; const current = findJargon(identity); if (!current) return notFound("Jargon meaning not found");
+  if (body.expected_revision !== current.revision) return err("Jargon meaning changed", "edit_conflict", { current_entity: withoutRevision(current), current_revision: current.revision });
+  JARGON_MEANINGS.splice(JARGON_MEANINGS.indexOf(current as any), 1); return ok({ deleted: true, identity: jargonIdentityOf(current) });
+}
+function handleJargonBatch(body: MutableRecord): ApiResponse {
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (items.length < 1 || items.length > 100) return validation({ items: "项目数量必须在 1 到 100 之间" });
+  const succeeded: MutableRecord[] = [];
+  const failures: MutableRecord[] = [];
+  for (const item of items) {
+    const identity = structuredClone(item.identity ?? item);
+    const current = findJargon(identity);
+    if (!current) { failures.push({ identity, code: "not_found", message: "Jargon meaning not found" }); continue; }
+    if (current.revision !== item.expected_revision) { failures.push({ identity, code: "edit_conflict", message: "Jargon meaning changed" }); continue; }
+    if (body.action === "delete") JARGON_MEANINGS.splice(JARGON_MEANINGS.indexOf(current as any), 1);
+    else if (body.action === "confirm") { current.is_confirmed = true; current.revision = revision(); }
+    else if (body.action === "unconfirm") { current.is_confirmed = false; current.revision = revision(); }
+    else if (body.action === "set_global") { current.is_global = true; current.revision = revision(); }
+    else if (body.action === "unset_global") { current.is_global = false; current.revision = revision(); }
+    else { failures.push({ identity, code: "validation_error", message: "Unsupported action" }); continue; }
+    succeeded.push(identity);
+  }
+  return batchResult(items.length, succeeded, failures);
+}
+
+function affectionUsers(groupId: string): MutableRecord[] { return (AFFECTION_DATA[groupId]?.top_users ?? []) as MutableRecord[]; }
+function findAffection(identity: MutableRecord): MutableRecord | undefined { return affectionUsers(identity.group_id).find((item) => item.user_id === identity.user_id); }
+function affectionLevel(score: number): string { return score >= 100 ? "INTIMATE" : score >= 75 ? "CLOSE" : score >= 50 ? "FRIENDLY" : score >= 25 ? "WARM" : score >= 0 ? "NEUTRAL" : score >= -25 ? "COLD" : score >= -50 ? "DISLIKED" : "HOSTILE"; }
+const AFFECTION_LEVEL_NAMES: Record<string, string> = { HOSTILE: "敌对", DISLIKED: "不喜", COLD: "冷淡", NEUTRAL: "中立", WARM: "温暖", FRIENDLY: "友好", CLOSE: "亲密", INTIMATE: "挚友" };
+function handleAffectionCreate(body: MutableRecord): ApiResponse {
+  const invalid = validateText(body, ["group_id", "user_id"]);
+  if (invalid) return invalid;
+  if (typeof body.affection_score === "boolean" || !Number.isInteger(body.affection_score)) return validation({ affection_score: "必须为整数" });
+  if (body.affection_score < -100 || body.affection_score > 100) return validation({ affection_score: "必须在 -100 到 100 之间" });
+  if (!AFFECTION_DATA[body.group_id]) {
+    AFFECTION_DATA[body.group_id] = { group_id: body.group_id, total_affection: 0, max_total_affection: 0, user_count: 0, top_users: [], current_mood: { mood_type: "NEUTRAL", intensity: 0, description: "", is_active: false } };
+  }
+  const group = AFFECTION_DATA[body.group_id];
+  if (findAffection(body)) return err("Affection user already exists", "already_exists");
+  const score = Number(body.affection_score);
+  const level = affectionLevel(score);
+  const record: MutableRecord = { ...structuredClone(body), affection_score: score, affection_level: level, level_name: AFFECTION_LEVEL_NAMES[level], interaction_count: body.interaction_count ?? 0, last_interaction: body.last_interaction ?? 0, revision: revision() };
+  group.top_users.push(record as any);
+  group.user_count += 1;
+  group.total_affection += score;
+  group.max_total_affection = Math.max(group.max_total_affection, group.total_affection);
+  return envelope(record);
+}
+function handleAffectionUpdate(body: MutableRecord): ApiResponse {
+  const identity = body.identity ?? body; const current = findAffection(identity); if (!current) return notFound("Affection user not found");
+  if (body.expected_revision !== current.revision) return err("Affection user changed", "edit_conflict", { current_entity: withoutRevision(current), current_revision: current.revision });
+  const previousScore = Number(current.affection_score); Object.assign(current, structuredClone(body.changes ?? {})); const group = AFFECTION_DATA[identity.group_id]; group.total_affection += Number(current.affection_score) - previousScore; group.max_total_affection = Math.max(group.max_total_affection, group.total_affection); current.affection_level = affectionLevel(Number(current.affection_score)); current.level_name = AFFECTION_LEVEL_NAMES[current.affection_level]; current.revision = revision(); return envelope(current);
+}
+function handleAffectionDelete(body: MutableRecord): ApiResponse {
+  const identity = body.identity ?? body; const group = AFFECTION_DATA[identity.group_id]; const current = findAffection(identity); if (!group || !current) return notFound("Affection user not found");
+  if (body.expected_revision !== current.revision) return err("Affection user changed", "edit_conflict", { current_entity: withoutRevision(current), current_revision: current.revision });
+  group.top_users.splice(group.top_users.indexOf(current as any), 1); group.user_count = Math.max(0, group.user_count - 1); group.total_affection -= Number(current.affection_score); return ok({ deleted: true, identity: affectionIdentityOf(current) });
+}
+function handleAffectionBatch(body: MutableRecord): ApiResponse {
+  const items = Array.isArray(body.items) ? body.items : []; if (items.length < 1 || items.length > 100) return validation({ items: "项目数量必须在 1 到 100 之间" });
+  const succeeded: MutableRecord[] = [], failures: MutableRecord[] = [];
+  for (const item of items) { const identity = item.identity ?? item; const current = findAffection(identity); if (!current) { failures.push({ identity, code: "not_found", message: "Affection user not found" }); continue; } if (current.revision !== item.expected_revision) { failures.push({ identity, code: "edit_conflict", message: "Affection user changed" }); continue; } const group = AFFECTION_DATA[identity.group_id]; group.top_users.splice(group.top_users.indexOf(current as any), 1); group.user_count = Math.max(0, group.user_count - 1); group.total_affection -= Number(current.affection_score); succeeded.push(structuredClone(identity)); }
+  return batchResult(items.length, succeeded, failures);
+}
+function handleMoodSet(body: MutableRecord): ApiResponse {
+  const invalid = validateText(body, ["group_id", "mood_type"]);
+  if (invalid) return invalid;
+  const group = AFFECTION_DATA[body.group_id];
+  if (!group) return notFound("Affection group not found");
+  const mood = { mood_type: String(body.mood_type), intensity: Number(body.intensity), duration_hours: Number(body.duration_hours ?? 0), description: String(body.description ?? ""), start_time: Date.now() / 1000, is_active: true };
+  group.current_mood = structuredClone(mood) as any;
+  moodHistory.push({ group_id: body.group_id, ...structuredClone(mood) });
+  return ok(mood);
+}
+function handleMoodReset(body: MutableRecord): ApiResponse { const group = AFFECTION_DATA[body.group_id]; if (!group) return notFound("Affection group not found"); const mood = { mood_type: "calm", intensity: 0.5, duration_hours: 4, description: "Default calm mood", start_time: Date.now() / 1000, is_active: true }; group.current_mood = structuredClone(mood) as any; moodHistory.push({ group_id: body.group_id, ...structuredClone(mood) }); return ok(mood); }
 
 // Simulate network latency (80-250ms)
 function delay(): Promise<void> {
@@ -208,11 +460,9 @@ function handleMemoryDetail(id: string): ApiResponse {
 function handleMemoryUpdate(body: Record<string, unknown>): ApiResponse {
   const idx = MEMORIES.findIndex((m) => m.id === (body.memory_id as string));
   if (idx === -1) return err("Memory not found");
+  if (body.changes && typeof body.changes === "object") Object.assign(MEMORIES[idx], structuredClone(body.changes));
   const field = body.field as string;
-  const value = body.value;
-  if (field && value !== undefined) {
-    (MEMORIES[idx] as Record<string, unknown>)[field] = value;
-  }
+  if (field && body.value !== undefined) (MEMORIES[idx] as Record<string, unknown>)[field] = body.value;
   return ok({ updated: true });
 }
 
@@ -243,13 +493,14 @@ function handleGraphSearch(params: Record<string, string>): ApiResponse {
 
 function handleProfiles(params: Record<string, string>): ApiResponse {
   const limit = parseInt(params.limit ?? "100", 10);
-  const items = PROFILES.slice(0, limit);
-  return ok({ profiles: items, total: PROFILES.length, count: PROFILES.length });
+  const offset = parseInt(params.offset ?? "0", 10);
+  const items = PROFILES.slice(offset, offset + limit);
+  return ok({ profiles: items, total: PROFILES.length, count: PROFILES.length, limit, offset });
 }
 
 function handleProfileDetail(userId: string): ApiResponse {
-  const p = PROFILES.find((p) => p.user_id === userId);
-  return p ? ok({ profile: p }) : err("Profile not found");
+  const profile = PROFILES.find((item) => item.user_id === userId) as MutableRecord | undefined;
+  return profile ? ok({ entity: withoutRevision(profile), revision: profile.revision }) : notFound("Profile not found");
 }
 
 function handleKnowledgeList(params: Record<string, string>): ApiResponse {
@@ -298,14 +549,11 @@ function handleKnowledgeDelete(body: Record<string, unknown>): ApiResponse {
 }
 
 function handleKnowledgeUpdate(body: Record<string, unknown>): ApiResponse {
-  const id = body.entry_id as string;
-  const entry = KNOWLEDGE_ENTRIES.find((e) => e.entry_id === id);
+  const entry = KNOWLEDGE_ENTRIES.find((item) => item.entry_id === body.entry_id);
   if (!entry) return err("Entry not found");
+  if (body.changes && typeof body.changes === "object") Object.assign(entry, structuredClone(body.changes));
   const field = body.field as string;
-  const value = body.value;
-  if (field && value !== undefined) {
-    (entry as Record<string, unknown>)[field] = field === "confidence" ? Number(value) : value;
-  }
+  if (field && body.value !== undefined) (entry as Record<string, unknown>)[field] = field === "confidence" ? Number(body.value) : body.value;
   entry.updated_at = new Date().toISOString();
   return ok({ entry });
 }
@@ -376,17 +624,14 @@ function handleNoteArchive(body: Record<string, unknown>): ApiResponse {
 }
 
 function handleNoteUpdate(body: Record<string, unknown>): ApiResponse {
-  const id = body.note_id as string;
-  const note = NOTES.find((n) => n.note_id === id);
+  const note = NOTES.find((item) => item.note_id === body.note_id);
   if (!note) return err("Note not found");
+  if (body.changes && typeof body.changes === "object") Object.assign(note, structuredClone(body.changes));
   const field = body.field as string;
-  const value = body.value;
-  if (field && value !== undefined) {
-    if (field === "tags") {
-      note.tags = String(value).split(",").map((t) => t.trim()).filter(Boolean);
-    } else {
-      (note as Record<string, unknown>)[field] = value;
-    }
+  if (field && body.value !== undefined) {
+    (note as Record<string, unknown>)[field] = field === "tags" && typeof body.value === "string"
+      ? body.value.split(",").map((tag) => tag.trim()).filter(Boolean)
+      : body.value;
   }
   note.updated_at = new Date().toISOString();
   note.version = (note.version ?? 1) + 1;
@@ -694,6 +939,17 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   if (p === "jargon/meanings" || p.startsWith("jargon/meanings?")) return handleJargonMeanings(params);
   if (p === "jargon/stats" || p.startsWith("jargon/stats?")) return handleJargonStats(params);
   if (p === "affection/status" || p.startsWith("affection/status?")) return handleAffectionStatus(params);
+  if (p === "affection/users" || p.startsWith("affection/users?")) {
+    const limit = parseInt(params.limit ?? "50", 10);
+    const offset = parseInt(params.offset ?? "0", 10);
+    const users = affectionUsers(params.group_id ?? "group_001");
+    return ok({ users: users.slice(offset, offset + limit), total: users.length, limit, offset });
+  }
+  if (p === "affection/moods/history" || p.startsWith("affection/moods/history?")) {
+    const limit = parseInt(params.limit ?? "50", 10);
+    const history = moodHistory.filter((mood) => !params.group_id || mood.group_id === params.group_id).slice(-limit);
+    return ok({ history, total: history.length });
+  }
   if (p === "social/relations" || p.startsWith("social/relations?")) return handleSocialRelations(params);
   if (p === "quality/stats" || p.startsWith("quality/stats")) return handleQualityStats();
   if (p === "quality/recent" || p.startsWith("quality/recent?")) return handleQualityRecent(params);
@@ -716,6 +972,12 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   if (p === "recall/test") return handleRecallTest(data);
   if (p === "recall/trace") return handleRecallTrace(data);
   if (p === "memory/update") return handleMemoryUpdate(data);
+  if (p === "social/create") return handleSocialCreate(data);
+  if (p === "social/update") return handleSocialUpdate(data);
+  if (p === "social/delete") return handleSocialDelete(data);
+  if (p === "social/batch") return handleSocialBatch(data);
+  if (p === "profiles/create") return handleProfileCreate(data);
+  if (p === "profiles/update") return handleProfileUpdate(data);
   if (p === "memories/batch") return handleMemoryBatch(data);
   if (p === "knowledge/create") return handleKnowledgeCreate(data);
   if (p === "knowledge/delete") return handleKnowledgeDelete(data);
@@ -726,8 +988,8 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   if (p === "notes/update") return handleNoteUpdate(data);
   if (p === "notes/archive") return handleNoteArchive(data);
   if (p === "notes/batch") return handleNoteBatch(data);
-  if (p === "profiles/delete") return ok({ deleted: true });
-  if (p === "profiles/batch") return ok({ action: data.action ?? "delete", affected: ((data.user_ids as string[]) ?? []).length });
+  if (p === "profiles/delete") return handleProfileDelete(data);
+  if (p === "profiles/batch") return handleProfileBatch(data);
   if (p === "system/rebuild") return ok({ rebuilt: true });
   if (p === "system/purge") return ok({ purged: true });
   if (p === "system/compact") return ok({ compacted: true });
@@ -745,6 +1007,16 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   if (p === "backfill/start") return handleBackfillStart();
   if (p === "backfill/status") return handleBackfillStatus();
   // v1.0.0+ new subsystems
+  if (p === "jargon/create") return handleJargonCreate(data);
+  if (p === "jargon/update") return handleJargonUpdate(data);
+  if (p === "jargon/delete") return handleJargonDelete(data);
+  if (p === "jargon/batch") return handleJargonBatch(data);
+  if (p === "affection/users/create") return handleAffectionCreate(data);
+  if (p === "affection/users/update") return handleAffectionUpdate(data);
+  if (p === "affection/users/delete") return handleAffectionDelete(data);
+  if (p === "affection/users/batch") return handleAffectionBatch(data);
+  if (p === "affection/mood/set") return handleMoodSet(data);
+  if (p === "affection/mood/reset") return handleMoodReset(data);
   if (p === "jargon/confirm") return handleJargonConfirm(data);
   if (p === "jargon/mine") return handleJargonMine(data);
   if (p === "quality/reset") return handleQualityReset();
@@ -871,6 +1143,7 @@ function handleJargonConfirm(body: Record<string, unknown>): ApiResponse {
     // server-side persistence across requests within a session.
     found.is_confirmed = confirmed;
     found.updated_at = Date.now() / 1000;
+    (found as MutableRecord).revision = revision();
   }
   return ok({ term, group_id: groupId, action: confirmed ? "confirmed" : "rejected", message: confirmed ? `「${term}」已确认` : `「${term}」已驳回` });
 }
