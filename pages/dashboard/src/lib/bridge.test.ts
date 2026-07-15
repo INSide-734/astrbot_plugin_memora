@@ -7,6 +7,7 @@ import {
   normalizeImportance,
   unwrapApiData,
 } from "./bridge";
+import { ApiRequestError } from "@/types/editing";
 
 interface BridgeMock {
   apiGet: ReturnType<typeof vi.fn>;
@@ -107,13 +108,43 @@ describe("bridge", () => {
     })).toEqual({ total: 3 });
   });
 
-  it("throws on error envelopes", () => {
-    expect(() =>
+  it("unwraps error envelopes as structured request errors", () => {
+    let error: unknown;
+    try {
       unwrapApiData({
         status: "error",
         message: "boom",
+        code: "validation_failed",
+        field_errors: { name: "名称不能为空" },
+        data: { request_id: "req-1" },
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({
+      message: "boom",
+      code: "validation_failed",
+      fieldErrors: { name: "名称不能为空" },
+      data: { request_id: "req-1" },
+    });
+  });
+
+  it("reads structured field errors from error data", () => {
+    expect(() =>
+      unwrapApiData({
+        status: "error",
+        code: "validation_failed",
+        data: { field_errors: { tags: "标签不合法" } },
       })
-    ).toThrow("boom");
+    ).toThrowError(
+      expect.objectContaining({
+        code: "validation_failed",
+        fieldErrors: { tags: "标签不合法" },
+        data: { field_errors: { tags: "标签不合法" } },
+      })
+    );
   });
 
   it("throws on non-object responses", () => {

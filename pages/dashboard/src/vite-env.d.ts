@@ -41,6 +41,8 @@ interface ApiResponse {
   status?: string;
   data?: unknown;
   message?: string;
+  code?: string;
+  field_errors?: Record<string, string>;
   total?: number;
   page?: number;
   page_size?: number;
