@@ -35,13 +35,13 @@ Both choices are explicit and data-free in this module, so a domain page can pre
 
 ## Validation and accessibility contract
 
-`EditFormLayout` receives path-indexed `fieldErrors` plus optional form errors. It derives stable error IDs, renders a focusable form-level `role="alert"`, and focuses the first registered invalid field when `focusInvalid` is true. Domain inputs register DOM controls and connect their field error with `aria-describedby`; the module therefore supports native inputs and existing Base UI controls without creating a parallel form primitive.
+`EditFormLayout` receives path-indexed `fieldErrors` plus optional form errors. It derives stable, collision-resistant HTML-safe error IDs from each full field path, renders a focusable form-level `role="alert"`, and focuses the first registered invalid field when validation first becomes active or when the first invalid field changes. Equivalent rerenders do not steal a user's current focus. When only form-level errors exist, the summary itself receives focus. Domain inputs register DOM controls and connect their field error with `aria-describedby`; the module therefore supports native inputs and existing Base UI controls without creating a parallel form primitive.
 
 All dialogs and the Sheet render existing Base UI title and description primitives. Destructive confirmation is a named, described Dialog. Tag controls have an input label and descriptive remove button labels. Save shortcut handling is limited to Ctrl+Enter and Meta+Enter; it avoids any delete shortcut and only invokes callbacks while dirty, valid, and not submitting.
 
 ## Tag rules
 
-The pending input is local transient UI state; `values` remains caller-controlled. Enter trims and proposes a tag. Empty strings and exact duplicates are ignored. Backspace removes the last current tag only when the input is empty. A configured maximum blocks additional additions and invokes `onLimitReached` so the caller can present localized feedback. `getRemoveLabel(tag)` is required so each remove button has a caller-owned translated accessible name; the generic module has no hard-coded action text. The component never normalizes existing caller values or sends API requests.
+The pending input is local transient UI state; `values` remains caller-controlled. Enter trims and proposes a tag. Empty strings and new exact duplicates are ignored. Existing duplicate controlled values are still rendered as separate entries and each remove button deletes only its associated index. Backspace removes the last current tag only when the input is empty. A configured maximum blocks additional additions and invokes `onLimitReached` so the caller can present localized feedback. `getRemoveLabel(tag)` is required so each remove button has a caller-owned translated accessible name; the generic module has no hard-coded action text. The component never normalizes existing caller values or sends API requests.
 
 ## Responsive layout
 
@@ -57,6 +57,8 @@ Editor surfaces use three flex regions: a shrink-to-content header, `min-h-0 fle
 | Use exact confirmation text only for higher-impact deletes | Ordinary deletion remains fast while cross-group or large-batch operations gain an intentional checkpoint. | A caller must decide when its operation meets the higher-impact threshold. |
 | Scope keyboard saving to explicit modifier Enter | Supports efficient editing without hijacking normal typing or creating a destructive shortcut. | Users still activate standard buttons for other actions. |
 | Reset destructive confirmation on every close | A prior acknowledgement must not authorize a later deletion session. | Users re-enter the phrase after reopening. |
+| Consume editor callback failures after resetting guards | The caller already owns error state, while the generic surface must remain usable after a throw or rejection. | The component intentionally does not render a second generic error message. |
+| Preserve duplicate controlled tag entries by index | Server or legacy data may already contain duplicates; deleting one must not erase all matching strings. | Reordered duplicate values are identified by their current controlled index. |
 
 ## Change history
 
@@ -64,3 +66,4 @@ Editor surfaces use three flex regions: a shrink-to-content header, `min-h-0 fle
 | --- | --- |
 | 2026-07-15 | Added the first shared controlled editing components for the unified CRUD dashboard work. |
 | 2026-07-15 | Required caller-provided tag remove labels and reset destructive confirmation phrases between sessions. |
+| 2026-07-15 | Hardened callback failures, validation focus/ID stability, and duplicate controlled tag handling. |

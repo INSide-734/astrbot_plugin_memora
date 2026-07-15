@@ -21,7 +21,10 @@ export interface EditFormLayoutProps {
 }
 
 function errorId(prefix: string, name: string) {
-  return `${prefix}-error-${name.replace(/[^a-zA-Z0-9_-]+/g, "-")}`;
+  const encodedName = Array.from(name)
+    .map((character) => character.codePointAt(0)!.toString(16))
+    .join("-");
+  return `${prefix}-error-${encodedName}`;
 }
 
 export function EditFormLayout({
@@ -35,17 +38,19 @@ export function EditFormLayout({
   const fields = useRef(new Map<string, HTMLElement>());
   const alertRef = useRef<HTMLDivElement>(null);
   const errors = Object.entries(fieldErrors).filter((entry): entry is [string, string] => Boolean(entry[1]));
+  const firstErrorName = errors[0]?.[0];
+  const hasErrors = errors.length > 0 || formErrors.length > 0;
 
   useEffect(() => {
-    if (!focusInvalid || errors.length === 0) return;
-    const firstField = fields.current.get(errors[0][0]);
+    if (!focusInvalid || !hasErrors) return;
+    const firstField = firstErrorName ? fields.current.get(firstErrorName) : undefined;
     if (firstField) firstField.focus();
     else alertRef.current?.focus();
-  }, [errors, focusInvalid]);
+  }, [firstErrorName, focusInvalid, hasErrors]);
 
   return (
     <FieldGroup>
-      {errors.length > 0 || formErrors.length > 0 ? (
+      {hasErrors ? (
         <div ref={alertRef} role="alert" tabIndex={-1} className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
           <p className="font-medium">{summaryLabel}</p>
           <ul className="mt-1 list-disc pl-5">
