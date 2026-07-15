@@ -1,5 +1,6 @@
 """记忆写入 API"""
 
+import asyncio
 import time
 from typing import Any
 
@@ -9,6 +10,7 @@ from astrbot.api import logger
 
 from ..utils.number_utils import clamp_float
 from .history_tracker import HistoryTracker
+from .response_utils import error_response
 
 
 def _coerce_importance_value(raw_value: Any) -> float:
@@ -16,6 +18,21 @@ def _coerce_importance_value(raw_value: Any) -> float:
     if isinstance(raw_value, bool):
         raise TypeError("boolean values are not valid importance values")
     return float(raw_value)
+
+
+def _is_safe_replacement_id(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _replacement_error(message: str, code: str) -> dict[str, Any]:
+    return error_response(message, code=code)
+
+
+class _TaskTerminalError(Exception):
+    def __init__(self, cause: Exception, caller_cancelled: bool) -> None:
+        self.cause = cause
+        self.caller_cancelled = caller_cancelled
+        super().__init__(type(cause).__name__)
 
 
 class MemoryWriteApiMixin:
@@ -305,37 +322,66 @@ class MemoryWriteApiMixin:
             )
 
         final_metadata["previous_content"] = str(memory.get("text", ""))[:100]
-        new_memory_id = None
-        try:
-            new_memory_id = await memory_engine.add_memory(
+        add_task = asyncio.create_task(
+            memory_engine.add_memory(
                 content=new_content,
                 session_id=final_metadata.get("session_id"),
                 persona_id=final_metadata.get("persona_id"),
                 importance=clamp_float(final_metadata.get("importance"), default=0.5),
                 metadata=final_metadata,
             )
-            if new_memory_id is None:
-                return self._error("创建新记忆失败")
-            delete_success = await memory_engine.delete_memory(memory_id)
-            if not delete_success:
-                await memory_engine.delete_memory(new_memory_id)
-                return self._error("旧记忆删除失败，已回滚本次内容更新")
-        except Exception as exc:
-            if new_memory_id is not None:
-                try:
-                    await memory_engine.delete_memory(new_memory_id)
-                except Exception:
-                    logger.error(
-                        f"[PageAPI] 回滚新记忆失败 (new_memory_id={new_memory_id})",
-                        exc_info=True,
-                    )
+        )
+        try:
+            new_memory_id, add_cancelled = await self._await_task_terminal(add_task)
+        except _TaskTerminalError as failure:
             logger.error(
-                "[PageAPI] operation=%s memory_id=%s error_class=%s",
-                "replace_memory_content",
+                "[PageAPI] operation=add_replacement old_memory_id=%s "
+                "new_memory_id=%s cleanup_result=%s error_class=%s",
                 memory_id,
-                type(exc).__name__,
+                None,
+                "not_started",
+                type(failure.cause).__name__,
             )
-            return self._error("更新记忆内容失败")
+            if failure.caller_cancelled:
+                raise asyncio.CancelledError
+            return _replacement_error("创建替换记忆失败", "replacement_failed")
+
+        if not _is_safe_replacement_id(new_memory_id):
+            if add_cancelled:
+                raise asyncio.CancelledError
+            return _replacement_error("创建替换记忆失败", "replacement_failed")
+
+        if add_cancelled:
+            await self._cleanup_replacement(memory_engine, memory_id, new_memory_id)
+            raise asyncio.CancelledError
+
+        old_delete_task = asyncio.create_task(memory_engine.delete_memory(memory_id))
+        try:
+            delete_success, delete_cancelled = await self._await_task_terminal(
+                old_delete_task
+            )
+        except _TaskTerminalError as failure:
+            return await self._replacement_failure_after_cleanup(
+                memory_engine,
+                memory_id,
+                new_memory_id,
+                operation="delete_old_memory",
+                error_class=type(failure.cause).__name__,
+                caller_cancelled=failure.caller_cancelled,
+            )
+
+        if delete_success is not True:
+            return await self._replacement_failure_after_cleanup(
+                memory_engine,
+                memory_id,
+                new_memory_id,
+                operation="delete_old_memory",
+                error_class=None,
+                caller_cancelled=delete_cancelled,
+            )
+
+        if delete_cancelled:
+            raise asyncio.CancelledError
 
         return self._ok(
             {
@@ -344,4 +390,114 @@ class MemoryWriteApiMixin:
                 "new_memory_id": new_memory_id,
                 "field": "changes",
             }
+        )
+
+    @staticmethod
+    async def _await_task_terminal(task: asyncio.Task) -> tuple[Any, bool]:
+        """等待已启动的后端任务结束，记录但不丢失调用方取消信号。"""
+
+        caller_cancelled = False
+        while True:
+            try:
+                return await asyncio.shield(task), caller_cancelled
+            except asyncio.CancelledError:
+                if task.done():
+                    try:
+                        return task.result(), caller_cancelled
+                    except Exception as exc:
+                        raise _TaskTerminalError(exc, caller_cancelled) from exc
+                caller_cancelled = True
+                current_task = asyncio.current_task()
+                if current_task is not None:
+                    current_task.uncancel()
+            except Exception as exc:
+                raise _TaskTerminalError(exc, caller_cancelled) from exc
+
+    async def _cleanup_replacement(
+        self,
+        memory_engine,
+        old_memory_id: int,
+        new_memory_id: int,
+    ) -> tuple[bool, bool]:
+        """删除已创建替换项，并返回（已确认回滚，调用方曾取消）。"""
+
+        if not _is_safe_replacement_id(new_memory_id):
+            return False, False
+        cleanup_task = asyncio.create_task(memory_engine.delete_memory(new_memory_id))
+        try:
+            cleanup_result, cleanup_cancelled = await self._await_task_terminal(
+                cleanup_task
+            )
+        except asyncio.CancelledError:
+            self._log_cleanup_failure(
+                old_memory_id,
+                new_memory_id,
+                cleanup_result="cancelled",
+                error_class="CancelledError",
+            )
+            return False, False
+        except _TaskTerminalError as failure:
+            self._log_cleanup_failure(
+                old_memory_id,
+                new_memory_id,
+                cleanup_result="exception",
+                error_class=type(failure.cause).__name__,
+            )
+            return False, failure.caller_cancelled
+        if cleanup_result is not True:
+            self._log_cleanup_failure(
+                old_memory_id,
+                new_memory_id,
+                cleanup_result=str(cleanup_result),
+                error_class=None,
+            )
+            return False, cleanup_cancelled
+        return True, cleanup_cancelled
+
+    async def _replacement_failure_after_cleanup(
+        self,
+        memory_engine,
+        old_memory_id: int,
+        new_memory_id: int,
+        *,
+        operation: str,
+        error_class: str | None,
+        caller_cancelled: bool,
+    ):
+        cleanup_success, cleanup_cancelled = await self._cleanup_replacement(
+            memory_engine, old_memory_id, new_memory_id
+        )
+        if error_class is not None:
+            logger.error(
+                "[PageAPI] operation=%s old_memory_id=%s new_memory_id=%s "
+                "cleanup_result=%s error_class=%s",
+                operation,
+                old_memory_id,
+                new_memory_id,
+                "succeeded" if cleanup_success else "failed",
+                error_class,
+            )
+        if caller_cancelled or cleanup_cancelled:
+            raise asyncio.CancelledError
+        if not cleanup_success:
+            return _replacement_error(
+                "替换回滚失败，请稍后检查记忆状态", "rollback_failed"
+            )
+        return _replacement_error("替换记忆失败，已回滚", "replacement_failed")
+
+    @staticmethod
+    def _log_cleanup_failure(
+        old_memory_id: int,
+        new_memory_id: int,
+        *,
+        cleanup_result: str,
+        error_class: str | None,
+    ) -> None:
+        logger.error(
+            "[PageAPI] operation=rollback_replacement old_memory_id=%s "
+            "new_memory_id=%s cleanup_result=%s error_class=%s",
+            old_memory_id,
+            new_memory_id,
+            cleanup_result,
+            error_class,
         )

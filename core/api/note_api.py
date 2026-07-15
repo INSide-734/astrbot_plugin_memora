@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from quart import request
@@ -95,6 +96,64 @@ def _json_object_payload_or_error(payload: Any):
     if isinstance(payload, dict):
         return payload, None
     return None, error_response("请求体必须是 JSON 对象")
+
+
+def _note_changes_validation_error(field_errors: dict[str, str]):
+    return error_response(
+        "笔记更新数据无效", code="validation_error", field_errors=field_errors
+    )
+
+
+def _note_changes_candidate(note: Note, changes: Any):
+    if not isinstance(changes, dict):
+        return None, _note_changes_validation_error({"changes": "必须是对象"})
+    if not changes:
+        return None, _note_changes_validation_error({"changes": "不能为空"})
+    editable_fields = {"title", "content", "tags", "status"}
+    unsupported = sorted(set(changes) - editable_fields)
+    if unsupported:
+        return None, _note_changes_validation_error(
+            {field: "字段不可写" for field in unsupported}
+        )
+
+    values: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    for field, value in changes.items():
+        if field in {"title", "content"}:
+            if not isinstance(value, str):
+                errors[field] = "必须为字符串"
+            elif not value.strip():
+                errors[field] = "不能为空"
+            else:
+                values[field] = value.strip()
+        elif field == "tags":
+            if not isinstance(value, list):
+                errors[field] = "必须为字符串数组"
+                continue
+            normalized_tags: list[str] = []
+            for index, tag in enumerate(value):
+                if not isinstance(tag, str):
+                    errors[f"tags.{index}"] = "必须为字符串"
+                    continue
+                normalized = tag.strip()
+                if normalized and normalized not in normalized_tags:
+                    normalized_tags.append(normalized)
+            values[field] = normalized_tags
+        else:
+            if not isinstance(value, str):
+                errors[field] = "必须为字符串"
+            else:
+                try:
+                    values[field] = NoteStatus(value.strip())
+                except ValueError:
+                    errors[field] = "不支持的状态"
+    if errors:
+        return None, _note_changes_validation_error(errors)
+
+    candidate = copy.copy(note)
+    for field, value in values.items():
+        setattr(candidate, field, value)
+    return candidate, None
 
 
 class NoteApiMixin:
@@ -231,16 +290,28 @@ class NoteApiMixin:
         if note is None:
             return error_response("not found: 笔记不存在")
         if "changes" in payload:
-            changes = payload["changes"]
-            if not isinstance(changes, dict):
-                return error_response("changes 必须是 JSON 对象")
-            if not changes:
-                return error_response("changes 不能为空")
-            editable_fields = {"title", "content", "tags", "status"}
-            unsupported = sorted(set(changes) - editable_fields)
-            if unsupported:
-                return error_response(f"不支持的字段: {unsupported[0]}")
-            payload = changes
+            candidate, candidate_error = _note_changes_candidate(note, payload["changes"])
+            if candidate_error:
+                return candidate_error
+            if manager:
+                note = await manager.update_note(
+                    note_id,
+                    title=candidate.title,
+                    content=candidate.content,
+                    tags=candidate.tags,
+                    status=candidate.status.value,
+                )
+                if note is None:
+                    return error_response("not found: 笔记不存在")
+            else:
+                await store.update(candidate)
+                note = candidate
+            version = _safe_note_version_value(note)
+            if version is None:
+                return error_response(
+                    "note version serialization failed: 笔记版本序列化失败"
+                )
+            return ok_response({"note_id": note_id, "version": version})
         # field/value 模式（前端兼容）：{note_id, field: "title"|"content"|"tags"|"status", value}
         field = str(payload.get("field", "")).strip()
         if field and "value" in payload:

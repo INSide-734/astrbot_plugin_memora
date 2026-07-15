@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from types import SimpleNamespace
@@ -266,6 +267,327 @@ class TestMemoryFullFormUpdate:
 
         assert result["status"] == "error"
         assert secret not in result["message"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("replacement_id", [0, -1, False, True, "8", None])
+    async def test_memory_full_form_rejects_invalid_replacement_ids_before_old_delete(
+        self, replacement_id
+    ) -> None:
+        api, engine = self._api_and_engine()
+        engine.add_memory = AsyncMock(return_value=replacement_id)
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            result = await api.update_memory()
+
+        assert result == {
+            "status": "error",
+            "message": "创建替换记忆失败",
+            "code": "replacement_failed",
+        }
+        engine.delete_memory.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_cleans_up_once_when_old_delete_raises(self) -> None:
+        api, engine = self._api_and_engine()
+        engine.delete_memory = AsyncMock(side_effect=[RuntimeError("old delete"), True])
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            result = await api.update_memory()
+
+        assert result["code"] == "replacement_failed"
+        assert [call.args for call in engine.delete_memory.await_args_list] == [(7,), (8,)]
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_reports_rollback_failed_when_cleanup_returns_false(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        engine.delete_memory = AsyncMock(side_effect=[False, False])
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock) as request_patch, patch(
+            "core.api.memory_write_api.logger.error"
+        ) as log_error:
+            result = await api.update_memory()
+
+        assert result == {
+            "status": "error",
+            "message": "替换回滚失败，请稍后检查记忆状态",
+            "code": "rollback_failed",
+        }
+        assert [call.args for call in engine.delete_memory.await_args_list] == [(7,), (8,)]
+        assert "New content" not in str(log_error.call_args_list)
+        assert log_error.call_args.args[1:] == (7, 8, "False", None)
+        request_patch.get_json.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_reports_rollback_failed_when_cleanup_raises(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        engine.delete_memory = AsyncMock(
+            side_effect=[False, RuntimeError("cleanup database failure")]
+        )
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock), patch(
+            "core.api.memory_write_api.logger.error"
+        ) as log_error:
+            result = await api.update_memory()
+
+        assert result["code"] == "rollback_failed"
+        assert [call.args for call in engine.delete_memory.await_args_list] == [(7,), (8,)]
+        assert "cleanup database failure" not in str(log_error.call_args_list)
+        assert "RuntimeError" in str(log_error.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_cancellation_while_add_reconciles_cleanup_before_reraising(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        add_started = asyncio.Event()
+        add_release = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        cleanup_release = asyncio.Event()
+        events: list[str] = []
+
+        async def add_memory(**_kwargs):
+            events.append("add:start")
+            add_started.set()
+            await add_release.wait()
+            events.append("add:done")
+            return 8
+
+        async def delete_memory(memory_id):
+            events.append(f"delete:{memory_id}:start")
+            if memory_id == 8:
+                cleanup_started.set()
+                await cleanup_release.wait()
+            events.append(f"delete:{memory_id}:done")
+            return True
+
+        engine.add_memory = add_memory
+        engine.delete_memory = delete_memory
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            task = asyncio.create_task(api.update_memory())
+            try:
+                await asyncio.wait_for(add_started.wait(), timeout=1)
+                task.cancel()
+                add_release.set()
+                await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+                assert "delete:7:start" not in events
+                cleanup_release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=1)
+            finally:
+                add_release.set()
+                cleanup_release.set()
+                await asyncio.gather(task, return_exceptions=True)
+
+        assert events == [
+            "add:start",
+            "add:done",
+            "delete:8:start",
+            "delete:8:done",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_cancellation_after_old_delete_succeeds_keeps_replacement(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        old_delete_started = asyncio.Event()
+        old_delete_release = asyncio.Event()
+        events: list[str] = []
+
+        async def delete_memory(memory_id):
+            events.append(f"delete:{memory_id}:start")
+            old_delete_started.set()
+            await old_delete_release.wait()
+            events.append(f"delete:{memory_id}:done")
+            return True
+
+        engine.delete_memory = delete_memory
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            task = asyncio.create_task(api.update_memory())
+            try:
+                await asyncio.wait_for(old_delete_started.wait(), timeout=1)
+                task.cancel()
+                old_delete_release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=1)
+            finally:
+                old_delete_release.set()
+                await asyncio.gather(task, return_exceptions=True)
+
+        assert events == ["delete:7:start", "delete:7:done"]
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_cancellation_after_old_delete_false_finishes_cleanup(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        old_delete_started = asyncio.Event()
+        old_delete_release = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        cleanup_release = asyncio.Event()
+        events: list[str] = []
+
+        async def delete_memory(memory_id):
+            events.append(f"delete:{memory_id}:start")
+            if memory_id == 7:
+                old_delete_started.set()
+                await old_delete_release.wait()
+                events.append("delete:7:done")
+                return False
+            cleanup_started.set()
+            await cleanup_release.wait()
+            events.append("delete:8:done")
+            return True
+
+        engine.delete_memory = delete_memory
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            task = asyncio.create_task(api.update_memory())
+            try:
+                await asyncio.wait_for(old_delete_started.wait(), timeout=1)
+                task.cancel()
+                old_delete_release.set()
+                await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+                cleanup_release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=1)
+            finally:
+                old_delete_release.set()
+                cleanup_release.set()
+                await asyncio.gather(task, return_exceptions=True)
+
+        assert events == [
+            "delete:7:start",
+            "delete:7:done",
+            "delete:8:start",
+            "delete:8:done",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_cancellation_after_old_delete_error_finishes_cleanup(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        old_delete_started = asyncio.Event()
+        old_delete_release = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        cleanup_release = asyncio.Event()
+        events: list[str] = []
+
+        async def delete_memory(memory_id):
+            events.append(f"delete:{memory_id}:start")
+            if memory_id == 7:
+                old_delete_started.set()
+                await old_delete_release.wait()
+                events.append("delete:7:error")
+                raise RuntimeError("old delete failure")
+            cleanup_started.set()
+            await cleanup_release.wait()
+            events.append("delete:8:done")
+            return True
+
+        engine.delete_memory = delete_memory
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            task = asyncio.create_task(api.update_memory())
+            try:
+                await asyncio.wait_for(old_delete_started.wait(), timeout=1)
+                task.cancel()
+                old_delete_release.set()
+                await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+                cleanup_release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=1)
+            finally:
+                old_delete_release.set()
+                cleanup_release.set()
+                await asyncio.gather(task, return_exceptions=True)
+
+        assert events == [
+            "delete:7:start",
+            "delete:7:error",
+            "delete:8:start",
+            "delete:8:done",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_repeated_cancellation_waits_for_cleanup_terminal_state(
+        self,
+    ) -> None:
+        api, engine = self._api_and_engine()
+        cleanup_started = asyncio.Event()
+        cleanup_release = asyncio.Event()
+        events: list[str] = []
+
+        async def delete_memory(memory_id):
+            events.append(f"delete:{memory_id}:start")
+            if memory_id == 7:
+                return False
+            cleanup_started.set()
+            await cleanup_release.wait()
+            events.append("delete:8:done")
+            return True
+
+        engine.delete_memory = delete_memory
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            task = asyncio.create_task(api.update_memory())
+            try:
+                await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+                task.cancel()
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done()
+                cleanup_release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=1)
+            finally:
+                cleanup_release.set()
+                await asyncio.gather(task, return_exceptions=True)
+
+        assert events == ["delete:7:start", "delete:8:start", "delete:8:done"]
 
 
 class TestOkError:

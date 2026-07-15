@@ -28,7 +28,8 @@ def _make_mixin(*, store_available: bool = True,
                 detail_note: Note | None = None,
                 versions_list: list | None = None,
                 create_id: int = 1,
-                delete_result: bool = True):
+                delete_result: bool = True,
+                manager_available: bool = False):
     """Create a NoteApiMixin stub."""
 
     class Stub:
@@ -59,6 +60,10 @@ def _make_mixin(*, store_available: bool = True,
                 engine.note_store.create = AsyncMock(return_value=create_id)
                 engine.note_store.update = AsyncMock(return_value=None)
                 engine.note_store.delete = AsyncMock(return_value=delete_result)
+                if manager_available:
+                    engine.note_manager = MagicMock()
+                    engine.note_manager.get_note = AsyncMock(return_value=detail_note)
+                    engine.note_manager.update_note = AsyncMock(return_value=detail_note)
             self.engine = engine
             return {"memory_engine": engine}, None
 
@@ -263,6 +268,85 @@ class TestNoteValidation:
             result = await mixin.update_note()
         assert result["status"] == "ok"
         assert mixin.engine.note_store.update.await_args.args[0].title == "new title"
+
+    @pytest.mark.asyncio
+    async def test_update_changes_valid_title_and_invalid_status_keeps_note_unchanged(
+        self,
+    ) -> None:
+        note = _make_note(title="old", content="body", note_id_val=2)
+        req = _mock_request()
+        req.get_json = AsyncMock(
+            return_value={
+                "note_id": 2,
+                "changes": {"title": "new title", "status": "invalid"},
+            }
+        )
+        with patch("core.api.note_api.request", req):
+            mixin = _make_mixin(detail_note=note)
+            result = await mixin.update_note()
+        assert result["status"] == "error"
+        assert note.title == "old"
+        assert note.status is NoteStatus.ACTIVE
+        mixin.engine.note_store.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("field", ["title", "content"])
+    async def test_update_changes_rejects_blank_text_without_mutating_note(self, field) -> None:
+        note = _make_note(title="old", content="body", note_id_val=2)
+        req = _mock_request()
+        req.get_json = AsyncMock(
+            return_value={"note_id": 2, "changes": {field: "   "}}
+        )
+        with patch("core.api.note_api.request", req):
+            mixin = _make_mixin(detail_note=note)
+            result = await mixin.update_note()
+        assert result["status"] == "error"
+        assert note.title == "old"
+        assert note.content == "body"
+        mixin.engine.note_store.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_changes_rejects_malformed_tags_without_mutating_note(self) -> None:
+        note = _make_note(title="old", content="body", note_id_val=2)
+        req = _mock_request()
+        req.get_json = AsyncMock(
+            return_value={"note_id": 2, "changes": {"tags": ["ok", 2]}}
+        )
+        with patch("core.api.note_api.request", req):
+            mixin = _make_mixin(detail_note=note)
+            result = await mixin.update_note()
+        assert result["status"] == "error"
+        assert note.tags == []
+        mixin.engine.note_store.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_changes_uses_manager_path_with_detached_candidate(self) -> None:
+        note = _make_note(title="old", content="body", note_id_val=2)
+        req = _mock_request()
+        req.get_json = AsyncMock(
+            return_value={
+                "note_id": 2,
+                "changes": {
+                    "title": "new title",
+                    "content": "new body",
+                    "tags": [" one ", "two", "one"],
+                    "status": "archived",
+                },
+            }
+        )
+        with patch("core.api.note_api.request", req):
+            mixin = _make_mixin(detail_note=note, manager_available=True)
+            result = await mixin.update_note()
+        assert result["status"] == "ok"
+        mixin.engine.note_store.update.assert_not_awaited()
+        kwargs = mixin.engine.note_manager.update_note.await_args.kwargs
+        assert kwargs == {
+            "title": "new title",
+            "content": "new body",
+            "tags": ["one", "two"],
+            "status": "archived",
+        }
+        assert note.title == "old"
 
     @pytest.mark.asyncio
     async def test_archive_requires_note_id(self) -> None:
