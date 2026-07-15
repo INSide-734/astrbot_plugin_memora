@@ -136,8 +136,15 @@ def format_memories_for_injection(
                 metadata_parts.append(line)
                 metadata_chars += len(line)
 
-            key_facts = metadata.get("key_facts", [])
-            facts = [str(fact) for fact in key_facts if fact] if isinstance(key_facts, list) else []
+            facts: list[str] = []
+            if (
+                not use_budget
+                or content_level is ContentLevel.FACTS
+                or budget.include_key_facts
+            ):
+                key_facts = metadata.get("key_facts", [])
+                if isinstance(key_facts, list):
+                    facts = [str(fact) for fact in key_facts if fact]
 
             if use_budget and content_level is ContentLevel.FACTS:
                 if facts:
@@ -187,19 +194,33 @@ def format_memories_for_injection(
         return ("", stats) if use_budget else ""
 
     if use_budget:
-        retained = formatted_entries.copy()
-        while retained:
-            body = "\n\n".join(entry for entry, _ in retained)
+        retained_count = len(formatted_entries)
+        payload_chars = (
+            len(header)
+            + len(footer)
+            + sum(len(entry) for entry, _ in formatted_entries)
+            + 2 * max(0, retained_count - 1)
+        )
+        while retained_count and payload_chars > budget.total_chars:
+            payload_chars -= len(formatted_entries[retained_count - 1][0])
+            if retained_count > 1:
+                payload_chars -= 2
+            retained_count -= 1
+
+        if retained_count:
+            body = "\n\n".join(
+                formatted_entries[index][0] for index in range(retained_count)
+            )
             result = f"{header}{body}{footer}"
-            if len(result) <= budget.total_chars:
-                stats.chars = len(result)
-                stats.memory_count = len(retained)
-                stats.truncated_count = sum(truncated for _, truncated in retained)
-                stats.dropped_by_budget = len(formatted_entries) - len(retained)
-                stats.header_chars = len(header)
-                stats.footer_chars = len(footer)
-                return (result, stats)
-            retained.pop()
+            stats.chars = len(result)
+            stats.memory_count = retained_count
+            stats.truncated_count = sum(
+                formatted_entries[index][1] for index in range(retained_count)
+            )
+            stats.dropped_by_budget = len(formatted_entries) - retained_count
+            stats.header_chars = len(header)
+            stats.footer_chars = len(footer)
+            return (result, stats)
 
         stats.dropped_by_budget = len(formatted_entries)
         return ("", stats)

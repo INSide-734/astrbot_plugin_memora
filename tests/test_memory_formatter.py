@@ -408,6 +408,27 @@ class TestBudgetedInjectionFormatting:
         assert "fact-0" not in text
         assert "person-0" not in text
 
+    def test_compact_does_not_touch_disabled_key_facts(self):
+        class RaisingFact:
+            def __str__(self) -> str:
+                raise AssertionError("disabled key facts must stay unread")
+
+        memory = _rich_memory(0)
+        memory["metadata"]["key_facts"] = [RaisingFact()]
+
+        text, stats = format_memories_for_injection(
+            [memory],
+            budget=_budget(
+                ContentLevel.COMPACT,
+                1200,
+                include_key_facts=False,
+            ),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Complete memory 0." in text
+        assert stats.memory_count == 1
+
     def test_detailed_may_emit_all_supported_metadata(self):
         text, _ = format_memories_for_injection(
             [_rich_memory(0)],
