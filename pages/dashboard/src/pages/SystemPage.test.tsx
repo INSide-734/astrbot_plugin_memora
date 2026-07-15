@@ -244,6 +244,7 @@ describe("SystemPage", () => {
     expect(bridge.apiPost).not.toHaveBeenCalledWith("page/backup/restore", { name: "backup-alpha" });
 
     const confirmDialog = screen.getByRole("dialog", { name: "Restore Backup" });
+    expect(within(confirmDialog).getByRole("button", { name: /restore backup/i }).className).toContain("bg-destructive/10");
     fireEvent.click(within(confirmDialog).getByRole("button", { name: /restore backup/i }));
 
     await waitFor(() => {

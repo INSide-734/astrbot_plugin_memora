@@ -426,7 +426,7 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
             item={selectedItem}
             actions={actions}
             loading={loadingDetail}
-            submitting={actionFeedbackVisible && submitting}
+            submitting={submitting}
             activeAction={actionFeedbackVisible ? activeAction : null}
             onAction={runAction}
           />
