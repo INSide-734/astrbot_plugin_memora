@@ -118,19 +118,117 @@
                 "type": "bool",
                 "default": true
             },
-            "injection_method": {
-                "description": "记忆注入位置",
-                "hint": "记忆注入到 LLM 请求的位置。extra_user_content(推荐)：追加到用户消息末尾，不影响前缀缓存且不污染对话历史。user_message_before：作为用户消息前缀。user_message_after：作为用户消息后缀。fake_tool_call：伪造工具调用消息对注入到对话历史，使 LLM 自然地理解这是检索结果。fake_tool_call_deepseek_v4：DeepSeek V4 thinking 模式专用伪工具转录。Gemini 下若选择 fake_tool_call 会自动降级为 user_message_before。system_prompt：⚠️已废弃，选择后自动回退至 extra_user_content。",
+            "injection_routing_mode": {
+                "description": "记忆注入路由模式",
+                "hint": "manual 严格使用管理员预设；auto 按当前请求信号自动选择；hybrid 自动选择后限制在管理员设定的预设范围内。",
                 "type": "string",
-                "default": "extra_user_content",
+                "default": "manual",
                 "options": [
+                    "manual",
+                    "auto",
+                    "hybrid"
+                ]
+            },
+            "injection_manual_preset": {
+                "description": "手动模式预设",
+                "hint": "纯手动模式固定使用的高级策略预设。",
+                "type": "string",
+                "default": "balanced",
+                "options": [
+                    "tool_first",
+                    "low_cost",
+                    "balanced",
+                    "quality"
+                ]
+            },
+            "injection_auto_fallback_preset": {
+                "description": "自动模式回退预设",
+                "hint": "自动路由无法形成可靠建议时使用的高级策略预设。",
+                "type": "string",
+                "default": "balanced",
+                "options": [
+                    "tool_first",
+                    "low_cost",
+                    "balanced",
+                    "quality"
+                ]
+            },
+            "injection_hybrid_base_preset": {
+                "description": "混合模式基础预设",
+                "hint": "混合模式的稳定基线，必须位于最小与最大预设之间。",
+                "type": "string",
+                "default": "balanced",
+                "options": [
+                    "tool_first",
+                    "low_cost",
+                    "balanced",
+                    "quality"
+                ]
+            },
+            "injection_hybrid_min_preset": {
+                "description": "混合模式最小预设",
+                "hint": "混合模式自动建议允许采用的最低策略等级。",
+                "type": "string",
+                "default": "low_cost",
+                "options": [
+                    "tool_first",
+                    "low_cost",
+                    "balanced",
+                    "quality"
+                ]
+            },
+            "injection_hybrid_max_preset": {
+                "description": "混合模式最大预设",
+                "hint": "混合模式自动建议允许采用的最高策略等级。",
+                "type": "string",
+                "default": "quality",
+                "options": [
+                    "tool_first",
+                    "low_cost",
+                    "balanced",
+                    "quality"
+                ]
+            },
+            "injection_delivery_override": {
+                "description": "注入传输覆盖",
+                "hint": "auto 由预设和 Provider 能力选择临时注入方式；其余选项强制指定兼容的传输方式。System Prompt 不再是注入目标。",
+                "type": "string",
+                "default": "auto",
+                "options": [
+                    "auto",
                     "extra_user_content",
                     "user_message_before",
                     "user_message_after",
                     "fake_tool_call",
-                    "fake_tool_call_deepseek_v4",
-                    "system_prompt"
+                    "fake_tool_call_deepseek_v4"
                 ]
+            },
+            "injection_preset_overrides_enabled": {
+                "description": "启用高级预设覆盖",
+                "hint": "开启后允许下方预算和内容开关覆盖已解析预设；数值为 0 时仍使用预设默认值。",
+                "type": "bool",
+                "default": false
+            },
+            "injection_decision_retention_days": {
+                "description": "注入决策保留天数",
+                "hint": "只允许 7、30、90、180 或 0 天；0 表示不按时间删除，但仍受最大行数限制。",
+                "type": "int",
+                "default": 30,
+                "options": [
+                    7,
+                    30,
+                    90,
+                    180,
+                    0
+                ]
+            },
+            "injection_decision_max_rows": {
+                "description": "注入决策最大行数",
+                "hint": "保留的完整脱敏决策记录上限；超过上限后优先删除最旧记录。",
+                "type": "int",
+                "default": 100000,
+                "min": 1000,
+                "max": 1000000
             },
             "auto_remove_injected": {
                 "description": "自动清除旧注入片段",
@@ -234,25 +332,25 @@
             },
             "injection_budget_chars": {
                 "description": "注入预算：总字符数上限",
-                "hint": "每轮 LLM 请求注入的记忆上下文总字符数上限。0 表示不限制。默认 1200 约 900 tokens。",
+                "hint": "普通记忆注入总字符数硬上限覆盖。0 表示使用已解析高级预设的默认值，不表示无限制。",
                 "type": "int",
-                "default": 1200,
+                "default": 0,
                 "min": 0,
                 "max": 10000
             },
             "injection_memory_max_chars": {
                 "description": "注入预算：单条记忆最大字符数",
-                "hint": "单条记忆 content 超过此值会被截断。0 表示不限制。",
+                "hint": "单条记忆 content 的硬上限覆盖。0 表示使用已解析高级预设的默认值，不表示无限制。",
                 "type": "int",
-                "default": 220,
+                "default": 0,
                 "min": 0,
                 "max": 2000
             },
             "injection_metadata_max_chars": {
                 "description": "注入预算：单条记忆元数据最大字符数",
-                "hint": "单条记忆的 topics/key_facts/participants 等元数据总字符数上限。",
+                "hint": "单条记忆元数据的硬上限覆盖。0 表示使用已解析高级预设的默认值，不表示无限制。",
                 "type": "int",
-                "default": 180,
+                "default": 0,
                 "min": 0,
                 "max": 500
             },

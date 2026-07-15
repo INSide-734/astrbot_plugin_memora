@@ -228,13 +228,108 @@ def test_memora_config_preserves_every_schema_leaf_and_default() -> None:
     )
 
 
+def test_hybrid_preset_order_is_rejected() -> None:
+    from pydantic import ValidationError
+
+    from core.base.config_validator import RecallEngineConfig
+
+    with pytest.raises(ValidationError, match="min <= base <= max"):
+        RecallEngineConfig(
+            injection_hybrid_min_preset="quality",
+            injection_hybrid_base_preset="balanced",
+            injection_hybrid_max_preset="low_cost",
+        )
+
+
+def test_runtime_bad_retention_and_row_cap_default_only_those_leaves() -> None:
+    from core.base.config_manager import ConfigManager
+
+    manager = ConfigManager(
+        {
+            "recall_engine": {
+                "injection_routing_mode": "hybrid",
+                "injection_hybrid_base_preset": "quality",
+                "injection_hybrid_min_preset": "balanced",
+                "injection_hybrid_max_preset": "quality",
+                "injection_decision_retention_days": 13,
+                "injection_decision_max_rows": 42,
+                "injection_method": "system_prompt",
+            }
+        }
+    )
+
+    recall = manager.get_config_snapshot()[0]["recall_engine"]
+    assert recall["injection_routing_mode"] == "hybrid"
+    assert recall["injection_hybrid_base_preset"] == "quality"
+    assert recall["injection_hybrid_min_preset"] == "balanced"
+    assert recall["injection_hybrid_max_preset"] == "quality"
+    assert recall["injection_decision_retention_days"] == 30
+    assert recall["injection_decision_max_rows"] == 100_000
+    assert "injection_method" not in recall
+    assert manager.runtime_injection_fallback is True
+
+
+def test_runtime_invalid_strategy_defaults_to_safe_manual_strategy() -> None:
+    from core.base.config_manager import ConfigManager
+
+    manager = ConfigManager(
+        {
+            "recall_engine": {
+                "injection_routing_mode": "hybrid",
+                "injection_manual_preset": "quality",
+                "injection_auto_fallback_preset": "quality",
+                "injection_hybrid_base_preset": "low_cost",
+                "injection_hybrid_min_preset": "quality",
+                "injection_hybrid_max_preset": "balanced",
+                "injection_delivery_override": "fake_tool_call",
+                "injection_preset_overrides_enabled": True,
+                "injection_budget_chars": 500,
+            }
+        }
+    )
+
+    recall = manager.get_config_snapshot()[0]["recall_engine"]
+    assert recall["injection_routing_mode"] == "manual"
+    assert recall["injection_manual_preset"] == "balanced"
+    assert recall["injection_auto_fallback_preset"] == "balanced"
+    assert recall["injection_hybrid_base_preset"] == "balanced"
+    assert recall["injection_hybrid_min_preset"] == "low_cost"
+    assert recall["injection_hybrid_max_preset"] == "quality"
+    assert recall["injection_delivery_override"] == "extra_user_content"
+    assert recall["injection_preset_overrides_enabled"] is False
+    assert recall["injection_budget_chars"] == 0
+    assert manager.runtime_injection_fallback is True
+
+
+@pytest.mark.asyncio
+async def test_apply_rejects_invalid_hybrid_preset_order() -> None:
+    from core.base.config_manager import ConfigManager, ConfigValidationError
+
+    manager = ConfigManager({})
+    snapshot_before = manager.get_config_snapshot()
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        await manager.apply_config_changes(
+            {
+                "recall_engine.injection_hybrid_min_preset": "quality",
+                "recall_engine.injection_hybrid_base_preset": "balanced",
+                "recall_engine.injection_hybrid_max_preset": "low_cost",
+            },
+            expected_revision=snapshot_before[1],
+            persist=False,
+        )
+
+    assert "recall_engine" in exc_info.value.field_errors
+    assert manager.get_config_snapshot() == snapshot_before
+
+
 def test_schema_numeric_bounds_match_every_pydantic_constraint() -> None:
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
 
     model_bounds = _model_numeric_bounds()
     schema_bounds = _schema_numeric_bounds(schema)
 
-    assert len(model_bounds) == 71
+    assert len(model_bounds) == 72
     assert schema_bounds == model_bounds
 
 

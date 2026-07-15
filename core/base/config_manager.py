@@ -23,6 +23,16 @@ from .config_validator import (
 from .exceptions import ConfigurationError
 
 _SENTINEL = object()
+_INJECTION_PRESETS = {"tool_first", "low_cost", "balanced", "quality"}
+_INJECTION_RETENTION_DAYS = {0, 7, 30, 90, 180}
+_INJECTION_DELIVERY_METHODS = {
+    "auto",
+    "extra_user_content",
+    "user_message_before",
+    "user_message_after",
+    "fake_tool_call",
+    "fake_tool_call_deepseek_v4",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +80,7 @@ class ConfigManager:
         self._revision = ""
         self._source_revision = ""
         self._validation_errors: list[dict[str, Any]] = []
+        self._runtime_injection_fallback = False
         self._apply_lock = asyncio.Lock()
         self._persistence_capable = callable(
             getattr(self._source_config, "save_config", None)
@@ -81,6 +92,11 @@ class ConfigManager:
         else:
             self._schema_leaf_paths, self._schema_leaf_options = schema_contract
         self._load_config()
+
+    @property
+    def runtime_injection_fallback(self) -> bool:
+        """返回最近一次读取源配置时是否应用了注入策略运行时降级。"""
+        return self._runtime_injection_fallback
 
     def _load_config(self) -> None:
         """合并模型默认值并校验 AstrBot 当前配置。"""
@@ -95,10 +111,119 @@ class ConfigManager:
 
     def _read_source_state(self) -> tuple[MemoraConfig, dict[str, Any], str]:
         source_snapshot = copy.deepcopy(dict(self._source_config))
+        source_snapshot, fallback_applied = self._normalize_runtime_injection_config(
+            source_snapshot
+        )
+        self._runtime_injection_fallback = fallback_applied
         merged_config = merge_config_with_defaults(source_snapshot)
         config_obj = self._validate_with_branch_fallback(merged_config)
         config = config_obj.model_dump()
         return config_obj, config, self._compute_revision(config)
+
+    @classmethod
+    def _normalize_runtime_injection_config(
+        cls,
+        source: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
+        """容忍运行时来源中的无效新策略叶子，但不修改或迁移源配置。"""
+        normalized = copy.deepcopy(source)
+        fallback_applied = False
+        recall = normalized.get("recall_engine")
+        if not isinstance(recall, dict):
+            return normalized, fallback_applied
+
+        retention_days = recall.get("injection_decision_retention_days", 30)
+        if (
+            type(retention_days) is not int
+            or retention_days not in _INJECTION_RETENTION_DAYS
+        ):
+            recall["injection_decision_retention_days"] = 30
+            fallback_applied = True
+
+        max_rows = recall.get("injection_decision_max_rows", 100_000)
+        if (
+            type(max_rows) is not int
+            or not 1_000 <= max_rows <= 1_000_000
+        ):
+            recall["injection_decision_max_rows"] = 100_000
+            fallback_applied = True
+
+        strategy_values = (
+            recall.get("injection_manual_preset", "balanced"),
+            recall.get("injection_auto_fallback_preset", "balanced"),
+            recall.get("injection_hybrid_base_preset", "balanced"),
+            recall.get("injection_hybrid_min_preset", "low_cost"),
+            recall.get("injection_hybrid_max_preset", "quality"),
+        )
+        routing_value = recall.get("injection_routing_mode", "manual")
+        routing_valid = type(routing_value) is str and routing_value in {
+            "manual",
+            "auto",
+            "hybrid",
+        }
+        presets_valid = all(
+            type(value) is str and value in _INJECTION_PRESETS
+            for value in strategy_values
+        )
+        delivery_value = recall.get("injection_delivery_override", "auto")
+        delivery_valid = (
+            type(delivery_value) is str
+            and delivery_value in _INJECTION_DELIVERY_METHODS
+        )
+        override_numbers_valid = all(
+            type(recall.get(path, 0)) is int
+            and 0 <= recall.get(path, 0) <= maximum
+            for path, maximum in (
+                ("injection_budget_chars", 10_000),
+                ("injection_memory_max_chars", 2_000),
+                ("injection_metadata_max_chars", 500),
+            )
+        )
+        override_booleans_valid = all(
+            type(recall.get(path, default)) is bool
+            for path, default in (
+                ("injection_preset_overrides_enabled", False),
+                ("injection_include_key_facts", True),
+                ("injection_include_topics", True),
+                ("injection_include_participants", False),
+                ("injection_compact_header", True),
+            )
+        )
+        ranks = {"tool_first": 0, "low_cost": 1, "balanced": 2, "quality": 3}
+        hybrid_order_valid = presets_valid and (
+            ranks[strategy_values[3]]
+            <= ranks[strategy_values[2]]
+            <= ranks[strategy_values[4]]
+        )
+        if not (
+            routing_valid
+            and presets_valid
+            and delivery_valid
+            and override_numbers_valid
+            and override_booleans_valid
+            and hybrid_order_valid
+        ):
+            recall.update(
+                {
+                    "injection_routing_mode": "manual",
+                    "injection_manual_preset": "balanced",
+                    "injection_auto_fallback_preset": "balanced",
+                    "injection_hybrid_base_preset": "balanced",
+                    "injection_hybrid_min_preset": "low_cost",
+                    "injection_hybrid_max_preset": "quality",
+                    "injection_delivery_override": "extra_user_content",
+                    "injection_preset_overrides_enabled": False,
+                    "injection_budget_chars": 0,
+                    "injection_memory_max_chars": 0,
+                    "injection_metadata_max_chars": 0,
+                    "injection_include_key_facts": True,
+                    "injection_include_topics": True,
+                    "injection_include_participants": False,
+                    "injection_compact_header": True,
+                }
+            )
+            fallback_applied = True
+        return normalized, fallback_applied
 
     def _reconcile_source_locked(self) -> None:
         """Publish external AstrBotConfig changes without persisting them."""

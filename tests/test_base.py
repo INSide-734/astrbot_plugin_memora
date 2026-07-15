@@ -205,7 +205,20 @@ class TestGetDefaultConfig:
         assert re_cfg["top_k"] == 5
         assert re_cfg["max_k"] == 10
         assert re_cfg["importance_weight"] == 1.0
-        assert re_cfg["injection_method"] == "extra_user_content"
+        assert "injection_method" not in re_cfg
+        assert re_cfg["injection_routing_mode"] == "manual"
+        assert re_cfg["injection_manual_preset"] == "balanced"
+        assert re_cfg["injection_auto_fallback_preset"] == "balanced"
+        assert re_cfg["injection_hybrid_base_preset"] == "balanced"
+        assert re_cfg["injection_hybrid_min_preset"] == "low_cost"
+        assert re_cfg["injection_hybrid_max_preset"] == "quality"
+        assert re_cfg["injection_delivery_override"] == "auto"
+        assert re_cfg["injection_preset_overrides_enabled"] is False
+        assert re_cfg["injection_budget_chars"] == 0
+        assert re_cfg["injection_memory_max_chars"] == 0
+        assert re_cfg["injection_metadata_max_chars"] == 0
+        assert re_cfg["injection_decision_retention_days"] == 30
+        assert re_cfg["injection_decision_max_rows"] == 100_000
 
     def test_graph_memory_defaults(self) -> None:
         from core.base.config_validator import get_default_config
