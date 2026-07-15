@@ -100,7 +100,7 @@ def select_memories_with_budget(
     返回 (selected, dropped)。
     """
     if budget.total_chars <= 0:
-        return ([], list(memories))
+        return ([], memories)
 
     # 按分数降序排列（高分的优先保留）
     sorted_memories = sorted(

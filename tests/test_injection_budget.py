@@ -24,6 +24,7 @@ def test_zero_budget_selects_nothing() -> None:
 
     assert selected == []
     assert dropped == memories
+    assert dropped is memories
 
 
 def test_oversized_first_item_is_dropped_instead_of_forced_into_budget() -> None:
