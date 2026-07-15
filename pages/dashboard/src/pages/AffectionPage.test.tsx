@@ -42,6 +42,7 @@ const AFFECTION_SENTINELS: Record<string, string> = {
   "common.delete": "删除好感动作哨兵",
   "common.close": "关闭好感动作哨兵",
   "common.cancel": "取消好感动作哨兵",
+  "affection.deleteUser": "删除好感用户标题哨兵",
   "affection.userId": "用户字段哨兵",
   "affection.groupId": "群组字段哨兵",
   "affection.score": "好感分数字段哨兵",
@@ -522,12 +523,12 @@ describe("AffectionPage", () => {
     const userDialog = editor(/new affection/i);
     fireEvent.change(within(userDialog).getByLabelText("User ID"), { target: { value: "alice" } });
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
-    fireEvent.click(within(userDialog).getByRole("button", { name: /cancel|close/i }));
+    fireEvent.click(within(userDialog).getByRole("button", { name: /^cancel$/i }));
     fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
     const moodDialog = editor(/mood/i);
     fireEvent.change(within(moodDialog).getByLabelText("Description"), { target: { value: "dirty mood" } });
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
-    fireEvent.click(within(moodDialog).getByRole("button", { name: /cancel|close/i }));
+    fireEvent.click(within(moodDialog).getByRole("button", { name: /^cancel$/i }));
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
@@ -549,7 +550,7 @@ describe("AffectionPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
     const dialog = editor(/mood/i);
     fireEvent.change(within(dialog).getByLabelText("Description"), { target: { value: "dirty mood" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: /cancel|close/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
     fireEvent.click(screen.getByRole("button", { name: /restore default mood/i }));
     bridge.apiPost.mockResolvedValue(ok({ mood_type: "calm", intensity: 0.1, duration_hours: 4, description: "default", is_active: true }));
     fireEvent.click(within(editor(/restore default mood/i)).getByRole("button", { name: /restore/i }));
@@ -565,7 +566,7 @@ describe("AffectionPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
     const dialog = editor(/mood/i);
     fireEvent.change(within(dialog).getByLabelText("Description"), { target: { value: "discarded mood" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: /cancel|close/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
     fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
     expect(within(editor(/mood/i)).queryByDisplayValue("discarded mood")).toBeNull();
@@ -609,7 +610,7 @@ describe("AffectionPage", () => {
     expect(await screen.findByText(/invalid affection.*entity|invalid.*response/i)).toBeTruthy();
     expect(within(createDialog).getByDisplayValue("alice")).toBeTruthy();
 
-    fireEvent.click(within(createDialog).getByRole("button", { name: /cancel|close/i }));
+    fireEvent.click(within(createDialog).getByRole("button", { name: /^cancel$/i }));
     fireEvent.click(screen.getByRole("button", { name: /edit alice/i }));
     const sheet = editor(/affection.*alice/i); fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
     fireEvent.change(within(sheet).getByLabelText(/affection score/i), { target: { value: "77" } });
@@ -636,7 +637,7 @@ describe("AffectionPage", () => {
     const userDialog = editor(/new affection/i); fireEvent.change(within(userDialog).getByLabelText("User ID"), { target: { value: "alice" } });
     fireEvent.click(within(userDialog).getByRole("button", { name: /^create$/i }));
     expect(await screen.findByText("offline")).toBeTruthy(); expect(within(userDialog).getByDisplayValue("alice")).toBeTruthy();
-    fireEvent.click(within(userDialog).getByRole("button", { name: /cancel|close/i }));
+    fireEvent.click(within(userDialog).getByRole("button", { name: /^cancel$/i }));
     fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
     const moodDialog = editor(/mood/i); fireEvent.change(within(moodDialog).getByLabelText("Description"), { target: { value: "keep mood" } });
     fireEvent.click(within(moodDialog).getByRole("button", { name: /set|save/i }));
@@ -680,7 +681,7 @@ describe("AffectionPage", () => {
     expect(within(conflict).getByRole("button", { name: AFFECTION_SENTINELS["affection.reapplyLocal"] })).toBeTruthy();
     fireEvent.click(within(conflict).getByRole("button", { name: AFFECTION_SENTINELS["config.conflict.loadRemote"] }));
     fireEvent.click(screen.getByRole("button", { name: `${AFFECTION_SENTINELS["common.delete"]} alice` }));
-    expect(await screen.findByRole("dialog", { name: AFFECTION_SENTINELS["common.delete"] })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: AFFECTION_SENTINELS["affection.deleteUser"] })).toBeTruthy();
   });
 
   it("consumes non-English mood field, range, and reset translations", async () => {

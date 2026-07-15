@@ -26,6 +26,7 @@ const JARGON_SENTINELS: Record<string, string> = {
   "common.delete": "删除动作哨兵",
   "common.close": "关闭动作哨兵",
   "common.cancel": "取消动作哨兵",
+  "jargon.deleteTitle": "删除黑话标题哨兵",
   "jargon.conflictTitle": "黑话冲突哨兵",
   "jargon.conflictDescription": "远端黑话已变更哨兵",
   "config.conflict.loadRemote": "加载远端哨兵",
@@ -768,6 +769,6 @@ describe("JargonPage", () => {
     expect(within(conflict).getByRole("button", { name: JARGON_SENTINELS["jargon.reapplyLocal"] })).toBeTruthy();
     fireEvent.click(within(conflict).getByRole("button", { name: JARGON_SENTINELS["config.conflict.loadRemote"] }));
     fireEvent.click(screen.getByRole("button", { name: JARGON_SENTINELS["common.delete"] }));
-    expect(await screen.findByRole("dialog", { name: JARGON_SENTINELS["common.delete"] })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: JARGON_SENTINELS["jargon.deleteTitle"] })).toBeTruthy();
   });
 });
