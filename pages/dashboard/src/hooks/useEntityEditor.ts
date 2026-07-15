@@ -143,6 +143,13 @@ export function useEntityEditor<T extends object>(
     setState(initialData(options.entity, options.revision));
   }, [options.entity, options.revision]);
 
+  const invalidatePendingSave = useCallback(() => {
+    if (!submittingRef.current) return false;
+    generationRef.current += 1;
+    submittingRef.current = false;
+    return true;
+  }, []);
+
   const beginEdit = useCallback(() => {
     setState((previous) => ({
       ...previous,
@@ -153,6 +160,7 @@ export function useEntityEditor<T extends object>(
   }, []);
 
   const setField = useCallback(<K extends keyof T>(field: K, value: T[K]) => {
+    const invalidatedSave = invalidatePendingSave();
     setState((previous) => {
       const dirtyFields = new Set(previous.dirtyFields);
       if (valuesEqual(previous.baseline[field], value)) dirtyFields.delete(field);
@@ -165,11 +173,13 @@ export function useEntityEditor<T extends object>(
           Object.entries(previous.fieldErrors).filter(([name]) => name !== String(field))
         ),
         formError: null,
+        isSubmitting: invalidatedSave ? false : previous.isSubmitting,
       };
     });
-  }, []);
+  }, [invalidatePendingSave]);
 
   const cancel = useCallback(() => {
+    invalidatePendingSave();
     setState((previous) => ({
       ...previous,
       draft: cloneValue(previous.baseline),
@@ -178,8 +188,9 @@ export function useEntityEditor<T extends object>(
       fieldErrors: {},
       formError: null,
       conflict: null,
+      isSubmitting: false,
     }));
-  }, []);
+  }, [invalidatePendingSave]);
 
   const save = useCallback(async (): Promise<boolean> => {
     const current = stateRef.current;
