@@ -14,6 +14,7 @@ from .models import (
     RoutingMode,
 )
 from .presets import PRESETS, get_preset, resolve_preset
+from .recorder import InjectionDecisionRecorder
 from .router import InjectionRoutingConfig, InjectionStrategyRouter
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "InjectionDecision",
     "InjectionDecisionRecord",
     "InjectionExecutionResult",
+    "InjectionDecisionRecorder",
     "InjectionOutcome",
     "InjectionExecutionContext",
     "InjectionExecutor",
