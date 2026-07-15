@@ -35,6 +35,12 @@ class _TaskTerminalError(Exception):
         super().__init__(type(cause).__name__)
 
 
+class _TaskTerminalCancelled(Exception):
+    def __init__(self, caller_cancelled: bool) -> None:
+        self.caller_cancelled = caller_cancelled
+        super().__init__("CancelledError")
+
+
 class MemoryWriteApiMixin:
     """混入类：单条记忆更新"""
 
@@ -333,6 +339,18 @@ class MemoryWriteApiMixin:
         )
         try:
             new_memory_id, add_cancelled = await self._await_task_terminal(add_task)
+        except _TaskTerminalCancelled as failure:
+            logger.error(
+                "[PageAPI] operation=add_replacement old_memory_id=%s "
+                "new_memory_id=%s cleanup_result=%s error_class=%s",
+                memory_id,
+                None,
+                "not_started",
+                "CancelledError",
+            )
+            if failure.caller_cancelled:
+                raise asyncio.CancelledError
+            return _replacement_error("创建替换记忆失败", "replacement_failed")
         except _TaskTerminalError as failure:
             logger.error(
                 "[PageAPI] operation=add_replacement old_memory_id=%s "
@@ -359,6 +377,12 @@ class MemoryWriteApiMixin:
         try:
             delete_success, delete_cancelled = await self._await_task_terminal(
                 old_delete_task
+            )
+        except _TaskTerminalCancelled as failure:
+            return self._replacement_repair_required(
+                memory_id,
+                new_memory_id,
+                caller_cancelled=failure.caller_cancelled,
             )
         except _TaskTerminalError as failure:
             return await self._replacement_failure_after_cleanup(
@@ -402,6 +426,8 @@ class MemoryWriteApiMixin:
                 return await asyncio.shield(task), caller_cancelled
             except asyncio.CancelledError:
                 if task.done():
+                    if task.cancelled():
+                        raise _TaskTerminalCancelled(caller_cancelled)
                     try:
                         return task.result(), caller_cancelled
                     except Exception as exc:
@@ -428,6 +454,14 @@ class MemoryWriteApiMixin:
             cleanup_result, cleanup_cancelled = await self._await_task_terminal(
                 cleanup_task
             )
+        except _TaskTerminalCancelled as failure:
+            self._log_cleanup_failure(
+                old_memory_id,
+                new_memory_id,
+                cleanup_result="backend_cancelled",
+                error_class="CancelledError",
+            )
+            return False, failure.caller_cancelled
         except asyncio.CancelledError:
             self._log_cleanup_failure(
                 old_memory_id,
@@ -484,6 +518,27 @@ class MemoryWriteApiMixin:
                 "替换回滚失败，请稍后检查记忆状态", "rollback_failed"
             )
         return _replacement_error("替换记忆失败，已回滚", "replacement_failed")
+
+    @staticmethod
+    def _replacement_repair_required(
+        old_memory_id: int,
+        new_memory_id: int,
+        *,
+        caller_cancelled: bool,
+    ) -> dict[str, Any]:
+        logger.error(
+            "[PageAPI] operation=repair_replacement old_memory_id=%s "
+            "new_memory_id=%s cleanup_result=%s error_class=%s",
+            old_memory_id,
+            new_memory_id,
+            "retained",
+            "CancelledError",
+        )
+        if caller_cancelled:
+            raise asyncio.CancelledError
+        return _replacement_error(
+            "记忆替换状态待修复，请稍后检查", "repair_required"
+        )
 
     @staticmethod
     def _log_cleanup_failure(
