@@ -188,10 +188,25 @@ class ComponentFactory:
                 "injection_decision_recorder": decision_recorder,
             }
         except BaseException:
-            if decision_recorder is not None:
-                await decision_recorder.close(timeout=5.0)
-            await decision_store.close()
+            try:
+                if decision_recorder is not None:
+                    try:
+                        await decision_recorder.close(timeout=5.0)
+                    except Exception:
+                        logger.error(
+                            "关闭注入决策记录器失败",
+                            exc_info=True,
+                        )
+            finally:
+                try:
+                    await decision_store.close()
+                except Exception:
+                    logger.error(
+                        "关闭注入决策存储失败",
+                        exc_info=True,
+                    )
             raise
+
 
     def _build_engine_config(
         self, stopwords_dir: Path, graph_memory_enabled: bool

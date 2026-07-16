@@ -209,7 +209,11 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 logger.error("插件初始化不完整：部分核心组件未能初始化")
                 return False
 
-            self._register_agent_tools_if_needed()
+            try:
+                self._register_agent_tools_if_needed()
+            except Exception:
+                self._llm_tools_registered = False
+                logger.error("智能体工具注册失败，将使用直接记忆召回", exc_info=True)
             memory_tool_available = bool(
                 self._llm_tools_registered
                 and self.config_manager.get("agent_tools.enable_recall_tool", True)
