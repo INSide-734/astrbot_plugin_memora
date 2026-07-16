@@ -12,58 +12,92 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_HANDLER_WORKER_MODE = "--handler-worker" in sys.argv
+
+
+def _argument_value(name: str, default: str) -> str:
+    try:
+        return sys.argv[sys.argv.index(name) + 1]
+    except (ValueError, IndexError):
+        return default
+
+
+PROJECT_ROOT = Path(
+    _argument_value("--source-root", str(Path(__file__).resolve().parent.parent))
+).resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
+ENTRYPOINT_ROOT = Path(__file__).resolve().parent.parent
+if str(ENTRYPOINT_ROOT) not in sys.path:
+    sys.path.append(str(ENTRYPOINT_ROOT))
 
-from astrbot.api.provider import ProviderRequest
-
-from core.injection.executor import InjectionExecutionContext, InjectionExecutor
-from core.injection.models import (
-    DeliveryMode,
-    InjectionOutcome,
-    PresetName,
-    RequestSignals,
-    RoutingMode,
+from scripts.recall_total_path_benchmark import (
+    TOTAL_RECALL_BASELINE_PATH,
+    TOTAL_RECALL_REGRESSION_LIMIT,
+    evaluate_total_path_regression,
+    handler_worker_main,
+    load_total_path_baseline,
+    record_total_path_baseline,
+    run_handler_worker,
+    run_total_path_benchmark as _run_total_path_benchmark,
 )
-from core.injection.presets import PRESETS
-from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
-from core.utils.injection_adapter import InjectionAdapter
+
+if not _HANDLER_WORKER_MODE:
+    from astrbot.api.provider import ProviderRequest
+
+    from core.injection.executor import InjectionExecutionContext, InjectionExecutor
+    from core.injection.models import (
+        DeliveryMode,
+        InjectionOutcome,
+        PresetName,
+        RequestSignals,
+        RoutingMode,
+    )
+    from core.injection.presets import PRESETS
+    from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
+    from core.utils.injection_budget import (
+        InjectionBudget,
+        select_memories_with_budget,
+    )
+    from core.utils.injection_adapter import InjectionAdapter
 
 
-@dataclass(frozen=True, slots=True)
-class RoutingCase:
-    expected: PresetName
-    signals: RequestSignals
+if not _HANDLER_WORKER_MODE:
+    @dataclass(frozen=True, slots=True)
+    class RoutingCase:
+        expected: PresetName
+        signals: RequestSignals
 
 
-class CountingProvider:
-    """Provider spy whose inference boundaries count actual LLM calls."""
+    class CountingProvider:
+        """Provider spy whose inference boundaries count actual LLM calls."""
 
-    def __init__(self) -> None:
-        self.inference_calls = 0
-        self.provider_config = {"type": "openai_chat_completion"}
+        def __init__(self) -> None:
+            self.inference_calls = 0
+            self.provider_config = {"type": "openai_chat_completion"}
 
-    def get_model(self) -> str:
-        return "benchmark-model"
+        def get_model(self) -> str:
+            return "benchmark-model"
 
-    async def text_chat(self, *_args: Any, **_kwargs: Any) -> str:
-        self.inference_calls += 1
-        return ""
+        async def text_chat(self, *_args: Any, **_kwargs: Any) -> str:
+            self.inference_calls += 1
+            return ""
 
-    async def completion(self, *_args: Any, **_kwargs: Any) -> str:
-        self.inference_calls += 1
-        return ""
+        async def completion(self, *_args: Any, **_kwargs: Any) -> str:
+            self.inference_calls += 1
+            return ""
 
 
-PROFILES = {
-    name.value: {
-        "memory_budget_chars": preset.memory_budget_chars,
-        "memory_max_chars": preset.memory_max_chars,
-        "metadata_max_chars": preset.metadata_max_chars,
-        "max_memories": preset.max_memories,
+    PROFILES = {
+        name.value: {
+            "memory_budget_chars": preset.memory_budget_chars,
+            "memory_max_chars": preset.memory_max_chars,
+            "metadata_max_chars": preset.metadata_max_chars,
+            "max_memories": preset.max_memories,
+        }
+        for name, preset in PRESETS.items()
     }
-    for name, preset in PRESETS.items()
-}
+else:
+    PROFILES = {}
 
 _CANDIDATES = [
     {
@@ -90,16 +124,58 @@ _CANDIDATES = [
 ]
 _PAYLOAD_RUNS = 20
 
-_ROUTING_CASES = (
-    RoutingCase(PresetName.QUALITY, RequestSignals(query_intent="temporal", explicit_history_request=True, context_headroom_chars=2400, candidate_count=2, top_confidence=.9)),
-    RoutingCase(PresetName.LOW_COST, RequestSignals(context_headroom_chars=1199, candidate_count=2, top_confidence=.9)),
-    RoutingCase(PresetName.BALANCED, RequestSignals(candidate_count=2, top_confidence=.9)),
-)
+if not _HANDLER_WORKER_MODE:
+    _ROUTING_CASES = (
+        RoutingCase(
+            PresetName.QUALITY,
+            RequestSignals(
+                query_intent="temporal",
+                explicit_history_request=True,
+                context_headroom_chars=2_400,
+                candidate_count=2,
+                top_confidence=0.9,
+            ),
+        ),
+        RoutingCase(
+            PresetName.LOW_COST,
+            RequestSignals(
+                context_headroom_chars=1_199,
+                candidate_count=2,
+                top_confidence=0.9,
+            ),
+        ),
+        RoutingCase(
+            PresetName.BALANCED,
+            RequestSignals(candidate_count=2, top_confidence=0.9),
+        ),
+    )
+else:
+    _ROUTING_CASES = ()
 
 
 def percentile_95(values: list[float]) -> float:
     ordered = sorted(values)
     return ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)]
+
+
+def _fixed_budget_injection_hit() -> float:
+    """Return the relevant-memory hit rate of the pre-strategy balanced budget."""
+
+    selected, _dropped = select_memories_with_budget(
+        list(_CANDIDATES),
+        InjectionBudget(
+            total_chars=1_200,
+            memory_max_chars=220,
+            metadata_max_chars=180,
+            include_key_facts=True,
+            include_topics=True,
+            include_participants=False,
+            compact_header=True,
+        ),
+    )
+    useful_ids = {item["id"] for item in _CANDIDATES if item["useful"]}
+    selected_useful = sum(item["id"] in useful_ids for item in selected)
+    return selected_useful / len(useful_ids) if useful_ids else 0.0
 
 
 def _request() -> ProviderRequest:
@@ -191,7 +267,13 @@ async def _profile_metrics(
     )
     selected_content = [item["content"] for item in _CANDIDATES[: result.selected_count]]
     redundant = len(selected_content) - len(set(selected_content))
-    expected_hit = profile_name is not PresetName.TOOL_FIRST
+    useful_candidate_count = sum(bool(item["useful"]) for item in _CANDIDATES)
+    injection_hit = (
+        result.selected_count / useful_candidate_count
+        if useful_candidate_count
+        else 0.0
+    )
+    fixed_budget_hit = _fixed_budget_injection_hit()
     routing_case_count = len(_ROUTING_CASES)
     total_correct = manual_correct + auto_correct + hybrid_correct
     total_cases = 1 + routing_case_count * 2
@@ -201,9 +283,8 @@ async def _profile_metrics(
         "ManualRoutingAccuracy": float(manual_correct),
         "AutoRoutingAccuracy": round(auto_correct / routing_case_count, 6),
         "HybridRoutingAccuracy": round(hybrid_correct / routing_case_count, 6),
-        "InjectionHit@Budget": float(
-            (result.actual_payload_chars > 0) == expected_hit
-        ),
+        "InjectionHit@Budget": round(injection_hit, 6),
+        "FixedBudgetInjectionHit": round(fixed_budget_hit, 6),
         "UsefulCharsRatio": (
             round(useful_chars / content_chars, 6) if content_chars else 0.0
         ),
@@ -234,6 +315,7 @@ async def _profile_metrics(
 def run_benchmark(profile_name: str) -> dict[str, Any]:
     preset = PresetName(profile_name)
     metrics, diagnostics = asyncio.run(_profile_metrics(preset))
+    expected_hit = preset is not PresetName.TOOL_FIRST
     expected_outcome = (
         InjectionOutcome.EMPTY.value
         if preset is PresetName.TOOL_FIRST
@@ -244,7 +326,16 @@ def run_benchmark(profile_name: str) -> dict[str, Any]:
         and metrics["ManualRoutingAccuracy"] == 1.0
         and metrics["AutoRoutingAccuracy"] == 1.0
         and metrics["HybridRoutingAccuracy"] == 1.0
-        and metrics["InjectionHit@Budget"] == 1.0
+        and (
+            metrics["InjectionHit@Budget"] > 0.0
+            if expected_hit
+            else metrics["InjectionHit@Budget"] == 0.0
+        )
+        and (
+            preset is not PresetName.BALANCED
+            or metrics["InjectionHit@Budget"]
+            >= metrics["FixedBudgetInjectionHit"]
+        )
         and metrics["BudgetOverflowRate"] == 0.0
         and metrics["ToolFirstPassiveRecallRate"] == 0.0
         and metrics["ExtraLLMCalls"] == 0
@@ -274,34 +365,112 @@ def validate_cross_profile_metrics(reports: dict[str, dict[str, Any]]) -> bool:
     low_cost = float(reports[PresetName.LOW_COST.value]["metrics"]["OrdinaryMemoryCharsP95"])
     balanced = float(reports[PresetName.BALANCED.value]["metrics"]["OrdinaryMemoryCharsP95"])
     reduction = 1.0 - (low_cost / balanced) if balanced > 0 else 0.0
-    passed = balanced > 0 and reduction >= 0.30
+    balanced_metrics = reports[PresetName.BALANCED.value]["metrics"]
+    balanced_hit = float(balanced_metrics["InjectionHit@Budget"])
+    fixed_budget_hit = float(balanced_metrics["FixedBudgetInjectionHit"])
+    hit_delta = balanced_hit - fixed_budget_hit
+    passed = balanced > 0 and reduction >= 0.30 and hit_delta >= 0.0
     print(f"\n  LowCostPayloadReduction: {reduction:.6f} (required >= 0.300000)")
+    print(
+        "  BalancedInjectionHitDelta: "
+        f"{hit_delta:.6f} (required >= 0.000000)"
+    )
     print("  Cross-profile result: " + ("ALL PASSED" if passed else "FAILED"))
     return passed
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", choices=list(PROFILES), default="balanced")
     parser.add_argument("--output")
     parser.add_argument("--all", action="store_true")
-    args = parser.parse_args()
-    reports: Any
-    if args.all:
-        reports = {name: run_benchmark(name) for name in PROFILES}
-        profile_checks_passed = all(
-            item["summary"]["all_checks_passed"] for item in reports.values()
+    parser.add_argument("--record-total-path-baseline", action="store_true")
+    parser.add_argument("--baseline-source-root")
+    parser.add_argument("--source-commit")
+    parser.add_argument("--baseline-output")
+    return parser
+
+
+def _record_requested_baseline(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> bool:
+    if not args.record_total_path_baseline:
+        return False
+    if not args.baseline_source_root or not args.source_commit:
+        parser.error(
+            "--record-total-path-baseline requires "
+            "--baseline-source-root and --source-commit"
         )
-        cross_profile_checks_passed = validate_cross_profile_metrics(reports)
-        passed = profile_checks_passed and cross_profile_checks_passed
+    baseline_output = (
+        Path(args.baseline_output).resolve()
+        if args.baseline_output
+        else TOTAL_RECALL_BASELINE_PATH
+    )
+    baseline = record_total_path_baseline(
+        source_root=Path(args.baseline_source_root),
+        source_commit=args.source_commit,
+        output_path=baseline_output,
+    )
+    print(
+        f"Recorded total-path baseline at {baseline_output}: "
+        f"{baseline['p95_ms']:.6f} ms"
+    )
+    return True
+
+
+def _run_all_benchmarks() -> tuple[dict[str, Any], bool]:
+    profile_reports = {name: run_benchmark(name) for name in PROFILES}
+    profile_checks_passed = all(
+        item["summary"]["all_checks_passed"] for item in profile_reports.values()
+    )
+    cross_profile_checks_passed = validate_cross_profile_metrics(profile_reports)
+    total_path_report = _run_total_path_benchmark(PROJECT_ROOT)
+    reports = {
+        "profiles": profile_reports,
+        "total_recall_path": total_path_report,
+    }
+    passed = (
+        profile_checks_passed
+        and cross_profile_checks_passed
+        and total_path_report["summary"]["all_checks_passed"]
+    )
+    return reports, passed
+
+
+def _run_single_benchmark(profile: str) -> tuple[dict[str, Any], bool]:
+    profile_report = run_benchmark(profile)
+    total_path_report = _run_total_path_benchmark(PROJECT_ROOT)
+    reports = {
+        "profile": profile_report,
+        "total_recall_path": total_path_report,
+    }
+    passed = (
+        profile_report["summary"]["all_checks_passed"]
+        and total_path_report["summary"]["all_checks_passed"]
+    )
+    return reports, passed
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+    if _record_requested_baseline(args, parser):
+        return
+
+    if args.all:
+        reports, passed = _run_all_benchmarks()
     else:
-        reports = run_benchmark(args.profile)
-        passed = reports["summary"]["all_checks_passed"]
+        reports, passed = _run_single_benchmark(args.profile)
     if args.output:
-        Path(args.output).write_text(json.dumps(reports, indent=2, ensure_ascii=False), encoding="utf-8")
+        Path(args.output).write_text(
+            json.dumps(reports, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
     if not passed:
         raise SystemExit(1)
 
 
 if __name__ == "__main__":
+    if _HANDLER_WORKER_MODE:
+        raise SystemExit(handler_worker_main(_argument_value))
     main()

@@ -531,7 +531,7 @@ class InjectionExecutor:
         contexts = deepcopy(original_contexts)
         parts = list(original_parts)
         if delivery is DeliveryMode.EXTRA_USER_CONTENT:
-            part = TextPart(protected_payload).mark_as_temp()
+            part = TextPart(text=protected_payload).mark_as_temp()
             parts.append(part)
         elif delivery is DeliveryMode.USER_MESSAGE_BEFORE:
             prompt = f"{protected_payload}\n\n{original_prompt}"
