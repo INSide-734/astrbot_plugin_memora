@@ -34,6 +34,7 @@ from ..injection.models import (
     RoutingMode,
 )
 from ..injection.router import InjectionRoutingConfig, InjectionStrategyRouter
+from ..security.prompt_sanitizer import PROMPT_PROTECTION_SCOPE_EXTRA_KEY
 from ..utils import OperationContext, get_persona_id
 
 if TYPE_CHECKING:
@@ -57,6 +58,7 @@ class _RecallExecutionInput:
     persona_filtered: bool
     decision_ms: float
     provider: Any
+    scope_id: str | None
     preflight_short_circuit: bool
     cognitive_format_ms: float = 0.0
 
@@ -116,6 +118,7 @@ class RecallHandler:
         filtered_count = 0
         try:
             session_id = event.unified_msg_origin
+            scope_id = self._set_prompt_protection_scope(event)
             logger.debug(f"[召回流程] 获取到 unified_msg_origin: {session_id}")
 
             if session_id and (
@@ -294,6 +297,7 @@ class RecallHandler:
                         decision_ms=preflight_ms,
                         provider=provider,
                         preflight_short_circuit=True,
+                        scope_id=scope_id,
                     ))
                     injected_count = result.selected_count
                     return
@@ -356,6 +360,7 @@ class RecallHandler:
                     decision_ms=decision_ms,
                     provider=provider,
                     preflight_short_circuit=False,
+                    scope_id=scope_id,
                     cognitive_format_ms=format_ms,
                 ))
                 injected_count = result.selected_count
@@ -547,6 +552,7 @@ class RecallHandler:
                 persona_filtered=execution.persona_filtered,
                 context_headroom_chars=signals.context_headroom_chars,
                 provider=execution.provider,
+                scope_id=execution.scope_id,
             )
             result = await self._executor.execute(
                 execution.req, decision, context
@@ -651,6 +657,24 @@ class RecallHandler:
             })
         except Exception:
             logger.debug("[召回流程] 性能样本记录失败", exc_info=True)
+
+    @staticmethod
+    def _set_prompt_protection_scope(event: AstrMessageEvent) -> str | None:
+        setter = getattr(event, "set_extra", None)
+        if not callable(setter):
+            return None
+        scope_id = uuid.uuid4().hex
+        try:
+            setter(PROMPT_PROTECTION_SCOPE_EXTRA_KEY, scope_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "[召回流程] 请求安全关联写入失败，使用兼容保护模式",
+                exc_info=True,
+            )
+            return None
+        return scope_id
 
     @staticmethod
     def _get_event_sender_id(event: AstrMessageEvent) -> str | None:

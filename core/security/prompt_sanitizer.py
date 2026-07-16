@@ -17,6 +17,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 logger = logging.getLogger("astrbot.memora.security.prompt_sanitizer")
+PROMPT_PROTECTION_SCOPE_EXTRA_KEY = "memora_prompt_protection_scope"
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +204,7 @@ class ResponseSanitizer:
         remove_tags: bool = True,
         remove_keywords: bool = True,
         remove_original: bool = True,
+        instructions: list[str] | tuple[str, ...] | None = None,
     ) -> tuple[str, list[str]]:
         """消毒 LLM 回复。
 
@@ -229,9 +231,16 @@ class ResponseSanitizer:
             sanitized, kw_leaks = self._remove_keyword_sentences(sanitized)
             leaks_found.extend(kw_leaks)
 
-        # 第 3 轮：原始提示词片段匹配
-        if remove_original and self._original_instructions:
-            sanitized, orig_leaks = self._remove_original_fragments(sanitized)
+        # 第 3 轮：原始提示词片段匹配。显式 instructions 不污染旧全局列表。
+        active_instructions = (
+            self._original_instructions
+            if instructions is None
+            else [inst.strip() for inst in instructions if inst and inst.strip()]
+        )
+        if remove_original and active_instructions:
+            sanitized, orig_leaks = self._remove_original_fragments(
+                sanitized, active_instructions
+            )
             leaks_found.extend(orig_leaks)
 
         sanitized = self._clean_whitespace(sanitized)
@@ -284,12 +293,18 @@ class ResponseSanitizer:
 
         return "".join(filtered), leaks
 
-    def _remove_original_fragments(self, text: str) -> tuple[str, list[str]]:
+    def _remove_original_fragments(
+        self,
+        text: str,
+        instructions: list[str] | tuple[str, ...] | None = None,
+    ) -> tuple[str, list[str]]:
         """检测并移除原始提示词的完整或部分匹配。"""
         leaks: list[str] = []
         result = text
 
-        for instruction in self._original_instructions:
+        for instruction in (
+            self._original_instructions if instructions is None else instructions
+        ):
             # 完整匹配
             if instruction in result:
                 preview = instruction[:50] + "..." if len(instruction) > 50 else instruction
@@ -565,6 +580,7 @@ class PromptProtectionService:
         self.sanitizer = ResponseSanitizer()
         self.validator = DoubleCheckValidator()
         self.enable_double_check = enable_double_check
+        self._scoped_instructions: dict[str, tuple[str, ...]] = {}
 
         self._stats: dict[str, int] = {
             "wrapped": 0,
@@ -583,6 +599,7 @@ class PromptProtectionService:
         label: str = "memory_context",
         *,
         register_for_filter: bool = True,
+        scope_id: str | None = None,
     ) -> str:
         """用隐藏标签包裹注入内容。
 
@@ -595,9 +612,11 @@ class PromptProtectionService:
         self._stats["wrapped"] += 1
 
         if register_for_filter:
-            self.sanitizer.register_instructions([content])
-            self.validator.register_instructions([content])
-
+            if scope_id:
+                self._scoped_instructions[scope_id] = (content.strip(),)
+            else:
+                self.sanitizer.register_instructions([content])
+                self.validator.register_instructions([content])
         return wrapped
 
     def sanitize_response(
@@ -605,6 +624,8 @@ class PromptProtectionService:
         response: str,
         *,
         enable_validation: bool | None = None,
+        scope_id: str | None = None,
+        consume_scope: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """后处理 LLM 回复：清洗 + 可选双重验证。
 
@@ -622,29 +643,48 @@ class PromptProtectionService:
             "validation_details": [],
         }
 
-        # 步骤 1：后处理过滤
-        sanitized, leaks = self.sanitizer.sanitize(response)
-        report["leaks_removed"] = leaks
-        report["sanitized_length"] = len(sanitized)
+        instructions = self._scoped_instructions.get(scope_id, ()) if scope_id else None
+        try:
+            sanitized, leaks = self.sanitizer.sanitize(
+                response,
+                instructions=instructions,
+            )
+            report["leaks_removed"] = leaks
+            report["sanitized_length"] = len(sanitized)
 
-        if leaks:
-            self._stats["sanitized"] += 1
-            self._stats["leaks_detected"] += len(leaks)
+            if leaks:
+                self._stats["sanitized"] += 1
+                self._stats["leaks_detected"] += len(leaks)
 
-        # 步骤 2：双重检查验证
-        do_validation = (
-            enable_validation if enable_validation is not None else self.enable_double_check
-        )
-        if do_validation:
-            is_valid, details = self.validator.validate_no_leak(sanitized)
-            report["validation_passed"] = is_valid
-            report["validation_details"] = details
+            do_validation = (
+                enable_validation
+                if enable_validation is not None
+                else self.enable_double_check
+            )
+            if do_validation:
+                validation_instructions = (
+                    list(instructions) if instructions is not None else None
+                )
+                is_valid, details = self.validator.validate_no_leak(
+                    sanitized,
+                    validation_instructions,
+                )
+                report["validation_passed"] = is_valid
+                report["validation_details"] = details
 
-            if not is_valid:
-                self._stats["validation_failed"] += 1
-                logger.warning("双重检查验证失败，发现泄露风险")
+                if not is_valid:
+                    self._stats["validation_failed"] += 1
+                    logger.warning("双重检查验证失败，发现泄露风险")
 
-        return sanitized, report
+            return sanitized, report
+        finally:
+            if consume_scope and scope_id:
+                self._scoped_instructions.pop(scope_id, None)
+
+    def discard_scope(self, scope_id: str | None) -> None:
+        """Discard one request-scoped registration without touching legacy state."""
+        if scope_id:
+            self._scoped_instructions.pop(scope_id, None)
 
     def process_interaction(
         self,

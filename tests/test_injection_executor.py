@@ -996,3 +996,49 @@ async def test_assignment_failure_never_registers_prompt() -> None:
     )
     assert result.error_code == "MUTATION_FAILED"
     protection.wrap_prompt.assert_not_called()
+
+class _FailingGetterRequest:
+    @property
+    def prompt(self):
+        raise RuntimeError("prompt getter failed")
+
+    contexts = []
+    extra_user_content_parts = []
+
+
+@pytest.mark.asyncio
+async def test_request_getter_failure_returns_stable_mutation_error() -> None:
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        _FailingGetterRequest(),
+        _decision(),
+        _context([{"content": "memory", "score": 1.0, "metadata": {}}]),
+    )
+    assert result.outcome is InjectionOutcome.ERROR
+    assert result.error_code == "MUTATION_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_empty_execution_does_not_register_scope() -> None:
+    protection = MagicMock()
+    result = await InjectionExecutor(InjectionAdapter(), protection).execute(
+        _request(),
+        _decision(),
+        _context([], scope_id="scope-empty"),
+    )
+    assert result.outcome is InjectionOutcome.EMPTY
+    protection.wrap_prompt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_successful_execution_registers_only_its_scope() -> None:
+    protection = MagicMock()
+    result = await InjectionExecutor(InjectionAdapter(), protection).execute(
+        _request(),
+        _decision(),
+        _context(
+            [{"content": "memory", "score": 1.0, "metadata": {}}],
+            scope_id="scope-success",
+        ),
+    )
+    assert result.outcome is InjectionOutcome.INJECTED
+    assert protection.wrap_prompt.call_args.kwargs["scope_id"] == "scope-success"

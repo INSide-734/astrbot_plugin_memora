@@ -16,6 +16,7 @@ from ..managers.memory_engine import MemoryEngine
 from ..processors.memory_processor import MemoryProcessor
 from ..utils import OperationContext, get_persona_id
 from .topic_batch_preparer import TopicBatchPreparer
+from ..security.prompt_sanitizer import PROMPT_PROTECTION_SCOPE_EXTRA_KEY
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -77,6 +78,19 @@ class ReflectionHandler:
         if resp.role != "assistant":
             return
 
+        scope_id, scope_lookup_failed = self._get_prompt_protection_scope(event)
+        if scope_lookup_failed:
+            resp.completion_text = ""
+            return
+        session_id = getattr(event, "unified_msg_origin", "") or ""
+        response_text = str(getattr(resp, "completion_text", "") or "")
+        response_text = self._sanitize_response_text(
+            response_text,
+            session_id,
+            scope_id=scope_id,
+        )
+        resp.completion_text = response_text
+
         if resp.tools_call_name:
             logger.debug(
                 f"[反思处理] 检测到工具调用响应（tools={resp.tools_call_name}），跳过记录"
@@ -90,7 +104,6 @@ class ReflectionHandler:
             return
 
         try:
-            session_id = event.unified_msg_origin
             logger.debug(f"[反思处理] 获取到 unified_msg_origin: {session_id}")
 
             if not session_id:
@@ -106,18 +119,11 @@ class ReflectionHandler:
                     f"[{session_id}] 检测到异常的会话 ID，这可能导致记忆总结异常。"
                 )
 
-            response_text = resp.completion_text
-            if not response_text or not response_text.strip():
-                logger.debug(f"[{session_id}] 模型返回空回复，跳过记录")
-                return
-            response_text = self._sanitize_response_text(response_text, session_id)
-            resp.completion_text = response_text
             if not response_text or not response_text.strip():
                 logger.warning(
                     f"[{session_id}] 模型回复经安全清洗后为空，跳过记录"
                 )
                 return
-
             error_indicators = [
                 "api error",
                 "request failed",
@@ -302,19 +308,28 @@ class ReflectionHandler:
         except Exception as e:
             logger.error(f"处理 on_llm_response 钩子时发生错误：{e}", exc_info=True)
 
-    def _sanitize_response_text(self, response_text: str, session_id: str) -> str:
-        """在对话落库与反思前，对 LLM 响应执行安全清洗。"""
-        if not self._config_manager.get("security.sanitize_llm_response", True):
-            return response_text
-        if self._prompt_protection is None:
-            return response_text
+    def _sanitize_response_text(
+        self,
+        response_text: str,
+        session_id: str,
+        *,
+        scope_id: str | None = None,
+    ) -> str:
+        """Sanitize the user-visible response and consume its request scope."""
         try:
+            if not self._config_manager.get("security.sanitize_llm_response", True):
+                self._discard_prompt_protection_scope(scope_id)
+                return response_text
+            if self._prompt_protection is None:
+                return response_text
             sanitized, report = self._prompt_protection.sanitize_response(
                 response_text,
                 enable_validation=self._config_manager.get(
                     "security.double_check_enabled",
                     True,
                 ),
+                scope_id=scope_id,
+                consume_scope=True,
             )
             leaks = report.get("leaks_removed") or []
             validation_passed = report.get("validation_passed", True)
@@ -323,13 +338,43 @@ class ReflectionHandler:
                     f"[{session_id}] LLM 回复触发安全清洗："
                     f"移除项数量={len(leaks)}, 校验通过={validation_passed}"
                 )
-            return sanitized
+            return sanitized if validation_passed else ""
+        except asyncio.CancelledError:
+            self._discard_prompt_protection_scope(scope_id)
+            raise
         except Exception:
+            self._discard_prompt_protection_scope(scope_id)
             logger.warning(
-                f"[{session_id}] LLM 回复安全清洗失败，使用原始回复",
+                f"[{session_id}] LLM 回复安全清洗失败，已阻止输出",
                 exc_info=True,
             )
-            return response_text
+            return ""
+
+    def _discard_prompt_protection_scope(self, scope_id: str | None) -> None:
+        if self._prompt_protection is None or not scope_id:
+            return
+        discard = getattr(self._prompt_protection, "discard_scope", None)
+        if callable(discard):
+            try:
+                discard(scope_id)
+            except Exception:
+                logger.warning("[反思处理] 请求安全关联清理失败", exc_info=True)
+
+    @staticmethod
+    def _get_prompt_protection_scope(
+        event: AstrMessageEvent,
+    ) -> tuple[str | None, bool]:
+        getter = getattr(event, "get_extra", None)
+        if not callable(getter):
+            return None, False
+        try:
+            scope_id = getter(PROMPT_PROTECTION_SCOPE_EXTRA_KEY)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("[反思处理] 请求安全关联读取失败，已阻止输出", exc_info=True)
+            return None, True
+        return (scope_id, False) if isinstance(scope_id, str) and scope_id else (None, False)
 
     def _writes_blocked(self) -> bool:
         if self._write_guard_cb is None:

@@ -271,3 +271,50 @@ class TestPromptProtectionService:
         _, report = svc.sanitize_response("普通回复")
         # validation_details should be empty when double check is off
         assert report["validation_details"] == []
+
+    def test_scoped_registrations_are_isolated_and_consumed(self):
+        svc = PromptProtectionService(enable_double_check=False)
+        secret_a = "scope alpha unique secret one two three four five"
+        secret_b = "scope beta unique secret six seven eight nine ten"
+        svc.wrap_prompt(secret_a, scope_id="scope-a")
+        svc.wrap_prompt(secret_b, scope_id="scope-b")
+
+        cleaned_a, _ = svc.sanitize_response(
+            f"A {secret_a} B {secret_b}",
+            scope_id="scope-a",
+            consume_scope=True,
+        )
+        assert secret_a not in cleaned_a
+        assert secret_b in cleaned_a
+
+        cleaned_b, _ = svc.sanitize_response(
+            f"B {secret_b}",
+            scope_id="scope-b",
+            consume_scope=True,
+        )
+        assert secret_b not in cleaned_b
+
+        after_consume, _ = svc.sanitize_response(
+            secret_a,
+            scope_id="scope-a",
+        )
+        assert after_consume == secret_a
+
+    def test_discard_scope_prevents_later_filtering(self):
+        svc = PromptProtectionService(enable_double_check=False)
+        secret = "discarded scope secret alpha beta gamma delta epsilon"
+        svc.wrap_prompt(secret, scope_id="scope-discard")
+        svc.discard_scope("scope-discard")
+        cleaned, _ = svc.sanitize_response(secret, scope_id="scope-discard")
+        assert cleaned == secret
+
+    def test_response_sanitizer_explicit_instructions_do_not_replace_legacy(self):
+        sanitizer = ResponseSanitizer()
+        sanitizer.register_instructions(["legacy global secret"])
+        scoped, _ = sanitizer.sanitize(
+            "scoped request secret",
+            instructions=["scoped request secret"],
+        )
+        legacy, _ = sanitizer.sanitize("legacy global secret")
+        assert scoped == ""
+        assert legacy == ""
