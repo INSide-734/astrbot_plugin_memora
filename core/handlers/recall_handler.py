@@ -7,7 +7,7 @@ import hashlib
 import math
 import uuid
 import random
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -40,6 +40,24 @@ if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import ProviderRequest
     from ..injection.recorder import InjectionDecisionRecorder
+    from ..security.prompt_sanitizer import PromptProtectionService
+    from ..utils.injection_adapter import InjectionAdapter
+
+
+@dataclass(frozen=True, slots=True)
+class _RecallExecutionInput:
+    req: Any
+    decision: InjectionDecision
+    signals: RequestSignals
+    memories: list[dict[str, Any]]
+    prospective: list[Any]
+    cognitive_context: str
+    session_filtered: bool
+    persona_filtered: bool
+    decision_ms: float
+    provider: Any
+    preflight_short_circuit: bool
+    cognitive_format_ms: float = 0.0
 
 
 class RecallHandler:
@@ -57,7 +75,7 @@ class RecallHandler:
         expression_learner: Any | None = None,
         affection_manager: Any | None = None,
         relation_manager: Any | None = None,
-        prompt_protection_service: Any | None = None,
+        prompt_protection_service: PromptProtectionService | None = None,
         perf_tracker: Any | None = None,
         injection_recorder: InjectionDecisionRecorder | None = None,
         memory_tool_available: bool = False,
@@ -77,7 +95,7 @@ class RecallHandler:
         self._injection_recorder = injection_recorder
         self._memory_tool_available = memory_tool_available
         self._router = InjectionStrategyRouter()
-        self._executor = InjectionExecutor(injection_adapter)
+        self._executor = InjectionExecutor(injection_adapter, prompt_protection_service)
         self._cleaner = InjectionCleaner()
         self._extractor = MessageContentExtractor()
         # R1：查询改写器（无 LLM 调用方时使用关键词回退，后续再注入 LLM 调用方）
@@ -235,7 +253,16 @@ class RecallHandler:
                 if provider is None:
                     provider_getter = getattr(self._context, "get_using_provider", None)
                     if callable(provider_getter):
-                        provider = provider_getter(session_id)
+                        try:
+                            provider = provider_getter(session_id)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            provider = None
+                            logger.warning(
+                                "[召回流程] Provider 获取失败，使用保守注入能力",
+                                exc_info=True,
+                            )
 
                 routing_config = self._routing_config()
                 preflight_signals = self._preflight_signals(
@@ -253,20 +280,19 @@ class RecallHandler:
                         persona_id=recall_persona_id,
                         chat_type=chat_type,
                     )
-                    result = await self._execute_and_record(
+                    result = await self._execute_and_record(_RecallExecutionInput(
                         req=req,
                         decision=preflight,
                         signals=preflight_signals,
                         memories=[],
                         prospective=prospective,
                         cognitive_context="",
-                        query=actual_query,
                         session_filtered=use_session_filtering,
                         persona_filtered=use_persona_filtering,
                         decision_ms=preflight_ms,
                         provider=provider,
                         preflight_short_circuit=True,
-                    )
+                    ))
                     injected_count = result.selected_count
                     return
 
@@ -315,21 +341,20 @@ class RecallHandler:
                     persona_id=persona_id or "default",
                 )
                 format_ms = (time.perf_counter() - format_started) * 1000.0
-                result = await self._execute_and_record(
+                result = await self._execute_and_record(_RecallExecutionInput(
                     req=req,
                     decision=decision,
                     signals=final_signals,
                     memories=memories,
                     prospective=prospective,
                     cognitive_context=cognitive_context,
-                    query=actual_query,
                     session_filtered=use_session_filtering,
                     persona_filtered=use_persona_filtering,
                     decision_ms=decision_ms,
-                    format_ms=format_ms,
                     provider=provider,
                     preflight_short_circuit=False,
-                )
+                    cognitive_format_ms=format_ms,
+                ))
                 injected_count = result.selected_count
 
         except asyncio.CancelledError:
@@ -369,9 +394,18 @@ class RecallHandler:
     def _preflight_signals(
         self, query_intent: Any, provider: Any, req: Any, chat_type: str
     ) -> RequestSignals:
-        provider_type, provider_model, tools_supported = (
-            self._injection_adapter.capabilities(provider)
-        )
+        try:
+            provider_type, provider_model, tools_supported = (
+                self._injection_adapter.capabilities(provider)
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            provider_type, provider_model, tools_supported = "", "", False
+            logger.warning(
+                "[召回流程] Provider 能力探测失败，使用保守能力",
+                exc_info=True,
+            )
         intent = str(getattr(query_intent, "intent", "default") or "default")
         explicit = intent in {
             "relationship", "relational", "temporal", "preference", "contextual"
@@ -407,12 +441,16 @@ class RecallHandler:
                 score = 0.0
             if not math.isfinite(score):
                 score = 0.0
-            safe.append({
+            stable_id = getattr(candidate, "doc_id", None)
+            safe_candidate = {
                 "content": content,
                 "score": max(0.0, min(1.0, score)),
                 "metadata": dict(metadata),
                 "timestamp": metadata.get("create_time"),
-            })
+            }
+            if isinstance(stable_id, (str, int)):
+                safe_candidate["id"] = stable_id
+            safe.append(safe_candidate)
         return safe
 
     @staticmethod
@@ -468,30 +506,18 @@ class RecallHandler:
         return "\n".join(lines)
 
     async def _execute_and_record(
-        self,
-        *,
-        req: Any,
-        decision: InjectionDecision,
-        signals: RequestSignals,
-        memories: list[dict[str, Any]],
-        prospective: list[Any],
-        cognitive_context: str,
-        query: str,
-        session_filtered: bool,
-        persona_filtered: bool,
-        decision_ms: float,
-        provider: Any,
-        preflight_short_circuit: bool,
-        format_ms: float = 0.0,
+        self, execution: _RecallExecutionInput
     ) -> InjectionExecutionResult:
+        decision = execution.decision
+        signals = execution.signals
         cognitive_budget = int(self._config_manager.get(
             "recall_engine.cognitive_context_budget_chars", 300
         ))
         prospective_budget = int(self._config_manager.get(
             "recall_engine.proactive_plan_budget_chars", 240
         ))
-        prospective_context = self._prospective_context(prospective)
-        if preflight_short_circuit and not prospective_context:
+        prospective_context = self._prospective_context(execution.prospective)
+        if execution.preflight_short_circuit and not prospective_context:
             configured_budget = (
                 max(0, decision.memory_budget_chars)
                 + max(0, cognitive_budget)
@@ -503,29 +529,29 @@ class RecallHandler:
                 effective_budget_chars=min(
                     signals.context_headroom_chars, configured_budget
                 ),
-                decision_ms=decision_ms,
-                format_ms=format_ms,
+                decision_ms=execution.decision_ms,
+                format_ms=execution.cognitive_format_ms,
             )
         else:
             context = InjectionExecutionContext(
-                query=query,
-                memories=memories,
-                cognitive_context=cognitive_context,
+                query="",
+                memories=execution.memories,
+                cognitive_context=execution.cognitive_context,
                 prospective_context=prospective_context,
                 cognitive_budget_chars=cognitive_budget,
                 prospective_budget_chars=prospective_budget,
-                session_filtered=session_filtered,
-                persona_filtered=persona_filtered,
+                session_filtered=execution.session_filtered,
+                persona_filtered=execution.persona_filtered,
                 context_headroom_chars=signals.context_headroom_chars,
-                provider=provider,
+                provider=execution.provider,
             )
-            inject_started = time.perf_counter()
-            result = await self._executor.execute(req, decision, context)
+            result = await self._executor.execute(
+                execution.req, decision, context
+            )
             result = replace(
                 result,
-                decision_ms=decision_ms,
-                format_ms=format_ms,
-                inject_ms=(time.perf_counter() - inject_started) * 1000.0,
+                decision_ms=execution.decision_ms,
+                format_ms=result.format_ms + execution.cognitive_format_ms,
             )
         self._record_injection_decision(decision, signals, result)
         return result
@@ -538,6 +564,15 @@ class RecallHandler:
     ) -> None:
         if self._injection_recorder is None:
             return
+        actual_delivery = (
+            result.actual_resolved_delivery or decision.resolved_delivery
+        )
+        reason_codes = decision.reason_codes
+        if (
+            result.fallback_applied
+            and "PROVIDER_DELIVERY_DOWNGRADED" not in reason_codes
+        ):
+            reason_codes = (*reason_codes, "PROVIDER_DELIVERY_DOWNGRADED")
         record = InjectionDecisionRecord(
             decision_id=str(uuid.uuid4()),
             created_at_ms=time.time_ns() // 1_000_000,
@@ -546,14 +581,14 @@ class RecallHandler:
             recommended_preset=decision.recommended_preset.value,
             resolved_preset=decision.resolved_preset.value,
             preferred_delivery=decision.preferred_delivery.value,
-            resolved_delivery=decision.resolved_delivery.value,
+            resolved_delivery=actual_delivery.value,
             fallback_applied=result.fallback_applied,
             outcome=result.outcome.value,
             primary_reason=(
                 decision.reason_codes[0]
                 if decision.reason_codes else "NO_USEFUL_CANDIDATES"
             ),
-            reason_codes=decision.reason_codes,
+            reason_codes=reason_codes,
             trace_id=None,
             error_code=result.error_code,
             provider_type=signals.provider_type,

@@ -6,13 +6,15 @@ import asyncio
 import json
 import math
 import re
+import time
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable
 
 from astrbot.core.agent.message import TextPart
 
-from ..base.constants import FAKE_TOOL_CALL_NAME
+from ..base.constants import FAKE_TOOL_CALL_ID_PREFIX, FAKE_TOOL_CALL_NAME
 from ..utils.injection_budget import InjectionBudget, InjectionStats
 from .models import (
     DeliveryMode,
@@ -26,6 +28,7 @@ from .presets import PRESETS
 
 if TYPE_CHECKING:
     from ..utils.injection_adapter import InjectionAdapter
+    from ..security.prompt_sanitizer import PromptProtectionService
 
 __all__ = ["InjectionExecutionContext", "InjectionExecutor", "candidate_utility"]
 
@@ -35,6 +38,12 @@ _PROTECTION_PREFIX = (
 )
 _PROTECTION_SUFFIX = "\n</memora-untrusted-memory>"
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+_RESERVED_BOUNDARIES = (
+    ("</memora-untrusted-memory>", "</memora-untrusted-memory\u200b>"),
+    ("<memora-untrusted-memory>", "<memora-untrusted-memory\u200b>"),
+    ("[/DeepSeekV4-FakeToolCall-Replay]", "[/DeepSeekV4-FakeToolCall-Replay\u200b]"),
+    ("[DeepSeekV4-FakeToolCall-Replay]", "[DeepSeekV4-FakeToolCall-Replay\u200b]"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,8 +102,13 @@ def candidate_utility(
 class InjectionExecutor:
     """Build and verify a complete payload before atomically mutating a request."""
 
-    def __init__(self, adapter: "InjectionAdapter") -> None:
+    def __init__(
+        self,
+        adapter: "InjectionAdapter",
+        prompt_protection_service: "PromptProtectionService | None" = None,
+    ) -> None:
         self._adapter = adapter
+        self._prompt_protection = prompt_protection_service
 
     async def execute(
         self,
@@ -110,7 +124,7 @@ class InjectionExecutor:
         effective_budget = min(
             max(0, context.context_headroom_chars), configured_budget
         )
-
+        format_started = time.perf_counter()
         try:
             selected, dropped = self._select_candidates(decision, context.memories)
             protected_payload, stats, selected, dropped = self._build_verified_payload(
@@ -128,6 +142,7 @@ class InjectionExecutor:
                 configured_budget,
                 effective_budget,
                 error_code="FORMAT_FAILED",
+                format_ms=(time.perf_counter() - format_started) * 1000.0,
             )
 
         if not protected_payload:
@@ -138,13 +153,39 @@ class InjectionExecutor:
                 selected_count=0,
                 dropped_count=len(dropped),
                 truncated_count=stats.truncated_count,
+                format_ms=(time.perf_counter() - format_started) * 1000.0,
             )
 
+        if self._prompt_protection is not None:
+            escaped_raw_payload = protected_payload[
+                len(_PROTECTION_PREFIX):-len(_PROTECTION_SUFFIX)
+            ]
+            try:
+                self._prompt_protection.wrap_prompt(
+                    escaped_raw_payload,
+                    label="memory_context",
+                    register_for_filter=True,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return self._result(
+                    InjectionOutcome.ERROR,
+                    configured_budget,
+                    effective_budget,
+                    selected_count=len(selected),
+                    dropped_count=len(dropped),
+                    truncated_count=stats.truncated_count,
+                    error_code="PROTECTION_FAILED",
+                    format_ms=(time.perf_counter() - format_started) * 1000.0,
+                )
+
+        format_ms = (time.perf_counter() - format_started) * 1000.0
+        inject_started = time.perf_counter()
         delivery = decision.resolved_delivery
         fallback_applied = False
-        provider = context.provider
         try:
-            delivery, fallback_reason = self._adapter.resolve(provider, delivery)
+            delivery, fallback_reason = self._adapter.resolve(context.provider, delivery)
             fallback_applied = fallback_reason is not None
         except asyncio.CancelledError:
             raise
@@ -164,15 +205,14 @@ class InjectionExecutor:
                 selected_count=len(selected),
                 dropped_count=len(dropped),
                 truncated_count=stats.truncated_count,
+                actual_resolved_delivery=delivery,
                 error_code="MUTATION_FAILED",
+                format_ms=format_ms,
+                inject_ms=(time.perf_counter() - inject_started) * 1000.0,
             )
 
         return self._result(
-            (
-                InjectionOutcome.FALLBACK
-                if fallback_applied
-                else InjectionOutcome.INJECTED
-            ),
+            InjectionOutcome.FALLBACK if fallback_applied else InjectionOutcome.INJECTED,
             configured_budget,
             effective_budget,
             actual_payload_chars=len(protected_payload),
@@ -180,6 +220,9 @@ class InjectionExecutor:
             dropped_count=len(dropped),
             truncated_count=stats.truncated_count,
             fallback_applied=fallback_applied,
+            actual_resolved_delivery=delivery,
+            format_ms=format_ms,
+            inject_ms=(time.perf_counter() - inject_started) * 1000.0,
         )
 
     @staticmethod
@@ -428,7 +471,10 @@ class InjectionExecutor:
 
     @staticmethod
     def _protect(payload: str) -> str:
-        return f"{_PROTECTION_PREFIX}{payload}{_PROTECTION_SUFFIX}"
+        escaped = payload
+        for marker, replacement in _RESERVED_BOUNDARIES:
+            escaped = escaped.replace(marker, replacement)
+        return f"{_PROTECTION_PREFIX}{escaped}{_PROTECTION_SUFFIX}"
 
     def _apply_delivery(
         self,
@@ -452,7 +498,7 @@ class InjectionExecutor:
         elif delivery is DeliveryMode.USER_MESSAGE_AFTER:
             prompt = f"{original_prompt}\n\n{protected_payload}"
         elif delivery is DeliveryMode.FAKE_TOOL_CALL:
-            call_id = "memora_verified_recall"
+            call_id = f"{FAKE_TOOL_CALL_ID_PREFIX}{uuid.uuid4().hex}"
             contexts.extend(
                 [
                     {
