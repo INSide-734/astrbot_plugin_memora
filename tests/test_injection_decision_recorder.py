@@ -430,6 +430,66 @@ async def test_failed_retained_batch_counts_toward_capacity_and_evicts_global_ol
 
 
 @pytest.mark.asyncio
+async def test_trimmed_failed_batch_retries_at_backoff_before_flush_interval(
+    store, make_record
+) -> None:
+    clock = [0.0]
+    first_insert_started = asyncio.Event()
+    release_first_insert = asyncio.Event()
+    retry_waiting = asyncio.Event()
+    advance_retry = asyncio.Event()
+    second_insert_started = asyncio.Event()
+    release_second_insert = asyncio.Event()
+    observed_delays: list[float] = []
+    calls: list[list[str]] = []
+
+    async def insert(rows):
+        calls.append([row.decision_id for row in rows])
+        if len(calls) == 1:
+            first_insert_started.set()
+            await release_first_insert.wait()
+            raise RuntimeError("locked")
+        if len(calls) == 2:
+            second_insert_started.set()
+            await release_second_insert.wait()
+        return len(rows)
+
+    async def sleep(delay):
+        observed_delays.append(delay)
+        retry_waiting.set()
+        await advance_retry.wait()
+
+    store.insert_many = AsyncMock(side_effect=insert)
+    recorder = InjectionDecisionRecorder(
+        store,
+        batch_size=2,
+        queue_capacity=2,
+        flush_interval=86_400.0,
+        retry_base_delay=0.05,
+        monotonic=lambda: clock[0],
+        sleep=sleep,
+    )
+    await recorder.start()
+    recorder.record(make_record("a"))
+    recorder.record(make_record("b"))
+    await asyncio.wait_for(first_insert_started.wait(), timeout=1.0)
+    recorder.record(make_record("c"))
+    release_first_insert.set()
+    await asyncio.wait_for(retry_waiting.wait(), timeout=1.0)
+    try:
+        assert recorder.queued_decision_ids() == ["b", "c"]
+        assert recorder.snapshot()["dropped_total"] == 1
+        assert observed_delays[0] == pytest.approx(0.05)
+        clock[0] = 0.05
+        advance_retry.set()
+        await asyncio.wait_for(second_insert_started.wait(), timeout=1.0)
+        assert calls[:2] == [["a", "b"], ["b"]]
+    finally:
+        release_second_insert.set()
+        await recorder.close(timeout=0.1)
+
+
+@pytest.mark.asyncio
 async def test_very_large_retry_attempt_is_capped_and_does_not_kill_worker(
     store, make_record
 ) -> None:

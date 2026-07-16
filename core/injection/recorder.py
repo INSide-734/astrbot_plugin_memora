@@ -209,7 +209,8 @@ class InjectionDecisionRecorder:
                         flush_at = now + self._flush_interval
 
                 flush_due = bool(retained) and (
-                    len(retained) >= self._batch_size
+                    batch_attempt > 0
+                    or len(retained) >= self._batch_size
                     or self._closing
                     or (flush_at is not None and now >= flush_at)
                 )
@@ -286,7 +287,7 @@ class InjectionDecisionRecorder:
 
                 deadlines = [next_periodic_cleanup_at]
                 if retained:
-                    if self._closing or len(retained) >= self._batch_size:
+                    if batch_attempt > 0 or self._closing or len(retained) >= self._batch_size:
                         deadlines.append(batch_retry_at)
                     elif flush_at is not None:
                         deadlines.append(max(flush_at, batch_retry_at))
