@@ -93,7 +93,8 @@ class InjectionDecisionRecorder:
         started = self._monotonic()
         try:
             if self._closing:
-                self._count_dropped()
+                self._failures_total += 1
+                self._safe_failure("closed")
                 return
             if len(self._retained_batch) + self._queue.qsize() >= self._queue_capacity:
                 if self._retained_batch:
