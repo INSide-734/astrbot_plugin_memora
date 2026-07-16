@@ -117,6 +117,7 @@ class ConfigApiMixin:
         ) as exc:
             return self._config_apply_error(exc)
 
+        self._schedule_injection_decision_cleanup(result.changed_paths)
         reload_scheduled = self._schedule_plugin_reload(result.changed_paths)
 
         logger.info(
@@ -131,6 +132,36 @@ class ConfigApiMixin:
                 "reload_scheduled": reload_scheduled,
                 "instance_id": self.plugin.instance_id,
             }
+        )
+
+    def _schedule_injection_decision_cleanup(
+        self,
+        changed_paths: tuple[str, ...],
+    ) -> None:
+        retention_paths = {
+            "recall_engine.injection_decision_retention_days",
+            "recall_engine.injection_decision_max_rows",
+        }
+        if not retention_paths.intersection(changed_paths):
+            return
+
+        initializer = getattr(self.plugin, "initializer", None)
+        recorder = getattr(initializer, "injection_decision_recorder", None)
+        if recorder is None:
+            return
+        recorder.schedule_cleanup(
+            retention_days=int(
+                self.plugin.config_manager.get(
+                    "recall_engine.injection_decision_retention_days",
+                    30,
+                )
+            ),
+            max_rows=int(
+                self.plugin.config_manager.get(
+                    "recall_engine.injection_decision_max_rows",
+                    100_000,
+                )
+            ),
         )
 
     async def _read_apply_request(
