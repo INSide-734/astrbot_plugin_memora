@@ -48,6 +48,17 @@ _MAX_TAGS = 100
 _AUDIT_EMITTED: ContextVar[bool] = ContextVar(
     "profile_mutation_audit_emitted", default=False
 )
+_AUDIT_ACTION: ContextVar[str] = ContextVar(
+    "profile_mutation_audit_action", default="mutation"
+)
+_AUDIT_IDENTITY: ContextVar[Any] = ContextVar(
+    "profile_mutation_audit_identity", default="unavailable"
+)
+
+
+def _select_audit(action: str, identity: Any = "unavailable") -> None:
+    _AUDIT_ACTION.set(action)
+    _AUDIT_IDENTITY.set(identity)
 
 
 def _audit_event(
@@ -89,12 +100,18 @@ def _audit_boundary(action: str):
     def decorate(handler):
         @wraps(handler)
         async def wrapped(*args, **kwargs):
-            token = _AUDIT_EMITTED.set(False)
+            emitted_token = _AUDIT_EMITTED.set(False)
+            action_token = _AUDIT_ACTION.set(action)
+            identity_token = _AUDIT_IDENTITY.set("unavailable")
             try:
                 try:
                     response = await handler(*args, **kwargs)
                 except Exception as exc:
-                    response = _exception_response(exc, operation=action)
+                    response = _exception_response(
+                        exc,
+                        operation=_AUDIT_ACTION.get(),
+                        identity=_AUDIT_IDENTITY.get(),
+                    )
                 if (
                     isinstance(response, dict)
                     and response.get("status") == "error"
@@ -102,8 +119,8 @@ def _audit_boundary(action: str):
                 ):
                     code = response.get("code")
                     _audit_event(
-                        action,
-                        "unavailable",
+                        _AUDIT_ACTION.get(),
+                        _AUDIT_IDENTITY.get(),
                         result="failure",
                         error_code=(
                             code
@@ -113,7 +130,9 @@ def _audit_boundary(action: str):
                     )
                 return response
             finally:
-                _AUDIT_EMITTED.reset(token)
+                _AUDIT_IDENTITY.reset(identity_token)
+                _AUDIT_ACTION.reset(action_token)
+                _AUDIT_EMITTED.reset(emitted_token)
 
         return wrapped
 
@@ -125,6 +144,19 @@ def _coerce_user_id(raw_user_id: Any) -> str:
     if isinstance(raw_user_id, bool):
         return ""
     return str(raw_user_id).strip()
+
+def _safe_identity(raw_user_id: Any) -> Any:
+    if raw_user_id is None or isinstance(raw_user_id, (bool, Mapping, list, tuple, set)):
+        return "unavailable"
+    user_id = _coerce_user_id(raw_user_id)
+    return {"user_id": user_id} if user_id else "unavailable"
+
+
+def _returned_profile_identity(profile: Any) -> Any:
+    try:
+        return _safe_identity(profile.user_id)
+    except Exception:
+        return "unavailable"
 
 
 def _coerce_confidence(raw_confidence: Any) -> float:
@@ -158,9 +190,9 @@ def _safe_total(value: Any, default: int = 0) -> int:
 
 
 def _profile_response_or_error(profile: Any, *, revision: str | None = None):
-    payload = _safe_profile_to_dict(profile)
-    if payload is None:
-        return error_response("profile serialization failed: 画像序列化失败")
+    payload = profile.to_dict()
+    if not isinstance(payload, dict):
+        raise TypeError("profile serialization returned a non-object")
     if revision is not None:
         payload["revision"] = revision
     return ok_response(payload)
@@ -189,7 +221,11 @@ def _component_unavailable() -> dict[str, Any]:
 
 
 def _exception_response(
-    exc: Exception, *, operation: str, audit: bool = True
+    exc: Exception,
+    *,
+    operation: str,
+    identity: Any = "unavailable",
+    audit: bool = True,
 ) -> dict[str, Any]:
     error_code = (
         "validation_error" if isinstance(exc, EntityValidationError)
@@ -201,7 +237,7 @@ def _exception_response(
     if audit:
         _audit_event(
             operation,
-            "unavailable",
+            identity,
             result="failure",
             error_code=error_code,
             error_class=type(exc).__name__,
@@ -231,13 +267,17 @@ def _validate_preferences(value: Any, *, field: str) -> dict | None:
     unknown = sorted(set(value) - _PREFERENCE_FIELDS)
     if unknown:
         return _field_error(field + "." + unknown[0], "字段不可写")
-    reply_style = value.get("reply_style")
-    if reply_style is not None and (
-        not isinstance(reply_style, str)
-        or not reply_style.strip()
-        or len(reply_style.strip()) > 128
-    ):
-        return _field_error(field + ".reply_style", "必须为非空字符串且不超过 128 字符")
+    if "reply_style" in value:
+        reply_style = value["reply_style"]
+        if (
+            not isinstance(reply_style, str)
+            or not reply_style.strip()
+            or len(reply_style.strip()) > 128
+        ):
+            return _field_error(
+                field + ".reply_style",
+                "必须为非空字符串且不超过 128 字符",
+            )
     for name in ("preferred_topics", "avoided_topics"):
         if name not in value:
             continue
@@ -477,9 +517,11 @@ class ProfileApiMixin:
             return error_response("画像不存在")
         try:
             revision = manager.revision_for(profile)
+            return _profile_response_or_error(profile, revision=revision)
         except Exception as exc:
-            return _exception_response(exc, operation="detail_revision")
-        return _profile_response_or_error(profile, revision=revision)
+            return _exception_response(
+                exc, operation="detail_mapping", audit=False
+            )
 
     @_audit_boundary("create")
     async def create_profile(self):
@@ -490,6 +532,7 @@ class ProfileApiMixin:
             payload, error = require_object(await request.get_json(silent=True))
             if error:
                 return error
+            _select_audit("create", _safe_identity(payload.get("user_id", "")))
             unknown = reject_unknown_fields(payload, _CREATE_FIELDS)
             if unknown:
                 return unknown
@@ -508,16 +551,19 @@ class ProfileApiMixin:
                 preferences=payload.get("preferences", {}),
                 tags=payload.get("tags", []),
             )
-            entity = _safe_profile_to_dict(profile)
-            if entity is None:
-                return error_response("profile serialization failed: 画像序列化失败")
+            _select_audit("create", _returned_profile_identity(profile))
+            entity = profile.to_dict()
+            if not isinstance(entity, dict):
+                raise TypeError("profile serialization returned a non-object")
             response = entity_ok(entity, revision=manager.revision_for(profile))
-            _audit_event(
-                "create", {"user_id": entity.get("user_id", "")}, result="success"
-            )
+            _audit_event("create", _AUDIT_IDENTITY.get(), result="success")
             return response
         except Exception as exc:
-            return _exception_response(exc, operation="create")
+            return _exception_response(
+                exc,
+                operation=_AUDIT_ACTION.get(),
+                identity=_AUDIT_IDENTITY.get(),
+            )
 
     @_audit_boundary("update")
     async def update_profile(self):
@@ -534,37 +580,38 @@ class ProfileApiMixin:
                 for field in ("identity", "changes", "expected_revision")
             ):
                 return await self._update_profile_envelope(payload)
-            engines, ready_error = await self._ensure_plugin_ready()
-            if ready_error:
-                return ready_error
-            manager = getattr(engines["memory_engine"], "profile_manager", None)
-            if manager is None:
-                return _component_unavailable()
             user_id = _coerce_user_id(payload.get("user_id", ""))
+            _select_audit("legacy_update", _safe_identity(user_id))
             if not user_id:
                 return error_response("user_id required: 缺少必填参数 user_id")
-            profile = await manager.get_profile(user_id)
-            if profile is None:
-                return error_response("画像不存在")
-            preferences = None
             if "preferences" in payload:
                 validation_error = _validate_preferences(
                     payload["preferences"], field="preferences"
                 )
                 if validation_error:
                     return validation_error
+            preferences = None
+            if "preferences" in payload:
                 preferences = dict(payload["preferences"])
                 if "reply_style" in preferences:
                     preferences["reply_style"] = preferences["reply_style"].strip()
                 for topic_field in ("preferred_topics", "avoided_topics"):
                     if topic_field in preferences:
-                        preferences[topic_field] = list(dict.fromkeys(
-                            item.strip() for item in preferences[topic_field]
-                        ))
+                        preferences[topic_field] = list(
+                            dict.fromkeys(
+                                item.strip() for item in preferences[topic_field]
+                            )
+                        )
                 if "active_hours" in preferences:
-                    preferences["active_hours"] = list(dict.fromkeys(
-                        preferences["active_hours"]
-                    ))
+                    preferences["active_hours"] = list(
+                        dict.fromkeys(preferences["active_hours"])
+                    )
+            engines, ready_error = await self._ensure_plugin_ready()
+            if ready_error:
+                return ready_error
+            manager = getattr(engines["memory_engine"], "profile_manager", None)
+            if manager is None:
+                return _component_unavailable()
             display_name = None
             if "display_name" in payload:
                 raw_display_name = payload["display_name"]
@@ -585,7 +632,11 @@ class ProfileApiMixin:
                 _audit_event("legacy_update", {"user_id": user_id}, result="success")
             return response
         except Exception as exc:
-            return _exception_response(exc, operation="legacy_update")
+            return _exception_response(
+                exc,
+                operation=_AUDIT_ACTION.get(),
+                identity=_AUDIT_IDENTITY.get(),
+            )
 
     async def _update_profile_envelope(self, payload: Mapping[str, Any]):
         unknown = reject_unknown_fields(payload, _UPDATE_FIELDS)
@@ -594,6 +645,7 @@ class ProfileApiMixin:
         identity, user_id, identity_error = _parse_identity(payload.get("identity"))
         if identity_error:
             return identity_error
+        _select_audit("update", identity)
         changes, changes_error = require_object(payload.get("changes"))
         if changes_error:
             return _field_error("changes", "必须为对象")
@@ -619,9 +671,9 @@ class ProfileApiMixin:
             tags=changes.get("tags", []),
             expected_revision=revision,
         )
-        entity = _safe_profile_to_dict(profile)
-        if entity is None:
-            return error_response("profile serialization failed: 画像序列化失败")
+        entity = profile.to_dict()
+        if not isinstance(entity, dict):
+            raise TypeError("profile serialization returned a non-object")
         response = entity_ok(entity, revision=manager.revision_for(profile))
         _audit_event("update", identity, result="success")
         return response
@@ -638,21 +690,34 @@ class ProfileApiMixin:
                 return error
             if "identity" in payload or "expected_revision" in payload:
                 return await self._delete_profile_envelope(payload)
+            user_id = _coerce_user_id(payload.get("user_id", ""))
+            _select_audit("legacy_delete", _safe_identity(user_id))
+            if not user_id:
+                return error_response("user_id required: 缺少必填参数 user_id")
             engines, ready_error = await self._ensure_plugin_ready()
             if ready_error:
                 return ready_error
             manager = getattr(engines["memory_engine"], "profile_manager", None)
             if manager is None:
                 return _component_unavailable()
-            user_id = _coerce_user_id(payload.get("user_id", ""))
-            if not user_id:
-                return error_response("user_id required: 缺少必填参数 user_id")
             deleted = await manager.delete_profile(user_id)
             response = ok_response({"deleted": deleted, "user_id": user_id})
-            _audit_event("legacy_delete", {"user_id": user_id}, result="success")
+            if deleted:
+                _audit_event("legacy_delete", {"user_id": user_id}, result="success")
+            else:
+                _audit_event(
+                    "legacy_delete",
+                    {"user_id": user_id},
+                    result="failure",
+                    error_code="not_deleted",
+                )
             return response
         except Exception as exc:
-            return _exception_response(exc, operation="legacy_delete")
+            return _exception_response(
+                exc,
+                operation=_AUDIT_ACTION.get(),
+                identity=_AUDIT_IDENTITY.get(),
+            )
 
     async def _delete_profile_envelope(self, payload: Mapping[str, Any]):
         unknown = reject_unknown_fields(payload, _DELETE_FIELDS)
@@ -661,6 +726,7 @@ class ProfileApiMixin:
         identity, user_id, identity_error = _parse_identity(payload.get("identity"))
         if identity_error:
             return identity_error
+        _select_audit("delete", identity)
         revision, revision_error = _parse_revision(payload.get("expected_revision"))
         if revision_error:
             return revision_error
@@ -849,13 +915,6 @@ class ProfileApiMixin:
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
             return guard
-        engines, err = await self._ensure_plugin_ready()
-        if err:
-            return err
-        engine = engines["memory_engine"]
-        manager = getattr(engine, "profile_manager", None)
-        if manager is None:
-            return _component_unavailable()
         payload = await request.get_json(silent=True)
         payload, error = _json_object_payload_or_error(payload)
         if error:
@@ -866,6 +925,14 @@ class ProfileApiMixin:
             return error_response("user_id required: 缺少必填参数 user_id")
         if action not in ("add", "remove"):
             return error_response("action 必须为 'add' 或 'remove'")
+        _select_audit("tag_" + action, {"user_id": user_id})
+        engines, err = await self._ensure_plugin_ready()
+        if err:
+            return err
+        engine = engines["memory_engine"]
+        manager = getattr(engine, "profile_manager", None)
+        if manager is None:
+            return _component_unavailable()
         profile = await manager.get_profile(user_id)
         if profile is None:
             return error_response("画像不存在")
@@ -910,8 +977,7 @@ class ProfileApiMixin:
         if profile is None:
             return error_response("画像不存在")
         response = _profile_response_or_error(profile)
-        if response.get("status") == "ok":
-            _audit_event("tag_" + action, {"user_id": user_id}, result="success")
+        _audit_event("tag_" + action, {"user_id": user_id}, result="success")
         return response
 
 
