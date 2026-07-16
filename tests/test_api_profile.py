@@ -1382,6 +1382,7 @@ class TestProfileMutationAuditContract:
         [
             {"secret": "AUDIT_LEAK_MARKER"},
             ["AUDIT_LEAK_MARKER"],
+            None,
         ],
     )
     async def test_legacy_mutations_reject_structured_user_id_without_audit_leak(

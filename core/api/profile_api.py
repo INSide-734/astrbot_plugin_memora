@@ -140,8 +140,10 @@ def _audit_boundary(action: str):
 
 
 def _coerce_user_id(raw_user_id: Any) -> str:
-    """将外部用户 ID 转为字符串，同时拒绝布尔值与结构化值。"""
-    if isinstance(raw_user_id, (bool, Mapping, list, tuple, set)):
+    """将外部用户 ID 转为字符串，同时拒绝空值、布尔值与结构化值。"""
+    if raw_user_id is None or isinstance(
+        raw_user_id, (bool, Mapping, list, tuple, set)
+    ):
         return ""
     return str(raw_user_id).strip()
 
