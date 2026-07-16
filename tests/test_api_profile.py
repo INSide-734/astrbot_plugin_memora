@@ -5,6 +5,8 @@ Validates request validation, response format, and error handling.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -233,7 +235,7 @@ class TestProfileValidation:
             return_value={
                 "user_id": True,
                 "action": "add",
-                "tag": {"category": "hobby", "value": "reading", "confidence": 0.8},
+                "tag": {"category": "interest", "value": "reading", "confidence": 0.8},
             }
         )
         with patch("core.api.profile_api.request", req):
@@ -270,7 +272,7 @@ class TestProfileValidation:
                 "user_id": "u1",
                 "action": "add",
                 "tag": {
-                    "category": "hobby",
+                    "category": "interest",
                     "value": "reading",
                     "confidence": "invalid",
                 },
@@ -290,7 +292,7 @@ class TestProfileValidation:
                 "user_id": "u1",
                 "action": "add",
                 "tag": {
-                    "category": "hobby",
+                    "category": "interest",
                     "value": "reading",
                     "confidence": True,
                 },
@@ -312,7 +314,7 @@ class TestProfileValidation:
             return_value={
                 "user_id": "u1",
                 "action": "add",
-                "tag": {"category": "hobby", "value": "reading", "confidence": confidence},
+                "tag": {"category": "interest", "value": "reading", "confidence": confidence},
             }
         )
         mixin = _make_mixin(detail_profile=_make_profile())
@@ -329,7 +331,7 @@ class TestProfileValidation:
                 "user_id": "u1",
                 "action": "add",
                 "tag": {
-                    "category": "hobby",
+                    "category": "interest",
                     "value": "reading",
                     "confidence": 0.8,
                     "source": "imported-secret",
@@ -470,7 +472,7 @@ class TestProfileHappyPath:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={
             "user_id": "u1", "action": "add",
-            "tag": {"category": "hobby", "value": "reading", "confidence": 0.8}
+            "tag": {"category": "interest", "value": "reading", "confidence": 0.8}
         })
         p = _make_profile()
         with patch("core.api.profile_api.request", req):
@@ -483,7 +485,7 @@ class TestProfileHappyPath:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={
             "user_id": "u1", "action": "add",
-            "tag": {"category": "hobby", "value": "reading", "confidence": 0.8}
+            "tag": {"category": "interest", "value": "reading", "confidence": 0.8}
         })
         broken = _make_profile()
         broken.to_dict.side_effect = RuntimeError("broken profile")
@@ -498,7 +500,7 @@ class TestProfileHappyPath:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={
             "user_id": "u1", "action": "remove",
-            "tag": {"category": "hobby", "value": "reading"}
+            "tag": {"category": "interest", "value": "reading"}
         })
         p = _make_profile()
         with patch("core.api.profile_api.request", req):
@@ -548,7 +550,7 @@ class TestProfileEdgeCases:
     async def test_update_with_display_name(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "display_name": "New Name", "preferences": {"theme": "dark"}
+            "user_id": "u1", "display_name": "New Name", "preferences": {"reply_style": "formal"}
         })
         p = _make_profile()
         with patch("core.api.profile_api.request", req):
@@ -560,7 +562,7 @@ class TestProfileEdgeCases:
     async def test_update_returns_error_for_malformed_profile_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "display_name": "New Name", "preferences": {"theme": "dark"}
+            "user_id": "u1", "display_name": "New Name", "preferences": {"reply_style": "formal"}
         })
         broken = _make_profile()
         broken.to_dict.side_effect = RuntimeError("broken profile")
@@ -626,7 +628,7 @@ class TestProfileEdgeCases:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={
             "user_id": "u1", "action": "add",
-            "tag": {"category": "hobby", "value": "reading"}
+            "tag": {"category": "interest", "value": "reading"}
         })
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin(profile_manager_available=False)
@@ -638,7 +640,7 @@ class TestProfileEdgeCases:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={
             "user_id": "u999", "action": "add",
-            "tag": {"category": "hobby", "value": "reading"}
+            "tag": {"category": "interest", "value": "reading"}
         })
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=None)
@@ -714,7 +716,8 @@ class TestRevisionedProfileApi:
             **_complete_profile_payload()
         )
         rendered_audit = repr(audit.call_args_list)
-        assert "action=%s entity=profile identity=%s result=success count=%d" in rendered_audit
+        assert "action=%s entity=profile identity=%s result=%s error_code=%s" in rendered_audit
+        assert "'success', 'none'" in rendered_audit
         assert "formal" not in rendered_audit
         assert "graphs" not in rendered_audit
 
@@ -1013,6 +1016,111 @@ class TestRevisionedProfileApi:
         mixin._maintenance_write_guard.assert_called_once_with()
         request_mock.get_json.assert_not_awaited()
         mixin._ensure_plugin_ready.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_mutation_audit_covers_early_validation_without_payload_leak(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile())
+        secret = "profile-payload-secret-e684"
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            return_value={**_complete_profile_payload(), "unknown": secret}
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.create_profile()
+
+        audits = [
+            record.getMessage()
+            for record in caplog.records
+            if "[画像 AUDIT]" in record.getMessage()
+        ]
+        assert result["code"] == "validation_error"
+        assert len(audits) == 1
+        assert "action=create" in audits[0]
+        assert "entity=profile" in audits[0]
+        assert "identity=unavailable" in audits[0]
+        assert "result=failure" in audits[0]
+        assert "error_code=validation_error" in audits[0]
+        assert secret not in caplog.text
+        request_mock.get_json.assert_awaited_once_with(silent=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failure", "expected_code", "exception_secret"),
+        [
+            (
+                EntityNotFoundError("profile-domain-secret-53ad"),
+                "not_found",
+                "profile-domain-secret-53ad",
+            ),
+            (
+                RuntimeError("profile-generic-secret-a722"),
+                "internal_error",
+                "profile-generic-secret-a722",
+            ),
+        ],
+    )
+    async def test_mutation_audit_mapper_failure_is_single_and_redacted(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        failure: Exception,
+        expected_code: str,
+        exception_secret: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile())
+        payload_secret = "profile-payload-secret-07bf"
+        mixin.profile_manager.create_profile_manual.side_effect = failure
+        payload = _complete_profile_payload()
+        payload["display_name"] = payload_secret
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.create_profile()
+
+        audits = [
+            record.getMessage()
+            for record in caplog.records
+            if "[画像 AUDIT]" in record.getMessage()
+        ]
+        assert result["code"] == expected_code
+        assert len(audits) == 1
+        assert "action=create" in audits[0]
+        assert "entity=profile" in audits[0]
+        assert "identity=unavailable" in audits[0]
+        assert "result=failure" in audits[0]
+        assert f"error_code={expected_code}" in audits[0]
+        rendered = caplog.text + repr(result)
+        assert payload_secret not in rendered
+        assert exception_secret not in rendered
+
+    @pytest.mark.asyncio
+    async def test_mutation_audit_preserves_cancellation(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile())
+        mixin.profile_manager.create_profile_manual.side_effect = (
+            asyncio.CancelledError()
+        )
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=_complete_profile_payload())
+
+        with (
+            patch("core.api.profile_api.request", request_mock),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await mixin.create_profile()
+
+        assert not [
+            record
+            for record in caplog.records
+            if "[画像 AUDIT]" in record.getMessage()
+        ]
 
     @pytest.mark.asyncio
     async def test_unexpected_failure_is_redacted_from_response_and_logs(self) -> None:
@@ -1462,3 +1570,57 @@ class TestRevisionedProfileBatchIntegration:
         assert persisted.display_name == "Concurrent"
         assert persisted.preferences.preferred_topics == ["current"]
         assert persisted.tags == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("display_name", [True, {}, [], 123, "x" * 129])
+async def test_legacy_update_rejects_invalid_display_name_without_mutation(display_name) -> None:
+    mixin = _make_mixin(detail_profile=_make_profile())
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={"user_id": "u1", "display_name": display_name}
+    )
+    with patch("core.api.profile_api.request", request_mock):
+        result = await mixin.update_profile()
+    assert result["code"] == "validation_error"
+    mixin.profile_manager.update_profile_fields.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preferences", [
+    {"unknown": "x"},
+    {"reply_style": True},
+    {"preferred_topics": "graphs"},
+    {"preferred_topics": ["ok", True]},
+    {"active_hours": [9, True]},
+    {"active_hours": [24]},
+])
+async def test_legacy_update_rejects_invalid_nested_preferences_without_mutation(preferences) -> None:
+    mixin = _make_mixin(detail_profile=_make_profile())
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={"user_id": "u1", "preferences": preferences}
+    )
+    with patch("core.api.profile_api.request", request_mock):
+        result = await mixin.update_profile()
+    assert result["code"] == "validation_error"
+    mixin.profile_manager.update_profile_fields.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tag", [
+    {"category": True, "value": "x", "confidence": 0.5},
+    {"category": "bogus", "value": "x", "confidence": 0.5},
+    {"category": "interest", "value": True, "confidence": 0.5},
+    {"category": " interest ", "value": "   ", "confidence": 0.5},
+])
+async def test_legacy_tags_reject_invalid_strings_without_mutation(tag) -> None:
+    mixin = _make_mixin(detail_profile=_make_profile())
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={"user_id": "u1", "action": "add", "tag": tag}
+    )
+    with patch("core.api.profile_api.request", request_mock):
+        result = await mixin.manage_profile_tags()
+    assert result["status"] == "error"
+    mixin.profile_manager.add_tag.assert_not_awaited()

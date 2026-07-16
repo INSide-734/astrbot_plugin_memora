@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+from functools import wraps
 import inspect
 from collections.abc import Mapping
 from typing import Any
@@ -40,13 +42,79 @@ _BATCH_FIELDS = frozenset({"action", "items", "params"})
 _BATCH_ACTIONS = frozenset({"delete", "add_tags", "remove_tags"})
 
 
-def _audit_success(action: str, identity: Any, *, count: int = 1) -> None:
+_AUDIT_EMITTED: ContextVar[bool] = ContextVar(
+    "social_mutation_audit_emitted", default=False
+)
+
+
+def _audit_event(
+    action: str,
+    identity: Any,
+    *,
+    result: str,
+    error_code: str = "none",
+    error_class: str = "none",
+    count: int = 1,
+    succeeded_count: int | None = None,
+    failed_count: int | None = None,
+) -> None:
+    _AUDIT_EMITTED.set(True)
+    if succeeded_count is not None or failed_count is not None:
+        logger.info(
+            "[社交关系 AUDIT] action=%s entity=social_relation identity=%s result=%s error_code=%s error_class=%s succeeded_count=%d failed_count=%d",
+            action,
+            identity,
+            result,
+            error_code,
+            error_class,
+            0 if succeeded_count is None else succeeded_count,
+            0 if failed_count is None else failed_count,
+        )
+        return
     logger.info(
-        "[社交关系 AUDIT] action=%s entity=social_relation identity=%s result=success count=%d",
+        "[社交关系 AUDIT] action=%s entity=social_relation identity=%s result=%s error_code=%s error_class=%s count=%d",
         action,
         identity,
+        result,
+        error_code,
+        error_class,
         count,
     )
+
+
+def _audit_boundary(action: str):
+    def decorate(handler):
+        @wraps(handler)
+        async def wrapped(*args, **kwargs):
+            token = _AUDIT_EMITTED.set(False)
+            try:
+                try:
+                    response = await handler(*args, **kwargs)
+                except Exception as exc:
+                    response = _exception_response(exc, operation=action)
+                if (
+                    isinstance(response, dict)
+                    and response.get("status") == "error"
+                    and not _AUDIT_EMITTED.get()
+                ):
+                    code = response.get("code")
+                    _audit_event(
+                        action,
+                        "unavailable",
+                        result="failure",
+                        error_code=(
+                            code
+                            if isinstance(code, str) and code
+                            else "request_error"
+                        ),
+                    )
+                return response
+            finally:
+                _AUDIT_EMITTED.reset(token)
+
+        return wrapped
+
+    return decorate
 
 
 def _relation_to_dict(rel: Any) -> dict[str, Any]:
@@ -113,7 +181,24 @@ def _component_unavailable() -> dict[str, Any]:
     return error_response("关系管理器不可用", code="component_unavailable")
 
 
-def _exception_response(exc: Exception, *, operation: str) -> dict[str, Any]:
+def _exception_response(
+    exc: Exception, *, operation: str, audit: bool = True
+) -> dict[str, Any]:
+    error_code = (
+        "validation_error" if isinstance(exc, EntityValidationError)
+        else "already_exists" if isinstance(exc, EntityAlreadyExistsError)
+        else "not_found" if isinstance(exc, EntityNotFoundError)
+        else "edit_conflict" if isinstance(exc, EditConflictError)
+        else "internal_error"
+    )
+    if audit:
+        _audit_event(
+            operation,
+            "unavailable",
+            result="failure",
+            error_code=error_code,
+            error_class=type(exc).__name__,
+        )
     """将领域异常映射为稳定响应；未知异常只记录操作与异常类。"""
     if isinstance(exc, EntityValidationError):
         return _validation_error(exc)
@@ -288,6 +373,7 @@ class SocialApiMixin:
         except Exception as exc:
             return _exception_response(exc, operation="list")
 
+    @_audit_boundary("create")
     async def create_social_relation(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -314,17 +400,25 @@ class SocialApiMixin:
                 strength=finite_float(payload.get("strength"), field="strength"),
                 tags=normalized_string_list(payload.get("tags", []), field="tags"),
             )
-            _audit_success("create", {
-                "from_user": rel.from_user, "to_user": rel.to_user,
-                "group_id": rel.group_id, "relation_type": rel.relation_type,
-            })
-            return entity_ok(
+            response = entity_ok(
                 _relation_to_dict(rel),
                 revision=manager.revision_for(rel),
             )
+            _audit_event(
+                "create",
+                {
+                    "from_user": rel.from_user,
+                    "to_user": rel.to_user,
+                    "group_id": rel.group_id,
+                    "relation_type": rel.relation_type,
+                },
+                result="success",
+            )
+            return response
         except Exception as exc:
             return _exception_response(exc, operation="create")
 
+    @_audit_boundary("update")
     async def update_social_relation(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -384,14 +478,16 @@ class SocialApiMixin:
                 ),
                 expected_revision=expected_revision,
             )
-            _audit_success("update", identity)
-            return entity_ok(
+            response = entity_ok(
                 _relation_to_dict(rel),
                 revision=manager.revision_for(rel),
             )
+            _audit_event("update", identity, result="success")
+            return response
         except Exception as exc:
             return _exception_response(exc, operation="update")
 
+    @_audit_boundary("delete")
     async def delete_social_relation(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -420,11 +516,13 @@ class SocialApiMixin:
                 identity=identity_tuple,
                 expected_revision=expected_revision,
             )
-            _audit_success("delete", identity)
-            return ok_response({"deleted": True, "identity": identity})
+            response = ok_response({"deleted": True, "identity": identity})
+            _audit_event("delete", identity, result="success")
+            return response
         except Exception as exc:
             return _exception_response(exc, operation="delete")
 
+    @_audit_boundary("batch")
     async def batch_social_relations(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -515,10 +613,23 @@ class SocialApiMixin:
                     item_response = _exception_response(
                         exc,
                         operation=f"batch_{action}_item_{index}",
+                        audit=False,
                     )
                     failures.append(_batch_failure(identity_ref, item_response))
 
-            _audit_success("batch_" + action, "batch", count=len(succeeded_ids))
+            batch_result = (
+                "success"
+                if not failures
+                else ("failure" if not succeeded_ids else "partial")
+            )
+            _audit_event(
+                "batch_" + action,
+                "batch",
+                result=batch_result,
+                error_code="none" if not failures else "item_failure",
+                succeeded_count=len(succeeded_ids),
+                failed_count=len(failures),
+            )
             return ok_response(
                 {
                     "succeeded_ids": succeeded_ids,

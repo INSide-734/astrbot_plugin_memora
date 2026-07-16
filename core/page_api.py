@@ -1097,16 +1097,12 @@ class PluginPageApi(
             return memory
         if memory_engine.db_connection is None:
             return None
-        try:
-            cursor = await memory_engine.db_connection.execute(
-                "SELECT id, doc_id, text, metadata, created_at, updated_at "
-                "FROM documents WHERE id = ?",
-                (memory_id,),
-            )
-            row = await cursor.fetchone()
-        except Exception as e:
-            logger.warning(f"获取记忆详情失败（id={memory_id}）：{e}")
-            return None
+        cursor = await memory_engine.db_connection.execute(
+            "SELECT id, doc_id, text, metadata, created_at, updated_at "
+            "FROM documents WHERE id = ?",
+            (memory_id,),
+        )
+        row = await cursor.fetchone()
         if not row:
             return None
         return {

@@ -94,7 +94,15 @@ class MemoryWriteApiMixin:
         if not field or value is None:
             return self._error("需要指定 field 和 value")
 
-        memory = await self._get_memory_record(memory_id)
+        try:
+            memory = await self._get_memory_record(memory_id)
+        except Exception as exc:
+            logger.error(
+                "[PageAPI] operation=read_memory_for_update memory_id=%s error_class=%s",
+                memory_id,
+                type(exc).__name__,
+            )
+            return error_response("读取记忆失败", code="internal_error")
         if not memory:
             return self._error("记忆不存在")
 
@@ -259,7 +267,15 @@ class MemoryWriteApiMixin:
         if unsupported:
             return self._error(f"不支持编辑字段: {unsupported[0]}")
 
-        memory = await self._get_memory_record(memory_id)
+        try:
+            memory = await self._get_memory_record(memory_id)
+        except Exception as exc:
+            logger.error(
+                "[PageAPI] operation=read_memory_for_update memory_id=%s error_class=%s",
+                memory_id,
+                type(exc).__name__,
+            )
+            return error_response("读取记忆失败", code="internal_error")
         if not memory:
             return self._error("记忆不存在")
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+from functools import wraps
 from collections.abc import Mapping
 from typing import Any
 
@@ -43,13 +45,79 @@ _MAX_BATCH_ITEMS = 100
 _MAX_TAGS = 100
 
 
-def _audit_success(action: str, identity: Any, *, count: int = 1) -> None:
+_AUDIT_EMITTED: ContextVar[bool] = ContextVar(
+    "profile_mutation_audit_emitted", default=False
+)
+
+
+def _audit_event(
+    action: str,
+    identity: Any,
+    *,
+    result: str,
+    error_code: str = "none",
+    error_class: str = "none",
+    count: int = 1,
+    succeeded_count: int | None = None,
+    failed_count: int | None = None,
+) -> None:
+    _AUDIT_EMITTED.set(True)
+    if succeeded_count is not None or failed_count is not None:
+        logger.info(
+            "[画像 AUDIT] action=%s entity=profile identity=%s result=%s error_code=%s error_class=%s succeeded_count=%d failed_count=%d",
+            action,
+            identity,
+            result,
+            error_code,
+            error_class,
+            0 if succeeded_count is None else succeeded_count,
+            0 if failed_count is None else failed_count,
+        )
+        return
     logger.info(
-        "[画像 AUDIT] action=%s entity=profile identity=%s result=success count=%d",
+        "[画像 AUDIT] action=%s entity=profile identity=%s result=%s error_code=%s error_class=%s count=%d",
         action,
         identity,
+        result,
+        error_code,
+        error_class,
         count,
     )
+
+
+def _audit_boundary(action: str):
+    def decorate(handler):
+        @wraps(handler)
+        async def wrapped(*args, **kwargs):
+            token = _AUDIT_EMITTED.set(False)
+            try:
+                try:
+                    response = await handler(*args, **kwargs)
+                except Exception as exc:
+                    response = _exception_response(exc, operation=action)
+                if (
+                    isinstance(response, dict)
+                    and response.get("status") == "error"
+                    and not _AUDIT_EMITTED.get()
+                ):
+                    code = response.get("code")
+                    _audit_event(
+                        action,
+                        "unavailable",
+                        result="failure",
+                        error_code=(
+                            code
+                            if isinstance(code, str) and code
+                            else "request_error"
+                        ),
+                    )
+                return response
+            finally:
+                _AUDIT_EMITTED.reset(token)
+
+        return wrapped
+
+    return decorate
 
 
 def _coerce_user_id(raw_user_id: Any) -> str:
@@ -120,7 +188,24 @@ def _component_unavailable() -> dict[str, Any]:
     return error_response("用户画像管理器不可用", code="component_unavailable")
 
 
-def _exception_response(exc: Exception, *, operation: str) -> dict[str, Any]:
+def _exception_response(
+    exc: Exception, *, operation: str, audit: bool = True
+) -> dict[str, Any]:
+    error_code = (
+        "validation_error" if isinstance(exc, EntityValidationError)
+        else "already_exists" if isinstance(exc, EntityAlreadyExistsError)
+        else "not_found" if isinstance(exc, EntityNotFoundError)
+        else "edit_conflict" if isinstance(exc, EditConflictError)
+        else "internal_error"
+    )
+    if audit:
+        _audit_event(
+            operation,
+            "unavailable",
+            result="failure",
+            error_code=error_code,
+            error_class=type(exc).__name__,
+        )
     if isinstance(exc, EntityValidationError):
         return _validation_error(exc)
     if isinstance(exc, EntityAlreadyExistsError):
@@ -143,13 +228,38 @@ def _exception_response(exc: Exception, *, operation: str) -> dict[str, Any]:
 def _validate_preferences(value: Any, *, field: str) -> dict | None:
     if not isinstance(value, Mapping):
         return _field_error(field, "必须为对象")
-    unknown = reject_unknown_fields(value, _PREFERENCE_FIELDS)
+    unknown = sorted(set(value) - _PREFERENCE_FIELDS)
     if unknown:
-        unknown["field_errors"] = {
-            field + "." + name: message
-            for name, message in unknown.get("field_errors", {}).items()
-        }
-    return unknown
+        return _field_error(field + "." + unknown[0], "字段不可写")
+    reply_style = value.get("reply_style")
+    if reply_style is not None and (
+        not isinstance(reply_style, str)
+        or not reply_style.strip()
+        or len(reply_style.strip()) > 128
+    ):
+        return _field_error(field + ".reply_style", "必须为非空字符串且不超过 128 字符")
+    for name in ("preferred_topics", "avoided_topics"):
+        if name not in value:
+            continue
+        items = value[name]
+        if not isinstance(items, list) or len(items) > 100:
+            return _field_error(field + "." + name, "必须为最多 100 项的数组")
+        normalized: list[str] = []
+        for item in items:
+            if not isinstance(item, str) or not item.strip() or len(item.strip()) > 128:
+                return _field_error(field + "." + name, "每项必须为非空字符串且不超过 128 字符")
+            if item.strip() in normalized:
+                return _field_error(field + "." + name, "项目不得重复")
+            normalized.append(item.strip())
+    if "active_hours" in value:
+        hours = value["active_hours"]
+        if not isinstance(hours, list) or len(hours) > 24:
+            return _field_error(field + ".active_hours", "必须为最多 24 项的数组")
+        if any(isinstance(hour, bool) or not isinstance(hour, int) or not 0 <= hour <= 23 for hour in hours):
+            return _field_error(field + ".active_hours", "每项必须为 0 到 23 的整数")
+        if len(set(hours)) != len(hours):
+            return _field_error(field + ".active_hours", "项目不得重复")
+    return None
 
 
 def _validate_tags(value: Any, *, field: str) -> dict | None:
@@ -371,6 +481,7 @@ class ProfileApiMixin:
             return _exception_response(exc, operation="detail_revision")
         return _profile_response_or_error(profile, revision=revision)
 
+    @_audit_boundary("create")
     async def create_profile(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -400,11 +511,15 @@ class ProfileApiMixin:
             entity = _safe_profile_to_dict(profile)
             if entity is None:
                 return error_response("profile serialization failed: 画像序列化失败")
-            _audit_success("create", {"user_id": entity.get("user_id", "")})
-            return entity_ok(entity, revision=manager.revision_for(profile))
+            response = entity_ok(entity, revision=manager.revision_for(profile))
+            _audit_event(
+                "create", {"user_id": entity.get("user_id", "")}, result="success"
+            )
+            return response
         except Exception as exc:
             return _exception_response(exc, operation="create")
 
+    @_audit_boundary("update")
     async def update_profile(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -433,30 +548,42 @@ class ProfileApiMixin:
                 return error_response("画像不存在")
             preferences = None
             if "preferences" in payload:
-                if not isinstance(payload["preferences"], Mapping):
-                    return _field_error("preferences", "必须为对象")
-                derived = sorted(
-                    set(payload["preferences"])
-                    & {"avg_reply_length", "interaction_frequency"}
+                validation_error = _validate_preferences(
+                    payload["preferences"], field="preferences"
                 )
-                if derived:
-                    return _field_error(
-                        "preferences." + derived[0], "字段不可写"
-                    )
+                if validation_error:
+                    return validation_error
                 preferences = dict(payload["preferences"])
+                if "reply_style" in preferences:
+                    preferences["reply_style"] = preferences["reply_style"].strip()
+                for topic_field in ("preferred_topics", "avoided_topics"):
+                    if topic_field in preferences:
+                        preferences[topic_field] = list(dict.fromkeys(
+                            item.strip() for item in preferences[topic_field]
+                        ))
+                if "active_hours" in preferences:
+                    preferences["active_hours"] = list(dict.fromkeys(
+                        preferences["active_hours"]
+                    ))
+            display_name = None
+            if "display_name" in payload:
+                raw_display_name = payload["display_name"]
+                if not isinstance(raw_display_name, str):
+                    return _field_error("display_name", "必须为字符串")
+                display_name = raw_display_name.strip()
+                if len(display_name) > 128:
+                    return _field_error("display_name", "不得超过 128 字符")
             profile = await manager.update_profile_fields(
                 user_id,
-                display_name=(
-                    str(payload["display_name"])
-                    if "display_name" in payload
-                    else None
-                ),
+                display_name=display_name,
                 preferences=preferences,
             )
             if profile is None:
                 return error_response("画像不存在")
-            _audit_success("legacy_update", {"user_id": user_id})
-            return _profile_response_or_error(profile)
+            response = _profile_response_or_error(profile)
+            if response.get("status") == "ok":
+                _audit_event("legacy_update", {"user_id": user_id}, result="success")
+            return response
         except Exception as exc:
             return _exception_response(exc, operation="legacy_update")
 
@@ -495,9 +622,11 @@ class ProfileApiMixin:
         entity = _safe_profile_to_dict(profile)
         if entity is None:
             return error_response("profile serialization failed: 画像序列化失败")
-        _audit_success("update", identity)
-        return entity_ok(entity, revision=manager.revision_for(profile))
+        response = entity_ok(entity, revision=manager.revision_for(profile))
+        _audit_event("update", identity, result="success")
+        return response
 
+    @_audit_boundary("delete")
     async def delete_profile(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -519,8 +648,9 @@ class ProfileApiMixin:
             if not user_id:
                 return error_response("user_id required: 缺少必填参数 user_id")
             deleted = await manager.delete_profile(user_id)
-            _audit_success("legacy_delete", {"user_id": user_id})
-            return ok_response({"deleted": deleted, "user_id": user_id})
+            response = ok_response({"deleted": deleted, "user_id": user_id})
+            _audit_event("legacy_delete", {"user_id": user_id}, result="success")
+            return response
         except Exception as exc:
             return _exception_response(exc, operation="legacy_delete")
 
@@ -545,9 +675,11 @@ class ProfileApiMixin:
         )
         if not deleted:
             raise EntityNotFoundError("用户画像不存在")
-        _audit_success("delete", identity)
-        return ok_response({"deleted": True, "identity": identity})
+        response = ok_response({"deleted": True, "identity": identity})
+        _audit_event("delete", identity, result="success")
+        return response
 
+    @_audit_boundary("batch")
     async def batch_delete_profiles(self):
         """兼容旧批量删除，并提供带修订版本的安全批量动作。"""
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
@@ -598,6 +730,19 @@ class ProfileApiMixin:
                     type(exc).__name__,
                 )
                 failed_ids.append(raw_id)
+        batch_result = (
+            "success"
+            if not failed_ids
+            else ("failure" if not deleted_count else "partial")
+        )
+        _audit_event(
+            "legacy_batch_delete",
+            "batch",
+            result=batch_result,
+            error_code="none" if not failed_ids else "item_failure",
+            succeeded_count=deleted_count,
+            failed_count=len(failed_ids),
+        )
         return ok_response(
             {
                 "deleted_count": deleted_count,
@@ -672,10 +817,23 @@ class ProfileApiMixin:
                 succeeded_ids.append(identity)
             except Exception as exc:
                 item_response = _exception_response(
-                    exc, operation="batch_" + action + "_item"
+                    exc, operation="batch_" + action + "_item",
+                    audit=False,
                 )
                 failures.append(_batch_failure(identity_ref, item_response))
-        _audit_success("batch_" + action, "batch", count=len(succeeded_ids))
+        batch_result = (
+            "success"
+            if not failures
+            else ("failure" if not succeeded_ids else "partial")
+        )
+        _audit_event(
+            "batch_" + action,
+            "batch",
+            result=batch_result,
+            error_code="none" if not failures else "item_failure",
+            succeeded_count=len(succeeded_ids),
+            failed_count=len(failures),
+        )
         return ok_response(
             {
                 "total": len(items),
@@ -686,6 +844,7 @@ class ProfileApiMixin:
             }
         )
 
+    @_audit_boundary("manage_tags")
     async def manage_profile_tags(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -716,13 +875,16 @@ class ProfileApiMixin:
         unknown = reject_unknown_fields(tag, _TAG_FIELDS)
         if unknown:
             return unknown
-        category = str(tag.get("category", ""))
-        value = str(tag.get("value", ""))
-        if not category or not value:
-            return error_response("tag 的 category 和 value 为必填项")
-        category_value = (
-            category if category in {item.value for item in TagCategory} else "custom"
-        )
+        raw_category = tag.get("category")
+        raw_value = tag.get("value")
+        if not isinstance(raw_category, str) or not isinstance(raw_value, str):
+            return _field_error("tag", "category 和 value 必须为字符串")
+        category_value = raw_category.strip()
+        value = raw_value.strip()
+        if not category_value or not value or len(value) > 128:
+            return _field_error("tag", "category 和 value 必须为非空有界字符串")
+        if category_value not in {item.value for item in TagCategory}:
+            return _field_error("tag.category", "未知标签分类")
         if action == "add":
             try:
                 confidence = finite_float(
@@ -747,8 +909,10 @@ class ProfileApiMixin:
             profile = await manager.remove_tag(user_id, category_value, value)
         if profile is None:
             return error_response("画像不存在")
-        _audit_success("tag_" + action, {"user_id": user_id})
-        return _profile_response_or_error(profile)
+        response = _profile_response_or_error(profile)
+        if response.get("status") == "ok":
+            _audit_event("tag_" + action, {"user_id": user_id}, result="success")
+        return response
 
 
 __all__ = ["ProfileApiMixin"]
