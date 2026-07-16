@@ -499,6 +499,18 @@ def test_injection_decision_benchmark_is_file_backed_and_checks_thresholds() -> 
     assert '":memory:"' not in source
 
 
+def test_recall_cost_benchmark_covers_each_routing_mode_and_p95() -> None:
+    source = _read_text("scripts/benchmark_recall_cost.py")
+    for marker in [
+        "ManualRoutingAccuracy",
+        "AutoRoutingAccuracy",
+        "HybridRoutingAccuracy",
+        "StrategyDecisionLatency",
+        "percentile_95",
+    ]:
+        assert marker in source
+
+
 def test_requirements_cover_mandatory_runtime_dependencies() -> None:
     requirements = {
         line.strip()

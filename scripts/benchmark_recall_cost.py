@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import statistics
+import math
 import sys
 import time
 from dataclasses import dataclass
@@ -79,6 +79,11 @@ _ROUTING_CASES = (
 )
 
 
+def percentile_95(values: list[float]) -> float:
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)]
+
+
 def _request() -> ProviderRequest:
     return ProviderRequest(
         prompt="benchmark",
@@ -110,19 +115,29 @@ async def _profile_metrics(
     started = time.perf_counter()
     decision = router.route_final(config, signals)
     latencies = [(time.perf_counter() - started) * 1000]
-    correct = int(
+    manual_correct = int(
         decision.configured_preset is profile_name
         and decision.recommended_preset is profile_name
         and decision.resolved_preset is profile_name
     )
-    total = 1
+    auto_correct = 0
+    hybrid_correct = 0
+    hybrid_config = InjectionRoutingConfig(
+        mode=RoutingMode.HYBRID,
+        hybrid_base=PresetName.BALANCED,
+        hybrid_min=PresetName.BALANCED,
+        hybrid_max=PresetName.BALANCED,
+    )
 
     for case in _ROUTING_CASES:
         started = time.perf_counter()
         routed = router.route_final(InjectionRoutingConfig(mode=RoutingMode.AUTO), case.signals)
         latencies.append((time.perf_counter() - started) * 1000)
-        correct += int(routed.resolved_preset is case.expected)
-        total += 1
+        auto_correct += int(routed.resolved_preset is case.expected)
+        started = time.perf_counter()
+        hybrid = router.route_final(hybrid_config, case.signals)
+        latencies.append((time.perf_counter() - started) * 1000)
+        hybrid_correct += int(hybrid.resolved_preset is PresetName.BALANCED)
 
     preflight = router.route_preflight(
         InjectionRoutingConfig(mode=RoutingMode.MANUAL, manual_preset=PresetName.TOOL_FIRST),
@@ -152,9 +167,15 @@ async def _profile_metrics(
     selected_content = [item["content"] for item in _CANDIDATES[: result.selected_count]]
     redundant = len(selected_content) - len(set(selected_content))
     expected_hit = profile_name is not PresetName.TOOL_FIRST
+    routing_case_count = len(_ROUTING_CASES)
+    total_correct = manual_correct + auto_correct + hybrid_correct
+    total_cases = 1 + routing_case_count * 2
 
     metrics: dict[str, float | int] = {
-        "PresetSelectionAccuracy": round(correct / total, 6),
+        "PresetSelectionAccuracy": round(total_correct / total_cases, 6),
+        "ManualRoutingAccuracy": float(manual_correct),
+        "AutoRoutingAccuracy": round(auto_correct / routing_case_count, 6),
+        "HybridRoutingAccuracy": round(hybrid_correct / routing_case_count, 6),
         "InjectionHit@Budget": float(
             (result.actual_payload_chars > 0) == expected_hit
         ),
@@ -170,7 +191,7 @@ async def _profile_metrics(
             round(overflow / effective_budget, 6) if effective_budget else 0.0
         ),
         "ToolFirstPassiveRecallRate": passive_rate,
-        "StrategyDecisionLatency": round(statistics.mean(latencies), 6),
+        "StrategyDecisionLatency": round(percentile_95(latencies), 6),
         "ExtraLLMCalls": provider.inference_calls,
     }
     diagnostics: dict[str, float | int | str | bool | None] = {
@@ -194,10 +215,14 @@ def run_benchmark(profile_name: str) -> dict[str, Any]:
     )
     passed = (
         metrics["PresetSelectionAccuracy"] == 1.0
+        and metrics["ManualRoutingAccuracy"] == 1.0
+        and metrics["AutoRoutingAccuracy"] == 1.0
+        and metrics["HybridRoutingAccuracy"] == 1.0
         and metrics["InjectionHit@Budget"] == 1.0
         and metrics["BudgetOverflowRate"] == 0.0
         and metrics["ToolFirstPassiveRecallRate"] == 0.0
         and metrics["ExtraLLMCalls"] == 0
+        and metrics["StrategyDecisionLatency"] < 10.0
         and diagnostics["execution_outcome"] == expected_outcome
         and diagnostics["error_code"] is None
         and diagnostics["actual_payload_chars"]
