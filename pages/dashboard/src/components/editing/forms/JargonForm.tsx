@@ -14,6 +14,7 @@ export interface JargonFormProps {
   value: JargonValue;
   onChange(value: JargonValue): void;
   fieldErrors: FieldErrors;
+  formErrors?: readonly string[];
   disabled?: boolean;
   mode: "create" | "edit";
 }
@@ -24,7 +25,7 @@ const labelFallbacks: Record<string, string> = {
   "jargon.isJargonDescription": "Marks whether this term is jargon", "jargon.isConfirmedDescription": "Marks whether this term was confirmed by an administrator", "jargon.isGlobalDescription": "Makes this meaning available across groups",
 };
 
-export function JargonForm({ value, onChange, fieldErrors, disabled = false, mode }: JargonFormProps) {
+export function JargonForm({ value, onChange, fieldErrors, formErrors = [], disabled = false, mode }: JargonFormProps) {
   const { t } = useI18n();
   const label = (key: string) => { const translated = t(key); return translated === key ? labelFallbacks[key] ?? key : translated; };
   const [rangeError, setRangeError] = React.useState<string>();
@@ -32,7 +33,7 @@ export function JargonForm({ value, onChange, fieldErrors, disabled = false, mod
   const update = <K extends keyof JargonDraft>(field: K, next: JargonDraft[K]) => onChange({ ...value, [field]: next });
   const identityDisabled = disabled || mode === "edit";
   const validationErrors = { ...fieldErrors, ...(meaningError ? { meaning: meaningError } : {}), ...(rangeError ? { confidence: rangeError } : {}) };
-  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} focusInvalid={Object.keys(validationErrors).length > 0}>
+  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} formErrors={formErrors} focusInvalid={Object.keys(validationErrors).length > 0 || formErrors.length > 0}>
     {({ getFieldError }) => {
       const termError = getFieldError("term");
       const groupIdError = getFieldError("group_id");

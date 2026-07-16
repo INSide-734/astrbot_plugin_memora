@@ -24,7 +24,7 @@ import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
 import { ProfileForm } from "@/components/editing/forms/ProfileForm";
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
 import { dashboardLocale, formatDashboardDate, formatDashboardPercent } from "@/lib/i18n";
-import { ApiRequestError, BULK_CONFIRMATION_THRESHOLD, type BatchResult, type EntityEnvelope, type FieldErrors } from "@/types/editing";
+import { ApiRequestError, BULK_CONFIRMATION_THRESHOLD, editingErrorDetails, type BatchResult, type EntityEnvelope, type FieldErrors } from "@/types/editing";
 import type { ProfileDraft } from "@/types";
 
 interface ProfilesPageProps {
@@ -194,10 +194,7 @@ function isProfileBatchFailure(value: unknown): value is ProfileBatchFailure {
   return isRecord(value) && isProfileIdentity(value.identity) && typeof value.code === "string" && typeof value.message === "string";
 }
 
-function errorDetails(error: unknown): { fieldErrors: FieldErrors; message: string } {
-  if (error instanceof ApiRequestError) return { fieldErrors: error.fieldErrors, message: error.message };
-  return { fieldErrors: {}, message: error instanceof Error ? error.message : String(error) };
-}
+const PROFILE_FORM_FIELDS = ["user_id", "display_name", "preferences", "tags"] as const;
 
 function hasProfileRevision(profile: Profile | undefined): profile is Profile & { revision: string } {
   return typeof profile?.revision === "string" && profile.revision.length > 0;
@@ -368,9 +365,9 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
         showToast(label("profiles.createdOutsideView", "Created profile is outside the current view"));
       }
     } catch (error) {
-      const details = errorDetails(error);
+      const details = editingErrorDetails(error, PROFILE_FORM_FIELDS);
       setCreateFieldErrors(details.fieldErrors);
-      setCreateFormError(details.message);
+      setCreateFormError(details.formError);
       throw error;
     } finally {
       setCreateSubmitting(false);
@@ -403,9 +400,9 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
       setEditMode(false);
       setProfiles((previous) => previous.map((profile) => profile.user_id === saved.user_id ? { ...profile, ...saved } : profile));
     } catch (error) {
-      const details = errorDetails(error);
+      const details = editingErrorDetails(error, PROFILE_FORM_FIELDS);
       setEditFieldErrors(details.fieldErrors);
-      setEditFormError(details.message);
+      setEditFormError(details.formError);
       if (error instanceof ApiRequestError && (error.code === "conflict" || error.code === "edit_conflict")) {
         const entity = error.data.current_entity;
         const revision = error.data.current_revision;
@@ -643,7 +640,7 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
           {detail.tags?.length ? <div><h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold"><Tag />{t("table.tags")}</h4><div className="flex flex-col gap-1.5">{detail.tags.map((tag, index) => <div key={`${tag.value ?? tag.name}-${index}`} className="flex items-center justify-between"><span>{tag.value ?? tag.name}</span><span>{formatDashboardPercent(tag.confidence ?? 0, locale, { maximumFractionDigits: 0 })}</span></div>)}</div></div> : null}
           <Button variant="destructive" size="sm" onClick={() => { if (hasProfileRevision(detail)) setDeleteOpen(true); else void executeSingleDelete(); }}><Trash2 data-icon="inline-start" />{hasProfileRevision(detail) ? t("common.delete") : t("detail.deleteProfile")}</Button>
         </div> : null}
-        form={<>{editFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{editFormError}</div> : null}<ProfileForm value={editDraft} onChange={(next) => { setEditDraft(next); setEditFieldErrors({}); setEditFormError(null); }} fieldErrors={editFieldErrors} disabled={editSubmitting} mode="edit" /></>}
+        form={<ProfileForm value={editDraft} onChange={(next) => { setEditDraft(next); setEditFieldErrors({}); setEditFormError(null); }} fieldErrors={editFieldErrors} formErrors={editFormError ? [editFormError] : []} disabled={editSubmitting} mode="edit" />}
       />
 
       <EntityCreateDialog
@@ -657,7 +654,7 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
         onCancel={requestCloseCreate}
         onSubmit={createProfile}
         labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: t("detail.create"), submitting: label("common.saving", "Saving...") }}
-        form={<>{createFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{createFormError}</div> : null}<ProfileForm value={createDraft} onChange={(next) => { setCreateDraft(next); setCreateFieldErrors({}); setCreateFormError(null); }} fieldErrors={createFieldErrors} disabled={createSubmitting} mode="create" /></>}
+        form={<ProfileForm value={createDraft} onChange={(next) => { setCreateDraft(next); setCreateFieldErrors({}); setCreateFormError(null); }} fieldErrors={createFieldErrors} formErrors={createFormError ? [createFormError] : []} disabled={createSubmitting} mode="create" />}
       />
 
       <Dialog open={batchTagOpen} onOpenChange={(open) => { if (!open) requestCloseBatchTag(); }}>

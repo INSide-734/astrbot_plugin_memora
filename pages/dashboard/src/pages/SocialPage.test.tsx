@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SocialPage } from "./SocialPage";
+import { ApiRequestError } from "@/types/editing";
 
 interface BridgeMock {
   apiGet: ReturnType<typeof vi.fn>;
@@ -300,6 +301,27 @@ describe("SocialPage", () => {
     });
     expect(await screen.findByRole("button", { name: /^edit$/i })).toBeTruthy();
     expect(screen.getByText("trusted")).toBeTruthy();
+  });
+
+  it("normalizes update field errors into one linked validation summary", async () => {
+    mockSocialList();
+    bridge.apiPost.mockRejectedValue(new ApiRequestError("Invalid relation", "validation_error", {
+      "changes.strength": "strength rejected",
+      "changes.unknown": "unknown relation field",
+    }));
+    render(<SocialPage showToast={showToast} />);
+    const sheet = await openRelationEditor();
+    fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(sheet).getByLabelText("Strength"), { target: { value: "0.8" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(within(sheet).getAllByRole("alert")).toHaveLength(1));
+    const href = within(sheet).getByRole("link", { name: "strength rejected" }).getAttribute("href")!;
+    const errorId = href.slice(1);
+    expect(within(sheet).getByLabelText("Strength").getAttribute("aria-describedby")?.split(/\s+/)).toContain(errorId);
+    expect(document.querySelectorAll(`[id="${errorId}"]`)).toHaveLength(1);
+    expect(within(sheet).getByText("unknown relation field")).toBeTruthy();
+    expect(within(sheet).queryByRole("link", { name: "unknown relation field" })).toBeNull();
   });
 
   it("reapplies a local relation edit after a structured stale conflict and retries the latest revision", async () => {

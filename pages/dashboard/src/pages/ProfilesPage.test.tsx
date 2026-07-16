@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EN_MAP } from "../mock";
 import { ProfilesPage } from "./ProfilesPage";
+import { ApiRequestError } from "@/types/editing";
 
 interface BridgeMock {
   apiGet: ReturnType<typeof vi.fn>;
@@ -479,6 +480,25 @@ describe("ProfilesPage", () => {
       });
     });
     expect(await screen.findByRole("button", { name: /^edit$/i })).toBeTruthy();
+  });
+
+  it("normalizes prefixed profile update errors into one linked summary", async () => {
+    bridge.apiGet.mockImplementation((path: string) => Promise.resolve(ok(path.endsWith("detail")
+      ? { user_id: "alice", display_name: "Alice", revision: "rev-1", preferences: { reply_style: "casual", preferred_topics: [], avoided_topics: [], active_hours: [] }, tags: [] }
+      : { total: 1, profiles: [{ user_id: "alice", display_name: "Alice", revision: "rev-1" }] })));
+    bridge.apiPost.mockRejectedValue(new ApiRequestError("Invalid profile", "validation_error", { "changes.display_name": "name rejected" }));
+    render(<ProfilesPage showToast={showToast} />);
+    fireEvent.click(await screen.findByRole("button", { name: /open profile alice/i }));
+    const drawer = await screen.findByRole("dialog", { name: "Profile: Alice" });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(drawer).getByLabelText("Name"), { target: { value: "Alicia" } });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(within(drawer).getAllByRole("alert")).toHaveLength(1));
+    const href = within(drawer).getByRole("link", { name: "name rejected" }).getAttribute("href")!;
+    const errorId = href.slice(1);
+    expect(within(drawer).getByLabelText("Name").getAttribute("aria-describedby")?.split(/\s+/)).toContain(errorId);
+    expect(document.querySelectorAll(`[id="${errorId}"]`)).toHaveLength(1);
   });
 
   it("retains the edit sheet, draft, and visible error after an update network failure", async () => {

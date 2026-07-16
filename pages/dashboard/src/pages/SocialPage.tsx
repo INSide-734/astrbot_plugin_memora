@@ -31,7 +31,7 @@ import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog"
 import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { RELATION_CATEGORIES } from "@/lib/constants";
 import { dashboardLocale, formatDashboardPercent } from "@/lib/i18n";
-import { ApiRequestError, type BatchResult, type EntityEnvelope, type FieldErrors } from "@/types/editing";
+import { ApiRequestError, editingErrorDetails, type BatchResult, type EntityEnvelope, type FieldErrors } from "@/types/editing";
 import type { SocialRelationDraft, SocialRelationEntry } from "@/types";
 
 interface SocialPageProps {
@@ -151,10 +151,7 @@ function relationKey(relation: Pick<SocialRelation, "from_user" | "to_user" | "g
   return [identity.from_user, identity.to_user, identity.group_id, identity.relation_type].join("\u0000");
 }
 
-function errorDetails(error: unknown): { fieldErrors: FieldErrors; message: string } {
-  if (error instanceof ApiRequestError) return { fieldErrors: error.fieldErrors, message: error.message };
-  return { fieldErrors: {}, message: error instanceof Error ? error.message : String(error) };
-}
+const SOCIAL_FORM_FIELDS = ["from_user", "to_user", "group_id", "relation_type", "strength", "tags"] as const;
 
 function hasRevision(relation: SocialRelation | null | undefined): relation is SocialRelation & { revision: string } {
   return typeof relation?.revision === "string" && relation.revision.length > 0;
@@ -311,9 +308,9 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
         showToast(label("social.createdOutsideView", "Created relation is outside the current view"));
       }
     } catch (error) {
-      const details = errorDetails(error);
+      const details = editingErrorDetails(error, SOCIAL_FORM_FIELDS);
       setCreateFieldErrors(details.fieldErrors);
-      setCreateFormError(details.message);
+      setCreateFormError(details.formError);
       throw error;
     } finally {
       setCreateSubmitting(false);
@@ -352,9 +349,9 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
         showToast(label("social.updatedOutsideView", "Updated relation is outside the current view"));
       }
     } catch (error) {
-      const details = errorDetails(error);
+      const details = editingErrorDetails(error, SOCIAL_FORM_FIELDS);
       setEditFieldErrors(details.fieldErrors);
-      setEditFormError(details.message);
+      setEditFormError(details.formError);
       if (error instanceof ApiRequestError && (error.code === "conflict" || error.code === "edit_conflict")) {
         const entity = error.data.current_entity;
         const revision = error.data.current_revision;
@@ -496,8 +493,7 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
       }
       void loadRelations();
     } catch (error) {
-      const details = errorDetails(error);
-      setBatchTagError(details.message);
+      setBatchTagError(error instanceof Error ? error.message : String(error));
     } finally {
       setBatchTagSubmitting(false);
     }
@@ -572,9 +568,9 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
 
       {selected.size > 0 ? <PageToolbar className="border-b-0 border-t bg-muted/40"><span className="text-sm font-medium">{label("select.selected", `${selected.size} selected`, String(selected.size))}</span><Button variant="outline" size="sm" onClick={openBatchTag}>{label("social.editTags", "Edit Tags")}</Button><Button variant="destructive" size="sm" disabled={batchDeleteSubmitting} onClick={() => void executeBatchDelete()}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button><Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X data-icon="inline-start" />{t("common.clear")}</Button></PageToolbar> : null}
 
-      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) requestCloseDetail(); }} title={detail ? label("social.relationDetail", `Relation: ${detail.from_user} → ${detail.to_user}`, detail.from_user, detail.to_user) : ""} description={label("social.relationDetails", "Relation details")} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave={hasRevision(detail)} onBeginEdit={beginEdit} onCancel={cancelEdit} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: label("common.saving", "Saving...") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><div className="grid grid-cols-2 gap-3"><div><span className="text-xs font-medium text-muted-foreground">{label("social.fromUser", "From user")}</span><p>{detail.from_user}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.toUser", "To user")}</span><p>{detail.to_user}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.groupId", "Group ID")}</span><p>{detail.group_id || "--"}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.relationType", "Relation type")}</span><p>{relationLabel(detail.relation_type)}</p></div><div><span className="text-xs font-medium text-muted-foreground">{t("social.frequency")}</span><p>{detail.frequency}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.lastInteraction", "Last interaction")}</span><p>{detail.last_interaction || "--"}</p></div></div><Button variant="destructive" size="sm" disabled={!hasRevision(detail)} onClick={() => setDeleteOpen(true)}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<>{editFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{editFormError}</div> : null}<SocialRelationForm value={editDraft} onChange={(next) => { setEditDraft(next); setEditFieldErrors({}); setEditFormError(null); }} fieldErrors={editFieldErrors} disabled={editSubmitting} mode="edit" /></>} />
+      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) requestCloseDetail(); }} title={detail ? label("social.relationDetail", `Relation: ${detail.from_user} → ${detail.to_user}`, detail.from_user, detail.to_user) : ""} description={label("social.relationDetails", "Relation details")} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave={hasRevision(detail)} onBeginEdit={beginEdit} onCancel={cancelEdit} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: label("common.saving", "Saving...") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><div className="grid grid-cols-2 gap-3"><div><span className="text-xs font-medium text-muted-foreground">{label("social.fromUser", "From user")}</span><p>{detail.from_user}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.toUser", "To user")}</span><p>{detail.to_user}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.groupId", "Group ID")}</span><p>{detail.group_id || "--"}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.relationType", "Relation type")}</span><p>{relationLabel(detail.relation_type)}</p></div><div><span className="text-xs font-medium text-muted-foreground">{t("social.frequency")}</span><p>{detail.frequency}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.lastInteraction", "Last interaction")}</span><p>{detail.last_interaction || "--"}</p></div></div><Button variant="destructive" size="sm" disabled={!hasRevision(detail)} onClick={() => setDeleteOpen(true)}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<SocialRelationForm value={editDraft} onChange={(next) => { setEditDraft(next); setEditFieldErrors({}); setEditFormError(null); }} fieldErrors={editFieldErrors} formErrors={editFormError ? [editFormError] : []} disabled={editSubmitting} mode="edit" />} />
 
-      <EntityCreateDialog open={createOpen} onOpenChange={(open) => { if (!open) requestCloseCreate(); }} title={label("social.newRelation", "New Relation")} description={label("social.newRelationDescription", "Create a social relation")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(createDraft.from_user.trim() && createDraft.to_user.trim() && createDraft.relation_type.trim())} onCancel={requestCloseCreate} onSubmit={createRelation} labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: label("detail.create", "Create"), submitting: label("common.saving", "Saving...") }} form={<>{createFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{createFormError}</div> : null}<SocialRelationForm value={createDraft} onChange={(next) => { setCreateDraft(next); setCreateFieldErrors({}); setCreateFormError(null); }} fieldErrors={createFieldErrors} disabled={createSubmitting} mode="create" /></>} />
+      <EntityCreateDialog open={createOpen} onOpenChange={(open) => { if (!open) requestCloseCreate(); }} title={label("social.newRelation", "New Relation")} description={label("social.newRelationDescription", "Create a social relation")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(createDraft.from_user.trim() && createDraft.to_user.trim() && createDraft.relation_type.trim())} onCancel={requestCloseCreate} onSubmit={createRelation} labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: label("detail.create", "Create"), submitting: label("common.saving", "Saving...") }} form={<SocialRelationForm value={createDraft} onChange={(next) => { setCreateDraft(next); setCreateFieldErrors({}); setCreateFormError(null); }} fieldErrors={createFieldErrors} formErrors={createFormError ? [createFormError] : []} disabled={createSubmitting} mode="create" />} />
 
       <Dialog open={batchTagOpen} onOpenChange={(open) => { if (!open) requestCloseBatchTag(); }}>
         <DialogContent showCloseButton={false} className="sm:max-w-md"><DialogHeader><DialogTitle>{label("social.editTagsTitle", "Edit relation tags")}</DialogTitle><DialogDescription>{label("social.batchTagDescription", "Apply tags to selected relations")}</DialogDescription><Button type="button" variant="ghost" size="icon-sm" className="absolute right-3 top-3" aria-label={t("common.close")} disabled={batchTagSubmitting} onClick={requestCloseBatchTag}><span aria-hidden="true">×</span></Button></DialogHeader>{batchTagError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{batchTagError}</div> : null}<div className="flex flex-col gap-4"><Field data-disabled={batchTagSubmitting}><FieldLabel htmlFor="social-batch-operation">{label("social.operation", "Operation")}</FieldLabel><select id="social-batch-operation" aria-label={label("social.operation", "Operation")} className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm text-foreground disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50" value={batchTagDraft.operation} onChange={(event) => setBatchTagDraft((draft) => ({ ...draft, operation: event.currentTarget.value as BatchTagDraft["operation"] }))} disabled={batchTagSubmitting}><option value="add_tags">add_tags</option><option value="remove_tags">remove_tags</option></select></Field><Field data-disabled={batchTagSubmitting}><FieldLabel>{t("field.tags")}</FieldLabel><div onChange={(event) => setBatchTagTypingDirty(Boolean((event.target as HTMLInputElement).value?.trim()))}><TagEditor label={t("field.tags")} getRemoveLabel={(tag) => label("tags.remove", `Remove ${tag}`, tag)} values={batchTagDraft.tags} onChange={(tags) => { setBatchTagTypingDirty(false); setBatchTagDraft((draft) => ({ ...draft, tags })); }} disabled={batchTagSubmitting} /></div></Field></div><DialogFooter><Button type="button" variant="outline" disabled={batchTagSubmitting} onClick={requestCloseBatchTag}>{t("common.cancel")}</Button><Button type="button" disabled={batchTagSubmitting || !batchTagDraft.tags.length || !revisionedSelection} onClick={() => void submitBatchTag()}>{batchTagSubmitting ? label("common.saving", "Saving...") : label("common.apply", "Apply")}</Button></DialogFooter></DialogContent>

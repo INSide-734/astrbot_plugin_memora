@@ -7,15 +7,15 @@ import type { AffectionDraft, AffectionUserEntry } from "@/types";
 import type { FieldErrors } from "@/types/editing";
 
 type AffectionValue = AffectionDraft & Partial<Pick<AffectionUserEntry, "affection_level" | "level_name" | "interaction_count" | "last_interaction">>;
-export interface AffectionFormProps { value: AffectionValue; onChange(value: AffectionValue): void; fieldErrors: FieldErrors; disabled?: boolean; mode: "create" | "edit"; }
+export interface AffectionFormProps { value: AffectionValue; onChange(value: AffectionValue): void; fieldErrors: FieldErrors; formErrors?: readonly string[]; disabled?: boolean; mode: "create" | "edit"; }
 
-export function AffectionForm({ value, onChange, fieldErrors, disabled = false, mode }: AffectionFormProps) {
+export function AffectionForm({ value, onChange, fieldErrors, formErrors = [], disabled = false, mode }: AffectionFormProps) {
   const { t } = useI18n();
   const [rangeError, setRangeError] = React.useState<string>();
   const update = <K extends keyof AffectionDraft>(field: K, next: AffectionDraft[K]) => onChange({ ...value, [field]: next });
   const identityDisabled = disabled || mode === "edit";
   const validationErrors = { ...fieldErrors, ...(rangeError ? { affection_score: rangeError } : {}) };
-  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} focusInvalid={Object.keys(validationErrors).length > 0}>
+  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} formErrors={formErrors} focusInvalid={Object.keys(validationErrors).length > 0 || formErrors.length > 0}>
     {({ getFieldError }) => {
       const userIdError = getFieldError("user_id");
       const groupIdError = getFieldError("group_id");
