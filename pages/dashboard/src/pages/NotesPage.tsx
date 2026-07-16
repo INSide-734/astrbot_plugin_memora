@@ -19,7 +19,7 @@ import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
 import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { NoteForm, type NoteDraft } from "@/components/editing/forms/NoteForm";
-import { ApiRequestError, BULK_CONFIRMATION_THRESHOLD, type FieldErrors } from "@/types/editing";
+import { BULK_CONFIRMATION_THRESHOLD, editingErrorDetails, type FieldErrors } from "@/types/editing";
 import type { EntityNavigationTarget } from "@/types";
 
 interface NotesPageProps {
@@ -42,16 +42,8 @@ interface Note {
 
 const NOTE_STATUS_LABELS: Record<string, string> = {};
 const EDIT_NOTE_LABELS: Record<string, string> = {};
-
-function submissionError(error: unknown): { fieldErrors: FieldErrors; formError: string } {
-  if (error instanceof ApiRequestError) {
-    return { fieldErrors: error.fieldErrors, formError: error.message };
-  }
-  return {
-    fieldErrors: {},
-    formError: error instanceof Error ? error.message : "Request failed",
-  };
-}
+const NOTE_FORM_FIELDS = ["title", "content", "tags", "status"] as const;
+const normalizeNoteField = (name: string) => /^tags\.\d+$/.test(name) ? "tags" : name;
 
 export function NotesPage({ showToast, navigationTarget, onDirtyChange }: NotesPageProps) {
   const { t, currentLang } = useI18n();
@@ -143,7 +135,7 @@ export function NotesPage({ showToast, navigationTarget, onDirtyChange }: NotesP
       setCreateFormError(null);
       fetchNotes();
     } catch (error) {
-      const next = submissionError(error);
+      const next = editingErrorDetails(error, NOTE_FORM_FIELDS, normalizeNoteField);
       setCreateFieldErrors(next.fieldErrors);
       setCreateFormError(next.formError);
       throw error;
@@ -190,7 +182,7 @@ export function NotesPage({ showToast, navigationTarget, onDirtyChange }: NotesP
       setEditFormError(null);
       fetchNotes();
     } catch (error) {
-      const next = submissionError(error);
+      const next = editingErrorDetails(error, NOTE_FORM_FIELDS, normalizeNoteField);
       setEditFieldErrors(next.fieldErrors);
       setEditFormError(next.formError);
       throw error;
@@ -357,9 +349,9 @@ export function NotesPage({ showToast, navigationTarget, onDirtyChange }: NotesP
         </PageToolbar>
       )}
 
-      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) { if (editDirty) setPendingClose("edit"); else setDetail(null); } }} title={detail?.title ?? ""} description={detail ? `${t("detail.updated")}: ${formatDashboardDate(detail.updated_at ?? detail.created_at, locale)}` : ""} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave onBeginEdit={() => { setEditFieldErrors({}); setEditFormError(null); setEditMode(true); }} onCancel={() => { if (detail) setEditDraft({ title: detail.title ?? "", content: detail.content ?? "", tags: detail.tags ?? [], status: detail.status ?? "active" }); setEditFieldErrors({}); setEditFormError(null); setEditMode(false); setEditDirty(false); }} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: t("common.saving") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><p className="whitespace-pre-wrap">{detail.content}</p><p>{(detail.tags ?? []).join(", ")}</p><p>v{detail.version ?? 1}</p>{detail.status !== "archived" ? <Button variant="secondary" size="sm" onClick={() => void archiveNote(detail.note_id ?? detail.id ?? "")}><Archive data-icon="inline-start" />{t("common.archive")}</Button> : null}<Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<>{editFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{editFormError}</div> : null}<NoteForm value={editDraft} onChange={updateEditDraft} fieldErrors={editFieldErrors} disabled={editSubmitting} mode="edit" /></>} />
+      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) { if (editDirty) setPendingClose("edit"); else setDetail(null); } }} title={detail?.title ?? ""} description={detail ? `${t("detail.updated")}: ${formatDashboardDate(detail.updated_at ?? detail.created_at, locale)}` : ""} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave onBeginEdit={() => { setEditFieldErrors({}); setEditFormError(null); setEditMode(true); }} onCancel={() => { if (detail) setEditDraft({ title: detail.title ?? "", content: detail.content ?? "", tags: detail.tags ?? [], status: detail.status ?? "active" }); setEditFieldErrors({}); setEditFormError(null); setEditMode(false); setEditDirty(false); }} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: t("common.saving") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><p className="whitespace-pre-wrap">{detail.content}</p><p>{(detail.tags ?? []).join(", ")}</p><p>v{detail.version ?? 1}</p>{detail.status !== "archived" ? <Button variant="secondary" size="sm" onClick={() => void archiveNote(detail.note_id ?? detail.id ?? "")}><Archive data-icon="inline-start" />{t("common.archive")}</Button> : null}<Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<NoteForm value={editDraft} onChange={updateEditDraft} fieldErrors={editFieldErrors} formErrors={editFormError ? [editFormError] : []} disabled={editSubmitting} mode="edit" />} />
 
-      <EntityCreateDialog open={showCreate} onOpenChange={(open) => { if (!open) { if (createDirty) setPendingClose("create"); else { resetNewNote(); setShowCreate(false); } } }} title={t("detail.newNote")} description={t("detail.newNote")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(newNote.title.trim())} onCancel={() => { resetNewNote(); setShowCreate(false); }} onSubmit={createNote} labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: t("detail.create"), submitting: t("common.saving") }} form={<>{createFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{createFormError}</div> : null}<NoteForm value={newNote} onChange={updateNewNote} fieldErrors={createFieldErrors} disabled={createSubmitting} mode="create" /></>} />
+      <EntityCreateDialog open={showCreate} onOpenChange={(open) => { if (!open) { if (createDirty) setPendingClose("create"); else { resetNewNote(); setShowCreate(false); } } }} title={t("detail.newNote")} description={t("detail.newNote")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(newNote.title.trim())} onCancel={() => { resetNewNote(); setShowCreate(false); }} onSubmit={createNote} labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: t("detail.create"), submitting: t("common.saving") }} form={<NoteForm value={newNote} onChange={updateNewNote} fieldErrors={createFieldErrors} formErrors={createFormError ? [createFormError] : []} disabled={createSubmitting} mode="create" />} />
       <UnsavedChangesDialog open={pendingClose !== null} title={t("config.unsaved.title")} description={t("config.unsaved.description")} keepEditingLabel={t("config.unsaved.keepEditing")} discardLabel={t("config.unsaved.discard")} onKeepEditing={() => { setPendingClose(null); setPendingSelection(null); }} onDiscard={() => { if (pendingClose === "selection" && pendingSelection) { setEditDirty(false); resetNewNote(); setEditMode(false); setShowCreate(false); void fetchDetail(pendingSelection); } else if (pendingClose === "edit") { setEditDirty(false); setEditMode(false); setDetail(null); } else { resetNewNote(); setShowCreate(false); } setPendingSelection(null); setPendingClose(null); }} />
       <DeleteConfirmDialog open={deleteOpen} title={t("common.delete")} description={detail?.title ?? ""} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} onCancel={() => setDeleteOpen(false)} onConfirm={() => detail && void deleteNote(detail.note_id ?? detail.id ?? "")} />
       <DeleteConfirmDialog open={batchDeleteOpen} title={t("filter.deleteSelected")} description={t("filter.deleteSelected")} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} confirmationRequirement={{ label: t("filter.deleteSelected"), expectedText: String(selected.size) }} onCancel={() => setBatchDeleteOpen(false)} onConfirm={() => { setBatchDeleteOpen(false); void executeBatchAction("delete"); }} />
