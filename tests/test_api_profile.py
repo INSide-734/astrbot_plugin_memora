@@ -1360,6 +1360,60 @@ class TestProfileMutationAuditContract:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        ("method_name", "payload_fields"),
+        [
+            ("update_profile", {"display_name": "New"}),
+            ("delete_profile", {}),
+            (
+                "manage_profile_tags",
+                {
+                    "action": "add",
+                    "tag": {
+                        "category": "interest",
+                        "value": "graphs",
+                        "confidence": 0.9,
+                    },
+                },
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "structured_user_id",
+        [
+            {"secret": "AUDIT_LEAK_MARKER"},
+            ["AUDIT_LEAK_MARKER"],
+        ],
+    )
+    async def test_legacy_mutations_reject_structured_user_id_without_audit_leak(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        method_name: str,
+        payload_fields: dict,
+        structured_user_id,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile())
+        mixin._ensure_plugin_ready = AsyncMock(
+            side_effect=AssertionError("engine lookup must not run")
+        )
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            return_value={"user_id": structured_user_id, **payload_fields}
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await getattr(mixin, method_name)()
+
+        assert result["status"] == "error"
+        mixin._ensure_plugin_ready.assert_not_awaited()
+        audits = _profile_audit_messages(caplog)
+        assert len(audits) == 1
+        assert "identity=unavailable" in audits[0]
+        rendered = caplog.text + repr(result)
+        assert "AUDIT_LEAK_MARKER" not in rendered
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         ("method_name", "payload", "manager_method"),
         [
             ("create_profile", _complete_profile_payload(), "create_profile_manual"),
