@@ -43,6 +43,7 @@ export class ApiRequestError extends Error {
 export function editingErrorDetails(
   error: unknown,
   allowedFields: readonly string[],
+  normalizeField: (name: string) => string | null = (name) => name,
 ): { fieldErrors: FieldErrors; formError: string | null } {
   if (!(error instanceof ApiRequestError)) {
     return {
@@ -54,8 +55,9 @@ export function editingErrorDetails(
   const fieldErrors: FieldErrors = {};
   const formErrors: string[] = [];
   for (const [rawName, message] of Object.entries(error.fieldErrors)) {
-    const name = rawName.startsWith("changes.") ? rawName.slice("changes.".length) : rawName;
-    if (allowedFields.some((field) => name === field || name.startsWith(`${field}.`))) {
+    const unprefixedName = rawName.startsWith("changes.") ? rawName.slice("changes.".length) : rawName;
+    const name = normalizeField(unprefixedName);
+    if (name !== null && allowedFields.includes(name)) {
       fieldErrors[name] = message;
     } else if (!formErrors.includes(message)) {
       formErrors.push(message);
