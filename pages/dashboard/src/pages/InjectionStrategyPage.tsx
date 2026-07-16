@@ -3,6 +3,7 @@ import { SlidersHorizontal } from "lucide-react";
 
 import { ConfigUnsavedDialog } from "@/components/config/ConfigUnsavedDialog";
 import { InjectionConfigTab } from "@/components/injection/InjectionConfigTab";
+import { InjectionDecisionSheet } from "@/components/injection/InjectionDecisionSheet";
 import { InjectionDecisionsTab } from "@/components/injection/InjectionDecisionsTab";
 import { InjectionOverviewTab } from "@/components/injection/InjectionOverviewTab";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
@@ -40,6 +41,8 @@ export function InjectionStrategyPage({
   const decisions = useInjectionDecisions({ initialLimit: 25 });
   const [activeTab, setActiveTab] = useState<InjectionWorkbenchTab>("overview");
   const [pendingTab, setPendingTab] = useState<InjectionWorkbenchTab | null>(null);
+  const [selectedDecisionId, setSelectedDecisionId] = useState<string | null>(null);
+  const detailReturnFocusRef = useRef<HTMLElement | null>(null);
   const processedTargetRef = useRef<number | null>(null);
 
   const requestTab = useCallback((next: string) => {
@@ -59,6 +62,23 @@ export function InjectionStrategyPage({
     if (next) setActiveTab(next);
   }, [config, pendingTab]);
 
+  const openDecision = useCallback((decisionId: string) => {
+    detailReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setSelectedDecisionId(decisionId);
+    void decisions.loadDetail(decisionId);
+  }, [decisions.loadDetail]);
+
+  const closeDecision = useCallback(() => {
+    setSelectedDecisionId(null);
+    queueMicrotask(() => {
+      detailReturnFocusRef.current?.focus();
+      detailReturnFocusRef.current = null;
+      decisions.clearDetail();
+    });
+  }, [decisions.clearDetail]);
+
   useEffect(() => {
     if (
       !navigationTarget
@@ -66,7 +86,8 @@ export function InjectionStrategyPage({
     ) return;
     processedTargetRef.current = navigationTarget.requestId;
     requestTab(navigationTarget.tab);
-  }, [navigationTarget, requestTab]);
+    if (navigationTarget.decisionId) openDecision(navigationTarget.decisionId);
+  }, [navigationTarget, openDecision, requestTab]);
 
   const reportedDirtyRef = useRef(false);
   useEffect(() => {
@@ -162,11 +183,19 @@ export function InjectionStrategyPage({
             <InjectionDecisionsTab
               catalog={config.catalog}
               decisions={decisions}
-              onOpenTrace={openTrace}
+              onOpenDecision={openDecision}
             />
           </PageContent>
         </TabsContent>
       </Tabs>
+      <InjectionDecisionSheet
+        open={selectedDecisionId !== null}
+        catalog={config.catalog}
+        decisions={decisions}
+        selectedDecisionId={selectedDecisionId}
+        onClose={closeDecision}
+        onOpenTrace={openTrace}
+      />
       <ConfigUnsavedDialog
         open={pendingTab !== null}
         onCancel={() => setPendingTab(null)}
