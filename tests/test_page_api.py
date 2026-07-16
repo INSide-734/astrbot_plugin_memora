@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from types import SimpleNamespace
 from types import SimpleNamespace
@@ -1318,6 +1319,99 @@ class TestMaintenanceWriteGuard:
             "maintenance_write_guard_list_pending",
             "RuntimeError",
         )
+
+
+# ---------------------------------------------------------------------------
+# get_memory_detail tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetMemoryDetail:
+    """测试记忆详情读取边界。"""
+
+    @pytest.fixture
+    def api_with_fallback_engine(self):
+        engine = MagicMock()
+        engine.get_memory = AsyncMock(return_value=None)
+        engine.db_connection = MagicMock()
+        engine.db_connection.execute = AsyncMock()
+        plugin = SimpleNamespace(
+            initializer=SimpleNamespace(memory_engine=engine)
+        )
+        api = PluginPageApi(plugin)
+        api._ensure_plugin_ready = AsyncMock(
+            return_value=({"memory_engine": engine}, None)
+        )
+        return api, engine
+
+    @pytest.mark.asyncio
+    async def test_lookup_failure_is_stable_redacted_and_safely_logged(
+        self,
+        api_with_fallback_engine,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        secret = r"detail-read-secret C:\\private\\memory.db"
+        api, engine = api_with_fallback_engine
+        cursor = MagicMock()
+        cursor.fetchone = AsyncMock(side_effect=RuntimeError(secret))
+        engine.db_connection.execute.return_value = cursor
+        request_mock = MagicMock()
+        request_mock.args = {"memory_id": "7"}
+        caplog.set_level(logging.ERROR)
+
+        with patch("core.api.memory_read_api.request", request_mock):
+            result = await api.get_memory_detail()
+
+        assert result == {
+            "status": "error",
+            "message": "读取记忆失败",
+            "code": "internal_error",
+        }
+        engine.db_connection.execute.assert_awaited_once_with(
+            "SELECT id, doc_id, text, metadata, created_at, updated_at "
+            "FROM documents WHERE id = ?",
+            (7,),
+        )
+        cursor.fetchone.assert_awaited_once_with()
+        messages = [
+            record.getMessage()
+            for record in caplog.records
+            if "operation=get_memory_detail" in record.getMessage()
+        ]
+        assert messages == [
+            "[PageAPI] operation=get_memory_detail memory_id=7 "
+            "error_class=RuntimeError"
+        ]
+        rendered = repr(result) + caplog.text
+        assert secret not in rendered
+
+    @pytest.mark.asyncio
+    async def test_lookup_cancellation_propagates(
+        self,
+        api_with_fallback_engine,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        api, engine = api_with_fallback_engine
+        cursor = MagicMock()
+        cursor.fetchone = AsyncMock(side_effect=asyncio.CancelledError())
+        engine.db_connection.execute.return_value = cursor
+        request_mock = MagicMock()
+        request_mock.args = {"memory_id": "7"}
+        caplog.set_level(logging.ERROR)
+
+        with (
+            patch("core.api.memory_read_api.request", request_mock),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await api.get_memory_detail()
+
+        engine.db_connection.execute.assert_awaited_once()
+        cursor.fetchone.assert_awaited_once_with()
+        assert not [
+            record
+            for record in caplog.records
+            if "operation=get_memory_detail" in record.getMessage()
+        ]
 
 
 # ---------------------------------------------------------------------------
