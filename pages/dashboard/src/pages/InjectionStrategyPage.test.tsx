@@ -266,6 +266,11 @@ function rerenderPage() {
   );
 }
 
+function renderConfigTab() {
+  renderPage();
+  fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.config" }));
+}
+
 describe("InjectionStrategyPage", () => {
   beforeEach(() => {
     resetHookHarness();
@@ -547,5 +552,254 @@ describe("InjectionStrategyPage", () => {
         intelligenceTarget: expect.objectContaining({ traceId: "trace-safe" }),
       }),
     );
+  });
+
+  it.each([
+    ["manual", ["manualPreset"]],
+    ["auto", ["autoFallbackPreset"]],
+    ["hybrid", ["hybridBasePreset", "hybridMinPreset", "hybridMaxPreset"]],
+  ] as const)("shows only %s routing controls", (mode, visibleFields) => {
+    hooks.config.draft = draftFixture({ routingMode: mode });
+
+    renderConfigTab();
+
+    const allFields = [
+      "manualPreset",
+      "autoFallbackPreset",
+      "hybridBasePreset",
+      "hybridMinPreset",
+      "hybridMaxPreset",
+    ];
+    for (const field of allFields) {
+      const control = screen.queryByRole("combobox", {
+        name: `injection.field.${field}`,
+      });
+      if (visibleFields.includes(field as never)) {
+        expect(control).toBeTruthy();
+      } else {
+        expect(control).toBeNull();
+      }
+    }
+  });
+
+  it("marks invalid fields and blocks save", () => {
+    hooks.config.draft = draftFixture({
+      routingMode: "hybrid",
+      hybridMinPreset: "quality",
+      hybridBasePreset: "balanced",
+      hybridMaxPreset: "low_cost",
+      retentionDays: 13 as 30,
+      maxRows: 999,
+    });
+    hooks.config.errors = {
+      hybridMinPreset: "injection.validation.hybridOrder",
+      hybridBasePreset: "injection.validation.hybridOrder",
+      hybridMaxPreset: "injection.validation.hybridOrder",
+      retentionDays: "injection.validation.retention",
+      maxRows: "injection.validation.maxRows",
+    };
+    hooks.config.canSave = false;
+
+    renderConfigTab();
+
+    expect(
+      (screen.getByRole("button", {
+        name: "injection.actions.save",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      screen.getByRole("combobox", {
+        name: "injection.field.hybridMinPreset",
+      }).getAttribute("aria-invalid"),
+    ).toBe("true");
+    expect(screen.getAllByRole("alert").length).toBeGreaterThan(0);
+  });
+
+  it("restores defaults locally discards locally and saves explicitly", () => {
+    hooks.config.dirty = true;
+    hooks.config.canSave = true;
+    renderConfigTab();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "injection.actions.restoreDefaults",
+      }),
+    );
+    expect(hooks.config.restoreDefaults).toHaveBeenCalledOnce();
+    expect(hooks.config.save).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.actions.discard" }),
+    );
+    expect(hooks.config.discard).toHaveBeenCalledOnce();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.actions.save" }),
+    );
+    expect(hooks.config.save).toHaveBeenCalledOnce();
+  });
+
+  it("renders all built-in presets and rejects system_prompt delivery", async () => {
+    hooks.config.catalog = {
+      ...catalogFixture(),
+      deliveries: [
+        ...catalogFixture().deliveries,
+        "system_prompt" as never,
+      ],
+    };
+    renderConfigTab();
+
+    const comparison = screen.getByRole("table", {
+      name: "injection.config.presetComparison",
+    });
+    for (const preset of ["tool_first", "low_cost", "balanced", "quality"]) {
+      expect(within(comparison).getByText(`injection.preset.${preset}`)).toBeTruthy();
+    }
+
+    fireEvent.click(
+      screen.getByRole("combobox", {
+        name: "injection.field.deliveryOverride",
+      }),
+    );
+    expect(
+      await screen.findByRole("option", {
+        name: "injection.delivery.extra_user_content",
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByText("system_prompt")).toBeNull();
+    expect(showToast).toHaveBeenCalledWith("config.status.error", "error");
+  });
+
+  it("reveals advanced overrides only after the switch is enabled", () => {
+    hooks.config.draft = draftFixture({ overridesEnabled: false });
+    renderConfigTab();
+
+    expect(
+      screen.queryByRole("spinbutton", {
+        name: "injection.field.budgetChars",
+      }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: "injection.field.overridesEnabled",
+      }),
+    );
+    expect(hooks.config.change).toHaveBeenCalledWith("overridesEnabled", true);
+
+    hooks.config.draft = draftFixture({ overridesEnabled: true });
+    rerenderPage();
+    for (const field of ["budgetChars", "memoryMaxChars", "metadataMaxChars"]) {
+      expect(
+        screen.getByRole("spinbutton", { name: `injection.field.${field}` }),
+      ).toBeTruthy();
+    }
+    for (const field of [
+      "includeKeyFacts",
+      "includeTopics",
+      "includeParticipants",
+      "compactHeader",
+    ]) {
+      expect(
+        screen.getByRole("switch", { name: `injection.field.${field}` }),
+      ).toBeTruthy();
+    }
+  });
+
+  it("updates retention row cap and numeric override controls", async () => {
+    hooks.config.draft = draftFixture({ overridesEnabled: true });
+    renderConfigTab();
+
+    fireEvent.change(
+      screen.getByRole("spinbutton", { name: "injection.field.budgetChars" }),
+      { target: { value: "1600" } },
+    );
+    expect(hooks.config.change).toHaveBeenCalledWith("budgetChars", 1600);
+
+    fireEvent.change(
+      screen.getByRole("spinbutton", { name: "injection.field.maxRows" }),
+      { target: { value: "200000" } },
+    );
+    expect(hooks.config.change).toHaveBeenCalledWith("maxRows", 200000);
+
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "injection.field.retentionDays" }),
+    );
+    const ninetyDays = await screen.findByRole("option", { name: "90" });
+    fireEvent.pointerDown(ninetyDays, { pointerType: "mouse" });
+    fireEvent.click(ninetyDays);
+    expect(hooks.config.change).toHaveBeenCalledWith("retentionDays", 90);
+  });
+
+  it("keeps usable configuration visible during offline refresh failures", () => {
+    hooks.config.status = "offline";
+    renderConfigTab();
+
+    expect(
+      screen.getByRole("region", { name: "injection.config.title" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain(
+      "config.status.offline",
+    );
+    expect(hooks.config.discard).not.toHaveBeenCalled();
+  });
+
+  it("resolves conflict explicitly and cannot dismiss it silently", () => {
+    hooks.config.status = "conflict";
+    hooks.config.localPaths = ["recall_engine.injection_manual_preset"];
+    hooks.config.remotePaths = ["recall_engine.injection_routing_mode"];
+    hooks.config.overlapPaths = ["recall_engine.injection_manual_preset"];
+    hooks.config.remoteReady = true;
+    renderConfigTab();
+
+    const dialog = screen.getByRole("dialog", { name: "config.conflict.title" });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(dialog).toBeTruthy();
+    expect(hooks.config.discard).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "config.conflict.loadRemote" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "config.conflict.reapplyLocal" }),
+    );
+    expect(hooks.config.acceptRemote).toHaveBeenCalledOnce();
+    expect(hooks.config.rebaseRemote).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes a conflict while the remote snapshot is unavailable", () => {
+    hooks.config.status = "conflict";
+    hooks.config.remoteReady = false;
+    renderConfigTab();
+
+    expect(
+      (screen.getByRole("button", {
+        name: "config.conflict.loadRemote",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    fireEvent.click(
+      screen.getByRole("button", { name: "config.conflict.refreshRemote" }),
+    );
+    expect(hooks.config.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("announces completed saves and new terminal errors once", () => {
+    renderConfigTab();
+
+    hooks.config.status = "applying";
+    rerenderPage();
+    expect(showToast).not.toHaveBeenCalled();
+
+    hooks.config.status = "synced";
+    rerenderPage();
+    expect(showToast).toHaveBeenCalledWith("config.appliedToast", "success");
+
+    showToast.mockClear();
+    hooks.config.status = "error";
+    rerenderPage();
+    expect(showToast).toHaveBeenCalledWith("config.status.error", "error");
+
+    showToast.mockClear();
+    rerenderPage();
+    expect(showToast).not.toHaveBeenCalled();
   });
 });
