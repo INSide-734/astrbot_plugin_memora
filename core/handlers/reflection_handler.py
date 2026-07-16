@@ -84,15 +84,16 @@ class ReflectionHandler:
             self._get_prompt_protection_context(event)
         )
         if resp.role != "assistant":
-            self._discard_prompt_protection_scope(scope_id)
+            self._clear_prompt_protection_context(event, scope_id)
             return
         if scope_lookup_failed:
             resp.completion_text = ""
-            self._discard_prompt_protection_scope(scope_id)
+            self._clear_prompt_protection_context(event, scope_id)
             return
 
         if protection_required and not scope_id:
             resp.completion_text = ""
+            self._clear_prompt_protection_context(event, scope_id)
             return
         session_id = getattr(event, "unified_msg_origin", "") or ""
         response_text = str(getattr(resp, "completion_text", "") or "")
@@ -101,6 +102,7 @@ class ReflectionHandler:
             session_id,
             scope_id=scope_id,
             protection_required=protection_required,
+            event=event,
         )
         resp.completion_text = response_text
 
@@ -328,6 +330,7 @@ class ReflectionHandler:
         *,
         scope_id: str | None = None,
         protection_required: bool = False,
+        event: AstrMessageEvent | None = None,
     ) -> str:
         """Sanitize the user-visible response and consume its request scope."""
         try:
@@ -373,6 +376,9 @@ class ReflectionHandler:
                 exc_info=True,
             )
             return ""
+        finally:
+            if event is not None:
+                self._clear_prompt_protection_context(event, scope_id)
 
     def _discard_prompt_protection_scope(self, scope_id: str | None) -> None:
         if self._prompt_protection is None or not scope_id:
@@ -383,6 +389,54 @@ class ReflectionHandler:
                 discard(scope_id)
             except Exception:
                 logger.warning("[反思处理] 请求安全关联清理失败", exc_info=True)
+    def _clear_prompt_protection_context(
+        self,
+        event: AstrMessageEvent,
+        scope_id: str | None,
+    ) -> None:
+        self._discard_prompt_protection_scope(scope_id)
+        try:
+            setter = getattr(event, "set_extra", None)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            setter = None
+            logger.warning(
+                "[反思处理] 请求安全关联官方通道清理失败",
+                exc_info=True,
+            )
+        if callable(setter):
+            for key, value in (
+                (PROMPT_PROTECTION_SCOPE_EXTRA_KEY, None),
+                (PROMPT_PROTECTION_REQUIRED_EXTRA_KEY, False),
+            ):
+                try:
+                    setter(key, value)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "[反思处理] 请求安全关联官方通道清理失败",
+                        exc_info=True,
+                    )
+        for attr, reset_value in (
+            (PROMPT_PROTECTION_SCOPE_ATTR, None),
+            (PROMPT_PROTECTION_REQUIRED_ATTR, False),
+        ):
+            try:
+                delattr(event, attr)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                try:
+                    setattr(event, attr, reset_value)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "[反思处理] 请求安全关联私有通道清理失败",
+                        exc_info=True,
+                    )
 
     @staticmethod
     def _get_prompt_protection_context(

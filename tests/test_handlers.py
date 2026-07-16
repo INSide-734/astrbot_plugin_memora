@@ -1702,6 +1702,66 @@ async def test_nonassistant_response_discards_scope_without_sanitizing() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("first_role", ["assistant", "tool"])
+async def test_reflection_clears_event_markers_before_event_reuse(first_role) -> None:
+    from core.security.prompt_sanitizer import (
+        PROMPT_PROTECTION_REQUIRED_ATTR,
+        PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
+        PROMPT_PROTECTION_SCOPE_ATTR,
+        PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
+        PromptProtectionService,
+    )
+
+    service = PromptProtectionService(enable_double_check=False)
+    secret = "reused event secret alpha beta gamma delta epsilon"
+    service.wrap_prompt(secret, scope_id="scope-reused")
+    handler = _reflection_handler_for_scope(service)
+    extras = {
+        PROMPT_PROTECTION_SCOPE_EXTRA_KEY: "scope-reused",
+        PROMPT_PROTECTION_REQUIRED_EXTRA_KEY: True,
+    }
+    event, first = _scoped_event("scope-reused", role=first_role)
+    event.get_extra.side_effect = lambda key: extras.get(key)
+    event.set_extra.side_effect = lambda key, value: extras.__setitem__(key, value)
+    first.completion_text = secret
+
+    await handler.handle_memory_reflection(event, first)
+
+    assert extras[PROMPT_PROTECTION_SCOPE_EXTRA_KEY] is None
+    assert extras[PROMPT_PROTECTION_REQUIRED_EXTRA_KEY] is False
+    assert getattr(event, PROMPT_PROTECTION_SCOPE_ATTR, None) is None
+    assert getattr(event, PROMPT_PROTECTION_REQUIRED_ATTR, None) is None
+
+    second = SimpleNamespace(
+        role="assistant",
+        tools_call_name=None,
+        tools_call_extra_content=None,
+        completion_text="ordinary second response",
+    )
+    await handler.handle_memory_reflection(event, second)
+    assert second.completion_text == "ordinary second response"
+
+
+@pytest.mark.asyncio
+async def test_reflection_setter_error_still_clears_private_markers() -> None:
+    from core.security.prompt_sanitizer import (
+        PROMPT_PROTECTION_REQUIRED_ATTR,
+        PROMPT_PROTECTION_SCOPE_ATTR,
+        PromptProtectionService,
+    )
+
+    service = PromptProtectionService(enable_double_check=False)
+    service.wrap_prompt("setter error secret", scope_id="scope-setter-error")
+    handler = _reflection_handler_for_scope(service)
+    event, response = _scoped_event("scope-setter-error", role="tool")
+    event.set_extra.side_effect = RuntimeError("setter unavailable")
+    await handler.handle_memory_reflection(event, response)
+    assert getattr(event, PROMPT_PROTECTION_SCOPE_ATTR, None) is None
+    assert getattr(event, PROMPT_PROTECTION_REQUIRED_ATTR, None) is None
+    assert service.has_scope("scope-setter-error") is False
+
+
+@pytest.mark.asyncio
 async def test_no_injection_missing_scope_keys_does_not_clear_ordinary_response() -> None:
     from core.security.prompt_sanitizer import PromptProtectionService
 
