@@ -10,15 +10,15 @@ import type { BotMoodStatus, MoodDraft } from "@/types";
 import type { FieldErrors } from "@/types/editing";
 
 type MoodValue = MoodDraft & Partial<Pick<BotMoodStatus, "is_active">> & { start_time?: number };
-export interface MoodFormProps { value: MoodValue; onChange(value: MoodValue): void; fieldErrors: FieldErrors; disabled?: boolean; mode: "create" | "edit"; }
+export interface MoodFormProps { value: MoodValue; onChange(value: MoodValue): void; fieldErrors: FieldErrors; formErrors?: readonly string[]; disabled?: boolean; mode: "create" | "edit"; }
 
-export function MoodForm({ value, onChange, fieldErrors, disabled = false }: MoodFormProps) {
+export function MoodForm({ value, onChange, fieldErrors, formErrors = [], disabled = false }: MoodFormProps) {
   const { t } = useI18n();
   const [rangeErrors, setRangeErrors] = React.useState<Record<string, string>>({});
   const update = <K extends keyof MoodDraft>(field: K, next: MoodDraft[K]) => onChange({ ...value, [field]: next });
   const bounded = (field: "intensity" | "duration_hours", raw: string, min: number, max: number) => { const next = Number(raw); if (Number.isFinite(next) && next >= min && next <= max) { setRangeErrors((current) => { const rest = { ...current }; delete rest[field]; return rest; }); update(field, next); } else setRangeErrors((current) => ({ ...current, [field]: t(field === "intensity" ? "affection.intensityRange" : "affection.durationRange") })); };
   const validationErrors = { ...fieldErrors, ...rangeErrors };
-  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} focusInvalid={Object.keys(validationErrors).length > 0}>
+  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} formErrors={formErrors} focusInvalid={Object.keys(validationErrors).length > 0 || formErrors.length > 0}>
     {({ getFieldError }) => {
       const groupIdError = getFieldError("group_id");
       const moodTypeError = getFieldError("mood_type");

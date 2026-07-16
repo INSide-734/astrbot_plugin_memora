@@ -3,6 +3,7 @@ import type { ComponentType } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AffectionPage } from "./AffectionPage";
+import { ApiRequestError } from "@/types/editing";
 
 interface BridgeMock {
   apiGet: ReturnType<typeof vi.fn>;
@@ -231,6 +232,21 @@ describe("AffectionPage", () => {
       expect(within(sheet).getByDisplayValue("77")).toBeTruthy();
     }
     expect(expectedName).toBeTruthy();
+  });
+
+  it("propagates prefixed affection update errors to one linked summary", async () => {
+    await renderLoaded();
+    bridge.apiPost.mockRejectedValue(new ApiRequestError("Invalid affection", "validation_error", { "changes.affection_score": "score rejected" }));
+    fireEvent.click(screen.getByRole("button", { name: /edit alice/i }));
+    const sheet = editor(/affection.*alice/i);
+    fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(sheet).getByLabelText(/affection score/i), { target: { value: "77" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(within(sheet).getAllByRole("alert")).toHaveLength(1));
+    const href = within(sheet).getByRole("link", { name: "score rejected" }).getAttribute("href")!;
+    const errorId = href.slice(1);
+    expect(within(sheet).getByLabelText(/affection score/i).getAttribute("aria-describedby")?.split(/\s+/)).toContain(errorId);
+    expect(document.querySelectorAll(`[id="${errorId}"]`)).toHaveLength(1);
   });
 
   it("offers load-latest and reapply-local choices for edit conflicts", async () => {
@@ -463,11 +479,13 @@ describe("AffectionPage", () => {
     expect((within(dialog).getByLabelText(/duration/i) as HTMLInputElement).value).toBe("12.5");
     fireEvent.click(within(dialog).getByRole("combobox", { name: /mood type/i }));
     fireEvent.click(within(await screen.findByRole("listbox")).getByRole("option", { name: /happy/i }));
-    fireEvent.change(within(dialog).getByLabelText("Intensity"), { target: { value: "0" } });
-    expect(within(dialog).getByText(/between 0.1 and 1/i, { selector: "#mood-intensity-error" })).toBeTruthy();
+    const intensity = within(dialog).getByLabelText("Intensity");
+    fireEvent.change(intensity, { target: { value: "0" } });
+    expect(document.getElementById(intensity.getAttribute("aria-describedby") ?? "")?.textContent).toMatch(/between 0.1 and 1/i);
     fireEvent.change(within(dialog).getByLabelText("Intensity"), { target: { value: "0.5" } });
-    fireEvent.change(within(dialog).getByLabelText(/duration/i), { target: { value: "169" } });
-    expect(within(dialog).getByText(/between 0.25 and 168/i, { selector: "#mood-duration-error" })).toBeTruthy();
+    const duration = within(dialog).getByLabelText(/duration/i);
+    fireEvent.change(duration, { target: { value: "169" } });
+    expect(document.getElementById(duration.getAttribute("aria-describedby") ?? "")?.textContent).toMatch(/between 0.25 and 168/i);
     fireEvent.change(within(dialog).getByLabelText(/duration/i), { target: { value: "4" } });
     fireEvent.change(within(dialog).getByLabelText("Description"), { target: { value: "..." } });
     fireEvent.click(within(dialog).getByRole("button", { name: /set|save/i }));
@@ -517,6 +535,22 @@ describe("AffectionPage", () => {
     expect(within(dialog).getByDisplayValue("0.5")).toBeTruthy();
     expect(within(dialog).getByDisplayValue("4")).toBeTruthy();
     expect(within(dialog).getByDisplayValue("keep me")).toBeTruthy();
+  });
+
+  it("propagates mood field errors to one linked summary", async () => {
+    await renderLoaded();
+    bridge.apiPost.mockRejectedValue(new ApiRequestError("Invalid mood", "validation_error", { intensity: "intensity rejected" }));
+    fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
+    const dialog = editor(/mood/i);
+    fireEvent.click(within(dialog).getByRole("combobox", { name: /mood type/i }));
+    fireEvent.click(within(await screen.findByRole("listbox")).getByRole("option", { name: /happy/i }));
+    fireEvent.change(within(dialog).getByLabelText("Intensity"), { target: { value: "0.6" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /set|save/i }));
+    await waitFor(() => expect(within(dialog).getAllByRole("alert")).toHaveLength(1));
+    const href = within(dialog).getByRole("link", { name: "intensity rejected" }).getAttribute("href")!;
+    const errorId = href.slice(1);
+    expect(within(dialog).getByLabelText("Intensity").getAttribute("aria-describedby")?.split(/\s+/)).toContain(errorId);
+    expect(document.querySelectorAll(`[id="${errorId}"]`)).toHaveLength(1);
   });
 
   it("resets only with explicit confirmation, sends only group_id, and guards duplicate pending reset", async () => {

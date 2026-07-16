@@ -13,6 +13,7 @@ export interface SocialRelationFormProps {
   value: SocialRelationDraft;
   onChange(value: SocialRelationDraft): void;
   fieldErrors: FieldErrors;
+  formErrors?: readonly string[];
   disabled?: boolean;
   mode: "create" | "edit";
 }
@@ -26,7 +27,7 @@ const RELATION_TYPES = [
   "core_intimate", "daily_normal", "stranger",
 ];
 
-export function SocialRelationForm({ value, onChange, fieldErrors, disabled = false, mode }: SocialRelationFormProps) {
+export function SocialRelationForm({ value, onChange, fieldErrors, formErrors = [], disabled = false, mode }: SocialRelationFormProps) {
   const { t } = useI18n();
   const [rangeErrors, setRangeErrors] = useState<Record<string, string>>({});
   const label = (key: string, fallback: string) => {
@@ -49,7 +50,7 @@ export function SocialRelationForm({ value, onChange, fieldErrors, disabled = fa
   };
   const identityDisabled = disabled || mode === "edit";
   const validationErrors = { ...fieldErrors, ...rangeErrors };
-  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} focusInvalid={Object.keys(validationErrors).length > 0}>
+  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} formErrors={formErrors} focusInvalid={Object.keys(validationErrors).length > 0 || formErrors.length > 0}>
     {({ getFieldError }) => {
       const fromUserError = getFieldError("from_user");
       const toUserError = getFieldError("to_user");

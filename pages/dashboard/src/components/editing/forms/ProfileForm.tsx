@@ -12,11 +12,12 @@ export interface ProfileFormProps {
   value: ProfileDraft;
   onChange(value: ProfileDraft): void;
   fieldErrors: FieldErrors;
+  formErrors?: readonly string[];
   disabled?: boolean;
   mode: "create" | "edit";
 }
 
-export function ProfileForm({ value, onChange, fieldErrors, disabled = false, mode }: ProfileFormProps) {
+export function ProfileForm({ value, onChange, fieldErrors, formErrors = [], disabled = false, mode }: ProfileFormProps) {
   const { t } = useI18n();
   const [rangeErrors, setRangeErrors] = useState<Record<string, string>>({});
   const label = (key: string, fallback: string, ...args: string[]) => {
@@ -45,7 +46,7 @@ export function ProfileForm({ value, onChange, fieldErrors, disabled = false, mo
   };
 
   const validationErrors = { ...fieldErrors, ...rangeErrors };
-  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} focusInvalid={Object.keys(validationErrors).length > 0}>
+  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} formErrors={formErrors} focusInvalid={Object.keys(validationErrors).length > 0 || formErrors.length > 0}>
     {({ getFieldError }) => {
       const userIdError = getFieldError("user_id");
       const nameError = getFieldError("display_name");

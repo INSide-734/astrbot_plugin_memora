@@ -39,3 +39,34 @@ export class ApiRequestError extends Error {
     this.data = data;
   }
 }
+
+export function editingErrorDetails(
+  error: unknown,
+  allowedFields: readonly string[],
+): { fieldErrors: FieldErrors; formError: string | null } {
+  if (!(error instanceof ApiRequestError)) {
+    return {
+      fieldErrors: {},
+      formError: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const fieldErrors: FieldErrors = {};
+  const formErrors: string[] = [];
+  for (const [rawName, message] of Object.entries(error.fieldErrors)) {
+    const name = rawName.startsWith("changes.") ? rawName.slice("changes.".length) : rawName;
+    if (allowedFields.some((field) => name === field || name.startsWith(`${field}.`))) {
+      fieldErrors[name] = message;
+    } else if (!formErrors.includes(message)) {
+      formErrors.push(message);
+    }
+  }
+  return {
+    fieldErrors,
+    formError: formErrors.length > 0
+      ? formErrors.join("; ")
+      : Object.keys(error.fieldErrors).length === 0
+        ? error.message
+        : null,
+  };
+}
