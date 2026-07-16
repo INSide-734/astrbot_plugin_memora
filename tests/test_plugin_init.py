@@ -868,6 +868,66 @@ class TestInjectionDecisionLifecycle:
         recorder.close.assert_awaited_once_with(timeout=5.0)
 
     @pytest.mark.asyncio
+    async def test_component_factory_preserves_init_error_when_recorder_close_fails(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from core.initializer.component_factory import ComponentFactory
+
+        store = MagicMock()
+        store.initialize = AsyncMock()
+        store.close = AsyncMock()
+        recorder = MagicMock()
+        recorder.start = AsyncMock(side_effect=RuntimeError("start failed"))
+        recorder.close = AsyncMock(side_effect=RuntimeError("close failed"))
+        monkeypatch.setattr(
+            "core.initializer.component_factory.InjectionDecisionStore",
+            MagicMock(return_value=store),
+        )
+        monkeypatch.setattr(
+            "core.initializer.component_factory.InjectionDecisionRecorder",
+            MagicMock(return_value=recorder),
+        )
+        config = MagicMock()
+        config.get.side_effect = lambda _key, default=None: default
+        factory = ComponentFactory(MagicMock(), config, str(tmp_path))
+
+        with pytest.raises(RuntimeError, match="start failed"):
+            await factory._build_injection_components(tmp_path / "memora.db")
+
+        recorder.close.assert_awaited_once_with(timeout=5.0)
+        store.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_component_factory_closes_store_when_recorder_cleanup_is_cancelled(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from core.initializer.component_factory import ComponentFactory
+
+        store = MagicMock()
+        store.initialize = AsyncMock()
+        store.close = AsyncMock()
+        recorder = MagicMock()
+        recorder.start = AsyncMock(side_effect=RuntimeError("start failed"))
+        recorder.close = AsyncMock(side_effect=asyncio.CancelledError())
+        monkeypatch.setattr(
+            "core.initializer.component_factory.InjectionDecisionStore",
+            MagicMock(return_value=store),
+        )
+        monkeypatch.setattr(
+            "core.initializer.component_factory.InjectionDecisionRecorder",
+            MagicMock(return_value=recorder),
+        )
+        config = MagicMock()
+        config.get.side_effect = lambda _key, default=None: default
+        factory = ComponentFactory(MagicMock(), config, str(tmp_path))
+
+        with pytest.raises(asyncio.CancelledError):
+            await factory._build_injection_components(tmp_path / "memora.db")
+
+        recorder.close.assert_awaited_once_with(timeout=5.0)
+        store.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_build_all_awaits_and_merges_injection_components(
         self, monkeypatch, tmp_path
     ) -> None:
@@ -1075,7 +1135,7 @@ class TestMemoraInjectionLifecycle:
         plugin._register_agent_tools_if_needed.assert_called_once_with()
 
     @pytest.mark.asyncio
-    async def test_runtime_does_not_construct_handler_when_tool_registration_fails(
+    async def test_runtime_falls_back_when_memory_tool_registration_fails(
         self,
     ) -> None:
         MemoraPlugin = _load_memora_plugin_class()
@@ -1090,15 +1150,29 @@ class TestMemoraInjectionLifecycle:
         plugin.initializer.memory_engine = MagicMock()
         plugin.initializer.memory_processor = MagicMock()
         plugin.initializer.conversation_manager = MagicMock()
+        plugin.initializer.injection_decision_recorder = MagicMock()
         plugin._llm_tools_registered = False
-        plugin._register_agent_tools_if_needed = MagicMock(
-            side_effect=RuntimeError("registration failed")
+        plugin.config_manager.get = MagicMock(
+            side_effect=lambda key, default=None: True
+            if key == "agent_tools.enable_recall_tool"
+            else default
         )
         module = sys.modules[MemoraPlugin.__module__]
+        event_handler = MagicMock()
+        command_handler = MagicMock()
 
-        with patch.object(module, "EventHandler") as event_handler_type:
-            with pytest.raises(RuntimeError, match="registration failed"):
-                await plugin._ensure_runtime_components()
+        with patch.object(
+            module, "MemorySearchTool", side_effect=RuntimeError("registration failed")
+        ), patch.object(
+            module, "EventHandler", return_value=event_handler
+        ) as event_handler_type, patch.object(
+            module, "CommandHandler", return_value=command_handler
+        ) as command_handler_type:
+            ready = await plugin._ensure_runtime_components()
 
+        assert ready is True
         assert plugin._llm_tools_registered is False
-        event_handler_type.assert_not_called()
+        assert plugin.event_handler is event_handler
+        assert plugin.command_handler is command_handler
+        assert event_handler_type.call_args.kwargs["memory_tool_available"] is False
+        command_handler_type.assert_called_once()
