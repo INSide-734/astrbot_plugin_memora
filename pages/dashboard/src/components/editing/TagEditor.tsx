@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, Ref } from "react";
 import { X } from "lucide-react";
 
 import { Badge } from "@/components/ui/Badge";
@@ -16,9 +16,10 @@ export interface TagEditorProps {
   disabled?: boolean;
   ariaDescribedBy?: string;
   ariaInvalid?: boolean;
+  inputRef?: Ref<HTMLInputElement>;
 }
 
-export function TagEditor({ label, getRemoveLabel, values, onChange, maxCount, onLimitReached, disabled = false, ariaDescribedBy, ariaInvalid = false }: TagEditorProps) {
+export function TagEditor({ label, getRemoveLabel, values, onChange, maxCount, onLimitReached, disabled = false, ariaDescribedBy, ariaInvalid = false, inputRef }: TagEditorProps) {
   const [pending, setPending] = useState("");
   const addPending = () => {
     const tag = pending.trim();
@@ -54,7 +55,7 @@ export function TagEditor({ label, getRemoveLabel, values, onChange, maxCount, o
           </Badge>
         ))}
       </div>
-      <Input aria-label={label} aria-invalid={ariaInvalid} aria-describedby={ariaDescribedBy} value={pending} disabled={disabled} onChange={(event) => setPending(event.target.value)} onKeyDown={onKeyDown} />
+      <Input ref={inputRef} aria-label={label} aria-invalid={ariaInvalid} aria-describedby={ariaDescribedBy} value={pending} disabled={disabled} onChange={(event) => setPending(event.target.value)} onKeyDown={onKeyDown} />
     </div>
   );
 }

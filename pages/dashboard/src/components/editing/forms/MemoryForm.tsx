@@ -28,7 +28,7 @@ export function MemoryForm({ value, onChange, fieldErrors, formErrors = [], disa
 
   return (
     <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={fieldErrors} formErrors={formErrors} focusInvalid={Object.keys(fieldErrors).length > 0 || formErrors.length > 0}>
-      {({ getFieldError }) => {
+      {({ getFieldError, registerField }) => {
         const contentError = getFieldError("content");
         const importanceError = getFieldError("importance");
         const typeError = getFieldError("type");
@@ -36,23 +36,23 @@ export function MemoryForm({ value, onChange, fieldErrors, formErrors = [], disa
         return <>
           <Field data-invalid={Boolean(contentError)} data-disabled={disabled}>
             <FieldLabel htmlFor="memory-content">{t("field.content")}</FieldLabel>
-            <Textarea id="memory-content" aria-invalid={Boolean(contentError)} aria-describedby={contentError?.id} disabled={disabled} rows={5} value={value.content} onChange={(event) => update("content", event.currentTarget.value)} />
+            <Textarea ref={(element) => registerField("content", element)} id="memory-content" aria-invalid={Boolean(contentError)} aria-describedby={contentError?.id} disabled={disabled} rows={5} value={value.content} onChange={(event) => update("content", event.currentTarget.value)} />
             {contentError ? <FieldError id={contentError.id}>{contentError.message}</FieldError> : null}
           </Field>
           <Field data-invalid={Boolean(importanceError)} data-disabled={disabled}>
             <FieldLabel htmlFor="memory-importance">{t("table.importance")}</FieldLabel>
-            <Input id="memory-importance" type="number" min="0" max="10" step="0.1" aria-invalid={Boolean(importanceError)} aria-describedby={importanceError?.id} disabled={disabled} value={value.importance} onChange={(event) => update("importance", Number(event.currentTarget.value))} />
+            <Input ref={(element) => registerField("importance", element)} id="memory-importance" type="number" min="0" max="10" step="0.1" aria-invalid={Boolean(importanceError)} aria-describedby={importanceError?.id} disabled={disabled} value={value.importance} onChange={(event) => update("importance", Number(event.currentTarget.value))} />
             {importanceError ? <FieldError id={importanceError.id}>{importanceError.message}</FieldError> : null}
           </Field>
           <Field data-invalid={Boolean(typeError)} data-disabled={disabled}>
             <FieldLabel htmlFor="memory-type">{t("table.type")}</FieldLabel>
-            <Input id="memory-type" aria-invalid={Boolean(typeError)} aria-describedby={typeError?.id} disabled={disabled} value={value.type} onChange={(event) => update("type", event.currentTarget.value)} />
+            <Input ref={(element) => registerField("type", element)} id="memory-type" aria-invalid={Boolean(typeError)} aria-describedby={typeError?.id} disabled={disabled} value={value.type} onChange={(event) => update("type", event.currentTarget.value)} />
             {typeError ? <FieldError id={typeError.id}>{typeError.message}</FieldError> : null}
           </Field>
           <Field data-invalid={Boolean(statusError)} data-disabled={disabled}>
             <FieldLabel htmlFor="memory-status">{t("table.status")}</FieldLabel>
             <Select value={value.status} onValueChange={(next) => next && update("status", next)} disabled={disabled}>
-              <SelectTrigger id="memory-status" aria-label={t("table.status")} aria-invalid={Boolean(statusError)} aria-describedby={statusError?.id}><span>{t(`filter.status${value.status.slice(0, 1).toUpperCase()}${value.status.slice(1)}`)}</span></SelectTrigger>
+              <SelectTrigger ref={(element) => registerField("status", element)} id="memory-status" aria-label={t("table.status")} aria-invalid={Boolean(statusError)} aria-describedby={statusError?.id}><span>{t(`filter.status${value.status.slice(0, 1).toUpperCase()}${value.status.slice(1)}`)}</span></SelectTrigger>
               <SelectContent><SelectGroup>
                 <SelectItem value="active">{t("filter.statusActive")}</SelectItem>
                 <SelectItem value="archived">{t("filter.statusArchived")}</SelectItem>

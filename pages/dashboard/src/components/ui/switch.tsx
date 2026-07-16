@@ -1,16 +1,18 @@
+import * as React from "react"
 import { Switch as SwitchPrimitive } from "@base-ui/react/switch"
 
 import { cn } from "@/lib/utils"
 
-function Switch({
+const Switch = React.forwardRef<HTMLButtonElement, SwitchPrimitive.Root.Props & {
+  size?: "sm" | "default"
+}>(function Switch({
   className,
   size = "default",
   ...props
-}: SwitchPrimitive.Root.Props & {
-  size?: "sm" | "default"
-}) {
+}, ref) {
   return (
     <SwitchPrimitive.Root
+      ref={ref}
       data-slot="switch"
       data-size={size}
       className={cn(
@@ -25,6 +27,6 @@ function Switch({
       />
     </SwitchPrimitive.Root>
   )
-}
+})
 
 export { Switch }
