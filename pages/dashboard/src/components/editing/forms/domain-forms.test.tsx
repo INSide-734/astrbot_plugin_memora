@@ -166,6 +166,23 @@ describe("domain editing forms", () => {
     }
   });
 
+  it("uses the validation summary as the only live alert while keeping one inline description target", () => {
+    render(
+      <MemoryForm
+        value={{ content: "x", importance: 1, type: "fact", status: "active" }}
+        onChange={vi.fn()}
+        mode="edit"
+        fieldErrors={{ content: "bad content" }}
+      />,
+    );
+
+    const content = screen.getByLabelText("Content");
+    const errorId = content.getAttribute("aria-describedby");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(errorId).toBeTruthy();
+    expect(document.querySelectorAll(`[id="${errorId}"]`)).toHaveLength(1);
+  });
+
   it("keeps a profile user ID editable only while creating and renders structured preferences", () => {
     const value = {
       user_id: "alice",
