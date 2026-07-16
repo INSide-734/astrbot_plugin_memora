@@ -217,6 +217,7 @@ def test_dashboard_browser_smoke_covers_injection_strategy_workbench() -> None:
         "page/recall/trace/detail",
         "sanitizeBridgeCallParams",
         "sanitizeBridgeCallValue",
+        "body: sanitizeBridgeCallValue(body ?? {})",
         "delete sanitized.decision_id",
         "delete sanitized.trace_id",
     ]
@@ -507,6 +508,9 @@ def test_recall_cost_benchmark_covers_each_routing_mode_and_p95() -> None:
         "HybridRoutingAccuracy",
         "StrategyDecisionLatency",
         "percentile_95",
+        "OrdinaryMemoryCharsP95",
+        "LowCostPayloadReduction",
+        "validate_cross_profile_metrics",
     ]:
         assert marker in source
 

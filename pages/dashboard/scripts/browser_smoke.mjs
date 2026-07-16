@@ -1979,7 +1979,7 @@ async function installBridge(page) {
         const call = {
           method: "POST",
           endpoint: String(endpoint),
-          body: cloneJson(body ?? {}),
+          body: sanitizeBridgeCallValue(body ?? {}),
         };
         window.__memoraBridgeCalls.push(call);
         window.__memoraPostCalls.push(String(endpoint || "").replace(/^page\/?/, ""));

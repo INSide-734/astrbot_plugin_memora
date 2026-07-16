@@ -9,12 +9,13 @@ import uuid
 import random
 from dataclasses import dataclass, replace
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
+from ..base.constants import FAKE_TOOL_CALL_NAME
 from ..base.config_manager import ConfigManager
 from ..cleaners.injection_cleaner import InjectionCleaner
 from ..extractors.message_content_extractor import MessageContentExtractor
@@ -422,21 +423,102 @@ class RecallHandler:
         explicit = intent in {
             "relationship", "relational", "temporal", "preference", "contextual"
         }
-        raw_headroom = getattr(req, "context_headroom_chars", 10_000)
-        try:
-            headroom = max(0, int(raw_headroom if raw_headroom is not None else 10_000))
-        except (TypeError, ValueError):
-            headroom = 10_000
         return RequestSignals(
             query_intent=intent,
             explicit_history_request=explicit,
             provider_type=str(provider_type or ""),
             provider_model=str(provider_model or ""),
             tools_supported=tools_supported is True,
-            memory_tool_available=self._memory_tool_available is True,
-            context_headroom_chars=headroom,
+            memory_tool_available=self._request_has_memory_tool(req),
+            context_headroom_chars=self._context_headroom_chars(provider, req),
             chat_type=chat_type,
         )
+
+    def _request_has_memory_tool(self, req: Any) -> bool:
+        if self._memory_tool_available is not True:
+            return False
+        tool_set = getattr(req, "func_tool", None)
+        if tool_set is None:
+            return False
+        try:
+            get_tool = getattr(tool_set, "get_tool", None)
+            if callable(get_tool):
+                tool = get_tool(FAKE_TOOL_CALL_NAME)
+                return tool is not None and bool(getattr(tool, "active", True))
+            return any(
+                getattr(tool, "name", None) == FAKE_TOOL_CALL_NAME
+                and bool(getattr(tool, "active", True))
+                for tool in getattr(tool_set, "tools", ())
+            )
+        except Exception:
+            return False
+
+    @classmethod
+    def _context_headroom_chars(cls, provider: Any, req: Any) -> int:
+        raw_override = getattr(req, "context_headroom_chars", None)
+        if isinstance(raw_override, (int, float, str)) and not isinstance(
+            raw_override, bool
+        ):
+            try:
+                return max(0, int(raw_override))
+            except (OverflowError, TypeError, ValueError):
+                pass
+
+        config = getattr(provider, "provider_config", None)
+        if not isinstance(config, Mapping):
+            return 0
+        max_context_tokens = cls._nonnegative_int(config.get("max_context_tokens"))
+        if max_context_tokens <= 0:
+            return 0
+        output_reserve = max(
+            cls._nonnegative_int(config.get("max_tokens")),
+            cls._nonnegative_int(config.get("max_completion_tokens")),
+        )
+        request_chars = sum(
+            cls._text_chars(getattr(req, field, None))
+            for field in (
+                "prompt",
+                "system_prompt",
+                "contexts",
+                "extra_user_content_parts",
+                "tool_calls_result",
+                "image_urls",
+                "audio_urls",
+            )
+        )
+        tool_set = getattr(req, "func_tool", None)
+        for tool in getattr(tool_set, "tools", ()):
+            request_chars += cls._text_chars(
+                {
+                    "name": getattr(tool, "name", ""),
+                    "description": getattr(tool, "description", ""),
+                    "parameters": getattr(tool, "parameters", {}),
+                }
+            )
+        # Charge one token per text character: conservative for the
+        # character-denominated injection budget without a Provider tokenizer.
+        return max(0, max_context_tokens - output_reserve - request_chars)
+
+    @staticmethod
+    def _nonnegative_int(value: Any) -> int:
+        try:
+            return max(0, int(value))
+        except (OverflowError, TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def _text_chars(cls, value: Any) -> int:
+        if isinstance(value, str):
+            return len(value)
+        if isinstance(value, Mapping):
+            return sum(
+                len(str(key)) + cls._text_chars(item)
+                for key, item in value.items()
+            )
+        if isinstance(value, (list, tuple)):
+            return sum(cls._text_chars(item) for item in value)
+        text = getattr(value, "text", None)
+        return len(text) if isinstance(text, str) else 0
 
     @staticmethod
     def _safe_candidates(candidates: list[Any]) -> list[dict[str, Any]]:

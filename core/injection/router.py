@@ -206,7 +206,6 @@ def _route_auto(signals: RequestSignals) -> tuple[PresetName, str]:
     if (
         signals.candidate_count > 0
         and signals.top_confidence >= balanced.minimum_utility
-        and not usable_tool
     ):
         return PresetName.BALANCED, "AUTO_FALLBACK"
     if usable_tool:

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from ..injection.models import InjectionDecisionRecord
-from ..managers.write_coordinator import write_transaction
 from .base_store import BaseStore
 
 _DAY_MS = 86_400_000
@@ -199,6 +198,8 @@ class InjectionDecisionStore(BaseStore):
                 await self.connection.rollback()
                 raise
             return self.connection.total_changes - before
+
+        from ..managers.write_coordinator import write_transaction
 
         return await write_transaction(operation)
 
@@ -392,6 +393,8 @@ class InjectionDecisionStore(BaseStore):
                 await self.connection.rollback()
                 raise
             return CleanupResult(deleted_expired, deleted_overflow)
+
+        from ..managers.write_coordinator import write_transaction
 
         return await write_transaction(operation)
 

@@ -171,6 +171,14 @@ def test_manual_final_never_moves_for_candidate_or_headroom_signals() -> None:
                 candidate_count=3,
                 top_confidence=0.9,
             ),
+            PresetName.BALANCED,
+            "AUTO_FALLBACK",
+        ),
+        (
+            make_signals(
+                tools_supported=True,
+                memory_tool_available=True,
+            ),
             PresetName.TOOL_FIRST,
             "AUTO_MEMORY_UNCERTAIN",
         ),
@@ -237,9 +245,9 @@ def test_auto_useful_candidates_require_all_three_conditions() -> None:
     assert useful.resolved_preset is PresetName.BALANCED
     assert below_threshold.resolved_preset is PresetName.LOW_COST
     assert zero_candidates.resolved_preset is PresetName.LOW_COST
-    assert usable_tool.resolved_preset is PresetName.TOOL_FIRST
-    assert usable_tool.skip_passive_recall is True
-    assert usable_tool.reason_codes == ("AUTO_MEMORY_UNCERTAIN",)
+    assert usable_tool.resolved_preset is PresetName.BALANCED
+    assert usable_tool.skip_passive_recall is False
+    assert usable_tool.reason_codes == ("AUTO_FALLBACK",)
 
 
 @pytest.mark.parametrize("mode", [RoutingMode.AUTO, RoutingMode.HYBRID])
@@ -578,6 +586,9 @@ def test_one_hundred_identical_calls_return_equal_frozen_decisions() -> None:
     decisions = [router.route_final(config, signals) for _ in range(100)]
 
     assert all(decision == decisions[0] for decision in decisions)
-    assert all(decision.skip_passive_recall is True for decision in decisions)
+    assert all(
+        decision.resolved_preset is PresetName.BALANCED for decision in decisions
+    )
+    assert all(decision.skip_passive_recall is False for decision in decisions)
     with pytest.raises(FrozenInstanceError):
         decisions[0].resolved_preset = PresetName.QUALITY  # type: ignore[misc]
