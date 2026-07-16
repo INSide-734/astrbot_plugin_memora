@@ -73,7 +73,6 @@ class InjectionDecisionRecorder:
         self._idle = asyncio.Event()
         self._idle.set()
         self._retained_batch: list[InjectionDecisionRecord] = []
-        self._active_batch: list[InjectionDecisionRecord] = []
         self._cleanup_generation = 0
         self._cleanup_completed_generation = 0
         self._dropped_total = 0
@@ -93,6 +92,9 @@ class InjectionDecisionRecorder:
         """Enqueue one already-sanitized record without awaiting or doing I/O."""
         started = self._monotonic()
         try:
+            if self._closing:
+                self._count_dropped()
+                return
             if len(self._retained_batch) + self._queue.qsize() >= self._queue_capacity:
                 if self._retained_batch:
                     self._retained_batch.pop(0)
@@ -120,6 +122,10 @@ class InjectionDecisionRecorder:
         max_rows: int | None = None,
     ) -> None:
         """Replace pending cleanup limits and wake the worker without doing I/O."""
+        if self._closing:
+            self._failures_total += 1
+            self._safe_failure("closed")
+            return
         new_retention = self._retention_days if retention_days is None else retention_days
         new_max_rows = self._max_rows if max_rows is None else max_rows
         if new_retention < 1:
@@ -166,7 +172,7 @@ class InjectionDecisionRecorder:
         if worker is None:
             return
         try:
-            await asyncio.wait_for(worker, timeout=timeout)
+            await asyncio.wait_for(asyncio.shield(worker), timeout=timeout)
         except asyncio.TimeoutError:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
@@ -175,16 +181,17 @@ class InjectionDecisionRecorder:
             if current is not None and current.cancelling():
                 raise
         finally:
-            self._worker = None
+            if worker.done() and self._worker is worker:
+                self._worker = None
 
     async def _run(self) -> None:
         retained = self._retained_batch
-        flush_at: float | None = None
+        now = self._monotonic()
+        flush_at: float | None = now + self._flush_interval if retained else None
         batch_retry_at = 0.0
         batch_attempt = 0
         cleanup_retry_at = 0.0
         cleanup_attempt = 0
-        now = self._monotonic()
         next_periodic_cleanup_at = now + 86_400.0
         last_lightweight_cleanup_at = now - 3_600.0
         rows_since_cleanup = 0
@@ -217,17 +224,14 @@ class InjectionDecisionRecorder:
                 if flush_due and now >= batch_retry_at:
                     attempted = list(retained)
                     del retained[: len(attempted)]
-                    self._active_batch = attempted
                     try:
                         await self.store.insert_many(attempted)
                     except asyncio.CancelledError:
                         retained[:0] = attempted
-                        self._active_batch = []
                         self._trim_pending_after_failed_attempt()
                         raise
                     except Exception:
                         retained[:0] = attempted
-                        self._active_batch = []
                         self._trim_pending_after_failed_attempt()
                         self._failures_total += 1
                         self._safe_failure("persist")
@@ -236,7 +240,6 @@ class InjectionDecisionRecorder:
                         )
                         batch_attempt += 1
                     else:
-                        self._active_batch = []
                         for _ in attempted:
                             self._queue.task_done()
                         row_count = len(attempted)
