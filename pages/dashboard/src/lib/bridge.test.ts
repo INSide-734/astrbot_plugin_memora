@@ -129,6 +129,7 @@ describe("bridge", () => {
       fieldErrors: { name: "名称不能为空" },
       data: { request_id: "req-1" },
     });
+    expect(String(error)).toBe("Error: boom");
   });
 
   it("reads structured field errors from error data", () => {
