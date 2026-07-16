@@ -219,5 +219,14 @@ describe("global dashboard search helpers", () => {
     expect(searchLocalEntries(entries, "Page", 100).items.map((entry) => entry.page)).toEqual(
       DASHBOARD_NAVIGATION.flatMap((group) => group.items.map((item) => item.id)),
     );
+
+    const injection = entries.find((entry) => entry.id === "page:injection");
+    expect(injection).toMatchObject({
+      id: "page:injection",
+      page: "injection",
+    });
+    expect(entries.map((entry) => entry.page)).toEqual(
+      DASHBOARD_NAVIGATION.flatMap((group) => group.items.map((item) => item.id)),
+    );
   });
 });

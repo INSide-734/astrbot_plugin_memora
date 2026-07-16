@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Activity, AlertTriangle, BrainCircuit, ClipboardCheck, GitBranch, Stethoscope } from "lucide-react";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { DiagnosticCenter } from "@/components/intelligence/DiagnosticCenter";
@@ -7,9 +8,11 @@ import { ReviewQueue } from "@/components/intelligence/ReviewQueue";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useI18n } from "@/hooks/useI18n";
 import type { IntelligenceTabId } from "@/types/intelligence";
+import type { IntelligenceNavigationTarget } from "@/types/navigation";
 
 interface IntelligencePageProps {
   showToast: (msg: string, isError?: boolean) => void;
+  navigationTarget?: IntelligenceNavigationTarget | null;
 }
 
 interface TabDefinition {
@@ -25,15 +28,40 @@ const tabs: TabDefinition[] = [
   { id: "reviewQueue", labelKey: "intelligence.tabs.reviewQueue", icon: <AlertTriangle size={14} /> },
 ];
 
-const panelByTab: Record<IntelligenceTabId, (showToast: IntelligencePageProps["showToast"]) => JSX.Element> = {
+const panelByTab: Record<IntelligenceTabId, (
+  showToast: IntelligencePageProps["showToast"],
+  navigationTarget?: IntelligenceNavigationTarget | null,
+) => JSX.Element> = {
   evaluation: (showToast) => <EvaluationWorkbench showToast={showToast} />,
-  recallTrace: (showToast) => <RecallTracePanel showToast={showToast} />,
+  recallTrace: (showToast, navigationTarget) => (
+    <RecallTracePanel
+      showToast={showToast}
+      navigationTarget={navigationTarget}
+    />
+  ),
   diagnostics: (showToast) => <DiagnosticCenter showToast={showToast} />,
   reviewQueue: (showToast) => <ReviewQueue showToast={showToast} />,
 };
 
-export function IntelligencePage({ showToast }: IntelligencePageProps) {
+export function IntelligencePage({
+  navigationTarget,
+  showToast,
+}: IntelligencePageProps) {
   const { t } = useI18n();
+  const [activeTab, setActiveTab] = useState<IntelligenceTabId>(
+    navigationTarget?.tab ?? "evaluation",
+  );
+  const processedTargetRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (
+      !navigationTarget
+      || processedTargetRef.current === navigationTarget.requestId
+    ) return;
+    processedTargetRef.current = navigationTarget.requestId;
+    setActiveTab(navigationTarget.tab);
+  }, [navigationTarget]);
+
   return (
     <PageFrame variant="standard" aria-label={t("intelligence.title")}>
       <PageHeader
@@ -45,7 +73,11 @@ export function IntelligencePage({ showToast }: IntelligencePageProps) {
           <span>{t("intelligence.status.shell")}</span>
         </div>}
       />
-      <Tabs defaultValue="evaluation" className="min-h-0 flex-1 gap-0">
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setActiveTab(value as IntelligenceTabId)}
+        className="min-h-0 flex-1 gap-0"
+      >
         <div className="shrink-0 overflow-x-auto border-b px-4 sm:px-5 lg:px-6">
           <TabsList variant="line" aria-label={t("intelligence.tabs.label")} className="h-11 min-w-max">
           {tabs.map((tab) => {
@@ -81,7 +113,7 @@ export function IntelligencePage({ showToast }: IntelligencePageProps) {
                   {t("intelligence.status.local")}
                 </span>
               </div>
-              {panelByTab[tab.id](showToast)}
+              {panelByTab[tab.id](showToast, navigationTarget)}
             </PageContent>
           </TabsContent>
         ))}
