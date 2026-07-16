@@ -1163,16 +1163,20 @@ class TestMemoraInjectionLifecycle:
 
         with patch.object(
             module, "MemorySearchTool", side_effect=RuntimeError("registration failed")
-        ), patch.object(
+        ) as memory_tool_type, patch.object(
             module, "EventHandler", return_value=event_handler
         ) as event_handler_type, patch.object(
             module, "CommandHandler", return_value=command_handler
         ) as command_handler_type:
-            ready = await plugin._ensure_runtime_components()
+            first_ready = await plugin._ensure_runtime_components()
+            second_ready = await plugin._ensure_runtime_components()
 
-        assert ready is True
+        assert first_ready is True
+        assert second_ready is True
         assert plugin._llm_tools_registered is False
         assert plugin.event_handler is event_handler
         assert plugin.command_handler is command_handler
         assert event_handler_type.call_args.kwargs["memory_tool_available"] is False
+        memory_tool_type.assert_called_once()
+        plugin.context.add_llm_tools.assert_not_called()
         command_handler_type.assert_called_once()
