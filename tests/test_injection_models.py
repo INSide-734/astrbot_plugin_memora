@@ -180,3 +180,8 @@ def test_reason_codes_default_to_immutable_tuples() -> None:
 
     assert decision.reason_codes == ()
     assert isinstance(decision.reason_codes, tuple)
+
+
+def test_execution_result_actual_delivery_defaults_to_none() -> None:
+    result = InjectionExecutionResult(outcome=InjectionOutcome.EMPTY)
+    assert result.actual_resolved_delivery is None

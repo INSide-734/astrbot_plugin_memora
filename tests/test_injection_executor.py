@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from dataclasses import replace
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -774,3 +775,175 @@ async def test_explicit_context_provider_preserves_tool_delivery(delivery) -> No
     assert result.outcome is InjectionOutcome.INJECTED
     assert result.fallback_applied is False
     assert req.contexts != [{"role": "user", "content": "older turn"}]
+
+
+@pytest.mark.asyncio
+async def test_slow_formatter_is_reported_as_format_time(monkeypatch) -> None:
+    def slow_formatter(*args, **kwargs):
+        time.sleep(0.02)
+        return "TIMED_PAYLOAD", InjectionStats(chars=13, memory_count=1)
+
+    monkeypatch.setattr(
+        "core.injection.executor.format_memories_for_injection", slow_formatter
+    )
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        _request(),
+        _decision(),
+        _context([{"content": "timed", "score": 1.0, "metadata": {}}]),
+    )
+    assert result.format_ms >= 15.0
+    assert result.inject_ms >= 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "delivery",
+    [
+        DeliveryMode.EXTRA_USER_CONTENT,
+        DeliveryMode.USER_MESSAGE_BEFORE,
+        DeliveryMode.USER_MESSAGE_AFTER,
+        DeliveryMode.FAKE_TOOL_CALL,
+        DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4,
+    ],
+)
+async def test_protection_registers_once_before_each_delivery(delivery) -> None:
+    protection = MagicMock()
+    protection.wrap_prompt.return_value = "ignored-dynamic-wrapper"
+    provider = _tool_capable_provider() if "fake_tool" in delivery.value else None
+    result = await InjectionExecutor(InjectionAdapter(), protection).execute(
+        _request(),
+        _decision(delivery),
+        _context(
+            [{"content": "REGISTER_ONCE", "score": 1.0, "metadata": {}}],
+            provider=provider,
+        ),
+    )
+    protection.wrap_prompt.assert_called_once()
+    registered_payload = protection.wrap_prompt.call_args.args[0]
+    assert protection.wrap_prompt.call_args.kwargs == {
+        "label": "memory_context",
+        "register_for_filter": True,
+    }
+    assert "REGISTER_ONCE" in registered_payload
+    assert result.actual_resolved_delivery is delivery
+
+
+@pytest.mark.asyncio
+async def test_protection_failure_is_atomic() -> None:
+    req = _request()
+    snapshot = (req.prompt, list(req.contexts), list(req.extra_user_content_parts))
+    protection = MagicMock()
+    protection.wrap_prompt.side_effect = RuntimeError("protect failed")
+    result = await InjectionExecutor(InjectionAdapter(), protection).execute(
+        req,
+        _decision(),
+        _context([{"content": "sensitive", "score": 1.0, "metadata": {}}]),
+    )
+    assert result.error_code == "PROTECTION_FAILED"
+    assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "delivery",
+    [
+        DeliveryMode.EXTRA_USER_CONTENT,
+        DeliveryMode.USER_MESSAGE_BEFORE,
+        DeliveryMode.USER_MESSAGE_AFTER,
+        DeliveryMode.FAKE_TOOL_CALL,
+        DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4,
+    ],
+)
+async def test_reserved_boundaries_are_escaped_inside_untrusted_layers(
+    delivery, monkeypatch
+) -> None:
+    class Part:
+        def __init__(self, text):
+            self.text = text
+
+        def mark_as_temp(self):
+            return self
+
+    monkeypatch.setattr("core.injection.executor.TextPart", Part)
+    marker_text = (
+        "<memora-untrusted-memory>"
+        "</memora-untrusted-memory>"
+        "[DeepSeekV4-FakeToolCall-Replay]"
+        "[/DeepSeekV4-FakeToolCall-Replay]"
+    )
+    req = _request()
+    provider = _tool_capable_provider() if "fake_tool" in delivery.value else None
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        req,
+        _decision(delivery),
+        _context(
+            [{"content": marker_text, "score": 1.0, "metadata": {}}],
+            prospective_context=marker_text,
+            cognitive_context=marker_text,
+            provider=provider,
+        ),
+    )
+    if delivery is DeliveryMode.EXTRA_USER_CONTENT:
+        delivered = req.extra_user_content_parts[-1].text
+    elif delivery in {DeliveryMode.USER_MESSAGE_BEFORE, DeliveryMode.USER_MESSAGE_AFTER}:
+        delivered = req.prompt
+    else:
+        delivered = req.contexts[-1]["content"]
+    assert delivered.count("<memora-untrusted-memory>") == 1
+    assert delivered.count("</memora-untrusted-memory>") == 1
+    expected_replay_boundaries = int(delivery is DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4)
+    assert delivered.count("[DeepSeekV4-FakeToolCall-Replay]") == expected_replay_boundaries
+    assert delivered.count("[/DeepSeekV4-FakeToolCall-Replay]") == expected_replay_boundaries
+    assert result.actual_payload_chars <= result.effective_budget_chars
+
+
+@pytest.mark.asyncio
+async def test_fake_tool_call_ids_are_unique_and_prefixed() -> None:
+    contexts = []
+    for _ in range(2):
+        req = _request()
+        await InjectionExecutor(InjectionAdapter()).execute(
+            req,
+            _decision(DeliveryMode.FAKE_TOOL_CALL),
+            _context(
+                [{"content": "unique", "score": 1.0, "metadata": {}}],
+                provider=_tool_capable_provider(),
+            ),
+        )
+        assistant = req.contexts[-2]
+        tool = req.contexts[-1]
+        call_id = assistant["tool_calls"][0]["id"]
+        assert tool["tool_call_id"] == call_id
+        assert tool["name"] == assistant["tool_calls"][0]["function"]["name"]
+        contexts.append(call_id)
+    assert contexts[0].startswith("fake_recall_")
+    assert contexts[1].startswith("fake_recall_")
+    assert contexts[0] != contexts[1]
+
+@pytest.mark.asyncio
+async def test_real_prompt_protection_filters_registered_unique_secret() -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    secret = "unique executor secret phrase alpha beta gamma delta epsilon"
+    protection = PromptProtectionService(enable_double_check=False)
+    result = await InjectionExecutor(InjectionAdapter(), protection).execute(
+        _request(),
+        _decision(),
+        _context([{"content": secret, "score": 1.0, "metadata": {}}]),
+    )
+    sanitized, report = protection.sanitize_response(f"safe prefix {secret} safe suffix")
+    assert result.outcome is InjectionOutcome.INJECTED
+    assert secret not in sanitized
+    assert report["leaks_removed"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_protection_cancellation_is_not_converted_to_error() -> None:
+    protection = MagicMock()
+    protection.wrap_prompt.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await InjectionExecutor(InjectionAdapter(), protection).execute(
+            _request(),
+            _decision(),
+            _context([{"content": "secret", "score": 1.0, "metadata": {}}]),
+        )

@@ -1099,8 +1099,9 @@ def handler_case(monkeypatch):
             context_headroom_chars=10_000,
         )
 
+        context = MagicMock()
         handler = RecallHandler(
-            context=MagicMock(),
+            context=context,
             config_manager=manager,
             memory_engine=engine,
             conversation_manager=conversation,
@@ -1130,6 +1131,7 @@ def handler_case(monkeypatch):
             memory_engine=engine,
             recorder=recorder,
             adapter=adapter,
+            context=context,
         )
 
     return build
@@ -1197,6 +1199,9 @@ async def test_provider_delivery_fallback_is_recorded(handler_case) -> None:
     record = case.recorder.record.call_args.args[0]
     assert record.outcome == "fallback"
     assert record.fallback_applied is True
+    assert record.resolved_delivery == DeliveryMode.EXTRA_USER_CONTENT.value
+    assert record.primary_reason == "MANUAL_SELECTED"
+    assert record.reason_codes.count("PROVIDER_DELIVERY_DOWNGRADED") == 1
 
 
 @pytest.mark.asyncio
@@ -1305,3 +1310,46 @@ async def test_recall_logs_only_sanitized_counts(handler_case, caplog) -> None:
     assert private_entity not in log_text
     assert "rewritten_count=1" in log_text
     assert "entity_count=1" in log_text
+
+
+def test_safe_candidates_keep_only_stable_scalar_ids() -> None:
+    from core.handlers.recall_handler import RecallHandler
+
+    candidates = [
+        SimpleNamespace(doc_id="b", content="same", final_score=1.0, metadata={}),
+        SimpleNamespace(doc_id=2, content="same", final_score=1.0, metadata={}),
+        SimpleNamespace(doc_id=object(), content="same", final_score=1.0, metadata={}),
+    ]
+    safe = RecallHandler._safe_candidates(candidates)
+    assert [item.get("id") for item in safe] == ["b", 2, None]
+
+@pytest.mark.asyncio
+async def test_provider_getter_exception_continues_recall_and_record(handler_case) -> None:
+    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    case.context.get_using_provider.side_effect = RuntimeError("provider registry failed")
+    await case.handler.handle_memory_recall(case.event, case.request)
+    case.memory_engine.search_memories.assert_awaited_once()
+    case.recorder.record.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_provider_get_model_exception_uses_conservative_capabilities(handler_case) -> None:
+    from core.utils.injection_adapter import InjectionAdapter
+
+    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    provider = MagicMock()
+    provider.provider_config = {"type": "openai_chat_completion"}
+    provider.get_model.side_effect = RuntimeError("model unavailable")
+    case.request.provider = provider
+    case.handler._injection_adapter = InjectionAdapter()
+    await case.handler.handle_memory_recall(case.event, case.request)
+    case.memory_engine.search_memories.assert_awaited_once()
+    case.recorder.record.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_provider_getter_cancellation_propagates(handler_case) -> None:
+    case = handler_case(config=strategy_config())
+    case.context.get_using_provider.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await case.handler.handle_memory_recall(case.event, case.request)

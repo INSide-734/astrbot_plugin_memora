@@ -10,6 +10,7 @@ from astrbot.api import logger
 
 from ..base.constants import (
     FAKE_TOOL_CALL_ID_PREFIX,
+    FAKE_TOOL_CALL_NAME,
     MEMORY_INJECTION_FOOTER,
     MEMORY_INJECTION_HEADER,
 )
@@ -19,9 +20,11 @@ if TYPE_CHECKING:
 
 _VERIFIED_INJECTION_HEADER = "<memora-untrusted-memory>"
 _VERIFIED_INJECTION_FOOTER = "</memora-untrusted-memory>"
-_VERIFIED_FAKE_TOOL_CALL_ID = "memora_verified_recall"
 _DEEPSEEK_REPLAY_HEADER = "[DeepSeekV4-FakeToolCall-Replay]"
 _DEEPSEEK_REPLAY_FOOTER = "[/DeepSeekV4-FakeToolCall-Replay]"
+_FAKE_TOOL_CALL_ID_PATTERN = re.compile(
+    rf"{re.escape(FAKE_TOOL_CALL_ID_PREFIX)}[0-9a-f]{{32}}\Z"
+)
 _INJECTION_CLEANUP_PATTERN = re.compile(
     "(?:"
     + re.escape(_DEEPSEEK_REPLAY_HEADER)
@@ -45,10 +48,7 @@ def _contains_injection(value: str) -> bool:
 
 
 def _is_memora_fake_call_id(value: object) -> bool:
-    return isinstance(value, str) and (
-        value == _VERIFIED_FAKE_TOOL_CALL_ID
-        or value.startswith(FAKE_TOOL_CALL_ID_PREFIX)
-    )
+    return isinstance(value, str) and _FAKE_TOOL_CALL_ID_PATTERN.fullmatch(value) is not None
 
 
 class InjectionCleaner:
@@ -59,30 +59,11 @@ class InjectionCleaner:
         req: ProviderRequest,
         session_id: str,
     ) -> int:
-        """从对话历史、system_prompt和prompt中删除之前注入的记忆片段"""
+        """从非系统提示词上下文中删除之前注入的记忆片段。"""
         removed_count = 0
         pattern = _INJECTION_CLEANUP_PATTERN
 
         try:
-            if (
-                hasattr(req, "system_prompt")
-                and req.system_prompt
-                and isinstance(req.system_prompt, str)
-            ):
-                original_prompt = req.system_prompt
-                if _contains_injection(original_prompt):
-                    cleaned_prompt = pattern.sub("", original_prompt)
-                    cleaned_prompt = re.sub(
-                        r"\n{3,}", "\n\n", cleaned_prompt
-                    ).strip()
-                    req.system_prompt = cleaned_prompt
-                    if cleaned_prompt != original_prompt:
-                        removed_count += 1
-                        logger.debug(
-                            f"[{session_id}] 从system_prompt中清理记忆片段 "
-                            f"(原长度={len(original_prompt)}, 新长度={len(cleaned_prompt)})"
-                        )
-
             if (
                 hasattr(req, "extra_user_content_parts")
                 and req.extra_user_content_parts
@@ -125,6 +106,9 @@ class InjectionCleaner:
                     if isinstance(msg, str):
                         content = msg
                     elif isinstance(msg, dict):
+                        if msg.get("role") == "tool":
+                            filtered_contexts.append(msg)
+                            continue
                         content = msg.get("content", "")
                         if not isinstance(content, (str, list)):
                             filtered_contexts.append(msg)
@@ -314,45 +298,65 @@ class InjectionCleaner:
         req: ProviderRequest,
         session_id: str,
     ) -> int:
-        """从对话历史中删除伪造的工具调用消息对。"""
+        """Remove only adjacent, executor-shaped verified fake-tool pairs."""
         if not hasattr(req, "contexts") or not req.contexts:
             return 0
 
         removed = 0
-        indices_to_remove: set[int] = set()
-        fake_call_ids: set[str] = set()
-
         try:
-            for i, msg in enumerate(req.contexts):
-                if not isinstance(msg, dict):
+            contexts = req.contexts
+            kept: list[object] = []
+            index = 0
+            while index < len(contexts):
+                assistant = contexts[index]
+                tool = contexts[index + 1] if index + 1 < len(contexts) else None
+                if InjectionCleaner._is_verified_fake_tool_pair(assistant, tool):
+                    removed += 2
+                    index += 2
                     continue
-                role = msg.get("role")
-                if role == "assistant" and msg.get("tool_calls"):
-                    for tc in msg["tool_calls"]:
-                        tc_id = (
-                            tc.get("id", "")
-                            if isinstance(tc, dict)
-                            else getattr(tc, "id", "")
-                        )
-                        if _is_memora_fake_call_id(tc_id):
-                            fake_call_ids.add(tc_id)
-                            indices_to_remove.add(i)
-                elif role == "tool":
-                    tc_id = msg.get("tool_call_id", "")
-                    if tc_id in fake_call_ids:
-                        indices_to_remove.add(i)
-
-            for i in sorted(indices_to_remove, reverse=True):
-                req.contexts.pop(i)
-                removed += 1
-
-            if removed > 0:
+                kept.append(assistant)
+                index += 1
+            if removed:
+                req.contexts = kept
                 logger.info(f"[{session_id}] 清理了 {removed} 条伪造工具调用消息")
-
         except Exception as e:
             logger.error(
                 f"[{session_id}] 清理伪造工具调用时发生错误: {e}",
                 exc_info=True,
             )
-
         return removed
+
+    @staticmethod
+    def _is_verified_fake_tool_pair(assistant: object, tool: object) -> bool:
+        if not isinstance(assistant, dict) or not isinstance(tool, dict):
+            return False
+        if assistant.get("role") != "assistant" or tool.get("role") != "tool":
+            return False
+        calls = assistant.get("tool_calls")
+        if not isinstance(calls, list) or len(calls) != 1:
+            return False
+        call = calls[0]
+        if not isinstance(call, dict):
+            return False
+        call_id = call.get("id")
+        function = call.get("function")
+        if (
+            not _is_memora_fake_call_id(call_id)
+            or not isinstance(function, dict)
+            or function.get("name") != FAKE_TOOL_CALL_NAME
+        ):
+            return False
+        content = tool.get("content")
+        if not isinstance(content, str):
+            return False
+        envelope_start = content.find(_VERIFIED_INJECTION_HEADER)
+        envelope_end = content.find(
+            _VERIFIED_INJECTION_FOOTER,
+            envelope_start + len(_VERIFIED_INJECTION_HEADER),
+        )
+        return (
+            tool.get("tool_call_id") == call_id
+            and tool.get("name") == FAKE_TOOL_CALL_NAME
+            and envelope_start >= 0
+            and envelope_end >= 0
+        )

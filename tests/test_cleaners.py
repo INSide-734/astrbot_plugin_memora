@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -11,6 +12,7 @@ import pytest
 
 from core.base.constants import (
     FAKE_TOOL_CALL_ID_PREFIX,
+    FAKE_TOOL_CALL_NAME,
     MEMORY_INJECTION_FOOTER,
     MEMORY_INJECTION_HEADER,
 )
@@ -50,53 +52,21 @@ class TestRemoveInjectedMemoriesFromContext:
 
     # -- system_prompt --
 
-    def test_cleans_system_prompt_with_injection_markers(self) -> None:
-        raw = f"Before text\n{_injected_text('memory content')}\nAfter text"
-        req = _make_request(system_prompt=raw)
-        removed = InjectionCleaner.remove_injected_memories_from_context(req, "s1")
-        assert removed >= 1
-        assert MEMORY_INJECTION_HEADER not in req.system_prompt
-        assert MEMORY_INJECTION_FOOTER not in req.system_prompt
-        assert "Before text" in req.system_prompt
-        assert "After text" in req.system_prompt
-        # The regex removes everything between header and footer (DOTALL),
-        # so "memory content" is also removed
-
-    def test_no_change_when_no_markers_in_system_prompt(self) -> None:
-        raw = "Plain system prompt without markers"
-        req = _make_request(system_prompt=raw)
-        removed = InjectionCleaner.remove_injected_memories_from_context(req, "s1")
-        assert removed == 0
-        assert req.system_prompt == raw
-
-    def test_no_change_with_header_only_no_footer(self) -> None:
-        raw = f"text {MEMORY_INJECTION_HEADER} but no footer"
-        req = _make_request(system_prompt=raw)
-        removed = InjectionCleaner.remove_injected_memories_from_context(req, "s1")
-        assert removed == 0
-        assert req.system_prompt == raw
-
-    def test_system_prompt_becomes_empty_after_cleaning(self) -> None:
-        raw = _injected_text("only memory")
-        req = _make_request(system_prompt=raw)
-        removed = InjectionCleaner.remove_injected_memories_from_context(req, "s1")
-        assert removed >= 1
-        assert req.system_prompt == ""
-
-    def test_collapses_multiple_newlines_after_cleaning(self) -> None:
-        # content that when cleaned would leave 3+ newlines
-        raw = f"First\n\n{_injected_text('mem')}\n\n\nSecond"
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            _injected_text("memory content"),
+            "<memora-untrusted-memory>verified</memora-untrusted-memory>",
+            (
+                "[DeepSeekV4-FakeToolCall-Replay]replay"
+                "[/DeepSeekV4-FakeToolCall-Replay]"
+            ),
+        ],
+    )
+    def test_never_cleans_system_prompt(self, raw: str) -> None:
         req = _make_request(system_prompt=raw)
         InjectionCleaner.remove_injected_memories_from_context(req, "s1")
-        # Triple+ newlines should be collapsed to double
-        assert "\n\n\n" not in req.system_prompt
-
-    def test_cleans_multiple_injection_blocks(self) -> None:
-        raw = f"{_injected_text('mem1')}\nmiddle\n{_injected_text('mem2')}"
-        req = _make_request(system_prompt=raw)
-        removed = InjectionCleaner.remove_injected_memories_from_context(req, "s1")
-        assert removed >= 1
-        assert MEMORY_INJECTION_HEADER not in req.system_prompt
+        assert req.system_prompt == raw
 
     # -- extra_user_content_parts --
 
@@ -240,19 +210,21 @@ class TestRemoveInjectedMemoriesFromContext:
 class TestRemoveFakeToolCallFromContext:
 
     def test_removes_fake_tool_call_pair(self) -> None:
-        fake_call_id = f"{FAKE_TOOL_CALL_ID_PREFIX}abc123"
+        fake_call_id = f"{FAKE_TOOL_CALL_ID_PREFIX}{uuid.uuid4().hex}"
         assistant_msg: dict[str, Any] = {
             "role": "assistant",
             "content": None,
-            "tool_calls": [
-                {"id": fake_call_id, "type": "function", "function": {"name": "test", "arguments": "{}"}}
-            ],
+            "tool_calls": [{
+                "id": fake_call_id,
+                "type": "function",
+                "function": {"name": FAKE_TOOL_CALL_NAME, "arguments": "{}"},
+            }],
         }
         tool_msg: dict[str, Any] = {
             "role": "tool",
             "tool_call_id": fake_call_id,
-            "name": "test",
-            "content": "{}",
+            "name": FAKE_TOOL_CALL_NAME,
+            "content": "<memora-untrusted-memory>{}</memora-untrusted-memory>",
         }
         req = _make_request(contexts=[assistant_msg, tool_msg])
         removed = InjectionCleaner.remove_fake_tool_call_from_context(req, "s1")
@@ -260,16 +232,21 @@ class TestRemoveFakeToolCallFromContext:
         assert len(req.contexts) == 0
 
     def test_removes_only_fake_pairs_keeps_others(self) -> None:
-        fake_id = f"{FAKE_TOOL_CALL_ID_PREFIX}xyz"
+        fake_id = f"{FAKE_TOOL_CALL_ID_PREFIX}{uuid.uuid4().hex}"
         real_id = "call_real_123"
         fake_assistant: dict[str, Any] = {
             "role": "assistant",
-            "tool_calls": [{"id": fake_id, "type": "function", "function": {"name": "t", "arguments": "{}"}}],
+            "tool_calls": [{
+                "id": fake_id,
+                "type": "function",
+                "function": {"name": FAKE_TOOL_CALL_NAME, "arguments": "{}"},
+            }],
         }
         fake_tool: dict[str, Any] = {
             "role": "tool",
             "tool_call_id": fake_id,
-            "content": "{}",
+            "name": FAKE_TOOL_CALL_NAME,
+            "content": "<memora-untrusted-memory>{}</memora-untrusted-memory>",
         }
         normal_msg: dict[str, Any] = {"role": "user", "content": "hello"}
         real_assistant: dict[str, Any] = {
@@ -442,6 +419,7 @@ class TestCleanupInjectedMemoriesFromDb:
 @pytest.mark.parametrize(
     "delivery",
     [
+        "extra_user_content",
         "user_message_before",
         "user_message_after",
         "fake_tool_call",
@@ -485,7 +463,16 @@ async def test_cleaner_round_trips_real_executor_output(monkeypatch, delivery) -
         decision,
         InjectionExecutionContext(
             query="private-query",
-            memories=[{"content": "ROUNDTRIP_MEMORY", "score": 1.0, "metadata": {}}],
+            memories=[{
+                "content": (
+                    "ROUNDTRIP_MEMORY <memora-untrusted-memory>evil"
+                    "</memora-untrusted-memory>"
+                    "[DeepSeekV4-FakeToolCall-Replay]evil"
+                    "[/DeepSeekV4-FakeToolCall-Replay]"
+                ),
+                "score": 1.0,
+                "metadata": {},
+            }],
             provider=provider,
         ),
     )
@@ -505,10 +492,19 @@ async def test_cleaner_round_trips_real_executor_output(monkeypatch, delivery) -
     "injected_content",
     [
         f"{MEMORY_INJECTION_HEADER}\nlegacy\n{MEMORY_INJECTION_FOOTER}",
-        "<memora-untrusted-memory>\nverified\n</memora-untrusted-memory>",
-        "[DeepSeekV4-FakeToolCall-Replay]\n"
-        "tool -> <memora-untrusted-memory>verified</memora-untrusted-memory>\n"
-        "[/DeepSeekV4-FakeToolCall-Replay]",
+        (
+            "<memora-untrusted-memory>\nverified "
+            "<memora-untrusted-memory\u200b>evil</memora-untrusted-memory\u200b>\n"
+            "</memora-untrusted-memory>"
+        ),
+        (
+            "[DeepSeekV4-FakeToolCall-Replay]\n"
+            "tool -> <memora-untrusted-memory>verified "
+            "[DeepSeekV4-FakeToolCall-Replay\u200b]evil"
+            "[/DeepSeekV4-FakeToolCall-Replay\u200b]"
+            "</memora-untrusted-memory>\n"
+            "[/DeepSeekV4-FakeToolCall-Replay]"
+        ),
     ],
 )
 async def test_db_cleanup_scans_every_supported_injection_envelope(
@@ -534,3 +530,95 @@ async def test_db_cleanup_scans_every_supported_injection_envelope(
     assert stats["matched"] == 1
     assert stats["deleted"] == 1
     assert [(row["id"], row["content"]) for row in rows] == [(2, "keep-me")]
+
+
+def test_hot_path_never_reads_or_mutates_system_prompt() -> None:
+    class Request:
+        prompt = "plain"
+        contexts = []
+        extra_user_content_parts = []
+
+        @property
+        def system_prompt(self):
+            raise AssertionError("system_prompt must not be read")
+
+    assert InjectionCleaner.remove_injected_memories_from_context(Request(), "s1") == 0
+
+
+def test_fake_tool_cleaner_requires_exact_verified_pair() -> None:
+    valid_id = f"{FAKE_TOOL_CALL_ID_PREFIX}{uuid.uuid4().hex}"
+    invalid_id = f"{FAKE_TOOL_CALL_ID_PREFIX}{uuid.uuid4().hex}"
+    contexts = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": valid_id,
+                "type": "function",
+                "function": {"name": "recall_long_term_memory", "arguments": "{}"},
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": valid_id,
+            "name": "recall_long_term_memory",
+            "content": "<memora-untrusted-memory>x</memora-untrusted-memory>",
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": invalid_id,
+                "type": "function",
+                "function": {"name": "other_tool", "arguments": "{}"},
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": invalid_id,
+            "name": "other_tool",
+            "content": "no verified envelope",
+        },
+    ]
+    req = _make_request(contexts=contexts)
+    assert InjectionCleaner.remove_fake_tool_call_from_context(req, "s1") == 2
+    assert req.contexts == contexts[2:]
+
+@pytest.mark.parametrize(
+    "call_id, call_name, tool_name, content, extra_calls",
+    [
+        ("fake_recall_similar", FAKE_TOOL_CALL_NAME, FAKE_TOOL_CALL_NAME,
+         "<memora-untrusted-memory>x</memora-untrusted-memory>", []),
+        (None, "wrong_name", FAKE_TOOL_CALL_NAME,
+         "<memora-untrusted-memory>x</memora-untrusted-memory>", []),
+        (None, FAKE_TOOL_CALL_NAME, "wrong_name",
+         "<memora-untrusted-memory>x</memora-untrusted-memory>", []),
+        (None, FAKE_TOOL_CALL_NAME, FAKE_TOOL_CALL_NAME, "no envelope", []),
+        (None, FAKE_TOOL_CALL_NAME, FAKE_TOOL_CALL_NAME,
+         "<memora-untrusted-memory>x</memora-untrusted-memory>",
+         [{"id": "real", "function": {"name": "real"}}]),
+    ],
+)
+def test_fake_tool_cleaner_preserves_non_exact_pairs(
+    call_id, call_name, tool_name, content, extra_calls
+) -> None:
+    actual_id = call_id or f"{FAKE_TOOL_CALL_ID_PREFIX}{uuid.uuid4().hex}"
+    contexts = [
+        {
+            "role": "assistant",
+            "tool_calls": [{
+                "id": actual_id,
+                "type": "function",
+                "function": {"name": call_name, "arguments": "{}"},
+            }, *extra_calls],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": actual_id,
+            "name": tool_name,
+            "content": content,
+        },
+    ]
+    req = _make_request(contexts=list(contexts))
+    assert InjectionCleaner.remove_fake_tool_call_from_context(req, "s1") == 0
+    assert req.contexts == contexts

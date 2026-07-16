@@ -131,6 +131,7 @@ class InjectionExecutionResult:
     dropped_count: int = 0
     truncated_count: int = 0
     fallback_applied: bool = False
+    actual_resolved_delivery: DeliveryMode | None = None
     error_code: str | None = None
     decision_ms: float = 0.0
     format_ms: float = 0.0
