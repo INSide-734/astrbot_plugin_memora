@@ -1016,3 +1016,72 @@ class TestReflectionStorageTaskCommit:
         assert await handler.try_begin_summary_window("session-1") is False
         handler.finish_summary_window("session-1")
         assert await handler.try_begin_summary_window("session-1") is True
+
+
+class TestEventHandlerInjectionLifecycle:
+    def test_passes_injection_dependencies_to_recall_handler(self) -> None:
+        from core.event_handler import EventHandler
+
+        recorder = MagicMock()
+        with patch("core.event_handler.RecallHandler") as recall_handler_type:
+            EventHandler(
+                context=MagicMock(),
+                config_manager=MagicMock(),
+                memory_engine=MagicMock(),
+                memory_processor=MagicMock(),
+                conversation_manager=MagicMock(),
+                injection_recorder=recorder,
+                memory_tool_available=True,
+            )
+
+        kwargs = recall_handler_type.call_args.kwargs
+        assert kwargs["injection_recorder"] is recorder
+        assert kwargs["memory_tool_available"] is True
+
+    @pytest.mark.asyncio
+    async def test_shutdown_closes_recorder_after_reflection_and_maintenance(
+        self,
+    ) -> None:
+        from core.event_handler import EventHandler
+
+        order: list[str] = []
+        recorder = MagicMock()
+        recorder.close = AsyncMock(side_effect=lambda **_kwargs: order.append("recorder"))
+        handler = EventHandler(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            memory_engine=MagicMock(),
+            memory_processor=MagicMock(),
+            conversation_manager=MagicMock(),
+            injection_recorder=recorder,
+        )
+        handler._reflection_handler.shutdown = AsyncMock(
+            side_effect=lambda: order.append("reflection")
+        )
+
+        async def maintenance() -> None:
+            order.append("maintenance")
+
+        handler._create_maintenance_task(maintenance(), name="test-maintenance")
+        await handler.shutdown()
+
+        assert order == ["reflection", "maintenance", "recorder"]
+        recorder.close.assert_awaited_once_with(timeout=5.0)
+
+    def test_recall_handler_stores_injection_dependencies(self) -> None:
+        from core.handlers.recall_handler import RecallHandler
+
+        recorder = MagicMock()
+        handler = RecallHandler(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            memory_engine=MagicMock(),
+            conversation_manager=MagicMock(),
+            injection_adapter=MagicMock(),
+            enforce_limit_cb=MagicMock(),
+            injection_recorder=recorder,
+            memory_tool_available=True,
+        )
+
+        assert handler._injection_recorder is recorder
+        assert handler._memory_tool_available is True

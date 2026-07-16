@@ -7,12 +7,14 @@ from astrbot.api import logger
 from astrbot.core.provider.provider import Provider
 
 from ..base.exceptions import ProviderNotReadyError
+from ..injection.recorder import InjectionDecisionRecorder
 from ..managers.backup_manager import BackupManager
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..processors.memory_processor import MemoryProcessor
 from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
+from ..storage.injection_decision_store import InjectionDecisionStore
 from ..validators.index_validator import IndexValidator
 
 
@@ -147,6 +149,8 @@ class ComponentFactory:
             decay_scheduler = scheduler
             logger.info("DecayScheduler 已启动")
 
+        injection_components = await self._build_injection_components(db_path)
+
         return {
             "db": db,
             "graph_db": graph_db,
@@ -156,7 +160,38 @@ class ComponentFactory:
             "conversation_manager": conversation_manager,
             "index_validator": index_validator,
             "decay_scheduler": decay_scheduler,
+            **injection_components,
         }
+
+    async def _build_injection_components(self, db_path: Path) -> dict[str, object]:
+        decision_store = InjectionDecisionStore(db_path)
+        decision_recorder: InjectionDecisionRecorder | None = None
+        try:
+            await decision_store.initialize()
+            decision_recorder = InjectionDecisionRecorder(
+                decision_store,
+                retention_days=int(
+                    self.config_manager.get(
+                        "recall_engine.injection_decision_retention_days", 30
+                    )
+                ),
+                max_rows=int(
+                    self.config_manager.get(
+                        "recall_engine.injection_decision_max_rows", 100_000
+                    )
+                ),
+            )
+            await decision_recorder.start()
+            decision_recorder.schedule_cleanup()
+            return {
+                "injection_decision_store": decision_store,
+                "injection_decision_recorder": decision_recorder,
+            }
+        except BaseException:
+            if decision_recorder is not None:
+                await decision_recorder.close(timeout=5.0)
+            await decision_store.close()
+            raise
 
     def _build_engine_config(
         self, stopwords_dir: Path, graph_memory_enabled: bool
