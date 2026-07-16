@@ -87,17 +87,17 @@ describe("AffectionPage", () => {
     Object.defineProperty(window, "AstrBotPluginPage", { configurable: true, value: undefined });
   });
 
-  function mockInitialData(groups = [{ group_id: "group-1", message_count: 12 }]) {
+  function mockInitialData(groups = [{ group_id: "group-1", message_count: 12 }], statusOverrides: Record<string, unknown> = {}) {
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/groups") return Promise.resolve(ok({ groups }));
-      if (path === "page/affection/status") return Promise.resolve(ok(status()));
+      if (path === "page/affection/status") return Promise.resolve(ok(status(statusOverrides)));
       if (path === "page/affection/users") return Promise.resolve(ok({ group_id: params.group_id, users: [user()], total: 1, limit: 50, offset: Number(params.offset) }));
       if (path === "page/affection/moods/history") return Promise.resolve(ok({ history: [] }));
       return Promise.resolve(ok({}));
     });
   }
-  async function renderLoaded(props: Partial<FutureAffectionPageProps> = {}) {
-    mockInitialData();
+  async function renderLoaded(props: Partial<FutureAffectionPageProps> = {}, statusOverrides: Record<string, unknown> = {}) {
+    mockInitialData(undefined, statusOverrides);
     render(<FutureAffectionPage showToast={showToast} {...props} />);
     await screen.findByText("alice");
   }
@@ -430,13 +430,39 @@ describe("AffectionPage", () => {
     await waitFor(() => expect(screen.queryByText("1 selected")).toBeNull());
   });
 
+  it("uses the mood select popup for keyboard selection", async () => {
+    await renderLoaded({}, { current_mood: { ...status().current_mood, mood_type: "calm" } });
+    bridge.apiPost.mockResolvedValue(ok({ mood_type: "happy", intensity: 0.5, duration_hours: 12.5, description: "Upbeat" }));
+    fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
+    const dialog = editor(/mood/i);
+
+    expect(within(dialog).queryByRole("option")).toBeNull();
+    const moodType = within(dialog).getByRole("combobox", { name: /mood type/i });
+    moodType.focus();
+    fireEvent.keyDown(moodType, { key: "ArrowDown", code: "ArrowDown" });
+
+    const listbox = await screen.findByRole("listbox");
+    const happyOption = within(listbox).getByRole("option", { name: /happy/i });
+    await waitFor(() => expect(document.activeElement?.getAttribute("role")).toBe("option"));
+    fireEvent.keyDown(document.activeElement as Element, { key: "Home", code: "Home" });
+    await waitFor(() => expect(document.activeElement).toBe(happyOption));
+    fireEvent.keyDown(happyOption, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(moodType.textContent).toMatch(/happy/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: /set|save/i }));
+    await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith("page/affection/mood/set", {
+      group_id: "group-1", mood_type: "happy", intensity: 0.5, duration_hours: 12.5, description: "Upbeat",
+    }));
+  });
+
   it("sets lowercase mood with exact body and enforces both range boundaries", async () => {
     await renderLoaded(); bridge.apiPost.mockResolvedValue(ok({ mood_type: "happy", intensity: 0.5, duration_hours: 4, description: "..." }));
     fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
     const dialog = editor(/mood/i);
     expect((within(dialog).getByLabelText(/duration/i) as HTMLInputElement).value).toBe("12.5");
     fireEvent.click(within(dialog).getByRole("combobox", { name: /mood type/i }));
-    fireEvent.click(await within(dialog).findByRole("option", { name: /happy/i }));
+    fireEvent.click(within(await screen.findByRole("listbox")).getByRole("option", { name: /happy/i }));
     fireEvent.change(within(dialog).getByLabelText("Intensity"), { target: { value: "0" } });
     expect(within(dialog).getByText(/between 0.1 and 1/i, { selector: "#mood-intensity-error" })).toBeTruthy();
     fireEvent.change(within(dialog).getByLabelText("Intensity"), { target: { value: "0.5" } });
@@ -454,7 +480,7 @@ describe("AffectionPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
     const dialog = editor(/mood/i);
     fireEvent.click(within(dialog).getByRole("combobox", { name: /mood type/i }));
-    fireEvent.click(await within(dialog).findByRole("option", { name: /happy/i }));
+    fireEvent.click(within(await screen.findByRole("listbox")).getByRole("option", { name: /happy/i }));
     fireEvent.change(within(dialog).getByLabelText("Intensity"), { target: { value: "0.5" } });
     fireEvent.change(within(dialog).getByLabelText(/duration/i), { target: { value: "4" } });
     fireEvent.change(within(dialog).getByLabelText("Description"), { target: { value: "valid" } });
@@ -481,7 +507,7 @@ describe("AffectionPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /edit mood|set mood/i }));
     const dialog = editor(/mood/i);
     fireEvent.click(within(dialog).getByRole("combobox", { name: /mood type/i }));
-    fireEvent.click(await within(dialog).findByRole("option", { name: /happy/i }));
+    fireEvent.click(within(await screen.findByRole("listbox")).getByRole("option", { name: /happy/i }));
     fireEvent.change(within(dialog).getByLabelText("Intensity"), { target: { value: "0.5" } });
     fireEvent.change(within(dialog).getByLabelText(/duration/i), { target: { value: "4" } });
     fireEvent.change(within(dialog).getByLabelText("Description"), { target: { value: "keep me" } });
