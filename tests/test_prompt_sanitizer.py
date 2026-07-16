@@ -318,3 +318,46 @@ class TestPromptProtectionService:
         legacy, _ = sanitizer.sanitize("legacy global secret")
         assert scoped == ""
         assert legacy == ""
+
+    def test_explicit_empty_validator_scope_does_not_fallback_global(self):
+        validator = DoubleCheckValidator()
+        secret = "global validator secret alpha beta gamma delta epsilon"
+        validator.register_instructions([secret])
+        scoped_valid, scoped_details = validator.validate_no_leak(secret, [])
+        legacy_valid, legacy_details = validator.validate_no_leak(secret, None)
+        assert scoped_valid is True
+        assert scoped_details == []
+        assert legacy_valid is False
+        assert legacy_details
+
+    def test_scoped_registry_expires_and_remains_bounded(self):
+        now = [100.0]
+        svc = PromptProtectionService(
+            enable_double_check=False,
+            clock=lambda: now[0],
+            scope_ttl_seconds=10.0,
+            max_scopes=2,
+        )
+        svc.wrap_prompt("first secret", scope_id="first")
+        now[0] += 1
+        svc.wrap_prompt("second secret", scope_id="second")
+        now[0] += 1
+        svc.wrap_prompt("third secret", scope_id="third")
+        assert svc.has_scope("first") is False
+        assert svc.has_scope("second") is True
+        assert svc.has_scope("third") is True
+        assert svc.scoped_scope_count == 2
+
+        now[0] += 11
+        assert svc.has_scope("second") is False
+        assert svc.has_scope("third") is False
+        assert svc.scoped_scope_count == 0
+
+    def test_many_scopes_without_responses_never_exceed_capacity(self):
+        svc = PromptProtectionService(
+            enable_double_check=False,
+            max_scopes=3,
+        )
+        for index in range(20):
+            svc.wrap_prompt(f"secret-{index}", scope_id=f"scope-{index}")
+        assert svc.scoped_scope_count == 3

@@ -16,7 +16,12 @@ from ..managers.memory_engine import MemoryEngine
 from ..processors.memory_processor import MemoryProcessor
 from ..utils import OperationContext, get_persona_id
 from .topic_batch_preparer import TopicBatchPreparer
-from ..security.prompt_sanitizer import PROMPT_PROTECTION_SCOPE_EXTRA_KEY
+from ..security.prompt_sanitizer import (
+    PROMPT_PROTECTION_REQUIRED_ATTR,
+    PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
+    PROMPT_PROTECTION_SCOPE_ATTR,
+    PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
+)
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -75,11 +80,18 @@ class ReflectionHandler:
             f"[反思处理] 进入 handle_memory_reflection，resp.role={resp.role}"
         )
 
+        scope_id, protection_required, scope_lookup_failed = (
+            self._get_prompt_protection_context(event)
+        )
         if resp.role != "assistant":
+            self._discard_prompt_protection_scope(scope_id)
+            return
+        if scope_lookup_failed:
+            resp.completion_text = ""
+            self._discard_prompt_protection_scope(scope_id)
             return
 
-        scope_id, scope_lookup_failed = self._get_prompt_protection_scope(event)
-        if scope_lookup_failed:
+        if protection_required and not scope_id:
             resp.completion_text = ""
             return
         session_id = getattr(event, "unified_msg_origin", "") or ""
@@ -88,6 +100,7 @@ class ReflectionHandler:
             response_text,
             session_id,
             scope_id=scope_id,
+            protection_required=protection_required,
         )
         resp.completion_text = response_text
 
@@ -314,10 +327,21 @@ class ReflectionHandler:
         session_id: str,
         *,
         scope_id: str | None = None,
+        protection_required: bool = False,
     ) -> str:
         """Sanitize the user-visible response and consume its request scope."""
         try:
-            if not self._config_manager.get("security.sanitize_llm_response", True):
+            if protection_required:
+                if self._prompt_protection is None:
+                    return ""
+                has_scope = getattr(self._prompt_protection, "has_scope", None)
+                if callable(has_scope) and not has_scope(scope_id):
+                    self._discard_prompt_protection_scope(scope_id)
+                    return ""
+            if (
+                not protection_required
+                and not self._config_manager.get("security.sanitize_llm_response", True)
+            ):
                 self._discard_prompt_protection_scope(scope_id)
                 return response_text
             if self._prompt_protection is None:
@@ -361,20 +385,41 @@ class ReflectionHandler:
                 logger.warning("[反思处理] 请求安全关联清理失败", exc_info=True)
 
     @staticmethod
-    def _get_prompt_protection_scope(
+    def _get_prompt_protection_context(
         event: AstrMessageEvent,
-    ) -> tuple[str | None, bool]:
+    ) -> tuple[str | None, bool, bool]:
+        official_scope: Any = None
+        official_required: Any = False
+        official_failed = False
         getter = getattr(event, "get_extra", None)
-        if not callable(getter):
-            return None, False
+        if callable(getter):
+            try:
+                official_scope = getter(PROMPT_PROTECTION_SCOPE_EXTRA_KEY)
+                official_required = getter(PROMPT_PROTECTION_REQUIRED_EXTRA_KEY)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                official_failed = True
+                logger.warning(
+                    "[反思处理] 请求安全关联官方通道读取失败",
+                    exc_info=True,
+                )
         try:
-            scope_id = getter(PROMPT_PROTECTION_SCOPE_EXTRA_KEY)
-        except asyncio.CancelledError:
-            raise
+            private_scope = getattr(event, PROMPT_PROTECTION_SCOPE_ATTR, None)
+            private_required = getattr(event, PROMPT_PROTECTION_REQUIRED_ATTR, False)
         except Exception:
-            logger.warning("[反思处理] 请求安全关联读取失败，已阻止输出", exc_info=True)
-            return None, True
-        return (scope_id, False) if isinstance(scope_id, str) and scope_id else (None, False)
+            private_scope = None
+            private_required = False
+        scope_id = (
+            official_scope
+            if isinstance(official_scope, str) and official_scope
+            else private_scope
+            if isinstance(private_scope, str) and private_scope
+            else None
+        )
+        required = official_required is True or private_required is True
+        lookup_failed = official_failed and scope_id is None and private_required is not True
+        return scope_id, required, lookup_failed
 
     def _writes_blocked(self) -> bool:
         if self._write_guard_cb is None:

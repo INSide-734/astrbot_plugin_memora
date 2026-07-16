@@ -34,7 +34,12 @@ from ..injection.models import (
     RoutingMode,
 )
 from ..injection.router import InjectionRoutingConfig, InjectionStrategyRouter
-from ..security.prompt_sanitizer import PROMPT_PROTECTION_SCOPE_EXTRA_KEY
+from ..security.prompt_sanitizer import (
+    PROMPT_PROTECTION_REQUIRED_ATTR,
+    PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
+    PROMPT_PROTECTION_SCOPE_ATTR,
+    PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
+)
 from ..utils import OperationContext, get_persona_id
 
 if TYPE_CHECKING:
@@ -58,7 +63,7 @@ class _RecallExecutionInput:
     persona_filtered: bool
     decision_ms: float
     provider: Any
-    scope_id: str | None
+    event: Any
     preflight_short_circuit: bool
     cognitive_format_ms: float = 0.0
 
@@ -118,7 +123,6 @@ class RecallHandler:
         filtered_count = 0
         try:
             session_id = event.unified_msg_origin
-            scope_id = self._set_prompt_protection_scope(event)
             logger.debug(f"[召回流程] 获取到 unified_msg_origin: {session_id}")
 
             if session_id and (
@@ -297,7 +301,7 @@ class RecallHandler:
                         decision_ms=preflight_ms,
                         provider=provider,
                         preflight_short_circuit=True,
-                        scope_id=scope_id,
+                        event=event,
                     ))
                     injected_count = result.selected_count
                     return
@@ -360,7 +364,7 @@ class RecallHandler:
                     decision_ms=decision_ms,
                     provider=provider,
                     preflight_short_circuit=False,
-                    scope_id=scope_id,
+                    event=event,
                     cognitive_format_ms=format_ms,
                 ))
                 injected_count = result.selected_count
@@ -541,6 +545,25 @@ class RecallHandler:
                 format_ms=execution.cognitive_format_ms,
             )
         else:
+            scope_id: str | None = None
+            if self._prompt_protection is not None:
+                scope_id = self._associate_prompt_protection_scope(execution.event)
+                if scope_id is None:
+                    configured_budget = (
+                        max(0, decision.memory_budget_chars)
+                        + max(0, cognitive_budget)
+                        + max(0, prospective_budget)
+                    )
+                    result = InjectionExecutionResult(
+                        outcome=InjectionOutcome.ERROR,
+                        configured_budget_chars=configured_budget,
+                        effective_budget_chars=min(
+                            signals.context_headroom_chars, configured_budget
+                        ),
+                        error_code="PROTECTION_SCOPE_FAILED",
+                    )
+                    self._record_injection_decision(decision, signals, result)
+                    return result
             context = InjectionExecutionContext(
                 query=execution.query,
                 memories=execution.memories,
@@ -552,11 +575,17 @@ class RecallHandler:
                 persona_filtered=execution.persona_filtered,
                 context_headroom_chars=signals.context_headroom_chars,
                 provider=execution.provider,
-                scope_id=execution.scope_id,
+                scope_id=scope_id,
             )
-            result = await self._executor.execute(
-                execution.req, decision, context
-            )
+            result = await self._executor.execute(execution.req, decision, context)
+            if self._prompt_protection is not None:
+                if result.outcome in {
+                    InjectionOutcome.INJECTED,
+                    InjectionOutcome.FALLBACK,
+                }:
+                    self._mark_prompt_protection_required(execution.event, True)
+                else:
+                    self._clear_prompt_protection_scope(execution.event, scope_id)
             result = replace(
                 result,
                 decision_ms=execution.decision_ms,
@@ -659,22 +688,75 @@ class RecallHandler:
             logger.debug("[召回流程] 性能样本记录失败", exc_info=True)
 
     @staticmethod
-    def _set_prompt_protection_scope(event: AstrMessageEvent) -> str | None:
-        setter = getattr(event, "set_extra", None)
-        if not callable(setter):
-            return None
+    def _associate_prompt_protection_scope(event: AstrMessageEvent) -> str | None:
         scope_id = uuid.uuid4().hex
+        official = False
+        setter = getattr(event, "set_extra", None)
+        getter = getattr(event, "get_extra", None)
+        if callable(setter) and callable(getter):
+            try:
+                setter(PROMPT_PROTECTION_SCOPE_EXTRA_KEY, scope_id)
+                setter(PROMPT_PROTECTION_REQUIRED_EXTRA_KEY, False)
+                official = getter(PROMPT_PROTECTION_SCOPE_EXTRA_KEY) == scope_id
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "[召回流程] 请求安全关联官方通道写入失败",
+                    exc_info=True,
+                )
+        private = False
         try:
-            setter(PROMPT_PROTECTION_SCOPE_EXTRA_KEY, scope_id)
-        except asyncio.CancelledError:
-            raise
+            setattr(event, PROMPT_PROTECTION_SCOPE_ATTR, scope_id)
+            setattr(event, PROMPT_PROTECTION_REQUIRED_ATTR, False)
+            private = getattr(event, PROMPT_PROTECTION_SCOPE_ATTR, None) == scope_id
         except Exception:
             logger.warning(
-                "[召回流程] 请求安全关联写入失败，使用兼容保护模式",
+                "[召回流程] 请求安全关联私有通道写入失败",
                 exc_info=True,
             )
-            return None
-        return scope_id
+        return scope_id if official or private else None
+
+    @staticmethod
+    def _mark_prompt_protection_required(
+        event: AstrMessageEvent,
+        required: bool,
+    ) -> None:
+        setter = getattr(event, "set_extra", None)
+        if callable(setter):
+            try:
+                setter(PROMPT_PROTECTION_REQUIRED_EXTRA_KEY, required)
+            except Exception:
+                logger.warning("[召回流程] 请求安全标记官方通道写入失败", exc_info=True)
+        try:
+            setattr(event, PROMPT_PROTECTION_REQUIRED_ATTR, required)
+        except Exception:
+            logger.warning("[召回流程] 请求安全标记私有通道写入失败", exc_info=True)
+
+    def _clear_prompt_protection_scope(
+        self,
+        event: AstrMessageEvent,
+        scope_id: str | None,
+    ) -> None:
+        if self._prompt_protection is not None:
+            discard = getattr(self._prompt_protection, "discard_scope", None)
+            if callable(discard):
+                try:
+                    discard(scope_id)
+                except Exception:
+                    logger.warning("[召回流程] 请求安全注册清理失败", exc_info=True)
+        setter = getattr(event, "set_extra", None)
+        if callable(setter):
+            try:
+                setter(PROMPT_PROTECTION_SCOPE_EXTRA_KEY, None)
+                setter(PROMPT_PROTECTION_REQUIRED_EXTRA_KEY, False)
+            except Exception:
+                pass
+        for attr in (PROMPT_PROTECTION_SCOPE_ATTR, PROMPT_PROTECTION_REQUIRED_ATTR):
+            try:
+                delattr(event, attr)
+            except (AttributeError, TypeError):
+                pass
 
     @staticmethod
     def _get_event_sender_id(event: AstrMessageEvent) -> str | None:
