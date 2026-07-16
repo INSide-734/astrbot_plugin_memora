@@ -6,6 +6,7 @@ from .evaluation_api import EvaluationApiMixin
 from .expression_api import ExpressionApiMixin
 from .graph_api import GraphApiMixin
 from .history_tracker import HistoryTracker
+from .injection_strategy_api import InjectionStrategyApiMixin
 from .jargon_api import JargonApiMixin
 from .memory_batch_api import MemoryBatchApiMixin
 from .memory_read_api import MemoryReadApiMixin
@@ -27,6 +28,7 @@ __all__ = [
     "ExpressionApiMixin",
     "GraphApiMixin",
     "HistoryTracker",
+    "InjectionStrategyApiMixin",
     "JargonApiMixin",
     "MemoryBatchApiMixin",
     "MemoryReadApiMixin",

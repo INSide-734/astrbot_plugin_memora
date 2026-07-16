@@ -18,6 +18,7 @@ from .api.diagnostics_api import DiagnosticsApiMixin
 from .api.evaluation_api import EvaluationApiMixin
 from .api.expression_api import ExpressionApiMixin
 from .api.graph_api import GraphApiMixin
+from .api.injection_strategy_api import InjectionStrategyApiMixin
 from .api.jargon_api import JargonApiMixin
 from .api.knowledge_api import KnowledgeApiMixin
 from .api.learning_api import LearningApiMixin
@@ -62,6 +63,7 @@ class PluginPageApi(
     TopicSegmentationApiMixin,
     QualityApiMixin,
     RecallTraceApiMixin,
+    InjectionStrategyApiMixin,
     ReviewApiMixin,
     JargonApiMixin,
     DelegationApiMixin,
@@ -210,6 +212,34 @@ class PluginPageApi(
             ["GET"],
             "页面接口：可解释召回跟踪详情",
         )
+        for suffix, handler, description in (
+            (
+                "/injection-strategy/catalog",
+                self.get_injection_strategy_catalog,
+                "页面接口：注入策略目录",
+            ),
+            (
+                "/injection-strategy/summary",
+                self.get_injection_strategy_summary,
+                "页面接口：注入策略摘要",
+            ),
+            (
+                "/injection-strategy/decisions",
+                self.list_injection_decisions,
+                "页面接口：注入决策列表",
+            ),
+            (
+                "/injection-strategy/decisions/detail",
+                self.get_injection_decision_detail,
+                "页面接口：注入决策详情",
+            ),
+        ):
+            register(
+                f"{PAGE_API_PREFIX}{suffix}",
+                handler,
+                ["GET"],
+                description,
+            )
         register(
             f"{PAGE_API_PREFIX}/graph/overview",
             self.get_graph_overview,
