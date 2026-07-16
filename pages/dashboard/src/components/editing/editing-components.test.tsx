@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
 import { ActionConfirmDialog } from "./ActionConfirmDialog";
 import { EditConflictDialog } from "./EditConflictDialog";
-import { EditFormLayout } from "./EditFormLayout";
+import { EditFormLayout, InlineFieldError } from "./EditFormLayout";
 import { EntityCreateDialog } from "./EntityCreateDialog";
 import { EntityEditorSheet } from "./EntityEditorSheet";
 import { TagEditor } from "./TagEditor";
@@ -225,17 +225,26 @@ describe("EditFormLayout", () => {
         fieldErrors={{ name: "Name is required", email: "Email is required" }}
         focusInvalid
       >
-        {({ registerField, getFieldError }) => (
-          <>
-            <input aria-label="Name" ref={(element) => registerField("name", element)} aria-describedby={getFieldError("name")?.id} />
-            <input aria-label="Email" ref={(element) => registerField("email", element)} aria-describedby={getFieldError("email")?.id} />
-          </>
-        )}
+        {({ registerField, getFieldError }) => {
+          const nameError = getFieldError("name");
+          const emailError = getFieldError("email");
+          return (
+            <>
+              <input aria-label="Name" ref={(element) => registerField("name", element)} aria-describedby={nameError?.id} />
+              {nameError ? <InlineFieldError id={nameError.id}>{nameError.message}</InlineFieldError> : null}
+              <input aria-label="Email" ref={(element) => registerField("email", element)} aria-describedby={emailError?.id} />
+              {emailError ? <InlineFieldError id={emailError.id}>{emailError.message}</InlineFieldError> : null}
+            </>
+          );
+        }}
       </EditFormLayout>,
     );
 
-    expect(screen.getAllByRole("alert")[0].getAttribute("tabindex")).toBe("-1");
-    expect(screen.getAllByText("Name is required").find((element) => element.id)?.id).toMatch(/-error-[a-f0-9-]+$/);
+    const summary = screen.getByRole("alert");
+    const nameErrorId = screen.getByLabelText("Name").getAttribute("aria-describedby");
+    expect(summary.getAttribute("tabindex")).toBe("-1");
+    expect(nameErrorId).toMatch(/-error-[a-f0-9-]+$/);
+    expect(document.querySelectorAll(`[id="${nameErrorId}"]`)).toHaveLength(1);
     expect(document.activeElement).toBe(screen.getByLabelText("Name"));
   });
 

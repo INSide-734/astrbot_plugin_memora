@@ -1,6 +1,6 @@
-import { EditFormLayout } from "@/components/editing/EditFormLayout";
+import { EditFormLayout, InlineFieldError as FieldError } from "@/components/editing/EditFormLayout";
 import { TagEditor } from "@/components/editing/TagEditor";
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/Input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/textarea";

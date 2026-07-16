@@ -1,8 +1,8 @@
 import { useState } from "react";
 
 import { TagEditor } from "@/components/editing/TagEditor";
-import { EditFormLayout } from "@/components/editing/EditFormLayout";
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import { EditFormLayout, InlineFieldError as FieldError } from "@/components/editing/EditFormLayout";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/Input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
 import { useI18n } from "@/hooks/useI18n";
@@ -48,12 +48,11 @@ export function SocialRelationForm({ value, onChange, fieldErrors, disabled = fa
     }
   };
   const identityDisabled = disabled || mode === "edit";
-  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={fieldErrors} focusInvalid={Object.keys(fieldErrors).length > 0}>
+  const validationErrors = { ...fieldErrors, ...rangeErrors };
+  return <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={validationErrors} focusInvalid={Object.keys(validationErrors).length > 0}>
     {({ getFieldError }) => {
       const relationTypeError = getFieldError("relation_type");
-      const serverStrengthError = getFieldError("strength");
-      const rangeStrengthError = rangeErrors.strength;
-      const strengthError = serverStrengthError ?? (rangeStrengthError ? { id: "social-strength-range-error", message: rangeStrengthError } : undefined);
+      const strengthError = getFieldError("strength");
       const relationTypes = RELATION_TYPES.includes(value.relation_type) ? RELATION_TYPES : [...RELATION_TYPES, value.relation_type];
       const relationLabel = (type: string) => label(`relation.${type}`, type);
       return <>

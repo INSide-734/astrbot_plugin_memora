@@ -1,5 +1,5 @@
-import { EditFormLayout } from "@/components/editing/EditFormLayout";
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import { EditFormLayout, InlineFieldError as FieldError } from "@/components/editing/EditFormLayout";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/Input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/textarea";

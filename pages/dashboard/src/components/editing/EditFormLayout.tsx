@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 
-import { FieldError, FieldGroup } from "@/components/ui/field";
+import { FieldError as BaseFieldError, FieldGroup } from "@/components/ui/field";
 
 export type FieldErrors = Record<string, string | undefined>;
 
@@ -18,6 +18,10 @@ export interface EditFormLayoutProps {
     registerField: (name: string, element: HTMLElement | null) => void;
     getFieldError: (name: string) => FieldErrorDetails | undefined;
   }) => React.ReactNode;
+}
+
+export function InlineFieldError(props: React.ComponentProps<typeof BaseFieldError>) {
+  return <BaseFieldError {...props} role={undefined} />;
 }
 
 function errorId(prefix: string, name: string) {
@@ -69,7 +73,6 @@ export function EditFormLayout({
           return message ? { id: errorId(prefix, name), message } : undefined;
         },
       })}
-      {errors.map(([name, message]) => <FieldError key={name} id={errorId(prefix, name)}>{message}</FieldError>)}
     </FieldGroup>
   );
 }
