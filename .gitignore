@@ -34,7 +34,6 @@ pages/dashboard/assets/
 .codegraph/
 openspec/
 data/
-AGENTS.md
 .agents/
 .worktrees/
 .codex/
