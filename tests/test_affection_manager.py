@@ -1280,8 +1280,12 @@ class TestAffectionManager:
             await mgr.process_interaction("u1", "g1", "你好棒", "谢谢~")
             status = await mgr.get_group_affection_status("g1")
             assert status["user_count"] >= 1
-            assert status["current_mood"] is not None
-            assert "type" in status["current_mood"]
+            mood = status["current_mood"]
+            assert mood is not None
+            assert mood["type"] == "calm"
+            assert mood["duration_hours"] == 1.0
+            assert mood["start_time"] > 0
+            assert isinstance(mood["is_active"], bool)
         finally:
             await store.close()
 

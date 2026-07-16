@@ -399,6 +399,9 @@ class AffectionManager:
                 "type": mood.mood_type.value,
                 "intensity": mood.intensity,
                 "description": mood.description,
+                "duration_hours": mood.duration_hours,
+                "start_time": mood.start_time,
+                "is_active": mood.is_active(),
             },
         }
 

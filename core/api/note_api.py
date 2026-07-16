@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from functools import wraps
 from typing import Any
 
 from quart import request
@@ -96,6 +97,25 @@ def _json_object_payload_or_error(payload: Any):
     if isinstance(payload, dict):
         return payload, None
     return None, error_response("请求体必须是 JSON 对象")
+
+
+def _stable_api_errors(operation: str):
+    def decorate(handler):
+        @wraps(handler)
+        async def wrapped(*args, **kwargs):
+            try:
+                return await handler(*args, **kwargs)
+            except Exception as exc:
+                logger.error(
+                    "[笔记 API] operation=%s id=unavailable error_class=%s",
+                    operation,
+                    type(exc).__name__,
+                )
+                return error_response("笔记操作失败", code="internal_error")
+
+        return wrapped
+
+    return decorate
 
 
 def _note_changes_validation_error(field_errors: dict[str, str]):
@@ -209,6 +229,7 @@ class NoteApiMixin:
         ]
         return ok_response({"notes": serialized_notes, "total": _safe_total(total)})
 
+    @_stable_api_errors("read_detail")
     async def get_note_detail(self):
         engines, err = await self._ensure_plugin_ready()
         if err:
@@ -234,6 +255,7 @@ class NoteApiMixin:
         )
         return _note_response_or_error(note, versions)
 
+    @_stable_api_errors("create")
     async def create_note(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -265,6 +287,7 @@ class NoteApiMixin:
             note_id = await store.create(note)
         return ok_response({"note_id": note_id})
 
+    @_stable_api_errors("update")
     async def update_note(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -455,6 +478,7 @@ class NoteApiMixin:
             )
         return error_response(f"不支持的操作: {action}")
 
+    @_stable_api_errors("delete")
     async def delete_note(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -484,6 +508,7 @@ class NoteApiMixin:
             deleted = await store.delete(note_id)
         return ok_response({"deleted": deleted})
 
+    @_stable_api_errors("read_versions")
     async def get_note_versions(self):
         engines, err = await self._ensure_plugin_ready()
         if err:

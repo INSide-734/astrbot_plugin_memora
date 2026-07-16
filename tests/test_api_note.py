@@ -775,3 +775,46 @@ class TestNoteHappyPath:
             result = await mixin.get_note_versions()
         assert result["status"] == "ok"
         assert result["data"]["versions"] == []
+
+
+@pytest.mark.asyncio
+async def test_versions_backend_failure_is_redacted_and_safely_logged() -> None:
+    secret = "note-version-secret"
+    mixin = _make_mixin()
+    engine = MagicMock()
+    engine.note_store = MagicMock()
+    engine.note_store.get_versions = AsyncMock(side_effect=RuntimeError(secret))
+    mixin._ensure_plugin_ready = AsyncMock(
+        return_value=({"memory_engine": engine}, None)
+    )
+    request_mock = _mock_request(note_id="7")
+    with (
+        patch("core.api.note_api.request", request_mock),
+        patch("core.api.note_api.logger.error") as logged,
+    ):
+        result = await mixin.get_note_versions()
+    assert result["code"] == "internal_error"
+    assert secret not in repr(result)
+    assert secret not in repr(logged.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_full_form_update_backend_failure_is_redacted() -> None:
+    secret = "note-update-secret"
+    note = _make_note()
+    mixin = _make_mixin()
+    engine = MagicMock()
+    engine.note_store = MagicMock()
+    engine.note_store.get = AsyncMock(return_value=note)
+    engine.note_store.update = AsyncMock(side_effect=RuntimeError(secret))
+    mixin._ensure_plugin_ready = AsyncMock(
+        return_value=({"memory_engine": engine}, None)
+    )
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={"note_id": 7, "title": "After"}
+    )
+    with patch("core.api.note_api.request", request_mock):
+        result = await mixin.update_note()
+    assert result["code"] == "internal_error"
+    assert secret not in repr(result)

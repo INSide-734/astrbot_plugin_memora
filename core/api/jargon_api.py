@@ -44,6 +44,15 @@ _EDITABLE_FIELDS = frozenset(
 _BATCH_FIELDS = frozenset({"action", "items"})
 
 
+def _audit_success(action: str, identity: Any, *, count: int = 1) -> None:
+    logger.info(
+        "[黑话 AUDIT] action=%s entity=jargon identity=%s result=success count=%d",
+        action,
+        identity,
+        count,
+    )
+
+
 def _parse_limit(raw_value: Any, *, default: int, maximum: int) -> int:
     """解析正整数 limit 参数，非法时使用合理的默认值回退。"""
     try:
@@ -597,6 +606,9 @@ class JargonApiMixin:
             if service is None:
                 return _component_unavailable()
             meaning = await service.create(**payload)
+            _audit_success("create", {
+                "term": meaning.term, "group_id": meaning.group_id,
+            })
             return entity_ok(
                 _meaning_to_dict(meaning),
                 revision=service.revision_for(meaning),
@@ -633,6 +645,7 @@ class JargonApiMixin:
                 changes=changes,
                 expected_revision=revision,
             )
+            _audit_success("update", identity)
             return entity_ok(
                 _meaning_to_dict(meaning),
                 revision=service.revision_for(meaning),
@@ -667,6 +680,7 @@ class JargonApiMixin:
             )
             if not deleted:
                 raise EntityNotFoundError("黑话词条不存在")
+            _audit_success("delete", identity)
             return ok_response({"deleted": True, "identity": identity})
         except Exception as exc:
             return _exception_response(exc, operation="delete")
@@ -688,6 +702,11 @@ class JargonApiMixin:
             result = await service.batch(
                 action=payload.get("action"),
                 items=payload.get("items"),
+            )
+            _audit_success(
+                "batch_" + str(payload.get("action")),
+                "batch",
+                count=result.get("succeeded_count", 0),
             )
             return ok_response(result)
         except Exception as exc:
@@ -782,7 +801,11 @@ class JargonApiMixin:
 
         term = (body.get("term", "") or "").strip()
         group_id = (body.get("group_id", "") or "").strip()
-        confirmed = bool(body.get("confirmed", True))
+        confirmed = body.get("confirmed", True)
+        if not isinstance(confirmed, bool):
+            return error_response(
+                "confirmed 必须为布尔值", code="validation_error"
+            )
 
         if not term:
             return error_response("缺少必填参数 term")
@@ -790,7 +813,30 @@ class JargonApiMixin:
             return error_response("缺少必填参数 group_id")
 
         try:
-            await store.confirm(term, group_id, confirmed=confirmed)
+            if not callable(getattr(store, "get_by_term", None)):
+                await store.confirm(term, group_id, confirmed=confirmed)
+                _audit_success("confirm", {"term": term, "group_id": group_id})
+                action = "confirmed" if confirmed else "rejected"
+                action_text = "已确认" if confirmed else "已驳回"
+                return ok_response({
+                    "term": term,
+                    "group_id": group_id,
+                    "action": action,
+                    "message": f"词条“{term}”{action_text}",
+                })
+            service = await self._get_jargon_admin_service()
+            if service is None:
+                return _component_unavailable()
+            current = await store.get_by_term(term, group_id)
+            if current is None:
+                raise EntityNotFoundError("jargon meaning not found")
+            await service.update(
+                term=term,
+                group_id=group_id,
+                changes={"is_confirmed": confirmed},
+                expected_revision=service.revision_for(current),
+            )
+            _audit_success("confirm", {"term": term, "group_id": group_id})
             action = "confirmed" if confirmed else "rejected"
             action_text = "已确认" if confirmed else "已驳回"
             return ok_response({

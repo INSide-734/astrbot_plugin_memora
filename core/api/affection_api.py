@@ -78,6 +78,17 @@ def _safe_mood_to_dict(mood: Any) -> dict[str, Any] | None:
         return None
 
 
+def _canonical_mood_mapping(mood: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "mood_type": mood.get("mood_type", mood.get("type", "")),
+        "intensity": mood.get("intensity", 0.0),
+        "description": mood.get("description", ""),
+        "duration_hours": mood.get("duration_hours", 4.0),
+        "start_time": mood.get("start_time", 0.0),
+        "is_active": mood.get("is_active", False),
+    }
+
+
 def _validation_error(exc: EntityValidationError) -> dict[str, Any]:
     return error_response(
         "好感度校验失败",
@@ -266,8 +277,8 @@ class AffectionApiMixin:
 
             mood = status.get("current_mood")
             if mood is not None:
-                if isinstance(mood, dict):
-                    result["current_mood"] = mood
+                if isinstance(mood, Mapping):
+                    result["current_mood"] = _canonical_mood_mapping(mood)
                 else:
                     result["current_mood"] = _safe_mood_to_dict(mood)
             else:

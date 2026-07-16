@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from functools import wraps
 import contextlib
 import math
 from typing import Any
@@ -63,6 +64,25 @@ def _json_object_payload_or_error(payload: Any):
     if isinstance(payload, dict):
         return payload, None
     return None, error_response("请求体必须为 JSON 对象")
+
+
+def _stable_api_errors(operation: str):
+    def decorate(handler):
+        @wraps(handler)
+        async def wrapped(*args, **kwargs):
+            try:
+                return await handler(*args, **kwargs)
+            except Exception as exc:
+                logger.error(
+                    "[知识 API] operation=%s id=unavailable error_class=%s",
+                    operation,
+                    type(exc).__name__,
+                )
+                return error_response("知识库操作失败", code="internal_error")
+
+        return wrapped
+
+    return decorate
 
 
 def _normalize_tags(value: Any) -> list[str]:
@@ -210,6 +230,7 @@ class KnowledgeApiMixin:
         ]
         return ok_response({"entries": serialized_entries, "total": total})
 
+    @_stable_api_errors("read_detail")
     async def get_knowledge_detail(self):
         engines, err = await self._ensure_plugin_ready()
         if err:
@@ -229,6 +250,7 @@ class KnowledgeApiMixin:
             return error_response("not found: 条目不存在")
         return _entry_response_or_error(entry)
 
+    @_stable_api_errors("create")
     async def create_knowledge_entry(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -269,6 +291,7 @@ class KnowledgeApiMixin:
             return error_response("创建知识条目失败")
         return ok_response({"entry_id": entry_id})
 
+    @_stable_api_errors("update")
     async def update_knowledge_entry(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -347,6 +370,7 @@ class KnowledgeApiMixin:
             return error_response("not found: 条目不存在")
         return ok_response({"entry_id": entry_id})
 
+    @_stable_api_errors("delete")
     async def delete_knowledge_entry(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:

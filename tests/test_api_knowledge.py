@@ -718,3 +718,48 @@ class TestKnowledgeHappyPath:
             result = await mixin.get_knowledge_detail()
         assert result["status"] == "error"
         assert "entry serialization failed" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_detail_backend_failure_is_redacted_and_safely_logged() -> None:
+    secret = "knowledge-backend-secret"
+    mixin = _make_mixin()
+    engine = MagicMock()
+    engine.knowledge_manager = MagicMock()
+    engine.knowledge_manager.get_entry = AsyncMock(side_effect=RuntimeError(secret))
+    mixin._ensure_plugin_ready = AsyncMock(
+        return_value=({"memory_engine": engine}, None)
+    )
+    request_mock = _make_mock_request(entry_id="7")
+    with (
+        patch("core.api.knowledge_api.request", request_mock),
+        patch("core.api.knowledge_api.logger.error") as logged,
+    ):
+        result = await mixin.get_knowledge_detail()
+    assert result["code"] == "internal_error"
+    assert secret not in repr(result)
+    assert secret not in repr(logged.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_full_form_update_backend_failure_is_redacted() -> None:
+    secret = "knowledge-update-secret"
+    entry = KnowledgeEntry(title="Before", content="Body")
+    mixin = _make_mixin()
+    engine = MagicMock()
+    engine.knowledge_manager = MagicMock()
+    engine.knowledge_manager.get_entry = AsyncMock(return_value=entry)
+    engine.knowledge_manager.update_entry = AsyncMock(
+        side_effect=RuntimeError(secret)
+    )
+    mixin._ensure_plugin_ready = AsyncMock(
+        return_value=({"memory_engine": engine}, None)
+    )
+    request_mock = _make_mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={"entry_id": 7, "title": "After"}
+    )
+    with patch("core.api.knowledge_api.request", request_mock):
+        result = await mixin.update_knowledge_entry()
+    assert result["code"] == "internal_error"
+    assert secret not in repr(result)

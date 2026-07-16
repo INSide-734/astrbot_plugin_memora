@@ -20,6 +20,15 @@ def _coerce_importance_value(raw_value: Any) -> float:
     return float(raw_value)
 
 
+def _required_string(raw_value: Any, *, message: str) -> str:
+    if not isinstance(raw_value, str):
+        raise TypeError(message)
+    value = raw_value.strip()
+    if not value:
+        raise ValueError(message)
+    return value
+
+
 def _is_safe_replacement_id(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
@@ -92,9 +101,10 @@ class MemoryWriteApiMixin:
         current_metadata = self._normalize_metadata(memory.get("metadata"))
 
         if field == "content":
-            new_content = str(value).strip()
-            if not new_content:
-                return self._error("记忆内容不能为空")
+            try:
+                new_content = _required_string(value, message="记忆内容必须是非空字符串")
+            except (TypeError, ValueError):
+                return self._error("记忆内容必须是非空字符串")
 
             session_id = current_metadata.get("session_id")
             persona_id = current_metadata.get("persona_id")
@@ -128,17 +138,26 @@ class MemoryWriteApiMixin:
                 if not delete_success:
                     await memory_engine.delete_memory(new_memory_id)
                     return self._error("旧记忆删除失败，已回滚本次内容更新")
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 if new_memory_id is not None:
                     try:
                         await memory_engine.delete_memory(new_memory_id)
-                    except Exception:
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as cleanup_exc:
                         logger.error(
-                            f"[PageAPI] 回滚新记忆失败 (new_memory_id={new_memory_id})",
-                            exc_info=True,
+                            "[PageAPI] operation=rollback_replacement memory_id=%s error_class=%s",
+                            memory_id,
+                            type(cleanup_exc).__name__,
                         )
-                logger.error(f"[PageAPI] 更新记忆内容失败: {exc}", exc_info=True)
-                return self._error(str(exc))
+                logger.error(
+                    "[PageAPI] operation=legacy_content_update memory_id=%s error_class=%s",
+                    memory_id,
+                    type(exc).__name__,
+                )
+                return self._error("更新记忆失败")
 
             return self._ok(
                 {
@@ -167,16 +186,19 @@ class MemoryWriteApiMixin:
             old_v = self._importance_to_display(current_metadata.get("importance", 0.5))
             new_v = round(normalized * 10.0, 2)
         elif field == "status":
-            status_value = str(value).strip()
+            if not isinstance(value, str):
+                return self._error("状态必须是字符串")
+            status_value = value.strip()
             if status_value not in {"active", "archived", "deleted"}:
                 return self._error("状态必须是 active、archived 或 deleted")
             updates["metadata"] = {"status": status_value}
             old_v = current_metadata.get("status", "active")
             new_v = status_value
         elif field == "type":
-            type_value = str(value).strip()
-            if not type_value:
-                return self._error("类型不能为空")
+            try:
+                type_value = _required_string(value, message="类型必须是非空字符串")
+            except (TypeError, ValueError):
+                return self._error("类型必须是非空字符串")
             updates["metadata"] = {"memory_type": type_value}
             old_v = current_metadata.get("memory_type", "GENERAL")
             new_v = type_value
@@ -199,9 +221,15 @@ class MemoryWriteApiMixin:
 
         try:
             success = await memory_engine.update_memory(memory_id, updates)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            logger.error(f"[PageAPI] 更新记忆失败: {exc}", exc_info=True)
-            return self._error(str(exc))
+            logger.error(
+                "[PageAPI] operation=legacy_update memory_id=%s error_class=%s",
+                memory_id,
+                type(exc).__name__,
+            )
+            return self._error("更新记忆失败")
 
         if not success:
             return self._error("更新失败")
@@ -243,9 +271,12 @@ class MemoryWriteApiMixin:
 
         for field, value in changes.items():
             if field == "content":
-                parsed_content = str(value).strip()
-                if not parsed_content:
-                    return self._error("记忆内容不能为空")
+                try:
+                    parsed_content = _required_string(
+                        value, message="记忆内容必须是非空字符串"
+                    )
+                except (TypeError, ValueError):
+                    return self._error("记忆内容必须是非空字符串")
                 new_content = parsed_content
                 content_changed = True
                 history_items.append((field, memory.get("text", ""), parsed_content))
@@ -271,7 +302,9 @@ class MemoryWriteApiMixin:
                     )
                 )
             elif field == "status":
-                status_value = str(value).strip()
+                if not isinstance(value, str):
+                    return self._error("状态必须是字符串")
+                status_value = value.strip()
                 if status_value not in {"active", "archived", "deleted"}:
                     return self._error("状态必须是 active、archived 或 deleted")
                 final_metadata["status"] = status_value
@@ -279,9 +312,12 @@ class MemoryWriteApiMixin:
                     (field, current_metadata.get("status", "active"), status_value)
                 )
             else:
-                type_value = str(value).strip()
-                if not type_value:
-                    return self._error("类型不能为空")
+                try:
+                    type_value = _required_string(
+                        value, message="类型必须是非空字符串"
+                    )
+                except (TypeError, ValueError):
+                    return self._error("类型必须是非空字符串")
                 final_metadata["memory_type"] = type_value
                 history_items.append(
                     (field, current_metadata.get("memory_type", "GENERAL"), type_value)

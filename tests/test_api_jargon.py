@@ -128,6 +128,12 @@ def _make_stub(*, has_filter=True, has_store=True, has_miner=False,
     if has_store:
         store = MagicMock()
         store.list_by_group = AsyncMock(return_value=meanings or [])
+        store.get_by_term = AsyncMock(
+            return_value=(meanings or [_make_jargon_meaning()])[0]
+        )
+        store.update_if_revision = AsyncMock(
+            return_value=(meanings or [_make_jargon_meaning()])[0]
+        )
         store.confirm = AsyncMock(return_value=None)
         store.count_by_group = AsyncMock(return_value=store_count)
         store.count_confirmed = AsyncMock(return_value=store_confirmed)
@@ -903,7 +909,10 @@ class TestJargonCrud:
             "confidence": 0.9,
         }
 
-        with patch("core.api.jargon_api.request", _request_json(payload)):
+        with (
+            patch("core.api.jargon_api.request", _request_json(payload)),
+            patch("core.api.jargon_api.logger.info") as audit,
+        ):
             result = await api.create_jargon()
 
         assert result["status"] == "ok"
@@ -925,6 +934,9 @@ class TestJargonCrud:
         assert result["data"]["revision"] == "rev-jargon"
         service.create.assert_awaited_once_with(**payload)
         service.revision_for.assert_called_once_with(created)
+        rendered_audit = repr(audit.call_args_list)
+        assert "action=%s entity=jargon identity=%s result=success count=%d" in rendered_audit
+        assert "Gradual rollout" not in rendered_audit
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1533,6 +1545,19 @@ class TestJargonConfirm:
             result = await stub.confirm_jargon()
         assert result["status"] == "ok"
         assert result["data"]["action"] == "rejected"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("confirmed", [1, 0, "true", None, [], {}])
+    async def test_confirm_rejects_non_boolean_without_mutation(self, confirmed) -> None:
+        stub = _make_stub()
+        mock_req = _make_mock_request()
+        mock_req.get_json = AsyncMock(return_value={
+            "term": "破防", "group_id": "g1", "confirmed": confirmed,
+        })
+        with patch("core.api.jargon_api.request", mock_req):
+            result = await stub.confirm_jargon()
+        assert result["code"] == "validation_error"
+        stub.plugin._jargon_store.confirm.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_missing_term_returns_error(self) -> None:
