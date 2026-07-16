@@ -229,9 +229,17 @@ class InjectionCleaner:
                 query = """
                     SELECT id, session_id, content
                     FROM messages
-                    WHERE content LIKE ?
+                    WHERE (
+                        content LIKE ?
+                        OR content LIKE ?
+                        OR content LIKE ?
+                    )
                 """
-                params: list[str | int] = [f"%{MEMORY_INJECTION_HEADER}%"]
+                params: list[str | int] = [
+                    f"%{MEMORY_INJECTION_HEADER}%",
+                    f"%{_VERIFIED_INJECTION_HEADER}%",
+                    f"%{_DEEPSEEK_REPLAY_HEADER}%",
+                ]
 
                 if session_id:
                     query += " AND session_id = ?"
@@ -248,9 +256,8 @@ class InjectionCleaner:
                     msg_session = row["session_id"]
                     original_content = row["content"]
 
-                    if (
-                        MEMORY_INJECTION_HEADER not in original_content
-                        or MEMORY_INJECTION_FOOTER not in original_content
+                    if not isinstance(original_content, str) or not _contains_injection(
+                        original_content
                     ):
                         continue
 
