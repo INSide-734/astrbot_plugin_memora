@@ -14,9 +14,11 @@ export interface TagEditorProps {
   maxCount?: number;
   onLimitReached?: () => void;
   disabled?: boolean;
+  ariaDescribedBy?: string;
+  ariaInvalid?: boolean;
 }
 
-export function TagEditor({ label, getRemoveLabel, values, onChange, maxCount, onLimitReached, disabled = false }: TagEditorProps) {
+export function TagEditor({ label, getRemoveLabel, values, onChange, maxCount, onLimitReached, disabled = false, ariaDescribedBy, ariaInvalid = false }: TagEditorProps) {
   const [pending, setPending] = useState("");
   const addPending = () => {
     const tag = pending.trim();
@@ -52,7 +54,7 @@ export function TagEditor({ label, getRemoveLabel, values, onChange, maxCount, o
           </Badge>
         ))}
       </div>
-      <Input aria-label={label} value={pending} disabled={disabled} onChange={(event) => setPending(event.target.value)} onKeyDown={onKeyDown} />
+      <Input aria-label={label} aria-invalid={ariaInvalid} aria-describedby={ariaDescribedBy} value={pending} disabled={disabled} onChange={(event) => setPending(event.target.value)} onKeyDown={onKeyDown} />
     </div>
   );
 }
