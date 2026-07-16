@@ -435,3 +435,65 @@ class TestCleanupInjectedMemoriesFromDb:
         assert "AND session_id = ?" in query
         params = call_args[0][1]
         assert "target_session" in params
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "delivery",
+    [
+        "user_message_before",
+        "user_message_after",
+        "fake_tool_call",
+        "fake_tool_call_deepseek_v4",
+    ],
+)
+async def test_cleaner_round_trips_real_executor_output(monkeypatch, delivery) -> None:
+    from core.injection.executor import InjectionExecutionContext, InjectionExecutor
+    from core.injection.models import DeliveryMode, PresetName, RequestSignals, RoutingMode
+    from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
+    from core.utils.injection_adapter import InjectionAdapter
+
+    class Part:
+        def __init__(self, text):
+            self.text = text
+
+        def mark_as_temp(self):
+            return self
+
+    monkeypatch.setattr("core.injection.executor.TextPart", Part)
+    provider = MagicMock()
+    provider.provider_config = {"type": "openai_chat_completion"}
+    provider.get_model.return_value = "gpt-4.1"
+    req = _make_request(
+        system_prompt="unchanged-system",
+        prompt="original-user",
+        contexts=[{"role": "user", "content": "older-turn"}],
+        extra_user_content_parts=[],
+    )
+    mode = DeliveryMode(delivery)
+    decision = InjectionStrategyRouter().route_final(
+        InjectionRoutingConfig(
+            mode=RoutingMode.MANUAL,
+            manual_preset=PresetName.BALANCED,
+            delivery_override=mode,
+        ),
+        RequestSignals(candidate_count=1, top_confidence=0.9),
+    )
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        req,
+        decision,
+        InjectionExecutionContext(
+            query="private-query",
+            memories=[{"content": "ROUNDTRIP_MEMORY", "score": 1.0, "metadata": {}}],
+            provider=provider,
+        ),
+    )
+    assert result.outcome.value == "injected"
+    removed = InjectionCleaner.remove_injected_memories_from_context(req, "s1")
+    removed += InjectionCleaner.remove_fake_tool_call_from_context(req, "s1")
+    assert removed > 0
+    assert req.system_prompt == "unchanged-system"
+    assert req.prompt == "original-user"
+    assert req.contexts == [{"role": "user", "content": "older-turn"}]
+    assert req.extra_user_content_parts == []
+    assert "ROUNDTRIP_MEMORY" not in str(req)
