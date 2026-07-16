@@ -1,7 +1,18 @@
 // ================================================================
 // Mock API server — simulates AstrBot Plugin Page bridge
 // ================================================================
-import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_DATASETS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS } from "./data";
+import type {
+  InjectionCostPoint,
+  InjectionDecisionDetail,
+  InjectionDecisionListItem,
+  InjectionOutcome,
+  InjectionPresetName,
+  InjectionRecentEvent,
+  InjectionRoutingMode,
+  InjectionSummaryWindow,
+} from "@/types/injection";
+
+import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_DATASETS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS, INJECTION_DECISIONS, INJECTION_MOCK_NOW_MS } from "./data";
 import { createMockConfigServer } from "./configServer";
 
 type ApiResponse = { status: string; data?: unknown; message?: string };
@@ -655,6 +666,320 @@ function handleExportMemories(body: Record<string, unknown>): ApiResponse {
   return ok({ content, count: MEMORIES.length, format });
 }
 
+const INJECTION_WINDOWS_MS: Record<InjectionSummaryWindow, number> = {
+  "1h": 3_600_000,
+  "24h": 86_400_000,
+  "7d": 604_800_000,
+  "30d": 2_592_000_000,
+};
+const INJECTION_ROUTING_MODES: InjectionRoutingMode[] = [
+  "manual",
+  "auto",
+  "hybrid",
+];
+const INJECTION_PRESETS: InjectionPresetName[] = [
+  "tool_first",
+  "low_cost",
+  "balanced",
+  "quality",
+];
+const INJECTION_OUTCOMES: InjectionOutcome[] = [
+  "injected",
+  "skipped",
+  "empty",
+  "fallback",
+  "error",
+];
+const INJECTION_LIST_QUERY_FIELDS = new Set([
+  "offset",
+  "limit",
+  "from_ms",
+  "to_ms",
+  "routing_mode",
+  "resolved_preset",
+  "provider_type",
+  "primary_reason",
+  "fallback_applied",
+  "outcome",
+]);
+
+function payloadP95(rows: InjectionDecisionDetail[]): number {
+  const values = rows
+    .map((row) => row.actual_payload_chars)
+    .sort((left, right) => left - right);
+  return values[Math.max(0, Math.ceil(values.length * 0.95) - 1)] ?? 0;
+}
+
+function toInjectionRecentEvent(
+  row: InjectionDecisionDetail,
+): InjectionRecentEvent {
+  return {
+    decision_id: row.decision_id,
+    created_at_ms: row.created_at_ms,
+    trace_id: row.trace_id,
+    routing_mode: row.routing_mode,
+    resolved_preset: row.resolved_preset,
+    outcome: row.outcome,
+    primary_reason: row.primary_reason,
+    fallback_applied: row.fallback_applied,
+    actual_payload_chars: row.actual_payload_chars,
+  };
+}
+
+function toInjectionListItem(
+  row: InjectionDecisionDetail,
+): InjectionDecisionListItem {
+  return {
+    ...toInjectionRecentEvent(row),
+    configured_preset: row.configured_preset,
+    recommended_preset: row.recommended_preset,
+    preferred_delivery: row.preferred_delivery,
+    resolved_delivery: row.resolved_delivery,
+    provider_type: row.provider_type,
+    provider_model: row.provider_model,
+    error_code: row.error_code,
+    candidate_count: row.candidate_count,
+    selected_count: row.selected_count,
+    dropped_count: row.dropped_count,
+    truncated_count: row.truncated_count,
+    configured_budget_chars: row.configured_budget_chars,
+    effective_budget_chars: row.effective_budget_chars,
+    context_headroom_chars: row.context_headroom_chars,
+    decision_ms: row.decision_ms,
+    format_ms: row.format_ms,
+    inject_ms: row.inject_ms,
+  };
+}
+
+function toInjectionDetail(
+  row: InjectionDecisionDetail,
+): InjectionDecisionDetail {
+  return {
+    ...toInjectionListItem(row),
+    reason_codes: [...row.reason_codes],
+  };
+}
+
+function buildInjectionCostTrend(
+  rows: InjectionDecisionDetail[],
+): InjectionCostPoint[] {
+  const buckets = new Map<number, InjectionDecisionDetail[]>();
+  for (const row of rows) {
+    const bucket = Math.floor(row.created_at_ms / 3_600_000) * 3_600_000;
+    buckets.set(bucket, [...(buckets.get(bucket) ?? []), row]);
+  }
+  return [...buckets.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([bucket_ms, items]) => ({
+      bucket_ms,
+      decision_count: items.length,
+      payload_chars_p95: payloadP95(items),
+      provider_fallback_rate: items.filter((item) => item.fallback_applied).length
+        / items.length,
+    }));
+}
+
+function handleInjectionCatalog(): ApiResponse {
+  return ok({
+    routing_modes: INJECTION_ROUTING_MODES,
+    presets: [
+      {
+        name: "tool_first",
+        rank: 0,
+        auto_inject: false,
+        memory_budget_chars: 0,
+        max_memories: 0,
+        content_level: "NONE",
+        cost_penalty_weight: 1,
+        minimum_utility: 1,
+        allow_tool_fallback: true,
+        preferred_delivery: "extra_user_content",
+      },
+      {
+        name: "low_cost",
+        rank: 1,
+        auto_inject: true,
+        memory_budget_chars: 800,
+        max_memories: 2,
+        content_level: "FACTS",
+        cost_penalty_weight: 0.3,
+        minimum_utility: 0.45,
+        allow_tool_fallback: true,
+        preferred_delivery: "extra_user_content",
+      },
+      {
+        name: "balanced",
+        rank: 2,
+        auto_inject: true,
+        memory_budget_chars: 1_200,
+        max_memories: 4,
+        content_level: "COMPACT",
+        cost_penalty_weight: 0.18,
+        minimum_utility: 0.3,
+        allow_tool_fallback: true,
+        preferred_delivery: "extra_user_content",
+      },
+      {
+        name: "quality",
+        rank: 3,
+        auto_inject: true,
+        memory_budget_chars: 2_400,
+        max_memories: 6,
+        content_level: "DETAILED",
+        cost_penalty_weight: 0.08,
+        minimum_utility: 0.2,
+        allow_tool_fallback: true,
+        preferred_delivery: "extra_user_content",
+      },
+    ],
+    deliveries: [
+      "auto",
+      "extra_user_content",
+      "user_message_before",
+      "user_message_after",
+      "fake_tool_call",
+      "fake_tool_call_deepseek_v4",
+    ],
+    retention_options: [7, 30, 90, 180, 0],
+    provider_tools_supported: true,
+    memory_tool_available: true,
+    recall_trace_available: true,
+    effective_default_delivery: "extra_user_content",
+  });
+}
+
+function handleInjectionSummary(params: Record<string, string>): ApiResponse {
+  const windowValue = params.window ?? "24h";
+  if (!(windowValue in INJECTION_WINDOWS_MS)) {
+    return err("window must be one of 1h, 24h, 7d, 30d");
+  }
+  const window = windowValue as InjectionSummaryWindow;
+  const rows = INJECTION_DECISIONS.filter(
+    (row) => row.created_at_ms >= INJECTION_MOCK_NOW_MS - INJECTION_WINDOWS_MS[window],
+  );
+  return ok({
+    window,
+    decision_count: rows.length,
+    payload_chars_p95: payloadP95(rows),
+    provider_fallback_rate: rows.length
+      ? rows.filter((row) => row.fallback_applied).length / rows.length
+      : 0,
+    preset_distribution: Object.fromEntries(
+      INJECTION_PRESETS.map((preset) => [
+        preset,
+        rows.filter((row) => row.resolved_preset === preset).length,
+      ]),
+    ),
+    cost_trend: buildInjectionCostTrend(rows),
+    recent_events: rows.slice(0, 15).map(toInjectionRecentEvent),
+  });
+}
+
+function injectionInteger(value: string, field: string): number {
+  if (!/^-?\d+$/.test(value)) throw new Error(`${field} must be an integer`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new Error(`${field} must be an integer`);
+  return parsed;
+}
+
+function optionalInjectionInteger(
+  params: Record<string, string>,
+  field: string,
+): number | undefined {
+  return field in params ? injectionInteger(params[field], field) : undefined;
+}
+
+function optionalInjectionText(
+  params: Record<string, string>,
+  field: string,
+): string | undefined {
+  if (!(field in params)) return undefined;
+  const value = params[field].trim();
+  if (!value) throw new Error(`${field} must be a non-empty string`);
+  return value;
+}
+
+function handleInjectionDecisions(params: Record<string, string>): ApiResponse {
+  try {
+    const unknown = Object.keys(params)
+      .filter((key) => !INJECTION_LIST_QUERY_FIELDS.has(key))
+      .sort();
+    if (unknown.length) throw new Error(`unknown query field: ${unknown[0]}`);
+
+    const offset = injectionInteger(params.offset ?? "0", "offset");
+    const limit = injectionInteger(params.limit ?? "50", "limit");
+    if (offset < 0) throw new Error("offset must be non-negative");
+    if (limit < 1 || limit > 100) {
+      throw new Error("limit must be between 1 and 100");
+    }
+    const fromMs = optionalInjectionInteger(params, "from_ms");
+    const toMs = optionalInjectionInteger(params, "to_ms");
+    if (fromMs !== undefined && toMs !== undefined && fromMs > toMs) {
+      throw new Error("from_ms must not exceed to_ms");
+    }
+
+    const routingMode = params.routing_mode;
+    if (routingMode && !INJECTION_ROUTING_MODES.includes(routingMode as never)) {
+      throw new Error("routing_mode is invalid");
+    }
+    const resolvedPreset = params.resolved_preset;
+    if (resolvedPreset && !INJECTION_PRESETS.includes(resolvedPreset as never)) {
+      throw new Error("resolved_preset is invalid");
+    }
+    const outcome = params.outcome;
+    if (outcome && !INJECTION_OUTCOMES.includes(outcome as never)) {
+      throw new Error("outcome is invalid");
+    }
+    const providerType = optionalInjectionText(params, "provider_type");
+    const primaryReason = optionalInjectionText(params, "primary_reason");
+    let fallbackApplied: boolean | undefined;
+    if ("fallback_applied" in params) {
+      const normalized = params.fallback_applied.trim().toLowerCase();
+      if (normalized !== "true" && normalized !== "false") {
+        throw new Error("fallback_applied must be true or false");
+      }
+      fallbackApplied = normalized === "true";
+    }
+
+    const rows = INJECTION_DECISIONS
+      .filter((row) => fromMs === undefined || row.created_at_ms >= fromMs)
+      .filter((row) => toMs === undefined || row.created_at_ms <= toMs)
+      .filter((row) => !routingMode || row.routing_mode === routingMode)
+      .filter((row) => !resolvedPreset || row.resolved_preset === resolvedPreset)
+      .filter((row) => !providerType || row.provider_type === providerType)
+      .filter((row) => !primaryReason || row.primary_reason === primaryReason)
+      .filter((row) => fallbackApplied === undefined
+        || row.fallback_applied === fallbackApplied)
+      .filter((row) => !outcome || row.outcome === outcome)
+      .sort((left, right) => (
+        right.created_at_ms - left.created_at_ms
+        || right.decision_id.localeCompare(left.decision_id)
+      ));
+    return ok({
+      items: rows.slice(offset, offset + limit).map(toInjectionListItem),
+      total: rows.length,
+      offset,
+      limit,
+    });
+  } catch (error) {
+    return err(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function handleInjectionDetail(params: Record<string, string>): ApiResponse {
+  const decisionId = params.decision_id ?? "";
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(decisionId)) {
+    return err("decision_id must be a valid UUID");
+  }
+  const normalizedId = decisionId.toLowerCase();
+  const detail = INJECTION_DECISIONS.find(
+    (row) => row.decision_id === normalizedId,
+  );
+  return detail
+    ? ok(toInjectionDetail(detail))
+    : err("Injection decision not found");
+}
+
 // ---- Main router ----
 
 export async function handleApiGet(path: string, params: Record<string, string> = {}): Promise<ApiResponse> {
@@ -663,6 +988,16 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   const configResponse = configServer.handleGet(p, params);
   if (configResponse) return configResponse;
 
+  if (p === "injection-strategy/catalog") return handleInjectionCatalog();
+  if (p === "injection-strategy/summary" || p.startsWith("injection-strategy/summary?")) {
+    return handleInjectionSummary(params);
+  }
+  if (p === "injection-strategy/decisions/detail" || p.startsWith("injection-strategy/decisions/detail?")) {
+    return handleInjectionDetail(params);
+  }
+  if (p === "injection-strategy/decisions" || p.startsWith("injection-strategy/decisions?")) {
+    return handleInjectionDecisions(params);
+  }
   if (p === "stats") return handleStats();
   if (p === "metrics/summary") return handleMetricsSummary();
   if (p === "memories" || p.startsWith("memories?")) return handleMemories(params);

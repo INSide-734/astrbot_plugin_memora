@@ -310,7 +310,7 @@ export function InjectionConfigTab({
     config.catalogStatus === "loading" || config.status === "loading"
   )) {
     return (
-      <StatePanel state="loading" title={t("injection.config.loading")} />
+      <StatePanel state="loading" title={t("injection.state.loading")} />
     );
   }
   if (!config.catalog || !config.draft) {
@@ -318,7 +318,7 @@ export function InjectionConfigTab({
     return (
       <StatePanel
         state="error"
-        title={t("injection.config.unavailable")}
+        title={t("injection.state.error")}
         description={config.catalogError ?? undefined}
         actionLabel={t("common.retry")}
         onAction={catalogFailed
@@ -369,7 +369,7 @@ export function InjectionConfigTab({
   return (
     <section
       role="region"
-      aria-label={t("injection.config.title")}
+      aria-label={t("injection.tabs.config")}
       className="flex min-w-0 flex-col gap-5"
     >
       {config.status === "offline" || config.status === "error" ? (
@@ -382,7 +382,7 @@ export function InjectionConfigTab({
       ) : null}
 
       <form
-        aria-label={t("injection.config.title")}
+        aria-label={t("injection.tabs.config")}
         className="flex min-w-0 flex-col gap-6"
         onSubmit={(event) => event.preventDefault()}
       >

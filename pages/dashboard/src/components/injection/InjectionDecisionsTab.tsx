@@ -40,6 +40,7 @@ import {
   dashboardLocale,
   formatDashboardDateTime,
   formatDashboardNumber,
+  translateEnum,
 } from "@/lib/i18n";
 import type { Translate } from "@/lib/i18n";
 import {
@@ -87,10 +88,10 @@ const pageSizes = [25, 50, 100] as const;
 
 const decisionColumns = [
   "time",
-  "routingMode",
-  "resolvedPreset",
+  "mode",
+  "preset",
   "provider",
-  "primaryReason",
+  "reason",
   "fallback",
   "outcome",
   "payloadChars",
@@ -243,7 +244,7 @@ function DecisionFilters({
             onChange={(event) => changeDate("toMs", event.currentTarget.value)}
           />
           {invalidRange ? (
-            <FieldError>{t("injection.validation.dateRange")}</FieldError>
+            <FieldError>{t("injection.validation.timeRange")}</FieldError>
           ) : null}
         </Field>
         <FilterSelect
@@ -312,7 +313,7 @@ function DecisionFilters({
       <div className="flex justify-end">
         <Button type="button" variant="outline" size="sm" onClick={clear}>
           <RotateCcw data-icon="inline-start" />
-          {t("injection.filters.clear")}
+          {t("injection.actions.clearFilters")}
         </Button>
       </div>
     </div>
@@ -346,14 +347,14 @@ function DecisionTableLoading({ t }: { t: Translate }) {
     <div
       role="status"
       aria-busy="true"
-      aria-label={t("injection.decisions.loading")}
+      aria-label={t("injection.state.loading")}
       className="max-w-full overflow-x-auto rounded-lg border"
     >
       <Table className="min-w-[64rem]">
         <TableHeader>
           <TableRow>
             {decisionColumns.map((column) => (
-              <TableHead key={column}>{t(`injection.decisions.${column}`)}</TableHead>
+              <TableHead key={column}>{t(`injection.column.${column}`)}</TableHead>
             ))}
           </TableRow>
         </TableHeader>
@@ -389,11 +390,11 @@ function DecisionTable({
       className="max-w-full overflow-x-auto rounded-lg border"
       data-testid="decision-table-scroll"
     >
-      <Table className="min-w-[64rem]" aria-label={t("injection.decisions.table")}>
+      <Table className="min-w-[64rem]" aria-label={t("injection.tabs.decisions")}>
         <TableHeader>
           <TableRow>
             {decisionColumns.map((column) => (
-              <TableHead key={column}>{t(`injection.decisions.${column}`)}</TableHead>
+              <TableHead key={column}>{t(`injection.column.${column}`)}</TableHead>
             ))}
           </TableRow>
         </TableHeader>
@@ -416,7 +417,14 @@ function DecisionTable({
               <TableCell>{t(`injection.mode.${item.routing_mode}`)}</TableCell>
               <TableCell>{t(`injection.preset.${item.resolved_preset}`)}</TableCell>
               <TableCell>{item.provider_type}</TableCell>
-              <TableCell>{item.primary_reason}</TableCell>
+              <TableCell>
+                {translateEnum(
+                  t,
+                  "injection.reason",
+                  item.primary_reason,
+                  item.primary_reason,
+                )}
+              </TableCell>
               <TableCell>
                 <StatusText
                   icon={item.fallback_applied ? AlertTriangle : MinusCircle}
@@ -530,7 +538,7 @@ export function InjectionDecisionsTab({
 
   return (
     <section
-      aria-label={t("injection.decisions.title")}
+      aria-label={t("injection.tabs.decisions")}
       className="flex min-w-0 flex-col gap-5"
     >
       <DecisionFilters decisions={decisions} t={t} />
@@ -539,13 +547,13 @@ export function InjectionDecisionsTab({
       ) : decisions.status === "error" ? (
         <StatePanel
           state="error"
-          title={t("injection.decisions.error")}
+          title={t("injection.state.error")}
           description={decisions.error ?? undefined}
           actionLabel={t("common.retry")}
           onAction={() => { void decisions.refresh(); }}
         />
       ) : !decisions.page || decisions.page.items.length === 0 ? (
-        <StatePanel state="empty" title={t("injection.decisions.empty")} />
+        <StatePanel state="empty" title={t("injection.state.empty")} />
       ) : (
         <>
           <DecisionTable

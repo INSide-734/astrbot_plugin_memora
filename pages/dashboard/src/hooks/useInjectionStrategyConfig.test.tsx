@@ -11,7 +11,10 @@ import type {
 import type { InjectionStrategyCatalog } from "@/types/injection";
 
 import { DEFAULT_INJECTION_STRATEGY } from "@/types/injection";
-import { useInjectionStrategyConfig } from "./useInjectionStrategyConfig";
+import {
+  useInjectionStrategyConfig,
+  validateInjectionStrategy,
+} from "./useInjectionStrategyConfig";
 
 interface BridgeMock {
   apiGet: ReturnType<typeof vi.fn>;
@@ -179,6 +182,25 @@ describe("useInjectionStrategyConfig", () => {
     expect(hook.result.current.canSave).toBe(false);
     await act(async () => hook.result.current.save());
     expect(bridge.apiPost).not.toHaveBeenCalled();
+  });
+
+  it("validates retention row caps and every advanced budget bound", () => {
+    const errors = validateInjectionStrategy({
+      ...DEFAULT_INJECTION_STRATEGY,
+      retentionDays: 13 as 30,
+      maxRows: 999,
+      budgetChars: 10_001,
+      memoryMaxChars: 2_001,
+      metadataMaxChars: 501,
+    });
+
+    expect(errors).toMatchObject({
+      retentionDays: "injection.validation.retention",
+      maxRows: "injection.validation.maxRows",
+      budgetChars: "injection.validation.budget",
+      memoryMaxChars: "injection.validation.budget",
+      metadataMaxChars: "injection.validation.budget",
+    });
   });
 
   it("restores defaults locally and discards them without saving", async () => {

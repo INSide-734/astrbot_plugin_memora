@@ -92,6 +92,20 @@ describe("useInjectionStrategySummary", () => {
     expect(summaryCalls()).toHaveLength(2);
   });
 
+  it.each(["1h", "24h", "7d", "30d"] as const)(
+    "requests the supported %s summary window",
+    async (windowValue) => {
+      const hook = renderHook(() => useInjectionStrategySummary(windowValue));
+      await waitFor(() => expect(hook.result.current.status).toBe("success"));
+
+      expect(bridge.apiGet).toHaveBeenCalledWith(
+        "page/injection-strategy/summary",
+        { window: windowValue },
+      );
+      expect(hook.result.current.windowValue).toBe(windowValue);
+    },
+  );
+
   it("loads a changed window immediately and ignores the older response", async () => {
     const oldResponse = deferred<ApiResponse>();
     const newResponse = deferred<ApiResponse>();

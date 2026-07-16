@@ -79,6 +79,120 @@ const REQUIRED_KEYS = [
   "search.countLimited",
 ] as const;
 
+const INJECTION_REQUIRED_KEYS = [
+  "nav.injection",
+  "injection.title", "injection.subtitle", "injection.tabs.label",
+  "injection.tabs.overview", "injection.tabs.config", "injection.tabs.decisions",
+  "injection.actions.edit", "injection.actions.openTrace",
+  "injection.actions.traceUnavailable", "injection.actions.restoreDefaults",
+  "injection.actions.discard", "injection.actions.save",
+  "injection.actions.saving", "injection.actions.clearFilters",
+  "injection.decisions.openDetail", "injection.detail.title",
+  "injection.detail.description", "injection.state.loading",
+  "injection.state.empty", "injection.state.error",
+  "injection.window.1h", "injection.window.24h", "injection.window.7d",
+  "injection.window.30d", "injection.overview.window",
+  "injection.overview.currentMode", "injection.overview.currentPreset",
+  "injection.overview.effectiveDelivery", "injection.overview.decisions",
+  "injection.overview.payloadP95", "injection.overview.fallbackRate",
+  "injection.overview.presetDistribution", "injection.overview.presetChartSummary",
+  "injection.overview.costTrend", "injection.overview.costChartSummary",
+  "injection.overview.recent", "injection.overview.recentFallbacks",
+  "injection.overview.recentErrors", "injection.overview.noEvents",
+  "injection.config.routing", "injection.config.presetComparison",
+  "injection.config.delivery", "injection.config.advanced",
+  "injection.config.retention", "injection.preset.name",
+  "injection.preset.autoInject", "injection.preset.budget",
+  "injection.preset.maxMemories", "injection.preset.contentLevel",
+  "injection.preset.toolFallback", "injection.field.routingMode",
+  "injection.field.manualPreset", "injection.field.autoFallbackPreset",
+  "injection.field.hybridBasePreset", "injection.field.hybridMinPreset",
+  "injection.field.hybridMaxPreset", "injection.field.deliveryOverride",
+  "injection.field.overridesEnabled", "injection.field.budgetChars",
+  "injection.field.memoryMaxChars", "injection.field.metadataMaxChars",
+  "injection.field.includeKeyFacts", "injection.field.includeTopics",
+  "injection.field.includeParticipants", "injection.field.compactHeader",
+  "injection.field.retentionDays", "injection.field.maxRows",
+  "injection.help.preset", "injection.help.overridesEnabled",
+  "injection.help.zeroUsesPreset", "injection.help.retention",
+  "injection.validation.hybridOrder", "injection.validation.retention",
+  "injection.validation.maxRows", "injection.validation.budget",
+  "injection.validation.timeRange", "injection.filter.from",
+  "injection.filter.to", "injection.filter.routingMode",
+  "injection.filter.resolvedPreset", "injection.filter.providerType",
+  "injection.filter.primaryReason", "injection.filter.fallbackApplied",
+  "injection.filter.outcome", "injection.filter.all", "injection.column.time",
+  "injection.column.mode", "injection.column.preset", "injection.column.provider",
+  "injection.column.reason", "injection.column.fallback",
+  "injection.column.outcome", "injection.column.payloadChars",
+  "injection.column.totalMs", "injection.column.actions",
+  "injection.pagination.label", "injection.pagination.previous",
+  "injection.pagination.next", "injection.pagination.pageSize",
+  "injection.pagination.summary", "injection.detail.identity",
+  "injection.detail.routing", "injection.detail.delivery",
+  "injection.detail.counts", "injection.detail.budgets",
+  "injection.detail.timings", "injection.detail.reasons",
+  "injection.detail.retry",
+] as const;
+
+const INJECTION_EXACT_COPY = [
+  ["nav.injection", "注入策略", "Injection Strategy", "Стратегия внедрения"],
+  ["injection.title", "注入策略", "Injection Strategy", "Стратегия внедрения"],
+  ["injection.subtitle", "配置记忆注入路由，并审查脱敏决策记录。", "Configure memory injection routing and review sanitized decisions.", "Настройте маршрутизацию памяти и просматривайте обезличенные решения."],
+  ["injection.tabs.label", "注入策略工作台", "Injection strategy workbench", "Рабочая область стратегии внедрения"],
+  ["injection.tabs.overview", "概览", "Overview", "Обзор"],
+  ["injection.tabs.config", "策略配置", "Strategy Configuration", "Настройка стратегии"],
+  ["injection.tabs.decisions", "决策记录", "Decision History", "История решений"],
+  ["injection.actions.edit", "编辑策略", "Edit strategy", "Изменить стратегию"],
+  ["injection.actions.openTrace", "打开召回追踪", "Open recall trace", "Открыть трассировку поиска"],
+  ["injection.actions.traceUnavailable", "没有关联的召回追踪", "No linked recall trace", "Нет связанной трассировки"],
+  ["injection.actions.restoreDefaults", "恢复预设默认值", "Restore preset defaults", "Восстановить значения пресета"],
+  ["injection.actions.discard", "放弃草稿", "Discard draft", "Отменить черновик"],
+  ["injection.actions.save", "保存策略", "Save strategy", "Сохранить стратегию"],
+  ["injection.actions.saving", "正在保存…", "Saving…", "Сохранение…"],
+  ["injection.actions.clearFilters", "清除筛选", "Clear filters", "Очистить фильтры"],
+  ["injection.decisions.openDetail", "查看决策详情", "View decision details", "Открыть детали решения"],
+  ["injection.detail.title", "注入决策详情", "Injection decision details", "Детали решения о внедрении"],
+  ["injection.detail.description", "仅显示脱敏后的路由、预算、Provider 与耗时字段。", "Sanitized routing, budget, provider, and timing fields only.", "Только обезличенные поля маршрутизации, бюджета, провайдера и времени."],
+  ["injection.state.loading", "正在加载注入策略", "Loading injection strategy", "Загрузка стратегии внедрения"],
+  ["injection.state.empty", "当前窗口没有决策记录", "No decisions in this window", "В этом интервале нет решений"],
+  ["injection.state.error", "无法加载注入策略数据", "Could not load injection strategy data", "Не удалось загрузить данные стратегии"],
+  ["injection.mode.manual", "纯手动", "Manual", "Ручной"],
+  ["injection.mode.auto", "自动切换", "Auto", "Авто"],
+  ["injection.mode.hybrid", "混合切换", "Hybrid", "Гибрид"],
+  ["injection.preset.tool_first", "工具优先", "Tool first", "Сначала инструмент"],
+  ["injection.preset.low_cost", "低成本", "Low cost", "Низкая стоимость"],
+  ["injection.preset.balanced", "均衡", "Balanced", "Сбалансированный"],
+  ["injection.preset.quality", "质量优先", "Quality", "Приоритет качества"],
+  ["injection.content.NONE", "不注入", "None", "Без внедрения"],
+  ["injection.content.FACTS", "关键事实", "Facts", "Факты"],
+  ["injection.content.COMPACT", "紧凑", "Compact", "Компактный"],
+  ["injection.content.DETAILED", "详细", "Detailed", "Подробный"],
+  ["injection.outcome.injected", "已注入", "Injected", "Внедрено"],
+  ["injection.outcome.skipped", "已跳过", "Skipped", "Пропущено"],
+  ["injection.outcome.empty", "无有效内容", "Empty", "Пусто"],
+  ["injection.outcome.fallback", "已降级", "Fallback", "Резервный режим"],
+  ["injection.outcome.error", "错误", "Error", "Ошибка"],
+  ["injection.delivery.auto", "自动适配", "Auto", "Автовыбор"],
+  ["injection.delivery.extra_user_content", "临时用户附加内容", "Temporary user content", "Временный пользовательский контент"],
+  ["injection.delivery.user_message_before", "用户消息前", "Before user message", "Перед сообщением пользователя"],
+  ["injection.delivery.user_message_after", "用户消息后", "After user message", "После сообщения пользователя"],
+  ["injection.delivery.fake_tool_call", "模拟工具调用", "Synthetic tool call", "Имитация вызова инструмента"],
+  ["injection.delivery.fake_tool_call_deepseek_v4", "DeepSeek V4 模拟工具调用", "DeepSeek V4 synthetic tool call", "Имитация инструмента DeepSeek V4"],
+  ["injection.reason.MANUAL_SELECTED", "管理员手动选择", "Selected manually", "Выбрано вручную"],
+  ["injection.reason.AUTO_HISTORY_INTENT", "历史意图自动升级", "Auto history intent", "Автовыбор по историческому намерению"],
+  ["injection.reason.AUTO_LOW_CONTEXT_HEADROOM", "上下文余量不足", "Low context headroom", "Недостаточный запас контекста"],
+  ["injection.reason.AUTO_MEMORY_UNCERTAIN", "记忆需求不确定", "Memory need uncertain", "Неопределённая потребность в памяти"],
+  ["injection.reason.AUTO_FALLBACK", "自动规则回退", "Auto fallback", "Автоматический резерв"],
+  ["injection.reason.HYBRID_CLAMPED_MIN", "已限制到混合最小预设", "Clamped to Hybrid minimum", "Ограничено минимумом гибрида"],
+  ["injection.reason.HYBRID_CLAMPED_MAX", "已限制到混合最大预设", "Clamped to Hybrid maximum", "Ограничено максимумом гибрида"],
+  ["injection.reason.PROVIDER_TOOL_UNAVAILABLE", "Provider 记忆工具不可用", "Provider memory tool unavailable", "Инструмент памяти провайдера недоступен"],
+  ["injection.reason.PROVIDER_DELIVERY_DOWNGRADED", "Provider 传输方式已降级", "Provider delivery downgraded", "Способ доставки провайдера понижен"],
+  ["injection.reason.INVALID_CONFIG_FALLBACK", "非法配置安全回退", "Invalid configuration fallback", "Резерв из-за неверной конфигурации"],
+  ["injection.reason.NO_USEFUL_CANDIDATES", "没有有效候选", "No useful candidates", "Нет полезных кандидатов"],
+  ["injection.reason.BUDGET_EXHAUSTED", "注入预算耗尽", "Injection budget exhausted", "Бюджет внедрения исчерпан"],
+] as const;
+
 const KNOWN_RELATION_TYPES = [
   "parent_child", "siblings", "relatives", "neighbor", "fellow_town",
   "fellow_passenger", "colleague", "mentor_mentee", "classmate", "lover",
@@ -134,6 +248,41 @@ const DYNAMIC_KEYS = [
     .map((source) => `intelligence.trace.source.${source}`),
   ...["provider", "recall", "write", "scheduler", "index", "prometheus"]
     .map((domain) => `intelligence.diagnostics.domain.${domain}`),
+  ...["manual", "auto", "hybrid"].map((mode) => `injection.mode.${mode}`),
+  ...["tool_first", "low_cost", "balanced", "quality"]
+    .map((preset) => `injection.preset.${preset}`),
+  ...["NONE", "FACTS", "COMPACT", "DETAILED"]
+    .map((level) => `injection.content.${level}`),
+  ...["injected", "skipped", "empty", "fallback", "error"]
+    .map((outcome) => `injection.outcome.${outcome}`),
+  ...[
+    "auto", "extra_user_content", "user_message_before", "user_message_after",
+    "fake_tool_call", "fake_tool_call_deepseek_v4",
+  ].map((delivery) => `injection.delivery.${delivery}`),
+  ...[
+    "MANUAL_SELECTED", "AUTO_HISTORY_INTENT", "AUTO_LOW_CONTEXT_HEADROOM",
+    "AUTO_MEMORY_UNCERTAIN", "AUTO_FALLBACK", "HYBRID_CLAMPED_MIN",
+    "HYBRID_CLAMPED_MAX", "PROVIDER_TOOL_UNAVAILABLE",
+    "PROVIDER_DELIVERY_DOWNGRADED", "INVALID_CONFIG_FALLBACK",
+    "NO_USEFUL_CANDIDATES", "BUDGET_EXHAUSTED",
+  ].map((reason) => `injection.reason.${reason}`),
+  ...[
+    "MANUAL_SELECTED", "AUTO_HISTORY_INTENT", "AUTO_LOW_CONTEXT_HEADROOM",
+    "AUTO_MEMORY_UNCERTAIN", "AUTO_FALLBACK", "HYBRID_CLAMPED_MIN",
+    "HYBRID_CLAMPED_MAX", "PROVIDER_TOOL_UNAVAILABLE",
+    "PROVIDER_DELIVERY_DOWNGRADED", "INVALID_CONFIG_FALLBACK",
+    "NO_USEFUL_CANDIDATES", "BUDGET_EXHAUSTED",
+  ].map((reason) => `injection.reason.${reason.toLowerCase()}`),
+  ...[
+    "decision_id", "created_at_ms", "trace_id", "routing_mode",
+    "configured_preset", "recommended_preset", "resolved_preset",
+    "preferred_delivery", "resolved_delivery", "fallback_applied", "outcome",
+    "error_code", "primary_reason", "reason_codes", "provider_type",
+    "provider_model", "candidate_count", "selected_count", "dropped_count",
+    "truncated_count", "configured_budget_chars", "effective_budget_chars",
+    "actual_payload_chars", "context_headroom_chars", "decision_ms", "format_ms",
+    "inject_ms",
+  ].map((field) => `injection.detail.field.${field}`),
 ] as const;
 
 function placeholders(value: string): string[] {
@@ -152,6 +301,25 @@ describe("dashboard i18n dictionaries", () => {
       expect(I18N_MAP[key], `missing zh key: ${key}`).toBeTruthy();
       expect(EN_MAP[key], `missing en key: ${key}`).toBeTruthy();
       expect(RU_MAP[key], `missing ru key: ${key}`).toBeTruthy();
+    }
+  });
+
+  it("contains the complete injection workbench contract in all locales", () => {
+    for (const key of INJECTION_REQUIRED_KEYS) {
+      expect(I18N_MAP[key], `missing zh injection key: ${key}`).toBeTruthy();
+      expect(EN_MAP[key], `missing en injection key: ${key}`).toBeTruthy();
+      expect(RU_MAP[key], `missing ru injection key: ${key}`).toBeTruthy();
+      expect(I18N_MAP[key]).not.toBe(key);
+      expect(EN_MAP[key]).not.toBe(key);
+      expect(RU_MAP[key]).not.toBe(key);
+    }
+  });
+
+  it("uses the approved injection enum page action and state copy", () => {
+    for (const [key, zh, en, ru] of INJECTION_EXACT_COPY) {
+      expect(I18N_MAP[key]).toBe(zh);
+      expect(EN_MAP[key]).toBe(en);
+      expect(RU_MAP[key]).toBe(ru);
     }
   });
 
@@ -219,6 +387,18 @@ describe("dashboard i18n dictionaries", () => {
       expect(I18N_MAP[key], `missing dynamic zh key: ${key}`).toBeTruthy();
       expect(EN_MAP[key], `missing dynamic en key: ${key}`).toBeTruthy();
       expect(RU_MAP[key], `missing dynamic ru key: ${key}`).toBeTruthy();
+    }
+  });
+
+  it("never falls back to raw injection keys in any locale", () => {
+    const injectionKeys = [
+      ...INJECTION_REQUIRED_KEYS,
+      ...DYNAMIC_KEYS.filter((key) => key.startsWith("injection.")),
+    ];
+    for (const key of new Set(injectionKeys)) {
+      expect(I18N_MAP[key]).not.toBe(key);
+      expect(EN_MAP[key]).not.toBe(key);
+      expect(RU_MAP[key]).not.toBe(key);
     }
   });
 

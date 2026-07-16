@@ -332,17 +332,17 @@ describe("InjectionStrategyPage", () => {
     renderPage();
 
     expect(
-      screen.getByRole("region", { name: "injection.overview.title" }).textContent,
+      screen.getByRole("region", { name: "injection.tabs.overview" }).textContent,
     ).toContain("manual");
 
     fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.config" }));
     expect(
-      screen.getByRole("region", { name: "injection.config.title" }).textContent,
+      screen.getByRole("region", { name: "injection.tabs.config" }).textContent,
     ).toContain("manual");
 
     fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.decisions" }));
     expect(
-      screen.getByRole("region", { name: "injection.decisions.title" }).textContent,
+      screen.getByRole("region", { name: "injection.tabs.decisions" }).textContent,
     ).toContain("1");
   });
 
@@ -603,7 +603,7 @@ describe("InjectionStrategyPage", () => {
     expect(from.getAttribute("aria-invalid")).toBe("true");
     expect(to.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByRole("alert").textContent).toContain(
-      "injection.validation.dateRange",
+      "injection.validation.timeRange",
     );
     expect(hooks.decisions.setFilter).not.toHaveBeenCalled();
 
@@ -614,11 +614,49 @@ describe("InjectionStrategyPage", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "injection.filters.clear" }),
+      screen.getByRole("button", { name: "injection.actions.clearFilters" }),
     );
     expect(hooks.decisions.setFilters).toHaveBeenCalledWith(
       DEFAULT_INJECTION_FILTERS,
     );
+  });
+
+  it("forwards every categorical and text decision filter", async () => {
+    renderDecisionsTab();
+
+    await chooseOption("injection.filter.routingMode", "injection.mode.hybrid");
+    await chooseOption(
+      "injection.filter.resolvedPreset",
+      "injection.preset.quality",
+    );
+    await chooseOption("injection.filter.fallbackApplied", "common.yes");
+    await chooseOption("injection.filter.outcome", "injection.outcome.fallback");
+    fireEvent.change(screen.getByRole("textbox", {
+      name: "injection.filter.providerType",
+    }), { target: { value: "openai" } });
+    fireEvent.change(screen.getByRole("textbox", {
+      name: "injection.filter.primaryReason",
+    }), { target: { value: "PROVIDER_DELIVERY_DOWNGRADED" } });
+
+    expect(hooks.decisions.setFilter).toHaveBeenCalledWith("routingMode", "hybrid");
+    expect(hooks.decisions.setFilter).toHaveBeenCalledWith("resolvedPreset", "quality");
+    expect(hooks.decisions.setFilter).toHaveBeenCalledWith("fallbackApplied", "true");
+    expect(hooks.decisions.setFilter).toHaveBeenCalledWith("outcome", "fallback");
+    expect(hooks.decisions.setFilter).toHaveBeenCalledWith("providerType", "openai");
+    expect(hooks.decisions.setFilter).toHaveBeenCalledWith(
+      "primaryReason",
+      "PROVIDER_DELIVERY_DOWNGRADED",
+    );
+  });
+
+  it("offers only the approved decision page sizes", async () => {
+    renderDecisionsTab();
+    fireEvent.click(screen.getByRole("combobox", {
+      name: "injection.pagination.pageSize",
+    }));
+
+    const options = await screen.findAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["25", "50", "100"]);
   });
 
   it("uses server totals for true pagination and resets filters through the hook", async () => {
@@ -688,15 +726,15 @@ describe("InjectionStrategyPage", () => {
     expect(within(scroll).getByRole("table").className).toContain("min-w-[64rem]");
     expect(within(scroll).getAllByRole("columnheader").map((cell) => cell.textContent))
       .toEqual([
-        "injection.decisions.time",
-        "injection.decisions.routingMode",
-        "injection.decisions.resolvedPreset",
-        "injection.decisions.provider",
-        "injection.decisions.primaryReason",
-        "injection.decisions.fallback",
-        "injection.decisions.outcome",
-        "injection.decisions.payloadChars",
-        "injection.decisions.totalMs",
+        "injection.column.time",
+        "injection.column.mode",
+        "injection.column.preset",
+        "injection.column.provider",
+        "injection.column.reason",
+        "injection.column.fallback",
+        "injection.column.outcome",
+        "injection.column.payloadChars",
+        "injection.column.totalMs",
       ]);
   });
 
@@ -717,8 +755,17 @@ describe("InjectionStrategyPage", () => {
       query: "SECRET_QUERY",
       prompt: "SECRET_PROMPT",
       memory_content: "SECRET_MEMORY",
+      memory_ids: ["SECRET_MEMORY_ID"],
       user_id: "SECRET_USER",
+      group_id: "SECRET_GROUP",
+      persona_id: "SECRET_PERSONA",
       session_id: "SECRET_SESSION",
+      api_key: "SECRET_API_KEY",
+      authorization: "Bearer SECRET_TOKEN",
+      headers: { Authorization: "Bearer SECRET_HEADER" },
+      endpoint: "https://secret-endpoint.invalid",
+      base_url: "https://secret-base.invalid",
+      stack_trace: "SECRET_STACK",
     } as unknown as InjectionDecisionDetail;
     rerenderPage();
 
@@ -733,11 +780,24 @@ describe("InjectionStrategyPage", () => {
       "SECRET_QUERY",
       "SECRET_PROMPT",
       "SECRET_MEMORY",
+      "SECRET_MEMORY_ID",
       "SECRET_USER",
+      "SECRET_GROUP",
+      "SECRET_PERSONA",
       "SECRET_SESSION",
+      "SECRET_API_KEY",
+      "SECRET_TOKEN",
+      "SECRET_HEADER",
+      "secret-endpoint.invalid",
+      "secret-base.invalid",
+      "SECRET_STACK",
       "memory_content",
+      "memory_ids",
       "user_id",
+      "group_id",
+      "persona_id",
       "session_id",
+      "stack_trace",
     ]) {
       expect(sheet.textContent).not.toContain(forbidden);
     }
@@ -757,7 +817,7 @@ describe("InjectionStrategyPage", () => {
     hooks.decisions.detailStatus = "error";
     hooks.decisions.detailError = "detail unavailable";
     rerenderPage();
-    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "injection.detail.retry" }));
     expect(hooks.decisions.loadDetail).toHaveBeenLastCalledWith(
       "00000000-0000-4000-8000-000000000001",
     );
@@ -1023,7 +1083,7 @@ describe("InjectionStrategyPage", () => {
     renderConfigTab();
 
     expect(
-      screen.getByRole("region", { name: "injection.config.title" }),
+      screen.getByRole("region", { name: "injection.tabs.config" }),
     ).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain(
       "config.status.offline",

@@ -47,7 +47,7 @@ describe("createMockConfigServer", () => {
     );
 
     expect(Object.keys(first.schema)).toHaveLength(41);
-    expect(countSchemaLeaves(first.schema)).toBe(207);
+    expect(countSchemaLeaves(first.schema)).toBe(216);
     expect(first.plugin_name).toBe("astrbot_plugin_memora");
     expect(first.provider_options).toEqual({
       llm: [

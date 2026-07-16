@@ -9,6 +9,83 @@ import type {
   ReviewItem,
   RecallTraceResponse,
 } from "@/types/intelligence";
+import type {
+  InjectionDecisionDetail,
+  InjectionOutcome,
+  InjectionPresetName,
+  InjectionRoutingMode,
+} from "@/types/injection";
+
+export const INJECTION_MOCK_NOW_MS = Date.UTC(2026, 6, 15, 8, 0, 0);
+const INJECTION_PRESETS: InjectionPresetName[] = [
+  "tool_first",
+  "low_cost",
+  "balanced",
+  "quality",
+];
+const INJECTION_MODES: InjectionRoutingMode[] = ["manual", "auto", "hybrid"];
+const INJECTION_OUTCOMES: InjectionOutcome[] = [
+  "injected",
+  "skipped",
+  "empty",
+  "fallback",
+  "error",
+];
+
+export const INJECTION_DECISIONS: InjectionDecisionDetail[] = Array.from(
+  { length: 72 },
+  (_, index) => {
+    const resolved = INJECTION_PRESETS[index % INJECTION_PRESETS.length];
+    const outcome = INJECTION_OUTCOMES[index % INJECTION_OUTCOMES.length];
+    const fallback = outcome === "fallback" || index % 11 === 0;
+    const budget = resolved === "quality"
+      ? 2_400
+      : resolved === "balanced"
+        ? 1_200
+        : resolved === "low_cost"
+          ? 800
+          : 0;
+    return {
+      decision_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      created_at_ms: INJECTION_MOCK_NOW_MS - index * 30 * 60 * 1_000,
+      trace_id: index % 3 === 0
+        ? `trace-mock-${String(index + 1).padStart(3, "0")}`
+        : null,
+      routing_mode: INJECTION_MODES[index % INJECTION_MODES.length],
+      configured_preset: INJECTION_PRESETS[(index + 1) % INJECTION_PRESETS.length],
+      recommended_preset: INJECTION_PRESETS[(index + 2) % INJECTION_PRESETS.length],
+      resolved_preset: resolved,
+      preferred_delivery: "extra_user_content",
+      resolved_delivery: fallback
+        ? "user_message_before"
+        : "extra_user_content",
+      fallback_applied: fallback,
+      outcome,
+      error_code: outcome === "error" ? "FORMAT_FAILED" : null,
+      primary_reason: fallback
+        ? "PROVIDER_DELIVERY_DOWNGRADED"
+        : "MANUAL_SELECTED",
+      reason_codes: fallback
+        ? ["MANUAL_SELECTED", "PROVIDER_DELIVERY_DOWNGRADED"]
+        : ["MANUAL_SELECTED"],
+      provider_type: index % 2 === 0 ? "openai" : "gemini",
+      provider_model: index % 2 === 0 ? "gpt-mock" : "gemini-mock",
+      candidate_count: 6,
+      selected_count: resolved === "tool_first" ? 0 : Math.min(4, index % 5),
+      dropped_count: index % 3,
+      truncated_count: index % 2,
+      configured_budget_chars: budget,
+      effective_budget_chars: budget,
+      actual_payload_chars: budget === 0
+        ? 0
+        : Math.min(budget, 320 + index * 13),
+      context_headroom_chars: 8_000 - index * 10,
+      decision_ms: 0.4 + (index % 5) * 0.1,
+      format_ms: 1.2 + (index % 7) * 0.2,
+      inject_ms: 0.3 + (index % 3) * 0.1,
+    };
+  },
+);
 
 export const MEMORIES = Array.from({ length: 42 }, (_, i) => {
   const id = `mem_${String(i + 1).padStart(4, "0")}`;

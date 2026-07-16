@@ -220,6 +220,16 @@ describe("global dashboard search helpers", () => {
       DASHBOARD_NAVIGATION.flatMap((group) => group.items.map((item) => item.id)),
     );
 
+    const injectionEntries = buildPageSearchEntries((key) => {
+      if (key === "nav.injection") return "Injection Strategy";
+      if (key.startsWith("nav.group")) return `Group ${key}`;
+      return `Localized ${key}`;
+    });
+    expect(
+      searchLocalEntries(injectionEntries, "Injection Strategy", 10).items
+        .map((entry) => entry.page),
+    ).toEqual(["injection"]);
+
     const injection = entries.find((entry) => entry.id === "page:injection");
     expect(injection).toMatchObject({
       id: "page:injection",

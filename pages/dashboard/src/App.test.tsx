@@ -332,9 +332,11 @@ describe("App", () => {
   it("renders #/injection with stable dirty and navigation callbacks", async () => {
     window.location.hash = "#/injection";
 
-    render(<App />);
+    const { container } = render(<App />);
 
     expect(await screen.findByText("Injection Strategy Page")).toBeTruthy();
+    const header = container.querySelector('[data-slot="app-header"]') as HTMLElement;
+    expect(within(header).getByText("Injection Strategy")).toBeTruthy();
     expect(screen.getByTestId("injection-page-contract").textContent).toBe("ready");
     expect(screen.getByTestId("injection-callback-stability").textContent).toBe("stable");
 
@@ -454,6 +456,38 @@ describe("App", () => {
     expect(await screen.findByRole("dialog", {
       name: "Leave configuration without saving?",
     })).toBeTruthy();
+  });
+
+  it("guards browser Back while Injection Strategy owns a dirty draft", async () => {
+    window.history.replaceState({ route: "preview" }, "", "#/preview");
+    window.history.pushState({ route: "graph" }, "", "#/graph");
+    render(<App />);
+    expect(await screen.findByText("Graph Page")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Injection Strategy" }));
+    expect(await screen.findByText("Injection Strategy Page")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("make-injection-dirty"));
+
+    await traverseHistory(() => window.history.back());
+
+    await waitFor(() => expect(window.location.hash).toBe("#/injection"));
+    expect(await screen.findByRole("dialog", {
+      name: "Leave configuration without saving?",
+    })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", {
+      name: "Discard changes and leave",
+    }));
+    expect(await screen.findByText("Graph Page")).toBeTruthy();
+  });
+
+  it("opens Injection Strategy from global search", async () => {
+    window.history.replaceState({}, "", "#/graph");
+    render(<App />);
+    expect(await screen.findByText("Graph Page")).toBeTruthy();
+
+    await selectGlobalSearchOption("Injection Strategy", /Injection Strategy/);
+
+    await waitFor(() => expect(window.location.hash).toBe("#/injection"));
+    expect(await screen.findByText("Injection Strategy Page")).toBeTruthy();
   });
 
   it("uses the same dirty guard for global search result navigation", async () => {
