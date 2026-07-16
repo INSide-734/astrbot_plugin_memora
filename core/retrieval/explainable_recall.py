@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import math
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -173,10 +174,16 @@ def _candidate_signals(
     results: list[TraceResult],
     request_params: Mapping[str, Any],
 ) -> RequestSignals:
-    scores = sorted(
-        (max(0.0, min(1.0, item.final_score)) for item in results),
-        reverse=True,
-    )
+    normalized_scores = []
+    for item in results:
+        try:
+            score = float(item.final_score)
+        except (TypeError, ValueError):
+            score = 0.0
+        if not math.isfinite(score):
+            score = 0.0
+        normalized_scores.append(max(0.0, min(1.0, score)))
+    scores = sorted(normalized_scores, reverse=True)
     top_confidence = scores[0] if scores else 0.0
     score_gap = top_confidence - scores[1] if len(scores) > 1 else top_confidence
     token_sets = [
