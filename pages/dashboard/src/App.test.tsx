@@ -135,6 +135,45 @@ vi.mock("@/pages/SocialPage", () => ({
 vi.mock("@/pages/IntelligencePage", () => ({
   IntelligencePage: () => <div>Intelligence Page</div>,
 }));
+vi.mock("@/pages/InjectionStrategyPage", async () => {
+  const React = await vi.importActual<typeof import("react")>("react");
+
+  return {
+    InjectionStrategyPage: ({
+      onDirtyChange,
+      onNavigate,
+    }: {
+      onDirtyChange?: (dirty: boolean) => void;
+      onNavigate?: (page: string, intent?: unknown) => void;
+    }) => {
+      const initialDirtyCallback = React.useRef(onDirtyChange);
+      const initialNavigateCallback = React.useRef(onNavigate);
+      return (
+        <div>
+          <p>Injection Strategy Page</p>
+          <output data-testid="injection-page-contract">
+            {typeof onDirtyChange === "function" && typeof onNavigate === "function"
+              ? "ready"
+              : "missing"}
+          </output>
+          <output data-testid="injection-callback-stability">
+            {initialDirtyCallback.current === onDirtyChange
+              && initialNavigateCallback.current === onNavigate
+              ? "stable"
+              : "changed"}
+          </output>
+          <button
+            type="button"
+            data-testid="make-injection-dirty"
+            onClick={() => onDirtyChange?.(true)}
+          >
+            Make injection dirty
+          </button>
+        </div>
+      );
+    },
+  };
+});
 
 import App from "./App";
 
@@ -290,6 +329,21 @@ describe("App", () => {
     expect(within(header).getByText("Configuration")).toBeTruthy();
   });
 
+  it("renders #/injection with stable dirty and navigation callbacks", async () => {
+    window.location.hash = "#/injection";
+
+    render(<App />);
+
+    expect(await screen.findByText("Injection Strategy Page")).toBeTruthy();
+    expect(screen.getByTestId("injection-page-contract").textContent).toBe("ready");
+    expect(screen.getByTestId("injection-callback-stability").textContent).toBe("stable");
+
+    fireEvent.click(screen.getByLabelText("Open menu"));
+    await waitFor(() => {
+      expect(screen.getByTestId("injection-callback-stability").textContent).toBe("stable");
+    });
+  });
+
   it("passes a stable dirty callback and compatible toast command to ConfigPage", async () => {
     window.location.hash = "#/config";
     render(<App />);
@@ -368,6 +422,38 @@ describe("App", () => {
     })).toBeTruthy();
     expect(window.location.hash).toBe("#/config");
     expect(screen.getByText("Config Page")).toBeTruthy();
+  });
+
+  it("blocks dirty Injection Strategy navigation before changing the hash", async () => {
+    window.history.replaceState({}, "", "#/injection");
+    render(<App />);
+    expect(await screen.findByText("Injection Strategy Page")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("make-injection-dirty"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+
+    expect(await screen.findByRole("dialog", {
+      name: "Leave configuration without saving?",
+    })).toBeTruthy();
+    expect(window.location.hash).toBe("#/injection");
+    expect(screen.getByText("Injection Strategy Page")).toBeTruthy();
+  });
+
+  it("restores the Injection Strategy hash when direct hash navigation is blocked", async () => {
+    window.history.replaceState({}, "", "#/injection");
+    render(<App />);
+    expect(await screen.findByText("Injection Strategy Page")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("make-injection-dirty"));
+
+    act(() => {
+      window.location.hash = "#/memory";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+
+    expect(window.location.hash).toBe("#/injection");
+    expect(await screen.findByRole("dialog", {
+      name: "Leave configuration without saving?",
+    })).toBeTruthy();
   });
 
   it("uses the same dirty guard for global search result navigation", async () => {

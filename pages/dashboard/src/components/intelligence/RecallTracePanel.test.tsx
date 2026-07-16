@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RecallTracePanel } from "./RecallTracePanel";
@@ -13,6 +13,27 @@ interface BridgeMock {
 
 function ok<T>(data: T) {
   return { status: "ok", data };
+}
+
+function persistedTrace(traceId: string, query = "persisted query") {
+  return {
+    trace_id: traceId,
+    query,
+    total_ms: 12.3,
+    stages: [],
+    results: [],
+    filtered: [],
+    created_at: 1783150200,
+    metadata: {},
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
 }
 
 describe("RecallTracePanel", () => {
@@ -137,5 +158,61 @@ describe("RecallTracePanel", () => {
 
     expect(bridge.apiPost).not.toHaveBeenCalled();
     expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it("loads one persisted trace by id without posting the id as a query", async () => {
+    bridge.apiGet.mockResolvedValue(ok(persistedTrace("trace-persisted")));
+
+    render(
+      <RecallTracePanel
+        showToast={showToast}
+        navigationTarget={{
+          requestId: 1,
+          tab: "recallTrace",
+          traceId: "trace&id=unsafe",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith(
+        "page/recall/trace/detail",
+        { trace_id: "trace&id=unsafe" },
+      );
+    });
+    expect(bridge.apiGet).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("trace-persisted")).toBeTruthy();
+    expect(bridge.apiPost).not.toHaveBeenCalled();
+  });
+
+  it("ignores a late persisted trace after the navigation target is replaced", async () => {
+    const first = deferred<ReturnType<typeof ok>>();
+    bridge.apiGet
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce(ok(persistedTrace("trace-fresh")));
+
+    const { rerender } = render(
+      <RecallTracePanel
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, tab: "recallTrace", traceId: "trace-stale" }}
+      />,
+    );
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <RecallTracePanel
+        showToast={showToast}
+        navigationTarget={{ requestId: 2, tab: "recallTrace", traceId: "trace-fresh" }}
+      />,
+    );
+    expect(await screen.findByText("trace-fresh")).toBeTruthy();
+
+    await act(async () => {
+      first.resolve(ok(persistedTrace("trace-stale")));
+      await first.promise;
+    });
+
+    expect(screen.queryByText("trace-stale")).toBeNull();
+    expect(screen.getByText("trace-fresh")).toBeTruthy();
   });
 });

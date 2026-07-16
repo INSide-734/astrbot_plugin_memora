@@ -26,6 +26,7 @@ describe("dashboard navigation catalog", () => {
       "memory",
       "timeline",
       "recall",
+      "injection",
       "knowledge",
       "notes",
       "intelligence",
@@ -36,6 +37,20 @@ describe("dashboard navigation catalog", () => {
       "social",
       "system",
       "config",
+    ]);
+  });
+
+  it("places Injection Strategy after Recall and before Knowledge", () => {
+    const memory = DASHBOARD_NAVIGATION.find((group) => group.id === "memory");
+
+    expect(memory?.items.map((item) => item.id)).toEqual([
+      "graph",
+      "memory",
+      "timeline",
+      "recall",
+      "injection",
+      "knowledge",
+      "notes",
     ]);
   });
 

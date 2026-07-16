@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { GitBranch, Loader2, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
@@ -18,11 +18,13 @@ import type {
   RecallTraceResponse,
   RecallTraceResult,
 } from "@/types/intelligence";
+import type { IntelligenceNavigationTarget } from "@/types/navigation";
 
 import { TraceContributionList } from "./TraceContributionList";
 
 interface RecallTracePanelProps {
   showToast: (msg: string, isError?: boolean) => void;
+  navigationTarget?: IntelligenceNavigationTarget | null;
 }
 
 const chatTypeOptions = ["private", "group"];
@@ -131,7 +133,10 @@ function FilteredCandidateRow({ item }: { item: RecallTraceFilteredCandidate }) 
   );
 }
 
-export function RecallTracePanel({ showToast }: RecallTracePanelProps) {
+export function RecallTracePanel({
+  navigationTarget,
+  showToast,
+}: RecallTracePanelProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
   const [query, setQuery] = useState("");
@@ -146,6 +151,37 @@ export function RecallTracePanel({ showToast }: RecallTracePanelProps) {
   const clampedK = useMemo(() => clampNumber(k, 1, 20, 5), [k]);
   const clampedChainDepth = useMemo(() => clampNumber(chainDepth, 0, 5, 2), [chainDepth]);
   const canSubmit = query.trim().length > 0 && !loading;
+
+  useEffect(() => {
+    const traceId = navigationTarget?.traceId;
+    if (!traceId || navigationTarget.tab !== "recallTrace") return;
+    let active = true;
+    setLoading(true);
+    void apiRequest(
+      `recall/trace/detail?trace_id=${encodeURIComponent(traceId)}`,
+      { retries: 0 },
+    )
+      .then((response) => {
+        if (active) setTrace(unwrapApiData<RecallTraceResponse>(response));
+      })
+      .catch((error) => {
+        if (active) {
+          showToast(t("common.errorPrefix", String(error)), true);
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    navigationTarget?.requestId,
+    navigationTarget?.tab,
+    navigationTarget?.traceId,
+    showToast,
+    t,
+  ]);
 
   const submitTrace = async () => {
     const trimmedQuery = query.trim();
