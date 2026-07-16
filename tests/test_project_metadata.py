@@ -257,8 +257,8 @@ def test_dashboard_browser_smoke_covers_injection_strategy_workbench() -> None:
         "sanitizeBridgeCallParams",
         "sanitizeBridgeCallValue",
         "body: sanitizeBridgeCallValue(body ?? {})",
-        "delete sanitized.decision_id",
-        "delete sanitized.trace_id",
+        "BRIDGE_CALL_SENSITIVE_FIELDS",
+        "sensitiveFieldSet.forEach((field) => delete sanitized[field])",
     ]
     for marker in required_markers:
         assert marker in browser_smoke

@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   BROWSER_LAUNCH_CANDIDATES,
+  BRIDGE_CALL_SENSITIVE_FIELDS,
   createBrowserLaunchOptions,
   installBundledMockBridgeHarness,
   instrumentBrowserBridge,
@@ -1326,6 +1327,7 @@ async function assertHighImpactConfirmation(page) {
 
 async function installBundledMockBridge(page) {
   const content = `{
+    const BRIDGE_CALL_SENSITIVE_FIELDS = ${JSON.stringify(BRIDGE_CALL_SENSITIVE_FIELDS)};
     const instrumentBrowserBridge = ${instrumentBrowserBridge.toString()};
     const installBundledMockBridgeHarness = ${installBundledMockBridgeHarness.toString()};
     window.__memoraLoseNextStaleApplyResponse = true;
@@ -1920,9 +1922,10 @@ async function runMobileConfigSmoke(browser, errors, screenshotsDir) {
 }
 
 async function installBridge(page) {
-  await page.addInitScript(() => {
+  await page.addInitScript((sensitiveFields) => {
     let nextSubscriptionId = 1;
     const timers = new Map();
+    const sensitiveFieldSet = new Set(sensitiveFields);
     const cloneJson = (value) => (
       value === undefined ? undefined : JSON.parse(JSON.stringify(value))
     );
@@ -1933,19 +1936,7 @@ async function installBridge(page) {
           return sanitized;
         }
         if (!sanitized || typeof sanitized !== "object") return sanitized;
-        delete sanitized.decision_id;
-        delete sanitized.trace_id;
-        delete sanitized.query;
-        delete sanitized.prompt;
-        delete sanitized.memory_content;
-        delete sanitized.memory_ids;
-        delete sanitized.user_id;
-        delete sanitized.group_id;
-        delete sanitized.persona_id;
-        delete sanitized.session_id;
-        delete sanitized.headers;
-        delete sanitized.endpoint;
-        delete sanitized.stack_trace;
+        sensitiveFieldSet.forEach((field) => delete sanitized[field]);
         Object.values(sanitized).forEach(scrub);
         return sanitized;
       };
@@ -2014,7 +2005,7 @@ async function installBridge(page) {
         timers.delete(id);
       },
     };
-  });
+  }, BRIDGE_CALL_SENSITIVE_FIELDS);
   await page.exposeFunction("__memoraBridgePayload", bridgePayload);
   await page.exposeFunction("__memoraBridgeOk", ok);
 }

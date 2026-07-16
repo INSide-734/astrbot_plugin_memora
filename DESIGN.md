@@ -136,6 +136,13 @@ material as sensitive. The main controls are:
 - bounded queues, budgets, pagination, and retention;
 - cancellation propagation and failure isolation at asynchronous boundaries.
 
+Accepted residual risks are explicit. Prompt wrappers and response cleaning are
+defense-in-depth controls; untrusted memory remains untrusted and is never promoted to a
+trusted instruction. A process crash can lose the last decision batch that has not reached
+SQLite, and sustained recorder failure can make the bounded queue discard its oldest pending
+records to protect chat latency and memory use. Decision telemetry remains inside the AstrBot
+host-authenticated administration boundary and must not be exposed to ordinary chat users.
+
 Security scanners are evidence, not automatic truth. Findings in fixed SQL identifiers,
 test DOM setup, local CLI paths, or non-security randomness require manual data-flow review;
 actual user-controlled Critical/High findings block delivery.
