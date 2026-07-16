@@ -234,6 +234,45 @@ describe("useConfigSync", () => {
     expect(hook.result.current.localPaths).toEqual(["recall_engine.top_k"]);
   });
 
+  it("discards the local draft without sending a request", async () => {
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    expect(hook.result.current.status).toBe("dirty");
+
+    act(() => hook.result.current.discardLocal());
+
+    expect(hook.result.current.draft).toEqual(BASE_CONFIG);
+    expect(hook.result.current.dirtyPaths).toEqual([]);
+    expect(hook.result.current.status).toBe("synced");
+    expect(bridge.apiPost).not.toHaveBeenCalled();
+  });
+
+  it("discardLocal adopts a populated conflict snapshot without saving", async () => {
+    const remote = {
+      ...BASE_CONFIG,
+      recall_engine: { top_k: 20, mode: "vector" },
+    };
+    queueStates(stateSuccess(BASE_CONFIG), stateSuccess(remote, "rev-2"));
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+    await act(async () => hook.result.current.refresh());
+    expect(hook.result.current.status).toBe("conflict");
+    expect(hook.result.current.overlapPaths).toEqual(["recall_engine.top_k"]);
+
+    act(() => hook.result.current.discardLocal());
+
+    expect(hook.result.current.baseConfig).toEqual(remote);
+    expect(hook.result.current.draft).toEqual(remote);
+    expect(hook.result.current.revision).toBe("rev-2");
+    expect(hook.result.current.remoteConfig).toBeNull();
+    expect(hook.result.current.overlapPaths).toEqual([]);
+    expect(hook.result.current.dirtyPaths).toEqual([]);
+    expect(hook.result.current.status).toBe("synced");
+    expect(bridge.apiPost).not.toHaveBeenCalled();
+  });
+
   it("polls a visible page conditionally and refreshes immediately on focus", async () => {
     vi.useFakeTimers();
     queueStates(stateSuccess(BASE_CONFIG), stateUnchanged());

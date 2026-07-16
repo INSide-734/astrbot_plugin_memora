@@ -45,6 +45,7 @@ export interface ConfigSyncResult {
   changeField: (path: string, value: ConfigValue) => void;
   refresh: () => Promise<void>;
   apply: () => Promise<void>;
+  discardLocal: () => void;
   acceptRemote: () => void;
   rebaseRemote: () => void;
 }
@@ -342,6 +343,42 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         fieldErrors: {},
         status: "synced",
         error: null,
+      };
+    });
+  }, []);
+
+  const discardLocal = useCallback(() => {
+    const current = stateRef.current;
+    if (current.status === "applying" || current.status === "reloading") return;
+    refreshGenerationRef.current += 1;
+    setState((previous) => {
+      if (previous.remote) {
+        return {
+          ...previous,
+          baseConfig: cloneConfig(previous.remote.config),
+          draft: cloneConfig(previous.remote.config),
+          revision: previous.remote.revision,
+          instanceId: previous.remote.instanceId,
+          remote: null,
+          remoteRevisionHint: null,
+          fieldErrors: {},
+          status: "synced",
+          error: null,
+        };
+      }
+      if (!previous.baseConfig) return previous;
+      return {
+        ...previous,
+        draft: cloneConfig(previous.baseConfig),
+        fieldErrors: {},
+        status:
+          previous.status === "offline" || previous.status === "error"
+            ? previous.status
+            : "synced",
+        error:
+          previous.status === "offline" || previous.status === "error"
+            ? previous.error
+            : null,
       };
     });
   }, []);
@@ -791,6 +828,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
     changeField,
     refresh,
     apply,
+    discardLocal,
     acceptRemote,
     rebaseRemote,
   };
