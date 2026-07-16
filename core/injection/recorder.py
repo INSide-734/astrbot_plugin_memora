@@ -6,6 +6,7 @@ import asyncio
 import math
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..monitoring.metrics import (
@@ -31,6 +32,19 @@ if TYPE_CHECKING:
 __all__ = ["InjectionDecisionRecorder"]
 
 _PRESET_RANKS = {"tool_first": 0, "low_cost": 1, "balanced": 2, "quality": 3}
+
+
+@dataclass(slots=True)
+class RecorderWorkerState:
+    retained: list[InjectionDecisionRecord]
+    flush_at: float | None
+    batch_retry_at: float
+    batch_attempt: int
+    cleanup_retry_at: float
+    cleanup_attempt: int
+    next_periodic_cleanup_at: float
+    last_lightweight_cleanup_at: float
+    rows_since_cleanup: int = 0
 
 
 class InjectionDecisionRecorder:
@@ -187,124 +201,178 @@ class InjectionDecisionRecorder:
                 self._worker = None
 
     async def _run(self) -> None:
-        retained = self._retained_batch
-        now = self._monotonic()
-        flush_at: float | None = now + self._flush_interval if retained else None
-        batch_retry_at = 0.0
-        batch_attempt = 0
-        cleanup_retry_at = 0.0
-        cleanup_attempt = 0
-        next_periodic_cleanup_at = now + 86_400.0
-        last_lightweight_cleanup_at = now - 3_600.0
-        rows_since_cleanup = 0
+        state = self._new_worker_state()
         try:
             while True:
                 observed_wake_generation = self._wake_generation
                 now = self._monotonic()
-                if now >= next_periodic_cleanup_at:
-                    self._cleanup_generation += 1
-                    self._idle.clear()
-                    next_periodic_cleanup_at += 86_400.0
-
-                cleanup_due = self._cleanup_pending() and now >= cleanup_retry_at
-                if not cleanup_due and (not retained or batch_attempt == 0):
-                    was_empty = not retained
-                    while len(retained) < self._batch_size:
-                        try:
-                            retained.append(self._queue.get_nowait())
-                        except asyncio.QueueEmpty:
-                            break
-                    if was_empty and retained:
-                        flush_at = now + self._flush_interval
-
-                flush_due = bool(retained) and (
-                    batch_attempt > 0
-                    or len(retained) >= self._batch_size
-                    or self._closing
-                    or (flush_at is not None and now >= flush_at)
+                self._schedule_periodic_cleanup(state, now)
+                cleanup_due = (
+                    self._cleanup_pending() and now >= state.cleanup_retry_at
                 )
-                if flush_due and now >= batch_retry_at:
-                    attempted = list(retained)
-                    del retained[: len(attempted)]
-                    try:
-                        await self.store.insert_many(attempted)
-                    except asyncio.CancelledError:
-                        retained[:0] = attempted
-                        self._trim_pending_after_failed_attempt()
-                        raise
-                    except Exception:
-                        retained[:0] = attempted
-                        self._trim_pending_after_failed_attempt()
-                        self._failures_total += 1
-                        self._safe_failure("persist")
-                        batch_retry_at = self._monotonic() + self._retry_delay(
-                            batch_attempt
-                        )
-                        batch_attempt += 1
-                    else:
-                        for _ in attempted:
-                            self._queue.task_done()
-                        row_count = len(attempted)
-                        self._persisted_total += row_count
-                        rows_since_cleanup += row_count
-                        flush_at = None
-                        batch_attempt = 0
-                        batch_retry_at = 0.0
-                        if rows_since_cleanup >= 1_000:
-                            completed_at = self._monotonic()
-                            if completed_at - last_lightweight_cleanup_at >= 3_600.0:
-                                self._cleanup_generation += 1
-                                self._idle.clear()
-                                last_lightweight_cleanup_at = completed_at
-                            rows_since_cleanup = 0
-                        continue
-
-                now = self._monotonic()
-                if self._cleanup_pending() and now >= cleanup_retry_at:
-                    serviced_generation = self._cleanup_generation
-                    retention_days = self._retention_days
-                    max_rows = self._max_rows
-                    try:
-                        await self.store.cleanup(retention_days, max_rows)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        self._failures_total += 1
-                        self._safe_failure("cleanup")
-                        cleanup_retry_at = self._monotonic() + self._retry_delay(
-                            cleanup_attempt
-                        )
-                        cleanup_attempt += 1
-                    else:
-                        self._cleanup_completed_generation = serviced_generation
-                        cleanup_attempt = 0
-                        cleanup_retry_at = 0.0
-                        continue
-
-                if self._closing and not retained and self._queue.empty():
+                self._fill_retained_batch(state, now, cleanup_due)
+                if await self._flush_retained_if_due(state, now):
+                    continue
+                if await self._run_cleanup_if_due(state):
+                    continue
+                if self._closing and not state.retained and self._queue.empty():
                     self._idle.set()
                     return
-
-                if not retained and self._queue.empty() and not self._cleanup_pending():
-                    self._idle.set()
-                else:
-                    self._idle.clear()
-
-                deadlines = [next_periodic_cleanup_at]
-                if retained:
-                    if batch_attempt > 0 or self._closing or len(retained) >= self._batch_size:
-                        deadlines.append(batch_retry_at)
-                    elif flush_at is not None:
-                        deadlines.append(max(flush_at, batch_retry_at))
-                if self._cleanup_pending():
-                    deadlines.append(cleanup_retry_at)
-                delay = max(0.0, min(deadlines) - self._monotonic())
+                self._update_idle_state(state)
+                delay = self._next_worker_delay(state)
                 await self._wait_for_wake(delay, observed_wake_generation)
         finally:
-            if not retained and self._queue.empty() and not self._cleanup_pending():
+            if not state.retained and self._queue.empty() and not self._cleanup_pending():
                 self._idle.set()
             else:
                 self._idle.clear()
+
+    def _new_worker_state(self) -> RecorderWorkerState:
+        now = self._monotonic()
+        return RecorderWorkerState(
+            retained=self._retained_batch,
+            flush_at=now + self._flush_interval if self._retained_batch else None,
+            batch_retry_at=0.0,
+            batch_attempt=0,
+            cleanup_retry_at=0.0,
+            cleanup_attempt=0,
+            next_periodic_cleanup_at=now + 86_400.0,
+            last_lightweight_cleanup_at=now - 3_600.0,
+        )
+
+    def _schedule_periodic_cleanup(
+        self, state: RecorderWorkerState, now: float
+    ) -> None:
+        if now < state.next_periodic_cleanup_at:
+            return
+        self._cleanup_generation += 1
+        self._idle.clear()
+        state.next_periodic_cleanup_at += 86_400.0
+
+    def _fill_retained_batch(
+        self,
+        state: RecorderWorkerState,
+        now: float,
+        cleanup_due: bool,
+    ) -> None:
+        if cleanup_due or (state.retained and state.batch_attempt > 0):
+            return
+        was_empty = not state.retained
+        while len(state.retained) < self._batch_size:
+            try:
+                state.retained.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        if was_empty and state.retained:
+            state.flush_at = now + self._flush_interval
+
+    async def _flush_retained_if_due(
+        self, state: RecorderWorkerState, now: float
+    ) -> bool:
+        if not self._flush_is_due(state, now) or now < state.batch_retry_at:
+            return False
+        attempted = list(state.retained)
+        del state.retained[: len(attempted)]
+        try:
+            await self.store.insert_many(attempted)
+        except asyncio.CancelledError:
+            self._restore_failed_batch(state, attempted)
+            raise
+        except Exception:
+            self._restore_failed_batch(state, attempted)
+            self._failures_total += 1
+            self._safe_failure("persist")
+            state.batch_retry_at = self._monotonic() + self._retry_delay(
+                state.batch_attempt
+            )
+            state.batch_attempt += 1
+            return False
+        self._complete_persist(state, attempted)
+        return True
+
+    def _flush_is_due(self, state: RecorderWorkerState, now: float) -> bool:
+        return bool(state.retained) and (
+            state.batch_attempt > 0
+            or len(state.retained) >= self._batch_size
+            or self._closing
+            or (state.flush_at is not None and now >= state.flush_at)
+        )
+
+    def _restore_failed_batch(
+        self,
+        state: RecorderWorkerState,
+        attempted: list[InjectionDecisionRecord],
+    ) -> None:
+        state.retained[:0] = attempted
+        self._trim_pending_after_failed_attempt()
+
+    def _complete_persist(
+        self,
+        state: RecorderWorkerState,
+        attempted: list[InjectionDecisionRecord],
+    ) -> None:
+        for _ in attempted:
+            self._queue.task_done()
+        row_count = len(attempted)
+        self._persisted_total += row_count
+        state.rows_since_cleanup += row_count
+        state.flush_at = None
+        state.batch_attempt = 0
+        state.batch_retry_at = 0.0
+        self._schedule_lightweight_cleanup(state)
+
+    def _schedule_lightweight_cleanup(self, state: RecorderWorkerState) -> None:
+        if state.rows_since_cleanup < 1_000:
+            return
+        completed_at = self._monotonic()
+        if completed_at - state.last_lightweight_cleanup_at >= 3_600.0:
+            self._cleanup_generation += 1
+            self._idle.clear()
+            state.last_lightweight_cleanup_at = completed_at
+        state.rows_since_cleanup = 0
+
+    async def _run_cleanup_if_due(self, state: RecorderWorkerState) -> bool:
+        now = self._monotonic()
+        if not self._cleanup_pending() or now < state.cleanup_retry_at:
+            return False
+        serviced_generation = self._cleanup_generation
+        try:
+            await self.store.cleanup(self._retention_days, self._max_rows)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._failures_total += 1
+            self._safe_failure("cleanup")
+            state.cleanup_retry_at = self._monotonic() + self._retry_delay(
+                state.cleanup_attempt
+            )
+            state.cleanup_attempt += 1
+            return False
+        self._cleanup_completed_generation = serviced_generation
+        state.cleanup_attempt = 0
+        state.cleanup_retry_at = 0.0
+        return True
+
+    def _update_idle_state(self, state: RecorderWorkerState) -> None:
+        if not state.retained and self._queue.empty() and not self._cleanup_pending():
+            self._idle.set()
+        else:
+            self._idle.clear()
+
+    def _next_worker_delay(self, state: RecorderWorkerState) -> float:
+        deadlines = [state.next_periodic_cleanup_at]
+        if state.retained:
+            if (
+                state.batch_attempt > 0
+                or self._closing
+                or len(state.retained) >= self._batch_size
+            ):
+                deadlines.append(state.batch_retry_at)
+            elif state.flush_at is not None:
+                deadlines.append(max(state.flush_at, state.batch_retry_at))
+        if self._cleanup_pending():
+            deadlines.append(state.cleanup_retry_at)
+        return max(0.0, min(deadlines) - self._monotonic())
 
     async def _wait_for_wake(self, delay: float, observed_generation: int) -> None:
         if self._wake_generation != observed_generation:
@@ -358,6 +426,11 @@ class InjectionDecisionRecorder:
         return min(5.0, math.ldexp(self._retry_base_delay, exponent))
 
     def _observe_record(self, record: InjectionDecisionRecord) -> None:
+        self._observe_decision_counters(record)
+        self._observe_decision_ratios(record)
+        self._observe_stage_timings(record)
+
+    def _observe_decision_counters(self, record: InjectionDecisionRecord) -> None:
         self._safe_labeled_inc(
             INJECTION_DECISIONS_TOTAL,
             routing_mode=record.routing_mode,
@@ -386,6 +459,8 @@ class InjectionDecisionRecorder:
             self._safe_labeled_inc(INJECTION_HYBRID_CLAMP_TOTAL, boundary=boundary)
         if record.outcome in {"skipped", "empty"}:
             self._safe_labeled_inc(INJECTION_SKIP_TOTAL, reason=record.primary_reason)
+
+    def _observe_decision_ratios(self, record: InjectionDecisionRecord) -> None:
         self._safe_observe(INJECTION_PAYLOAD_CHARS, max(0, record.actual_payload_chars))
         candidates = max(0, record.candidate_count)
         selected = max(0, record.selected_count)
@@ -401,6 +476,8 @@ class InjectionDecisionRecorder:
             INJECTION_TRUNCATION_RATIO,
             max(0, record.truncated_count) / selected if selected else 0.0,
         )
+
+    def _observe_stage_timings(self, record: InjectionDecisionRecord) -> None:
         for stage, milliseconds in (
             ("decision", record.decision_ms),
             ("format", record.format_ms),
