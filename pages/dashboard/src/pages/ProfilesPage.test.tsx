@@ -484,9 +484,14 @@ describe("ProfilesPage", () => {
 
   it("normalizes prefixed profile update errors into one linked summary", async () => {
     bridge.apiGet.mockImplementation((path: string) => Promise.resolve(ok(path.endsWith("detail")
-      ? { user_id: "alice", display_name: "Alice", revision: "rev-1", preferences: { reply_style: "casual", preferred_topics: [], avoided_topics: [], active_hours: [] }, tags: [] }
+      ? { user_id: "alice", display_name: "Alice", revision: "rev-1", preferences: { reply_style: "casual", preferred_topics: [], avoided_topics: [], active_hours: [] }, tags: [{ category: "interest", value: "music", confidence: 0.8 }] }
       : { total: 1, profiles: [{ user_id: "alice", display_name: "Alice", revision: "rev-1" }] })));
-    bridge.apiPost.mockRejectedValue(new ApiRequestError("Invalid profile", "validation_error", { "changes.display_name": "name rejected" }));
+    bridge.apiPost.mockRejectedValue(new ApiRequestError("Invalid profile", "validation_error", {
+      "changes.display_name": "name rejected",
+      "changes.tags.0.value": "tag value rejected",
+      "changes.preferences.unknown": "unknown preference field",
+      "changes.tags.999.value": "missing tag field",
+    }));
     render(<ProfilesPage showToast={showToast} />);
     fireEvent.click(await screen.findByRole("button", { name: /open profile alice/i }));
     const drawer = await screen.findByRole("dialog", { name: "Profile: Alice" });
@@ -499,6 +504,13 @@ describe("ProfilesPage", () => {
     const errorId = href.slice(1);
     expect(within(drawer).getByLabelText("Name").getAttribute("aria-describedby")?.split(/\s+/)).toContain(errorId);
     expect(document.querySelectorAll(`[id="${errorId}"]`)).toHaveLength(1);
+    const tagHref = within(drawer).getByRole("link", { name: "tag value rejected" }).getAttribute("href")!;
+    const tagErrorId = tagHref.slice(1);
+    expect(within(drawer).getByLabelText("Tag value").getAttribute("aria-describedby")?.split(/\s+/)).toContain(tagErrorId);
+    expect(document.querySelectorAll(`[id="${tagErrorId}"]`)).toHaveLength(1);
+    expect(within(drawer).getByText("unknown preference field; missing tag field")).toBeTruthy();
+    expect(within(drawer).queryByRole("link", { name: "unknown preference field" })).toBeNull();
+    expect(within(drawer).queryByRole("link", { name: "missing tag field" })).toBeNull();
   });
 
   it("retains the edit sheet, draft, and visible error after an update network failure", async () => {

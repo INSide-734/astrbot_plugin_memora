@@ -194,7 +194,30 @@ function isProfileBatchFailure(value: unknown): value is ProfileBatchFailure {
   return isRecord(value) && isProfileIdentity(value.identity) && typeof value.code === "string" && typeof value.message === "string";
 }
 
-const PROFILE_FORM_FIELDS = ["user_id", "display_name", "preferences", "tags"] as const;
+const PROFILE_FORM_FIELDS = [
+  "user_id",
+  "display_name",
+  "preferences",
+  "preferences.reply_style",
+  "preferences.preferred_topics",
+  "preferences.avoided_topics",
+  "preferences.active_hours",
+  "preferences.active_hours.0",
+  "preferences.active_hours.1",
+  "tags",
+] as const;
+
+function profileFormFields(draft: ProfileDraft): string[] {
+  return [
+    ...PROFILE_FORM_FIELDS,
+    ...draft.tags.flatMap((_, index) => [
+      `tags.${index}`,
+      `tags.${index}.category`,
+      `tags.${index}.value`,
+      `tags.${index}.confidence`,
+    ]),
+  ];
+}
 
 function hasProfileRevision(profile: Profile | undefined): profile is Profile & { revision: string } {
   return typeof profile?.revision === "string" && profile.revision.length > 0;
@@ -365,7 +388,7 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
         showToast(label("profiles.createdOutsideView", "Created profile is outside the current view"));
       }
     } catch (error) {
-      const details = editingErrorDetails(error, PROFILE_FORM_FIELDS);
+      const details = editingErrorDetails(error, profileFormFields(createDraft));
       setCreateFieldErrors(details.fieldErrors);
       setCreateFormError(details.formError);
       throw error;
@@ -400,7 +423,7 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
       setEditMode(false);
       setProfiles((previous) => previous.map((profile) => profile.user_id === saved.user_id ? { ...profile, ...saved } : profile));
     } catch (error) {
-      const details = editingErrorDetails(error, PROFILE_FORM_FIELDS);
+      const details = editingErrorDetails(error, profileFormFields(editDraft));
       setEditFieldErrors(details.fieldErrors);
       setEditFormError(details.formError);
       if (error instanceof ApiRequestError && (error.code === "conflict" || error.code === "edit_conflict")) {

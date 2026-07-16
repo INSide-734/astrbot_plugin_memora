@@ -307,6 +307,7 @@ describe("SocialPage", () => {
     mockSocialList();
     bridge.apiPost.mockRejectedValue(new ApiRequestError("Invalid relation", "validation_error", {
       "changes.strength": "strength rejected",
+      "changes.tags.0": "first tag rejected",
       "changes.unknown": "unknown relation field",
     }));
     render(<SocialPage showToast={showToast} />);
@@ -320,6 +321,10 @@ describe("SocialPage", () => {
     const errorId = href.slice(1);
     expect(within(sheet).getByLabelText("Strength").getAttribute("aria-describedby")?.split(/\s+/)).toContain(errorId);
     expect(document.querySelectorAll(`[id="${errorId}"]`)).toHaveLength(1);
+    const tagHref = within(sheet).getByRole("link", { name: "first tag rejected" }).getAttribute("href")!;
+    const tagErrorId = tagHref.slice(1);
+    expect(within(sheet).getByRole("textbox", { name: "Tags" }).getAttribute("aria-describedby")?.split(/\s+/)).toContain(tagErrorId);
+    expect(document.querySelectorAll(`[id="${tagErrorId}"]`)).toHaveLength(1);
     expect(within(sheet).getByText("unknown relation field")).toBeTruthy();
     expect(within(sheet).queryByRole("link", { name: "unknown relation field" })).toBeNull();
   });

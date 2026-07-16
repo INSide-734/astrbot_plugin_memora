@@ -153,6 +153,10 @@ function relationKey(relation: Pick<SocialRelation, "from_user" | "to_user" | "g
 
 const SOCIAL_FORM_FIELDS = ["from_user", "to_user", "group_id", "relation_type", "strength", "tags"] as const;
 
+function normalizeSocialFormField(name: string): string {
+  return /^tags\.\d+$/.test(name) ? "tags" : name;
+}
+
 function hasRevision(relation: SocialRelation | null | undefined): relation is SocialRelation & { revision: string } {
   return typeof relation?.revision === "string" && relation.revision.length > 0;
 }
@@ -308,7 +312,7 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
         showToast(label("social.createdOutsideView", "Created relation is outside the current view"));
       }
     } catch (error) {
-      const details = editingErrorDetails(error, SOCIAL_FORM_FIELDS);
+      const details = editingErrorDetails(error, SOCIAL_FORM_FIELDS, normalizeSocialFormField);
       setCreateFieldErrors(details.fieldErrors);
       setCreateFormError(details.formError);
       throw error;
@@ -349,7 +353,7 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
         showToast(label("social.updatedOutsideView", "Updated relation is outside the current view"));
       }
     } catch (error) {
-      const details = editingErrorDetails(error, SOCIAL_FORM_FIELDS);
+      const details = editingErrorDetails(error, SOCIAL_FORM_FIELDS, normalizeSocialFormField);
       setEditFieldErrors(details.fieldErrors);
       setEditFormError(details.formError);
       if (error instanceof ApiRequestError && (error.code === "conflict" || error.code === "edit_conflict")) {
