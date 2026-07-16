@@ -73,6 +73,7 @@ class InjectionDecisionRecorder:
         self._idle = asyncio.Event()
         self._idle.set()
         self._retained_batch: list[InjectionDecisionRecord] = []
+        self._active_batch: list[InjectionDecisionRecord] = []
         self._cleanup_generation = 0
         self._cleanup_completed_generation = 0
         self._dropped_total = 0
@@ -98,8 +99,7 @@ class InjectionDecisionRecorder:
                 else:
                     self._queue.get_nowait()
                 self._queue.task_done()
-                self._dropped_total += 1
-                self._safe_inc(INJECTION_DECISION_RECORD_DROPPED_TOTAL)
+                self._count_dropped()
             self._queue.put_nowait(record)
             self._idle.clear()
             self._signal_wake()
@@ -171,7 +171,8 @@ class InjectionDecisionRecorder:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
         except asyncio.CancelledError:
-            if not worker.cancelled():
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
                 raise
         finally:
             self._worker = None
@@ -214,11 +215,19 @@ class InjectionDecisionRecorder:
                 )
                 if flush_due and now >= batch_retry_at:
                     attempted = list(retained)
+                    del retained[: len(attempted)]
+                    self._active_batch = attempted
                     try:
                         await self.store.insert_many(attempted)
                     except asyncio.CancelledError:
+                        retained[:0] = attempted
+                        self._active_batch = []
+                        self._trim_pending_after_failed_attempt()
                         raise
                     except Exception:
+                        retained[:0] = attempted
+                        self._active_batch = []
+                        self._trim_pending_after_failed_attempt()
                         self._failures_total += 1
                         self._safe_failure("persist")
                         batch_retry_at = self._monotonic() + self._retry_delay(
@@ -226,10 +235,9 @@ class InjectionDecisionRecorder:
                         )
                         batch_attempt += 1
                     else:
-                        completed_count = min(len(attempted), len(retained))
-                        for _ in range(completed_count):
+                        self._active_batch = []
+                        for _ in attempted:
                             self._queue.task_done()
-                        del retained[:completed_count]
                         row_count = len(attempted)
                         self._persisted_total += row_count
                         rows_since_cleanup += row_count
@@ -312,6 +320,19 @@ class InjectionDecisionRecorder:
             sleep_task.cancel()
             await asyncio.gather(wake_task, sleep_task, return_exceptions=True)
             raise
+
+    def _trim_pending_after_failed_attempt(self) -> None:
+        while len(self._retained_batch) + self._queue.qsize() > self._queue_capacity:
+            if self._retained_batch:
+                self._retained_batch.pop(0)
+            else:
+                self._queue.get_nowait()
+            self._queue.task_done()
+            self._count_dropped()
+
+    def _count_dropped(self) -> None:
+        self._dropped_total += 1
+        self._safe_inc(INJECTION_DECISION_RECORD_DROPPED_TOTAL)
 
     def _signal_wake(self) -> None:
         self._wake_generation += 1
