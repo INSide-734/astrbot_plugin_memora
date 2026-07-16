@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { KnowledgeForm } from "./KnowledgeForm";
@@ -27,6 +27,116 @@ vi.mock("@/hooks/useI18n", async () => {
 
 describe("domain editing forms", () => {
   afterEach(cleanup);
+
+  const profileValue = {
+    user_id: "alice",
+    display_name: "Alice",
+    preferences: { reply_style: "concise", preferred_topics: ["ops"], avoided_topics: ["spoilers"], active_hours: [9, 17] },
+    tags: [{ category: "interest", value: "testing", confidence: 0.8 }],
+  };
+
+  const focusCases = [
+    {
+      name: "memory textarea",
+      form: () => <MemoryForm value={{ content: "x", importance: 1, type: "fact", status: "active" }} onChange={vi.fn()} mode="edit" fieldErrors={{ content: "bad content" }} />,
+      control: () => screen.getByLabelText("Content"),
+    },
+    {
+      name: "knowledge select",
+      form: () => <KnowledgeForm value={{ title: "x", content: "x", category: "fact", confidence: 1, tags: [] }} onChange={vi.fn()} mode="edit" fieldErrors={{ category: "bad category" }} />,
+      control: () => screen.getByLabelText("Category"),
+    },
+    {
+      name: "note tag editor",
+      form: () => <NoteForm value={{ title: "x", content: "x", tags: [], status: "active" }} onChange={vi.fn()} mode="edit" fieldErrors={{ tags: "bad tags" }} />,
+      control: () => screen.getByRole("textbox", { name: "Tags" }),
+    },
+    {
+      name: "profile user id",
+      form: () => <ProfileForm value={profileValue} onChange={vi.fn()} mode="create" fieldErrors={{ user_id: "bad user" }} />,
+      control: () => screen.getByLabelText("User ID"),
+    },
+    {
+      name: "social relation select",
+      form: () => <SocialRelationForm value={{ from_user: "alice", to_user: "bob", group_id: "g1", relation_type: "colleague", strength: 0.5, tags: [] }} onChange={vi.fn()} mode="create" fieldErrors={{ relation_type: "bad relation" }} />,
+      control: () => screen.getByLabelText("Relation type"),
+    },
+    {
+      name: "jargon switch",
+      form: () => <JargonForm value={{ term: "x", group_id: "g1", meaning: "meaning", confidence: 0.8, is_jargon: true, is_confirmed: false, is_global: false }} onChange={vi.fn()} mode="create" fieldErrors={{ is_confirmed: "bad confirmation" }} />,
+      control: () => screen.getByRole("switch", { name: "Is confirmed" }),
+    },
+    {
+      name: "affection number input",
+      form: () => <AffectionForm value={{ user_id: "alice", group_id: "g1", affection_score: 10 }} onChange={vi.fn()} mode="create" fieldErrors={{ affection_score: "bad score" }} />,
+      control: () => screen.getByLabelText("Affection score"),
+    },
+    {
+      name: "mood textarea",
+      form: () => <MoodForm value={{ group_id: "g1", mood_type: "happy", intensity: 0.5, duration_hours: 4, description: "steady" }} onChange={vi.fn()} mode="create" fieldErrors={{ description: "bad description" }} />,
+      control: () => screen.getByLabelText("Description"),
+    },
+  ];
+
+  it.each(focusCases)("focuses the first invalid real control in the $name form", async ({ form, control }) => {
+    render(form());
+
+    await waitFor(() => expect(document.activeElement).toBe(control()));
+  });
+
+  const profileFocusCases = [
+    ["preferences.reply_style", "Reply style selector"],
+    ["preferences.preferred_topics", "Preferred topics"],
+    ["preferences.avoided_topics", "Avoided topics"],
+    ["preferences.active_hours.0", "Active hours start"],
+    ["preferences.active_hours.1", "Active hours end"],
+    ["tags.0.category", "Tag category"],
+    ["tags.0.value", "Tag value"],
+    ["tags.0.confidence", "Tag confidence"],
+  ] as const;
+
+  it.each(profileFocusCases)("focuses the Profile control registered for %s", async (field, label) => {
+    render(<ProfileForm value={profileValue} onChange={vi.fn()} mode="create" fieldErrors={{ [field]: `${field} error` }} />);
+
+    const control = label === "Preferred topics" || label === "Avoided topics"
+      ? screen.getByRole("textbox", { name: label })
+      : screen.getByLabelText(label);
+    await waitFor(() => expect(document.activeElement).toBe(control));
+  });
+
+  it("focuses the first Profile tag row for a root tags error", async () => {
+    const value = {
+      ...profileValue,
+      tags: [
+        profileValue.tags[0],
+        { category: "skill", value: "typescript", confidence: 0.9 },
+      ],
+    };
+
+    render(<ProfileForm value={value} onChange={vi.fn()} mode="create" fieldErrors={{ tags: "bad tags" }} />);
+
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Tag category")));
+  });
+
+  it("removes detached Profile tag controls from the focus registry", async () => {
+    const value = {
+      ...profileValue,
+      tags: [
+        profileValue.tags[0],
+        { category: "skill", value: "typescript", confidence: 0.9 },
+      ],
+    };
+    const error = { "tags.1.confidence": "bad confidence" };
+    const { rerender } = render(<ProfileForm value={value} onChange={vi.fn()} mode="create" fieldErrors={error} />);
+    const removedControl = screen.getByLabelText("Tag confidence 2");
+    await waitFor(() => expect(document.activeElement).toBe(removedControl));
+
+    rerender(<ProfileForm value={profileValue} onChange={vi.fn()} mode="create" fieldErrors={{}} />);
+    rerender(<ProfileForm value={profileValue} onChange={vi.fn()} mode="create" fieldErrors={error} />);
+
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("alert")));
+    expect(removedControl.isConnected).toBe(false);
+  });
 
   function expectLinkedError(control: HTMLElement, message: string | RegExp) {
     expect(screen.getAllByRole("alert")).toHaveLength(1);
