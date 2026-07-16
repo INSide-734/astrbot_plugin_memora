@@ -104,6 +104,8 @@ def _context(memories, **overrides):
 
 def _part_payload() -> str:
     assert TextPart.call_args is not None
+    if "text" in TextPart.call_args.kwargs:
+        return str(TextPart.call_args.kwargs["text"])
     return str(TextPart.call_args.args[0])
 
 

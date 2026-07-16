@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "metric": "RecallHandler.handle_memory_recall total-path p95",
+  "scenario": "balanced_full_path_with_fixed_retrieval",
+  "source_commit": "6555cf217231ad5efac608ba02fedf25a9c7fc84",
+  "warmup_runs": 20,
+  "measured_runs": 160,
+  "retrieval_delay_ms": 10.0,
+  "p95_ms": 16.1155000096187,
+  "injected_runs": 160,
+  "system_prompt_mutations": 0,
+  "temporary_extra_user_content_runs": 160,
+  "recorded_python_version": "3.12.10",
+  "recorded_platform": "Windows-11-10.0.26200-SP0"
+}

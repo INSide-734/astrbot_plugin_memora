@@ -4,6 +4,7 @@ import json
 import re
 import ast
 import sys
+import configparser
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -121,7 +122,9 @@ def test_readme_documents_fast_context_fallback() -> None:
 
 def test_root_agents_links_point_to_existing_module_docs() -> None:
     agents_text = _read_text("AGENTS.md")
-    targets = re.findall(r'click\s+\w+\s+"\.\/([^"]+)"', agents_text)
+    click_targets = re.findall(r'click\s+\w+\s+"\.\/([^"]+)"', agents_text)
+    markdown_targets = re.findall(r'\]\(\.\/([^\s)#]+)(?:#[^)]+)?\)', agents_text)
+    targets = sorted(set(click_targets + markdown_targets))
 
     assert targets, "No module doc links found in AGENTS.md"
     missing = [target for target in targets if not (REPO_ROOT / target).exists()]
@@ -129,7 +132,43 @@ def test_root_agents_links_point_to_existing_module_docs() -> None:
 
 
 def test_root_design_document_exists() -> None:
-    assert (REPO_ROOT / "DESIGN.md").exists()
+    design = _read_text("DESIGN.md")
+    for marker in [
+        "MemoryAtom",
+        "RecallHandler",
+        "InjectionStrategyRouter",
+        "InjectionExecutor",
+        "injection_decisions",
+        "python scripts/check_all.py",
+    ]:
+        assert marker in design, f"DESIGN.md is missing architecture marker: {marker}"
+
+
+def test_root_agents_documents_real_commands_and_quality_gate() -> None:
+    agents = _read_text("AGENTS.md")
+    for command in [
+        "status",
+        "search",
+        "forget",
+        "rebuild-index",
+        "rebuild-graph",
+        "webui",
+        "summarize",
+        "reset",
+        "cleanup",
+        "help",
+    ]:
+        assert f"/memora {command}" in agents
+    assert "python scripts/check_all.py" in agents
+
+
+def test_pytest_ini_is_a_real_repository_entrypoint() -> None:
+    parser = configparser.ConfigParser()
+    parser.read(REPO_ROOT / "pytest.ini", encoding="utf-8")
+
+    assert parser.has_section("pytest")
+    testpaths = parser.get("pytest", "testpaths").split()
+    assert testpaths == ["tests"]
 
 
 def test_quality_gate_entrypoints_exist() -> None:
@@ -501,7 +540,9 @@ def test_injection_decision_benchmark_is_file_backed_and_checks_thresholds() -> 
 
 
 def test_recall_cost_benchmark_covers_each_routing_mode_and_p95() -> None:
-    source = _read_text("scripts/benchmark_recall_cost.py")
+    source = _read_text("scripts/benchmark_recall_cost.py") + _read_text(
+        "scripts/recall_total_path_benchmark.py"
+    )
     for marker in [
         "ManualRoutingAccuracy",
         "AutoRoutingAccuracy",
@@ -511,8 +552,29 @@ def test_recall_cost_benchmark_covers_each_routing_mode_and_p95() -> None:
         "OrdinaryMemoryCharsP95",
         "LowCostPayloadReduction",
         "validate_cross_profile_metrics",
+        "RecallHandler.handle_memory_recall",
+        "TOTAL_RECALL_REGRESSION_LIMIT",
+        "TotalRecallPathP95",
+        "RecordedBaselineP95",
+        "TotalRecallPathRegression",
+        "--handler-worker",
+        "--source-root",
+        "subprocess.run",
+        "scripts/baselines/recall_total_path.json",
     ]:
         assert marker in source
+
+    baseline = json.loads(
+        _read_text("scripts/baselines/recall_total_path.json")
+    )
+    assert baseline["schema_version"] == 1
+    assert baseline["metric"] == "RecallHandler.handle_memory_recall total-path p95"
+    assert baseline["scenario"] == "balanced_full_path_with_fixed_retrieval"
+    assert baseline["p95_ms"] > 0
+    assert baseline["measured_runs"] >= 100
+    assert baseline["warmup_runs"] >= 10
+    assert baseline["retrieval_delay_ms"] > 0
+    assert re.fullmatch(r"[0-9a-f]{40}", baseline["source_commit"])
 
 
 def test_requirements_cover_mandatory_runtime_dependencies() -> None:
