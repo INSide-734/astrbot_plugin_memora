@@ -98,6 +98,44 @@ def _batch_payload(action="delete", *, items=None, params=None):
     }
 
 
+def _audit_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if "[社交关系 AUDIT]" in record.getMessage()
+    ]
+
+
+def _individual_audit(
+    action: str,
+    identity,
+    *,
+    result: str,
+    error_code: str = "none",
+    error_class: str = "none",
+) -> str:
+    return (
+        f"[社交关系 AUDIT] action={action} entity=social_relation "
+        f"identity={identity} result={result} error_code={error_code} "
+        f"error_class={error_class} count=1"
+    )
+
+
+def _batch_audit(
+    action: str,
+    *,
+    result: str,
+    error_code: str,
+    succeeded_count: int,
+    failed_count: int,
+) -> str:
+    return (
+        f"[社交关系 AUDIT] action={action} entity=social_relation identity=batch "
+        f"result={result} error_code={error_code} error_class=none "
+        f"succeeded_count={succeeded_count} failed_count={failed_count}"
+    )
+
+
 def _make_stub(*, group_relations=None, all_relations=None, has_manager=True):
     class Stub:
         get_social_relations = SocialApiMixin.get_social_relations
@@ -275,6 +313,53 @@ class TestSocialRelations:
         assert result["status"] == "ok"
         assert result["data"]["relations"] == []
         assert result["data"]["total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_audit_contract_read_failure_does_not_audit_or_leak_into_mutation(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        read_stub = _make_stub()
+        read_stub.plugin._relation_manager.list_all = AsyncMock(
+            side_effect=RuntimeError("read-backend-secret-514c")
+        )
+
+        with patch("core.api.social_api.request", _mock_request()):
+            read_result = await read_stub.get_social_relations()
+
+        assert read_result["status"] == "error"
+        assert read_result["code"] == "internal_error"
+        assert _audit_messages(caplog) == []
+
+        write_stub = _make_write_stub()
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = _create_payload()
+        with patch("core.api.social_api.request", request_mock):
+            write_result = await write_stub.create_social_relation()
+
+        assert write_result["status"] == "ok"
+        assert _audit_messages(caplog) == [
+            _individual_audit("create", _identity(), result="success")
+        ]
+        assert "read-backend-secret-514c" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_audit_contract_read_cancellation_propagates_without_audit(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        stub = _make_stub()
+        stub.plugin._relation_manager.list_all = AsyncMock(
+            side_effect=asyncio.CancelledError()
+        )
+
+        with (
+            patch("core.api.social_api.request", _mock_request()),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await stub.get_social_relations()
+
+        assert _audit_messages(caplog) == []
 
 
 class TestSocialRelationWrites:
@@ -626,6 +711,198 @@ class TestSocialRelationWrites:
         assert secret not in json.dumps(result, ensure_ascii=False)
         assert secret not in repr(log_error.call_args_list)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "payload", "expected_audit"),
+        [
+            (
+                "create_social_relation",
+                _create_payload(),
+                _individual_audit("create", _identity(), result="success"),
+            ),
+            (
+                "update_social_relation",
+                _update_payload(),
+                _individual_audit("update", _identity(), result="success"),
+            ),
+            (
+                "delete_social_relation",
+                _delete_payload(),
+                _individual_audit("delete", _identity(), result="success"),
+            ),
+            (
+                "batch_social_relations",
+                _batch_payload(),
+                _batch_audit(
+                    "batch_delete",
+                    result="success",
+                    error_code="none",
+                    succeeded_count=1,
+                    failed_count=0,
+                ),
+            ),
+        ],
+    )
+    async def test_audit_contract_mutation_success_emits_exactly_once(
+        self, caplog: pytest.LogCaptureFixture, method_name, payload, expected_audit
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        stub = _make_write_stub()
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = payload
+
+        with patch("core.api.social_api.request", request_mock):
+            result = await getattr(stub, method_name)()
+
+        assert result["status"] == "ok"
+        assert _audit_messages(caplog) == [expected_audit]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "action"),
+        [
+            ("create_social_relation", "create"),
+            ("update_social_relation", "update"),
+            ("delete_social_relation", "delete"),
+            ("batch_social_relations", "batch"),
+        ],
+    )
+    async def test_audit_contract_mutation_early_failure_emits_exactly_once(
+        self, caplog: pytest.LogCaptureFixture, method_name, action
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        stub = _make_write_stub()
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = None
+
+        with patch("core.api.social_api.request", request_mock):
+            result = await getattr(stub, method_name)()
+
+        assert result["code"] == "invalid_request"
+        assert _audit_messages(caplog) == [
+            _individual_audit(
+                action,
+                "unavailable",
+                result="failure",
+                error_code="invalid_request",
+            )
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "manager_method", "failure", "expected_code", "error_class"),
+        [
+            (
+                "update_social_relation",
+                "update_manual_relation",
+                EditConflictError({**_identity(), "strength": 0.6}, "rev-current"),
+                "edit_conflict",
+                "EditConflictError",
+            ),
+            (
+                "delete_social_relation",
+                "delete_manual_relation",
+                EntityNotFoundError("delete-domain-secret-2d91"),
+                "not_found",
+                "EntityNotFoundError",
+            ),
+        ],
+    )
+    async def test_audit_contract_domain_failure_uses_parsed_canonical_identity(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        method_name,
+        manager_method,
+        failure,
+        expected_code,
+        error_class,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        stub = _make_write_stub()
+        getattr(stub.plugin._relation_manager, manager_method).side_effect = failure
+        canonical_identity = _identity()
+        payload = (
+            _update_payload(identity=_identity(from_user=" alice ", group_id=" g1 "))
+            if method_name == "update_social_relation"
+            else _delete_payload(
+                identity=_identity(from_user=" alice ", group_id=" g1 ")
+            )
+        )
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = payload
+
+        with patch("core.api.social_api.request", request_mock):
+            result = await getattr(stub, method_name)()
+
+        action = method_name.removesuffix("_social_relation")
+        assert result["code"] == expected_code
+        assert _audit_messages(caplog) == [
+            _individual_audit(
+                action,
+                canonical_identity,
+                result="failure",
+                error_code=expected_code,
+                error_class=error_class,
+            )
+        ]
+        assert "delete-domain-secret-2d91" not in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_point", ["revision", "serialization"])
+    async def test_audit_contract_create_post_return_failure_uses_entity_identity(
+        self, caplog: pytest.LogCaptureFixture, failure_point: str
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        stub = _make_write_stub()
+        returned_identity = _identity(
+            from_user="canonical-alice", to_user="canonical-bob", group_id="canonical-g"
+        )
+        failure_secret = f"create-{failure_point}-secret-a81f"
+
+        if failure_point == "revision":
+            returned = _make_relation(**returned_identity, tags=["returned"])
+            stub.plugin._relation_manager.revision_for.side_effect = RuntimeError(
+                failure_secret
+            )
+        else:
+            class BrokenSerializedRelation:
+                from_user = returned_identity["from_user"]
+                to_user = returned_identity["to_user"]
+                group_id = returned_identity["group_id"]
+                relation_type = returned_identity["relation_type"]
+                frequency = 0
+                last_interaction = 0.0
+                tags = ["returned"]
+
+                @property
+                def strength(self):
+                    raise RuntimeError(failure_secret)
+
+            returned = BrokenSerializedRelation()
+
+        stub.plugin._relation_manager.create_manual_relation.return_value = returned
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = _create_payload(
+            tags=["create-payload-secret-c573"]
+        )
+
+        with patch("core.api.social_api.request", request_mock):
+            result = await stub.create_social_relation()
+
+        assert result["code"] == "internal_error"
+        assert _audit_messages(caplog) == [
+            _individual_audit(
+                "create",
+                returned_identity,
+                result="failure",
+                error_code="internal_error",
+                error_class="RuntimeError",
+            )
+        ]
+        rendered = caplog.text + repr(result)
+        assert failure_secret not in rendered
+        assert "create-payload-secret-c573" not in rendered
+
 
 class TestSocialRelationBatch:
     @pytest.mark.asyncio
@@ -775,3 +1052,87 @@ class TestSocialRelationBatch:
         assert result["data"]["succeeded_ids"] == [_identity()]
         assert result["data"]["succeeded_count"] == 1
         assert result["data"]["failed_count"] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("side_effect", "expected_result", "succeeded_count", "failed_count"),
+        [
+            (
+                [EntityNotFoundError("batch-item-secret-41e0"), True],
+                "partial",
+                1,
+                1,
+            ),
+            (
+                [
+                    EntityNotFoundError("batch-item-secret-41e0"),
+                    EntityNotFoundError("batch-item-secret-41e0"),
+                ],
+                "failure",
+                0,
+                2,
+            ),
+        ],
+    )
+    async def test_audit_contract_batch_failure_emits_one_aggregate_event(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        side_effect,
+        expected_result,
+        succeeded_count,
+        failed_count,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        stub = _make_write_stub()
+        stub.plugin._relation_manager.delete_manual_relation.side_effect = side_effect
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = _batch_payload(
+            items=[
+                {
+                    "identity": _identity(),
+                    "expected_revision": "batch-payload-secret-f921",
+                },
+                {
+                    "identity": _identity(to_user="carol"),
+                    "expected_revision": "rev-2",
+                },
+            ]
+        )
+
+        with patch("core.api.social_api.request", request_mock):
+            result = await stub.batch_social_relations()
+
+        assert result["status"] == "ok"
+        assert result["data"]["succeeded_count"] == succeeded_count
+        assert result["data"]["failed_count"] == failed_count
+        assert _audit_messages(caplog) == [
+            _batch_audit(
+                "batch_delete",
+                result=expected_result,
+                error_code="item_failure",
+                succeeded_count=succeeded_count,
+                failed_count=failed_count,
+            )
+        ]
+        assert "batch-item-secret-41e0" not in caplog.text
+        assert "batch-payload-secret-f921" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_audit_contract_batch_cancellation_has_no_completed_audit(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        stub = _make_write_stub()
+        stub.plugin._relation_manager.delete_manual_relation.side_effect = (
+            asyncio.CancelledError()
+        )
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = _batch_payload()
+
+        with (
+            patch("core.api.social_api.request", request_mock),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await stub.batch_social_relations()
+
+        assert _audit_messages(caplog) == []
