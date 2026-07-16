@@ -52,6 +52,7 @@ class _RecallExecutionInput:
     memories: list[dict[str, Any]]
     prospective: list[Any]
     cognitive_context: str
+    query: str
     session_filtered: bool
     persona_filtered: bool
     decision_ms: float
@@ -287,6 +288,7 @@ class RecallHandler:
                         memories=[],
                         prospective=prospective,
                         cognitive_context="",
+                        query=actual_query,
                         session_filtered=use_session_filtering,
                         persona_filtered=use_persona_filtering,
                         decision_ms=preflight_ms,
@@ -348,6 +350,7 @@ class RecallHandler:
                     memories=memories,
                     prospective=prospective,
                     cognitive_context=cognitive_context,
+                    query=actual_query,
                     session_filtered=use_session_filtering,
                     persona_filtered=use_persona_filtering,
                     decision_ms=decision_ms,
@@ -534,7 +537,7 @@ class RecallHandler:
             )
         else:
             context = InjectionExecutionContext(
-                query="",
+                query=execution.query,
                 memories=execution.memories,
                 cognitive_context=execution.cognitive_context,
                 prospective_context=prospective_context,
