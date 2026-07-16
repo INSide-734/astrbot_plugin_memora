@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import aiosqlite
 import pytest
 
 from core.base.constants import (
@@ -497,3 +498,39 @@ async def test_cleaner_round_trips_real_executor_output(monkeypatch, delivery) -
     assert req.contexts == [{"role": "user", "content": "older-turn"}]
     assert req.extra_user_content_parts == []
     assert "ROUNDTRIP_MEMORY" not in str(req)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "injected_content",
+    [
+        f"{MEMORY_INJECTION_HEADER}\nlegacy\n{MEMORY_INJECTION_FOOTER}",
+        "<memora-untrusted-memory>\nverified\n</memora-untrusted-memory>",
+        "[DeepSeekV4-FakeToolCall-Replay]\n"
+        "tool -> <memora-untrusted-memory>verified</memora-untrusted-memory>\n"
+        "[/DeepSeekV4-FakeToolCall-Replay]",
+    ],
+)
+async def test_db_cleanup_scans_every_supported_injection_envelope(
+    tmp_path, injected_content
+) -> None:
+    db_path = tmp_path / "cleaner-roundtrip.db"
+    async with aiosqlite.connect(db_path) as connection:
+        connection.row_factory = aiosqlite.Row
+        await connection.execute(
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, content TEXT)"
+        )
+        await connection.executemany(
+            "INSERT INTO messages (id, session_id, content) VALUES (?, ?, ?)",
+            [(1, "s1", injected_content), (2, "s1", "keep-me")],
+        )
+        await connection.commit()
+        stats = await InjectionCleaner.cleanup_injected_memories_from_db(
+            connection, asyncio.Lock()
+        )
+        cursor = await connection.execute("SELECT id, content FROM messages ORDER BY id")
+        rows = await cursor.fetchall()
+    assert stats["scanned"] == 1
+    assert stats["matched"] == 1
+    assert stats["deleted"] == 1
+    assert [(row["id"], row["content"]) for row in rows] == [(2, "keep-me")]
