@@ -353,14 +353,27 @@ class TestConfigApplyApi:
     async def test_maps_validation_errors_to_field_errors(self) -> None:
         manager = MagicMock()
         manager.apply_config_changes = AsyncMock(
-            side_effect=ConfigValidationError({"recall_engine.top_k": "must be positive"})
+            side_effect=ConfigValidationError(
+                {
+                    "recall_engine.injection_decision_retention_days": (
+                        "must be a supported retention period"
+                    )
+                }
+            )
         )
         api, plugin = _make_api(
             request=_Request(
-                body={"base_revision": "rev-1", "changes": {"recall_engine.top_k": -1}}
+                body={
+                    "base_revision": "rev-1",
+                    "changes": {
+                        "recall_engine.injection_decision_retention_days": 13
+                    },
+                }
             ),
             config_manager=manager,
         )
+        recorder = MagicMock()
+        plugin.initializer = SimpleNamespace(injection_decision_recorder=recorder)
 
         result = await api.apply_config()
 
@@ -368,9 +381,16 @@ class TestConfigApplyApi:
             "status": "error",
             "code": "validation_failed",
             "message": "配置验证失败",
-            "data": {"field_errors": {"recall_engine.top_k": "must be positive"}},
+            "data": {
+                "field_errors": {
+                    "recall_engine.injection_decision_retention_days": (
+                        "must be a supported retention period"
+                    )
+                }
+            },
         }
         plugin.schedule_plugin_reload.assert_not_called()
+        recorder.schedule_cleanup.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_maps_persistence_failure_without_scheduling_reload(self) -> None:
@@ -382,6 +402,8 @@ class TestConfigApplyApi:
             request=_Request(body={"base_revision": "rev-1", "changes": {"debug": True}}),
             config_manager=manager,
         )
+        recorder = MagicMock()
+        plugin.initializer = SimpleNamespace(injection_decision_recorder=recorder)
 
         result = await api.apply_config()
 
@@ -391,6 +413,67 @@ class TestConfigApplyApi:
             "message": "disk write failed",
         }
         plugin.schedule_plugin_reload.assert_not_called()
+        recorder.schedule_cleanup.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_retention_change_schedules_cleanup_without_awaiting(self) -> None:
+        changes = {
+            "recall_engine.injection_decision_retention_days": 90,
+            "recall_engine.injection_decision_max_rows": 200_000,
+        }
+        manager = MagicMock()
+        manager.apply_config_changes = AsyncMock(
+            return_value=ConfigApplyResult(
+                "rev-new",
+                tuple(sorted(changes)),
+            )
+        )
+        manager.get.side_effect = lambda path, default=None: {
+            "recall_engine.injection_decision_retention_days": 90,
+            "recall_engine.injection_decision_max_rows": 200_000,
+        }.get(path, default)
+        api, plugin = _make_api(
+            request=_Request(
+                body={"base_revision": "rev-old", "changes": changes}
+            ),
+            config_manager=manager,
+        )
+        recorder = MagicMock()
+        plugin.initializer = SimpleNamespace(injection_decision_recorder=recorder)
+
+        result = await api.apply_config()
+
+        assert result["status"] == "ok"
+        recorder.schedule_cleanup.assert_called_once_with(
+            retention_days=90,
+            max_rows=200_000,
+        )
+
+    @pytest.mark.asyncio
+    async def test_unrelated_config_change_does_not_schedule_cleanup(self) -> None:
+        manager = MagicMock()
+        manager.apply_config_changes = AsyncMock(
+            return_value=ConfigApplyResult(
+                "rev-new",
+                ("recall_engine.top_k",),
+            )
+        )
+        api, plugin = _make_api(
+            request=_Request(
+                body={
+                    "base_revision": "rev-old",
+                    "changes": {"recall_engine.top_k": 8},
+                }
+            ),
+            config_manager=manager,
+        )
+        recorder = MagicMock()
+        plugin.initializer = SimpleNamespace(injection_decision_recorder=recorder)
+
+        result = await api.apply_config()
+
+        assert result["status"] == "ok"
+        recorder.schedule_cleanup.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_success_applies_exact_transaction_and_never_logs_values(self) -> None:
