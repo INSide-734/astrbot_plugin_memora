@@ -725,9 +725,11 @@ describe("KnowledgePage", () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("keeps a rejected knowledge update open with structured field and form errors", async () => {
+  it("keeps a rejected knowledge update open in one linked validation summary", async () => {
     const validationError = new ApiRequestError("Update rejected by the server", "validation_failed", {
       title: "A unique title is required",
+      "tags.0": "The first tag is invalid",
+      unsupported: "The server rejected an unsupported field",
     });
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/knowledge") {
@@ -743,6 +745,7 @@ describe("KnowledgePage", () => {
             content: "Original content",
             category: "fact",
             confidence: 0.8,
+            tags: ["old-tag"],
           },
         }));
       }
@@ -760,18 +763,26 @@ describe("KnowledgePage", () => {
 
     await waitFor(() => {
       expect(within(drawer).getAllByText("A unique title is required").length).toBeGreaterThan(0);
-      expect(within(drawer).getByText("Update rejected by the server").closest('[role="alert"]')).toBeTruthy();
+      expect(within(drawer).getAllByRole("alert")).toHaveLength(1);
     }, { timeout: 5000 });
     const title = within(drawer).getByLabelText("Title") as HTMLInputElement;
     expect(title.value).toBe("Rejected title");
     expect(title.getAttribute("aria-invalid")).toBe("true");
     expect(title.getAttribute("aria-describedby")).toBeTruthy();
+    const tags = within(drawer).getByRole("textbox", { name: "Tags" });
+    const tagErrorLink = within(drawer).getByRole("link", { name: "The first tag is invalid" });
+    const tagErrorId = tagErrorLink.getAttribute("href")?.slice(1) ?? "";
+    expect(tags.getAttribute("aria-describedby")?.split(/\s+/)).toContain(tagErrorId);
+    expect(document.querySelectorAll(`[id="${tagErrorId}"]`)).toHaveLength(1);
+    expect(within(drawer).getByText("The server rejected an unsupported field")).toBeTruthy();
+    expect(within(drawer).queryByRole("link", { name: "The server rejected an unsupported field" })).toBeNull();
+    expect(within(drawer).queryByText("Update rejected by the server")).toBeNull();
     expect(title.disabled).toBe(false);
     expect(within(drawer).getByRole("button", { name: /^save$/i })).toBeTruthy();
     expect(showToast).not.toHaveBeenCalledWith("Entry updated");
   });
 
-  it("keeps a rejected knowledge create open with structured field and form errors", async () => {
+  it("keeps a rejected knowledge create open with one validation summary", async () => {
     const validationError = new ApiRequestError("Create rejected by the server", "validation_failed", {
       title: "A title with this value already exists",
     });
@@ -788,8 +799,9 @@ describe("KnowledgePage", () => {
 
     await waitFor(() => {
       expect(within(dialog).getAllByText("A title with this value already exists").length).toBeGreaterThan(0);
-      expect(within(dialog).getByText("Create rejected by the server").closest('[role="alert"]')).toBeTruthy();
+      expect(within(dialog).getAllByRole("alert")).toHaveLength(1);
     }, { timeout: 5000 });
+    expect(within(dialog).queryByText("Create rejected by the server")).toBeNull();
     const title = within(dialog).getByLabelText("Title") as HTMLInputElement;
     expect(title.value).toBe("Rejected entry");
     expect(title.getAttribute("aria-invalid")).toBe("true");

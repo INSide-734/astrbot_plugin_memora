@@ -17,16 +17,17 @@ export interface DomainFormProps<T> {
   value: T;
   onChange(value: T): void;
   fieldErrors: FieldErrors;
+  formErrors?: readonly string[];
   disabled?: boolean;
   mode: "create" | "edit";
 }
 
-export function MemoryForm({ value, onChange, fieldErrors, disabled = false }: DomainFormProps<MemoryDraft>) {
+export function MemoryForm({ value, onChange, fieldErrors, formErrors = [], disabled = false }: DomainFormProps<MemoryDraft>) {
   const { t } = useI18n();
   const update = <K extends keyof MemoryDraft>(field: K, next: MemoryDraft[K]) => onChange({ ...value, [field]: next });
 
   return (
-    <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={fieldErrors} focusInvalid={Object.keys(fieldErrors).length > 0}>
+    <EditFormLayout summaryLabel={t("edit.validationSummary")} fieldErrors={fieldErrors} formErrors={formErrors} focusInvalid={Object.keys(fieldErrors).length > 0 || formErrors.length > 0}>
       {({ getFieldError }) => {
         const contentError = getFieldError("content");
         const importanceError = getFieldError("importance");

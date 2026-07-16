@@ -281,6 +281,48 @@ describe("MemoryPage", () => {
     expect(within(drawer).getByRole("button", { name: /^edit$/i })).toBeTruthy();
   });
 
+  it("shows a non-field save failure in the form's only live validation summary", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/memories") {
+        return Promise.resolve(ok({
+          items: [{ id: "mem-error", summary: "Memory with save error", type: "fact", importance: 0.8, status: "active" }],
+          total: 1,
+        }));
+      }
+      if (path === "page/memory/detail") {
+        return Promise.resolve(ok({
+          memory: {
+            id: params.id,
+            content: "Original memory content",
+            type: "fact",
+            importance: 0.8,
+            status: "active",
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockRejectedValue(new Error("Memory update is offline"));
+
+    render(<MemoryPage showToast={showToast} />);
+    fireEvent.click(await screen.findByText("Memory with save error"));
+    const detailTitle = await screen.findByText("Memory Detail");
+    const drawer = detailTitle.closest("div")?.parentElement;
+    if (!drawer) throw new Error("expected detail drawer");
+
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(drawer).getByLabelText("Content"), {
+      target: { value: "Unsaved memory content" },
+    });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(within(drawer).getAllByRole("alert")).toHaveLength(1);
+    });
+    expect(within(drawer).getByRole("alert").textContent).toContain("Memory update is offline");
+    expect((within(drawer).getByLabelText("Content") as HTMLTextAreaElement).value).toBe("Unsaved memory content");
+  });
+
   it("keeps a dirty memory edit until local selection changes are discarded", async () => {
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/memories") {

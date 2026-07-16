@@ -18,7 +18,7 @@ import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
 import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { KnowledgeForm, type KnowledgeDraft } from "@/components/editing/forms/KnowledgeForm";
-import { ApiRequestError, BULK_CONFIRMATION_THRESHOLD, type FieldErrors } from "@/types/editing";
+import { BULK_CONFIRMATION_THRESHOLD, editingErrorDetails, type FieldErrors } from "@/types/editing";
 import type { EntityNavigationTarget } from "@/types";
 
 interface KnowledgePageProps {
@@ -42,16 +42,8 @@ interface KnowledgeEntry {
 const CAT_LABELS: Record<string, string> = {};
 const EDIT_KB_LABELS: Record<string, string> = {};
 const PAGE_SIZE = 100;
-
-function submissionError(error: unknown): { fieldErrors: FieldErrors; formError: string } {
-  if (error instanceof ApiRequestError) {
-    return { fieldErrors: error.fieldErrors, formError: error.message };
-  }
-  return {
-    fieldErrors: {},
-    formError: error instanceof Error ? error.message : "Request failed",
-  };
-}
+const KNOWLEDGE_FORM_FIELDS = ["title", "content", "category", "confidence", "tags"] as const;
+const normalizeKnowledgeField = (name: string) => /^tags\.\d+$/.test(name) ? "tags" : name;
 
 export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: KnowledgePageProps) {
   const { t, currentLang } = useI18n();
@@ -163,7 +155,7 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
       setCreateFormError(null);
       fetchEntries();
     } catch (error) {
-      const next = submissionError(error);
+      const next = editingErrorDetails(error, KNOWLEDGE_FORM_FIELDS, normalizeKnowledgeField);
       setCreateFieldErrors(next.fieldErrors);
       setCreateFormError(next.formError);
       throw error;
@@ -200,7 +192,7 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
       setEditFormError(null);
       fetchEntries();
     } catch (error) {
-      const next = submissionError(error);
+      const next = editingErrorDetails(error, KNOWLEDGE_FORM_FIELDS, normalizeKnowledgeField);
       setEditFieldErrors(next.fieldErrors);
       setEditFormError(next.formError);
       throw error;
@@ -361,8 +353,8 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
         </PageToolbar>
       )}
 
-      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) { if (editDirty) setPendingClose("edit"); else setDetail(null); } }} title={detail?.title ?? ""} description={detail ? (CAT_LABELS[detail.category ?? "fact"] ?? detail.category ?? "") : ""} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave onBeginEdit={() => { setEditFieldErrors({}); setEditFormError(null); setEditMode(true); }} onCancel={() => { if (detail) setEditDraft({ title: detail.title ?? "", content: detail.content ?? "", category: detail.category ?? "fact", confidence: Number(detail.confidence ?? 0), tags: (detail as KnowledgeEntry & { tags?: string[] }).tags ?? [] }); setEditFieldErrors({}); setEditFormError(null); setEditMode(false); setEditDirty(false); }} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: t("common.saving") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><p>{detail.content}</p><p>{t("table.category")}: {CAT_LABELS[detail.category ?? "fact"] ?? detail.category}</p><p>{t("table.confidence")}: {formatDashboardNumber(detail.confidence ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p><Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<>{editFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{editFormError}</div> : null}<KnowledgeForm value={editDraft} onChange={updateEditDraft} fieldErrors={editFieldErrors} disabled={editSubmitting} mode="edit" /></>} />
-      <EntityCreateDialog open={showCreate} onOpenChange={(open) => { if (!open) { if (createDirty) setPendingClose("create"); else { resetNewEntry(); setShowCreate(false); } } }} title={t("detail.newEntry")} description={t("detail.newEntry")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(newEntry.title.trim())} onCancel={() => { resetNewEntry(); setShowCreate(false); }} onSubmit={createEntry} labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: t("detail.create"), submitting: t("common.saving") }} form={<>{createFormError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{createFormError}</div> : null}<KnowledgeForm value={newEntry} onChange={updateNewEntry} fieldErrors={createFieldErrors} disabled={createSubmitting} mode="create" /></>} />
+      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) { if (editDirty) setPendingClose("edit"); else setDetail(null); } }} title={detail?.title ?? ""} description={detail ? (CAT_LABELS[detail.category ?? "fact"] ?? detail.category ?? "") : ""} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave onBeginEdit={() => { setEditFieldErrors({}); setEditFormError(null); setEditMode(true); }} onCancel={() => { if (detail) setEditDraft({ title: detail.title ?? "", content: detail.content ?? "", category: detail.category ?? "fact", confidence: Number(detail.confidence ?? 0), tags: (detail as KnowledgeEntry & { tags?: string[] }).tags ?? [] }); setEditFieldErrors({}); setEditFormError(null); setEditMode(false); setEditDirty(false); }} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: t("common.saving") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><p>{detail.content}</p><p>{t("table.category")}: {CAT_LABELS[detail.category ?? "fact"] ?? detail.category}</p><p>{t("table.confidence")}: {formatDashboardNumber(detail.confidence ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p><Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<KnowledgeForm value={editDraft} onChange={updateEditDraft} fieldErrors={editFieldErrors} formErrors={editFormError ? [editFormError] : []} disabled={editSubmitting} mode="edit" />} />
+      <EntityCreateDialog open={showCreate} onOpenChange={(open) => { if (!open) { if (createDirty) setPendingClose("create"); else { resetNewEntry(); setShowCreate(false); } } }} title={t("detail.newEntry")} description={t("detail.newEntry")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(newEntry.title.trim())} onCancel={() => { resetNewEntry(); setShowCreate(false); }} onSubmit={createEntry} labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: t("detail.create"), submitting: t("common.saving") }} form={<KnowledgeForm value={newEntry} onChange={updateNewEntry} fieldErrors={createFieldErrors} formErrors={createFormError ? [createFormError] : []} disabled={createSubmitting} mode="create" />} />
       <UnsavedChangesDialog open={pendingClose !== null} title={t("config.unsaved.title")} description={t("config.unsaved.description")} keepEditingLabel={t("config.unsaved.keepEditing")} discardLabel={t("config.unsaved.discard")} onKeepEditing={() => { setPendingClose(null); setPendingSelection(null); }} onDiscard={() => { if (pendingClose === "selection" && pendingSelection) { setEditDirty(false); resetNewEntry(); setEditMode(false); setShowCreate(false); void fetchDetail(pendingSelection); } else if (pendingClose === "edit") { setEditDirty(false); setEditMode(false); setDetail(null); } else { resetNewEntry(); setShowCreate(false); } setPendingSelection(null); setPendingClose(null); }} />
       <DeleteConfirmDialog open={deleteOpen} title={t("common.delete")} description={detail?.title ?? ""} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} onCancel={() => setDeleteOpen(false)} onConfirm={() => detail && void deleteEntry(detail.entry_id ?? detail.id ?? "")} />
       <DeleteConfirmDialog open={batchDeleteOpen} title={t("filter.deleteSelected")} description={t("filter.deleteSelected")} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} confirmationRequirement={{ label: t("filter.deleteSelected"), expectedText: String(selected.size) }} onCancel={() => setBatchDeleteOpen(false)} onConfirm={() => { setBatchDeleteOpen(false); void executeBatchDelete(); }} />
