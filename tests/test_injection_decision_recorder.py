@@ -132,15 +132,51 @@ async def test_thousand_persisted_rows_schedule_rate_limited_cleanup(store, make
 
 
 @pytest.mark.asyncio
-async def test_periodic_cleanup_uses_injected_monotonic(store) -> None:
+async def test_periodic_cleanup_uses_deadline_and_preserves_cadence_after_failure(
+    store,
+) -> None:
     clock = [0.0]
-    recorder = InjectionDecisionRecorder(store, monotonic=lambda: clock[0])
+    observed_delays: list[float] = []
+    periodic_waiting = asyncio.Event()
+    advance_periodic = asyncio.Event()
+    retry_waiting = asyncio.Event()
+    advance_retry = asyncio.Event()
+    later_waiting = asyncio.Event()
+
+    async def sleep(delay):
+        observed_delays.append(delay)
+        if len(observed_delays) == 1:
+            periodic_waiting.set()
+            await advance_periodic.wait()
+        elif len(observed_delays) == 2:
+            retry_waiting.set()
+            await advance_retry.wait()
+        else:
+            later_waiting.set()
+            await asyncio.Event().wait()
+
+    store.cleanup = AsyncMock(side_effect=[RuntimeError("locked"), 0])
+    recorder = InjectionDecisionRecorder(
+        store,
+        retry_base_delay=0.001,
+        monotonic=lambda: clock[0],
+        sleep=sleep,
+    )
     await recorder.start()
+    await asyncio.wait_for(periodic_waiting.wait(), timeout=1.0)
+    assert observed_delays[0] == pytest.approx(86_400.0)
     clock[0] = 86_400.0
-    recorder.schedule_cleanup()
-    await recorder.wait_until_idle(timeout=1.0)
+    advance_periodic.set()
+    await asyncio.wait_for(retry_waiting.wait(), timeout=1.0)
     assert store.cleanup.await_count == 1
-    await recorder.close(timeout=1.0)
+    assert observed_delays[1] == pytest.approx(0.001)
+    clock[0] = 86_400.001
+    advance_retry.set()
+    await asyncio.wait_for(later_waiting.wait(), timeout=1.0)
+    assert store.cleanup.await_count == 2
+    assert recorder.snapshot()["cleanup_requested"] is False
+    assert observed_delays[2] == pytest.approx(86_399.999)
+    await recorder.close(timeout=0.1)
 
 
 @pytest.mark.asyncio
@@ -171,6 +207,46 @@ async def test_cancelled_worker_propagates_cancellation(store) -> None:
 
 
 @pytest.mark.asyncio
+async def test_restarting_cancelled_worker_flushes_existing_partial_batch(
+    store, make_record
+) -> None:
+    first_wait_started = asyncio.Event()
+    hold_first_wait = asyncio.Event()
+    sleep_calls = 0
+
+    async def sleep(delay):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            first_wait_started.set()
+            await hold_first_wait.wait()
+        else:
+            await asyncio.sleep(delay)
+
+    recorder = InjectionDecisionRecorder(
+        store,
+        batch_size=2,
+        flush_interval=0.001,
+        sleep=sleep,
+    )
+    await recorder.start()
+    recorder.record(make_record("restart-partial"))
+    await asyncio.wait_for(first_wait_started.wait(), timeout=1.0)
+    worker = recorder._worker
+    assert worker is not None
+    worker.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await worker
+
+    await recorder.start()
+    await recorder.wait_until_idle(timeout=1.0)
+    await recorder.close(timeout=1.0)
+    assert [row.decision_id for row in store.insert_many.await_args.args[0]] == [
+        "restart-partial"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_close_wakes_long_interval_flush_and_is_idempotent(store, make_record) -> None:
     recorder = InjectionDecisionRecorder(store, flush_interval=60.0)
     await recorder.start()
@@ -178,6 +254,24 @@ async def test_close_wakes_long_interval_flush_and_is_idempotent(store, make_rec
     await recorder.close(timeout=1.0)
     await recorder.close(timeout=1.0)
     assert store.insert_many.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_record_and_cleanup_are_rejected_after_close(store, make_record) -> None:
+    recorder = InjectionDecisionRecorder(store)
+    await recorder.start()
+    await recorder.close(timeout=1.0)
+    before = recorder.snapshot()
+
+    recorder.record(make_record("too-late"))
+    recorder.schedule_cleanup(retention_days=7, max_rows=25)
+
+    after = recorder.snapshot()
+    assert recorder.queued_decision_ids() == []
+    assert after["cleanup_requested"] is False
+    assert after["dropped_total"] == before["dropped_total"] + 1
+    assert after["failures_total"] == before["failures_total"] + 1
+    assert recorder._idle.is_set()
 
 
 @pytest.mark.asyncio
@@ -198,7 +292,7 @@ async def test_close_timeout_cancels_stuck_worker(store, make_record) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancelling_close_task_propagates_and_restores_pending_boundary(
+async def test_cancelling_close_propagates_while_worker_keeps_ownership(
     store, make_record
 ) -> None:
     insert_started = asyncio.Event()
@@ -210,26 +304,26 @@ async def test_cancelling_close_task_propagates_and_restores_pending_boundary(
         return len(rows)
 
     store.insert_many = AsyncMock(side_effect=blocked_insert)
-    recorder = InjectionDecisionRecorder(store, batch_size=2, queue_capacity=2)
+    recorder = InjectionDecisionRecorder(store, batch_size=1)
     await recorder.start()
-    recorder.record(make_record("active-0"))
-    recorder.record(make_record("active-1"))
+    recorder.record(make_record("survives-close-cancel"))
     await asyncio.wait_for(insert_started.wait(), timeout=1.0)
-    recorder.record(make_record("overflowed-pending"))
-    recorder.record(make_record("pending-0"))
-    recorder.record(make_record("pending-1"))
+    worker = recorder._worker
+    assert worker is not None
 
     close_task = asyncio.create_task(recorder.close(timeout=1.0))
     await asyncio.sleep(0)
     close_task.cancel()
-
     with pytest.raises(asyncio.CancelledError):
         await close_task
-    snapshot = recorder.snapshot()
+
+    assert recorder._worker is worker
+    assert not worker.done()
+    release_insert.set()
+    await recorder.close(timeout=1.0)
+    await asyncio.wait_for(recorder._queue.join(), timeout=1.0)
+    assert recorder.snapshot()["persisted_total"] == 1
     assert recorder._worker is None
-    assert snapshot["retained_size"] + snapshot["queue_size"] == 2
-    assert recorder.queued_decision_ids() == ["pending-0", "pending-1"]
-    assert snapshot["dropped_total"] == 3
 
 
 @pytest.mark.asyncio

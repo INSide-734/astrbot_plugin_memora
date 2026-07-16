@@ -7,6 +7,8 @@ import importlib
 import sys
 from types import ModuleType
 
+import pytest
+
 
 def test_metrics_registry_and_well_known_collectors_exist() -> None:
     import core.monitoring.metrics as metrics
@@ -48,6 +50,35 @@ def test_real_metrics_are_usable_when_prometheus_is_available() -> None:
         assert metrics.REGISTRY.collect() == []
 
 
+def test_injection_payload_chars_uses_character_buckets_without_labels() -> None:
+    pytest.importorskip("prometheus_client")
+    import core.monitoring.metrics as metrics
+
+    collector = next(
+        metric
+        for metric in metrics.REGISTRY.collect()
+        if metric.name == "memora_injection_payload_chars"
+    )
+    bucket_bounds = {
+        float(sample.labels["le"])
+        for sample in collector.samples
+        if sample.name == "memora_injection_payload_chars_bucket"
+    }
+    assert bucket_bounds == {
+        200.0,
+        400.0,
+        600.0,
+        800.0,
+        1000.0,
+        1500.0,
+        2000.0,
+        3000.0,
+        5000.0,
+        float("inf"),
+    }
+    assert metrics.INJECTION_PAYLOAD_CHARS._labelnames == ()
+
+
 def test_stub_metrics_degrade_gracefully_without_prometheus() -> None:
     module_name = "core.monitoring.metrics"
     original = sys.modules.pop(module_name, None)
@@ -74,6 +105,7 @@ def test_stub_metrics_degrade_gracefully_without_prometheus() -> None:
         stubbed.WRITE_OPERATIONS_TOTAL.inc()
         stubbed.WRITE_LOCK_RETRIES_TOTAL.inc()
         stubbed.WRITE_FAILURES_TOTAL.labels(reason="fatal").inc()
+        stubbed.INJECTION_PAYLOAD_CHARS.observe(512)
     finally:
         builtins.__import__ = real_import
         sys.modules.pop(module_name, None)
