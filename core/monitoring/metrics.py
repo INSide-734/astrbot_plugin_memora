@@ -241,7 +241,7 @@ INJECTION_SKIP_TOTAL = Counter(
 INJECTION_PAYLOAD_CHARS = Histogram(
     "memora_injection_payload_chars",
     "Actual protected injection payload characters.",
-    buckets=(200, 400, 600, 800, 1000, 1500, 2000, 3000, 5000),
+    buckets=(0, 200, 500, 800, 1200, 2400, 5000, 10000, 12000),
     registry=REGISTRY,
 )
 

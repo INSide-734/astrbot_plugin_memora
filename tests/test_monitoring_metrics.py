@@ -50,34 +50,65 @@ def test_real_metrics_are_usable_when_prometheus_is_available() -> None:
         assert metrics.REGISTRY.collect() == []
 
 
+_EXPECTED_INJECTION_PAYLOAD_BUCKETS = (
+    0.0,
+    200.0,
+    500.0,
+    800.0,
+    1200.0,
+    2400.0,
+    5000.0,
+    10000.0,
+    12000.0,
+)
+
+
+def _record_injection_payload_metric_config() -> tuple[
+    tuple[float, ...], tuple[str, ...]
+]:
+    module_name = "core.monitoring.metrics"
+    original_metrics = sys.modules.pop(module_name, None)
+    original_prometheus = sys.modules.get("prometheus_client")
+
+    class StubRegistry:
+        pass
+
+    class RecordingMetric:
+        def __init__(self, *args, **kwargs) -> None:
+            self.buckets = tuple(kwargs.get("buckets", ()))
+            self.labelnames = tuple(kwargs.get("labelnames", ()))
+
+    fake_prometheus = ModuleType("prometheus_client")
+    fake_prometheus.CollectorRegistry = StubRegistry
+    fake_prometheus.Counter = RecordingMetric
+    fake_prometheus.Gauge = RecordingMetric
+    fake_prometheus.Histogram = RecordingMetric
+    sys.modules["prometheus_client"] = fake_prometheus
+
+    try:
+        captured = importlib.import_module(module_name)
+        metric = captured.INJECTION_PAYLOAD_CHARS
+        return tuple(float(value) for value in metric.buckets), metric.labelnames
+    finally:
+        sys.modules.pop(module_name, None)
+        if original_prometheus is None:
+            sys.modules.pop("prometheus_client", None)
+        else:
+            sys.modules["prometheus_client"] = original_prometheus
+        if isinstance(original_metrics, ModuleType):
+            sys.modules[module_name] = original_metrics
+        else:
+            importlib.import_module(module_name)
+
+
 def test_injection_payload_chars_uses_character_buckets_without_labels() -> None:
-    pytest.importorskip("prometheus_client")
-    import core.monitoring.metrics as metrics
+    bucket_bounds, labelnames = _record_injection_payload_metric_config()
 
-    collector = next(
-        metric
-        for metric in metrics.REGISTRY.collect()
-        if metric.name == "memora_injection_payload_chars"
-    )
-    bucket_bounds = {
-        float(sample.labels["le"])
-        for sample in collector.samples
-        if sample.name == "memora_injection_payload_chars_bucket"
-    }
-    assert bucket_bounds == {
-        200.0,
-        400.0,
-        600.0,
-        800.0,
-        1000.0,
-        1500.0,
-        2000.0,
-        3000.0,
-        5000.0,
-        float("inf"),
-    }
-    assert metrics.INJECTION_PAYLOAD_CHARS._labelnames == ()
-
+    assert bucket_bounds == _EXPECTED_INJECTION_PAYLOAD_BUCKETS
+    assert all(left < right for left, right in zip(bucket_bounds, bucket_bounds[1:]))
+    assert bucket_bounds[0] == 0.0
+    assert bucket_bounds[-1] == 12000.0
+    assert labelnames == ()
 
 def test_stub_metrics_degrade_gracefully_without_prometheus() -> None:
     module_name = "core.monitoring.metrics"
