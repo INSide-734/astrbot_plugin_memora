@@ -98,4 +98,3 @@ def test_selection_reserves_exact_full_wrapper() -> None:
     assert dropped_at_wrapper == [memory]
     assert selected_at_threshold == [memory]
     assert dropped_at_threshold == []
-
