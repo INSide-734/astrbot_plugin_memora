@@ -34,51 +34,101 @@ _CREATE_FIELDS = frozenset(
 )
 _UPDATE_FIELDS = frozenset({"identity", "changes", "expected_revision"})
 _DELETE_FIELDS = frozenset({"identity", "expected_revision"})
-_IDENTITY_FIELDS = frozenset(
-    {"from_user", "to_user", "group_id", "relation_type"}
-)
+_IDENTITY_KEYS = ("from_user", "to_user", "group_id", "relation_type")
+_IDENTITY_FIELDS = frozenset(_IDENTITY_KEYS)
 _EDITABLE_FIELDS = frozenset({"relation_type", "strength", "tags"})
 _BATCH_FIELDS = frozenset({"action", "items", "params"})
 _BATCH_ACTIONS = frozenset({"delete", "add_tags", "remove_tags"})
 
 
-_AUDIT_EMITTED: ContextVar[bool] = ContextVar(
-    "social_mutation_audit_emitted", default=False
+class _AuditScope:
+    __slots__ = ("action", "identity", "error_class", "emitted")
+
+    def __init__(self, action: str) -> None:
+        self.action = action
+        self.identity: dict[str, str] | str = "unavailable"
+        self.error_class = "none"
+        self.emitted = False
+
+
+_AUDIT_SCOPE: ContextVar[_AuditScope | None] = ContextVar(
+    "social_mutation_audit_scope", default=None
 )
 
 
+def _set_audit_identity(identity: Mapping[str, Any] | None) -> None:
+    scope = _AUDIT_SCOPE.get()
+    if scope is None or scope.emitted or scope.identity != "unavailable":
+        return
+    try:
+        safe_identity = {field: identity[field] for field in _IDENTITY_KEYS}
+    except Exception:
+        return
+    if not all(isinstance(value, str) for value in safe_identity.values()):
+        return
+    scope.identity = safe_identity
+
+
+def _set_audit_relation_identity(relation: Any) -> None:
+    try:
+        identity = {field: getattr(relation, field) for field in _IDENTITY_KEYS}
+    except Exception:
+        return
+    _set_audit_identity(identity)
+
+
+def _set_batch_audit_action(action: str) -> None:
+    scope = _AUDIT_SCOPE.get()
+    if scope is None or scope.emitted or action not in _BATCH_ACTIONS:
+        return
+    scope.action = f"batch_{action}"
+    scope.identity = "batch"
+
+
+def _set_audit_error_class(exc: Exception) -> None:
+    scope = _AUDIT_SCOPE.get()
+    if scope is None or scope.emitted or scope.error_class != "none":
+        return
+    error_class = type(exc).__name__
+    if (
+        len(error_class) > 128
+        or not error_class.isascii()
+        or not error_class.isidentifier()
+    ):
+        error_class = "Exception"
+    scope.error_class = error_class
+
+
 def _audit_event(
-    action: str,
-    identity: Any,
     *,
     result: str,
     error_code: str = "none",
-    error_class: str = "none",
-    count: int = 1,
     succeeded_count: int | None = None,
     failed_count: int | None = None,
 ) -> None:
-    _AUDIT_EMITTED.set(True)
+    scope = _AUDIT_SCOPE.get()
+    if scope is None or scope.emitted:
+        return
+    scope.emitted = True
     if succeeded_count is not None or failed_count is not None:
         logger.info(
             "[社交关系 AUDIT] action=%s entity=social_relation identity=%s result=%s error_code=%s error_class=%s succeeded_count=%d failed_count=%d",
-            action,
-            identity,
+            scope.action,
+            scope.identity,
             result,
             error_code,
-            error_class,
+            scope.error_class,
             0 if succeeded_count is None else succeeded_count,
             0 if failed_count is None else failed_count,
         )
         return
     logger.info(
-        "[社交关系 AUDIT] action=%s entity=social_relation identity=%s result=%s error_code=%s error_class=%s count=%d",
-        action,
-        identity,
+        "[社交关系 AUDIT] action=%s entity=social_relation identity=%s result=%s error_code=%s error_class=%s count=1",
+        scope.action,
+        scope.identity,
         result,
         error_code,
-        error_class,
-        count,
+        "none" if result == "success" else scope.error_class,
     )
 
 
@@ -86,21 +136,25 @@ def _audit_boundary(action: str):
     def decorate(handler):
         @wraps(handler)
         async def wrapped(*args, **kwargs):
-            token = _AUDIT_EMITTED.set(False)
+            scope = _AUDIT_SCOPE.get()
+            outermost = scope is None
+            token = None
+            if outermost:
+                scope = _AuditScope(action)
+                token = _AUDIT_SCOPE.set(scope)
             try:
                 try:
                     response = await handler(*args, **kwargs)
                 except Exception as exc:
-                    response = _exception_response(exc, operation=action)
+                    _set_audit_error_class(exc)
+                    response = _exception_response(exc)
                 if (
-                    isinstance(response, dict)
+                    outermost
+                    and isinstance(response, dict)
                     and response.get("status") == "error"
-                    and not _AUDIT_EMITTED.get()
                 ):
                     code = response.get("code")
                     _audit_event(
-                        action,
-                        "unavailable",
                         result="failure",
                         error_code=(
                             code
@@ -110,7 +164,8 @@ def _audit_boundary(action: str):
                     )
                 return response
             finally:
-                _AUDIT_EMITTED.reset(token)
+                if token is not None:
+                    _AUDIT_SCOPE.reset(token)
 
         return wrapped
 
@@ -181,25 +236,8 @@ def _component_unavailable() -> dict[str, Any]:
     return error_response("关系管理器不可用", code="component_unavailable")
 
 
-def _exception_response(
-    exc: Exception, *, operation: str, audit: bool = True
-) -> dict[str, Any]:
-    error_code = (
-        "validation_error" if isinstance(exc, EntityValidationError)
-        else "already_exists" if isinstance(exc, EntityAlreadyExistsError)
-        else "not_found" if isinstance(exc, EntityNotFoundError)
-        else "edit_conflict" if isinstance(exc, EditConflictError)
-        else "internal_error"
-    )
-    if audit:
-        _audit_event(
-            operation,
-            "unavailable",
-            result="failure",
-            error_code=error_code,
-            error_class=type(exc).__name__,
-        )
-    """将领域异常映射为稳定响应；未知异常只记录操作与异常类。"""
+def _exception_response(exc: Exception) -> dict[str, Any]:
+    """将领域异常映射为稳定响应，不产生任何日志副作用。"""
     if isinstance(exc, EntityValidationError):
         return _validation_error(exc)
     if isinstance(exc, EntityAlreadyExistsError):
@@ -211,11 +249,6 @@ def _exception_response(
             exc.current_entity,
             current_revision=exc.current_revision,
         )
-    logger.error(
-        "[社交关系 API] operation=%s error_class=%s",
-        operation,
-        type(exc).__name__,
-    )
     return error_response("社交关系操作失败", code="internal_error")
 
 
@@ -371,276 +404,254 @@ class SocialApiMixin:
                 }
             )
         except Exception as exc:
-            return _exception_response(exc, operation="list")
+            return _exception_response(exc)
 
     @_audit_boundary("create")
     async def create_social_relation(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
             return guard
-        try:
-            payload, error = require_object(await request.get_json(silent=True))
-            if error:
-                return error
-            unknown_error = reject_unknown_fields(payload, _CREATE_FIELDS)
-            if unknown_error:
-                return unknown_error
-            manager = self._get_relation_manager()
-            if manager is None:
-                return _component_unavailable()
-            rel = await manager.create_manual_relation(
-                from_user=required_text(payload.get("from_user"), field="from_user"),
-                to_user=required_text(payload.get("to_user"), field="to_user"),
-                group_id=_optional_bounded_text(
-                    payload.get("group_id"), field="group_id"
-                ),
-                relation_type=required_text(
-                    payload.get("relation_type"), field="relation_type"
-                ),
-                strength=finite_float(payload.get("strength"), field="strength"),
-                tags=normalized_string_list(payload.get("tags", []), field="tags"),
-            )
-            response = entity_ok(
-                _relation_to_dict(rel),
-                revision=manager.revision_for(rel),
-            )
-            _audit_event(
-                "create",
-                {
-                    "from_user": rel.from_user,
-                    "to_user": rel.to_user,
-                    "group_id": rel.group_id,
-                    "relation_type": rel.relation_type,
-                },
-                result="success",
-            )
-            return response
-        except Exception as exc:
-            return _exception_response(exc, operation="create")
+        payload, error = require_object(await request.get_json(silent=True))
+        if error:
+            return error
+        unknown_error = reject_unknown_fields(payload, _CREATE_FIELDS)
+        if unknown_error:
+            return unknown_error
+        manager = self._get_relation_manager()
+        if manager is None:
+            return _component_unavailable()
+        rel = await manager.create_manual_relation(
+            from_user=required_text(payload.get("from_user"), field="from_user"),
+            to_user=required_text(payload.get("to_user"), field="to_user"),
+            group_id=_optional_bounded_text(
+                payload.get("group_id"), field="group_id"
+            ),
+            relation_type=required_text(
+                payload.get("relation_type"), field="relation_type"
+            ),
+            strength=finite_float(payload.get("strength"), field="strength"),
+            tags=normalized_string_list(payload.get("tags", []), field="tags"),
+        )
+        _set_audit_relation_identity(rel)
+        response = entity_ok(
+            _relation_to_dict(rel),
+            revision=manager.revision_for(rel),
+        )
+        _audit_event(result="success")
+        return response
 
     @_audit_boundary("update")
     async def update_social_relation(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
             return guard
-        try:
-            payload, error = require_object(await request.get_json(silent=True))
-            if error:
-                return error
-            unknown_error = reject_unknown_fields(payload, _UPDATE_FIELDS)
-            if unknown_error:
-                return unknown_error
-            identity, identity_tuple, identity_error = _parse_identity(
-                payload.get("identity")
+        payload, error = require_object(await request.get_json(silent=True))
+        if error:
+            return error
+        unknown_error = reject_unknown_fields(payload, _UPDATE_FIELDS)
+        if unknown_error:
+            return unknown_error
+        identity, identity_tuple, identity_error = _parse_identity(
+            payload.get("identity")
+        )
+        if identity_error:
+            return identity_error
+        _set_audit_identity(identity)
+        changes, changes_error = require_object(payload.get("changes"))
+        if changes_error:
+            return changes_error
+        unknown_changes = reject_unknown_fields(changes, _EDITABLE_FIELDS)
+        if unknown_changes:
+            return unknown_changes
+        expected_revision = required_text(
+            payload.get("expected_revision"),
+            field="expected_revision",
+            maximum=256,
+        )
+
+        normalized_changes: dict[str, Any] = {}
+        if "relation_type" in changes:
+            normalized_changes["relation_type"] = required_text(
+                changes["relation_type"], field="changes.relation_type"
             )
-            if identity_error:
-                return identity_error
-            changes, changes_error = require_object(payload.get("changes"))
-            if changes_error:
-                return changes_error
-            unknown_changes = reject_unknown_fields(changes, _EDITABLE_FIELDS)
-            if unknown_changes:
-                return unknown_changes
-            expected_revision = required_text(
-                payload.get("expected_revision"),
-                field="expected_revision",
-                maximum=256,
+        if "strength" in changes:
+            normalized_changes["strength"] = finite_float(
+                changes["strength"], field="changes.strength"
+            )
+        if "tags" in changes:
+            normalized_changes["tags"] = normalized_string_list(
+                changes["tags"], field="changes.tags"
             )
 
-            normalized_changes: dict[str, Any] = {}
-            if "relation_type" in changes:
-                normalized_changes["relation_type"] = required_text(
-                    changes["relation_type"], field="changes.relation_type"
-                )
-            if "strength" in changes:
-                normalized_changes["strength"] = finite_float(
-                    changes["strength"], field="changes.strength"
-                )
-            if "tags" in changes:
-                normalized_changes["tags"] = normalized_string_list(
-                    changes["tags"], field="changes.tags"
-                )
-
-            manager = self._get_relation_manager()
-            if manager is None:
-                return _component_unavailable()
-            current = await _find_social_relation(manager, identity_tuple)
-            rel = await manager.update_manual_relation(
-                identity=identity_tuple,
-                relation_type=normalized_changes.get(
-                    "relation_type", getattr(current, "relation_type")
-                ),
-                strength=normalized_changes.get(
-                    "strength", getattr(current, "strength")
-                ),
-                tags=normalized_changes.get(
-                    "tags", list(getattr(current, "tags", []) or [])
-                ),
-                expected_revision=expected_revision,
-            )
-            response = entity_ok(
-                _relation_to_dict(rel),
-                revision=manager.revision_for(rel),
-            )
-            _audit_event("update", identity, result="success")
-            return response
-        except Exception as exc:
-            return _exception_response(exc, operation="update")
+        manager = self._get_relation_manager()
+        if manager is None:
+            return _component_unavailable()
+        current = await _find_social_relation(manager, identity_tuple)
+        rel = await manager.update_manual_relation(
+            identity=identity_tuple,
+            relation_type=normalized_changes.get(
+                "relation_type", getattr(current, "relation_type")
+            ),
+            strength=normalized_changes.get(
+                "strength", getattr(current, "strength")
+            ),
+            tags=normalized_changes.get(
+                "tags", list(getattr(current, "tags", []) or [])
+            ),
+            expected_revision=expected_revision,
+        )
+        response = entity_ok(
+            _relation_to_dict(rel),
+            revision=manager.revision_for(rel),
+        )
+        _audit_event(result="success")
+        return response
 
     @_audit_boundary("delete")
     async def delete_social_relation(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
             return guard
-        try:
-            payload, error = require_object(await request.get_json(silent=True))
-            if error:
-                return error
-            unknown_error = reject_unknown_fields(payload, _DELETE_FIELDS)
-            if unknown_error:
-                return unknown_error
-            identity, identity_tuple, identity_error = _parse_identity(
-                payload.get("identity")
-            )
-            if identity_error:
-                return identity_error
-            expected_revision = required_text(
-                payload.get("expected_revision"),
-                field="expected_revision",
-                maximum=256,
-            )
-            manager = self._get_relation_manager()
-            if manager is None:
-                return _component_unavailable()
-            await manager.delete_manual_relation(
-                identity=identity_tuple,
-                expected_revision=expected_revision,
-            )
-            response = ok_response({"deleted": True, "identity": identity})
-            _audit_event("delete", identity, result="success")
-            return response
-        except Exception as exc:
-            return _exception_response(exc, operation="delete")
+        payload, error = require_object(await request.get_json(silent=True))
+        if error:
+            return error
+        unknown_error = reject_unknown_fields(payload, _DELETE_FIELDS)
+        if unknown_error:
+            return unknown_error
+        identity, identity_tuple, identity_error = _parse_identity(
+            payload.get("identity")
+        )
+        if identity_error:
+            return identity_error
+        _set_audit_identity(identity)
+        expected_revision = required_text(
+            payload.get("expected_revision"),
+            field="expected_revision",
+            maximum=256,
+        )
+        manager = self._get_relation_manager()
+        if manager is None:
+            return _component_unavailable()
+        await manager.delete_manual_relation(
+            identity=identity_tuple,
+            expected_revision=expected_revision,
+        )
+        response = ok_response({"deleted": True, "identity": identity})
+        _audit_event(result="success")
+        return response
 
     @_audit_boundary("batch")
     async def batch_social_relations(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
             return guard
-        try:
-            payload, error = require_object(await request.get_json(silent=True))
-            if error:
-                return error
-            unknown_error = reject_unknown_fields(payload, _BATCH_FIELDS)
-            if unknown_error:
-                return unknown_error
+        payload, error = require_object(await request.get_json(silent=True))
+        if error:
+            return error
+        unknown_error = reject_unknown_fields(payload, _BATCH_FIELDS)
+        if unknown_error:
+            return unknown_error
 
-            action = required_text(payload.get("action"), field="action")
-            if action not in _BATCH_ACTIONS:
-                return error_response(
-                    "不支持的批量操作",
-                    code="validation_error",
-                    field_errors={"action": "仅支持 delete、add_tags 或 remove_tags"},
-                )
-            items = payload.get("items")
-            if not isinstance(items, list):
-                return error_response(
-                    "社交关系校验失败",
-                    code="validation_error",
-                    field_errors={"items": "必须为数组"},
-                )
-            if not 1 <= len(items) <= 100:
-                return error_response(
-                    "社交关系校验失败",
-                    code="validation_error",
-                    field_errors={"items": "项目数量必须在 1 到 100 之间"},
-                )
+        action = required_text(payload.get("action"), field="action")
+        if action not in _BATCH_ACTIONS:
+            return error_response(
+                "不支持的批量操作",
+                code="validation_error",
+                field_errors={"action": "仅支持 delete、add_tags 或 remove_tags"},
+            )
+        items = payload.get("items")
+        if not isinstance(items, list):
+            return error_response(
+                "社交关系校验失败",
+                code="validation_error",
+                field_errors={"items": "必须为数组"},
+            )
+        if not 1 <= len(items) <= 100:
+            return error_response(
+                "社交关系校验失败",
+                code="validation_error",
+                field_errors={"items": "项目数量必须在 1 到 100 之间"},
+            )
 
-            params, params_error = require_object(payload.get("params", {}))
-            if params_error:
-                return params_error
-            allowed_params = frozenset() if action == "delete" else frozenset({"tags"})
-            unknown_params = reject_unknown_fields(params, allowed_params)
-            if unknown_params:
-                return unknown_params
-            tag_params: list[str] = []
-            if action in {"add_tags", "remove_tags"}:
-                if "tags" not in params:
-                    raise EntityValidationError({"params.tags": "不能为空"})
-                tag_params = normalized_string_list(
-                    params["tags"], field="params.tags"
-                )
+        params, params_error = require_object(payload.get("params", {}))
+        if params_error:
+            return params_error
+        allowed_params = frozenset() if action == "delete" else frozenset({"tags"})
+        unknown_params = reject_unknown_fields(params, allowed_params)
+        if unknown_params:
+            return unknown_params
+        tag_params: list[str] = []
+        if action in {"add_tags", "remove_tags"}:
+            if "tags" not in params:
+                raise EntityValidationError({"params.tags": "不能为空"})
+            tag_params = normalized_string_list(
+                params["tags"], field="params.tags"
+            )
 
-            manager = self._get_relation_manager()
-            if manager is None:
-                return _component_unavailable()
+        manager = self._get_relation_manager()
+        if manager is None:
+            return _component_unavailable()
+        _set_batch_audit_action(action)
 
-            succeeded_ids: list[dict[str, str]] = []
-            failures: list[dict[str, Any]] = []
-            for index, item in enumerate(items):
-                identity_ref: dict[str, Any] = {"item_index": index}
-                identity, identity_tuple, revision, item_error = _parse_batch_item(item)
-                if identity is not None:
-                    identity_ref = identity
-                if item_error:
-                    failures.append(_batch_failure(identity_ref, item_error))
-                    continue
-                try:
-                    if action == "delete":
-                        await manager.delete_manual_relation(
-                            identity=identity_tuple,
-                            expected_revision=revision,
-                        )
-                    else:
-                        current = await _find_social_relation(manager, identity_tuple)
-                        current_tags = list(getattr(current, "tags", []) or [])
-                        if action == "add_tags":
-                            next_tags = current_tags + [
-                                tag for tag in tag_params if tag not in current_tags
-                            ]
-                        else:
-                            removed = set(tag_params)
-                            next_tags = [tag for tag in current_tags if tag not in removed]
-                        await manager.update_manual_relation(
-                            identity=identity_tuple,
-                            relation_type=getattr(current, "relation_type"),
-                            strength=getattr(current, "strength"),
-                            tags=next_tags,
-                            expected_revision=revision,
-                        )
-                    succeeded_ids.append(identity)
-                except Exception as exc:
-                    item_response = _exception_response(
-                        exc,
-                        operation=f"batch_{action}_item_{index}",
-                        audit=False,
+        succeeded_ids: list[dict[str, str]] = []
+        failures: list[dict[str, Any]] = []
+        for index, item in enumerate(items):
+            identity_ref: dict[str, Any] = {"item_index": index}
+            identity, identity_tuple, revision, item_error = _parse_batch_item(item)
+            if identity is not None:
+                identity_ref = identity
+            if item_error:
+                failures.append(_batch_failure(identity_ref, item_error))
+                continue
+            try:
+                if action == "delete":
+                    await manager.delete_manual_relation(
+                        identity=identity_tuple,
+                        expected_revision=revision,
                     )
-                    failures.append(_batch_failure(identity_ref, item_response))
+                else:
+                    current = await _find_social_relation(manager, identity_tuple)
+                    current_tags = list(getattr(current, "tags", []) or [])
+                    if action == "add_tags":
+                        next_tags = current_tags + [
+                            tag for tag in tag_params if tag not in current_tags
+                        ]
+                    else:
+                        removed = set(tag_params)
+                        next_tags = [tag for tag in current_tags if tag not in removed]
+                    await manager.update_manual_relation(
+                        identity=identity_tuple,
+                        relation_type=getattr(current, "relation_type"),
+                        strength=getattr(current, "strength"),
+                        tags=next_tags,
+                        expected_revision=revision,
+                    )
+                succeeded_ids.append(identity)
+            except Exception as exc:
+                item_response = _exception_response(exc)
+                failures.append(_batch_failure(identity_ref, item_response))
 
-            batch_result = (
-                "success"
-                if not failures
-                else ("failure" if not succeeded_ids else "partial")
-            )
-            _audit_event(
-                "batch_" + action,
-                "batch",
-                result=batch_result,
-                error_code="none" if not failures else "item_failure",
-                succeeded_count=len(succeeded_ids),
-                failed_count=len(failures),
-            )
-            return ok_response(
-                {
-                    "succeeded_ids": succeeded_ids,
-                    "succeeded_count": len(succeeded_ids),
-                    "failed_count": len(failures),
-                    "failures": failures,
-                    "total": len(items),
-                }
-            )
-        except Exception as exc:
-            return _exception_response(exc, operation="batch")
+        batch_result = (
+            "success"
+            if not failures
+            else ("failure" if not succeeded_ids else "partial")
+        )
+        response = ok_response(
+            {
+                "succeeded_ids": succeeded_ids,
+                "succeeded_count": len(succeeded_ids),
+                "failed_count": len(failures),
+                "failures": failures,
+                "total": len(items),
+            }
+        )
+        _audit_event(
+            result=batch_result,
+            error_code="none" if not failures else "item_failure",
+            succeeded_count=len(succeeded_ids),
+            failed_count=len(failures),
+        )
+        return response
 
 
 __all__ = ["SocialApiMixin"]
