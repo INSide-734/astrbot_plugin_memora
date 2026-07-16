@@ -69,64 +69,74 @@ async def median_ms(call, *, runs: int = RUNS) -> float:
     return statistics.median([await elapsed_ms(call) for _ in range(runs)])
 
 
+async def populate_store(store: InjectionDecisionStore, now_ms: int) -> None:
+    for start in range(0, ROW_COUNT, 1_000):
+        await store.insert_many(
+            [
+                make_record(index, now_ms)
+                for index in range(start, min(ROW_COUNT, start + 1_000))
+            ]
+        )
+
+
+async def measure_summary(store: InjectionDecisionStore, now_ms: int) -> float:
+    summary = await store.summary("24h", now_ms=now_ms)
+    expected_rows = 86_401
+    if summary["decision_count"] != expected_rows:
+        raise RuntimeError(
+            "24h summary did not cover the populated benchmark window: "
+            f"expected {expected_rows}, got {summary['decision_count']}"
+        )
+    return await median_ms(lambda: store.summary("24h", now_ms=now_ms))
+
+
+async def measure_page(store: InjectionDecisionStore) -> float:
+    query = DecisionQuery(
+        resolved_preset="balanced",
+        provider_type="openai",
+        outcome="injected",
+        offset=500,
+        limit=100,
+    )
+    return await median_ms(lambda: store.list_decisions(query))
+
+
+async def measure_enqueue(store: InjectionDecisionStore, now_ms: int) -> float:
+    recorder = InjectionDecisionRecorder(store, flush_interval=60.0)
+    await recorder.start()
+    try:
+        samples = []
+        for index in range(1_000):
+            started = time.perf_counter()
+            recorder.record(make_record(ROW_COUNT + index, now_ms))
+            samples.append((time.perf_counter() - started) * 1_000)
+        return sorted(samples)[949]
+    finally:
+        await recorder.close(timeout=5.0)
+
+
+async def measure_cleanup(store: InjectionDecisionStore, now_ms: int) -> float:
+    return await elapsed_ms(
+        lambda: store.cleanup(
+            retention_days=30,
+            max_rows=50_000,
+            now_ms=now_ms,
+        )
+    )
+
+
 async def run_benchmark() -> dict[str, float]:
     with tempfile.TemporaryDirectory(prefix="memora-injection-bench-") as directory:
         store = InjectionDecisionStore(Path(directory) / "memora.db")
         await store.initialize()
         try:
             now_ms = time.time_ns() // 1_000_000
-            for start in range(0, ROW_COUNT, 1_000):
-                await store.insert_many(
-                    [
-                        make_record(index, now_ms)
-                        for index in range(start, min(ROW_COUNT, start + 1_000))
-                    ]
-                )
-
-            summary = await store.summary("24h", now_ms=now_ms)
-            expected_summary_rows = 86_401
-            if summary["decision_count"] != expected_summary_rows:
-                raise RuntimeError(
-                    "24h summary did not cover the populated benchmark window: "
-                    f"expected {expected_summary_rows}, got {summary['decision_count']}"
-                )
-            summary_ms = await median_ms(
-                lambda: store.summary("24h", now_ms=now_ms)
-            )
-            page_ms = await median_ms(
-                lambda: store.list_decisions(
-                    DecisionQuery(
-                        resolved_preset="balanced",
-                        provider_type="openai",
-                        outcome="injected",
-                        offset=500,
-                        limit=100,
-                    )
-                )
-            )
-            recorder = InjectionDecisionRecorder(store, flush_interval=60.0)
-            await recorder.start()
-            try:
-                enqueue_samples = []
-                for index in range(1_000):
-                    started = time.perf_counter()
-                    recorder.record(make_record(ROW_COUNT + index, now_ms))
-                    enqueue_samples.append((time.perf_counter() - started) * 1_000)
-                enqueue_p95_ms = sorted(enqueue_samples)[949]
-            finally:
-                await recorder.close(timeout=5.0)
-            cleanup_ms = await elapsed_ms(
-                lambda: store.cleanup(
-                    retention_days=30,
-                    max_rows=50_000,
-                    now_ms=now_ms,
-                )
-            )
+            await populate_store(store, now_ms)
             return {
-                "summary_median_ms": summary_ms,
-                "page_median_ms": page_ms,
-                "cleanup_ms": cleanup_ms,
-                "enqueue_p95_ms": enqueue_p95_ms,
+                "summary_median_ms": await measure_summary(store, now_ms),
+                "page_median_ms": await measure_page(store),
+                "enqueue_p95_ms": await measure_enqueue(store, now_ms),
+                "cleanup_ms": await measure_cleanup(store, now_ms),
             }
         finally:
             await store.close()

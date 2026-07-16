@@ -214,40 +214,53 @@ def _route_auto(signals: RequestSignals) -> tuple[PresetName, str]:
 
 
 def _signals_are_valid(signals: RequestSignals) -> bool:
-    if not isinstance(signals.query_intent, str) or not signals.query_intent:
-        return False
-    if not isinstance(signals.provider_type, str):
-        return False
-    if not isinstance(signals.provider_model, str):
-        return False
-    if not isinstance(signals.chat_type, str) or not signals.chat_type:
-        return False
+    return (
+        _signal_strings_are_valid(signals)
+        and _signal_booleans_are_valid(signals)
+        and _signal_integers_are_valid(signals)
+        and _signal_ratios_are_valid(signals)
+    )
 
-    boolean_values = (
+
+def _signal_strings_are_valid(signals: RequestSignals) -> bool:
+    return (
+        isinstance(signals.query_intent, str)
+        and bool(signals.query_intent)
+        and isinstance(signals.provider_type, str)
+        and isinstance(signals.provider_model, str)
+        and isinstance(signals.chat_type, str)
+        and bool(signals.chat_type)
+    )
+
+
+def _signal_booleans_are_valid(signals: RequestSignals) -> bool:
+    values = (
         signals.explicit_history_request,
         signals.tools_supported,
         signals.memory_tool_available,
         signals.temporal_conflict,
     )
-    if any(type(value) is not bool for value in boolean_values):
-        return False
+    return all(type(value) is bool for value in values)
 
-    integer_values = (
+
+def _signal_integers_are_valid(signals: RequestSignals) -> bool:
+    values = (
         signals.context_headroom_chars,
         signals.candidate_count,
         signals.estimated_payload_chars,
     )
-    if any(type(value) is not int or value < 0 for value in integer_values):
-        return False
+    return all(type(value) is int and value >= 0 for value in values)
 
-    bounded_values = (
+
+def _signal_ratios_are_valid(signals: RequestSignals) -> bool:
+    values = (
         signals.top_confidence,
         signals.score_gap,
         signals.candidate_redundancy,
     )
     return all(
         type(value) in (int, float) and 0.0 <= value <= 1.0 and isfinite(value)
-        for value in bounded_values
+        for value in values
     )
 
 

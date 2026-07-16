@@ -61,6 +61,9 @@ routing, execution, and sanitized observability.
 Adaptive injection has one strategy path:
 
 - `InjectionStrategyRouter` resolves Manual, Auto, or Hybrid routing deterministically.
+- `core/injection/selection.py` owns pure candidate normalization, utility ranking, and
+  stable budget selection; `InjectionExecutor` remains the sole orchestration and request
+  mutation boundary.
 - Built-in presets are Tool First, Low Cost, Balanced, and Quality.
 - Preflight may skip passive retrieval only when the current Provider request really exposes
   an active memory tool.
@@ -164,6 +167,13 @@ Behavior changes follow RED -> GREEN -> REFACTOR. Larger changes additionally ru
 repository change and quality checks; persistence, API, prompt, and sensitive-data changes run
 the security check. Completion requires fresh outputs for the full scope, a clean Git diff,
 and a requirement-by-requirement audit rather than extrapolation from narrow tests.
+
+The quality gate may report parameter-count design warnings on the fixed utility formula,
+preset override resolver, recorder dependency-injection constructor, and internal routing or
+payload assembly helpers. These signatures intentionally keep the approved scalar formula,
+Schema leaves, clock/sleep test seams, and immutable routing inputs explicit. Replacing them
+with single-use parameter-holder objects would add coupling without reducing behavior or
+complexity; complexity, naming, duplication, and oversized-function findings remain blocking.
 
 Release notes must identify breaking configuration changes, operational loss windows, default
 retention, and rollback settings. Feature work is committed by concern and never stages
