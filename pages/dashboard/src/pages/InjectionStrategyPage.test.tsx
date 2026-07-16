@@ -1,4 +1,11 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useInjectionDecisions } from "@/hooks/useInjectionDecisions";
@@ -269,6 +276,19 @@ function rerenderPage() {
 function renderConfigTab() {
   renderPage();
   fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.config" }));
+}
+
+function renderDecisionsTab() {
+  const rendered = renderPage();
+  fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.decisions" }));
+  return rendered;
+}
+
+async function chooseOption(comboboxName: string, optionName: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: comboboxName }));
+  const option = await screen.findByRole("option", { name: optionName });
+  fireEvent.pointerDown(option, { pointerType: "mouse" });
+  fireEvent.click(option);
 }
 
 describe("InjectionStrategyPage", () => {
@@ -552,6 +572,274 @@ describe("InjectionStrategyPage", () => {
         intelligenceTarget: expect.objectContaining({ traceId: "trace-safe" }),
       }),
     );
+  });
+
+  it("renders all decision filters and validates local date ranges", async () => {
+    renderDecisionsTab();
+
+    expect(screen.getByLabelText("injection.filter.from")).toBeTruthy();
+    expect(screen.getByLabelText("injection.filter.to")).toBeTruthy();
+    for (const name of [
+      "injection.filter.routingMode",
+      "injection.filter.resolvedPreset",
+      "injection.filter.fallbackApplied",
+      "injection.filter.outcome",
+    ]) {
+      expect(screen.getByRole("combobox", { name })).toBeTruthy();
+    }
+    for (const name of [
+      "injection.filter.providerType",
+      "injection.filter.primaryReason",
+    ]) {
+      expect(screen.getByRole("textbox", { name })).toBeTruthy();
+    }
+
+    const from = screen.getByLabelText("injection.filter.from");
+    const to = screen.getByLabelText("injection.filter.to");
+    fireEvent.change(from, { target: { value: "2026-07-16T12:00" } });
+    vi.mocked(hooks.decisions.setFilter).mockClear();
+    fireEvent.change(to, { target: { value: "2026-07-16T11:00" } });
+
+    expect(from.getAttribute("aria-invalid")).toBe("true");
+    expect(to.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByRole("alert").textContent).toContain(
+      "injection.validation.dateRange",
+    );
+    expect(hooks.decisions.setFilter).not.toHaveBeenCalled();
+
+    fireEvent.change(to, { target: { value: "2026-07-16T13:00" } });
+    expect(hooks.decisions.setFilter).toHaveBeenCalledWith(
+      "toMs",
+      new Date("2026-07-16T13:00").getTime(),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.filters.clear" }),
+    );
+    expect(hooks.decisions.setFilters).toHaveBeenCalledWith(
+      DEFAULT_INJECTION_FILTERS,
+    );
+  });
+
+  it("uses server totals for true pagination and resets filters through the hook", async () => {
+    hooks.decisions.page = decisionPageFixture({ total: 61, offset: 25, limit: 25 });
+    hooks.decisions.offset = 25;
+    renderDecisionsTab();
+
+    const pagination = screen.getByRole("navigation", {
+      name: "injection.pagination.label",
+    });
+    expect(within(pagination).getByText("injection.pagination.summary", {
+      exact: false,
+    })).toBeTruthy();
+    fireEvent.click(within(pagination).getByRole("button", {
+      name: "injection.pagination.previous",
+    }));
+    expect(hooks.decisions.setOffset).toHaveBeenCalledWith(0);
+    fireEvent.click(within(pagination).getByRole("button", {
+      name: "injection.pagination.next",
+    }));
+    expect(hooks.decisions.setOffset).toHaveBeenCalledWith(50);
+
+    await chooseOption("injection.filter.outcome", "injection.outcome.error");
+    expect(hooks.decisions.setFilter).toHaveBeenCalledWith("outcome", "error");
+    await chooseOption("injection.pagination.pageSize", "50");
+    expect(hooks.decisions.setLimit).toHaveBeenCalledWith(50);
+  });
+
+  it("disables pagination at the server boundaries", () => {
+    hooks.decisions.page = decisionPageFixture({ total: 1, offset: 0, limit: 25 });
+    renderDecisionsTab();
+
+    expect((screen.getByRole("button", {
+      name: "injection.pagination.previous",
+    }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", {
+      name: "injection.pagination.next",
+    }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("renders loading rows retryable errors empty pages and a bounded table", () => {
+    hooks.decisions.status = "loading";
+    hooks.decisions.page = null;
+    const loading = renderDecisionsTab();
+    expect(loading.container.querySelectorAll('[data-slot="skeleton"]').length)
+      .toBeGreaterThan(0);
+
+    cleanup();
+    resetHookHarness();
+    hooks.decisions.status = "error";
+    hooks.decisions.page = null;
+    renderDecisionsTab();
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(hooks.decisions.refresh).toHaveBeenCalledOnce();
+
+    cleanup();
+    resetHookHarness();
+    hooks.decisions.page = decisionPageFixture({ items: [], total: 0 });
+    renderDecisionsTab();
+    expect(screen.getByRole("status").getAttribute("data-state")).toBe("empty");
+
+    cleanup();
+    resetHookHarness();
+    renderDecisionsTab();
+    const scroll = screen.getByTestId("decision-table-scroll");
+    expect(scroll.className).toContain("overflow-x-auto");
+    expect(within(scroll).getByRole("table").className).toContain("min-w-[64rem]");
+    expect(within(scroll).getAllByRole("columnheader").map((cell) => cell.textContent))
+      .toEqual([
+        "injection.decisions.time",
+        "injection.decisions.routingMode",
+        "injection.decisions.resolvedPreset",
+        "injection.decisions.provider",
+        "injection.decisions.primaryReason",
+        "injection.decisions.fallback",
+        "injection.decisions.outcome",
+        "injection.decisions.payloadChars",
+        "injection.decisions.totalMs",
+      ]);
+  });
+
+  it("loads an allowlisted decision detail in an accessible sheet", () => {
+    hooks.decisions.page = decisionPageFixture({
+      items: [decisionRow({ decision_id: "decision-safe" })],
+    });
+    renderDecisionsTab();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
+    );
+    expect(hooks.decisions.loadDetail).toHaveBeenCalledWith("decision-safe");
+
+    hooks.decisions.detailStatus = "success";
+    hooks.decisions.detail = {
+      ...decisionDetail({ decision_id: "decision-safe", trace_id: "trace-safe" }),
+      query: "SECRET_QUERY",
+      prompt: "SECRET_PROMPT",
+      memory_content: "SECRET_MEMORY",
+      user_id: "SECRET_USER",
+      session_id: "SECRET_SESSION",
+    } as unknown as InjectionDecisionDetail;
+    rerenderPage();
+
+    const sheet = screen.getByRole("dialog", { name: "injection.detail.title" });
+    expect(sheet.className).toContain("w-full");
+    expect(sheet.className).toContain("max-w-full");
+    expect(sheet.className).toContain("sm:max-w-xl");
+    expect(within(sheet).getByText("injection.detail.description")).toBeTruthy();
+    expect(sheet.textContent).toContain("decision-safe");
+    expect(sheet.textContent).toContain("trace-safe");
+    for (const forbidden of [
+      "SECRET_QUERY",
+      "SECRET_PROMPT",
+      "SECRET_MEMORY",
+      "SECRET_USER",
+      "SECRET_SESSION",
+      "memory_content",
+      "user_id",
+      "session_id",
+    ]) {
+      expect(sheet.textContent).not.toContain(forbidden);
+    }
+  });
+
+  it("keeps the detail sheet open across loading errors and retry", () => {
+    renderDecisionsTab();
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
+    );
+    hooks.decisions.detailStatus = "loading";
+    rerenderPage();
+    expect(screen.getByRole("dialog", { name: "injection.detail.title" }))
+      .toBeTruthy();
+    expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
+
+    hooks.decisions.detailStatus = "error";
+    hooks.decisions.detailError = "detail unavailable";
+    rerenderPage();
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(hooks.decisions.loadDetail).toHaveBeenLastCalledWith(
+      "00000000-0000-4000-8000-000000000001",
+    );
+    expect(screen.getByRole("dialog", { name: "injection.detail.title" }))
+      .toBeTruthy();
+  });
+
+  it("gates Trace navigation by both trace id and catalog capability", () => {
+    renderDecisionsTab();
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
+    );
+    hooks.decisions.detailStatus = "success";
+    hooks.decisions.detail = decisionDetail({ trace_id: null });
+    rerenderPage();
+    expect((screen.getByRole("button", {
+      name: "injection.actions.openTrace",
+    }) as HTMLButtonElement).disabled).toBe(true);
+
+    hooks.decisions.detail = decisionDetail({ trace_id: "trace-safe" });
+    hooks.config.catalog = { ...catalogFixture(), recall_trace_available: false };
+    rerenderPage();
+    expect((screen.getByRole("button", {
+      name: "injection.actions.openTrace",
+    }) as HTMLButtonElement).disabled).toBe(true);
+
+    hooks.config.catalog = catalogFixture();
+    rerenderPage();
+    fireEvent.click(screen.getByRole("button", {
+      name: "injection.actions.openTrace",
+    }));
+    expect(onNavigate).toHaveBeenCalledWith(
+      "intelligence",
+      expect.objectContaining({
+        intelligenceTarget: expect.objectContaining({ traceId: "trace-safe" }),
+      }),
+    );
+  });
+
+  it("restores row-action focus and clears detail after closing the sheet", async () => {
+    renderDecisionsTab();
+    const detailButton = screen.getByRole("button", {
+      name: "injection.decisions.openDetail",
+    });
+    detailButton.focus();
+    fireEvent.click(detailButton);
+    hooks.decisions.detailStatus = "success";
+    hooks.decisions.detail = decisionDetail();
+    rerenderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "common.close" }));
+    await waitFor(() => expect(document.activeElement).toBe(detailButton));
+    expect(hooks.decisions.clearDetail).toHaveBeenCalledOnce();
+  });
+
+  it("opens a decision deep link exactly once per navigation request", () => {
+    const target = {
+      requestId: 17,
+      tab: "decisions" as const,
+      decisionId: "decision-deep-link",
+    };
+    const { rerender } = render(
+      <InjectionStrategyPage
+        showToast={showToast}
+        onNavigate={onNavigate}
+        navigationTarget={target}
+      />,
+    );
+
+    expect(document.getElementById("injection-tab-decisions")
+      ?.getAttribute("aria-selected")).toBe("true");
+    expect(hooks.decisions.loadDetail).toHaveBeenCalledOnce();
+    expect(hooks.decisions.loadDetail).toHaveBeenCalledWith("decision-deep-link");
+
+    rerender(
+      <InjectionStrategyPage
+        showToast={showToast}
+        onNavigate={onNavigate}
+        navigationTarget={target}
+      />,
+    );
+    expect(hooks.decisions.loadDetail).toHaveBeenCalledOnce();
   });
 
   it.each([
