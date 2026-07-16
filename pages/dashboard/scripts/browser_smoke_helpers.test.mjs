@@ -112,6 +112,83 @@ describe("browser smoke helpers", () => {
     ]);
   });
 
+  it("redacts sensitive bridge-call snapshots without changing forwarded transport values", async () => {
+    const forwarded = [];
+    const getResponse = {
+      status: "ok",
+      data: {
+        decision_id: "decision-secret",
+        trace_id: "trace-secret",
+        query: "raw query",
+        nested: {
+          endpoint: "https://provider.example/v1",
+          api_key: "provider-key",
+          safe: "kept",
+        },
+      },
+    };
+    const postResponse = {
+      status: "ok",
+      data: [{ stack_trace: "private stack", provider_endpoint: "https://provider.example" }],
+    };
+    const sourceBridge = {
+      async apiGet(endpoint, params) {
+        forwarded.push({ method: "GET", endpoint, payload: params });
+        return getResponse;
+      },
+      async apiPost(endpoint, body) {
+        forwarded.push({ method: "POST", endpoint, payload: body });
+        return postResponse;
+      },
+    };
+    const { bridge, calls } = instrumentBrowserBridge(sourceBridge);
+    const params = {
+      decision_id: "decision-secret",
+      filters: { user_id: "user-secret", safe: "kept" },
+    };
+    const body = {
+      prompt: "private prompt",
+      memory_content: "private memory",
+      nested: {
+        memory_ids: ["memory-secret"],
+        group_id: "group-secret",
+        persona_id: "persona-secret",
+        session_id: "session-secret",
+        headers: { Authorization: "Bearer secret" },
+        secret: "provider-secret",
+        safe: "kept",
+      },
+    };
+
+    expect(await bridge.apiGet("page/injection-strategy/decisions/detail", params)).toBe(
+      getResponse,
+    );
+    expect(await bridge.apiPost("page/config/apply", body)).toBe(postResponse);
+
+    expect(forwarded).toEqual([
+      {
+        method: "GET",
+        endpoint: "page/injection-strategy/decisions/detail",
+        payload: params,
+      },
+      { method: "POST", endpoint: "page/config/apply", payload: body },
+    ]);
+    expect(calls).toEqual([
+      {
+        method: "GET",
+        endpoint: "page/injection-strategy/decisions/detail",
+        params: { filters: { safe: "kept" } },
+        response: { status: "ok", data: { nested: { safe: "kept" } } },
+      },
+      {
+        method: "POST",
+        endpoint: "page/config/apply",
+        body: { nested: { safe: "kept" } },
+        response: { status: "ok", data: [{}] },
+      },
+    ]);
+  });
+
   it("lets the bundle install its mock bridge before wrapping it for the smoke harness", async () => {
     const target = {};
     const harness = installBundledMockBridgeHarness(target);
@@ -139,7 +216,6 @@ describe("browser smoke helpers", () => {
         response: {
           status: "ok",
           data: {
-            endpoint: "page/config/state",
             params: { revision: "revision-1" },
             marker: "bundled-mock",
           },

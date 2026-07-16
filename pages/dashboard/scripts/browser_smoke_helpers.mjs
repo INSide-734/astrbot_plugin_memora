@@ -6,6 +6,25 @@ export const BROWSER_LAUNCH_CANDIDATES = [
   { channel: undefined, label: "Playwright Chromium" },
 ];
 
+export const BRIDGE_CALL_SENSITIVE_FIELDS = Object.freeze([
+  "decision_id",
+  "trace_id",
+  "query",
+  "prompt",
+  "memory_content",
+  "memory_ids",
+  "user_id",
+  "group_id",
+  "persona_id",
+  "session_id",
+  "headers",
+  "api_key",
+  "secret",
+  "provider_endpoint",
+  "endpoint",
+  "stack_trace",
+]);
+
 export function createBrowserLaunchOptions(
   channel,
   {
@@ -45,9 +64,23 @@ export function instrumentBrowserBridge(
     throw new TypeError("Browser smoke requires apiGet and apiPost bridge methods");
   }
 
+  const sensitiveFieldSet = new Set(BRIDGE_CALL_SENSITIVE_FIELDS);
   const cloneJson = (value) => (
     value === undefined ? undefined : JSON.parse(JSON.stringify(value))
   );
+  const sanitizeBridgeCallValue = (value) => {
+    const scrub = (sanitized) => {
+      if (Array.isArray(sanitized)) {
+        sanitized.forEach(scrub);
+        return sanitized;
+      }
+      if (!sanitized || typeof sanitized !== "object") return sanitized;
+      sensitiveFieldSet.forEach((field) => delete sanitized[field]);
+      Object.values(sanitized).forEach(scrub);
+      return sanitized;
+    };
+    return scrub(cloneJson(value));
+  };
   const errorMessage = (error) => (
     error instanceof Error ? error.message : String(error)
   );
@@ -60,12 +93,12 @@ export function instrumentBrowserBridge(
     const call = {
       method: "GET",
       endpoint: String(endpoint),
-      params: cloneJson(params),
+      params: sanitizeBridgeCallValue(params),
     };
     calls.push(call);
     try {
       const response = await raw.apiGet(endpoint, params);
-      call.response = cloneJson(response);
+      call.response = sanitizeBridgeCallValue(response);
       return response;
     } catch (error) {
       call.error = errorMessage(error);
@@ -77,13 +110,13 @@ export function instrumentBrowserBridge(
     const call = {
       method: "POST",
       endpoint: String(endpoint),
-      body: cloneJson(body),
+      body: sanitizeBridgeCallValue(body),
     };
     calls.push(call);
     postCalls.push(String(endpoint || "").replace(/^page\/?/, ""));
     try {
       const response = await raw.apiPost(endpoint, body);
-      call.response = cloneJson(response);
+      call.response = sanitizeBridgeCallValue(response);
       if (typeof afterPost === "function") {
         await afterPost({
           endpoint: String(endpoint),
