@@ -17,10 +17,38 @@ from ..base.constants import (
 if TYPE_CHECKING:
     from astrbot.api.provider import ProviderRequest
 
+_VERIFIED_INJECTION_HEADER = "<memora-untrusted-memory>"
+_VERIFIED_INJECTION_FOOTER = "</memora-untrusted-memory>"
+_VERIFIED_FAKE_TOOL_CALL_ID = "memora_verified_recall"
+_DEEPSEEK_REPLAY_HEADER = "[DeepSeekV4-FakeToolCall-Replay]"
+_DEEPSEEK_REPLAY_FOOTER = "[/DeepSeekV4-FakeToolCall-Replay]"
 _INJECTION_CLEANUP_PATTERN = re.compile(
-    re.escape(MEMORY_INJECTION_HEADER) + r".*?" + re.escape(MEMORY_INJECTION_FOOTER),
+    "(?:"
+    + re.escape(_DEEPSEEK_REPLAY_HEADER)
+    + r".*?"
+    + re.escape(_DEEPSEEK_REPLAY_FOOTER)
+    + "|"
+    + re.escape(_VERIFIED_INJECTION_HEADER)
+    + r".*?"
+    + re.escape(_VERIFIED_INJECTION_FOOTER)
+    + "|"
+    + re.escape(MEMORY_INJECTION_HEADER)
+    + r".*?"
+    + re.escape(MEMORY_INJECTION_FOOTER)
+    + ")",
     flags=re.DOTALL,
 )
+
+
+def _contains_injection(value: str) -> bool:
+    return _INJECTION_CLEANUP_PATTERN.search(value) is not None
+
+
+def _is_memora_fake_call_id(value: object) -> bool:
+    return isinstance(value, str) and (
+        value == _VERIFIED_FAKE_TOOL_CALL_ID
+        or value.startswith(FAKE_TOOL_CALL_ID_PREFIX)
+    )
 
 
 class InjectionCleaner:
@@ -42,10 +70,7 @@ class InjectionCleaner:
                 and isinstance(req.system_prompt, str)
             ):
                 original_prompt = req.system_prompt
-                if (
-                    MEMORY_INJECTION_HEADER in original_prompt
-                    and MEMORY_INJECTION_FOOTER in original_prompt
-                ):
+                if _contains_injection(original_prompt):
                     cleaned_prompt = pattern.sub("", original_prompt)
                     cleaned_prompt = re.sub(
                         r"\n{3,}", "\n\n", cleaned_prompt
@@ -65,10 +90,7 @@ class InjectionCleaner:
                 kept_parts = []
                 for part in req.extra_user_content_parts:
                     text = getattr(part, "text", "")
-                    if isinstance(text, str) and (
-                        MEMORY_INJECTION_HEADER in text
-                        and MEMORY_INJECTION_FOOTER in text
-                    ):
+                    if isinstance(text, str) and _contains_injection(text):
                         removed_count += 1
                         logger.debug(
                             f"[{session_id}] 从extra_user_content_parts中清理记忆片段"
@@ -83,10 +105,7 @@ class InjectionCleaner:
                 and isinstance(req.prompt, str)
             ):
                 original_prompt = req.prompt
-                if (
-                    MEMORY_INJECTION_HEADER in original_prompt
-                    and MEMORY_INJECTION_FOOTER in original_prompt
-                ):
+                if _contains_injection(original_prompt):
                     cleaned_prompt = pattern.sub("", original_prompt)
                     cleaned_prompt = re.sub(
                         r"\n{3,}", "\n\n", cleaned_prompt
@@ -115,9 +134,7 @@ class InjectionCleaner:
                         continue
 
                     if isinstance(content, str):
-                        has_header = MEMORY_INJECTION_HEADER in content
-                        has_footer = MEMORY_INJECTION_FOOTER in content
-                        if has_header and has_footer:
+                        if _contains_injection(content):
                             cleaned_content = pattern.sub("", content).strip()
                             cleaned_content = re.sub(r"\n{3,}", "\n\n", cleaned_content)
                             if not cleaned_content:
@@ -139,24 +156,21 @@ class InjectionCleaner:
                         for part in content:
                             if isinstance(part, dict) and part.get("type") == "text":
                                 text = part.get("text", "")
-                                if isinstance(text, str):
-                                    has_header = MEMORY_INJECTION_HEADER in text
-                                    has_footer = MEMORY_INJECTION_FOOTER in text
-                                    if has_header and has_footer:
-                                        cleaned_text = pattern.sub("", text).strip()
-                                        cleaned_text = re.sub(
-                                            r"\n{3,}", "\n\n", cleaned_text
-                                        )
-                                        if not cleaned_text:
-                                            has_changes = True
-                                            continue
-                                        if cleaned_text != text:
-                                            has_changes = True
-                                            removed_count += 1
-                                            part_copy = part.copy()
-                                            part_copy["text"] = cleaned_text
-                                            cleaned_parts.append(part_copy)
-                                            continue
+                                if isinstance(text, str) and _contains_injection(text):
+                                    cleaned_text = pattern.sub("", text).strip()
+                                    cleaned_text = re.sub(
+                                        r"\n{3,}", "\n\n", cleaned_text
+                                    )
+                                    if not cleaned_text:
+                                        has_changes = True
+                                        continue
+                                    if cleaned_text != text:
+                                        has_changes = True
+                                        removed_count += 1
+                                        part_copy = part.copy()
+                                        part_copy["text"] = cleaned_text
+                                        cleaned_parts.append(part_copy)
+                                        continue
                             cleaned_parts.append(part)
                         if not cleaned_parts:
                             removed_count += 1
@@ -313,7 +327,7 @@ class InjectionCleaner:
                             if isinstance(tc, dict)
                             else getattr(tc, "id", "")
                         )
-                        if tc_id.startswith(FAKE_TOOL_CALL_ID_PREFIX):
+                        if _is_memora_fake_call_id(tc_id):
                             fake_call_ids.add(tc_id)
                             indices_to_remove.add(i)
                 elif role == "tool":

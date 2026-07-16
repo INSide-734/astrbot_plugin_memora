@@ -333,7 +333,7 @@ class _FailingAssignmentRequest:
 @pytest.mark.asyncio
 async def test_assignment_failure_rolls_back_all_request_fields() -> None:
     req = _FailingAssignmentRequest()
-    req.provider = _tool_capable_provider()
+    provider = _tool_capable_provider()
     original_prompt = req.prompt
     original_contexts = req.contexts
     original_extra_user_content_parts = req.extra_user_content_parts
@@ -345,7 +345,10 @@ async def test_assignment_failure_rolls_back_all_request_fields() -> None:
     result = await InjectionExecutor(InjectionAdapter()).execute(
         req,
         _decision(DeliveryMode.FAKE_TOOL_CALL),
-        _context([{"content": "memory", "score": 1.0, "metadata": {}}]),
+        _context(
+            [{"content": "memory", "score": 1.0, "metadata": {}}],
+            provider=provider,
+        ),
     )
     assert result.outcome is InjectionOutcome.ERROR
     assert result.error_code == "MUTATION_FAILED"
@@ -654,15 +657,21 @@ async def test_all_delivery_modes_mutate_only_their_designated_field(delivery) -
     original_contexts = deepcopy(req.contexts)
     original_parts = list(req.extra_user_content_parts)
     original_system = req.system_prompt
-    if delivery in {
-        DeliveryMode.FAKE_TOOL_CALL,
-        DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4,
-    }:
-        req.provider = _tool_capable_provider()
+    provider = (
+        _tool_capable_provider()
+        if delivery in {
+            DeliveryMode.FAKE_TOOL_CALL,
+            DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4,
+        }
+        else None
+    )
     result = await InjectionExecutor(InjectionAdapter()).execute(
         req,
         _decision(delivery),
-        _context([{"content": "DELIVERY_PAYLOAD", "score": 1.0, "metadata": {}}]),
+        _context(
+            [{"content": "DELIVERY_PAYLOAD", "score": 1.0, "metadata": {}}],
+            provider=provider,
+        ),
     )
     assert result.outcome in {InjectionOutcome.INJECTED, InjectionOutcome.FALLBACK}
     assert req.system_prompt == original_system
@@ -712,7 +721,7 @@ async def test_fake_tool_deliveries_consume_verified_payload_not_raw_memories(
     monkeypatch, delivery
 ) -> None:
     req = _request()
-    req.provider = _tool_capable_provider()
+    provider = _tool_capable_provider()
     monkeypatch.setattr(
         "core.injection.executor.format_memories_for_injection",
         lambda *args, **kwargs: (
@@ -734,9 +743,34 @@ async def test_fake_tool_deliveries_consume_verified_payload_not_raw_memories(
     result = await InjectionExecutor(InjectionAdapter()).execute(
         req,
         _decision(delivery),
-        _context([{"content": "RAW_MEMORY_OBJECT", "score": 1.0, "metadata": {}}]),
+        _context(
+            [{"content": "RAW_MEMORY_OBJECT", "score": 1.0, "metadata": {}}],
+            provider=provider,
+        ),
     )
     assert result.outcome is InjectionOutcome.INJECTED
     assert "VERIFIED_PROTECTED_INPUT" in str(req.contexts)
     assert "RAW_MEMORY_OBJECT" not in str(req.contexts)
     assert result.actual_payload_chars <= result.effective_budget_chars
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "delivery",
+    [DeliveryMode.FAKE_TOOL_CALL, DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4],
+)
+async def test_explicit_context_provider_preserves_tool_delivery(delivery) -> None:
+    req = _request()
+    del req.provider
+    provider = _tool_capable_provider()
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        req,
+        _decision(delivery),
+        _context(
+            [{"content": "PROVIDER_INPUT", "score": 1.0, "metadata": {}}],
+            provider=provider,
+        ),
+    )
+    assert result.outcome is InjectionOutcome.INJECTED
+    assert result.fallback_applied is False
+    assert req.contexts != [{"role": "user", "content": "older turn"}]

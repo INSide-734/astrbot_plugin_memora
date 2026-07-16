@@ -1266,3 +1266,42 @@ async def test_tool_first_prospective_only_executes_without_search(handler_case)
     assert execution_context.memories == []
     assert execution_context.prospective_context.startswith("[Upcoming Plans]")
     assert case.recorder.record.call_args.args[0].outcome == "injected"
+
+
+@pytest.mark.asyncio
+async def test_auto_final_tool_first_still_executes_once(handler_case) -> None:
+    case = handler_case(
+        config=strategy_config(**{
+            "recall_engine.injection_routing_mode": "auto",
+            "recall_engine.injection_auto_fallback_preset": "balanced",
+        }),
+        memory_tool_available=True,
+        provider_tools_supported=True,
+    )
+    case.handler._executor.execute = AsyncMock(return_value=InjectionExecutionResult(
+        outcome=InjectionOutcome.EMPTY,
+    ))
+    await case.handler.handle_memory_recall(case.event, case.request)
+    case.memory_engine.search_memories.assert_awaited_once()
+    case.handler._executor.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_recall_logs_only_sanitized_counts(handler_case, caplog) -> None:
+    private_query = "secret-query-7349"
+    private_entity = "private-entity-9821"
+    case = handler_case(config=strategy_config())
+    case.handler._extractor.get_event_message_str.return_value = private_query
+    case.handler._query_rewriter.rewrite.return_value = SimpleNamespace(
+        intent="default",
+        rewritten_queries=[private_query],
+        memory_types=[],
+        extracted_entities=[private_entity],
+    )
+    with caplog.at_level("INFO"):
+        await case.handler.handle_memory_recall(case.event, case.request)
+    log_text = caplog.text
+    assert private_query not in log_text
+    assert private_entity not in log_text
+    assert "rewritten_count=1" in log_text
+    assert "entity_count=1" in log_text

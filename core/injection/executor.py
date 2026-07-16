@@ -50,6 +50,7 @@ class InjectionExecutionContext:
     session_filtered: bool = True
     persona_filtered: bool = True
     context_headroom_chars: int = 10_000
+    provider: Any | None = None
 
 
 def _bounded_float(value: Any, default: float = 0.0) -> float:
@@ -141,7 +142,7 @@ class InjectionExecutor:
 
         delivery = decision.resolved_delivery
         fallback_applied = False
-        provider = getattr(req, "provider", None)
+        provider = context.provider
         try:
             delivery, fallback_reason = self._adapter.resolve(provider, delivery)
             fallback_applied = fallback_reason is not None

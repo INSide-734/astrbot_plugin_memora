@@ -225,8 +225,9 @@ class RecallHandler:
                 memory_type_filter = query_intent.memory_types or None
 
                 logger.info(
-                    f"[{session_id}] 开始记忆召回，查询='{primary_query[:80]}...'"
-                    f", intent={query_intent.intent}, entities={query_intent.extracted_entities}"
+                    f"[{session_id}] 开始记忆召回: intent={query_intent.intent}, "
+                    f"rewritten_count={len(rewritten_queries)}, "
+                    f"entity_count={len(query_intent.extracted_entities)}"
                 )
 
                 chat_type = "group" if is_group else "private"
@@ -263,6 +264,8 @@ class RecallHandler:
                         session_filtered=use_session_filtering,
                         persona_filtered=use_persona_filtering,
                         decision_ms=preflight_ms,
+                        provider=provider,
+                        preflight_short_circuit=True,
                     )
                     injected_count = result.selected_count
                     return
@@ -324,6 +327,8 @@ class RecallHandler:
                     persona_filtered=use_persona_filtering,
                     decision_ms=decision_ms,
                     format_ms=format_ms,
+                    provider=provider,
+                    preflight_short_circuit=False,
                 )
                 injected_count = result.selected_count
 
@@ -475,6 +480,8 @@ class RecallHandler:
         session_filtered: bool,
         persona_filtered: bool,
         decision_ms: float,
+        provider: Any,
+        preflight_short_circuit: bool,
         format_ms: float = 0.0,
     ) -> InjectionExecutionResult:
         cognitive_budget = int(self._config_manager.get(
@@ -484,7 +491,7 @@ class RecallHandler:
             "recall_engine.proactive_plan_budget_chars", 240
         ))
         prospective_context = self._prospective_context(prospective)
-        if decision.skip_passive_recall and not prospective_context:
+        if preflight_short_circuit and not prospective_context:
             configured_budget = (
                 max(0, decision.memory_budget_chars)
                 + max(0, cognitive_budget)
@@ -510,6 +517,7 @@ class RecallHandler:
                 session_filtered=session_filtered,
                 persona_filtered=persona_filtered,
                 context_headroom_chars=signals.context_headroom_chars,
+                provider=provider,
             )
             inject_started = time.perf_counter()
             result = await self._executor.execute(req, decision, context)
