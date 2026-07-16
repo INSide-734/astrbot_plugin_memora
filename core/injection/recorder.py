@@ -48,8 +48,8 @@ class InjectionDecisionRecorder:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
-        if retention_days < 1:
-            raise ValueError("retention_days must be at least 1")
+        if retention_days < 0:
+            raise ValueError("retention_days must be non-negative")
         if max_rows < 1:
             raise ValueError("max_rows must be at least 1")
         if queue_capacity < 1 or batch_size < 1:
@@ -129,8 +129,8 @@ class InjectionDecisionRecorder:
             return
         new_retention = self._retention_days if retention_days is None else retention_days
         new_max_rows = self._max_rows if max_rows is None else max_rows
-        if new_retention < 1:
-            raise ValueError("retention_days must be at least 1")
+        if new_retention < 0:
+            raise ValueError("retention_days must be non-negative")
         if new_max_rows < 1:
             raise ValueError("max_rows must be at least 1")
         self._retention_days = new_retention

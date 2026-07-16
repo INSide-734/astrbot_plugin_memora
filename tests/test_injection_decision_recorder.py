@@ -99,12 +99,16 @@ def test_queue_overflow_drops_oldest_and_counts_it(store, make_record) -> None:
     assert recorder.queued_decision_ids() == ["middle", "latest"]
 
 
+def test_constructor_accepts_zero_retention_days(store) -> None:
+    InjectionDecisionRecorder(store, retention_days=0)
+
+
 @pytest.mark.asyncio
 async def test_schedule_cleanup_validates_replaces_limits_and_retries(store) -> None:
     store.cleanup = AsyncMock(side_effect=[RuntimeError("locked"), 3])
     recorder = InjectionDecisionRecorder(store, retry_base_delay=0.001)
     with pytest.raises(ValueError):
-        recorder.schedule_cleanup(retention_days=0)
+        recorder.schedule_cleanup(retention_days=-1)
     with pytest.raises(ValueError):
         recorder.schedule_cleanup(max_rows=0)
     recorder.schedule_cleanup(retention_days=7, max_rows=321)
@@ -114,6 +118,16 @@ async def test_schedule_cleanup_validates_replaces_limits_and_retries(store) -> 
     assert store.cleanup.await_count == 2
     assert store.cleanup.await_args.args == (7, 321)
     assert recorder.snapshot()["cleanup_requested"] is False
+
+
+@pytest.mark.asyncio
+async def test_schedule_cleanup_accepts_zero_retention_days(store) -> None:
+    recorder = InjectionDecisionRecorder(store)
+    recorder.schedule_cleanup(retention_days=0, max_rows=321)
+    await recorder.start()
+    await recorder.wait_until_idle(timeout=1.0)
+    await recorder.close(timeout=1.0)
+    store.cleanup.assert_awaited_once_with(0, 321)
 
 
 @pytest.mark.asyncio
