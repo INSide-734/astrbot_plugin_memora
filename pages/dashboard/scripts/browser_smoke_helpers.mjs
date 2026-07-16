@@ -6,6 +6,44 @@ export const BROWSER_LAUNCH_CANDIDATES = [
   { channel: undefined, label: "Playwright Chromium" },
 ];
 
+export function assertEditorViewport(
+  { scrollViewport, lastField },
+  { tolerance = 1 } = {},
+) {
+  const fieldIsVisible = (
+    Number.isFinite(scrollViewport?.top)
+    && Number.isFinite(scrollViewport?.bottom)
+    && Number.isFinite(lastField?.top)
+    && Number.isFinite(lastField?.bottom)
+    && lastField.top >= scrollViewport.top - tolerance
+    && lastField.bottom <= scrollViewport.bottom + tolerance
+  );
+  if (!fieldIsVisible) {
+    throw new Error("The last form field is outside the scrollable viewport");
+  }
+}
+
+export function assertNoHorizontalOverflow(
+  measurements,
+  { tolerance = 1 } = {},
+) {
+  const failures = measurements.flatMap(({ label, clientWidth, scrollWidth }) => {
+    const overflow = scrollWidth - clientWidth;
+    if (
+      Number.isFinite(clientWidth)
+      && clientWidth > 0
+      && Number.isFinite(scrollWidth)
+      && overflow <= tolerance
+    ) {
+      return [];
+    }
+    return [`${label} overflows by ${Number.isFinite(overflow) ? overflow : "unknown"}px`];
+  });
+  if (failures.length > 0) {
+    throw new Error(`Horizontal overflow detected: ${failures.join("; ")}`);
+  }
+}
+
 export function createBrowserLaunchOptions(
   channel,
   {

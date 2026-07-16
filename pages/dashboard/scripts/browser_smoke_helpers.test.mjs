@@ -1,29 +1,73 @@
-import { describe, expect, it } from "vitest";
-import {
+import assert from "node:assert/strict";
+
+const { describe, it } = process.env.VITEST
+  ? await import("vitest")
+  : await import("node:test");
+import * as browserHelpers from "./browser_smoke_helpers.mjs";
+
+const {
   BROWSER_LAUNCH_CANDIDATES,
   createBrowserLaunchOptions,
   installBundledMockBridgeHarness,
   instrumentBrowserBridge,
   isRouteTextSettled,
-} from "./browser_smoke_helpers.mjs";
+} = browserHelpers;
 
 describe("browser smoke helpers", () => {
+  it("accepts the last form field after scrolling it into the editor viewport", () => {
+    assert.equal(typeof browserHelpers.assertEditorViewport, "function");
+
+    assert.doesNotThrow(() => browserHelpers.assertEditorViewport({
+      scrollViewport: { top: 120, bottom: 760 },
+      lastField: { top: 680, bottom: 728 },
+    }));
+  });
+
+  it("rejects a last form field hidden below the editor viewport", () => {
+    assert.throws(
+      () => browserHelpers.assertEditorViewport({
+        scrollViewport: { top: 120, bottom: 760 },
+        lastField: { top: 744, bottom: 792 },
+      }),
+      /last form field.*scrollable viewport/i,
+    );
+  });
+
+  it("accepts a mobile viewport without horizontal overflow", () => {
+    assert.equal(typeof browserHelpers.assertNoHorizontalOverflow, "function");
+
+    assert.doesNotThrow(() => browserHelpers.assertNoHorizontalOverflow([
+      { label: "document", clientWidth: 390, scrollWidth: 390 },
+      { label: "editor", clientWidth: 358, scrollWidth: 359 },
+    ]));
+  });
+
+  it("reports the mobile element that overflows horizontally", () => {
+    assert.throws(
+      () => browserHelpers.assertNoHorizontalOverflow([
+        { label: "document", clientWidth: 390, scrollWidth: 390 },
+        { label: "editor", clientWidth: 358, scrollWidth: 402 },
+      ]),
+      /editor.*44px/i,
+    );
+  });
+
   it("keeps route waits pending while expected text is present but loading text remains", () => {
-    expect(isRouteTextSettled("知识图谱 加载中...", "知识图谱")).toBe(false);
-    expect(isRouteTextSettled("Memory Loading...", "Memory")).toBe(false);
-    expect(isRouteTextSettled("Граф Загрузка...", "Граф")).toBe(false);
+    assert.equal(isRouteTextSettled("知识图谱 加载中...", "知识图谱"), false);
+    assert.equal(isRouteTextSettled("Memory Loading...", "Memory"), false);
+    assert.equal(isRouteTextSettled("Граф Загрузка...", "Граф"), false);
   });
 
   it("allows route waits once every expected text is present and loading text is gone", () => {
-    expect(isRouteTextSettled("系统概览 运行观测 Provider 状态", ["系统概览", "运行观测"])).toBe(true);
+    assert.equal(isRouteTextSettled("系统概览 运行观测 Provider 状态", ["系统概览", "运行观测"]), true);
   });
 
   it("keeps route waits pending until every expected text is present", () => {
-    expect(isRouteTextSettled("系统概览 Provider 状态", ["系统概览", "运行观测"])).toBe(false);
+    assert.equal(isRouteTextSettled("系统概览 Provider 状态", ["系统概览", "运行观测"]), false);
   });
 
   it("prefers isolated headless Chrome before falling back to system Edge", () => {
-    expect(BROWSER_LAUNCH_CANDIDATES).toEqual([
+    assert.deepEqual(BROWSER_LAUNCH_CANDIDATES, [
       { channel: "chrome", label: "Google Chrome" },
       { channel: "msedge", label: "Microsoft Edge" },
       { channel: undefined, label: "Playwright Chromium" },
@@ -31,7 +75,7 @@ describe("browser smoke helpers", () => {
   });
 
   it("opens a visible browser on local Windows runs", () => {
-    expect(createBrowserLaunchOptions("chrome", { platform: "win32", ci: false })).toEqual({
+    assert.deepEqual(createBrowserLaunchOptions("chrome", { platform: "win32", ci: false }), {
       channel: "chrome",
       headless: false,
       slowMo: 50,
@@ -39,7 +83,7 @@ describe("browser smoke helpers", () => {
   });
 
   it("keeps CI runs headless", () => {
-    expect(createBrowserLaunchOptions(undefined, { platform: "win32", ci: true })).toEqual({
+    assert.deepEqual(createBrowserLaunchOptions(undefined, { platform: "win32", ci: true }), {
       headless: true,
     });
   });
@@ -74,7 +118,7 @@ describe("browser smoke helpers", () => {
     body.changes["recall_engine.top_k"] = 99;
     getResponse.data.nested.value = 99;
 
-    expect(calls).toEqual([
+    assert.deepEqual(calls, [
       {
         method: "GET",
         endpoint: "page/config/state",
@@ -97,15 +141,15 @@ describe("browser smoke helpers", () => {
         },
       },
     ]);
-    expect(postCalls).toEqual(["config/apply"]);
+    assert.deepEqual(postCalls, ["config/apply"]);
 
     await raw.apiPost("page/config/apply", {
       base_revision: "revision-2",
       changes: { "recall_engine.top_k": 8 },
     });
-    expect(calls).toHaveLength(2);
-    expect(postCalls).toEqual(["config/apply"]);
-    expect(forwarded.map((call) => call.receiver)).toEqual([
+    assert.equal(calls.length, 2);
+    assert.deepEqual(postCalls, ["config/apply"]);
+    assert.deepEqual(forwarded.map((call) => call.receiver), [
       "source-bridge",
       "source-bridge",
       "source-bridge",
@@ -116,7 +160,7 @@ describe("browser smoke helpers", () => {
     const target = {};
     const harness = installBundledMockBridgeHarness(target);
 
-    expect(target.AstrBotPluginPage).toBeUndefined();
+    assert.equal(target.AstrBotPluginPage, undefined);
     const sourceBridge = {
       marker: "bundled-mock",
       async apiGet(endpoint, params) {
@@ -131,7 +175,7 @@ describe("browser smoke helpers", () => {
     await target.AstrBotPluginPage.apiGet("page/config/state", {
       revision: "revision-1",
     });
-    expect(harness.calls).toEqual([
+    assert.deepEqual(harness.calls, [
       {
         method: "GET",
         endpoint: "page/config/state",
@@ -146,12 +190,11 @@ describe("browser smoke helpers", () => {
         },
       },
     ]);
-    expect(target.__memoraBridgeCalls).toBe(harness.calls);
-    expect(target.__memoraRawBridge.apiGet).toBeTypeOf("function");
-    expect(await target.__memoraRawBridge.apiGet("page/config/state", {})).toMatchObject({
-      data: { marker: "bundled-mock" },
-    });
-    expect(harness.calls).toHaveLength(1);
+    assert.equal(target.__memoraBridgeCalls, harness.calls);
+    assert.equal(typeof target.__memoraRawBridge.apiGet, "function");
+    const rawResponse = await target.__memoraRawBridge.apiGet("page/config/state", {});
+    assert.equal(rawResponse.data.marker, "bundled-mock");
+    assert.equal(harness.calls.length, 1);
   });
 
   it("records a response before an afterPost hook simulates a lost transport response", async () => {
@@ -175,13 +218,14 @@ describe("browser smoke helpers", () => {
       },
     });
 
-    await expect(
+    await assert.rejects(
       bridge.apiPost("page/config/apply", {
         base_revision: "revision-1",
         changes: { "recall_engine.top_k": 9 },
       }),
-    ).rejects.toThrow("Browser smoke lost the stale apply response");
-    expect(calls).toEqual([
+      /Browser smoke lost the stale apply response/,
+    );
+    assert.deepEqual(calls, [
       {
         method: "POST",
         endpoint: "page/config/apply",

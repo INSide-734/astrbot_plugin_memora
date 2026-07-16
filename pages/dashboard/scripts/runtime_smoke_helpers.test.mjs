@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
 import path from "node:path";
+
+const { describe, it } = process.env.VITEST
+  ? await import("vitest")
+  : await import("node:test");
 
 import * as runtimeHelpers from "./runtime_smoke_helpers.mjs";
 
@@ -94,33 +98,186 @@ function configLifecycleCalls() {
   ];
 }
 
+function editingRuntimeCalls() {
+  const getEndpoints = [
+    "page/social/relations",
+    "page/profiles",
+    "page/profiles/detail",
+    "page/jargon/candidates",
+    "page/jargon/meanings",
+    "page/jargon/stats",
+    "page/affection/status",
+    "page/affection/users",
+    "page/affection/moods/history",
+  ];
+  const postEndpoints = [
+    "page/social/create",
+    "page/social/update",
+    "page/social/delete",
+    "page/social/batch",
+    "page/profiles/create",
+    "page/profiles/update",
+    "page/profiles/delete",
+    "page/profiles/batch",
+    "page/jargon/create",
+    "page/jargon/update",
+    "page/jargon/delete",
+    "page/jargon/batch",
+    "page/affection/users/create",
+    "page/affection/users/update",
+    "page/affection/users/delete",
+    "page/affection/users/batch",
+    "page/affection/mood/set",
+    "page/affection/mood/reset",
+  ];
+  const calls = [
+    ...getEndpoints.map((endpoint) => ({
+      method: "GET",
+      endpoint,
+      params: {},
+      response: { status: "ok", data: {} },
+    })),
+    ...postEndpoints.map((endpoint) => ({
+      method: "POST",
+      endpoint,
+      body: {},
+      response: { status: "ok", data: {} },
+    })),
+  ];
+  calls.push(
+    {
+      method: "POST",
+      endpoint: "page/affection/users/create",
+      body: { group_id: "g", user_id: "invalid", affection_score: 101 },
+      response: {
+        status: "error",
+        code: "validation_error",
+        field_errors: { affection_score: "必须在 -100 到 100 之间" },
+      },
+    },
+    {
+      method: "POST",
+      endpoint: "page/social/update",
+      body: { expected_revision: "stale" },
+      response: {
+        status: "error",
+        code: "edit_conflict",
+        data: { current_entity: { from_user: "a" }, current_revision: "rev-current" },
+      },
+    },
+  );
+  return calls;
+}
+
 describe("runtime smoke bridge instrumentation", () => {
+  it("accepts complete editing CRUD route and error-envelope coverage", () => {
+    assert.equal(typeof runtimeHelpers.assertEditingRuntimeCalls, "function");
+    assert.doesNotThrow(() => runtimeHelpers.assertEditingRuntimeCalls(editingRuntimeCalls()));
+  });
+
+  it("rejects missing editing routes and required error envelopes", () => {
+    const missingRoute = editingRuntimeCalls().filter(
+      (call) => call.endpoint !== "page/jargon/batch",
+    );
+    assert.throws(
+      () => runtimeHelpers.assertEditingRuntimeCalls(missingRoute),
+      /page\/jargon\/batch/,
+    );
+
+    const missingValidation = editingRuntimeCalls().filter(
+      (call) => call.response?.code !== "validation_error",
+    );
+    assert.throws(
+      () => runtimeHelpers.assertEditingRuntimeCalls(missingValidation),
+      /affection_score.*validation/i,
+    );
+
+    const missingConflict = editingRuntimeCalls().filter(
+      (call) => call.response?.code !== "edit_conflict",
+    );
+    assert.throws(
+      () => runtimeHelpers.assertEditingRuntimeCalls(missingConflict),
+      /edit_conflict/i,
+    );
+  });
+
+  it("accepts an editor with the expected title, no loader, and a fixed footer", () => {
+    assert.equal(typeof runtimeHelpers.assertEditorReadiness, "function");
+
+    assert.doesNotThrow(() => runtimeHelpers.assertEditorReadiness({
+      visibleTitles: ["Edit social relation"],
+      loadingOverlayVisible: false,
+      fixedFooterVisible: true,
+    }, {
+      expectedTitle: "Edit social relation",
+    }));
+  });
+
+  it("rejects an editor until its title, loader, and fixed footer are ready", () => {
+    assert.throws(
+      () => runtimeHelpers.assertEditorReadiness({
+        visibleTitles: ["Social relation"],
+        loadingOverlayVisible: true,
+        fixedFooterVisible: false,
+      }, {
+        expectedTitle: "Edit social relation",
+      }),
+      /expected title.*loading overlay.*fixed editor footer/i,
+    );
+  });
+
+  it("requires the expected conflict and unsaved dialog actions", () => {
+    assert.equal(typeof runtimeHelpers.assertDialogActions, "function");
+
+    assert.doesNotThrow(() => runtimeHelpers.assertDialogActions(
+      ["Load latest", "Overwrite"],
+      ["Load latest", "Overwrite"],
+      "conflict dialog",
+    ));
+    assert.doesNotThrow(() => runtimeHelpers.assertDialogActions(
+      ["Keep editing", "Discard"],
+      ["Keep editing", "Discard"],
+      "unsaved dialog",
+    ));
+    assert.throws(
+      () => runtimeHelpers.assertDialogActions(
+        ["Keep editing"],
+        ["Keep editing", "Discard"],
+        "unsaved dialog",
+      ),
+      /unsaved dialog.*Discard/i,
+    );
+  });
+
   it("allows only contained same-origin runtime resources", () => {
-    expect(runtimeHelpers.resolveRuntimeResourcePath).toBeTypeOf("function");
+    assert.equal(typeof runtimeHelpers.resolveRuntimeResourcePath, "function");
     const dashboardRoot = path.resolve("runtime-smoke-dashboard");
     const options = {
       runtimeOrigin: "https://memora.runtime",
       dashboardRoot,
     };
 
-    expect(
+    assert.equal(
       runtimeHelpers.resolveRuntimeResourcePath(
         "https://memora.runtime/assets/index.js",
         options,
       ),
-    ).toBe(path.join(dashboardRoot, "assets", "index.js"));
-    expect(
+      path.join(dashboardRoot, "assets", "index.js"),
+    );
+    assert.equal(
       runtimeHelpers.resolveRuntimeResourcePath(
         "https://evil.example/script.js",
         options,
       ),
-    ).toBeNull();
-    expect(
+      null,
+    );
+    assert.equal(
       runtimeHelpers.resolveRuntimeResourcePath(
         "https://memora.runtime/%2e%2e%2fsecret.js",
         options,
       ),
-    ).toBeNull();
+      null,
+    );
   });
 
   it("records exact GET params and POST bodies while forwarding through the bridge", async () => {
@@ -157,7 +314,7 @@ describe("runtime smoke bridge instrumentation", () => {
     params.revision = "mutated";
     body.changes["recall_engine.top_k"] = 99;
 
-    expect(forwarded).toEqual([
+    assert.deepEqual(forwarded, [
       {
         method: "GET",
         endpoint: "page/config/state",
@@ -172,7 +329,7 @@ describe("runtime smoke bridge instrumentation", () => {
         },
       },
     ]);
-    expect(calls).toEqual([
+    assert.deepEqual(calls, [
       {
         method: "GET",
         endpoint: "page/config/state",
@@ -191,8 +348,8 @@ describe("runtime smoke bridge instrumentation", () => {
     ]);
 
     restore();
-    expect(bridge.apiGet).toBe(originalGet);
-    expect(bridge.apiPost).toBe(originalPost);
+    assert.equal(bridge.apiGet, originalGet);
+    assert.equal(bridge.apiPost, originalPost);
   });
 
   it("records a POST response before a one-shot afterPost transport failure", async () => {
@@ -219,15 +376,16 @@ describe("runtime smoke bridge instrumentation", () => {
       },
     });
 
-    await expect(
+    await assert.rejects(
       bridge.apiPost("page/config/apply", {
         base_revision: "revision-1",
         changes: { "recall_engine.top_k": 9 },
       }),
-    ).rejects.toThrow("Runtime smoke lost the stale apply response");
+      /Runtime smoke lost the stale apply response/,
+    );
 
-    expect(forwardedCount).toBe(1);
-    expect(calls).toEqual([
+    assert.equal(forwardedCount, 1);
+    assert.deepEqual(calls, [
       {
         method: "POST",
         endpoint: "page/config/apply",
@@ -263,51 +421,54 @@ describe("runtime smoke bridge instrumentation", () => {
       changes: { "recall_engine.max_k": 11 },
     });
 
-    expect(response).toEqual({ status: "ok", data: { revision: "revision-2" } });
-    expect(forwarded).toHaveLength(1);
-    expect(instrumentation.calls).toEqual([]);
+    assert.deepEqual(response, { status: "ok", data: { revision: "revision-2" } });
+    assert.equal(forwarded.length, 1);
+    assert.deepEqual(instrumentation.calls, []);
   });
 
   it("accepts a complete conflict, rebase, apply, and reload request trace", () => {
-    expect(runtimeHelpers.assertConfigRuntimeCalls).toBeTypeOf("function");
+    assert.equal(typeof runtimeHelpers.assertConfigRuntimeCalls, "function");
 
-    expect(
+    assert.deepEqual(
       runtimeHelpers.assertConfigRuntimeCalls(configLifecycleCalls(), {
         changedPath: "recall_engine.top_k",
         changedValue: 9,
       }),
-    ).toEqual({
+      {
       initialRevision: "revision-1",
       conflictRevision: "revision-2",
       appliedRevision: "revision-3",
       initialInstanceId: "instance-1",
       finalInstanceId: "instance-3",
-    });
+      },
+    );
   });
 
   it("rejects a request trace containing an automatic apply retry", () => {
-    expect(runtimeHelpers.assertConfigRuntimeCalls).toBeTypeOf("function");
+    assert.equal(typeof runtimeHelpers.assertConfigRuntimeCalls, "function");
     const calls = configLifecycleCalls();
     calls.splice(3, 0, JSON.parse(JSON.stringify(calls[2])));
 
-    expect(() =>
-      runtimeHelpers.assertConfigRuntimeCalls(calls, {
+    assert.throws(
+      () => runtimeHelpers.assertConfigRuntimeCalls(calls, {
         changedPath: "recall_engine.top_k",
         changedValue: 9,
       }),
-    ).toThrow(/exactly two UI apply POSTs/);
+      /exactly two UI apply POSTs/,
+    );
   });
 
   it("rejects a conflict trace without the simulated lost response", () => {
     const calls = configLifecycleCalls();
     delete calls[2].error;
 
-    expect(() =>
-      runtimeHelpers.assertConfigRuntimeCalls(calls, {
+    assert.throws(
+      () => runtimeHelpers.assertConfigRuntimeCalls(calls, {
         changedPath: "recall_engine.top_k",
         changedValue: 9,
       }),
-    ).toThrow(/lost stale apply response/);
+      /lost stale apply response/,
+    );
   });
 
   it("rejects a reload trace without a recorded disconnect", () => {
@@ -315,23 +476,25 @@ describe("runtime smoke bridge instrumentation", () => {
       (call) => call.error !== "Mock plugin is reloading",
     );
 
-    expect(() =>
-      runtimeHelpers.assertConfigRuntimeCalls(calls, {
+    assert.throws(
+      () => runtimeHelpers.assertConfigRuntimeCalls(calls, {
         changedPath: "recall_engine.top_k",
         changedValue: 9,
       }),
-    ).toThrow(/reload disconnect/);
+      /reload disconnect/,
+    );
   });
 
   it("times out bounded waits with the pending condition in the error", async () => {
-    expect(runtimeHelpers.waitFor).toBeTypeOf("function");
+    assert.equal(typeof runtimeHelpers.waitFor, "function");
 
-    await expect(
+    await assert.rejects(
       runtimeHelpers.waitFor(() => false, {
         timeoutMs: 20,
         intervalMs: 1,
         description: "configuration page to become synced",
       }),
-    ).rejects.toThrow(/configuration page to become synced.*20ms/);
+      /configuration page to become synced.*20ms/,
+    );
   });
 });
