@@ -659,6 +659,7 @@ class TestReflectionHandlerPromptProtection:
             InjectionExecutionContext(
                 query="question",
                 memories=[{"content": secret, "score": 1.0, "metadata": {}}],
+                scope_id="scope-visible",
             ),
         )
         cfg = MagicMock()
@@ -680,6 +681,8 @@ class TestReflectionHandlerPromptProtection:
         )
         event = MagicMock()
         event.unified_msg_origin = "session-1"
+        event._memora_prompt_protection_scope = "scope-visible"
+        event._memora_prompt_protection_required = True
         resp = SimpleNamespace(
             role="assistant",
             tools_call_name=None,
@@ -1130,6 +1133,7 @@ def handler_case(monkeypatch):
         provider_tools_supported: bool = False,
         query_intent: str = "default",
         memories: list[HybridResult] | None = None,
+        prompt_protection_service=None,
     ):
         manager = MagicMock()
         manager.filtering_settings = {
@@ -1173,6 +1177,7 @@ def handler_case(monkeypatch):
             enforce_limit_cb=AsyncMock(),
             injection_recorder=recorder,
             memory_tool_available=memory_tool_available,
+            prompt_protection_service=prompt_protection_service,
         )
         handler._extractor.get_event_message_str = AsyncMock(return_value="remember coffee")
         handler._query_rewriter.rewrite = AsyncMock(return_value=SimpleNamespace(
@@ -1445,16 +1450,23 @@ async def test_fake_tool_execution_uses_transient_query_without_recording_it(
 
 @pytest.mark.asyncio
 async def test_recall_correlates_scope_without_recording_token(handler_case) -> None:
-    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    service = PromptProtectionService(enable_double_check=False)
+    case = handler_case(
+        config=strategy_config(),
+        memories=high_confidence_memories(),
+        prompt_protection_service=service,
+    )
     case.handler._executor.execute = AsyncMock(return_value=InjectionExecutionResult(
         outcome=InjectionOutcome.INJECTED,
     ))
     await case.handler.handle_memory_recall(case.event, case.request)
-    case.event.set_extra.assert_called_once()
-    extra_key, scope_id = case.event.set_extra.call_args.args
-    assert isinstance(scope_id, str) and scope_id
     execution_context = case.handler._executor.execute.await_args.args[2]
-    assert execution_context.scope_id == scope_id
+    scope_id = execution_context.scope_id
+    assert isinstance(scope_id, str) and scope_id
+    assert case.event._memora_prompt_protection_scope == scope_id
+    assert case.event._memora_prompt_protection_required is True
     record = case.recorder.record.call_args.args[0]
     assert scope_id not in repr(record)
 
@@ -1538,31 +1550,46 @@ async def test_reflection_visible_sanitizer_failures_are_closed(failure) -> None
     assert resp.completion_text == ""
 
 @pytest.mark.asyncio
-async def test_recall_scope_setter_exception_falls_back_without_leaking_token(
+async def test_recall_scope_setter_exception_uses_private_scope_without_leaking_token(
     handler_case,
 ) -> None:
-    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    service = PromptProtectionService(enable_double_check=False)
+    case = handler_case(
+        config=strategy_config(),
+        memories=high_confidence_memories(),
+        prompt_protection_service=service,
+    )
     case.event.set_extra.side_effect = RuntimeError("event seam failed")
     case.handler._executor.execute = AsyncMock(return_value=InjectionExecutionResult(
         outcome=InjectionOutcome.INJECTED,
     ))
     await case.handler.handle_memory_recall(case.event, case.request)
     context = case.handler._executor.execute.await_args.args[2]
-    assert context.scope_id is None
+    assert context.scope_id == case.event._memora_prompt_protection_scope
+    assert context.scope_id
     assert "event seam failed" not in repr(case.recorder.record.call_args.args[0])
 
 
 @pytest.mark.asyncio
-async def test_reflection_scope_getter_exception_fails_visible_response_closed() -> None:
+async def test_reflection_scope_getter_exception_uses_private_fallback() -> None:
     from core.handlers.reflection_handler import ReflectionHandler
+    from core.security.prompt_sanitizer import PromptProtectionService
 
+    secret = "private fallback secret alpha beta gamma delta epsilon"
+    service = PromptProtectionService(enable_double_check=False)
+    service.wrap_prompt(secret, scope_id="scope-private")
     event = MagicMock()
     event.get_extra.side_effect = RuntimeError("event seam failed")
+    event._memora_prompt_protection_scope = "scope-private"
+    event._memora_prompt_protection_required = True
+    event.unified_msg_origin = ""
     resp = SimpleNamespace(
         role="assistant",
         tools_call_name=None,
         tools_call_extra_content=None,
-        completion_text="potentially unsafe",
+        completion_text=secret,
     )
     handler = ReflectionHandler(
         context=MagicMock(),
@@ -1571,7 +1598,232 @@ async def test_reflection_scope_getter_exception_fails_visible_response_closed()
         memory_processor=MagicMock(),
         conversation_manager=MagicMock(),
         enforce_limit_cb=AsyncMock(),
-        prompt_protection_service=MagicMock(),
+        prompt_protection_service=service,
     )
     await handler.handle_memory_reflection(event, resp)
     assert resp.completion_text == ""
+
+
+def _reflection_handler_for_scope(service, *, now_config=True):
+    from core.handlers.reflection_handler import ReflectionHandler
+
+    cfg = MagicMock()
+    cfg.get.side_effect = lambda key, default=None: {
+        "security.sanitize_llm_response": now_config,
+        "security.double_check_enabled": False,
+    }.get(key, default)
+    return ReflectionHandler(
+        context=MagicMock(),
+        config_manager=cfg,
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=MagicMock(),
+        enforce_limit_cb=AsyncMock(),
+        prompt_protection_service=service,
+    )
+
+
+def _scoped_event(scope_id, *, required=True, role="assistant"):
+    event = MagicMock()
+    event.unified_msg_origin = ""
+    event._memora_prompt_protection_scope = scope_id
+    event._memora_prompt_protection_required = required
+    response = SimpleNamespace(
+        role=role,
+        tools_call_name=None,
+        tools_call_extra_content=None,
+        completion_text="",
+    )
+    return event, response
+
+
+@pytest.mark.asyncio
+async def test_interleaved_scopes_sanitize_only_their_own_responses() -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    service = PromptProtectionService(enable_double_check=False)
+    secret_a = "request A amber birch cedar dogwood elm"
+    secret_b = "request B falcon granite harbor island juniper"
+    service.wrap_prompt(secret_a, scope_id="scope-a")
+    service.wrap_prompt(secret_b, scope_id="scope-b")
+    handler = _reflection_handler_for_scope(service)
+    event_a, response_a = _scoped_event("scope-a")
+    event_b, response_b = _scoped_event("scope-b")
+    response_a.completion_text = f"A {secret_a} keeps {secret_b}"
+    response_b.completion_text = f"B {secret_b} keeps {secret_a}"
+
+    await handler.handle_memory_reflection(event_a, response_a)
+    await handler.handle_memory_reflection(event_b, response_b)
+
+    assert secret_a not in response_a.completion_text
+    assert secret_b in response_a.completion_text
+    assert secret_b not in response_b.completion_text
+    assert secret_a in response_b.completion_text
+    assert service.scoped_scope_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unavailable", ["expired", "evicted"])
+async def test_required_expired_or_evicted_scope_fails_closed(unavailable) -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    now = [10.0]
+    service = PromptProtectionService(
+        enable_double_check=False,
+        clock=lambda: now[0],
+        scope_ttl_seconds=5.0,
+        max_scopes=1,
+    )
+    service.wrap_prompt("protected secret", scope_id="missing-scope")
+    if unavailable == "expired":
+        now[0] += 6.0
+    else:
+        service.wrap_prompt("new secret", scope_id="new-scope")
+    handler = _reflection_handler_for_scope(service)
+    event, response = _scoped_event("missing-scope")
+    response.completion_text = "visible output"
+    await handler.handle_memory_reflection(event, response)
+    assert response.completion_text == ""
+
+
+@pytest.mark.asyncio
+async def test_nonassistant_response_discards_scope_without_sanitizing() -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    service = PromptProtectionService(enable_double_check=False)
+    secret = "nonassistant secret alpha beta gamma delta epsilon"
+    service.wrap_prompt(secret, scope_id="scope-tool")
+    handler = _reflection_handler_for_scope(service)
+    event, response = _scoped_event("scope-tool", role="tool")
+    response.completion_text = secret
+    await handler.handle_memory_reflection(event, response)
+    assert response.completion_text == secret
+    assert service.has_scope("scope-tool") is False
+
+
+@pytest.mark.asyncio
+async def test_no_injection_missing_scope_keys_does_not_clear_ordinary_response() -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    service = PromptProtectionService(enable_double_check=False)
+    handler = _reflection_handler_for_scope(service)
+    event = MagicMock()
+    event.get_extra.return_value = None
+    event.unified_msg_origin = ""
+    response = SimpleNamespace(
+        role="assistant",
+        tools_call_name=None,
+        tools_call_extra_content=None,
+        completion_text="ordinary visible response",
+    )
+    await handler.handle_memory_reflection(event, response)
+    assert response.completion_text == "ordinary visible response"
+
+
+@pytest.mark.asyncio
+async def test_scope_getter_error_without_fallback_fails_visible_response_closed() -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    handler = _reflection_handler_for_scope(
+        PromptProtectionService(enable_double_check=False)
+    )
+    event = MagicMock()
+    event.get_extra.side_effect = RuntimeError("getter unavailable")
+    event.unified_msg_origin = ""
+    response = SimpleNamespace(
+        role="assistant",
+        tools_call_name=None,
+        tools_call_extra_content=None,
+        completion_text="potentially unsafe response",
+    )
+    await handler.handle_memory_reflection(event, response)
+    assert response.completion_text == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", [InjectionOutcome.EMPTY, InjectionOutcome.ERROR])
+async def test_recall_empty_or_error_clears_event_scope(handler_case, outcome) -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    service = PromptProtectionService(enable_double_check=False)
+    case = handler_case(
+        config=strategy_config(),
+        memories=high_confidence_memories(),
+        prompt_protection_service=service,
+    )
+    case.handler._executor.execute = AsyncMock(return_value=InjectionExecutionResult(
+        outcome=outcome,
+        error_code="TEST" if outcome is InjectionOutcome.ERROR else None,
+    ))
+    await case.handler.handle_memory_recall(case.event, case.request)
+    assert getattr(case.event, "_memora_prompt_protection_scope", None) is None
+    assert getattr(case.event, "_memora_prompt_protection_required", None) is None
+    assert service.scoped_scope_count == 0
+
+
+@pytest.mark.asyncio
+async def test_recall_both_scope_channels_failure_skips_protected_executor(
+    handler_case,
+) -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    class EventWithoutStorage:
+        __slots__ = ("unified_msg_origin",)
+
+        def __init__(self):
+            self.unified_msg_origin = "session-1"
+
+        def set_extra(self, *_args):
+            raise RuntimeError("setter unavailable")
+
+        def get_extra(self, *_args):
+            raise RuntimeError("getter unavailable")
+
+        def get_message_type(self):
+            return MessageType.PRIVATE_MESSAGE
+
+        def get_sender_id(self):
+            return "user-1"
+
+    service = PromptProtectionService(enable_double_check=False)
+    case = handler_case(
+        config=strategy_config(),
+        memories=high_confidence_memories(),
+        prompt_protection_service=service,
+    )
+    case.event = EventWithoutStorage()
+    case.handler._executor.execute = AsyncMock()
+    snapshot = (
+        case.request.prompt,
+        list(case.request.contexts),
+        list(case.request.extra_user_content_parts),
+    )
+    await case.handler.handle_memory_recall(case.event, case.request)
+    case.handler._executor.execute.assert_not_awaited()
+    assert (
+        case.request.prompt,
+        case.request.contexts,
+        case.request.extra_user_content_parts,
+    ) == snapshot
+    assert case.recorder.record.call_args.args[0].error_code == "PROTECTION_SCOPE_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_setter_exception_real_executor_never_registers_unscoped(
+    handler_case,
+) -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    service = PromptProtectionService(enable_double_check=False)
+    case = handler_case(
+        config=strategy_config(),
+        memories=high_confidence_memories(),
+        prompt_protection_service=service,
+    )
+    case.event.set_extra.side_effect = RuntimeError("setter unavailable")
+    await case.handler.handle_memory_recall(case.event, case.request)
+    scope_id = case.event._memora_prompt_protection_scope
+    assert scope_id
+    assert service.has_scope(scope_id)
+    assert service.sanitizer._original_instructions == []
+    assert case.recorder.record.call_args.args[0].outcome in {"injected", "fallback"}

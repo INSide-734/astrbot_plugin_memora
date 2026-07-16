@@ -12,12 +12,16 @@ import hashlib
 import logging
 import random
 import re
+import time
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger("astrbot.memora.security.prompt_sanitizer")
 PROMPT_PROTECTION_SCOPE_EXTRA_KEY = "memora_prompt_protection_scope"
+PROMPT_PROTECTION_REQUIRED_EXTRA_KEY = "memora_prompt_protection_required"
+PROMPT_PROTECTION_SCOPE_ATTR = "_memora_prompt_protection_scope"
+PROMPT_PROTECTION_REQUIRED_ATTR = "_memora_prompt_protection_required"
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +387,11 @@ class DoubleCheckValidator:
         if not response:
             return True, []
 
-        check_instructions = instructions or self._registered_instructions
+        check_instructions = (
+            self._registered_instructions
+            if instructions is None
+            else instructions
+        )
         if not check_instructions:
             return True, []
 
@@ -575,12 +583,19 @@ class PromptProtectionService:
         *,
         wrapper_template_index: int = 0,
         enable_double_check: bool = True,
+        clock: Callable[[], float] | None = None,
+        scope_ttl_seconds: float = 300.0,
+        max_scopes: int = 1024,
     ) -> None:
+
         self.wrapper = MetaInstructionWrapper(wrapper_template_index)
         self.sanitizer = ResponseSanitizer()
         self.validator = DoubleCheckValidator()
         self.enable_double_check = enable_double_check
-        self._scoped_instructions: dict[str, tuple[str, ...]] = {}
+        self._clock = clock or time.monotonic
+        self._scope_ttl_seconds = max(0.0, float(scope_ttl_seconds))
+        self._max_scopes = max(0, int(max_scopes))
+        self._scoped_instructions: dict[str, tuple[tuple[str, ...], float]] = {}
 
         self._stats: dict[str, int] = {
             "wrapped": 0,
@@ -612,8 +627,8 @@ class PromptProtectionService:
         self._stats["wrapped"] += 1
 
         if register_for_filter:
-            if scope_id:
-                self._scoped_instructions[scope_id] = (content.strip(),)
+            if scope_id is not None:
+                self._register_scope(scope_id, (content.strip(),))
             else:
                 self.sanitizer.register_instructions([content])
                 self.validator.register_instructions([content])
@@ -643,7 +658,8 @@ class PromptProtectionService:
             "validation_details": [],
         }
 
-        instructions = self._scoped_instructions.get(scope_id, ()) if scope_id else None
+        instructions = self._get_scope(scope_id) if scope_id is not None else None
+
         try:
             sanitized, leaks = self.sanitizer.sanitize(
                 response,
@@ -675,14 +691,58 @@ class PromptProtectionService:
                 if not is_valid:
                     self._stats["validation_failed"] += 1
                     logger.warning("双重检查验证失败，发现泄露风险")
-
             return sanitized, report
         finally:
-            if consume_scope and scope_id:
-                self._scoped_instructions.pop(scope_id, None)
+            if consume_scope and scope_id is not None:
+                self.discard_scope(scope_id)
+
+    def _prune_scopes(self) -> None:
+        now = self._clock()
+        expired = [
+            scope_id
+            for scope_id, (_, registered_at) in self._scoped_instructions.items()
+            if now - registered_at >= self._scope_ttl_seconds
+        ]
+        for scope_id in expired:
+            self._scoped_instructions.pop(scope_id, None)
+
+    def _register_scope(
+        self,
+        scope_id: str,
+        instructions: tuple[str, ...],
+    ) -> None:
+        self._prune_scopes()
+        self._scoped_instructions.pop(scope_id, None)
+        if self._max_scopes <= 0:
+            return
+        while len(self._scoped_instructions) >= self._max_scopes:
+            oldest = min(
+                self._scoped_instructions,
+                key=lambda key: self._scoped_instructions[key][1],
+            )
+            self._scoped_instructions.pop(oldest, None)
+        self._scoped_instructions[scope_id] = (instructions, self._clock())
+
+    def _get_scope(self, scope_id: str) -> tuple[str, ...]:
+        self._prune_scopes()
+        entry = self._scoped_instructions.get(scope_id)
+        return entry[0] if entry is not None else ()
+
+    def has_scope(self, scope_id: str | None) -> bool:
+        """Return whether a live request-scoped registration exists."""
+        if not scope_id:
+            return False
+        self._prune_scopes()
+        return scope_id in self._scoped_instructions
+
+    @property
+    def scoped_scope_count(self) -> int:
+        self._prune_scopes()
+        return len(self._scoped_instructions)
 
     def discard_scope(self, scope_id: str | None) -> None:
         """Discard one request-scoped registration without touching legacy state."""
+        self._prune_scopes()
         if scope_id:
             self._scoped_instructions.pop(scope_id, None)
 

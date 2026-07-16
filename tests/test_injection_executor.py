@@ -816,6 +816,7 @@ async def test_protection_registers_once_before_each_delivery(delivery) -> None:
         _context(
             [{"content": "REGISTER_ONCE", "score": 1.0, "metadata": {}}],
             provider=provider,
+            scope_id="scope-register",
         ),
     )
     protection.wrap_prompt.assert_called_once()
@@ -823,6 +824,7 @@ async def test_protection_registers_once_before_each_delivery(delivery) -> None:
     assert protection.wrap_prompt.call_args.kwargs == {
         "label": "memory_context",
         "register_for_filter": True,
+        "scope_id": "scope-register",
     }
     assert "REGISTER_ONCE" in registered_payload
     assert result.actual_resolved_delivery is delivery
@@ -837,7 +839,10 @@ async def test_protection_failure_is_atomic() -> None:
     result = await InjectionExecutor(InjectionAdapter(), protection).execute(
         req,
         _decision(),
-        _context([{"content": "sensitive", "score": 1.0, "metadata": {}}]),
+        _context(
+            [{"content": "sensitive", "score": 1.0, "metadata": {}}],
+            scope_id="scope-failure",
+        ),
     )
     assert result.error_code == "PROTECTION_FAILED"
     assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
@@ -929,9 +934,15 @@ async def test_real_prompt_protection_filters_registered_unique_secret() -> None
     result = await InjectionExecutor(InjectionAdapter(), protection).execute(
         _request(),
         _decision(),
-        _context([{"content": secret, "score": 1.0, "metadata": {}}]),
+        _context(
+            [{"content": secret, "score": 1.0, "metadata": {}}],
+            scope_id="scope-real",
+        ),
     )
-    sanitized, report = protection.sanitize_response(f"safe prefix {secret} safe suffix")
+    sanitized, report = protection.sanitize_response(
+        f"safe prefix {secret} safe suffix",
+        scope_id="scope-real",
+    )
     assert result.outcome is InjectionOutcome.INJECTED
     assert secret not in sanitized
     assert report["leaks_removed"]
@@ -947,7 +958,10 @@ async def test_prompt_protection_cancellation_is_not_converted_to_error() -> Non
         await InjectionExecutor(InjectionAdapter(), protection).execute(
             req,
             _decision(),
-            _context([{"content": "secret", "score": 1.0, "metadata": {}}]),
+            _context(
+                [{"content": "secret", "score": 1.0, "metadata": {}}],
+                scope_id="scope-cancelled",
+            ),
         )
     assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
 
@@ -972,9 +986,15 @@ async def test_registration_failure_after_mutation_rolls_back_and_does_not_filte
     result = await InjectionExecutor(InjectionAdapter(), protection).execute(
         req,
         _decision(),
-        _context([{"content": secret, "score": 1.0, "metadata": {}}]),
+        _context(
+            [{"content": secret, "score": 1.0, "metadata": {}}],
+            scope_id="scope-rollback",
+        ),
     )
-    sanitized, report = protection.sanitize_response(secret)
+    sanitized, report = protection.sanitize_response(
+        secret,
+        scope_id="scope-rollback",
+    )
     assert result.error_code == "PROTECTION_FAILED"
     assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
     assert sanitized == secret
@@ -992,6 +1012,7 @@ async def test_assignment_failure_never_registers_prompt() -> None:
         _context(
             [{"content": "memory", "score": 1.0, "metadata": {}}],
             provider=_tool_capable_provider(),
+            scope_id="scope-assignment",
         ),
     )
     assert result.error_code == "MUTATION_FAILED"
@@ -1042,3 +1063,19 @@ async def test_successful_execution_registers_only_its_scope() -> None:
     )
     assert result.outcome is InjectionOutcome.INJECTED
     assert protection.wrap_prompt.call_args.kwargs["scope_id"] == "scope-success"
+
+
+@pytest.mark.asyncio
+async def test_protected_execution_without_scope_fails_before_mutation() -> None:
+    req = _request()
+    snapshot = (req.prompt, deepcopy(req.contexts), deepcopy(req.extra_user_content_parts))
+    protection = MagicMock()
+    result = await InjectionExecutor(InjectionAdapter(), protection).execute(
+        req,
+        _decision(),
+        _context([{"content": "memory", "score": 1.0, "metadata": {}}]),
+    )
+    assert result.outcome is InjectionOutcome.ERROR
+    assert result.error_code == "PROTECTION_SCOPE_FAILED"
+    assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
+    protection.wrap_prompt.assert_not_called()

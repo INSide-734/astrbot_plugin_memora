@@ -169,7 +169,21 @@ class InjectionExecutor:
         except Exception:
             delivery = DeliveryMode.EXTRA_USER_CONTENT
             fallback_applied = True
-
+        if self._prompt_protection is not None and not (
+            isinstance(context.scope_id, str) and context.scope_id.strip()
+        ):
+            return self._result(
+                InjectionOutcome.ERROR,
+                configured_budget,
+                effective_budget,
+                selected_count=len(selected),
+                dropped_count=len(dropped),
+                truncated_count=stats.truncated_count,
+                actual_resolved_delivery=delivery,
+                error_code="PROTECTION_SCOPE_FAILED",
+                format_ms=format_ms,
+                inject_ms=(time.perf_counter() - inject_started) * 1000.0,
+            )
         try:
             request_snapshot = (
                 req.prompt,
@@ -197,26 +211,20 @@ class InjectionExecutor:
             escaped_raw_payload = protected_payload[
                 len(_PROTECTION_PREFIX):-len(_PROTECTION_SUFFIX)
             ]
-            protection_state: dict[str, Any] | None = None
             try:
-                protection_state = self._snapshot_protection_state()
-                wrap_kwargs: dict[str, Any] = {
-                    "label": "memory_context",
-                    "register_for_filter": True,
-                }
-                if context.scope_id is not None:
-                    wrap_kwargs["scope_id"] = context.scope_id
                 self._prompt_protection.wrap_prompt(
                     escaped_raw_payload,
-                    **wrap_kwargs,
+                    label="memory_context",
+                    register_for_filter=True,
+                    scope_id=context.scope_id,
                 )
             except asyncio.CancelledError:
                 self._restore_request(req, request_snapshot)
-                self._restore_protection_state(protection_state)
+                self._discard_protection_scope(context.scope_id)
                 raise
             except Exception:
                 self._restore_request(req, request_snapshot)
-                self._restore_protection_state(protection_state)
+                self._discard_protection_scope(context.scope_id)
                 return self._result(
                     InjectionOutcome.ERROR,
                     configured_budget,
@@ -248,15 +256,14 @@ class InjectionExecutor:
     def _restore_request(req: Any, snapshot: tuple[Any, Any, Any]) -> None:
         req.prompt, req.contexts, req.extra_user_content_parts = snapshot
 
-    def _snapshot_protection_state(self) -> dict[str, Any]:
-        return deepcopy(vars(self._prompt_protection))
-
-    def _restore_protection_state(self, snapshot: dict[str, Any] | None) -> None:
-        if snapshot is None:
+    def _discard_protection_scope(self, scope_id: str | None) -> None:
+        discard = getattr(self._prompt_protection, "discard_scope", None)
+        if not callable(discard):
             return
-        state = vars(self._prompt_protection)
-        state.clear()
-        state.update(snapshot)
+        try:
+            discard(scope_id)
+        except Exception:
+            pass
 
     @staticmethod
     def _result(
