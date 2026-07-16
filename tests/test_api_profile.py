@@ -431,7 +431,8 @@ class TestProfileHappyPath:
             mixin = _make_mixin(detail_profile=broken)
             result = await mixin.get_profile_detail()
         assert result["status"] == "error"
-        assert "profile serialization failed" in result["message"]
+        assert result["message"] == "用户画像操作失败"
+        assert "broken profile" not in repr(result)
 
     @pytest.mark.asyncio
     async def test_delete_returns_result(self) -> None:
@@ -493,7 +494,8 @@ class TestProfileHappyPath:
             mixin = _make_mixin(detail_profile=broken)
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
-        assert "profile serialization failed" in result["message"]
+        assert result["message"] == "用户画像操作失败"
+        assert "broken profile" not in repr(result)
 
     @pytest.mark.asyncio
     async def test_remove_tag(self) -> None:
@@ -570,7 +572,8 @@ class TestProfileEdgeCases:
             mixin = _make_mixin(detail_profile=broken)
             result = await mixin.update_profile()
         assert result["status"] == "error"
-        assert "profile serialization failed" in result["message"]
+        assert result["message"] == "用户画像操作失败"
+        assert "broken profile" not in repr(result)
 
     @pytest.mark.asyncio
     async def test_delete_no_manager(self) -> None:
@@ -692,6 +695,43 @@ def _update_envelope(user_id: str = "u1") -> dict:
         "changes": payload,
         "expected_revision": "rev-old",
     }
+
+
+def _profile_audit_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if "[画像 AUDIT]" in record.getMessage()
+    ]
+
+
+def _profile_audit(
+    action: str,
+    identity,
+    *,
+    result: str,
+    error_code: str = "none",
+    error_class: str = "none",
+) -> str:
+    return (
+        f"[画像 AUDIT] action={action} entity=profile identity={identity} "
+        f"result={result} error_code={error_code} error_class={error_class} count=1"
+    )
+
+
+def _profile_batch_audit(
+    action: str,
+    *,
+    result: str,
+    error_code: str,
+    succeeded_count: int,
+    failed_count: int,
+) -> str:
+    return (
+        f"[画像 AUDIT] action={action} entity=profile identity=batch "
+        f"result={result} error_code={error_code} error_class=none "
+        f"succeeded_count={succeeded_count} failed_count={failed_count}"
+    )
 
 
 class TestRevisionedProfileApi:
@@ -1041,7 +1081,7 @@ class TestRevisionedProfileApi:
         assert len(audits) == 1
         assert "action=create" in audits[0]
         assert "entity=profile" in audits[0]
-        assert "identity=unavailable" in audits[0]
+        assert "identity={'user_id': 'u1'}" in audits[0]
         assert "result=failure" in audits[0]
         assert "error_code=validation_error" in audits[0]
         assert secret not in caplog.text
@@ -1063,7 +1103,7 @@ class TestRevisionedProfileApi:
             ),
         ],
     )
-    async def test_mutation_audit_mapper_failure_is_single_and_redacted(
+    async def test_mutation_audit_backend_failure_is_single_and_redacted(
         self,
         caplog: pytest.LogCaptureFixture,
         failure: Exception,
@@ -1091,7 +1131,7 @@ class TestRevisionedProfileApi:
         assert len(audits) == 1
         assert "action=create" in audits[0]
         assert "entity=profile" in audits[0]
-        assert "identity=unavailable" in audits[0]
+        assert "identity={'user_id': 'u1'}" in audits[0]
         assert "result=failure" in audits[0]
         assert f"error_code={expected_code}" in audits[0]
         rendered = caplog.text + repr(result)
@@ -1148,6 +1188,626 @@ class TestRevisionedProfileApi:
             "free-text-secret",
             "preference-secret",
             "tag-secret",
+        ):
+            assert secret not in rendered
+
+
+
+class TestProfileMutationAuditContract:
+    @pytest.mark.asyncio
+    async def test_detail_revision_failure_has_no_audit_or_scope_leak(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        read_mixin = _make_mixin(detail_profile=_make_profile("read-user"))
+        read_mixin.profile_manager.revision_for.side_effect = RuntimeError(
+            "detail-revision-secret-85bc"
+        )
+
+        with patch(
+            "core.api.profile_api.request", _mock_request(user_id="read-user")
+        ):
+            read_result = await read_mixin.get_profile_detail()
+
+        assert read_result["status"] == "error"
+        assert read_result["code"] == "internal_error"
+        assert _profile_audit_messages(caplog) == []
+
+        returned = _make_profile("write-user")
+        write_mixin = _make_mixin(detail_profile=returned)
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            return_value=_complete_profile_payload("write-user")
+        )
+        with patch("core.api.profile_api.request", request_mock):
+            write_result = await write_mixin.create_profile()
+
+        assert write_result["status"] == "ok"
+        assert _profile_audit_messages(caplog) == [
+            _profile_audit(
+                "create", {"user_id": "write-user"}, result="success"
+            )
+        ]
+        assert "detail-revision-secret-85bc" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_detail_cancellation_propagates_without_audit(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile())
+        mixin.profile_manager.get_profile.side_effect = asyncio.CancelledError()
+
+        with (
+            patch("core.api.profile_api.request", _mock_request(user_id="u1")),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await mixin.get_profile_detail()
+
+        assert _profile_audit_messages(caplog) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "payload", "expected_audit"),
+        [
+            (
+                "create_profile",
+                _complete_profile_payload(),
+                _profile_audit("create", {"user_id": "u1"}, result="success"),
+            ),
+            (
+                "update_profile",
+                _update_envelope(),
+                _profile_audit("update", {"user_id": "u1"}, result="success"),
+            ),
+            (
+                "delete_profile",
+                {
+                    "identity": {"user_id": "u1"},
+                    "expected_revision": "rev-old",
+                },
+                _profile_audit("delete", {"user_id": "u1"}, result="success"),
+            ),
+            (
+                "batch_delete_profiles",
+                {
+                    "action": "delete",
+                    "items": [
+                        {
+                            "identity": {"user_id": "u1"},
+                            "expected_revision": "rev-old",
+                        }
+                    ],
+                },
+                _profile_batch_audit(
+                    "batch_delete",
+                    result="success",
+                    error_code="none",
+                    succeeded_count=1,
+                    failed_count=0,
+                ),
+            ),
+            (
+                "manage_profile_tags",
+                {
+                    "user_id": "u1",
+                    "action": "add",
+                    "tag": {
+                        "category": "interest",
+                        "value": "graphs",
+                        "confidence": 0.9,
+                    },
+                },
+                _profile_audit("tag_add", {"user_id": "u1"}, result="success"),
+            ),
+        ],
+    )
+    async def test_each_mutation_route_success_emits_exactly_once(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        method_name: str,
+        payload: dict,
+        expected_audit: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile())
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await getattr(mixin, method_name)()
+
+        assert result["status"] == "ok"
+        assert _profile_audit_messages(caplog) == [expected_audit]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "action", "response_code", "audit_code"),
+        [
+            ("create_profile", "create", "invalid_request", "invalid_request"),
+            ("update_profile", "update", None, "request_error"),
+            ("delete_profile", "delete", None, "request_error"),
+            ("batch_delete_profiles", "batch", "invalid_request", "invalid_request"),
+            ("manage_profile_tags", "manage_tags", None, "request_error"),
+        ],
+    )
+    async def test_each_mutation_route_early_failure_emits_exactly_once(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        method_name: str,
+        action: str,
+        response_code: str | None,
+        audit_code: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile())
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=None)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await getattr(mixin, method_name)()
+
+        assert result["status"] == "error"
+        assert result.get("code") == response_code
+        assert _profile_audit_messages(caplog) == [
+            _profile_audit(
+                action,
+                "unavailable",
+                result="failure",
+                error_code=audit_code,
+            )
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "payload", "manager_method"),
+        [
+            ("create_profile", _complete_profile_payload(), "create_profile_manual"),
+            ("update_profile", _update_envelope(), "update_profile_manual"),
+            (
+                "delete_profile",
+                {
+                    "identity": {"user_id": "u1"},
+                    "expected_revision": "rev-old",
+                },
+                "delete_profile_manual",
+            ),
+            (
+                "batch_delete_profiles",
+                {
+                    "action": "delete",
+                    "items": [
+                        {
+                            "identity": {"user_id": "u1"},
+                            "expected_revision": "rev-old",
+                        }
+                    ],
+                },
+                "delete_profile_manual",
+            ),
+            (
+                "manage_profile_tags",
+                {
+                    "user_id": "u1",
+                    "action": "add",
+                    "tag": {
+                        "category": "interest",
+                        "value": "graphs",
+                        "confidence": 0.9,
+                    },
+                },
+                "add_tag",
+            ),
+        ],
+    )
+    async def test_each_mutation_route_cancellation_has_no_completed_audit(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        method_name: str,
+        payload: dict,
+        manager_method: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile())
+        getattr(mixin.profile_manager, manager_method).side_effect = (
+            asyncio.CancelledError()
+        )
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with (
+            patch("core.api.profile_api.request", request_mock),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await getattr(mixin, method_name)()
+
+        assert _profile_audit_messages(caplog) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "payload", "manager_method", "failure", "code"),
+        [
+            (
+                "update_profile",
+                _update_envelope(" audited-user "),
+                "update_profile_manual",
+                EditConflictError({"user_id": "audited-user"}, "rev-current"),
+                "edit_conflict",
+            ),
+            (
+                "delete_profile",
+                {
+                    "identity": {"user_id": " audited-user "},
+                    "expected_revision": "rev-old",
+                },
+                "delete_profile_manual",
+                EntityNotFoundError("revision-delete-secret-776a"),
+                "not_found",
+            ),
+        ],
+    )
+    async def test_revisioned_failures_use_canonical_action_identity_and_class(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        method_name: str,
+        payload: dict,
+        manager_method: str,
+        failure: Exception,
+        code: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile())
+        getattr(mixin.profile_manager, manager_method).side_effect = failure
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await getattr(mixin, method_name)()
+
+        action = "update" if method_name == "update_profile" else "delete"
+        assert result["code"] == code
+        assert _profile_audit_messages(caplog) == [
+            _profile_audit(
+                action,
+                {"user_id": "audited-user"},
+                result="failure",
+                error_code=code,
+                error_class=type(failure).__name__,
+            )
+        ]
+        assert "revision-delete-secret-776a" not in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "payload", "manager_method", "expected_action"),
+        [
+            (
+                "update_profile",
+                {"user_id": " legacy-user ", "display_name": "Renamed"},
+                "update_profile_fields",
+                "legacy_update",
+            ),
+            (
+                "delete_profile",
+                {"user_id": " legacy-user "},
+                "delete_profile",
+                "legacy_delete",
+            ),
+        ],
+    )
+    async def test_legacy_backend_failures_keep_branch_action_and_safe_identity(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        method_name: str,
+        payload: dict,
+        manager_method: str,
+        expected_action: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile("legacy-user"))
+        getattr(mixin.profile_manager, manager_method).side_effect = RuntimeError(
+            "legacy-backend-secret-d01e"
+        )
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await getattr(mixin, method_name)()
+
+        assert result["code"] == "internal_error"
+        assert _profile_audit_messages(caplog) == [
+            _profile_audit(
+                expected_action,
+                {"user_id": "legacy-user"},
+                result="failure",
+                error_code="internal_error",
+                error_class="RuntimeError",
+            )
+        ]
+        assert "legacy-backend-secret-d01e" not in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "payload", "expected_action"),
+        [
+            (
+                "update_profile",
+                {"user_id": " legacy-user ", "display_name": "Renamed"},
+                "legacy_update",
+            ),
+            (
+                "delete_profile",
+                {"user_id": " legacy-user "},
+                "legacy_delete",
+            ),
+        ],
+    )
+    async def test_legacy_component_failure_uses_selected_branch_and_safe_identity(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        method_name: str,
+        payload: dict,
+        expected_action: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(profile_manager_available=False)
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await getattr(mixin, method_name)()
+
+        assert result["code"] == "component_unavailable"
+        assert _profile_audit_messages(caplog) == [
+            _profile_audit(
+                expected_action,
+                {"user_id": "legacy-user"},
+                result="failure",
+                error_code="component_unavailable",
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_legacy_delete_false_keeps_response_and_audits_not_deleted(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin()
+        mixin.profile_manager.delete_profile.return_value = False
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value={"user_id": "u1"})
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.delete_profile()
+
+        assert result == {
+            "status": "ok",
+            "data": {"deleted": False, "user_id": "u1"},
+        }
+        assert _profile_audit_messages(caplog) == [
+            _profile_audit(
+                "legacy_delete",
+                {"user_id": "u1"},
+                result="failure",
+                error_code="not_deleted",
+            )
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "payload", "manager_method", "expected_action"),
+        [
+            (
+                "create_profile",
+                {
+                    **_complete_profile_payload(),
+                    "preferences": {
+                        **_complete_profile_payload()["preferences"],
+                        "reply_style": None,
+                    },
+                },
+                "create_profile_manual",
+                "create",
+            ),
+            (
+                "update_profile",
+                {"user_id": "u1", "preferences": {"reply_style": None}},
+                "update_profile_fields",
+                "legacy_update",
+            ),
+            (
+                "update_profile",
+                {
+                    **_update_envelope(),
+                    "changes": {
+                        **_update_envelope()["changes"],
+                        "preferences": {"reply_style": None},
+                    },
+                },
+                "update_profile_manual",
+                "update",
+            ),
+        ],
+    )
+    async def test_reply_style_null_is_validation_error_without_mutation(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        method_name: str,
+        payload: dict,
+        manager_method: str,
+        expected_action: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile())
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await getattr(mixin, method_name)()
+
+        assert result["code"] == "validation_error"
+        getattr(mixin.profile_manager, manager_method).assert_not_awaited()
+        assert _profile_audit_messages(caplog) == [
+            _profile_audit(
+                expected_action,
+                {"user_id": "u1"},
+                result="failure",
+                error_code="validation_error",
+            )
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_point", ["to_dict", "revision"])
+    async def test_create_post_return_mapper_failure_uses_returned_identity(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        failure_point: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        failure_secret = f"mapper-{failure_point}-secret-a91f"
+        returned = _make_profile("returned-user")
+        mixin = _make_mixin(detail_profile=returned)
+        if failure_point == "to_dict":
+            returned.to_dict.side_effect = RuntimeError(failure_secret)
+        else:
+            mixin.profile_manager.revision_for.side_effect = RuntimeError(
+                failure_secret
+            )
+        payload = _complete_profile_payload("requested-user")
+        payload["display_name"] = "mapper-payload-secret-5d4c"
+        payload["preferences"]["reply_style"] = "mapper-preference-secret-c843"
+        payload["tags"][0]["value"] = "mapper-tag-secret-088b"
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.create_profile()
+
+        assert result["code"] == "internal_error"
+        assert _profile_audit_messages(caplog) == [
+            _profile_audit(
+                "create",
+                {"user_id": "returned-user"},
+                result="failure",
+                error_code="internal_error",
+                error_class="RuntimeError",
+            )
+        ]
+        rendered = caplog.text + repr(result)
+        for secret in (
+            failure_secret,
+            "mapper-payload-secret-5d4c",
+            "mapper-preference-secret-c843",
+            "mapper-tag-secret-088b",
+        ):
+            assert secret not in rendered
+
+    @pytest.mark.asyncio
+    async def test_manage_tags_backend_failure_uses_selected_action_and_identity(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin(detail_profile=_make_profile("u1"))
+        mixin.profile_manager.add_tag.side_effect = RuntimeError(
+            "manage-tag-secret-23ae"
+        )
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            return_value={
+                "user_id": " u1 ",
+                "action": "add",
+                "tag": {
+                    "category": "interest",
+                    "value": "graphs",
+                    "confidence": 0.9,
+                },
+            }
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.manage_profile_tags()
+
+        assert result["code"] == "internal_error"
+        assert _profile_audit_messages(caplog) == [
+            _profile_audit(
+                "tag_add",
+                {"user_id": "u1"},
+                result="failure",
+                error_code="internal_error",
+                error_class="RuntimeError",
+            )
+        ]
+        assert "manage-tag-secret-23ae" not in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("side_effect", "expected_result", "succeeded_count", "failed_count"),
+        [
+            (
+                [EntityNotFoundError("batch-item-secret-9d2f"), True],
+                "partial",
+                1,
+                1,
+            ),
+            (
+                [
+                    EntityNotFoundError("batch-item-secret-9d2f"),
+                    RuntimeError("batch-runtime-secret-d42a"),
+                ],
+                "failure",
+                0,
+                2,
+            ),
+        ],
+    )
+    async def test_batch_failure_emits_one_aggregate_without_item_audits(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        side_effect,
+        expected_result: str,
+        succeeded_count: int,
+        failed_count: int,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        mixin = _make_mixin()
+        mixin.profile_manager.delete_profile_manual.side_effect = side_effect
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(
+            return_value={
+                "action": "delete",
+                "items": [
+                    {
+                        "identity": {"user_id": "u1"},
+                        "expected_revision": "batch-revision-secret-351f",
+                    },
+                    {
+                        "identity": {"user_id": "u2"},
+                        "expected_revision": "rev-2",
+                    },
+                ],
+            }
+        )
+
+        with patch("core.api.profile_api.request", request_mock):
+            result = await mixin.batch_delete_profiles()
+
+        assert result["status"] == "ok"
+        assert result["data"]["succeeded_count"] == succeeded_count
+        assert result["data"]["failed_count"] == failed_count
+        assert _profile_audit_messages(caplog) == [
+            _profile_batch_audit(
+                "batch_delete",
+                result=expected_result,
+                error_code="item_failure",
+                succeeded_count=succeeded_count,
+                failed_count=failed_count,
+            )
+        ]
+        rendered = caplog.text + repr(result)
+        for secret in (
+            "batch-item-secret-9d2f",
+            "batch-runtime-secret-d42a",
+            "batch-revision-secret-351f",
         ):
             assert secret not in rendered
 
