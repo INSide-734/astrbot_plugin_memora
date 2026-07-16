@@ -39,6 +39,8 @@ def _make_provider_request(
     req.system_prompt = system_prompt
     req.contexts = contexts if contexts is not None else []
     req.extra_user_content_parts = extra_parts if extra_parts is not None else []
+    req.provider = None
+    req.context_headroom_chars = 10_000
     return req
 
 
@@ -171,7 +173,8 @@ class TestPipelineEvent:
         cfg.get.side_effect = lambda key, default=None: {
             "recall_engine.top_k": 5,
             "recall_engine.auto_remove_injected": True,
-            "recall_engine.injection_method": "extra_user_content",
+            "recall_engine.injection_routing_mode": "manual",
+            "recall_engine.injection_delivery_override": "extra_user_content",
             "recall_engine.inject_with_recent_context": False,
             "recall_engine.spontaneous_recall_enabled": False,
             "recall_engine.prospective_recall_enabled": False,
@@ -251,7 +254,8 @@ class TestPipelineEvent:
         cfg.get.side_effect = lambda key, default=None: {
             "recall_engine.top_k": 5,
             "recall_engine.auto_remove_injected": False,
-            "recall_engine.injection_method": "extra_user_content",
+            "recall_engine.injection_routing_mode": "manual",
+            "recall_engine.injection_delivery_override": "extra_user_content",
             "recall_engine.inject_with_recent_context": False,
             "recall_engine.spontaneous_recall_enabled": False,
             "recall_engine.prospective_recall_enabled": False,
@@ -315,7 +319,8 @@ class TestPipelineEvent:
         cfg.get.side_effect = lambda key, default=None: {
             "recall_engine.top_k": 5,
             "recall_engine.auto_remove_injected": False,
-            "recall_engine.injection_method": "extra_user_content",
+            "recall_engine.injection_routing_mode": "manual",
+            "recall_engine.injection_delivery_override": "extra_user_content",
             "recall_engine.inject_with_recent_context": False,
             "recall_engine.spontaneous_recall_enabled": False,
             "recall_engine.prospective_recall_enabled": False,
@@ -404,7 +409,8 @@ class TestPipelineEvent:
         cfg.get.side_effect = lambda key, default=None: {
             "recall_engine.top_k": 5,
             "recall_engine.auto_remove_injected": False,
-            "recall_engine.injection_method": "user_message_before",
+            "recall_engine.injection_routing_mode": "manual",
+            "recall_engine.injection_delivery_override": "user_message_before",
             "recall_engine.inject_with_recent_context": False,
             "recall_engine.spontaneous_recall_enabled": False,
             "recall_engine.prospective_recall_enabled": False,
@@ -432,23 +438,13 @@ class TestPipelineEvent:
             f"注入后 prompt 必须包含原始消息 '{original_message}'"
         )
 
-        # 2. 注入的记忆片段与原消息可区分
-        assert MEMORY_INJECTION_HEADER in req.prompt, (
-            "注入内容应包含 MEMORY_INJECTION_HEADER 标记"
-        )
-        assert MEMORY_INJECTION_FOOTER in req.prompt, (
-            "注入内容应包含 MEMORY_INJECTION_FOOTER 标记"
-        )
-
-        # 3. 原消息位于注入标记之后（user_message_before: memory_first, then prompt）
-        header_pos = req.prompt.index(MEMORY_INJECTION_HEADER)
-        footer_pos = req.prompt.index(MEMORY_INJECTION_FOOTER)
+        # 2. 执行器保护边界完整，且全部位于原消息之前
+        assert "<memora-untrusted-memory>" in req.prompt
+        assert "</memora-untrusted-memory>" in req.prompt
+        header_pos = req.prompt.index("<memora-untrusted-memory>")
+        footer_pos = req.prompt.index("</memora-untrusted-memory>")
         original_pos = req.prompt.index(original_message)
-
-        assert footer_pos < original_pos, (
-            "user_message_before 模式：注入标记应全部位于原始消息之前 \n"
-            f"  footer_pos={footer_pos}, original_pos={original_pos}"
-        )
+        assert header_pos < footer_pos < original_pos
 
         # 4. 记忆内容确实被注入
         assert "散步" in req.prompt, "注入内容应包含记忆中的关键词"
@@ -501,7 +497,8 @@ class TestPipelineEvent:
         cfg.get.side_effect = lambda key, default=None: {
             "recall_engine.top_k": 5,
             "recall_engine.auto_remove_injected": False,
-            "recall_engine.injection_method": "user_message_after",
+            "recall_engine.injection_routing_mode": "manual",
+            "recall_engine.injection_delivery_override": "user_message_after",
             "recall_engine.inject_with_recent_context": False,
             "recall_engine.spontaneous_recall_enabled": False,
             "recall_engine.prospective_recall_enabled": False,
@@ -529,17 +526,12 @@ class TestPipelineEvent:
             f"注入后 prompt 必须包含原始消息 '{original_message}'"
         )
 
-        # 2. 注入标记存在
-        assert MEMORY_INJECTION_HEADER in req.prompt
-        assert MEMORY_INJECTION_FOOTER in req.prompt
-
-        # 3. 原消息位于注入标记之前（user_message_after: prompt first, then memory）
+        # 2. 执行器保护边界存在，原消息位于注入之前
+        assert "<memora-untrusted-memory>" in req.prompt
+        assert "</memora-untrusted-memory>" in req.prompt
         original_pos = req.prompt.index(original_message)
-        header_pos = req.prompt.index(MEMORY_INJECTION_HEADER)
-
-        assert original_pos < header_pos, (
-            "user_message_after 模式：原始消息应位于注入标记之前"
-        )
+        header_pos = req.prompt.index("<memora-untrusted-memory>")
+        assert original_pos < header_pos
 
     # ------------------------------------------------------------------
     # test_format_memories_for_injection_structure
@@ -671,7 +663,8 @@ class TestPipelineEvent:
         cfg.get.side_effect = lambda key, default=None: {
             "recall_engine.top_k": 0,  # 关键：设置为 0
             "recall_engine.auto_remove_injected": False,
-            "recall_engine.injection_method": "extra_user_content",
+            "recall_engine.injection_routing_mode": "manual",
+            "recall_engine.injection_delivery_override": "extra_user_content",
             "recall_engine.inject_with_recent_context": False,
             "recall_engine.spontaneous_recall_enabled": False,
             "recall_engine.prospective_recall_enabled": False,
