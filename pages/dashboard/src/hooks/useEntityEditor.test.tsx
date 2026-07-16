@@ -224,6 +224,35 @@ describe("useEntityEditor", () => {
     expect([...hook.result.current.dirtyFields]).toEqual(["name"]);
   });
 
+  it("recomputes dirty fields against the remote baseline after reapplying local edits", async () => {
+    const remote = {
+      entity: { name: "共同名称", tags: ["remote"] },
+      revision: "rev-2",
+    };
+    const submit = vi.fn().mockRejectedValue(
+      new ApiRequestError("记录已更新", "conflict", {}, {
+        current_entity: remote.entity,
+        current_revision: remote.revision,
+      })
+    );
+    const hook = renderEditor(submit);
+
+    act(() => {
+      hook.result.current.beginEdit();
+      hook.result.current.setField("name", "共同名称");
+      hook.result.current.setField("tags", ["local"]);
+    });
+    await act(async () => { await hook.result.current.save(); });
+    act(() => hook.result.current.reapplyLocal());
+
+    expect(hook.result.current.draft).toEqual({
+      name: "共同名称",
+      tags: ["local"],
+    });
+    expect([...hook.result.current.dirtyFields]).toEqual(["tags"]);
+    expect(hook.result.current.isDirty).toBe(true);
+  });
+
   it("prevents a second submit while the first is pending", async () => {
     const pending = deferred<EntityEnvelope<Draft>>();
     const submit = vi.fn(() => pending.promise);

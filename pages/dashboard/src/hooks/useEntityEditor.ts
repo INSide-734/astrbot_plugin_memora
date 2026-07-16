@@ -264,8 +264,10 @@ export function useEntityEditor<T extends object>(
       if (!previous.conflict) return previous;
       const baseline = cloneValue(previous.conflict.entity);
       const draft = cloneValue(baseline);
+      const dirtyFields = new Set<keyof T>();
       for (const field of previous.dirtyFields) {
         draft[field] = cloneValue(previous.draft[field]);
+        if (!valuesEqual(baseline[field], draft[field])) dirtyFields.add(field);
       }
       return {
         ...previous,
@@ -273,7 +275,7 @@ export function useEntityEditor<T extends object>(
         draft,
         revision: previous.conflict.revision,
         mode: "edit",
-        dirtyFields: new Set(previous.dirtyFields),
+        dirtyFields,
         fieldErrors: {},
         formError: null,
         conflict: null,
