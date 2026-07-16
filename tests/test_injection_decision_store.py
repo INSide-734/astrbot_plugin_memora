@@ -102,6 +102,37 @@ async def test_file_database_uses_wal_and_exact_safe_schema(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_summary_and_filtered_page_use_expected_indexes(tmp_path) -> None:
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        index_rows = await store._fetch_all("PRAGMA index_list('injection_decisions')")
+        names = {row["name"] for row in index_rows}
+        assert {
+            "idx_injection_decisions_created",
+            "idx_injection_decisions_preset",
+            "idx_injection_decisions_provider",
+            "idx_injection_decisions_outcome",
+        } <= names
+        plan = await store._fetch_all(
+            """
+            EXPLAIN QUERY PLAN
+            SELECT decision_id
+            FROM injection_decisions
+            WHERE resolved_preset = ?
+            ORDER BY created_at_ms DESC, decision_id DESC
+            LIMIT ? OFFSET ?
+            """,
+            ("balanced", 50, 0),
+        )
+        assert any(
+            "idx_injection_decisions_preset" in row["detail"] for row in plan
+        )
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_initialize_is_idempotent_on_same_file(tmp_path) -> None:
     db_path = tmp_path / "memora.db"
     first = InjectionDecisionStore(db_path)
@@ -319,7 +350,14 @@ async def test_summary_reports_deterministic_p95_distribution_fallback_and_event
         assert summary["payload_chars_p95"] == 19
         assert summary["provider_fallback_rate"] == pytest.approx(4 / 20)
         assert summary["preset_distribution"] == {"balanced": 10, "quality": 10}
-        assert summary["cost_trend"]
+        assert summary["cost_trend"] == [
+            {
+                "bucket_ms": 0,
+                "decision_count": 20,
+                "payload_chars_p95": 19,
+                "provider_fallback_rate": pytest.approx(4 / 20),
+            }
+        ]
         assert summary["recent_events"]
         assert summary["recent_events"][0]["decision_id"] == "d-01"
         assert all("query" not in event and "content" not in event for event in summary["recent_events"])
