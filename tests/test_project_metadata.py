@@ -194,6 +194,47 @@ def test_dashboard_browser_smoke_covers_mobile_menu_navigation() -> None:
     assert "mobile-jargon.png" in browser_smoke
 
 
+def test_dashboard_browser_smoke_covers_injection_strategy_workbench() -> None:
+    browser_smoke = _read_text("pages/dashboard/scripts/browser_smoke.mjs")
+    required_markers = [
+        "runInjectionStrategySmoke",
+        "runMobileInjectionStrategySmoke",
+        "#/injection",
+        "injection-overview.png",
+        "injection-config-conflict.png",
+        "injection-decisions.png",
+        "mobile-injection-detail.png",
+        "assertNoHorizontalOverflow",
+        "assertScreenshotLooksNonEmpty",
+        "assertScreenshotMatchesBaseline",
+        'page.getByRole("tab"',
+        'page.getByRole("dialog"',
+        "ROUTE_LOADING_TEXT",
+        "注入决策详情",
+        "下一页",
+        "ConfigConflictDialog",
+        "trace_id",
+        "page/recall/trace/detail",
+        "sanitizeBridgeCallParams",
+        "sanitizeBridgeCallValue",
+        "delete sanitized.decision_id",
+        "delete sanitized.trace_id",
+    ]
+    for marker in required_markers:
+        assert marker in browser_smoke
+
+
+def test_injection_overview_charts_use_valid_tokens_and_deterministic_motion() -> None:
+    overview = _read_text(
+        "pages/dashboard/src/components/injection/InjectionOverviewTab.tsx"
+    )
+    assert 'color: "hsl(var(--primary))"' not in overview
+    assert 'color: "hsl(var(--destructive))"' not in overview
+    assert 'color: "var(--primary)"' in overview
+    assert 'color: "var(--destructive)"' in overview
+    assert overview.count("isAnimationActive={false}") == 3
+
+
 def test_dashboard_browser_smoke_covers_high_impact_confirmation_flow() -> None:
     browser_smoke = _read_text("pages/dashboard/scripts/browser_smoke.mjs")
 
