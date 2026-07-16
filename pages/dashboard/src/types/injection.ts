@@ -19,6 +19,7 @@ export type InjectionOutcome =
   | "fallback"
   | "error";
 export type InjectionSummaryWindow = "1h" | "24h" | "7d" | "30d";
+export type InjectionWorkbenchTab = "overview" | "config" | "decisions";
 export type InjectionLoadStatus = "loading" | "success" | "error";
 export type InjectionDetailStatus = "idle" | InjectionLoadStatus;
 

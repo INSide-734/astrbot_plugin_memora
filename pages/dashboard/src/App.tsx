@@ -31,6 +31,11 @@ const JargonPage = lazy(() => import("@/pages/JargonPage").then(m => ({ default:
 const AffectionPage = lazy(() => import("@/pages/AffectionPage").then(m => ({ default: m.AffectionPage })));
 const SocialPage = lazy(() => import("@/pages/SocialPage").then(m => ({ default: m.SocialPage })));
 const IntelligencePage = lazy(() => import("@/pages/IntelligencePage").then(m => ({ default: m.IntelligencePage })));
+const InjectionStrategyPage = lazy(() =>
+  import("@/pages/InjectionStrategyPage").then((module) => ({
+    default: module.InjectionStrategyPage,
+  })),
+);
 
 /** Lightweight fallback shown while a page chunk loads over the network. */
 function PageLoader() {
@@ -51,7 +56,7 @@ const pageTransition = {
 const HASH_TO_PAGE: Record<string, PageId> = {
   preview: "preview",
   graph: "graph", memory: "memory", timeline: "timeline",
-  recall: "recall", system: "system",
+  recall: "recall", injection: "injection", system: "system",
   config: "config",
   profiles: "profiles", knowledge: "knowledge", notes: "notes", learning: "learning",
   jargon: "jargon", affection: "affection", social: "social",
@@ -93,7 +98,8 @@ export default function App() {
     useState<PageNavigationIntent | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const currentPageRef = useRef(currentPage);
-  const configDirtyRef = useRef(false);
+  const editableDirtyRef = useRef(false);
+  const editableDirtyOwnerRef = useRef<PageId | null>(null);
   const pendingPageRef = useRef<PageId | null>(null);
   const pendingIntentRef = useRef<PageNavigationIntent | undefined>(undefined);
   const pendingHistoryDeltaRef = useRef<number | null>(null);
@@ -126,6 +132,11 @@ export default function App() {
     applyPage(page, intent);
   }, [applyPage]);
 
+  const currentPageIsDirty = useCallback(() =>
+    editableDirtyRef.current
+    && editableDirtyOwnerRef.current === currentPageRef.current,
+  []);
+
   const navigate = useCallback((
     page: PageId,
     intent?: PageNavigationIntent,
@@ -136,7 +147,7 @@ export default function App() {
       return;
     }
 
-    if (currentPageRef.current === "config" && configDirtyRef.current) {
+    if (currentPageIsDirty()) {
       pendingPageRef.current = page;
       pendingIntentRef.current = intent;
       pendingHistoryDeltaRef.current = null;
@@ -145,17 +156,33 @@ export default function App() {
     }
 
     commitNavigation(page, intent);
-  }, [commitNavigation]);
+  }, [commitNavigation, currentPageIsDirty]);
+
+  const handleEditableDirtyChange = useCallback((owner: PageId, dirty: boolean) => {
+    if (dirty) {
+      editableDirtyOwnerRef.current = owner;
+      editableDirtyRef.current = true;
+      return;
+    }
+    if (editableDirtyOwnerRef.current !== owner) return;
+
+    editableDirtyOwnerRef.current = null;
+    editableDirtyRef.current = false;
+    if (pendingPageRef.current !== null) {
+      pendingPageRef.current = null;
+      pendingIntentRef.current = undefined;
+      pendingHistoryDeltaRef.current = null;
+      setPendingPage(null);
+    }
+  }, []);
 
   const handleConfigDirtyChange = useCallback((dirty: boolean) => {
-    configDirtyRef.current = dirty;
-    if (dirty || pendingPageRef.current === null) return;
+    handleEditableDirtyChange("config", dirty);
+  }, [handleEditableDirtyChange]);
 
-    pendingPageRef.current = null;
-    pendingIntentRef.current = undefined;
-    pendingHistoryDeltaRef.current = null;
-    setPendingPage(null);
-  }, []);
+  const handleInjectionDirtyChange = useCallback((dirty: boolean) => {
+    handleEditableDirtyChange("injection", dirty);
+  }, [handleEditableDirtyChange]);
 
   const cancelPendingNavigation = useCallback(() => {
     pendingPageRef.current = null;
@@ -171,7 +198,8 @@ export default function App() {
     pendingPageRef.current = null;
     pendingIntentRef.current = undefined;
     pendingHistoryDeltaRef.current = null;
-    configDirtyRef.current = false;
+    editableDirtyRef.current = false;
+    editableDirtyOwnerRef.current = null;
     setPendingPage(null);
     if (historyDelta !== null) {
       replayingHistoryRef.current = true;
@@ -193,10 +221,10 @@ export default function App() {
       window.history.pushState(
         withHistoryIndex(null, sentinelIndex, { [HISTORY_GUARD_KEY]: true }),
         "",
-        "#/config",
+        `#/${currentPageRef.current}`,
       );
       historyIndexRef.current = sentinelIndex;
-      browserHashRef.current = "#/config";
+      browserHashRef.current = `#/${currentPageRef.current}`;
       pendingHistoryDeltaRef.current = -1;
       setPendingPage(target);
       return;
@@ -233,14 +261,14 @@ export default function App() {
       return;
     }
 
-    if (currentPageRef.current === "config" && configDirtyRef.current) {
+    if (currentPageIsDirty()) {
       blockHistoryNavigation(target, targetIndex);
       return;
     }
 
     if (targetIndex !== null) historyIndexRef.current = targetIndex;
     applyPage(target);
-  }, [applyPage, blockHistoryNavigation]);
+  }, [applyPage, blockHistoryNavigation, currentPageIsDirty]);
 
   useEffect(() => {
     const initialIndex = getHistoryIndex(window.history.state) ?? 0;
@@ -284,19 +312,17 @@ export default function App() {
         );
       }
 
-      if (target !== currentPageRef.current
-        && currentPageRef.current === "config"
-        && configDirtyRef.current) {
+      if (target !== currentPageRef.current && currentPageIsDirty()) {
         pendingPageRef.current = target;
         pendingIntentRef.current = undefined;
         pendingHistoryDeltaRef.current = null;
         window.history.replaceState(
           withHistoryIndex(window.history.state, targetIndex),
           "",
-          "#/config",
+          `#/${currentPageRef.current}`,
         );
         historyIndexRef.current = targetIndex;
-        browserHashRef.current = "#/config";
+        browserHashRef.current = `#/${currentPageRef.current}`;
         setPendingPage(target);
         return;
       }
@@ -310,7 +336,7 @@ export default function App() {
       window.removeEventListener("popstate", handlePopState);
       window.removeEventListener("hashchange", handleHashChange);
     };
-  }, [handleHistoryArrival]);
+  }, [currentPageIsDirty, handleHistoryArrival]);
 
   const showConfigToast = useCallback((
     message: string,
@@ -387,6 +413,14 @@ export default function App() {
                 )}
                 {currentPage === "timeline" && <TimelinePage showToast={showToast} />}
                 {currentPage === "recall" && <RecallPage showToast={showToast} />}
+                {currentPage === "injection" && (
+                  <InjectionStrategyPage
+                    showToast={showConfigToast}
+                    onNavigate={navigate}
+                    onDirtyChange={handleInjectionDirtyChange}
+                    navigationTarget={navigationIntent?.injectionTarget ?? null}
+                  />
+                )}
                 {currentPage === "system" && <SystemPage showToast={showToast} />}
                 {currentPage === "config" && (
                   <ConfigPage
@@ -412,7 +446,12 @@ export default function App() {
                 {currentPage === "jargon" && <JargonPage showToast={showToast} />}
                 {currentPage === "affection" && <AffectionPage showToast={showToast} />}
                 {currentPage === "social" && <SocialPage showToast={showToast} />}
-                {currentPage === "intelligence" && <IntelligencePage showToast={showToast} />}
+                {currentPage === "intelligence" && (
+                  <IntelligencePage
+                    showToast={showToast}
+                    navigationTarget={navigationIntent?.intelligenceTarget ?? null}
+                  />
+                )}
                 </Suspense>
               </motion.div>
             </AnimatePresence>

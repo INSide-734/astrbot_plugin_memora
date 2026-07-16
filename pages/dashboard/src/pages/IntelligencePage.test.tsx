@@ -1,7 +1,27 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+
+vi.mock("@/components/intelligence/RecallTracePanel", () => ({
+  RecallTracePanel: ({ navigationTarget }: {
+    navigationTarget?: {
+      requestId: number;
+      tab: string;
+      traceId?: string;
+    } | null;
+  }) => (
+    <output data-testid="recall-trace-navigation-target">
+      {navigationTarget
+        ? `${navigationTarget.requestId}:${navigationTarget.tab}:${navigationTarget.traceId ?? ""}`
+        : "none"}
+    </output>
+  ),
+}));
 
 import { IntelligencePage } from "./IntelligencePage";
+
+afterEach(() => {
+  cleanup();
+});
 
 it("switches intelligence tabs", async () => {
   render(<IntelligencePage showToast={() => undefined} />);
@@ -21,4 +41,24 @@ it("switches intelligence tabs", async () => {
   expect(screen.getByRole("tab", { name: /Diagnostics|诊断/ }).getAttribute("aria-selected")).toBe("true");
   expect(screen.getByRole("tabpanel", { name: /Diagnostics|诊断/ })).toBeTruthy();
   expect(screen.getAllByText(/^(Health|健康)$/).length).toBeGreaterThan(0);
+});
+
+it("selects Recall Trace and forwards a persisted trace target", () => {
+  render(
+    <IntelligencePage
+      showToast={() => undefined}
+      navigationTarget={{
+        requestId: 42,
+        tab: "recallTrace",
+        traceId: "trace-persisted",
+      }}
+    />,
+  );
+
+  expect(
+    screen.getByRole("tab", { name: /Recall Trace|召回链路/ }).getAttribute("aria-selected"),
+  ).toBe("true");
+  expect(screen.getByTestId("recall-trace-navigation-target").textContent).toBe(
+    "42:recallTrace:trace-persisted",
+  );
 });

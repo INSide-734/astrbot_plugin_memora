@@ -1,10 +1,11 @@
 export type PageId =
-  | "graph" | "memory" | "recall" | "system" | "config"
+  | "graph" | "memory" | "recall" | "injection" | "system" | "config"
   | "profiles" | "knowledge" | "notes" | "learning"
   | "preview" | "timeline"
   | "jargon" | "affection" | "social" | "intelligence";
 
 export * from "./intelligence";
+export * from "./injection";
 export * from "./navigation";
 
 export interface MemoryItem {
