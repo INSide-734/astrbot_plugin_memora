@@ -134,6 +134,24 @@ class TestMemoryFullFormUpdate:
         return api, engine
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("full_form", [False, True])
+    async def test_memory_lookup_failure_is_stable_and_redacted(self, full_form) -> None:
+        secret = r"lookup-secret C:\\private\\memory.db"
+        api, _ = self._api_and_engine()
+        api._get_memory_record.side_effect = RuntimeError(secret)
+        request_mock = MagicMock()
+        payload = {"memory_id": 7, "changes": {"importance": 0.8}} if full_form else {"memory_id": 7, "field": "importance", "value": 0.8}
+        request_mock.get_json = AsyncMock(return_value=payload)
+        with (
+            patch("core.api.memory_write_api.request", request_mock),
+            patch("core.api.memory_write_api.logger.error") as logged,
+        ):
+            result = await api.update_memory()
+        assert result["code"] == "internal_error"
+        assert secret not in repr(result)
+        assert secret not in repr(logged.call_args_list)
+
+    @pytest.mark.asyncio
     async def test_memory_full_form_applies_content_and_metadata_once(self) -> None:
         api, engine = self._api_and_engine()
         request_mock = MagicMock()
@@ -1382,18 +1400,17 @@ class TestGetMemoryRecord:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_db_fallback_handles_exception(self) -> None:
-        """当 DB query fails, returns None (with warning)."""
+    async def test_db_fallback_propagates_exception_to_calling_boundary(self) -> None:
         plugin = MagicMock()
         engine = MagicMock()
         engine.get_memory = AsyncMock(return_value=None)
         engine.db_connection = AsyncMock()
-        engine.db_connection.execute = AsyncMock(side_effect=Exception("DB error"))
+        engine.db_connection.execute = AsyncMock(side_effect=RuntimeError("DB error"))
         plugin.initializer = MagicMock()
         plugin.initializer.memory_engine = engine
         api = PluginPageApi(plugin)
-        result = await api._get_memory_record(1)
-        assert result is None
+        with pytest.raises(RuntimeError, match="DB error"):
+            await api._get_memory_record(1)
 
     @pytest.mark.asyncio
     async def test_db_fallback_when_no_connection(self) -> None:

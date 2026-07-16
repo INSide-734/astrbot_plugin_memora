@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -935,7 +936,8 @@ class TestJargonCrud:
         service.create.assert_awaited_once_with(**payload)
         service.revision_for.assert_called_once_with(created)
         rendered_audit = repr(audit.call_args_list)
-        assert "action=%s entity=jargon identity=%s result=success count=%d" in rendered_audit
+        assert "action=%s entity=jargon identity=%s result=%s error_code=%s" in rendered_audit
+        assert "'success', 'none'" in rendered_audit
         assert "Gradual rollout" not in rendered_audit
 
     @pytest.mark.asyncio
@@ -1083,6 +1085,122 @@ class TestJargonCrud:
             "current_entity": current,
             "current_revision": "rev-current",
         }
+
+    @pytest.mark.asyncio
+    async def test_mutation_audit_covers_early_validation_without_payload_leak(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        service = MagicMock()
+        service.create = AsyncMock()
+        api = _make_admin_api(service)
+        secret = "jargon-payload-secret-c9e2"
+        payload = {
+            "term": "灰度",
+            "group_id": "g1",
+            "meaning": "Gradual rollout",
+            "confidence": 0.9,
+            "unknown": secret,
+        }
+
+        with patch("core.api.jargon_api.request", _request_json(payload)) as request_mock:
+            result = await api.create_jargon()
+
+        audits = [
+            record.getMessage()
+            for record in caplog.records
+            if "[黑话 AUDIT]" in record.getMessage()
+        ]
+        assert result["code"] == "validation_error"
+        assert len(audits) == 1
+        assert "action=create" in audits[0]
+        assert "entity=jargon" in audits[0]
+        assert "identity=unavailable" in audits[0]
+        assert "result=failure" in audits[0]
+        assert "error_code=validation_error" in audits[0]
+        assert secret not in caplog.text
+        request_mock.get_json.assert_awaited_once_with(silent=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failure", "expected_code", "exception_secret"),
+        [
+            (
+                EntityNotFoundError("jargon-domain-secret-2b60"),
+                "not_found",
+                "jargon-domain-secret-2b60",
+            ),
+            (
+                RuntimeError("jargon-generic-secret-77fe"),
+                "internal_error",
+                "jargon-generic-secret-77fe",
+            ),
+        ],
+    )
+    async def test_mutation_audit_mapper_failure_is_single_and_redacted(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        failure: Exception,
+        expected_code: str,
+        exception_secret: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        service = MagicMock()
+        service.create = AsyncMock(side_effect=failure)
+        api = _make_admin_api(service)
+        payload_secret = "jargon-payload-secret-184a"
+        payload = {
+            "term": "灰度",
+            "group_id": "g1",
+            "meaning": payload_secret,
+            "confidence": 0.9,
+        }
+
+        with patch("core.api.jargon_api.request", _request_json(payload)):
+            result = await api.create_jargon()
+
+        audits = [
+            record.getMessage()
+            for record in caplog.records
+            if "[黑话 AUDIT]" in record.getMessage()
+        ]
+        assert result["code"] == expected_code
+        assert len(audits) == 1
+        assert "action=create" in audits[0]
+        assert "entity=jargon" in audits[0]
+        assert "identity=unavailable" in audits[0]
+        assert "result=failure" in audits[0]
+        assert f"error_code={expected_code}" in audits[0]
+        rendered = caplog.text + repr(result)
+        assert payload_secret not in rendered
+        assert exception_secret not in rendered
+
+    @pytest.mark.asyncio
+    async def test_mutation_audit_preserves_cancellation(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        service = MagicMock()
+        service.create = AsyncMock(side_effect=asyncio.CancelledError())
+        api = _make_admin_api(service)
+        payload = {
+            "term": "灰度",
+            "group_id": "g1",
+            "meaning": "Gradual rollout",
+            "confidence": 0.9,
+        }
+
+        with (
+            patch("core.api.jargon_api.request", _request_json(payload)),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await api.create_jargon()
+
+        assert not [
+            record
+            for record in caplog.records
+            if "[黑话 AUDIT]" in record.getMessage()
+        ]
 
     @pytest.mark.asyncio
     async def test_duplicate_and_not_found_errors_use_stable_codes(self) -> None:

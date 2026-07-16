@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -296,7 +298,8 @@ class TestSocialRelationWrites:
             "group_id"
         ] == ""
         rendered_audit = repr(audit.call_args_list)
-        assert "action=%s entity=social_relation identity=%s result=success count=%d" in rendered_audit
+        assert "action=%s entity=social_relation identity=%s result=%s error_code=%s" in rendered_audit
+        assert "'success', 'none'" in rendered_audit
         assert "work" not in rendered_audit
 
     @pytest.mark.asyncio
@@ -501,6 +504,107 @@ class TestSocialRelationWrites:
 
         assert result is guarded
         request_mock.get_json.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_mutation_audit_covers_early_validation_without_payload_leak(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        stub = _make_write_stub()
+        secret = "social-payload-secret-42d8"
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = _create_payload(unknown=secret)
+
+        with patch("core.api.social_api.request", request_mock):
+            result = await stub.create_social_relation()
+
+        audits = [
+            record.getMessage()
+            for record in caplog.records
+            if "[社交关系 AUDIT]" in record.getMessage()
+        ]
+        assert result["code"] == "validation_error"
+        assert len(audits) == 1
+        assert "action=create" in audits[0]
+        assert "entity=social_relation" in audits[0]
+        assert "identity=unavailable" in audits[0]
+        assert "result=failure" in audits[0]
+        assert "error_code=validation_error" in audits[0]
+        assert secret not in caplog.text
+        request_mock.get_json.assert_awaited_once_with(silent=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failure", "expected_code", "exception_secret"),
+        [
+            (
+                EntityNotFoundError("social-domain-secret-3fc1"),
+                "not_found",
+                "social-domain-secret-3fc1",
+            ),
+            (
+                RuntimeError("social-generic-secret-98a6"),
+                "internal_error",
+                "social-generic-secret-98a6",
+            ),
+        ],
+    )
+    async def test_mutation_audit_mapper_failure_is_single_and_redacted(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        failure: Exception,
+        expected_code: str,
+        exception_secret: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        stub = _make_write_stub()
+        payload_secret = "social-payload-secret-16bc"
+        stub.plugin._relation_manager.create_manual_relation.side_effect = failure
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = _create_payload(tags=[payload_secret])
+
+        with patch("core.api.social_api.request", request_mock):
+            result = await stub.create_social_relation()
+
+        audits = [
+            record.getMessage()
+            for record in caplog.records
+            if "[社交关系 AUDIT]" in record.getMessage()
+        ]
+        assert result["code"] == expected_code
+        assert len(audits) == 1
+        assert "action=create" in audits[0]
+        assert "entity=social_relation" in audits[0]
+        assert "identity=unavailable" in audits[0]
+        assert "result=failure" in audits[0]
+        assert f"error_code={expected_code}" in audits[0]
+        rendered = caplog.text + repr(result)
+        assert payload_secret not in rendered
+        assert exception_secret not in rendered
+
+    @pytest.mark.asyncio
+    async def test_mutation_audit_preserves_cancellation(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        stub = _make_write_stub()
+        stub.plugin._relation_manager.create_manual_relation.side_effect = (
+            asyncio.CancelledError()
+        )
+        request_mock = _mock_request()
+        request_mock.get_json.return_value = _create_payload()
+
+        with (
+            patch("core.api.social_api.request", request_mock),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await stub.create_social_relation()
+
+        assert not [
+            record
+            for record in caplog.records
+            if "[社交关系 AUDIT]" in record.getMessage()
+        ]
 
     @pytest.mark.asyncio
     async def test_unexpected_error_response_and_log_omit_payload_values(self) -> None:

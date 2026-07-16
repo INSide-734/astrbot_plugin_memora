@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+from functools import wraps
 import asyncio
 from typing import Any
 
@@ -44,13 +46,79 @@ _EDITABLE_FIELDS = frozenset(
 _BATCH_FIELDS = frozenset({"action", "items"})
 
 
-def _audit_success(action: str, identity: Any, *, count: int = 1) -> None:
+_AUDIT_EMITTED: ContextVar[bool] = ContextVar(
+    "jargon_mutation_audit_emitted", default=False
+)
+
+
+def _audit_event(
+    action: str,
+    identity: Any,
+    *,
+    result: str,
+    error_code: str = "none",
+    error_class: str = "none",
+    count: int = 1,
+    succeeded_count: int | None = None,
+    failed_count: int | None = None,
+) -> None:
+    _AUDIT_EMITTED.set(True)
+    if succeeded_count is not None or failed_count is not None:
+        logger.info(
+            "[黑话 AUDIT] action=%s entity=jargon identity=%s result=%s error_code=%s error_class=%s succeeded_count=%d failed_count=%d",
+            action,
+            identity,
+            result,
+            error_code,
+            error_class,
+            0 if succeeded_count is None else succeeded_count,
+            0 if failed_count is None else failed_count,
+        )
+        return
     logger.info(
-        "[黑话 AUDIT] action=%s entity=jargon identity=%s result=success count=%d",
+        "[黑话 AUDIT] action=%s entity=jargon identity=%s result=%s error_code=%s error_class=%s count=%d",
         action,
         identity,
+        result,
+        error_code,
+        error_class,
         count,
     )
+
+
+def _audit_boundary(action: str):
+    def decorate(handler):
+        @wraps(handler)
+        async def wrapped(*args, **kwargs):
+            token = _AUDIT_EMITTED.set(False)
+            try:
+                try:
+                    response = await handler(*args, **kwargs)
+                except Exception as exc:
+                    response = _exception_response(exc, operation=action)
+                if (
+                    isinstance(response, dict)
+                    and response.get("status") == "error"
+                    and not _AUDIT_EMITTED.get()
+                ):
+                    code = response.get("code")
+                    _audit_event(
+                        action,
+                        "unavailable",
+                        result="failure",
+                        error_code=(
+                            code
+                            if isinstance(code, str) and code
+                            else "request_error"
+                        ),
+                    )
+                return response
+            finally:
+                _AUDIT_EMITTED.reset(token)
+
+        return wrapped
+
+    return decorate
 
 
 def _parse_limit(raw_value: Any, *, default: int, maximum: int) -> int:
@@ -132,7 +200,24 @@ def _component_unavailable() -> dict[str, Any]:
     return error_response("黑话管理服务不可用", code="component_unavailable")
 
 
-def _exception_response(exc: Exception, *, operation: str) -> dict[str, Any]:
+def _exception_response(
+    exc: Exception, *, operation: str, audit: bool = True
+) -> dict[str, Any]:
+    error_code = (
+        "validation_error" if isinstance(exc, EntityValidationError)
+        else "already_exists" if isinstance(exc, EntityAlreadyExistsError)
+        else "not_found" if isinstance(exc, EntityNotFoundError)
+        else "edit_conflict" if isinstance(exc, EditConflictError)
+        else "internal_error"
+    )
+    if audit:
+        _audit_event(
+            operation,
+            "unavailable",
+            result="failure",
+            error_code=error_code,
+            error_class=type(exc).__name__,
+        )
     """映射领域异常，并对未知异常隐藏请求和异常文本。"""
 
     if isinstance(exc, EntityValidationError):
@@ -591,6 +676,7 @@ class JargonApiMixin:
     # POST /create, /update, /delete, /batch
     # ------------------------------------------------------------------
 
+    @_audit_boundary("create")
     async def create_jargon(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -606,16 +692,20 @@ class JargonApiMixin:
             if service is None:
                 return _component_unavailable()
             meaning = await service.create(**payload)
-            _audit_success("create", {
-                "term": meaning.term, "group_id": meaning.group_id,
-            })
-            return entity_ok(
+            response = entity_ok(
                 _meaning_to_dict(meaning),
                 revision=service.revision_for(meaning),
             )
+            _audit_event(
+                "create",
+                {"term": meaning.term, "group_id": meaning.group_id},
+                result="success",
+            )
+            return response
         except Exception as exc:
             return _exception_response(exc, operation="create")
 
+    @_audit_boundary("update")
     async def update_jargon(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -645,14 +735,16 @@ class JargonApiMixin:
                 changes=changes,
                 expected_revision=revision,
             )
-            _audit_success("update", identity)
-            return entity_ok(
+            response = entity_ok(
                 _meaning_to_dict(meaning),
                 revision=service.revision_for(meaning),
             )
+            _audit_event("update", identity, result="success")
+            return response
         except Exception as exc:
             return _exception_response(exc, operation="update")
 
+    @_audit_boundary("delete")
     async def delete_jargon(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -680,11 +772,13 @@ class JargonApiMixin:
             )
             if not deleted:
                 raise EntityNotFoundError("黑话词条不存在")
-            _audit_success("delete", identity)
-            return ok_response({"deleted": True, "identity": identity})
+            response = ok_response({"deleted": True, "identity": identity})
+            _audit_event("delete", identity, result="success")
+            return response
         except Exception as exc:
             return _exception_response(exc, operation="delete")
 
+    @_audit_boundary("batch")
     async def batch_jargon(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
@@ -703,10 +797,20 @@ class JargonApiMixin:
                 action=payload.get("action"),
                 items=payload.get("items"),
             )
-            _audit_success(
+            succeeded_count = int(result.get("succeeded_count", 0))
+            failed_count = int(result.get("failed_count", 0))
+            batch_result = (
+                "success"
+                if not failed_count
+                else ("failure" if not succeeded_count else "partial")
+            )
+            _audit_event(
                 "batch_" + str(payload.get("action")),
                 "batch",
-                count=result.get("succeeded_count", 0),
+                result=batch_result,
+                error_code="none" if not failed_count else "item_failure",
+                succeeded_count=succeeded_count,
+                failed_count=failed_count,
             )
             return ok_response(result)
         except Exception as exc:
@@ -771,6 +875,7 @@ class JargonApiMixin:
     # POST /confirm
     # ------------------------------------------------------------------
 
+    @_audit_boundary("confirm")
     async def confirm_jargon(self):
         """手动确认或拒绝某个黑话词条。
 
@@ -815,7 +920,11 @@ class JargonApiMixin:
         try:
             if not callable(getattr(store, "get_by_term", None)):
                 await store.confirm(term, group_id, confirmed=confirmed)
-                _audit_success("confirm", {"term": term, "group_id": group_id})
+                _audit_event(
+                    "confirm",
+                    {"term": term, "group_id": group_id},
+                    result="success",
+                )
                 action = "confirmed" if confirmed else "rejected"
                 action_text = "已确认" if confirmed else "已驳回"
                 return ok_response({
@@ -836,7 +945,11 @@ class JargonApiMixin:
                 changes={"is_confirmed": confirmed},
                 expected_revision=service.revision_for(current),
             )
-            _audit_success("confirm", {"term": term, "group_id": group_id})
+            _audit_event(
+                "confirm",
+                {"term": term, "group_id": group_id},
+                result="success",
+            )
             action = "confirmed" if confirmed else "rejected"
             action_text = "已确认" if confirmed else "已驳回"
             return ok_response({
@@ -852,6 +965,7 @@ class JargonApiMixin:
     # POST /mine
     # ------------------------------------------------------------------
 
+    @_audit_boundary("mine")
     async def mine_jargon(self):
         """手动触发指定群组的一轮黑话挖掘。
 
@@ -902,12 +1016,19 @@ class JargonApiMixin:
                 for item in (_safe_meaning_to_dict(r) for r in results)
                 if item is not None
             ]
-            return ok_response({
+            response = ok_response({
                 "group_id": group_id,
                 "inferred_count": len(results),
                 "results": serialized_results,
                 "message": f"黑话挖掘完成，共推断出 {len(results)} 个词条",
             })
+            _audit_event(
+                "mine",
+                {"group_id": group_id},
+                result="success",
+                count=len(results),
+            )
+            return response
         except Exception as exc:
             return _exception_response(exc, operation="mine")
 
