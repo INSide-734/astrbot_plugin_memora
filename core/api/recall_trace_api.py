@@ -147,52 +147,57 @@ class RecallTraceApiMixin:
         get = getattr(config_manager, "get", None)
         if not callable(get):
             return InjectionRoutingConfig()
-        return InjectionRoutingConfig(
-            mode=RoutingMode(get("recall_engine.injection_routing_mode", "manual")),
-            manual_preset=PresetName(
-                get("recall_engine.injection_manual_preset", "balanced")
-            ),
-            auto_fallback=PresetName(
-                get("recall_engine.injection_auto_fallback_preset", "balanced")
-            ),
-            hybrid_base=PresetName(
-                get("recall_engine.injection_hybrid_base_preset", "balanced")
-            ),
-            hybrid_min=PresetName(
-                get("recall_engine.injection_hybrid_min_preset", "low_cost")
-            ),
-            hybrid_max=PresetName(
-                get("recall_engine.injection_hybrid_max_preset", "quality")
-            ),
-            delivery_override=DeliveryMode(
-                get("recall_engine.injection_delivery_override", "auto")
-            ),
-            preset_overrides_enabled=bool(
-                get("recall_engine.injection_preset_overrides_enabled", False)
-            ),
-            budget_chars=int(get("recall_engine.injection_budget_chars", 0)),
-            memory_max_chars=int(
-                get("recall_engine.injection_memory_max_chars", 0)
-            ),
-            metadata_max_chars=int(
-                get("recall_engine.injection_metadata_max_chars", 0)
-            ),
-            include_key_facts=bool(
-                get("recall_engine.injection_include_key_facts", True)
-            ),
-            include_topics=bool(
-                get("recall_engine.injection_include_topics", True)
-            ),
-            include_participants=bool(
-                get("recall_engine.injection_include_participants", False)
-            ),
-            compact_header=bool(
-                get("recall_engine.injection_compact_header", True)
-            ),
-            invalid_config_fallback=bool(
-                getattr(config_manager, "runtime_injection_fallback", False)
-            ),
-        )
+        try:
+            return InjectionRoutingConfig(
+                mode=RoutingMode(
+                    get("recall_engine.injection_routing_mode", "manual")
+                ),
+                manual_preset=PresetName(
+                    get("recall_engine.injection_manual_preset", "balanced")
+                ),
+                auto_fallback=PresetName(
+                    get("recall_engine.injection_auto_fallback_preset", "balanced")
+                ),
+                hybrid_base=PresetName(
+                    get("recall_engine.injection_hybrid_base_preset", "balanced")
+                ),
+                hybrid_min=PresetName(
+                    get("recall_engine.injection_hybrid_min_preset", "low_cost")
+                ),
+                hybrid_max=PresetName(
+                    get("recall_engine.injection_hybrid_max_preset", "quality")
+                ),
+                delivery_override=DeliveryMode(
+                    get("recall_engine.injection_delivery_override", "auto")
+                ),
+                preset_overrides_enabled=bool(
+                    get("recall_engine.injection_preset_overrides_enabled", False)
+                ),
+                budget_chars=int(get("recall_engine.injection_budget_chars", 0)),
+                memory_max_chars=int(
+                    get("recall_engine.injection_memory_max_chars", 0)
+                ),
+                metadata_max_chars=int(
+                    get("recall_engine.injection_metadata_max_chars", 0)
+                ),
+                include_key_facts=bool(
+                    get("recall_engine.injection_include_key_facts", True)
+                ),
+                include_topics=bool(
+                    get("recall_engine.injection_include_topics", True)
+                ),
+                include_participants=bool(
+                    get("recall_engine.injection_include_participants", False)
+                ),
+                compact_header=bool(
+                    get("recall_engine.injection_compact_header", True)
+                ),
+                invalid_config_fallback=bool(
+                    getattr(config_manager, "runtime_injection_fallback", False)
+                ),
+            )
+        except (TypeError, ValueError):
+            return InjectionRoutingConfig(invalid_config_fallback=True)
 
     async def _get_recall_trace_store(self) -> RecallTraceStore:
         store = getattr(self, "_recall_trace_store", None)

@@ -95,6 +95,7 @@ async def capture_explainable_recall(
     request_params: Mapping[str, Any],
     *,
     store: RecallTraceStore | None = None,
+    routing_config: InjectionRoutingConfig | None = None,
 ) -> dict[str, Any]:
     """Run a recall search, persist its trace, and return a JSON-safe DTO."""
     query = str(request_params.get("query", "") or "")
@@ -113,6 +114,13 @@ async def capture_explainable_recall(
     result_list = _as_list(results)
     debug_trace = _extract_debug_trace(engine, results)
     filtered = _extract_filtered_candidates(engine, results)
+    normalized_results = _normalize_results(result_list, debug_trace)
+    decision_started = time.perf_counter()
+    decision = InjectionStrategyRouter().route_final(
+        routing_config or InjectionRoutingConfig(),
+        _candidate_signals(normalized_results, request_params),
+    )
+    decision_ms = (time.perf_counter() - decision_started) * 1000
     trace = RecallTrace(
         trace_id=str(uuid.uuid4()),
         query=query,
@@ -123,9 +131,22 @@ async def capture_explainable_recall(
                 duration_ms=round(total_ms, 3),
                 candidate_count=len(result_list),
                 metadata={"engine": engine.__class__.__name__},
-            )
+            ),
+            TraceStage(
+                name="injection_decision",
+                duration_ms=round(decision_ms, 3),
+                candidate_count=len(normalized_results),
+                metadata={
+                    "routing_mode": decision.routing_mode.value,
+                    "configured_preset": decision.configured_preset.value,
+                    "recommended_preset": decision.recommended_preset.value,
+                    "resolved_preset": decision.resolved_preset.value,
+                    "effective_budget_chars": decision.memory_budget_chars,
+                    "reason_codes": list(decision.reason_codes),
+                },
+            ),
         ],
-        results=_normalize_results(result_list, debug_trace),
+        results=normalized_results,
         filtered=filtered,
         metadata={
             "request": json_safe(
