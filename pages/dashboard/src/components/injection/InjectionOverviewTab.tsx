@@ -43,6 +43,7 @@ import {
   formatDashboardNumber,
   formatDashboardPercent,
   formatDashboardShortDate,
+  translateEnum,
 } from "@/lib/i18n";
 import type { Translate } from "@/lib/i18n";
 import type {
@@ -120,7 +121,12 @@ function EventList({
                       {t(`injection.mode.${event.routing_mode}`)} · {t(`injection.preset.${event.resolved_preset}`)} · {t(`injection.outcome.${event.outcome}`)}
                     </p>
                     <p className="mt-1 break-words text-xs text-muted-foreground">
-                      {event.primary_reason} · {formatDashboardNumber(event.actual_payload_chars, locale)}
+                      {translateEnum(
+                        t,
+                        "injection.reason",
+                        event.primary_reason,
+                        event.primary_reason,
+                      )} · {formatDashboardNumber(event.actual_payload_chars, locale)}
                     </p>
                   </div>
                   <Button
@@ -163,14 +169,14 @@ export function InjectionOverviewTab({
     || summary.status === "loading"
   ) {
     return (
-      <StatePanel state="loading" title={t("injection.overview.loading")} />
+      <StatePanel state="loading" title={t("injection.state.loading")} />
     );
   }
   if (config.catalogStatus === "error" || !config.catalog) {
     return (
       <StatePanel
         state="error"
-        title={t("injection.overview.unavailable")}
+        title={t("injection.state.error")}
         description={config.catalogError ?? undefined}
         actionLabel={t("common.retry")}
         onAction={() => { void config.retryCatalog(); }}
@@ -181,7 +187,7 @@ export function InjectionOverviewTab({
     return (
       <StatePanel
         state="error"
-        title={t("injection.overview.unavailable")}
+        title={t("injection.state.error")}
         actionLabel={t("common.retry")}
         onAction={() => { void config.refresh(); }}
       />
@@ -191,7 +197,7 @@ export function InjectionOverviewTab({
     return (
       <StatePanel
         state="error"
-        title={t("injection.overview.error")}
+        title={t("injection.state.error")}
         description={summary.error ?? undefined}
         actionLabel={t("common.retry")}
         onAction={() => { void summary.refresh(); }}
@@ -279,7 +285,7 @@ export function InjectionOverviewTab({
 
   return (
     <section
-      aria-label={t("injection.overview.title")}
+      aria-label={t("injection.tabs.overview")}
       className="flex min-w-0 flex-col gap-4"
     >
       <div className="flex min-w-0 flex-wrap items-end justify-between gap-3">

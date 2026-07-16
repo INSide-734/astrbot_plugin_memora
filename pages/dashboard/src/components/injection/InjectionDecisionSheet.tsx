@@ -13,6 +13,7 @@ import {
   dashboardLocale,
   formatDashboardDateTime,
   formatDashboardNumber,
+  translateEnum,
 } from "@/lib/i18n";
 import type { Translate } from "@/lib/i18n";
 import type {
@@ -42,30 +43,28 @@ const detailSections: DetailSectionDefinition[] = [
     fields: ["decision_id", "created_at_ms", "trace_id"],
   },
   {
-    title: "strategy",
+    title: "routing",
     fields: [
       "routing_mode",
       "configured_preset",
       "recommended_preset",
       "resolved_preset",
-      "preferred_delivery",
-      "resolved_delivery",
     ],
   },
   {
-    title: "result",
+    title: "delivery",
     fields: [
+      "preferred_delivery",
+      "resolved_delivery",
       "fallback_applied",
       "outcome",
       "error_code",
-      "primary_reason",
-      "reason_codes",
       "provider_type",
       "provider_model",
     ],
   },
   {
-    title: "selection",
+    title: "counts",
     fields: [
       "candidate_count",
       "selected_count",
@@ -74,7 +73,7 @@ const detailSections: DetailSectionDefinition[] = [
     ],
   },
   {
-    title: "budget",
+    title: "budgets",
     fields: [
       "configured_budget_chars",
       "effective_budget_chars",
@@ -83,8 +82,12 @@ const detailSections: DetailSectionDefinition[] = [
     ],
   },
   {
-    title: "timing",
+    title: "timings",
     fields: ["decision_ms", "format_ms", "inject_ms"],
+  },
+  {
+    title: "reasons",
+    fields: ["primary_reason", "reason_codes"],
   },
 ];
 
@@ -109,7 +112,14 @@ function formatDetailValue(
     return t(`injection.delivery.${String(value)}`);
   }
   if (field === "outcome") return t(`injection.outcome.${String(value)}`);
-  if (field === "reason_codes" && Array.isArray(value)) return value.join(", ");
+  if (field === "primary_reason") {
+    return translateEnum(t, "injection.reason", value, String(value));
+  }
+  if (field === "reason_codes" && Array.isArray(value)) {
+    return value.map((reason) => (
+      translateEnum(t, "injection.reason", reason, reason)
+    )).join(", ");
+  }
   if (field === "decision_ms" || field === "format_ms" || field === "inject_ms") {
     return formatDashboardNumber(value, locale, { maximumFractionDigits: 2 });
   }
@@ -142,7 +152,7 @@ function DetailContent({
       {detailSections.map((section) => (
         <section key={section.title} className="space-y-3">
           <h3 className="text-sm font-semibold text-foreground">
-            {t(`injection.detail.section.${section.title}`)}
+            {t(`injection.detail.${section.title}`)}
           </h3>
           <dl className="divide-y rounded-lg border">
             {section.fields.map((field) => (
@@ -204,13 +214,13 @@ export function InjectionDecisionSheet({
           <SheetDescription>{t("injection.detail.description")}</SheetDescription>
         </SheetHeader>
         {decisions.detailStatus === "loading" || decisions.detailStatus === "idle" ? (
-          <StatePanel state="loading" title={t("injection.detail.loading")} />
+          <StatePanel state="loading" title={t("injection.state.loading")} />
         ) : decisions.detailStatus === "error" ? (
           <StatePanel
             state="error"
-            title={t("injection.detail.error")}
+            title={t("injection.state.error")}
             description={decisions.detailError ?? undefined}
-            actionLabel={t("common.retry")}
+            actionLabel={t("injection.detail.retry")}
             onAction={selectedDecisionId
               ? () => { void decisions.loadDetail(selectedDecisionId); }
               : undefined}
@@ -224,7 +234,7 @@ export function InjectionDecisionSheet({
             t={t}
           />
         ) : (
-          <StatePanel state="empty" title={t("injection.detail.empty")} />
+          <StatePanel state="empty" title={t("injection.state.empty")} />
         )}
       </SheetContent>
     </Sheet>
