@@ -7,6 +7,16 @@ Memora 项目的所有重要变更都将记录在此文件中。
 
 ## [Unreleased] — 2026-07-03
 
+### Breaking: 自适应记忆注入策略
+
+- **可切换路由** — 支持 Manual、Auto 与 Hybrid；新安装默认采用 `manual + balanced + auto delivery`，需要回滚到确定性行为时使用 `manual + balanced`。
+- **高级预设** — Tool First、Low Cost、Balanced、Quality 的普通记忆字符预算分别为 `0/800/1200/2400`，最大条数分别为 `0/2/4/6`。
+- **安全注入边界** — 动态记忆不再进入 System Prompt；载荷仅在当前请求中临时存在，并受全局硬预算约束。
+- **完整策略工作台** — Dashboard 新增 Overview、Strategy Configuration 与 Decision History，用于查看、配置和审计注入决策。
+- **SQLite 决策记录** — 决策元数据全量持久化到 `injection_decisions`，不会保存查询文本、记忆正文/ID 或原始身份标识；默认保留 30 天和 100,000 行，两项均可配置。
+- **关闭与崩溃语义** — 正常关闭最多等待 5 秒刷新待写批次；进程崩溃可能丢失最后一个未刷新的批次。
+- **无旧配置迁移** — `recall_engine.injection_method` 已移除且没有兼容迁移；升级后必须用新字段重新配置，必要时可先采用 `manual + balanced`。
+
 ### docs: 路线图 Milestone A 事实同步
 
 - **当前事实入口** — 新增 `docs/QUALITY_GATE_STATUS.md`，记录最近一次 L0-L2 与统一 gate 的结果、耗时和失败归因。

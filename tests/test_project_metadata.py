@@ -443,6 +443,62 @@ def test_changelog_documents_current_command_set() -> None:
         assert command not in changelog
 
 
+def test_readmes_and_changelog_document_adaptive_injection_breaking_change() -> None:
+    required = {
+        "README.md": [
+            "Manual",
+            "Auto",
+            "Hybrid",
+            "manual + balanced",
+            "30 天",
+            "100,000",
+        ],
+        "README_EN.md": [
+            "Manual",
+            "Auto",
+            "Hybrid",
+            "manual + balanced",
+            "30 days",
+            "100,000",
+        ],
+        "README_RU.md": [
+            "Manual",
+            "Auto",
+            "Hybrid",
+            "manual + balanced",
+            "30 дней",
+            "100 000",
+        ],
+        "CHANGELOG.md": [
+            "injection_method",
+            "breaking",
+            "manual + balanced",
+            "injection_decisions",
+        ],
+    }
+    for path, phrases in required.items():
+        text = _read_text(path)
+        for phrase in phrases:
+            assert phrase.lower() in text.lower(), f"{path} missing {phrase}"
+
+
+def test_injection_decision_benchmark_is_file_backed_and_checks_thresholds() -> None:
+    source = _read_text("scripts/benchmark_injection_decisions.py")
+    for marker in [
+        "100_000",
+        "TemporaryDirectory",
+        "memora.db",
+        "median",
+        "warmup",
+        "SUMMARY_LIMIT_MS",
+        "PAGE_LIMIT_MS",
+        "CLEANUP_LIMIT_MS",
+        "ENQUEUE_LIMIT_MS",
+    ]:
+        assert marker in source
+    assert '":memory:"' not in source
+
+
 def test_requirements_cover_mandatory_runtime_dependencies() -> None:
     requirements = {
         line.strip()
