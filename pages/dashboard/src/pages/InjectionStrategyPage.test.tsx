@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useInjectionDecisions } from "@/hooks/useInjectionDecisions";
@@ -350,5 +350,202 @@ describe("InjectionStrategyPage", () => {
 
     unmount();
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("renders summary metrics and changes the server window", async () => {
+    hooks.summary.status = "success";
+    hooks.summary.data = summaryFixture({
+      decision_count: 42,
+      payload_chars_p95: 1_180,
+      provider_fallback_rate: 0.125,
+    });
+
+    renderPage();
+
+    expect(screen.getByText("42")).toBeTruthy();
+    expect(screen.getByText("1,180")).toBeTruthy();
+    expect(screen.getByText("12.5%")).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "injection.overview.window" }),
+    );
+    const sevenDays = await screen.findByRole("option", {
+      name: "injection.window.7d",
+    });
+    fireEvent.pointerDown(sevenDays, { pointerType: "mouse" });
+    fireEvent.click(sevenDays);
+    expect(hooks.summary.setWindowValue).toHaveBeenCalledWith("7d");
+  });
+
+  it("renders loading skeletons and retryable source-specific errors", () => {
+    hooks.config.catalog = null;
+    hooks.config.catalogStatus = "loading";
+    hooks.summary.status = "loading";
+    hooks.summary.data = null;
+    const loading = renderPage();
+
+    expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
+    expect(loading.container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(3);
+
+    cleanup();
+    resetHookHarness();
+    hooks.summary.status = "error";
+    hooks.summary.data = null;
+    hooks.summary.error = "summary unavailable";
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(hooks.summary.refresh).toHaveBeenCalledOnce();
+
+    cleanup();
+    resetHookHarness();
+    hooks.config.catalog = null;
+    hooks.config.catalogStatus = "error";
+    hooks.config.catalogError = "catalog unavailable";
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(hooks.config.retryCatalog).toHaveBeenCalledOnce();
+
+    cleanup();
+    resetHookHarness();
+    hooks.config.draft = null;
+    hooks.config.status = "error";
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(hooks.config.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("uses an empty StatePanel when the selected window has no decisions", () => {
+    hooks.summary.data = summaryFixture({
+      decision_count: 0,
+      payload_chars_p95: 0,
+      provider_fallback_rate: 0,
+      preset_distribution: {},
+      cost_trend: [],
+      recent_events: [],
+    });
+
+    renderPage();
+
+    const empty = screen.getByRole("status");
+    expect(empty.getAttribute("data-state")).toBe("empty");
+    expect(empty.textContent).toContain("injection.overview.noEvents");
+  });
+
+  it("provides text summaries for preset distribution and cost trend charts", () => {
+    hooks.summary.data = summaryFixture({
+      preset_distribution: { tool_first: 2, balanced: 3 },
+      cost_trend: [
+        {
+          bucket_ms: Date.UTC(2026, 6, 15, 8),
+          decision_count: 5,
+          payload_chars_p95: 1_180,
+          provider_fallback_rate: 0.125,
+        },
+      ],
+    });
+
+    renderPage();
+
+    const presetChart = screen.getByLabelText(
+      "injection.overview.presetChartSummary",
+    );
+    expect(presetChart).toBeTruthy();
+    expect(screen.getByText(/injection\.preset\.tool_first: 2/)).toBeTruthy();
+    expect(screen.getByText(/injection\.preset\.balanced: 3/)).toBeTruthy();
+
+    const costChart = screen.getByLabelText(
+      "injection.overview.costChartSummary",
+    );
+    expect(costChart).toBeTruthy();
+    expect(screen.getByText(/1,180/)).toBeTruthy();
+    expect(screen.getByText(/12\.5%/)).toBeTruthy();
+    expect(screen.getAllByText("injection.overview.payloadP95").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("injection.overview.fallbackRate").length).toBeGreaterThan(0);
+  });
+
+  it("partitions ordinary fallback and error events into labeled lists", () => {
+    hooks.summary.data = summaryFixture({
+      recent_events: [
+        decisionEvent({
+          decision_id: "ordinary",
+          trace_id: "trace-ordinary",
+        }),
+        decisionEvent({
+          decision_id: "fallback",
+          fallback_applied: true,
+          outcome: "fallback",
+          primary_reason: "PROVIDER_DELIVERY_DOWNGRADED",
+          trace_id: "trace-fallback",
+        }),
+        decisionEvent({
+          decision_id: "error",
+          outcome: "error",
+          primary_reason: "FORMAT_FAILED",
+          trace_id: null,
+        }),
+      ],
+    });
+
+    renderPage();
+
+    const ordinary = screen.getByRole("list", {
+      name: "injection.overview.recent",
+    });
+    const fallbacks = screen.getByRole("list", {
+      name: "injection.overview.recentFallbacks",
+    });
+    const errors = screen.getByRole("list", {
+      name: "injection.overview.recentErrors",
+    });
+    expect(ordinary.textContent).toContain("MANUAL_SELECTED");
+    expect(fallbacks.textContent).toContain("PROVIDER_DELIVERY_DOWNGRADED");
+    expect(errors.textContent).toContain("FORMAT_FAILED");
+    expect(
+      (within(errors).getByRole("button", {
+        name: "injection.actions.openTrace",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("disables trace navigation without a trace id", () => {
+    hooks.summary.data = summaryFixture({
+      recent_events: [decisionEvent({ trace_id: null })],
+    });
+
+    renderPage();
+
+    expect(
+      (screen.getByRole("button", {
+        name: "injection.actions.openTrace",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("opens configuration and a persisted Recall Trace", () => {
+    hooks.summary.data = summaryFixture({
+      recent_events: [decisionEvent({ trace_id: "trace-safe" })],
+    });
+    renderPage();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.actions.edit" }),
+    );
+    expect(
+      document.getElementById("injection-tab-config")
+        ?.getAttribute("aria-selected"),
+    ).toBe("true");
+
+    fireEvent.click(
+      screen.getByRole("tab", { name: "injection.tabs.overview" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.actions.openTrace" }),
+    );
+    expect(onNavigate).toHaveBeenCalledWith(
+      "intelligence",
+      expect.objectContaining({
+        intelligenceTarget: expect.objectContaining({ traceId: "trace-safe" }),
+      }),
+    );
   });
 });
