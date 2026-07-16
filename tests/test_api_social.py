@@ -282,7 +282,10 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = _create_payload(group_id="  ")
 
-        with patch("core.api.social_api.request", request_mock):
+        with (
+            patch("core.api.social_api.request", request_mock),
+            patch("core.api.social_api.logger.info") as audit,
+        ):
             result = await stub.create_social_relation()
 
         assert result["status"] == "ok"
@@ -292,6 +295,9 @@ class TestSocialRelationWrites:
         assert stub.plugin._relation_manager.create_manual_relation.await_args.kwargs[
             "group_id"
         ] == ""
+        rendered_audit = repr(audit.call_args_list)
+        assert "action=%s entity=social_relation identity=%s result=success count=%d" in rendered_audit
+        assert "work" not in rendered_audit
 
     @pytest.mark.asyncio
     async def test_update_stale_revision_maps_to_edit_conflict(self) -> None:
@@ -537,6 +543,8 @@ class TestSocialRelationBatch:
         assert result["status"] == "ok"
         assert result["data"]["total"] == 2
         assert len(result["data"]["succeeded_ids"]) == 2
+        assert result["data"]["succeeded_count"] == 2
+        assert result["data"]["failed_count"] == 0
         assert stub.plugin._relation_manager.delete_manual_relation.await_count == 2
 
     @pytest.mark.asyncio
@@ -591,6 +599,8 @@ class TestSocialRelationBatch:
         assert len(result["data"]["failures"]) == 1
         assert result["data"]["failures"][0]["code"] == "not_found"
         assert result["data"]["succeeded_ids"] == [_identity(to_user="carol")]
+        assert result["data"]["succeeded_count"] == 1
+        assert result["data"]["failed_count"] == 1
 
     @pytest.mark.asyncio
     async def test_batch_conflict_preserves_current_entity_and_revision(self) -> None:
@@ -659,3 +669,5 @@ class TestSocialRelationBatch:
         }
         assert result["data"]["failures"][0]["identity"] == {"item_index": 0}
         assert result["data"]["succeeded_ids"] == [_identity()]
+        assert result["data"]["succeeded_count"] == 1
+        assert result["data"]["failed_count"] == 1

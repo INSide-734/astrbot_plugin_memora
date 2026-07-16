@@ -253,6 +253,26 @@ class TestMemoryFullFormUpdate:
         engine.update_memory.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("field", ["content", "status", "type"])
+    @pytest.mark.parametrize("invalid", [True, None, [], {}])
+    async def test_memory_full_form_rejects_non_string_scalars_before_writing(
+        self, field, invalid
+    ) -> None:
+        api, engine = self._api_and_engine()
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {field: invalid}}
+        )
+
+        with patch("core.api.memory_write_api.request", request_mock):
+            result = await api.update_memory()
+
+        assert result["status"] == "error"
+        engine.add_memory.assert_not_awaited()
+        engine.delete_memory.assert_not_awaited()
+        engine.update_memory.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_memory_full_form_redacts_backend_write_errors(self) -> None:
         api, engine = self._api_and_engine()
         secret = r"database password at C:\private\memory.db"

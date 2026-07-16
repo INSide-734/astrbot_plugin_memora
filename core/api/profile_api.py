@@ -43,6 +43,15 @@ _MAX_BATCH_ITEMS = 100
 _MAX_TAGS = 100
 
 
+def _audit_success(action: str, identity: Any, *, count: int = 1) -> None:
+    logger.info(
+        "[画像 AUDIT] action=%s entity=profile identity=%s result=success count=%d",
+        action,
+        identity,
+        count,
+    )
+
+
 def _coerce_user_id(raw_user_id: Any) -> str:
     """将外部传入的用户 ID 转换为字符串，同时拒绝 JSON 布尔值。"""
     if isinstance(raw_user_id, bool):
@@ -391,6 +400,7 @@ class ProfileApiMixin:
             entity = _safe_profile_to_dict(profile)
             if entity is None:
                 return error_response("profile serialization failed: 画像序列化失败")
+            _audit_success("create", {"user_id": entity.get("user_id", "")})
             return entity_ok(entity, revision=manager.revision_for(profile))
         except Exception as exc:
             return _exception_response(exc, operation="create")
@@ -423,9 +433,17 @@ class ProfileApiMixin:
                 return error_response("画像不存在")
             preferences = None
             if "preferences" in payload:
-                if not isinstance(payload["preferences"], dict):
-                    return error_response("preferences 必须为对象")
-                preferences = dict(payload["preferences"] or {})
+                if not isinstance(payload["preferences"], Mapping):
+                    return _field_error("preferences", "必须为对象")
+                derived = sorted(
+                    set(payload["preferences"])
+                    & {"avg_reply_length", "interaction_frequency"}
+                )
+                if derived:
+                    return _field_error(
+                        "preferences." + derived[0], "字段不可写"
+                    )
+                preferences = dict(payload["preferences"])
             profile = await manager.update_profile_fields(
                 user_id,
                 display_name=(
@@ -437,6 +455,7 @@ class ProfileApiMixin:
             )
             if profile is None:
                 return error_response("画像不存在")
+            _audit_success("legacy_update", {"user_id": user_id})
             return _profile_response_or_error(profile)
         except Exception as exc:
             return _exception_response(exc, operation="legacy_update")
@@ -476,6 +495,7 @@ class ProfileApiMixin:
         entity = _safe_profile_to_dict(profile)
         if entity is None:
             return error_response("profile serialization failed: 画像序列化失败")
+        _audit_success("update", identity)
         return entity_ok(entity, revision=manager.revision_for(profile))
 
     async def delete_profile(self):
@@ -499,6 +519,7 @@ class ProfileApiMixin:
             if not user_id:
                 return error_response("user_id required: 缺少必填参数 user_id")
             deleted = await manager.delete_profile(user_id)
+            _audit_success("legacy_delete", {"user_id": user_id})
             return ok_response({"deleted": deleted, "user_id": user_id})
         except Exception as exc:
             return _exception_response(exc, operation="legacy_delete")
@@ -524,6 +545,7 @@ class ProfileApiMixin:
         )
         if not deleted:
             raise EntityNotFoundError("用户画像不存在")
+        _audit_success("delete", identity)
         return ok_response({"deleted": True, "identity": identity})
 
     async def batch_delete_profiles(self):
@@ -653,6 +675,7 @@ class ProfileApiMixin:
                     exc, operation="batch_" + action + "_item"
                 )
                 failures.append(_batch_failure(identity_ref, item_response))
+        _audit_success("batch_" + action, "batch", count=len(succeeded_ids))
         return ok_response(
             {
                 "total": len(items),
@@ -690,6 +713,9 @@ class ProfileApiMixin:
         tag = payload.get("tag", {})
         if not isinstance(tag, dict):
             return error_response("tag 必须为对象 {category, value, confidence}")
+        unknown = reject_unknown_fields(tag, _TAG_FIELDS)
+        if unknown:
+            return unknown
         category = str(tag.get("category", ""))
         value = str(tag.get("value", ""))
         if not category or not value:
@@ -699,9 +725,13 @@ class ProfileApiMixin:
         )
         if action == "add":
             try:
-                confidence = _coerce_confidence(tag.get("confidence", 0.5))
-            except (TypeError, ValueError):
-                return error_response("confidence 必须为数字")
+                confidence = finite_float(
+                    tag.get("confidence", 0.5), field="tag.confidence"
+                )
+            except EntityValidationError:
+                return error_response("confidence 必须为数字", code="validation_error")
+            if not 0.0 <= confidence <= 1.0:
+                return _field_error("tag.confidence", "必须在 0.0 到 1.0 之间")
             profile = await manager.add_tag(
                 user_id,
                 UserTag.from_dict(
@@ -709,7 +739,7 @@ class ProfileApiMixin:
                         "category": category_value,
                         "value": value,
                         "confidence": confidence,
-                        "source": str(tag.get("source", "manual")),
+                        "source": "manual",
                     }
                 ),
             )
@@ -717,6 +747,7 @@ class ProfileApiMixin:
             profile = await manager.remove_tag(user_id, category_value, value)
         if profile is None:
             return error_response("画像不存在")
+        _audit_success("tag_" + action, {"user_id": user_id})
         return _profile_response_or_error(profile)
 
 

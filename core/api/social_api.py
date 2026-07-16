@@ -40,6 +40,15 @@ _BATCH_FIELDS = frozenset({"action", "items", "params"})
 _BATCH_ACTIONS = frozenset({"delete", "add_tags", "remove_tags"})
 
 
+def _audit_success(action: str, identity: Any, *, count: int = 1) -> None:
+    logger.info(
+        "[社交关系 AUDIT] action=%s entity=social_relation identity=%s result=success count=%d",
+        action,
+        identity,
+        count,
+    )
+
+
 def _relation_to_dict(rel: Any) -> dict[str, Any]:
     """将 SocialRelation 转换为 JSON 响应所需字典。"""
     category = "unknown"
@@ -305,6 +314,10 @@ class SocialApiMixin:
                 strength=finite_float(payload.get("strength"), field="strength"),
                 tags=normalized_string_list(payload.get("tags", []), field="tags"),
             )
+            _audit_success("create", {
+                "from_user": rel.from_user, "to_user": rel.to_user,
+                "group_id": rel.group_id, "relation_type": rel.relation_type,
+            })
             return entity_ok(
                 _relation_to_dict(rel),
                 revision=manager.revision_for(rel),
@@ -371,6 +384,7 @@ class SocialApiMixin:
                 ),
                 expected_revision=expected_revision,
             )
+            _audit_success("update", identity)
             return entity_ok(
                 _relation_to_dict(rel),
                 revision=manager.revision_for(rel),
@@ -406,6 +420,7 @@ class SocialApiMixin:
                 identity=identity_tuple,
                 expected_revision=expected_revision,
             )
+            _audit_success("delete", identity)
             return ok_response({"deleted": True, "identity": identity})
         except Exception as exc:
             return _exception_response(exc, operation="delete")
@@ -503,9 +518,12 @@ class SocialApiMixin:
                     )
                     failures.append(_batch_failure(identity_ref, item_response))
 
+            _audit_success("batch_" + action, "batch", count=len(succeeded_ids))
             return ok_response(
                 {
                     "succeeded_ids": succeeded_ids,
+                    "succeeded_count": len(succeeded_ids),
+                    "failed_count": len(failures),
                     "failures": failures,
                     "total": len(items),
                 }

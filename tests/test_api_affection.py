@@ -101,6 +101,36 @@ class TestAffectionStatus:
         assert result["data"]["top_users"][0]["user_id"] == "u1"
 
     @pytest.mark.asyncio
+    async def test_real_manager_shape_is_canonicalized_with_complete_mood_fields(self) -> None:
+        status = {
+            "total_affection": 0,
+            "max_total_affection": 100,
+            "user_count": 0,
+            "top_users": [],
+            "current_mood": {
+                "type": "curious",
+                "intensity": 0.8,
+                "description": "investigating",
+                "duration_hours": 9.5,
+                "start_time": 1234.0,
+                "is_active": True,
+            },
+        }
+        stub = _make_stub(status=status, groups=["g1"])
+
+        with patch("core.api.affection_api.request", _mock_request(group_id="g1")):
+            result = await stub.get_affection_status()
+
+        assert result["data"]["current_mood"] == {
+            "mood_type": "curious",
+            "intensity": 0.8,
+            "description": "investigating",
+            "duration_hours": 9.5,
+            "start_time": 1234.0,
+            "is_active": True,
+        }
+
+    @pytest.mark.asyncio
     async def test_fetches_mood_directly_when_status_has_none(self) -> None:
         status = {
             "group_id": "default",

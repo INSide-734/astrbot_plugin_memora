@@ -302,6 +302,59 @@ class TestProfileValidation:
         assert result["status"] == "error"
         assert "confidence" in result["message"]
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("confidence", [float("nan"), float("inf"), -0.1, 1.1])
+    async def test_manage_tags_rejects_non_finite_or_out_of_range_confidence(
+        self, confidence
+    ) -> None:
+        req = _mock_request()
+        req.get_json = AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "action": "add",
+                "tag": {"category": "hobby", "value": "reading", "confidence": confidence},
+            }
+        )
+        mixin = _make_mixin(detail_profile=_make_profile())
+        with patch("core.api.profile_api.request", req):
+            result = await mixin.manage_profile_tags()
+        assert result["status"] == "error"
+        mixin.profile_manager.add_tag.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_manage_tags_rejects_client_source_before_mutation(self) -> None:
+        req = _mock_request()
+        req.get_json = AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "action": "add",
+                "tag": {
+                    "category": "hobby",
+                    "value": "reading",
+                    "confidence": 0.8,
+                    "source": "imported-secret",
+                },
+            }
+        )
+        mixin = _make_mixin(detail_profile=_make_profile())
+        with patch("core.api.profile_api.request", req):
+            result = await mixin.manage_profile_tags()
+        assert result["code"] == "validation_error"
+        mixin.profile_manager.add_tag.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("field", ["avg_reply_length", "interaction_frequency"])
+    async def test_legacy_update_rejects_derived_preferences(self, field) -> None:
+        req = _mock_request()
+        req.get_json = AsyncMock(
+            return_value={"user_id": "u1", "preferences": {field: 12}}
+        )
+        mixin = _make_mixin(detail_profile=_make_profile())
+        with patch("core.api.profile_api.request", req):
+            result = await mixin.update_profile()
+        assert result["code"] == "validation_error"
+        mixin.profile_manager.update_profile_fields.assert_not_awaited()
+
 
 class TestProfileHappyPath:
     """Profile API with mocked manager."""
@@ -647,7 +700,10 @@ class TestRevisionedProfileApi:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=_complete_profile_payload())
 
-        with patch("core.api.profile_api.request", request_mock):
+        with (
+            patch("core.api.profile_api.request", request_mock),
+            patch("core.api.profile_api.logger.info") as audit,
+        ):
             result = await mixin.create_profile()
 
         assert result == {
@@ -657,6 +713,10 @@ class TestRevisionedProfileApi:
         mixin.profile_manager.create_profile_manual.assert_awaited_once_with(
             **_complete_profile_payload()
         )
+        rendered_audit = repr(audit.call_args_list)
+        assert "action=%s entity=profile identity=%s result=success count=%d" in rendered_audit
+        assert "formal" not in rendered_audit
+        assert "graphs" not in rendered_audit
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
