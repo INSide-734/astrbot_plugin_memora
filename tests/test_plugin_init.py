@@ -728,6 +728,7 @@ class TestMemoraPluginReady:
         assert ready is True
         assert message == ""
         assert plugin.event_handler is not None
+        assert plugin.event_handler._memory_tool_available is False
         assert plugin.command_handler is not None
         assert plugin._backfill_scheduler is plugin.initializer.backfill_scheduler
 
@@ -793,3 +794,311 @@ class TestMemoraPluginReady:
         assert message == ""
         plugin.context.add_llm_tools.assert_called_once_with(fake_tool)
         assert plugin._llm_tools_registered is True
+
+
+class TestInjectionDecisionLifecycle:
+    @pytest.mark.asyncio
+    async def test_component_factory_builds_started_injection_recorder(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from core.initializer.component_factory import ComponentFactory
+
+        store = MagicMock()
+        store.initialize = AsyncMock()
+        store.close = AsyncMock()
+        recorder = MagicMock()
+        recorder.start = AsyncMock()
+        recorder.close = AsyncMock()
+        store_type = MagicMock(return_value=store)
+        recorder_type = MagicMock(return_value=recorder)
+        monkeypatch.setattr(
+            "core.initializer.component_factory.InjectionDecisionStore", store_type
+        )
+        monkeypatch.setattr(
+            "core.initializer.component_factory.InjectionDecisionRecorder", recorder_type
+        )
+        config = MagicMock()
+        config.get.side_effect = lambda key, default=None: {
+            "recall_engine.injection_decision_retention_days": 17,
+            "recall_engine.injection_decision_max_rows": 321,
+        }.get(key, default)
+        factory = ComponentFactory(MagicMock(), config, str(tmp_path))
+
+        components = await factory._build_injection_components(tmp_path / "memora.db")
+
+        store_type.assert_called_once_with(tmp_path / "memora.db")
+        store.initialize.assert_awaited_once()
+        recorder_type.assert_called_once_with(store, retention_days=17, max_rows=321)
+        recorder.start.assert_awaited_once()
+        recorder.schedule_cleanup.assert_called_once_with()
+        assert components == {
+            "injection_decision_store": store,
+            "injection_decision_recorder": recorder,
+        }
+
+    @pytest.mark.asyncio
+    async def test_component_factory_closes_partial_injection_components_on_failure(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from core.initializer.component_factory import ComponentFactory
+
+        order: list[str] = []
+        store = MagicMock()
+        store.initialize = AsyncMock()
+        store.close = AsyncMock(side_effect=lambda: order.append("store"))
+        recorder = MagicMock()
+        recorder.start = AsyncMock(side_effect=RuntimeError("start failed"))
+        recorder.close = AsyncMock(side_effect=lambda **_kwargs: order.append("recorder"))
+        monkeypatch.setattr(
+            "core.initializer.component_factory.InjectionDecisionStore",
+            MagicMock(return_value=store),
+        )
+        monkeypatch.setattr(
+            "core.initializer.component_factory.InjectionDecisionRecorder",
+            MagicMock(return_value=recorder),
+        )
+        config = MagicMock()
+        config.get.side_effect = lambda _key, default=None: default
+        factory = ComponentFactory(MagicMock(), config, str(tmp_path))
+
+        with pytest.raises(RuntimeError, match="start failed"):
+            await factory._build_injection_components(tmp_path / "memora.db")
+
+        assert order == ["recorder", "store"]
+        recorder.close.assert_awaited_once_with(timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_build_all_awaits_and_merges_injection_components(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from astrbot.core.provider.provider import Provider
+        from core.initializer.component_factory import ComponentFactory
+
+        config = MagicMock()
+        config.get.side_effect = lambda key, default=None: {
+            "graph_memory.enabled": False,
+            "importance_decay.decay_rate": 0,
+            "forgetting_agent.auto_cleanup_enabled": False,
+        }.get(key, default)
+        config.session_manager = {}
+        factory = ComponentFactory(MagicMock(), config, str(tmp_path))
+        injection_components = {
+            "injection_decision_store": object(),
+            "injection_decision_recorder": object(),
+        }
+        factory._build_injection_components = AsyncMock(
+            return_value=injection_components
+        )
+        db = MagicMock()
+        db.initialize = AsyncMock()
+        db_type = MagicMock(return_value=db)
+        engine = MagicMock()
+        engine.initialize = AsyncMock()
+        engine.text_processor = None
+        monkeypatch.setattr(
+            "core.initializer.component_factory.MemoryEngine",
+            MagicMock(return_value=engine),
+        )
+        conversation_store = MagicMock()
+        conversation_store.initialize = AsyncMock()
+        monkeypatch.setattr(
+            "core.initializer.component_factory.ConversationStore",
+            MagicMock(return_value=conversation_store),
+        )
+        faiss_checker = MagicMock()
+        faiss_checker.check_and_fix_dimension_mismatch = AsyncMock()
+        db_setup = MagicMock()
+        db_setup.repair_message_counts = AsyncMock()
+        db_setup.auto_rebuild_index_if_needed = AsyncMock()
+
+        components = await factory.build_all(
+            MagicMock(), MagicMock(spec=Provider), db_type, faiss_checker, db_setup
+        )
+
+        factory._build_injection_components.assert_awaited_once_with(
+            tmp_path / "memora.db"
+        )
+        assert components["injection_decision_store"] is injection_components[
+            "injection_decision_store"
+        ]
+        assert components["injection_decision_recorder"] is injection_components[
+            "injection_decision_recorder"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_plugin_initializer_retains_and_closes_injection_components_once(
+        self, tmp_path
+    ) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
+        assert initializer.injection_decision_store is None
+        assert initializer.injection_decision_recorder is None
+        order: list[str] = []
+        recorder = MagicMock()
+        recorder.close = AsyncMock(side_effect=lambda **_kwargs: order.append("recorder"))
+        store = MagicMock()
+        store.close = AsyncMock(side_effect=lambda: order.append("store"))
+        initializer.injection_decision_recorder = recorder
+        initializer.injection_decision_store = store
+
+        await asyncio.gather(
+            initializer.close_injection_components(),
+            initializer.close_injection_components(),
+        )
+        await initializer.close_injection_components()
+
+        assert order == ["recorder", "store"]
+        recorder.close.assert_awaited_once_with(timeout=5.0)
+        store.close.assert_awaited_once()
+        assert initializer.injection_decision_recorder is None
+        assert initializer.injection_decision_store is None
+
+    @pytest.mark.asyncio
+    async def test_plugin_initializer_propagates_cancellation_after_store_close(
+        self, tmp_path
+    ) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
+        recorder = MagicMock()
+        recorder.close = AsyncMock(side_effect=asyncio.CancelledError())
+        store = MagicMock()
+        store.close = AsyncMock()
+        initializer.injection_decision_recorder = recorder
+        initializer.injection_decision_store = store
+
+        with pytest.raises(asyncio.CancelledError):
+            await initializer.close_injection_components()
+
+        store.close.assert_awaited_once()
+        assert initializer.injection_decision_recorder is None
+        assert initializer.injection_decision_store is None
+
+    @pytest.mark.asyncio
+    async def test_run_full_init_retains_injection_components(self, tmp_path) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
+        initializer._faiss_checker.load_vec_db_class = MagicMock(return_value=MagicMock())
+        store = MagicMock()
+        recorder = MagicMock()
+        memory_processor = MagicMock()
+        initializer._component_factory.build_all = AsyncMock(
+            return_value={
+                "db": MagicMock(),
+                "graph_db": None,
+                "memory_engine": MagicMock(),
+                "memory_processor": memory_processor,
+                "conversation_manager": MagicMock(),
+                "index_validator": MagicMock(),
+                "decay_scheduler": None,
+                "injection_decision_store": store,
+                "injection_decision_recorder": recorder,
+            }
+        )
+        initializer._create_prompt_protection_service = MagicMock(return_value=MagicMock())
+        initializer._initialize_cognitive_components = AsyncMock()
+
+        await initializer._run_full_init()
+
+        assert initializer.injection_decision_store is store
+        assert initializer.injection_decision_recorder is recorder
+
+
+class TestMemoraInjectionLifecycle:
+    @pytest.mark.asyncio
+    async def test_terminate_closes_injection_components_without_event_handler(
+        self,
+    ) -> None:
+        MemoraPlugin = _load_memora_plugin_class()
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin, "_create_tracked_task", side_effect=lambda coro: coro.close()
+        ):
+            plugin = MemoraPlugin(MagicMock(), {})
+
+        plugin.event_handler = None
+        plugin.initializer.stop_background_tasks = AsyncMock()
+        plugin.initializer.stop_scheduler = AsyncMock()
+        plugin.initializer.close_extension_components = AsyncMock()
+        plugin.initializer.close_injection_components = AsyncMock()
+        plugin.initializer.conversation_manager = None
+        plugin.initializer.memory_engine = None
+        plugin.initializer.db = None
+        plugin._perf_tracker = MagicMock()
+        plugin._perf_tracker.get_perf_data.return_value = {}
+        plugin._backfill_scheduler = None
+
+        await plugin.terminate()
+
+        plugin.initializer.close_injection_components.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_runtime_registers_tools_before_constructing_event_handler(
+        self,
+    ) -> None:
+        MemoraPlugin = _load_memora_plugin_class()
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin, "_create_tracked_task", side_effect=lambda coro: coro.close()
+        ):
+            plugin = MemoraPlugin(MagicMock(), {})
+
+        plugin.initializer._initialization_complete = True
+        plugin.initializer.memory_engine = MagicMock()
+        plugin.initializer.memory_processor = MagicMock()
+        plugin.initializer.conversation_manager = MagicMock()
+        plugin.initializer.injection_decision_recorder = MagicMock()
+        plugin.config_manager.get = MagicMock(
+            side_effect=lambda key, default=None: True
+            if key == "agent_tools.enable_recall_tool"
+            else default
+        )
+        plugin._register_agent_tools_if_needed = MagicMock(
+            side_effect=lambda: setattr(plugin, "_llm_tools_registered", True)
+        )
+        module = sys.modules[MemoraPlugin.__module__]
+        event_handler = MagicMock()
+
+        def build_event_handler(**kwargs):
+            assert plugin._llm_tools_registered is True
+            assert kwargs["injection_recorder"] is plugin.initializer.injection_decision_recorder
+            assert kwargs["memory_tool_available"] is True
+            return event_handler
+
+        with patch.object(module, "EventHandler", side_effect=build_event_handler):
+            await plugin._ensure_runtime_components()
+
+        plugin._register_agent_tools_if_needed.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_runtime_does_not_construct_handler_when_tool_registration_fails(
+        self,
+    ) -> None:
+        MemoraPlugin = _load_memora_plugin_class()
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin, "_create_tracked_task", side_effect=lambda coro: coro.close()
+        ):
+            plugin = MemoraPlugin(MagicMock(), {})
+
+        plugin.initializer._initialization_complete = True
+        plugin.initializer.memory_engine = MagicMock()
+        plugin.initializer.memory_processor = MagicMock()
+        plugin.initializer.conversation_manager = MagicMock()
+        plugin._llm_tools_registered = False
+        plugin._register_agent_tools_if_needed = MagicMock(
+            side_effect=RuntimeError("registration failed")
+        )
+        module = sys.modules[MemoraPlugin.__module__]
+
+        with patch.object(module, "EventHandler") as event_handler_type:
+            with pytest.raises(RuntimeError, match="registration failed"):
+                await plugin._ensure_runtime_components()
+
+        assert plugin._llm_tools_registered is False
+        event_handler_type.assert_not_called()

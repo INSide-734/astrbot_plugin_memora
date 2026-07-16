@@ -18,11 +18,13 @@ from .initializer.db_setup import DatabaseSetup
 from .initializer.faiss_checker import FaissChecker
 from .initializer.provider_loader import ProviderLoader
 from .initializer.provider_waiter import ProviderWaiter
+from .injection.recorder import InjectionDecisionRecorder
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
 from .processors.memory_processor import MemoryProcessor
 from .schedulers.backfill_scheduler import BackfillScheduler
 from .schedulers.decay_scheduler import DecayScheduler
+from .storage.injection_decision_store import InjectionDecisionStore
 from .security import PromptProtectionService
 from .validators.index_validator import IndexValidator
 
@@ -50,6 +52,8 @@ class PluginInitializer:
         self.index_validator: IndexValidator | None = None
         self.decay_scheduler: DecayScheduler | None = None
         self.backfill_scheduler: BackfillScheduler | None = None
+        self.injection_decision_store: InjectionDecisionStore | None = None
+        self.injection_decision_recorder: InjectionDecisionRecorder | None = None
         self.affection_store: Any | None = None
         self.affection_manager: Any | None = None
         self.expression_store: Any | None = None
@@ -65,6 +69,7 @@ class PluginInitializer:
         # 初始化状态
         self._initialization_complete = False
         self._initialization_lock = asyncio.Lock()
+        self._injection_close_lock = asyncio.Lock()
         self._initialization_failed = False
         self._initialization_error: str | None = None
 
@@ -151,6 +156,10 @@ class PluginInitializer:
             self.conversation_manager = components["conversation_manager"]
             self.index_validator = components["index_validator"]
             self.decay_scheduler = components["decay_scheduler"]
+            self.injection_decision_store = components["injection_decision_store"]
+            self.injection_decision_recorder = components[
+                "injection_decision_recorder"
+            ]
             self.prompt_protection = self._create_prompt_protection_service()
             self.memory_processor.prompt_protection_service = self.prompt_protection
             await self._initialize_cognitive_components()
@@ -334,6 +343,23 @@ class PluginInitializer:
 
     async def stop_background_tasks(self) -> None:
         await self._safe_step("取消Provider等待", self._provider_waiter.cancel())
+
+    async def close_injection_components(self) -> None:
+        async with self._injection_close_lock:
+            recorder = self.injection_decision_recorder
+            store = self.injection_decision_store
+            if recorder is None and store is None:
+                return
+            try:
+                try:
+                    if recorder is not None:
+                        await recorder.close(timeout=5.0)
+                finally:
+                    if store is not None:
+                        await store.close()
+            finally:
+                self.injection_decision_recorder = None
+                self.injection_decision_store = None
 
     async def close_extension_components(self) -> None:
         for label, obj in (

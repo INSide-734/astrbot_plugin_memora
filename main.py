@@ -209,6 +209,12 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 logger.error("插件初始化不完整：部分核心组件未能初始化")
                 return False
 
+            self._register_agent_tools_if_needed()
+            memory_tool_available = bool(
+                self._llm_tools_registered
+                and self.config_manager.get("agent_tools.enable_recall_tool", True)
+            )
+
             # 创建事件处理器（幂等）
             if not self.event_handler:
                 self.event_handler = EventHandler(
@@ -226,6 +232,8 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     prompt_protection_service=getattr(self.initializer, "prompt_protection", None),
                     write_guard_cb=self._writes_blocked_by_pending_restore,
                     perf_tracker=self._perf_tracker,
+                    injection_recorder=self.initializer.injection_decision_recorder,
+                    memory_tool_available=memory_tool_available,
                 )
 
             # 创建命令处理器（幂等）
@@ -244,7 +252,6 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     write_guard_cb=self._writes_blocked_by_pending_restore,
                 )
 
-            self._register_agent_tools_if_needed()
 
         return True
 
@@ -544,6 +551,12 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 self.event_handler.shutdown(),
                 timeout=STEP_TIMEOUT,
             )
+
+        await _safe_step(
+            "关闭注入决策组件",
+            self.initializer.close_injection_components(),
+            timeout=STEP_TIMEOUT,
+        )
 
         # 4. 停止衰减调度器
         await _safe_step(

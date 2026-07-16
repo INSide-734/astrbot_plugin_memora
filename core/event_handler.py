@@ -26,6 +26,7 @@ from .utils.injection_adapter import InjectionAdapter
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import LLMResponse, ProviderRequest
+    from .injection.recorder import InjectionDecisionRecorder
 
 
 class EventHandler:
@@ -47,6 +48,8 @@ class EventHandler:
         prompt_protection_service: Any | None = None,
         write_guard_cb: Any | None = None,
         perf_tracker: Any | None = None,
+        injection_recorder: InjectionDecisionRecorder | None = None,
+        memory_tool_available: bool = False,
     ) -> None:
         self.context = context
         self.config_manager = config_manager
@@ -58,6 +61,8 @@ class EventHandler:
         self._expression_learner = expression_learner
         self._relation_manager = relation_manager
         self._write_guard_cb = write_guard_cb
+        self._injection_recorder = injection_recorder
+        self._memory_tool_available = memory_tool_available
 
         self._dedup = DedupManager(max_size=1000, ttl=300)
         self._extractor = MessageContentExtractor()
@@ -78,6 +83,8 @@ class EventHandler:
             relation_manager=relation_manager,
             prompt_protection_service=prompt_protection_service,
             perf_tracker=perf_tracker,
+            injection_recorder=injection_recorder,
+            memory_tool_available=memory_tool_available,
         )
         self._reflection_handler = ReflectionHandler(
             context=context,
@@ -255,6 +262,8 @@ class EventHandler:
                     await asyncio.gather(*pending, return_exceptions=True)
             finally:
                 self._maintenance_tasks.clear()
+        if self._injection_recorder is not None:
+            await self._injection_recorder.close(timeout=5.0)
         logger.info("EventHandler 已关闭")
 
     # ---- 内部方法 ----

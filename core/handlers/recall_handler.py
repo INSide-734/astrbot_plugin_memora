@@ -37,6 +37,7 @@ from ..utils.injection_budget import (
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import ProviderRequest
+    from ..injection.recorder import InjectionDecisionRecorder
 
 
 class RecallHandler:
@@ -56,6 +57,8 @@ class RecallHandler:
         relation_manager: Any | None = None,
         prompt_protection_service: Any | None = None,
         perf_tracker: Any | None = None,
+        injection_recorder: InjectionDecisionRecorder | None = None,
+        memory_tool_available: bool = False,
     ) -> None:
         self._context = context
         self._config_manager = config_manager
@@ -69,6 +72,8 @@ class RecallHandler:
         self._relation_manager = relation_manager
         self._prompt_protection = prompt_protection_service
         self._perf_tracker = perf_tracker
+        self._injection_recorder = injection_recorder
+        self._memory_tool_available = memory_tool_available
         self._cleaner = InjectionCleaner()
         self._extractor = MessageContentExtractor()
         # R1：查询改写器（无 LLM 调用方时使用关键词回退，后续再注入 LLM 调用方）
