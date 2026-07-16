@@ -37,10 +37,11 @@
 
 | 类 | 方法 | 职责 |
 |----|------|------|
-| `InjectionAdapter` | `resolve(provider, configured_mode)` | 按 Provider/模型自动选择注入策略 |
+| `InjectionAdapter` | `resolve(provider, configured_mode)` | 将已路由的传输偏好适配为 Provider 支持的临时投递方式 |
 
 **降级规则**：
-- `system_prompt` 模式已废弃，自动降级为 `extra_user_content`
+- `DeliveryMode` 不接受 `system_prompt`；动态记忆不会写入 System Prompt
+- `auto` 传输使用临时 `extra_user_content`
 - Gemini 系列不支持 `fake_tool_call`，自动降级为 `user_message_before`
 
 ### 缓存管理 (`cache_manager.py`)

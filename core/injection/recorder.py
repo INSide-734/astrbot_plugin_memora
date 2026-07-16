@@ -6,9 +6,9 @@ import asyncio
 import math
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from core.monitoring.metrics import (
+from ..monitoring.metrics import (
     INJECTION_BUDGET_DROP_RATIO,
     INJECTION_CANDIDATE_RETENTION_RATIO,
     INJECTION_DECISIONS_TOTAL,
@@ -23,9 +23,10 @@ from core.monitoring.metrics import (
     INJECTION_STAGE_SECONDS,
     INJECTION_TRUNCATION_RATIO,
 )
-from core.storage.injection_decision_store import InjectionDecisionStore
-
 from .models import InjectionDecisionRecord
+
+if TYPE_CHECKING:
+    from ..storage.injection_decision_store import InjectionDecisionStore
 
 __all__ = ["InjectionDecisionRecorder"]
 

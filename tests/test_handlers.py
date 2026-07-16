@@ -1158,11 +1158,20 @@ def handler_case(monkeypatch):
         event.unified_msg_origin = "session-1"
         event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
         event.get_sender_id.return_value = "user-1"
+        recall_tool = SimpleNamespace(name="recall_long_term_memory", active=True)
+        request_tools = SimpleNamespace(
+            get_tool=lambda name: (
+                recall_tool
+                if memory_tool_available and name == "recall_long_term_memory"
+                else None
+            )
+        )
         request = SimpleNamespace(
             prompt="remember coffee",
             system_prompt="system prompt must be byte-identical",
             contexts=[],
             extra_user_content_parts=[],
+            func_tool=request_tools,
             provider=None,
             context_headroom_chars=10_000,
         )
@@ -1217,6 +1226,64 @@ async def test_manual_tool_first_skips_passive_and_spontaneous(handler_case) -> 
     case.memory_engine.search_memories.assert_not_awaited()
     case.handler._maybe_spontaneous_recall.assert_not_awaited()
     assert case.recorder.record.call_args.args[0].outcome == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_tool_first_checks_the_current_request_toolset(handler_case) -> None:
+    case = handler_case(
+        config=strategy_config(**{"recall_engine.injection_manual_preset": "tool_first"}),
+        memory_tool_available=True,
+        provider_tools_supported=True,
+    )
+    case.request.func_tool = SimpleNamespace(get_tool=lambda _name: None)
+
+    await case.handler.handle_memory_recall(case.event, case.request)
+
+    case.memory_engine.search_memories.assert_awaited_once()
+    record = case.recorder.record.call_args.args[0]
+    assert record.resolved_preset == "low_cost"
+    assert "PROVIDER_TOOL_UNAVAILABLE" in record.reason_codes
+
+
+def test_preflight_estimates_headroom_from_real_provider_request_fields(
+    handler_case,
+) -> None:
+    from astrbot.api.provider import ProviderRequest
+
+    case = handler_case(config=strategy_config())
+    request = ProviderRequest(
+        prompt="p" * 300,
+        system_prompt="s" * 100,
+        contexts=[{"role": "user", "content": "c" * 200}],
+        extra_user_content_parts=[SimpleNamespace(text="e" * 100)],
+    )
+    provider = SimpleNamespace(
+        provider_config={"max_context_tokens": 1_000, "max_tokens": 100}
+    )
+
+    signals = case.handler._preflight_signals(
+        SimpleNamespace(intent="default"),
+        provider,
+        request,
+        "private",
+    )
+
+    assert signals.context_headroom_chars == 185
+
+    request.context_headroom_chars = float("inf")
+    signals = case.handler._preflight_signals(
+        SimpleNamespace(intent="default"), provider, request, "private"
+    )
+    assert signals.context_headroom_chars == 185
+
+    request.context_headroom_chars = None
+    signals = case.handler._preflight_signals(
+        SimpleNamespace(intent="default"),
+        SimpleNamespace(provider_config={}),
+        request,
+        "private",
+    )
+    assert signals.context_headroom_chars == 0
 
 
 @pytest.mark.asyncio

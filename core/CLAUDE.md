@@ -170,7 +170,7 @@ A: 检查 AstrBot 是否正确配置了 LLM Provider 和 Embedding Provider。�
 A: 在配置中启用 `graph_memory.enabled = true` 和 `atom_enabled = true`。
 
 **Q: 如何控制记忆召回策略？**
-A: 配置 `recall_engine` 区块中的 `top_k`、`injection_method`、`reranker.strategy` 等参数。
+A: 配置 `recall_engine` 区块中的 `top_k`、`injection_routing_mode`、`injection_manual_preset`、Hybrid 边界、`injection_delivery_override` 和 `reranker.strategy` 等参数。旧 `injection_method` 已移除且不会迁移。
 
 **Q: 伴侣插件如何协作？**
 A: `core/feature_delegation.py` 自动检测 `self_learning` 和 `GroupChatPlus` 插件，跳过重复处理。

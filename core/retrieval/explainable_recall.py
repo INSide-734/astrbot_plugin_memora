@@ -8,8 +8,8 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
-from core.injection.models import RequestSignals
-from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
+from ..injection.models import RequestSignals
+from ..injection.router import InjectionRoutingConfig, InjectionStrategyRouter
 
 from .trace_models import (
     FilteredCandidate,

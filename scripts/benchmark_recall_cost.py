@@ -66,11 +66,29 @@ PROFILES = {
 }
 
 _CANDIDATES = [
-    {"content": "用户喜欢燕麦拿铁", "score": 0.94, "metadata": {}, "useful": True},
-    {"content": "用户常在周末喝咖啡", "score": 0.83, "metadata": {}, "useful": True},
-    {"content": "用户喜欢燕麦拿铁", "score": 0.72, "metadata": {}, "useful": False},
-    {"content": "普通对话背景", "score": 0.31, "metadata": {}, "useful": False},
+    {
+        "id": f"benchmark-{index}",
+        "content": content,
+        "score": 0.9,
+        "metadata": {
+            "importance": 1.0,
+            "intent_match": 1.0,
+            "temporal_value": 1.0,
+            "source_value": 1.0,
+        },
+        "useful": True,
+    }
+    for index, content in enumerate(
+        (
+            "用户早餐固定选择燕麦拿铁，并明确要求不要加入额外糖浆；这个偏好在最近三次周末对话中保持一致。",
+            "用户安排长途旅行时优先选择靠窗座位，同时会提前确认安静车厢和可用电源，以便途中继续工作。",
+            "用户在项目复盘中偏好先列事实再讨论判断，并希望每个行动项都注明负责人、截止时间和验证方式。",
+            "用户赠送礼物时重视实用性和长期使用价值，通常避开一次性装饰品，并会保留购买凭证方便更换。",
+        ),
+        start=1,
+    )
 ]
+_PAYLOAD_RUNS = 20
 
 _ROUTING_CASES = (
     RoutingCase(PresetName.QUALITY, RequestSignals(query_intent="temporal", explicit_history_request=True, context_headroom_chars=2400, candidate_count=2, top_confidence=.9)),
@@ -145,7 +163,6 @@ async def _profile_metrics(
     )
     passive_rate = float(not preflight.skip_passive_recall)
 
-    req = _request()
     context = InjectionExecutionContext(
         query="benchmark",
         memories=list(_CANDIDATES),
@@ -155,7 +172,15 @@ async def _profile_metrics(
         prospective_budget_chars=0,
         provider=provider,
     )
-    result = await InjectionExecutor(adapter).execute(req, decision, context)
+    executor = InjectionExecutor(adapter)
+    results = [
+        await executor.execute(_request(), decision, context)
+        for _ in range(_PAYLOAD_RUNS)
+    ]
+    result = results[-1]
+    payload_chars_p95 = percentile_95(
+        [float(item.actual_payload_chars) for item in results]
+    )
     effective_budget = result.effective_budget_chars
     overflow = max(0, result.actual_payload_chars - effective_budget)
     content_chars = sum(len(item["content"]) for item in _CANDIDATES[: result.selected_count])
@@ -192,6 +217,7 @@ async def _profile_metrics(
         ),
         "ToolFirstPassiveRecallRate": passive_rate,
         "StrategyDecisionLatency": round(percentile_95(latencies), 6),
+        "OrdinaryMemoryCharsP95": round(payload_chars_p95, 6),
         "ExtraLLMCalls": provider.inference_calls,
     }
     diagnostics: dict[str, float | int | str | bool | None] = {
@@ -244,6 +270,16 @@ def run_benchmark(profile_name: str) -> dict[str, Any]:
     return report
 
 
+def validate_cross_profile_metrics(reports: dict[str, dict[str, Any]]) -> bool:
+    low_cost = float(reports[PresetName.LOW_COST.value]["metrics"]["OrdinaryMemoryCharsP95"])
+    balanced = float(reports[PresetName.BALANCED.value]["metrics"]["OrdinaryMemoryCharsP95"])
+    reduction = 1.0 - (low_cost / balanced) if balanced > 0 else 0.0
+    passed = balanced > 0 and reduction >= 0.30
+    print(f"\n  LowCostPayloadReduction: {reduction:.6f} (required >= 0.300000)")
+    print("  Cross-profile result: " + ("ALL PASSED" if passed else "FAILED"))
+    return passed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", choices=list(PROFILES), default="balanced")
@@ -253,7 +289,11 @@ def main() -> None:
     reports: Any
     if args.all:
         reports = {name: run_benchmark(name) for name in PROFILES}
-        passed = all(item["summary"]["all_checks_passed"] for item in reports.values())
+        profile_checks_passed = all(
+            item["summary"]["all_checks_passed"] for item in reports.values()
+        )
+        cross_profile_checks_passed = validate_cross_profile_metrics(reports)
+        passed = profile_checks_passed and cross_profile_checks_passed
     else:
         reports = run_benchmark(args.profile)
         passed = reports["summary"]["all_checks_passed"]

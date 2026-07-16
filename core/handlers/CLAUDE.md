@@ -22,32 +22,27 @@
 | `_build_fallback_query()` | 空消息（纯 @mention）时从历史构建回退查询 |
 | `_finalize_recall_candidates()` | 去重 + source 优先级排序 + inject budget 截断 |
 
-**注入策略（6 种模式）**：
+**自适应注入策略**：
 
-| 模式 | 配置值 | 行为 |
-|------|--------|------|
-| 默认（末尾注入） | `extra_user_content` | 追加 TextPart 到 `req.extra_user_content_parts` |
-| 消息前注入 | `user_message_before` | 前置到 `req.prompt`，包裹提示词保护 |
-| 消息后注入 | `user_message_after` | 后置到 `req.prompt`，包裹提示词保护 |
-| 伪造工具调用 | `fake_tool_call` | 构造 assistant tool_calls + tool 结果消息对 |
-| DeepSeek V4 兼容 | `fake_tool_call_deepseek_v4` | 转录为文本格式（DeepSeek V4 不支持 tool role） |
-| 系统提示词 | `system_prompt` | **已废弃**，自动降级为 `extra_user_content` |
+- 路由模式：`manual`、`auto`、`hybrid`。
+- 内置预设：`tool_first`、`low_cost`、`balanced`、`quality`。
+- 前置路由按当前请求的 ToolSet、Provider 能力和上下文余量决定是否跳过被动检索；最终路由再结合归一化候选信号。
+- `InjectionExecutor` 统一执行硬预算、分层格式化、提示词保护和原子请求变更。
+- 默认传输为临时 `extra_user_content`；Provider 兼容层可选择消息前后或伪工具传输，但动态记忆永不进入 System Prompt。
+- 旧 `recall_engine.injection_method` 已删除且无兼容迁移。
 
 **召回流程**：
 ```
 1. 清理历史注入片段 (InjectionCleaner)
 2. 提取用户消息 (MessageContentExtractor)
 3. 查询改写 (QueryRewriter → R1 语义展开)
-4. 会话过滤 + 人格过滤 (persona_id / session_id)
-5. 上下文扩展 (inject_with_recent_context: 最近 5 条历史拼接)
-6. 多路检索 (MemoryEngine.search_memories)
-7. 自发回忆 (6% 概率, 宽泛检索)
-8. 前瞻记忆 (PLANNED 原子扫描)
-9. 去重 + 截断 (source 优先级: prospective > main > spontaneous)
-10. 认知上下文组装 (黑话 + 表达 + 好感度)
-11. InjectionAdapter 解析最终注入模式 (Provider 兼容性降级)
-12. 格式化注入 (prompt 保护包装)
-13. 记录可观测性指标 (RECALL_DURATION, RECALL_REQUESTS)
+4. 构建当前请求能力/上下文信号并执行前置路由
+5. 未被 `tool_first` 短路时执行会话/人格过滤、上下文扩展与多路检索
+6. 自发回忆与前瞻记忆补充
+7. 归一化候选信号并执行唯一一次最终路由
+8. 认知上下文组装 (黑话 + 表达 + 好感度)
+9. InjectionExecutor 按全局硬预算构建、保护、校验并原子注入
+10. 异步提交脱敏决策记录并记录可观测性指标
 ```
 
 ### ReflectionHandler
@@ -94,7 +89,7 @@
 
 - **内部依赖**: `ConfigManager`, `MemoryEngine`, `MemoryProcessor`, `ConversationManager`, `InjectionAdapter`, `InjectionCleaner`, `MessageContentExtractor`, `QueryRewriter`, `TopicChunkingStrategy`, `TwoStageLLMStrategy`, `PromptProtectionService`
 - **可选认知模块**: `JargonQueryService`, `ExpressionLearner`, `AffectionManager`, `RelationManager`
-- **关键配置**: `recall_engine.*`（top_k, injection_method, query_rewrite, spontaneous_recall, prospective_recall）, `reflection_engine.summary_trigger_rounds`, `security.*`（sanitize_llm_response, prompt_protection）
+- **关键配置**: `recall_engine.*`（top_k, injection_routing_mode, injection_manual_preset, injection_hybrid_*, injection_delivery_override, query_rewrite, spontaneous_recall, prospective_recall）, `reflection_engine.summary_trigger_rounds`, `security.*`（sanitize_llm_response, prompt_protection）
 
 ## 数据模型
 

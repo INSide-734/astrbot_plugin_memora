@@ -34,7 +34,7 @@
 | 配置模型 | 用途 | 默认关键字段 |
 |---------|------|------------|
 | `SessionManagerConfig` | 会话生命周期 | max_sessions=100, session_ttl=3600, context_window_size=50, enable_full_group_capture=True |
-| `RecallEngineConfig` | 记忆检索注入 | top_k=5, max_k=10, injection_method="extra_user_content", search_cache_ttl=45s |
+| `RecallEngineConfig` | 记忆检索注入 | top_k=5, max_k=10, injection_routing_mode="manual", injection_manual_preset="balanced", injection_delivery_override="auto", search_cache_ttl=45s |
 | `ReflectionEngineConfig` | 反思触发 | summary_trigger_rounds=10 |
 | `AgentToolsConfig` | Agent 工具开关 | 15 个 boolean 开关（note_read/write 拆分，已废弃 note_tools 总开关） |
 | `DashboardConfig` | 运行时构建 | allow_runtime_build=False, build_timeout=120s |
