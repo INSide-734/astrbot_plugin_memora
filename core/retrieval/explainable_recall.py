@@ -169,6 +169,54 @@ async def capture_explainable_recall(
     return json_safe(payload)
 
 
+def _candidate_signals(
+    results: list[TraceResult],
+    request_params: Mapping[str, Any],
+) -> RequestSignals:
+    scores = sorted(
+        (max(0.0, min(1.0, item.final_score)) for item in results),
+        reverse=True,
+    )
+    top_confidence = scores[0] if scores else 0.0
+    score_gap = top_confidence - scores[1] if len(scores) > 1 else top_confidence
+    token_sets = [
+        set(str(item.metadata.get("content_preview", "")).casefold().split())
+        for item in results
+    ]
+    similarities: list[float] = []
+    for index, first in enumerate(token_sets):
+        for second in token_sets[index + 1:]:
+            union = first | second
+            similarities.append(len(first & second) / len(union) if union else 0.0)
+    redundancy = sum(similarities) / len(similarities) if similarities else 0.0
+    estimated_chars = sum(
+        len(str(item.metadata.get("content_preview", "")))
+        + len(str(item.metadata.get("canonical_summary", "")))
+        for item in results
+    )
+    intent = str(request_params.get("query_intent") or "default")
+    return RequestSignals(
+        query_intent=intent,
+        explicit_history_request=intent in {
+            "relationship",
+            "relational",
+            "temporal",
+            "preference",
+            "contextual",
+        },
+        tools_supported=False,
+        memory_tool_available=False,
+        context_headroom_chars=10_000,
+        candidate_count=len(results),
+        top_confidence=top_confidence,
+        score_gap=max(0.0, min(1.0, score_gap)),
+        candidate_redundancy=max(0.0, min(1.0, redundancy)),
+        temporal_conflict=False,
+        estimated_payload_chars=estimated_chars,
+        chat_type=str(request_params.get("chat_type") or "private"),
+    )
+
+
 def _as_list(value: Any) -> list[Any]:
     try:
         return list(value or [])
