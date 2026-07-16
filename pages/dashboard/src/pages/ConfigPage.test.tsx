@@ -18,6 +18,7 @@ import type {
   ConfigStateData,
 } from "@/types/config";
 import { toggleLanguage } from "@/hooks/useI18n";
+import { EN_MAP } from "@/mock";
 
 import { ConfigPage, type ConfigPageProps } from "./ConfigPage";
 
@@ -575,7 +576,9 @@ describe("ConfigPage", () => {
     expect(field.dataset.configHighlighted).toBeUndefined();
 
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "Load AstrBot version" }),
+      within(dialog).getByRole("button", {
+        name: EN_MAP["config.conflict.loadRemote"],
+      }),
     );
     await waitFor(() =>
       expect(
@@ -1209,7 +1212,9 @@ describe("ConfigPage", () => {
     ).toHaveProperty("disabled", true);
 
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "Load AstrBot version" }),
+      within(dialog).getByRole("button", {
+        name: EN_MAP["config.conflict.loadRemote"],
+      }),
     );
 
     await waitFor(() => expect(name).toHaveProperty("value", "AstrBot copy"));
@@ -1247,7 +1252,7 @@ describe("ConfigPage", () => {
 
     fireEvent.click(
       within(dialog).getByRole("button", {
-        name: "Reapply my changes on latest version",
+        name: EN_MAP["config.conflict.reapplyLocal"],
       }),
     );
 
@@ -1350,11 +1355,13 @@ describe("ConfigPage", () => {
     );
 
     expect(
-      await screen.findByRole("button", { name: "Load AstrBot version" }),
+      await screen.findByRole("button", {
+        name: EN_MAP["config.conflict.loadRemote"],
+      }),
     ).toBeTruthy();
     expect(
       screen.getByRole("button", {
-        name: "Reapply my changes on latest version",
+        name: EN_MAP["config.conflict.reapplyLocal"],
       }),
     ).toBeTruthy();
 

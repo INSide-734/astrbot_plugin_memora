@@ -10,49 +10,20 @@ import { AffectionForm } from "./AffectionForm";
 import { JargonForm } from "./JargonForm";
 import { MoodForm } from "./MoodForm";
 
-vi.mock("@/hooks/useI18n", () => ({
-  useI18n: () => ({ t: (key: string) => ({
-    "field.content": "Content",
-    "table.importance": "Importance",
-    "table.type": "Type",
-    "table.status": "Status",
-    "field.title": "Title",
-    "table.category": "Category",
-    "table.confidence": "Confidence",
-    "table.userId": "User ID",
-    "table.name": "Name",
-    "field.tags": "Tags",
-    "category.fact": "Fact",
-    "category.concept": "Concept",
-    "category.rule": "Rule",
-    "category.event": "Event",
-    "category.procedure": "Procedure",
-    "filter.statusActive": "Active",
-    "filter.statusArchived": "Archived",
-    "filter.statusDeleted": "Deleted",
-    "edit.validationSummary": "Please correct the highlighted fields",
-    "tags.remove": "Remove {0}",
-    "profile.replyStyle": "Reply style",
-    "profile.preferredTopics": "Preferred topics",
-    "profile.avoidedTopics": "Avoided topics",
-    "profile.activeHours": "Active hours",
-    "profile.activeHoursStart": "Active hours start",
-    "profile.activeHoursEnd": "Active hours end",
-    "profile.tagCategory": "Tag category",
-    "profile.tagValue": "Tag value",
-    "profile.tagConfidence": "Tag confidence",
-    "profile.addTag": "Add tag",
-    "profile.replyStyle.concise": "Concise",
-    "profile.replyStyle.casual": "Casual",
-    "profile.replyStyle.detailed": "Detailed",
-    "social.fromUser": "From user",
-    "social.toUser": "To user",
-    "social.groupId": "Group ID",
-    "social.relationType": "Relation type",
-    "social.strength": "Strength",
-    "relation.colleague": "Workmate",
-  }[key] ?? key) }),
-}));
+vi.mock("@/hooks/useI18n", async () => {
+  const { EN_MAP } = await import("@/mock");
+  return {
+    useI18n: () => ({
+      t: (key: string, ...args: string[]) => {
+        let value = key === "relation.colleague" ? "Workmate" : (EN_MAP[key] ?? key);
+        args.forEach((arg, index) => {
+          value = value.replace(new RegExp(`\\{${index}\\}`, "g"), () => arg);
+        });
+        return value;
+      },
+    }),
+  };
+});
 
 describe("domain editing forms", () => {
   afterEach(cleanup);
