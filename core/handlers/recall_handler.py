@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
+import uuid
 import random
+from dataclasses import replace
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -19,20 +22,19 @@ from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..monitoring import monitored
 from ..retrieval.query_rewriter import QueryRewriter
-from ..utils import (
-    OperationContext,
-    format_memories_for_fake_tool_call,
-    format_memories_for_fake_tool_call_deepseek_v4,
-    format_memories_for_injection,
-    get_persona_id,
+from ..injection.executor import InjectionExecutionContext, InjectionExecutor
+from ..injection.models import (
+    DeliveryMode,
+    InjectionDecision,
+    InjectionDecisionRecord,
+    InjectionExecutionResult,
+    InjectionOutcome,
+    PresetName,
+    RequestSignals,
+    RoutingMode,
 )
-from ..utils.injection_adapter import InjectionAdapter
-from ..utils.injection_budget import (
-    InjectionBudget,
-    InjectionStats,
-    select_memories_with_budget,
-    truncate_preserving_sentence,
-)
+from ..injection.router import InjectionRoutingConfig, InjectionStrategyRouter
+from ..utils import OperationContext, get_persona_id
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -74,6 +76,8 @@ class RecallHandler:
         self._perf_tracker = perf_tracker
         self._injection_recorder = injection_recorder
         self._memory_tool_available = memory_tool_available
+        self._router = InjectionStrategyRouter()
+        self._executor = InjectionExecutor(injection_adapter)
         self._cleaner = InjectionCleaner()
         self._extractor = MessageContentExtractor()
         # R1：查询改写器（无 LLM 调用方时使用关键词回退，后续再注入 LLM 调用方）
@@ -226,10 +230,47 @@ class RecallHandler:
                 )
 
                 chat_type = "group" if is_group else "private"
+                provider = getattr(req, "provider", None)
+                if provider is None:
+                    provider_getter = getattr(self._context, "get_using_provider", None)
+                    if callable(provider_getter):
+                        provider = provider_getter(session_id)
+
+                routing_config = self._routing_config()
+                preflight_signals = self._preflight_signals(
+                    query_intent, provider, req, chat_type
+                )
+                decision_started = time.perf_counter()
+                preflight = self._router.route_preflight(
+                    routing_config, preflight_signals
+                )
+                preflight_ms = (time.perf_counter() - decision_started) * 1000.0
+
+                if preflight.skip_passive_recall:
+                    prospective = await self._maybe_prospective_recall(
+                        session_id=recall_session_id,
+                        persona_id=recall_persona_id,
+                        chat_type=chat_type,
+                    )
+                    result = await self._execute_and_record(
+                        req=req,
+                        decision=preflight,
+                        signals=preflight_signals,
+                        memories=[],
+                        prospective=prospective,
+                        cognitive_context="",
+                        query=actual_query,
+                        session_filtered=use_session_filtering,
+                        persona_filtered=use_persona_filtering,
+                        decision_ms=preflight_ms,
+                    )
+                    injected_count = result.selected_count
+                    return
+
                 user_id = self._get_event_sender_id(event)
                 recalled_memories = await self._memory_engine.search_memories(
                     query=primary_query,
-                    k=self._config_manager.get("recall_engine.top_k", 5),
+                    k=top_k,
                     session_id=recall_session_id,
                     persona_id=recall_persona_id,
                     chat_type=chat_type,
@@ -238,225 +279,53 @@ class RecallHandler:
                     user_id=user_id,
                 )
 
-                # 自发回忆 — 6% 概率主动浮现低阈值关联记忆
                 spontaneous = await self._maybe_spontaneous_recall(
                     session_id=recall_session_id,
                     persona_id=recall_persona_id,
                     chat_type=chat_type,
                 )
+                ordinary_candidates = list(recalled_memories or [])
                 if spontaneous:
-                    recalled_memories = list(recalled_memories or []) + spontaneous
-                    logger.info(
-                        f"[{session_id}] 自发回忆触发，额外注入 {len(spontaneous)} 条记忆"
-                    )
+                    ordinary_candidates.extend(spontaneous)
+                ordinary_candidates = self._finalize_recall_candidates(
+                    ordinary_candidates,
+                    top_k=top_k,
+                )
 
-                # 前瞻记忆 — 扫描 24h 内到期的 PLANNED 原子主动注入
                 prospective = await self._maybe_prospective_recall(
                     session_id=recall_session_id,
                     persona_id=recall_persona_id,
                     chat_type=chat_type,
                 )
-                if prospective:
-                    recalled_memories = list(recalled_memories or []) + prospective
-                    logger.info(
-                        f"[{session_id}] 前瞻记忆触发，注入 {len(prospective)} 条待办"
-                    )
-
-                recalled_memories = self._finalize_recall_candidates(
-                    list(recalled_memories or []),
-                    top_k=top_k,
+                memories = self._safe_candidates(ordinary_candidates)
+                final_signals = self._final_signals(preflight_signals, memories)
+                decision_started = time.perf_counter()
+                decision = self._router.route_final(routing_config, final_signals)
+                decision_ms = (
+                    preflight_ms
+                    + (time.perf_counter() - decision_started) * 1000.0
                 )
-                injected_count = len(recalled_memories)
-
-                if recalled_memories:
-                    logger.info(
-                        f"[{session_id}] 检索到 {len(recalled_memories)} 条记忆"
-                    )
-
-                    memory_list = [
-                        {
-                            "id": getattr(mem, "doc_id", None),
-                            "content": mem.content,
-                            "score": mem.final_score,
-                            "metadata": mem.metadata,
-                            "timestamp": mem.metadata.get("create_time"),
-                        }
-                        for mem in recalled_memories
-                    ]
-
-                    for i, mem in enumerate(recalled_memories, 1):
-                        logger.debug(
-                            f"[{session_id}] 记忆 #{i}: 得分={mem.final_score:.3f}, "
-                            f"重要性={mem.metadata.get('importance', 0.5):.2f}, "
-                            f"内容={mem.content[:100]}..."
-                        )
-
-                    configured_method = self._config_manager.get(
-                        "recall_engine.injection_method", "extra_user_content"
-                    )
-                    provider = None
-                    if configured_method == "fake_tool_call":
-                        provider = self._context.get_using_provider(session_id)
-                    injection_method, fallback_reason = self._injection_adapter.resolve(
-                        provider, configured_method
-                    )
-                    if fallback_reason:
-                        logger.warning(
-                            f"[{session_id}] 注入模式从 {configured_method} 降级为 "
-                            f"{injection_method}: {fallback_reason}"
-                        )
-
-                    # === 注入预算控制 ===
-                    injection_budget = self._build_injection_budget()
-                    memory_list, dropped = select_memories_with_budget(
-                        memory_list, injection_budget
-                    )
-                    if dropped:
-                        logger.info(
-                            f"[{session_id}] 预算筛选: {len(dropped)} 条记忆因预算不足丢弃 "
-                            f"(budget={injection_budget.total_chars}chars)"
-                        )
-
-                    memory_str, fmt_stats = format_memories_for_injection(
-                        memory_list,
-                        budget=injection_budget,
-                    )
-                    fmt_stats.dropped_by_budget = len(dropped)
-
-                    # 认知上下文 — 受独立预算控制
-                    cognitive_context = await self._build_cognitive_context(
-                        text=actual_query,
-                        group_id=session_id or "default",
-                        persona_id=persona_id or "default",
-                    )
-                    if cognitive_context:
-                        if (
-                            injection_budget.cognitive_context_chars > 0
-                            and len(cognitive_context) > injection_budget.cognitive_context_chars
-                        ):
-                            cognitive_context = truncate_preserving_sentence(
-                                cognitive_context,
-                                injection_budget.cognitive_context_chars,
-                            )
-                        memory_str = memory_str + "\n\n" + cognitive_context
-                        fmt_stats.cognitive_chars = len(cognitive_context)
-
-                    # 主动提醒：注入即将触发的 PLANNED 原子（受预算控制）
-                    proactive = getattr(self._memory_engine, "_pending_proactive", None)
-                    if proactive and self._prospective_recall_enabled():
-                        injected_doc_ids = {
-                            getattr(mem, "doc_id", None)
-                            for mem in recalled_memories
-                            if getattr(mem, "doc_id", None) is not None
-                        }
-                        lines = ["[Upcoming Plans]"]
-                        running_chars = len(lines[0])
-                        for atom in proactive[:5]:
-                            parent_id = getattr(atom, "parent_memory_id", None)
-                            if parent_id in injected_doc_ids:
-                                continue
-                            content = getattr(atom, "content", str(atom))
-                            event_time = getattr(atom, "event_time", None)
-                            ts = f" (at {event_time})" if event_time else ""
-                            line = f"- {content}{ts}"
-                            if (
-                                injection_budget.proactive_plan_chars > 0
-                                and running_chars + len(line) > injection_budget.proactive_plan_chars
-                            ):
-                                logger.debug(
-                                    f"[{session_id}] 前瞻提醒截断: "
-                                    f"超出预算 {injection_budget.proactive_plan_chars}chars"
-                                )
-                                break
-                            lines.append(line)
-                            running_chars += len(line)
-                        if len(lines) > 1:
-                            proactive_str = "\n".join(lines)
-                            memory_str = proactive_str + "\n\n" + memory_str
-                            fmt_stats.proactive_chars = len(proactive_str)
-                            logger.info(f"[{session_id}] 前瞻: {len(lines) - 1} 条")
-
-                    logger.info(
-                        f"[{session_id}] 注入统计: chars={fmt_stats.chars}, "
-                        f"记忆={fmt_stats.memory_count}条, "
-                        f"截断={fmt_stats.truncated_count}, "
-                        f"丢弃={fmt_stats.dropped_by_budget}, "
-                        f"认知={fmt_stats.cognitive_chars}chars, "
-                        f"前瞻={fmt_stats.proactive_chars}chars"
-                    )
-
-                    if injection_method == "user_message_before":
-                        memory_str = self._wrap_injected_context(
-                            memory_str,
-                            session_id=session_id,
-                        )
-                        req.prompt = memory_str + "\n\n" + (req.prompt or "")
-                        logger.info(
-                            f"[{session_id}] 成功向用户消息前注入 "
-                            f"{len(recalled_memories)} 条记忆"
-                        )
-                    elif injection_method == "user_message_after":
-                        memory_str = self._wrap_injected_context(
-                            memory_str,
-                            session_id=session_id,
-                        )
-                        req.prompt = (req.prompt or "") + "\n\n" + memory_str
-                        logger.info(
-                            f"[{session_id}] 成功向用户消息后注入 "
-                            f"{len(recalled_memories)} 条记忆"
-                        )
-                    elif injection_method == "fake_tool_call":
-                        fake_messages = format_memories_for_fake_tool_call(
-                            memory_list,
-                            query=actual_query,
-                            k=self._config_manager.get("recall_engine.top_k", 5),
-                            session_filtered=use_session_filtering,
-                            persona_filtered=use_persona_filtering,
-                        )
-                        if fake_messages:
-                            fake_messages = self._wrap_fake_tool_messages(
-                                fake_messages,
-                                session_id=session_id,
-                            )
-                            req.contexts.extend(fake_messages)
-                            logger.info(
-                                f"[{session_id}] 成功以伪造工具调用方式注入 "
-                                f"{len(recalled_memories)} 条记忆"
-                            )
-                    elif injection_method == "fake_tool_call_deepseek_v4":
-                        fake_replay = format_memories_for_fake_tool_call_deepseek_v4(
-                            memory_list,
-                            query=actual_query,
-                            k=self._config_manager.get("recall_engine.top_k", 5),
-                            session_filtered=use_session_filtering,
-                            persona_filtered=use_persona_filtering,
-                        )
-                        if fake_replay:
-                            fake_replay = self._wrap_injected_context(
-                                fake_replay,
-                                session_id=session_id,
-                            )
-                            req.prompt = fake_replay + "\n\n" + (req.prompt or "")
-                            logger.info(
-                                f"[{session_id}] 成功以 DeepSeek V4 兼容伪工具转录方式注入 "
-                                f"{len(recalled_memories)} 条记忆"
-                            )
-                    else:
-                        from astrbot.core.agent.message import TextPart
-
-                        memory_str = self._wrap_injected_context(
-                            memory_str,
-                            session_id=session_id,
-                        )
-                        req.extra_user_content_parts.append(
-                            TextPart(text=memory_str).mark_as_temp()
-                        )
-                        logger.info(
-                            f"[{session_id}] 成功向用户消息末尾注入 "
-                            f"{len(recalled_memories)} 条记忆"
-                        )
-                else:
-                    logger.info(f"[{session_id}] 未找到相关记忆")
+                format_started = time.perf_counter()
+                cognitive_context = await self._build_cognitive_context(
+                    text=actual_query,
+                    group_id=session_id or "default",
+                    persona_id=persona_id or "default",
+                )
+                format_ms = (time.perf_counter() - format_started) * 1000.0
+                result = await self._execute_and_record(
+                    req=req,
+                    decision=decision,
+                    signals=final_signals,
+                    memories=memories,
+                    prospective=prospective,
+                    cognitive_context=cognitive_context,
+                    query=actual_query,
+                    session_filtered=use_session_filtering,
+                    persona_filtered=use_persona_filtering,
+                    decision_ms=decision_ms,
+                    format_ms=format_ms,
+                )
+                injected_count = result.selected_count
 
         except asyncio.CancelledError:
             raise
@@ -468,6 +337,237 @@ class RecallHandler:
                 injected_count=injected_count,
                 filtered_count=filtered_count,
             )
+
+    def _routing_config(self) -> InjectionRoutingConfig:
+        get = self._config_manager.get
+        return InjectionRoutingConfig(
+            mode=RoutingMode(get("recall_engine.injection_routing_mode", "manual")),
+            manual_preset=PresetName(get("recall_engine.injection_manual_preset", "balanced")),
+            auto_fallback=PresetName(get("recall_engine.injection_auto_fallback_preset", "balanced")),
+            hybrid_base=PresetName(get("recall_engine.injection_hybrid_base_preset", "balanced")),
+            hybrid_min=PresetName(get("recall_engine.injection_hybrid_min_preset", "low_cost")),
+            hybrid_max=PresetName(get("recall_engine.injection_hybrid_max_preset", "quality")),
+            delivery_override=DeliveryMode(get("recall_engine.injection_delivery_override", "auto")),
+            preset_overrides_enabled=bool(get("recall_engine.injection_preset_overrides_enabled", False)),
+            budget_chars=int(get("recall_engine.injection_budget_chars", 0)),
+            memory_max_chars=int(get("recall_engine.injection_memory_max_chars", 0)),
+            metadata_max_chars=int(get("recall_engine.injection_metadata_max_chars", 0)),
+            include_key_facts=bool(get("recall_engine.injection_include_key_facts", True)),
+            include_topics=bool(get("recall_engine.injection_include_topics", True)),
+            include_participants=bool(get("recall_engine.injection_include_participants", False)),
+            compact_header=bool(get("recall_engine.injection_compact_header", True)),
+            invalid_config_fallback=bool(
+                getattr(self._config_manager, "runtime_injection_fallback", False)
+            ),
+        )
+
+    def _preflight_signals(
+        self, query_intent: Any, provider: Any, req: Any, chat_type: str
+    ) -> RequestSignals:
+        provider_type, provider_model, tools_supported = (
+            self._injection_adapter.capabilities(provider)
+        )
+        intent = str(getattr(query_intent, "intent", "default") or "default")
+        explicit = intent in {
+            "relationship", "relational", "temporal", "preference", "contextual"
+        }
+        raw_headroom = getattr(req, "context_headroom_chars", 10_000)
+        try:
+            headroom = max(0, int(raw_headroom if raw_headroom is not None else 10_000))
+        except (TypeError, ValueError):
+            headroom = 10_000
+        return RequestSignals(
+            query_intent=intent,
+            explicit_history_request=explicit,
+            provider_type=str(provider_type or ""),
+            provider_model=str(provider_model or ""),
+            tools_supported=tools_supported is True,
+            memory_tool_available=self._memory_tool_available is True,
+            context_headroom_chars=headroom,
+            chat_type=chat_type,
+        )
+
+    @staticmethod
+    def _safe_candidates(candidates: list[Any]) -> list[dict[str, Any]]:
+        safe: list[dict[str, Any]] = []
+        for candidate in candidates:
+            content = str(getattr(candidate, "content", "") or "")
+            metadata = getattr(candidate, "metadata", None)
+            if not isinstance(metadata, dict):
+                metadata = {}
+            raw_score = getattr(candidate, "final_score", 0.0)
+            try:
+                score = float(raw_score)
+            except (TypeError, ValueError):
+                score = 0.0
+            if not math.isfinite(score):
+                score = 0.0
+            safe.append({
+                "content": content,
+                "score": max(0.0, min(1.0, score)),
+                "metadata": dict(metadata),
+                "timestamp": metadata.get("create_time"),
+            })
+        return safe
+
+    @staticmethod
+    def _final_signals(
+        preflight: RequestSignals, candidates: list[dict[str, Any]]
+    ) -> RequestSignals:
+        scores = sorted(
+            (float(candidate.get("score", 0.0)) for candidate in candidates),
+            reverse=True,
+        )
+        top_confidence = scores[0] if scores else 0.0
+        score_gap = top_confidence - scores[1] if len(scores) > 1 else top_confidence
+        token_sets = [
+            set(str(candidate.get("content", "")).casefold().split())
+            for candidate in candidates
+        ]
+        similarities: list[float] = []
+        for index, first in enumerate(token_sets):
+            for second in token_sets[index + 1:]:
+                union = first | second
+                similarities.append(len(first & second) / len(union) if union else 0.0)
+        redundancy = sum(similarities) / len(similarities) if similarities else 0.0
+        temporal_conflict = any(
+            (candidate.get("metadata") or {}).get("temporal_conflict") is True
+            for candidate in candidates
+        )
+        estimated_chars = sum(
+            len(str(candidate.get("content", "")))
+            + len(str(candidate.get("metadata", "")))
+            for candidate in candidates
+        )
+        return replace(
+            preflight,
+            candidate_count=len(candidates),
+            top_confidence=max(0.0, min(1.0, top_confidence)),
+            score_gap=max(0.0, min(1.0, score_gap)),
+            candidate_redundancy=max(0.0, min(1.0, redundancy)),
+            temporal_conflict=temporal_conflict,
+            estimated_payload_chars=estimated_chars,
+        )
+
+    @staticmethod
+    def _prospective_context(prospective: list[Any]) -> str:
+        if not prospective:
+            return ""
+        lines = ["[Upcoming Plans]"]
+        for candidate in prospective:
+            content = str(getattr(candidate, "content", "") or "")
+            metadata = getattr(candidate, "metadata", None) or {}
+            event_time = metadata.get("event_time")
+            suffix = f" (at {event_time})" if event_time else ""
+            lines.append(f"- {content}{suffix}")
+        return "\n".join(lines)
+
+    async def _execute_and_record(
+        self,
+        *,
+        req: Any,
+        decision: InjectionDecision,
+        signals: RequestSignals,
+        memories: list[dict[str, Any]],
+        prospective: list[Any],
+        cognitive_context: str,
+        query: str,
+        session_filtered: bool,
+        persona_filtered: bool,
+        decision_ms: float,
+        format_ms: float = 0.0,
+    ) -> InjectionExecutionResult:
+        cognitive_budget = int(self._config_manager.get(
+            "recall_engine.cognitive_context_budget_chars", 300
+        ))
+        prospective_budget = int(self._config_manager.get(
+            "recall_engine.proactive_plan_budget_chars", 240
+        ))
+        prospective_context = self._prospective_context(prospective)
+        if decision.skip_passive_recall and not prospective_context:
+            configured_budget = (
+                max(0, decision.memory_budget_chars)
+                + max(0, cognitive_budget)
+                + max(0, prospective_budget)
+            )
+            result = InjectionExecutionResult(
+                outcome=InjectionOutcome.SKIPPED,
+                configured_budget_chars=configured_budget,
+                effective_budget_chars=min(
+                    signals.context_headroom_chars, configured_budget
+                ),
+                decision_ms=decision_ms,
+                format_ms=format_ms,
+            )
+        else:
+            context = InjectionExecutionContext(
+                query=query,
+                memories=memories,
+                cognitive_context=cognitive_context,
+                prospective_context=prospective_context,
+                cognitive_budget_chars=cognitive_budget,
+                prospective_budget_chars=prospective_budget,
+                session_filtered=session_filtered,
+                persona_filtered=persona_filtered,
+                context_headroom_chars=signals.context_headroom_chars,
+            )
+            inject_started = time.perf_counter()
+            result = await self._executor.execute(req, decision, context)
+            result = replace(
+                result,
+                decision_ms=decision_ms,
+                format_ms=format_ms,
+                inject_ms=(time.perf_counter() - inject_started) * 1000.0,
+            )
+        self._record_injection_decision(decision, signals, result)
+        return result
+
+    def _record_injection_decision(
+        self,
+        decision: InjectionDecision,
+        signals: RequestSignals,
+        result: InjectionExecutionResult,
+    ) -> None:
+        if self._injection_recorder is None:
+            return
+        record = InjectionDecisionRecord(
+            decision_id=str(uuid.uuid4()),
+            created_at_ms=time.time_ns() // 1_000_000,
+            routing_mode=decision.routing_mode.value,
+            configured_preset=decision.configured_preset.value,
+            recommended_preset=decision.recommended_preset.value,
+            resolved_preset=decision.resolved_preset.value,
+            preferred_delivery=decision.preferred_delivery.value,
+            resolved_delivery=decision.resolved_delivery.value,
+            fallback_applied=result.fallback_applied,
+            outcome=result.outcome.value,
+            primary_reason=(
+                decision.reason_codes[0]
+                if decision.reason_codes else "NO_USEFUL_CANDIDATES"
+            ),
+            reason_codes=decision.reason_codes,
+            trace_id=None,
+            error_code=result.error_code,
+            provider_type=signals.provider_type,
+            provider_model=signals.provider_model,
+            candidate_count=signals.candidate_count,
+            selected_count=result.selected_count,
+            dropped_count=result.dropped_count,
+            truncated_count=result.truncated_count,
+            configured_budget_chars=result.configured_budget_chars,
+            effective_budget_chars=result.effective_budget_chars,
+            actual_payload_chars=result.actual_payload_chars,
+            context_headroom_chars=signals.context_headroom_chars,
+            decision_ms=result.decision_ms,
+            format_ms=result.format_ms,
+            inject_ms=result.inject_ms,
+        )
+        try:
+            self._injection_recorder.record(record)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("[召回流程] 注入决策记录失败", exc_info=True)
 
     def _record_recall_observability(
         self,
@@ -520,26 +620,6 @@ class RecallHandler:
         sender_id = str(sender_id).strip()
         return sender_id or None
 
-    def _build_injection_budget(self) -> InjectionBudget:
-        """从配置构建注入预算对象。"""
-        cm = self._config_manager
-        return InjectionBudget(
-            total_chars=cm.get("recall_engine.injection_budget_chars", 1200),
-            memory_max_chars=cm.get("recall_engine.injection_memory_max_chars", 220),
-            metadata_max_chars=cm.get("recall_engine.injection_metadata_max_chars", 180),
-            include_key_facts=cm.get("recall_engine.injection_include_key_facts", True),
-            include_topics=cm.get("recall_engine.injection_include_topics", True),
-            include_participants=cm.get(
-                "recall_engine.injection_include_participants", False
-            ),
-            compact_header=cm.get("recall_engine.injection_compact_header", True),
-            cognitive_context_chars=cm.get(
-                "recall_engine.cognitive_context_budget_chars", 300
-            ),
-            proactive_plan_chars=cm.get(
-                "recall_engine.proactive_plan_budget_chars", 240
-            ),
-        )
 
     @staticmethod
     def _finalize_recall_candidates(
@@ -585,53 +665,6 @@ class RecallHandler:
         finalized.sort(key=rank_tuple, reverse=True)
         return finalized[:top_k]
 
-    def _wrap_injected_context(self, memory_str: str, session_id: str | None) -> str:
-        """为注入的记忆上下文套用提示词保护包装。"""
-        if not memory_str:
-            return memory_str
-        if not self._config_manager.get("security.prompt_protection_enabled", True):
-            return memory_str
-        if self._prompt_protection is None:
-            return memory_str
-        try:
-            return self._prompt_protection.wrap_prompt(
-                memory_str,
-                label="memory_context",
-                register_for_filter=True,
-            )
-        except Exception:
-            logger.warning(
-                f"[{session_id}] 提示词保护服务包装注入内容失败，使用原始内容",
-                exc_info=True,
-            )
-            return memory_str
-
-    def _wrap_fake_tool_messages(
-        self,
-        fake_messages: list[dict],
-        session_id: str | None,
-    ) -> list[dict]:
-        """为伪造工具调用结果内容套用提示词保护。"""
-        if not fake_messages:
-            return fake_messages
-        if not self._config_manager.get("security.prompt_protection_enabled", True):
-            return fake_messages
-        if self._prompt_protection is None:
-            return fake_messages
-
-        protected: list[dict] = []
-        for message in fake_messages:
-            if not isinstance(message, dict):
-                protected.append(message)
-                continue
-            copied = dict(message)
-            if copied.get("role") == "tool" and isinstance(copied.get("content"), str):
-                copied["content"] = self._wrap_injected_context(
-                    copied["content"],
-                    session_id=session_id,
-                )
-            protected.append(copied)
-        return protected
 
     async def _build_cognitive_context(
         self,

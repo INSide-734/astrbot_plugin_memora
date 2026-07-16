@@ -1,6 +1,7 @@
 """core/handlers/ 测试 — recall_handler.py 和 reflection_handler.py。"""
 
 from __future__ import annotations
+import asyncio
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -269,6 +270,7 @@ class TestRecallHandlerSearchParameters:
         conv = MagicMock()
         conv.add_message_from_event = AsyncMock()
         adapter = MagicMock()
+        adapter.capabilities.return_value = ("", "", False)
         perf_tracker = PerfTracker()
 
         event = MagicMock()
@@ -394,83 +396,7 @@ class TestRecallHandlerFinalizeCandidates:
         assert handler._prospective_recall_enabled() is False
 
 
-class TestRecallHandlerPromptProtection:
-    """Tests for recall injection prompt protection wrapping."""
-
-    def test_wrap_injected_context_uses_prompt_protection_service(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
-        from core.security.prompt_sanitizer import PromptProtectionService
-
-        cfg = MagicMock()
-        cfg.get.side_effect = lambda key, default=None: {
-            "security.prompt_protection_enabled": True,
-        }.get(key, default)
-        service = PromptProtectionService(enable_double_check=False)
-
-        handler = RecallHandler(
-            context=MagicMock(),
-            config_manager=cfg,
-            memory_engine=MagicMock(),
-            conversation_manager=MagicMock(),
-            injection_adapter=MagicMock(),
-            enforce_limit_cb=MagicMock(),
-            prompt_protection_service=service,
-        )
-
-        wrapped = handler._wrap_injected_context("记忆上下文", "session-1")
-        assert "system_internal" in wrapped
-        assert service.get_stats()["wrapped"] == 1
-
-    def test_wrap_injected_context_respects_disabled_config(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
-        from core.security.prompt_sanitizer import PromptProtectionService
-
-        cfg = MagicMock()
-        cfg.get.side_effect = lambda key, default=None: {
-            "security.prompt_protection_enabled": False,
-        }.get(key, default)
-
-        handler = RecallHandler(
-            context=MagicMock(),
-            config_manager=cfg,
-            memory_engine=MagicMock(),
-            conversation_manager=MagicMock(),
-            injection_adapter=MagicMock(),
-            enforce_limit_cb=MagicMock(),
-            prompt_protection_service=PromptProtectionService(),
-        )
-
-        assert handler._wrap_injected_context("记忆上下文", "session-1") == "记忆上下文"
-
-    def test_wrap_fake_tool_messages_wraps_tool_content_only(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
-        from core.security.prompt_sanitizer import PromptProtectionService
-
-        cfg = MagicMock()
-        cfg.get.side_effect = lambda key, default=None: {
-            "security.prompt_protection_enabled": True,
-        }.get(key, default)
-
-        handler = RecallHandler(
-            context=MagicMock(),
-            config_manager=cfg,
-            memory_engine=MagicMock(),
-            conversation_manager=MagicMock(),
-            injection_adapter=MagicMock(),
-            enforce_limit_cb=MagicMock(),
-            prompt_protection_service=PromptProtectionService(enable_double_check=False),
-        )
-        messages = [
-            {"role": "assistant", "content": None},
-            {"role": "tool", "content": '{"results": [{"content": "记忆内容"}]}'},
-        ]
-
-        wrapped = handler._wrap_fake_tool_messages(messages, "session-1")
-        assert wrapped[0]["content"] is None
-        assert "system_internal" in wrapped[1]["content"]
-        assert "记忆内容" in wrapped[1]["content"]
-        assert messages[1]["content"].startswith('{"results"')
-
+class TestRecallHandlerProspectiveStore:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_atom_store(self) -> None:
         from core.handlers.recall_handler import RecallHandler
@@ -479,7 +405,6 @@ class TestRecallHandlerPromptProtection:
         cfg.get.return_value = True
         engine = MagicMock()
         engine.atom_store = None
-
         handler = RecallHandler(
             context=MagicMock(),
             config_manager=cfg,
@@ -1085,3 +1010,259 @@ class TestEventHandlerInjectionLifecycle:
 
         assert handler._injection_recorder is recorder
         assert handler._memory_tool_available is True
+
+
+# Adaptive injection hot-path contract
+from types import SimpleNamespace
+
+from astrbot.api.platform import MessageType
+from core.injection.models import DeliveryMode, InjectionExecutionResult, InjectionOutcome
+from core.retrieval.rrf_fusion import HybridResult
+
+
+def strategy_config(**overrides):
+    values = {
+        "recall_engine.top_k": 5,
+        "recall_engine.injection_routing_mode": "manual",
+        "recall_engine.injection_manual_preset": "balanced",
+        "recall_engine.injection_auto_fallback_preset": "balanced",
+        "recall_engine.injection_hybrid_base_preset": "balanced",
+        "recall_engine.injection_hybrid_min_preset": "low_cost",
+        "recall_engine.injection_hybrid_max_preset": "quality",
+        "recall_engine.injection_delivery_override": "auto",
+        "recall_engine.injection_preset_overrides_enabled": False,
+        "recall_engine.auto_remove_injected": False,
+        "recall_engine.query_rewrite_enabled": False,
+        "recall_engine.spontaneous_recall_enabled": False,
+        "recall_engine.prospective_recall_enabled": False,
+    }
+    values.update(overrides)
+    return values
+
+
+def high_confidence_memories() -> list[HybridResult]:
+    return [
+        HybridResult(
+            doc_id=index,
+            final_score=score,
+            rrf_score=score,
+            bm25_score=None,
+            vector_score=None,
+            content=f"memory-{index}",
+            metadata={"importance": 0.8, "create_time": 1_783_150_200},
+        )
+        for index, score in enumerate((0.95, 0.82, 0.61), start=1)
+    ]
+
+
+@pytest.fixture
+def handler_case(monkeypatch):
+    from core.handlers.recall_handler import RecallHandler
+
+    def build(
+        *,
+        config: dict[str, object],
+        memory_tool_available: bool = False,
+        provider_tools_supported: bool = False,
+        query_intent: str = "default",
+        memories: list[HybridResult] | None = None,
+    ):
+        manager = MagicMock()
+        manager.filtering_settings = {
+            "use_persona_filtering": True,
+            "use_session_filtering": True,
+        }
+        manager.runtime_injection_fallback = False
+        manager.get.side_effect = lambda key, default=None: config.get(key, default)
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=list(memories or []))
+        conversation = MagicMock()
+        conversation.add_message_from_event = AsyncMock()
+        adapter = MagicMock()
+        adapter.capabilities.return_value = (
+            "openai",
+            "test-model",
+            provider_tools_supported,
+        )
+        adapter.resolve.return_value = (DeliveryMode.EXTRA_USER_CONTENT, None)
+        recorder = MagicMock()
+        event = MagicMock()
+        event.unified_msg_origin = "session-1"
+        event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
+        event.get_sender_id.return_value = "user-1"
+        request = SimpleNamespace(
+            prompt="remember coffee",
+            system_prompt="system prompt must be byte-identical",
+            contexts=[],
+            extra_user_content_parts=[],
+            provider=None,
+            context_headroom_chars=10_000,
+        )
+
+        handler = RecallHandler(
+            context=MagicMock(),
+            config_manager=manager,
+            memory_engine=engine,
+            conversation_manager=conversation,
+            injection_adapter=adapter,
+            enforce_limit_cb=AsyncMock(),
+            injection_recorder=recorder,
+            memory_tool_available=memory_tool_available,
+        )
+        handler._extractor.get_event_message_str = AsyncMock(return_value="remember coffee")
+        handler._query_rewriter.rewrite = AsyncMock(return_value=SimpleNamespace(
+            intent=query_intent,
+            rewritten_queries=[],
+            memory_types=[],
+            extracted_entities=[],
+        ))
+        handler._maybe_spontaneous_recall = AsyncMock(return_value=[])
+        handler._maybe_prospective_recall = AsyncMock(return_value=[])
+        handler._build_cognitive_context = AsyncMock(return_value="")
+        monkeypatch.setattr(
+            "core.handlers.recall_handler.get_persona_id",
+            AsyncMock(return_value="persona-1"),
+        )
+        return SimpleNamespace(
+            handler=handler,
+            event=event,
+            request=request,
+            memory_engine=engine,
+            recorder=recorder,
+            adapter=adapter,
+        )
+
+    return build
+
+
+@pytest.mark.asyncio
+async def test_manual_tool_first_skips_passive_and_spontaneous(handler_case) -> None:
+    case = handler_case(
+        config=strategy_config(**{"recall_engine.injection_manual_preset": "tool_first"}),
+        memory_tool_available=True,
+        provider_tools_supported=True,
+    )
+    await case.handler.handle_memory_recall(case.event, case.request)
+    case.memory_engine.search_memories.assert_not_awaited()
+    case.handler._maybe_spontaneous_recall.assert_not_awaited()
+    assert case.recorder.record.call_args.args[0].outcome == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_tool_first_unavailable_falls_back_to_search(handler_case) -> None:
+    case = handler_case(
+        config=strategy_config(**{"recall_engine.injection_manual_preset": "tool_first"}),
+        memory_tool_available=True,
+        provider_tools_supported=False,
+    )
+    await case.handler.handle_memory_recall(case.event, case.request)
+    case.memory_engine.search_memories.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_clamps_quality_and_records_sanitized_decision(handler_case) -> None:
+    case = handler_case(
+        config=strategy_config(**{
+            "recall_engine.injection_routing_mode": "hybrid",
+            "recall_engine.injection_hybrid_max_preset": "balanced",
+        }),
+        query_intent="temporal",
+        memories=high_confidence_memories(),
+    )
+    await case.handler.handle_memory_recall(case.event, case.request)
+    record = case.recorder.record.call_args.args[0]
+    assert record.recommended_preset == "quality"
+    assert record.resolved_preset == "balanced"
+    assert "HYBRID_CLAMPED_MAX" in record.reason_codes
+    assert not hasattr(record, "query")
+    assert not hasattr(record, "memory_ids")
+
+
+@pytest.mark.asyncio
+async def test_no_candidates_records_empty_without_request_mutation(handler_case) -> None:
+    case = handler_case(config=strategy_config())
+    before = (case.request.prompt, list(case.request.contexts), list(case.request.extra_user_content_parts))
+    await case.handler.handle_memory_recall(case.event, case.request)
+    record = case.recorder.record.call_args.args[0]
+    assert record.outcome == "empty"
+    assert record.primary_reason == "MANUAL_SELECTED"
+    assert (case.request.prompt, case.request.contexts, case.request.extra_user_content_parts) == before
+
+
+@pytest.mark.asyncio
+async def test_provider_delivery_fallback_is_recorded(handler_case) -> None:
+    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    case.adapter.resolve.return_value = (DeliveryMode.EXTRA_USER_CONTENT, "unsupported")
+    await case.handler.handle_memory_recall(case.event, case.request)
+    record = case.recorder.record.call_args.args[0]
+    assert record.outcome == "fallback"
+    assert record.fallback_applied is True
+
+
+@pytest.mark.asyncio
+async def test_executor_error_leaves_request_atomic(handler_case) -> None:
+    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    case.handler._executor.execute = AsyncMock(return_value=InjectionExecutionResult(
+        outcome=InjectionOutcome.ERROR,
+        error_code="MUTATION_FAILED",
+    ))
+    before = (case.request.prompt, list(case.request.contexts), list(case.request.extra_user_content_parts))
+    await case.handler.handle_memory_recall(case.event, case.request)
+    assert (case.request.prompt, case.request.contexts, case.request.extra_user_content_parts) == before
+    assert case.recorder.record.call_args.args[0].error_code == "MUTATION_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_recorder_exception_is_isolated(handler_case) -> None:
+    case = handler_case(config=strategy_config())
+    case.recorder.record.side_effect = RuntimeError("queue unavailable")
+    await case.handler.handle_memory_recall(case.event, case.request)
+
+
+@pytest.mark.asyncio
+async def test_global_auxiliary_budget_and_system_prompt_equality(handler_case) -> None:
+    case = handler_case(
+        config=strategy_config(**{
+            "recall_engine.injection_budget_chars": 120,
+            "recall_engine.cognitive_context_budget_chars": 80,
+            "recall_engine.proactive_plan_budget_chars": 80,
+        }),
+        memories=high_confidence_memories(),
+    )
+    case.request.context_headroom_chars = 150
+    case.handler._build_cognitive_context.return_value = "c" * 80
+    case.handler._maybe_prospective_recall.return_value = high_confidence_memories()[:1]
+    system_prompt = case.request.system_prompt
+    await case.handler.handle_memory_recall(case.event, case.request)
+    record = case.recorder.record.call_args.args[0]
+    assert record.effective_budget_chars == 150
+    assert record.actual_payload_chars <= 150
+    assert case.request.system_prompt == system_prompt
+
+
+@pytest.mark.asyncio
+async def test_true_cancellation_propagates(handler_case) -> None:
+    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    case.handler._executor.execute = AsyncMock(side_effect=asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await case.handler.handle_memory_recall(case.event, case.request)
+
+
+@pytest.mark.asyncio
+async def test_tool_first_prospective_only_executes_without_search(handler_case) -> None:
+    case = handler_case(
+        config=strategy_config(**{"recall_engine.injection_manual_preset": "tool_first"}),
+        memory_tool_available=True,
+        provider_tools_supported=True,
+    )
+    case.handler._maybe_prospective_recall.return_value = high_confidence_memories()[:1]
+    case.handler._executor.execute = AsyncMock(return_value=InjectionExecutionResult(
+        outcome=InjectionOutcome.INJECTED,
+        actual_payload_chars=20,
+    ))
+    await case.handler.handle_memory_recall(case.event, case.request)
+    case.memory_engine.search_memories.assert_not_awaited()
+    execution_context = case.handler._executor.execute.await_args.args[2]
+    assert execution_context.memories == []
+    assert execution_context.prospective_context.startswith("[Upcoming Plans]")
+    assert case.recorder.record.call_args.args[0].outcome == "injected"
