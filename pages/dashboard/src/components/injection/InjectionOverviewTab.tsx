@@ -269,17 +269,17 @@ export function InjectionOverviewTab({
   const presetChartConfig: ChartConfig = {
     count: {
       label: t("injection.overview.decisions"),
-      color: "hsl(var(--primary))",
+      color: "var(--primary)",
     },
   };
   const costChartConfig: ChartConfig = {
     payload_chars_p95: {
       label: t("injection.overview.payloadP95"),
-      color: "hsl(var(--primary))",
+      color: "var(--primary)",
     },
     provider_fallback_rate: {
       label: t("injection.overview.fallbackRate"),
-      color: "hsl(var(--destructive))",
+      color: "var(--destructive)",
     },
   };
 
@@ -371,6 +371,7 @@ export function InjectionOverviewTab({
                       dataKey="count"
                       fill="var(--color-count)"
                       radius={[4, 4, 0, 0]}
+                      isAnimationActive={false}
                     />
                   </BarChart>
                 </ChartContainer>
@@ -425,6 +426,7 @@ export function InjectionOverviewTab({
                       stroke="var(--color-payload_chars_p95)"
                       strokeWidth={2}
                       dot={false}
+                      isAnimationActive={false}
                     />
                     <Line
                       yAxisId="fallback"
@@ -434,6 +436,7 @@ export function InjectionOverviewTab({
                       stroke="var(--color-provider_fallback_rate)"
                       strokeWidth={2}
                       dot={false}
+                      isAnimationActive={false}
                     />
                   </LineChart>
                 </ChartContainer>

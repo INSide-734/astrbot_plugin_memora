@@ -24,6 +24,10 @@ const SCREENSHOT_BASELINES = {
   "config.png": { width: 1366, height: 900, minBytes: 10_000 },
   "config-conflict.png": { width: 1366, height: 900, minBytes: 10_000 },
   "mobile-config.png": { width: 390, height: 844, minBytes: 10_000 },
+  "injection-overview.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "injection-config-conflict.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "injection-decisions.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "mobile-injection-detail.png": { width: 390, height: 844, minBytes: 10_000 },
   "global-search-scroll.png": { width: 1366, height: 900, minBytes: 10_000 },
   "global-search-memory-target.png": { width: 1366, height: 900, minBytes: 10_000 },
   "graph.png": { width: 1366, height: 900, minBytes: 10_000 },
@@ -52,6 +56,229 @@ const SCREENSHOT_BASELINES = {
   "i18n-ru-memory.png": { width: 1366, height: 900, minBytes: 10_000 },
 };
 
+const INJECTION_SMOKE_NOW_MS = Date.UTC(2026, 6, 15, 8, 0, 0);
+const INJECTION_SMOKE_PRESETS = ["tool_first", "low_cost", "balanced", "quality"];
+const INJECTION_SMOKE_MODES = ["manual", "auto", "hybrid"];
+const INJECTION_SMOKE_OUTCOMES = ["injected", "skipped", "empty", "fallback", "error"];
+const INJECTION_SMOKE_DECISIONS = Array.from({ length: 72 }, (_, index) => {
+  const resolvedPreset = INJECTION_SMOKE_PRESETS[index % INJECTION_SMOKE_PRESETS.length];
+  const outcome = INJECTION_SMOKE_OUTCOMES[index % INJECTION_SMOKE_OUTCOMES.length];
+  const fallbackApplied = outcome === "fallback" || index % 11 === 0;
+  const budget = resolvedPreset === "quality"
+    ? 2_400
+    : resolvedPreset === "balanced"
+      ? 1_200
+      : resolvedPreset === "low_cost"
+        ? 800
+        : 0;
+  return {
+    decision_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    created_at_ms: INJECTION_SMOKE_NOW_MS - index * 30 * 60 * 1_000,
+    trace_id: index % 3 === 0 ? `trace-smoke-${String(index + 1).padStart(3, "0")}` : null,
+    routing_mode: INJECTION_SMOKE_MODES[index % INJECTION_SMOKE_MODES.length],
+    configured_preset: INJECTION_SMOKE_PRESETS[(index + 1) % INJECTION_SMOKE_PRESETS.length],
+    recommended_preset: INJECTION_SMOKE_PRESETS[(index + 2) % INJECTION_SMOKE_PRESETS.length],
+    resolved_preset: resolvedPreset,
+    preferred_delivery: "extra_user_content",
+    resolved_delivery: fallbackApplied ? "user_message_before" : "extra_user_content",
+    fallback_applied: fallbackApplied,
+    outcome,
+    error_code: outcome === "error" ? "FORMAT_FAILED" : null,
+    primary_reason: fallbackApplied ? "PROVIDER_DELIVERY_DOWNGRADED" : "MANUAL_SELECTED",
+    reason_codes: fallbackApplied
+      ? ["MANUAL_SELECTED", "PROVIDER_DELIVERY_DOWNGRADED"]
+      : ["MANUAL_SELECTED"],
+    provider_type: index % 2 === 0 ? "openai" : "gemini",
+    provider_model: index % 2 === 0 ? "gpt-smoke" : "gemini-smoke",
+    candidate_count: 6,
+    selected_count: resolvedPreset === "tool_first" ? 0 : Math.min(4, index % 5),
+    dropped_count: index % 3,
+    truncated_count: index % 2,
+    configured_budget_chars: budget,
+    effective_budget_chars: budget,
+    actual_payload_chars: budget === 0 ? 0 : Math.min(budget, 320 + index * 13),
+    context_headroom_chars: 8_000 - index * 10,
+    decision_ms: 0.4 + (index % 5) * 0.1,
+    format_ms: 1.2 + (index % 7) * 0.2,
+    inject_ms: 0.3 + (index % 3) * 0.1,
+  };
+});
+
+function injectionCatalogPayload() {
+  const preset = (
+    name,
+    rank,
+    memoryBudgetChars,
+    maxMemories,
+    contentLevel,
+  ) => ({
+    name,
+    rank,
+    auto_inject: rank > 0,
+    memory_budget_chars: memoryBudgetChars,
+    max_memories: maxMemories,
+    content_level: contentLevel,
+    cost_penalty_weight: rank === 0 ? 1 : 0.3 / rank,
+    minimum_utility: rank === 0 ? 1 : 0.6 / rank,
+    allow_tool_fallback: true,
+    preferred_delivery: "extra_user_content",
+  });
+  return {
+    routing_modes: INJECTION_SMOKE_MODES,
+    presets: [
+      preset("tool_first", 0, 0, 0, "NONE"),
+      preset("low_cost", 1, 800, 2, "FACTS"),
+      preset("balanced", 2, 1_200, 4, "COMPACT"),
+      preset("quality", 3, 2_400, 6, "DETAILED"),
+    ],
+    deliveries: [
+      "auto",
+      "extra_user_content",
+      "user_message_before",
+      "user_message_after",
+      "fake_tool_call",
+      "fake_tool_call_deepseek_v4",
+    ],
+    retention_options: [7, 30, 90, 180, 0],
+    provider_tools_supported: true,
+    memory_tool_available: true,
+    recall_trace_available: true,
+    effective_default_delivery: "extra_user_content",
+  };
+}
+
+function injectionListItem(row) {
+  return {
+    decision_id: row.decision_id,
+    created_at_ms: row.created_at_ms,
+    trace_id: row.trace_id,
+    routing_mode: row.routing_mode,
+    configured_preset: row.configured_preset,
+    recommended_preset: row.recommended_preset,
+    resolved_preset: row.resolved_preset,
+    preferred_delivery: row.preferred_delivery,
+    resolved_delivery: row.resolved_delivery,
+    fallback_applied: row.fallback_applied,
+    outcome: row.outcome,
+    error_code: row.error_code,
+    primary_reason: row.primary_reason,
+    provider_type: row.provider_type,
+    provider_model: row.provider_model,
+    candidate_count: row.candidate_count,
+    selected_count: row.selected_count,
+    dropped_count: row.dropped_count,
+    truncated_count: row.truncated_count,
+    configured_budget_chars: row.configured_budget_chars,
+    effective_budget_chars: row.effective_budget_chars,
+    actual_payload_chars: row.actual_payload_chars,
+    context_headroom_chars: row.context_headroom_chars,
+    decision_ms: row.decision_ms,
+    format_ms: row.format_ms,
+    inject_ms: row.inject_ms,
+  };
+}
+
+function injectionSummaryPayload(params) {
+  const windowValue = params.window ?? "24h";
+  const windowMs = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 };
+  const rows = INJECTION_SMOKE_DECISIONS.filter(
+    (row) => row.created_at_ms >= INJECTION_SMOKE_NOW_MS - windowMs[windowValue],
+  );
+  const payloads = rows.map((row) => row.actual_payload_chars).sort((left, right) => left - right);
+  const buckets = new Map();
+  for (const row of rows) {
+    const bucket = Math.floor(row.created_at_ms / 3_600_000) * 3_600_000;
+    buckets.set(bucket, [...(buckets.get(bucket) ?? []), row]);
+  }
+  const recentEvent = (row) => ({
+    decision_id: row.decision_id,
+    created_at_ms: row.created_at_ms,
+    trace_id: row.trace_id,
+    routing_mode: row.routing_mode,
+    resolved_preset: row.resolved_preset,
+    outcome: row.outcome,
+    primary_reason: row.primary_reason,
+    fallback_applied: row.fallback_applied,
+    actual_payload_chars: row.actual_payload_chars,
+  });
+  return {
+    window: windowValue,
+    decision_count: rows.length,
+    payload_chars_p95: payloads[Math.max(0, Math.ceil(payloads.length * 0.95) - 1)] ?? 0,
+    provider_fallback_rate: rows.length
+      ? rows.filter((row) => row.fallback_applied).length / rows.length
+      : 0,
+    preset_distribution: Object.fromEntries(INJECTION_SMOKE_PRESETS.map(
+      (name) => [name, rows.filter((row) => row.resolved_preset === name).length],
+    )),
+    cost_trend: [...buckets.entries()].sort(([left], [right]) => left - right).map(
+      ([bucket_ms, items]) => ({
+        bucket_ms,
+        decision_count: items.length,
+        payload_chars_p95: Math.max(...items.map((item) => item.actual_payload_chars)),
+        provider_fallback_rate: items.filter((item) => item.fallback_applied).length / items.length,
+      }),
+    ),
+    recent_events: rows.slice(0, 15).map(recentEvent),
+  };
+}
+
+function injectionDecisionPagePayload(params) {
+  const offset = Number(params.offset ?? 0);
+  const limit = Number(params.limit ?? 50);
+  const fallback = params.fallback_applied === undefined
+    ? undefined
+    : params.fallback_applied === "true";
+  const rows = INJECTION_SMOKE_DECISIONS
+    .filter((row) => params.from_ms === undefined || row.created_at_ms >= Number(params.from_ms))
+    .filter((row) => params.to_ms === undefined || row.created_at_ms <= Number(params.to_ms))
+    .filter((row) => !params.routing_mode || row.routing_mode === params.routing_mode)
+    .filter((row) => !params.resolved_preset || row.resolved_preset === params.resolved_preset)
+    .filter((row) => !params.provider_type || row.provider_type === params.provider_type)
+    .filter((row) => !params.primary_reason || row.primary_reason === params.primary_reason)
+    .filter((row) => fallback === undefined || row.fallback_applied === fallback)
+    .filter((row) => !params.outcome || row.outcome === params.outcome)
+    .sort((left, right) => right.created_at_ms - left.created_at_ms
+      || right.decision_id.localeCompare(left.decision_id));
+  return {
+    items: rows.slice(offset, offset + limit).map(injectionListItem),
+    total: rows.length,
+    offset,
+    limit,
+  };
+}
+
+function injectionDecisionDetailPayload(decisionId) {
+  const row = INJECTION_SMOKE_DECISIONS.find((item) => item.decision_id === decisionId);
+  return row
+    ? { ...injectionListItem(row), reason_codes: [...row.reason_codes] }
+    : {};
+}
+
+function recallTraceDetailPayload(traceId = "trace-smoke-coffee") {
+  return {
+    trace_id: traceId,
+    query: "注入策略决策追踪",
+    total_ms: 84.2,
+    stages: [
+      { name: "bm25", duration_ms: 12.5, candidate_count: 7, metadata: { index: "atom_bm25" } },
+      { name: "vector", duration_ms: 24.8, candidate_count: 8, metadata: { provider: "mock_embedding" } },
+    ],
+    results: [{
+      doc_id: "mem-injection-smoke",
+      rank: 1,
+      initial_score: 0.71,
+      final_score: 0.93,
+      score_contributions: [{ source: "bm25", score: 0.62, weight: 0.35 }],
+      graph_paths: [],
+      metadata: { type: "preference", provenance: "browser_smoke" },
+    }],
+    filtered: [],
+    created_at: 1_782_000_000,
+    metadata: { provider: "mock", chat_type: "private" },
+  };
+}
+
 async function launchBrowser() {
   const failures = [];
   for (const candidate of BROWSER_LAUNCH_CANDIDATES) {
@@ -71,6 +298,13 @@ async function launchBrowser() {
 
 function bridgePayload(endpoint, params = {}) {
   const pathOnly = String(endpoint || "").replace(/^page\/?/, "");
+  if (pathOnly === "injection-strategy/catalog") return injectionCatalogPayload();
+  if (pathOnly === "injection-strategy/summary") return injectionSummaryPayload(params);
+  if (pathOnly === "injection-strategy/decisions") return injectionDecisionPagePayload(params);
+  if (pathOnly === "injection-strategy/decisions/detail") {
+    return injectionDecisionDetailPayload(params.decision_id);
+  }
+  if (pathOnly === "recall/trace/detail") return recallTraceDetailPayload(params.trace_id);
   if (pathOnly === "stats") {
     return {
       total_memories: 12,
@@ -352,7 +586,7 @@ function bridgePayload(endpoint, params = {}) {
       cases: [],
     };
   }
-  if (pathOnly === "recall/trace" || pathOnly === "recall/traces" || pathOnly === "recall/trace/detail") {
+  if (pathOnly === "recall/trace" || pathOnly === "recall/traces") {
     return {
       trace_id: "trace-smoke-coffee",
       query: "用户喜欢喝什么咖啡",
@@ -1113,14 +1347,21 @@ async function installBundledMockBridge(page) {
   await page.addInitScript({ content });
 }
 
-async function openBundledConfigPage(browser, viewport, errors) {
+async function openBundledConfigPage(
+  browser,
+  viewport,
+  errors,
+  initialHash = "#/config",
+  expectedText = null,
+) {
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
   collectPageErrors(page, errors);
   await installBundledMockBridge(page);
-  await page.goto(`${pathToFileURL(htmlPath).href}#/config`, { waitUntil: "load" });
+  await page.goto(`${pathToFileURL(htmlPath).href}${initialHash}`, { waitUntil: "load" });
   await page.bringToFront();
   await page.waitForSelector("#root > *", { timeout: 10_000 });
+  if (expectedText) await waitForRootText(page, expectedText, initialHash);
   return { context, page };
 }
 
@@ -1134,7 +1375,7 @@ async function waitForConfigReady(page, label) {
     ({ sections, fields }) =>
       document.querySelectorAll("[data-config-section]").length === sections
       && document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length === fields,
-    { sections: 41, fields: 207 },
+    { sections: 41, fields: 216 },
     { timeout: 10_000 },
   );
   const counts = await page.evaluate(() => ({
@@ -1148,7 +1389,7 @@ async function waitForConfigReady(page, label) {
     "Loading configuration",
     "Загрузка конфигурации",
   ].filter((text) => counts.text.includes(text));
-  if (counts.sections !== 41 || counts.fields !== 207 || lingeringLoading.length > 0) {
+  if (counts.sections !== 41 || counts.fields !== 216 || lingeringLoading.length > 0) {
     throw new Error(
       `${label} did not render the complete settled schema: ${JSON.stringify({
         sections: counts.sections,
@@ -1173,6 +1414,270 @@ async function getBrowserBridgeCalls(page) {
   return await page.evaluate(() =>
     JSON.parse(JSON.stringify(window.__memoraBridgeCalls ?? []))
   );
+}
+
+async function waitForInjectionSettled(page, label) {
+  await page.waitForFunction(
+    (loadingTexts) => {
+      const text = document.querySelector("#root")?.innerText ?? "";
+      return loadingTexts.every((item) => !text.includes(item));
+    },
+    ROUTE_LOADING_TEXT,
+    { timeout: 10_000 },
+  );
+  const rootText = await page.locator("#root").innerText();
+  const lingering = ROUTE_LOADING_TEXT.filter((item) => rootText.includes(item));
+  if (lingering.length > 0) {
+    throw new Error(`${label} retained a localized loading overlay`);
+  }
+}
+
+async function runInjectionStrategySmoke(page, screenshotsDir) {
+  const screenshots = [];
+  await navigateSidebar(
+    page,
+    "注入策略",
+    "#/injection",
+    ["注入策略", "概览", "策略配置", "决策记录"],
+  );
+  await waitForInjectionSettled(page, "#/injection:overview");
+  await assertNoHorizontalOverflow(page, "#/injection:overview");
+  screenshots.push(await captureBaselineScreenshot(
+    page,
+    path.join(screenshotsDir, "injection-overview.png"),
+    "injection-overview",
+  ));
+
+  await page.getByRole("tab", { name: "策略配置", exact: true }).click();
+  await page.getByRole("tab", { name: "混合切换", exact: true }).click();
+  await page.getByRole("tab", { name: "决策记录", exact: true }).click();
+  const unsaved = page.getByRole("dialog", { name: "要离开配置页吗？", exact: true });
+  await unsaved.waitFor({ state: "visible", timeout: 5_000 });
+  await unsaved.getByRole("button", { name: "继续编辑", exact: true }).click();
+
+  await page.getByRole("button", { name: "系统概览", exact: true }).click();
+  await unsaved.waitFor({ state: "visible", timeout: 5_000 });
+  await unsaved.getByRole("button", { name: "继续编辑", exact: true }).click();
+  if (await page.evaluate(() => window.location.hash) !== "#/injection") {
+    throw new Error("Cross-route dirty confirmation did not keep the injection workbench open");
+  }
+
+  await page.getByRole("tab", { name: "决策记录", exact: true }).click();
+  await unsaved.waitFor({ state: "visible", timeout: 5_000 });
+  await unsaved.getByRole("button", { name: "放弃更改并离开", exact: true }).click();
+
+  await page.getByRole("textbox", { name: "Provider 类型", exact: true }).fill("openai");
+  await page.waitForFunction(
+    () => (window.__memoraBridgeCalls ?? []).some((call) =>
+      call.endpoint === "page/injection-strategy/decisions"
+      && call.params?.provider_type === "openai"
+      && call.params?.offset === "0"),
+    undefined,
+    { timeout: 5_000 },
+  );
+  const pagination = page.getByRole("navigation", { name: "决策记录分页", exact: true });
+  await pagination.waitFor({ state: "visible", timeout: 5_000 });
+  await pagination.getByRole("button", { name: "下一页", exact: true }).click();
+  await page.waitForFunction(
+    () => (window.__memoraBridgeCalls ?? []).some((call) =>
+      call.endpoint === "page/injection-strategy/decisions"
+      && call.params?.provider_type === "openai"
+      && Number(call.params?.offset) > 0),
+    undefined,
+    { timeout: 5_000 },
+  );
+
+  const detailTrigger = page.getByRole("button", { name: "查看决策详情", exact: true }).nth(2);
+  await detailTrigger.click();
+  const detailSheet = page.getByRole("dialog", { name: "注入决策详情", exact: true });
+  await detailSheet.waitFor({ state: "visible", timeout: 5_000 });
+  await detailSheet.getByRole("heading", { name: "阶段耗时", exact: true })
+    .waitFor({ state: "visible", timeout: 5_000 });
+  screenshots.push(await captureBaselineScreenshot(
+    page,
+    path.join(screenshotsDir, "injection-decisions.png"),
+    "injection-decisions",
+  ));
+  await assertNoHorizontalOverflow(page, "#/injection:decisions");
+
+  await detailSheet.getByRole("button", { name: "打开召回追踪", exact: true }).click();
+  await page.waitForFunction(
+    () => window.location.hash === "#/intelligence",
+    undefined,
+    { timeout: 5_000 },
+  );
+  await page.waitForFunction(
+    () => {
+      const traceCalls = (window.__memoraBridgeCalls ?? []).filter((call) =>
+        call.endpoint === "page/recall/trace/detail");
+      return document.getElementById("intelligence-tab-recallTrace")
+        ?.getAttribute("aria-selected") === "true"
+        && traceCalls.length === 1;
+    },
+    undefined,
+    { timeout: 5_000 },
+  );
+  await waitForRootText(
+    page,
+    ["召回链路", "trace-mock-coffee"],
+    "#/intelligence:injection-trace",
+  );
+
+  await navigateSidebar(
+    page,
+    "注入策略",
+    "#/injection",
+    ["注入策略", "概览", "策略配置", "决策记录"],
+  );
+  await page.getByRole("tab", { name: "策略配置", exact: true }).click();
+  await page.getByRole("tab", { name: "混合切换", exact: true }).click();
+
+  const initialCalls = await getBrowserBridgeCalls(page);
+  const initialState = [...initialCalls].reverse().find(
+    (call) => call.method === "GET"
+      && call.endpoint === "page/config/state"
+      && call.response?.data?.revision,
+  );
+  const initialRevision = initialState?.response?.data?.revision;
+  if (!initialRevision) {
+    throw new Error("Injection strategy conflict smoke did not capture its initial revision");
+  }
+  const seeded = await page.evaluate(
+    async ({ revision }) => window.__memoraRawBridge.apiPost("page/config/apply", {
+      base_revision: revision,
+      changes: { "recall_engine.injection_routing_mode": "auto" },
+    }),
+    { revision: initialRevision },
+  );
+  if (seeded?.status !== "ok") {
+    throw new Error("Injection strategy conflict smoke could not seed a remote revision");
+  }
+  await new Promise((resolve) => setTimeout(resolve, 850));
+
+  await page.getByRole("button", { name: "保存策略", exact: true }).click();
+  const conflictDialog = page.getByRole("dialog", {
+    name: "AstrBot 中的配置已更改",
+    exact: true,
+  });
+  await conflictDialog.waitFor({ state: "visible", timeout: 5_000 });
+  const conflictPaths = await conflictDialog.locator("code").evaluateAll(
+    (nodes) => nodes.map((node) => node.textContent?.trim()),
+  );
+  if (
+    conflictPaths.length !== 3
+    || conflictPaths.some((value) => value !== "recall_engine.injection_routing_mode")
+  ) {
+    throw new Error("ConfigConflictDialog did not report the injection revision conflict");
+  }
+  screenshots.push(await captureBaselineScreenshot(
+    page,
+    path.join(screenshotsDir, "injection-config-conflict.png"),
+    "injection-config-conflict",
+  ));
+
+  await conflictDialog
+    .getByRole("button", { name: "在最新版本上重新应用我的更改", exact: true })
+    .click();
+  await conflictDialog.waitFor({ state: "detached", timeout: 5_000 });
+  const rebasedHybridTab = page.getByRole("tab", { name: "混合切换", exact: true });
+  if (await rebasedHybridTab.getAttribute("aria-selected") !== "true") {
+    throw new Error("Injection strategy conflict rebase lost the local hybrid draft");
+  }
+  if (await page.getByRole("button", { name: "保存策略", exact: true }).isDisabled()) {
+    throw new Error("Injection strategy conflict rebase did not preserve a saveable draft");
+  }
+  const callsAfterRebase = await getBrowserBridgeCalls(page);
+  if (callsAfterRebase.some((call) =>
+    call.method === "POST"
+    && call.endpoint === "page/config/apply"
+    && call.response?.status === "ok")) {
+    throw new Error("Injection strategy conflict rebase posted automatically");
+  }
+
+  await page.getByRole("button", { name: "保存策略", exact: true }).click();
+  await page.waitForFunction(
+    () => (window.__memoraBridgeCalls ?? []).some((call) =>
+      call.method === "POST"
+      && call.endpoint === "page/config/apply"
+      && call.response?.status === "ok"),
+    undefined,
+    { timeout: 5_000 },
+  );
+  const finalCalls = await getBrowserBridgeCalls(page);
+  const successfulApply = [...finalCalls].reverse().find((call) =>
+    call.method === "POST"
+    && call.endpoint === "page/config/apply"
+    && call.response?.status === "ok");
+  const bodyKeys = Object.keys(successfulApply?.body ?? {}).sort();
+  const changedPaths = Object.keys(successfulApply?.body?.changes ?? {});
+  if (
+    bodyKeys.join(",") !== "base_revision,changes"
+    || changedPaths.length === 0
+    || changedPaths.some((value) => !value.startsWith("recall_engine.injection_"))
+    || changedPaths.some((value) => value.includes("injection_method"))
+  ) {
+    throw new Error("Injection strategy apply payload crossed its configuration boundary");
+  }
+  return screenshots;
+}
+
+async function runMobileInjectionStrategySmoke(page, screenshotsDir) {
+  await page.getByRole("button", { name: "打开菜单" }).click();
+  await page.getByRole("button", { name: "注入策略", exact: true }).click();
+  await page.waitForFunction(
+    () => window.location.hash === "#/injection",
+    undefined,
+    { timeout: 5_000 },
+  );
+  await waitForRootText(page, ["注入策略", "概览", "策略配置", "决策记录"], "#/injection:mobile");
+  await page.getByRole("tab", { name: "决策记录", exact: true }).click();
+  const detailTrigger = page.getByRole("button", { name: "查看决策详情", exact: true }).first();
+  await detailTrigger.waitFor({ state: "visible", timeout: 5_000 });
+  await detailTrigger.click();
+  const sheet = page.getByRole("dialog", { name: "注入决策详情", exact: true });
+  await sheet.waitFor({ state: "visible", timeout: 5_000 });
+  await sheet.getByRole("heading", { name: "阶段耗时", exact: true })
+    .waitFor({ state: "visible", timeout: 5_000 });
+  const box = await sheet.boundingBox();
+  const viewportWidth = await page.evaluate(
+    () => window.visualViewport?.width ?? window.innerWidth,
+  );
+  const pixelTolerance = 0.5;
+  if (
+    !box
+    || box.x < -pixelTolerance
+    || box.x + box.width > viewportWidth + pixelTolerance
+    || box.width < 360
+  ) {
+    throw new Error(
+      `Mobile injection detail is not full width: ${JSON.stringify({ box, viewportWidth })}`,
+    );
+  }
+  const before = await sheet.evaluate((element) => ({
+    scrollTop: element.scrollTop,
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+  }));
+  await sheet.getByRole("heading", { name: "阶段耗时", exact: true }).scrollIntoViewIfNeeded();
+  await sheet.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
+  const after = await sheet.evaluate((element) => element.scrollTop);
+  if (before.scrollHeight <= before.clientHeight || after <= before.scrollTop) {
+    throw new Error("Mobile injection detail Sheet did not scroll to its final timing section");
+  }
+  await assertNoHorizontalOverflow(page, "#/injection:mobile-detail");
+  const result = await captureBaselineScreenshot(
+    page,
+    path.join(screenshotsDir, "mobile-injection-detail.png"),
+    "mobile-injection-detail",
+  );
+  await sheet.getByRole("button", { name: "关闭", exact: true }).click();
+  await sheet.waitFor({ state: "detached", timeout: 5_000 });
+  await page.waitForFunction(
+    (element) => document.activeElement === element,
+    await detailTrigger.elementHandle(),
+    { timeout: 5_000 },
+  );
+  return result;
 }
 
 async function runDesktopConfigSmoke(browser, errors, screenshotsDir) {
@@ -1418,14 +1923,76 @@ async function installBridge(page) {
   await page.addInitScript(() => {
     let nextSubscriptionId = 1;
     const timers = new Map();
+    const cloneJson = (value) => (
+      value === undefined ? undefined : JSON.parse(JSON.stringify(value))
+    );
+    const sanitizeBridgeCallValue = (value) => {
+      const scrub = (sanitized) => {
+        if (Array.isArray(sanitized)) {
+          sanitized.forEach(scrub);
+          return sanitized;
+        }
+        if (!sanitized || typeof sanitized !== "object") return sanitized;
+        delete sanitized.decision_id;
+        delete sanitized.trace_id;
+        delete sanitized.query;
+        delete sanitized.prompt;
+        delete sanitized.memory_content;
+        delete sanitized.memory_ids;
+        delete sanitized.user_id;
+        delete sanitized.group_id;
+        delete sanitized.persona_id;
+        delete sanitized.session_id;
+        delete sanitized.headers;
+        delete sanitized.endpoint;
+        delete sanitized.stack_trace;
+        Object.values(sanitized).forEach(scrub);
+        return sanitized;
+      };
+      return scrub(cloneJson(value));
+    };
+    const sanitizeBridgeCallParams = (params) => (
+      sanitizeBridgeCallValue(params ?? {})
+    );
+    window.__memoraBridgeCalls = [];
     window.__memoraPostCalls = [];
     window.AstrBotPluginPage = {
       async apiGet(endpoint, params) {
-        return window.__memoraBridgeOk(await window.__memoraBridgePayload(endpoint, params));
+        const call = {
+          method: "GET",
+          endpoint: String(endpoint),
+          params: sanitizeBridgeCallParams(params),
+        };
+        window.__memoraBridgeCalls.push(call);
+        try {
+          const response = window.__memoraBridgeOk(
+            await window.__memoraBridgePayload(endpoint, params),
+          );
+          call.response = sanitizeBridgeCallValue(response);
+          return response;
+        } catch (error) {
+          call.error = error instanceof Error ? error.message : String(error);
+          throw error;
+        }
       },
-      async apiPost(endpoint) {
+      async apiPost(endpoint, body) {
+        const call = {
+          method: "POST",
+          endpoint: String(endpoint),
+          body: cloneJson(body ?? {}),
+        };
+        window.__memoraBridgeCalls.push(call);
         window.__memoraPostCalls.push(String(endpoint || "").replace(/^page\/?/, ""));
-        return window.__memoraBridgeOk(await window.__memoraBridgePayload(endpoint));
+        try {
+          const response = window.__memoraBridgeOk(
+            await window.__memoraBridgePayload(endpoint),
+          );
+          call.response = sanitizeBridgeCallValue(response);
+          return response;
+        } catch (error) {
+          call.error = error instanceof Error ? error.message : String(error);
+          throw error;
+        }
       },
       subscribeSSE(_endpoint, handlers) {
         const id = `browser-smoke-${nextSubscriptionId++}`;
@@ -1491,6 +2058,20 @@ try {
   baselineResults.push(
     await runMobileConfigSmoke(browser, errors, screenshotsDir),
   );
+  const desktopInjection = await openBundledConfigPage(
+    browser,
+    { width: 1366, height: 900 },
+    errors,
+    "#/injection",
+    ["注入策略", "概览", "策略配置", "决策记录"],
+  );
+  try {
+    baselineResults.push(
+      ...await runInjectionStrategySmoke(desktopInjection.page, screenshotsDir),
+    );
+  } finally {
+    await desktopInjection.context.close();
+  }
   baselineResults.push(
     ...await runGlobalSearchScrollAndTargetSmoke(page, screenshotsDir),
   );
@@ -1585,6 +2166,21 @@ try {
   }
 
   await mobilePage.close();
+
+  const mobileInjection = await openBundledConfigPage(
+    browser,
+    { width: 390, height: 844 },
+    errors,
+    "#/injection",
+    ["注入策略", "概览", "策略配置", "决策记录"],
+  );
+  try {
+    baselineResults.push(
+      await runMobileInjectionStrategySmoke(mobileInjection.page, screenshotsDir),
+    );
+  } finally {
+    await mobileInjection.context.close();
+  }
 
   const widePage = await browser.newPage({ viewport: { width: 2048, height: 1152 } });
   collectPageErrors(widePage, errors);
@@ -1736,7 +2332,22 @@ try {
     await installBridge(i18nPage);
     await i18nPage.goto(pathToFileURL(htmlPath).href, { waitUntil: "load" });
     await i18nPage.bringToFront();
-    await i18nPage.waitForSelector("#root > *", { timeout: 10_000 });
+    try {
+      await i18nPage.waitForSelector("#root > *", { timeout: 10_000 });
+    } catch (error) {
+      const diagnostics = await i18nPage.evaluate(() => ({
+        url: window.location.href,
+        readyState: document.readyState,
+        rootChildren: document.querySelector("#root")?.childElementCount ?? -1,
+        rootText: document.querySelector("#root")?.textContent?.slice(0, 240) ?? null,
+        scripts: [...document.scripts].map((script) => script.src || "inline"),
+        bodyText: document.body?.innerText?.slice(0, 240) ?? null,
+      }));
+      throw new Error(
+        `Dashboard i18n page did not render: ${JSON.stringify({ diagnostics, errors })}`,
+        { cause: error },
+      );
+    }
 
     const i18nRoutes = [
       {
