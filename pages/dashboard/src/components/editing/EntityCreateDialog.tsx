@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import type { KeyboardEvent } from "react";
+import { X } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
 import {
@@ -75,7 +76,7 @@ export function EntityCreateDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
           <Button type="button" variant="ghost" size="icon-sm" className="absolute right-3 top-3" aria-label={labels.close} disabled={isSubmitting} onClick={requestClose}>
-            <span aria-hidden="true">×</span>
+            <X aria-hidden="true" />
           </Button>
         </DialogHeader>
         <form data-testid="entity-create-content" className="min-h-0 flex-1 overflow-y-auto px-5 py-4" onKeyDown={handleKeyDown}>
