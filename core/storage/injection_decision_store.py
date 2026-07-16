@@ -265,68 +265,91 @@ class InjectionDecisionStore(BaseStore):
         ordered = sorted(values)
         return ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)]
 
+    @staticmethod
+    def _empty_summary(window: str) -> dict[str, Any]:
+        return {
+            "window": window,
+            "decision_count": 0,
+            "payload_chars_p95": 0,
+            "provider_fallback_rate": 0.0,
+            "preset_distribution": {},
+            "cost_trend": [],
+            "recent_events": [],
+        }
+
+    @classmethod
+    def _summarize_buckets(
+        cls,
+        bucket_rows: list[dict[str, Any]],
+    ) -> tuple[list[int], int, list[dict[str, Any]]]:
+        payload_values: list[int] = []
+        fallback_count = 0
+        cost_trend: list[dict[str, Any]] = []
+        for row in bucket_rows:
+            bucket_values = [
+                int(value) for value in str(row["payload_chars_csv"]).split(",")
+            ]
+            payload_values.extend(bucket_values)
+            bucket_count = int(row["decision_count"])
+            bucket_fallback_count = int(row["fallback_count"] or 0)
+            fallback_count += bucket_fallback_count
+            cost_trend.append({
+                "bucket_ms": int(row["bucket_ms"]),
+                "decision_count": bucket_count,
+                "payload_chars_p95": cls._p95(bucket_values),
+                "provider_fallback_rate": bucket_fallback_count / bucket_count,
+            })
+        return payload_values, fallback_count, cost_trend
+
     async def summary(self, window: str = "24h", now_ms: int | None = None) -> dict[str, Any]:
         """Build the deterministic aggregate and hourly cost trend for a window."""
         if window not in _WINDOW_MS:
             raise ValueError("window must be one of 1h, 24h, 7d, 30d")
         if now_ms is None:
             import time
-
             now_ms = int(time.time() * 1000)
-        rows = await self._fetch_all(
+        cutoff_ms = now_ms - _WINDOW_MS[window]
+        bucket_rows = await self._fetch_all(
+            "SELECT (created_at_ms / ?) * ? AS bucket_ms, "
+            "COUNT(*) AS decision_count, SUM(fallback_applied) AS fallback_count, "
+            "GROUP_CONCAT(actual_payload_chars) AS payload_chars_csv "
+            "FROM injection_decisions WHERE created_at_ms >= ? "
+            "GROUP BY bucket_ms ORDER BY bucket_ms",
+            (_HOUR_MS, _HOUR_MS, cutoff_ms),
+        )
+        if not bucket_rows:
+            return self._empty_summary(window)
+        payload_values, fallback_count, cost_trend = self._summarize_buckets(
+            bucket_rows
+        )
+
+        preset_rows = await self._fetch_all(
+            "SELECT resolved_preset, COUNT(*) AS decision_count "
+            "FROM injection_decisions WHERE created_at_ms >= ? "
+            "GROUP BY resolved_preset ORDER BY resolved_preset",
+            (cutoff_ms,),
+        )
+        recent_events = await self._fetch_all(
             "SELECT decision_id, created_at_ms, trace_id, routing_mode, resolved_preset, "
             "outcome, primary_reason, fallback_applied, actual_payload_chars "
             "FROM injection_decisions WHERE created_at_ms >= ? "
-            "ORDER BY created_at_ms DESC, decision_id DESC",
-            (now_ms - _WINDOW_MS[window],),
+            "ORDER BY created_at_ms DESC, decision_id DESC LIMIT 15",
+            (cutoff_ms,),
         )
-        if not rows:
-            return {
-                "window": window,
-                "decision_count": 0,
-                "payload_chars_p95": 0,
-                "provider_fallback_rate": 0.0,
-                "preset_distribution": {},
-                "cost_trend": [],
-                "recent_events": [],
-            }
-
-        for row in rows:
-            self._normalize_row(row)
-        count = len(rows)
-        preset_distribution: dict[str, int] = {}
-        buckets: dict[int, list[dict[str, Any]]] = {}
-        for row in rows:
-            preset = row["resolved_preset"]
-            preset_distribution[preset] = preset_distribution.get(preset, 0) + 1
-            bucket = row["created_at_ms"] // _HOUR_MS * _HOUR_MS
-            buckets.setdefault(bucket, []).append(row)
-
-        cost_trend = []
-        for bucket_ms in sorted(buckets):
-            items = buckets[bucket_ms]
-            cost_trend.append({
-                "bucket_ms": bucket_ms,
-                "decision_count": len(items),
-                "payload_chars_p95": self._p95(
-                    [item["actual_payload_chars"] for item in items]
-                ),
-                "provider_fallback_rate": sum(
-                    item["fallback_applied"] for item in items
-                ) / len(items),
-            })
+        count = len(payload_values)
         return {
             "window": window,
             "decision_count": count,
-            "payload_chars_p95": self._p95(
-                [row["actual_payload_chars"] for row in rows]
-            ),
-            "provider_fallback_rate": sum(
-                row["fallback_applied"] for row in rows
-            ) / count,
-            "preset_distribution": dict(sorted(preset_distribution.items())),
+            "payload_chars_p95": self._p95(payload_values),
+            "provider_fallback_rate": fallback_count / count,
+            "preset_distribution": {
+                str(row["resolved_preset"]): int(row["decision_count"])
+                for row in preset_rows
+            },
             "cost_trend": cost_trend,
-            "recent_events": rows[:15],
+            "recent_events": [
+                self._normalize_row(row) for row in recent_events
+            ],
         }
 
     async def cleanup(
