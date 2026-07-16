@@ -622,3 +622,48 @@ def test_fake_tool_cleaner_preserves_non_exact_pairs(
     req = _make_request(contexts=list(contexts))
     assert InjectionCleaner.remove_fake_tool_call_from_context(req, "s1") == 0
     assert req.contexts == contexts
+
+def test_fake_tool_cleaner_removes_legacy_12_hex_rag_pair() -> None:
+    legacy_id = f"{FAKE_TOOL_CALL_ID_PREFIX}abcdef123456"
+    contexts = [
+        {
+            "role": "assistant",
+            "tool_calls": [{
+                "id": legacy_id,
+                "type": "function",
+                "function": {"name": FAKE_TOOL_CALL_NAME, "arguments": "{}"},
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": legacy_id,
+            "name": FAKE_TOOL_CALL_NAME,
+            "content": _injected_text("legacy memory"),
+        },
+    ]
+    req = _make_request(contexts=contexts)
+    assert InjectionCleaner.remove_fake_tool_call_from_context(req, "s1") == 2
+    assert req.contexts == []
+
+
+def test_fake_tool_cleaner_preserves_legacy_id_without_rag_envelope() -> None:
+    legacy_id = f"{FAKE_TOOL_CALL_ID_PREFIX}abcdef123456"
+    contexts = [
+        {
+            "role": "assistant",
+            "tool_calls": [{
+                "id": legacy_id,
+                "type": "function",
+                "function": {"name": FAKE_TOOL_CALL_NAME, "arguments": "{}"},
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": legacy_id,
+            "name": FAKE_TOOL_CALL_NAME,
+            "content": "not an injected result",
+        },
+    ]
+    req = _make_request(contexts=list(contexts))
+    assert InjectionCleaner.remove_fake_tool_call_from_context(req, "s1") == 0
+    assert req.contexts == contexts

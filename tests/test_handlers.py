@@ -6,6 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import json
 
 
 # ============================================================================
@@ -1353,3 +1354,28 @@ async def test_provider_getter_cancellation_propagates(handler_case) -> None:
     case.context.get_using_provider.side_effect = asyncio.CancelledError()
     with pytest.raises(asyncio.CancelledError):
         await case.handler.handle_memory_recall(case.event, case.request)
+
+@pytest.mark.asyncio
+async def test_fake_tool_execution_uses_transient_query_without_recording_it(
+    handler_case,
+) -> None:
+    private_query = "transient-private-query-9482"
+    case = handler_case(
+        config=strategy_config(**{
+            "recall_engine.injection_delivery_override": "fake_tool_call",
+        }),
+        memories=high_confidence_memories(),
+        provider_tools_supported=True,
+    )
+    case.request.provider = object()
+    case.handler._extractor.get_event_message_str.return_value = private_query
+    case.adapter.resolve.return_value = (DeliveryMode.FAKE_TOOL_CALL, None)
+
+    await case.handler.handle_memory_recall(case.event, case.request)
+
+    assistant = case.request.contexts[-2]
+    arguments = json.loads(assistant["tool_calls"][0]["function"]["arguments"])
+    assert arguments["query"] == private_query
+    record = case.recorder.record.call_args.args[0]
+    assert not hasattr(record, "query")
+    assert private_query not in repr(record)

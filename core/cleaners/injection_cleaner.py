@@ -23,7 +23,10 @@ _VERIFIED_INJECTION_FOOTER = "</memora-untrusted-memory>"
 _DEEPSEEK_REPLAY_HEADER = "[DeepSeekV4-FakeToolCall-Replay]"
 _DEEPSEEK_REPLAY_FOOTER = "[/DeepSeekV4-FakeToolCall-Replay]"
 _FAKE_TOOL_CALL_ID_PATTERN = re.compile(
-    rf"{re.escape(FAKE_TOOL_CALL_ID_PREFIX)}[0-9a-f]{{32}}\Z"
+    rf"{re.escape(FAKE_TOOL_CALL_ID_PREFIX)}(?:[0-9a-f]{{12}}|[0-9a-f]{{32}})\Z"
+)
+_LEGACY_FAKE_TOOL_CALL_ID_PATTERN = re.compile(
+    rf"{re.escape(FAKE_TOOL_CALL_ID_PREFIX)}[0-9a-f]{{12}}\Z"
 )
 _INJECTION_CLEANUP_PATTERN = re.compile(
     "(?:"
@@ -349,10 +352,16 @@ class InjectionCleaner:
         content = tool.get("content")
         if not isinstance(content, str):
             return False
-        envelope_start = content.find(_VERIFIED_INJECTION_HEADER)
+        if _LEGACY_FAKE_TOOL_CALL_ID_PATTERN.fullmatch(call_id):
+            envelope_header = MEMORY_INJECTION_HEADER
+            envelope_footer = MEMORY_INJECTION_FOOTER
+        else:
+            envelope_header = _VERIFIED_INJECTION_HEADER
+            envelope_footer = _VERIFIED_INJECTION_FOOTER
+        envelope_start = content.find(envelope_header)
         envelope_end = content.find(
-            _VERIFIED_INJECTION_FOOTER,
-            envelope_start + len(_VERIFIED_INJECTION_HEADER),
+            envelope_footer,
+            envelope_start + len(envelope_header),
         )
         return (
             tool.get("tool_call_id") == call_id
