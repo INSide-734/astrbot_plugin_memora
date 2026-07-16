@@ -282,6 +282,15 @@ class _FakeRecallResult:
     initial_score: float | None = None
 
 
+class _FakeConfigManager:
+    def __init__(self, values: dict[str, object] | None = None) -> None:
+        self._values = values or {}
+        self.runtime_injection_fallback = True
+
+    def get(self, key: str, default=None):
+        return self._values.get(key, default)
+
+
 class _FakeEngine:
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -376,6 +385,25 @@ def page_api_with_fake_engine():
     engine = _FakeEngine()
     plugin = MagicMock()
     plugin._ensure_plugin_ready = AsyncMock(return_value=(True, None))
+    plugin.config_manager = _FakeConfigManager(
+        {
+            "recall_engine.injection_routing_mode": "hybrid",
+            "recall_engine.injection_manual_preset": "quality",
+            "recall_engine.injection_auto_fallback_preset": "low_cost",
+            "recall_engine.injection_hybrid_base_preset": "balanced",
+            "recall_engine.injection_hybrid_min_preset": "low_cost",
+            "recall_engine.injection_hybrid_max_preset": "quality",
+            "recall_engine.injection_delivery_override": "auto",
+            "recall_engine.injection_preset_overrides_enabled": True,
+            "recall_engine.injection_budget_chars": 777,
+            "recall_engine.injection_memory_max_chars": 111,
+            "recall_engine.injection_metadata_max_chars": 55,
+            "recall_engine.injection_include_key_facts": True,
+            "recall_engine.injection_include_topics": False,
+            "recall_engine.injection_include_participants": False,
+            "recall_engine.injection_compact_header": True,
+        }
+    )
     plugin.initializer = SimpleNamespace(
         memory_engine=engine,
         conversation_manager=None,
@@ -404,6 +432,50 @@ async def test_recall_trace_endpoint_returns_trace(page_api_with_fake_engine):
     assert data["query"] == "用户喜欢喝什么咖啡"
     assert isinstance(data["stages"], list)
     assert isinstance(data["results"], list)
+
+
+@pytest.mark.asyncio
+async def test_trace_contains_non_executing_injection_decision(
+    page_api_with_fake_engine,
+    monkeypatch,
+):
+    from core.injection.executor import InjectionExecutor
+    from core.injection.recorder import InjectionDecisionRecorder
+
+    def unexpected_call(*_args, **_kwargs):
+        raise AssertionError("preview must not execute or record an injection")
+
+    monkeypatch.setattr(InjectionExecutor, "execute", unexpected_call)
+    monkeypatch.setattr(InjectionDecisionRecorder, "record", unexpected_call)
+    engine = page_api_with_fake_engine.plugin.initializer.memory_engine
+
+    response = await page_api_with_fake_engine.test_recall_with_trace_payload(
+        {"query": "我之前喜欢什么咖啡", "k": 5}
+    )
+
+    assert response["status"] == "ok"
+    stages = [
+        stage
+        for stage in response["data"]["stages"]
+        if stage["name"] == "injection_decision"
+    ]
+    assert len(stages) == 1
+    stage = stages[0]
+    metadata = stage["metadata"]
+    assert stage["candidate_count"] == 1
+    assert stage["duration_ms"] >= 0
+    assert metadata == {
+        "routing_mode": "hybrid",
+        "configured_preset": "balanced",
+        "recommended_preset": "balanced",
+        "resolved_preset": "balanced",
+        "effective_budget_chars": 777,
+        "reason_codes": ["AUTO_FALLBACK", "INVALID_CONFIG_FALLBACK"],
+    }
+    assert not ({"memory_content", "query", "doc_id", "trace_id"} & metadata.keys())
+    assert len(engine.calls) == 1
+    assert response["data"]["results"][0]["doc_id"] == "101"
+    assert response["data"]["results"][0]["final_score"] == 0.82
 
 
 @pytest.mark.asyncio
