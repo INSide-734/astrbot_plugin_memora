@@ -26,6 +26,7 @@ KNOWN_ENDPOINT_ROOTS = {
     "expression",
     "graph",
     "groups",
+    "injection-strategy",
     "jargon",
     "knowledge",
     "learning",

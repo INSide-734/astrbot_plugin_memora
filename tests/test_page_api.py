@@ -1147,6 +1147,36 @@ class TestRegisterRoutes:
         assert apply_metadata["write_guard"] is True
         assert all(not path.startswith("/Memora/page") for path in metadata)
 
+    def test_injection_strategy_routes_register_primary_aliases_and_metadata(self) -> None:
+        plugin = MagicMock()
+        api = PluginPageApi(plugin)
+
+        api.register_routes()
+
+        calls = plugin.context.register_web_api.call_args_list
+        registered = {
+            (call.args[0], tuple(call.args[2])): call.args[1]
+            for call in calls
+        }
+        suffixes = (
+            "/injection-strategy/catalog",
+            "/injection-strategy/summary",
+            "/injection-strategy/decisions",
+            "/injection-strategy/decisions/detail",
+        )
+        for suffix in suffixes:
+            assert (f"{PAGE_API_PREFIX}{suffix}", ("GET",)) in registered
+            assert (f"/Memora/page{suffix}", ("GET",)) in registered
+
+        metadata = {item["path"]: item for item in api.get_route_metadata()}
+        for suffix in suffixes:
+            route = metadata[f"{PAGE_API_PREFIX}{suffix}"]
+            assert route["risk"] == "read"
+            assert route["auth"] == "host"
+            assert route["requires_ready"] is True
+            assert route["write_guard"] is False
+        assert all(not path.startswith("/Memora/page") for path in metadata)
+
     def test_route_metadata_declares_risk_auth_and_guards_for_post_routes(self) -> None:
         """Plugin-side route metadata is available for audit and frontend contracts."""
         plugin = MagicMock()
