@@ -140,6 +140,7 @@ class PluginInitializer:
     async def _run_full_init(self):
         """执行完整初始化流程"""
         logger.info("开始完整初始化流程...")
+        owns_injection_components = False
         try:
             faiss_cls = self._faiss_checker.load_vec_db_class()
             components = await self._component_factory.build_all(
@@ -160,6 +161,7 @@ class PluginInitializer:
             self.injection_decision_recorder = components[
                 "injection_decision_recorder"
             ]
+            owns_injection_components = True
             self.prompt_protection = self._create_prompt_protection_service()
             self.memory_processor.prompt_protection_service = self.prompt_protection
             await self._initialize_cognitive_components()
@@ -182,7 +184,19 @@ class PluginInitializer:
 
             self._initialization_complete = True
             logger.info("记忆插件初始化成功。")
-        except Exception as e:
+        except BaseException as e:
+            if owns_injection_components:
+                try:
+                    await self.close_injection_components()
+                except BaseException:
+                    logger.error(
+                        "初始化失败后关闭注入决策组件失败",
+                        exc_info=True,
+                    )
+            if isinstance(e, asyncio.CancelledError):
+                raise
+            if not isinstance(e, Exception):
+                raise
             logger.error(f"完整初始化流程失败: {e}", exc_info=True)
             self._initialization_failed = True
             self._initialization_error = str(e)
@@ -346,20 +360,30 @@ class PluginInitializer:
 
     async def close_injection_components(self) -> None:
         async with self._injection_close_lock:
+            first_error: BaseException | None = None
             recorder = self.injection_decision_recorder
-            store = self.injection_decision_store
-            if recorder is None and store is None:
-                return
-            try:
+            if recorder is not None:
                 try:
-                    if recorder is not None:
-                        await recorder.close(timeout=5.0)
-                finally:
-                    if store is not None:
-                        await store.close()
-            finally:
-                self.injection_decision_recorder = None
-                self.injection_decision_store = None
+                    await recorder.close(timeout=5.0)
+                except BaseException as exc:
+                    first_error = exc
+                else:
+                    if self.injection_decision_recorder is recorder:
+                        self.injection_decision_recorder = None
+
+            store = self.injection_decision_store
+            if store is not None:
+                try:
+                    await store.close()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
+                else:
+                    if self.injection_decision_store is store:
+                        self.injection_decision_store = None
+
+            if first_error is not None:
+                raise first_error
 
     async def close_extension_components(self) -> None:
         for label, obj in (

@@ -149,7 +149,17 @@ class ComponentFactory:
             decay_scheduler = scheduler
             logger.info("DecayScheduler 已启动")
 
-        injection_components = await self._build_injection_components(db_path)
+        try:
+            injection_components = await self._build_injection_components(db_path)
+        except BaseException:
+            await self._rollback_build_components(
+                decay_scheduler,
+                conversation_store,
+                memory_engine,
+                graph_db,
+                db,
+            )
+            raise
 
         return {
             "db": db,
@@ -162,6 +172,29 @@ class ComponentFactory:
             "decay_scheduler": decay_scheduler,
             **injection_components,
         }
+
+    @staticmethod
+    async def _rollback_build_components(
+        decay_scheduler,
+        conversation_store,
+        memory_engine,
+        graph_db,
+        db,
+    ) -> None:
+        cleanup_steps = (
+            ("DecayScheduler", decay_scheduler, "stop"),
+            ("ConversationStore", conversation_store, "close"),
+            ("MemoryEngine", memory_engine, "close"),
+            ("GraphDB", graph_db, "close"),
+            ("DB", db, "close"),
+        )
+        for label, component, method_name in cleanup_steps:
+            if component is None:
+                continue
+            try:
+                await getattr(component, method_name)()
+            except BaseException:
+                logger.error("回滚组件 %s 失败", label, exc_info=True)
 
     async def _build_injection_components(self, db_path: Path) -> dict[str, object]:
         decision_store = InjectionDecisionStore(db_path)
@@ -206,7 +239,6 @@ class ComponentFactory:
                         exc_info=True,
                     )
             raise
-
 
     def _build_engine_config(
         self, stopwords_dir: Path, graph_memory_enabled: bool

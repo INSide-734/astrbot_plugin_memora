@@ -797,6 +797,104 @@ class TestMemoraPluginReady:
 
 
 class TestInjectionDecisionLifecycle:
+    @staticmethod
+    def _build_factory_rollback_scenario(monkeypatch, tmp_path, injection_builder):
+        from astrbot.core.provider.provider import Provider
+        from core.initializer.component_factory import ComponentFactory
+
+        order: list[str] = []
+        db = MagicMock()
+        db.initialize = AsyncMock()
+        db.close = AsyncMock(side_effect=lambda: order.append("db"))
+        graph_db = MagicMock()
+        graph_db.initialize = AsyncMock()
+        graph_db.close = AsyncMock(side_effect=lambda: order.append("graph_db"))
+        engine = MagicMock()
+        engine.initialize = AsyncMock()
+        engine.close = AsyncMock(side_effect=lambda: order.append("memory_engine"))
+        engine.text_processor = None
+        conversation_store = MagicMock()
+        conversation_store.initialize = AsyncMock()
+        conversation_store.close = AsyncMock(
+            side_effect=lambda: order.append("conversation_store")
+        )
+        scheduler = MagicMock()
+        scheduler.start = AsyncMock()
+
+        async def stop_scheduler() -> None:
+            order.append("scheduler")
+            raise RuntimeError("scheduler cleanup failed")
+
+        scheduler.stop = AsyncMock(side_effect=stop_scheduler)
+        monkeypatch.setattr(
+            "core.initializer.component_factory.MemoryEngine",
+            MagicMock(return_value=engine),
+        )
+        monkeypatch.setattr(
+            "core.initializer.component_factory.ConversationStore",
+            MagicMock(return_value=conversation_store),
+        )
+        monkeypatch.setattr(
+            "core.initializer.component_factory.DecayScheduler",
+            MagicMock(return_value=scheduler),
+        )
+        config = MagicMock()
+        config.get.side_effect = lambda key, default=None: {
+            "graph_memory.enabled": True,
+            "importance_decay.decay_rate": 0.1,
+            "forgetting_agent.auto_cleanup_enabled": False,
+        }.get(key, default)
+        config.session_manager = {}
+        factory = ComponentFactory(MagicMock(), config, str(tmp_path))
+        factory._build_injection_components = injection_builder
+        faiss_checker = MagicMock()
+        faiss_checker.check_and_fix_dimension_mismatch = AsyncMock()
+        db_setup = MagicMock()
+        db_setup.repair_message_counts = AsyncMock()
+        db_setup.auto_rebuild_index_if_needed = AsyncMock()
+        args = (
+            MagicMock(),
+            MagicMock(spec=Provider),
+            MagicMock(side_effect=[db, graph_db]),
+            faiss_checker,
+            db_setup,
+        )
+        return factory, args, order
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cancel_build", [False, True])
+    async def test_build_all_rolls_back_owned_components_when_injection_build_fails(
+        self, monkeypatch, tmp_path, cancel_build
+    ) -> None:
+        injection_started = asyncio.Event()
+
+        async def fail_injection(_db_path):
+            injection_started.set()
+            if cancel_build:
+                await asyncio.Future()
+            raise RuntimeError("injection failed")
+
+        factory, args, order = self._build_factory_rollback_scenario(
+            monkeypatch, tmp_path, fail_injection
+        )
+        task = asyncio.create_task(factory.build_all(*args))
+        await injection_started.wait()
+        if cancel_build:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(RuntimeError, match="injection failed"):
+                await task
+
+        assert order == [
+            "scheduler",
+            "conversation_store",
+            "memory_engine",
+            "graph_db",
+            "db",
+        ]
+
     @pytest.mark.asyncio
     async def test_component_factory_builds_started_injection_recorder(
         self, monkeypatch, tmp_path
@@ -1015,25 +1113,88 @@ class TestInjectionDecisionLifecycle:
         assert initializer.injection_decision_store is None
 
     @pytest.mark.asyncio
-    async def test_plugin_initializer_propagates_cancellation_after_store_close(
+    async def test_plugin_initializer_preserves_cancelled_recorder_for_retry(
+        self, tmp_path
+    ) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
+        close_started = asyncio.Event()
+
+        async def block_recorder_close(**_kwargs) -> None:
+            close_started.set()
+            await asyncio.Future()
+
+        recorder = MagicMock()
+        recorder.close = AsyncMock(side_effect=block_recorder_close)
+        store = MagicMock()
+        store.close = AsyncMock()
+        initializer.injection_decision_recorder = recorder
+        initializer.injection_decision_store = store
+
+        close_task = asyncio.create_task(initializer.close_injection_components())
+        await close_started.wait()
+        close_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await close_task
+
+        store.close.assert_awaited_once()
+        assert initializer.injection_decision_recorder is recorder
+        assert initializer.injection_decision_store is None
+
+        recorder.close = AsyncMock()
+        await initializer.close_injection_components()
+        recorder.close.assert_awaited_once_with(timeout=5.0)
+        assert initializer.injection_decision_recorder is None
+
+    @pytest.mark.asyncio
+    async def test_plugin_initializer_preserves_first_close_error_and_failed_refs(
         self, tmp_path
     ) -> None:
         from core.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         recorder = MagicMock()
-        recorder.close = AsyncMock(side_effect=asyncio.CancelledError())
+        recorder.close = AsyncMock(side_effect=RuntimeError("recorder failed"))
         store = MagicMock()
-        store.close = AsyncMock()
+        store.close = AsyncMock(side_effect=RuntimeError("store failed"))
         initializer.injection_decision_recorder = recorder
         initializer.injection_decision_store = store
 
-        with pytest.raises(asyncio.CancelledError):
+        with pytest.raises(RuntimeError, match="recorder failed"):
             await initializer.close_injection_components()
 
         store.close.assert_awaited_once()
+        assert initializer.injection_decision_recorder is recorder
+        assert initializer.injection_decision_store is store
+
+        recorder.close = AsyncMock()
+        store.close = AsyncMock()
+        await initializer.close_injection_components()
         assert initializer.injection_decision_recorder is None
         assert initializer.injection_decision_store is None
+
+
+    @pytest.mark.asyncio
+    async def test_plugin_initializer_clears_only_successfully_closed_reference(
+        self, tmp_path
+    ) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
+        recorder = MagicMock()
+        recorder.close = AsyncMock()
+        store = MagicMock()
+        store.close = AsyncMock(side_effect=RuntimeError("store failed"))
+        initializer.injection_decision_recorder = recorder
+        initializer.injection_decision_store = store
+
+        with pytest.raises(RuntimeError, match="store failed"):
+            await initializer.close_injection_components()
+
+        assert initializer.injection_decision_recorder is None
+        assert initializer.injection_decision_store is store
+
 
     @pytest.mark.asyncio
     async def test_run_full_init_retains_injection_components(self, tmp_path) -> None:
@@ -1064,6 +1225,92 @@ class TestInjectionDecisionLifecycle:
 
         assert initializer.injection_decision_store is store
         assert initializer.injection_decision_recorder is recorder
+
+    @pytest.mark.asyncio
+    async def test_run_full_init_closes_owned_injection_components_on_error(
+        self, tmp_path
+    ) -> None:
+        from core.base.exceptions import InitializationError
+        from core.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
+        initializer._faiss_checker.load_vec_db_class = MagicMock(return_value=MagicMock())
+        recorder = MagicMock()
+        recorder.close = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+        store = MagicMock()
+        store.close = AsyncMock()
+        memory_processor = MagicMock()
+        initializer._component_factory.build_all = AsyncMock(
+            return_value={
+                "db": MagicMock(),
+                "graph_db": None,
+                "memory_engine": MagicMock(),
+                "memory_processor": memory_processor,
+                "conversation_manager": MagicMock(),
+                "index_validator": MagicMock(),
+                "decay_scheduler": None,
+                "injection_decision_store": store,
+                "injection_decision_recorder": recorder,
+            }
+        )
+        initializer._create_prompt_protection_service = MagicMock(return_value=MagicMock())
+        initializer._initialize_cognitive_components = AsyncMock(
+            side_effect=ValueError("cognitive failed")
+        )
+
+        with pytest.raises(InitializationError, match="cognitive failed"):
+            await initializer._run_full_init()
+
+        recorder.close.assert_awaited_once_with(timeout=5.0)
+        store.close.assert_awaited_once()
+        assert initializer.injection_decision_recorder is recorder
+        assert initializer.injection_decision_store is None
+
+    @pytest.mark.asyncio
+    async def test_run_full_init_preserves_real_cancellation_during_cleanup(
+        self, tmp_path
+    ) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
+        initializer._faiss_checker.load_vec_db_class = MagicMock(return_value=MagicMock())
+        recorder = MagicMock()
+        recorder.close = AsyncMock()
+        store = MagicMock()
+        store.close = AsyncMock(side_effect=RuntimeError("store cleanup failed"))
+        memory_processor = MagicMock()
+        initializer._component_factory.build_all = AsyncMock(
+            return_value={
+                "db": MagicMock(),
+                "graph_db": None,
+                "memory_engine": MagicMock(),
+                "memory_processor": memory_processor,
+                "conversation_manager": MagicMock(),
+                "index_validator": MagicMock(),
+                "decay_scheduler": None,
+                "injection_decision_store": store,
+                "injection_decision_recorder": recorder,
+            }
+        )
+        initializer._create_prompt_protection_service = MagicMock(return_value=MagicMock())
+        cognitive_started = asyncio.Event()
+
+        async def block_cognitive_initialization() -> None:
+            cognitive_started.set()
+            await asyncio.Future()
+
+        initializer._initialize_cognitive_components = block_cognitive_initialization
+        init_task = asyncio.create_task(initializer._run_full_init())
+        await cognitive_started.wait()
+        init_task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await init_task
+
+        recorder.close.assert_awaited_once_with(timeout=5.0)
+        store.close.assert_awaited_once()
+        assert initializer.injection_decision_recorder is None
+        assert initializer.injection_decision_store is store
 
 
 class TestMemoraInjectionLifecycle:
