@@ -1442,3 +1442,136 @@ async def test_fake_tool_execution_uses_transient_query_without_recording_it(
     record = case.recorder.record.call_args.args[0]
     assert not hasattr(record, "query")
     assert private_query not in repr(record)
+
+@pytest.mark.asyncio
+async def test_recall_correlates_scope_without_recording_token(handler_case) -> None:
+    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    case.handler._executor.execute = AsyncMock(return_value=InjectionExecutionResult(
+        outcome=InjectionOutcome.INJECTED,
+    ))
+    await case.handler.handle_memory_recall(case.event, case.request)
+    case.event.set_extra.assert_called_once()
+    extra_key, scope_id = case.event.set_extra.call_args.args
+    assert isinstance(scope_id, str) and scope_id
+    execution_context = case.handler._executor.execute.await_args.args[2]
+    assert execution_context.scope_id == scope_id
+    record = case.recorder.record.call_args.args[0]
+    assert scope_id not in repr(record)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("early_gate", ["tools", "empty_session", "writes_blocked"])
+async def test_reflection_sanitizes_visible_response_before_early_gates(early_gate) -> None:
+    from core.handlers.reflection_handler import ReflectionHandler
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    secret = f"{early_gate} scoped secret alpha beta gamma delta epsilon"
+    service = PromptProtectionService(enable_double_check=False)
+    service.wrap_prompt(secret, scope_id=f"scope-{early_gate}")
+    cfg = MagicMock()
+    cfg.get.side_effect = lambda key, default=None: {
+        "security.sanitize_llm_response": True,
+        "security.double_check_enabled": False,
+    }.get(key, default)
+    event = MagicMock()
+    event.unified_msg_origin = "" if early_gate == "empty_session" else "session-1"
+    event.get_extra.return_value = f"scope-{early_gate}"
+    resp = SimpleNamespace(
+        role="assistant",
+        tools_call_name=["tool"] if early_gate == "tools" else None,
+        tools_call_extra_content=None,
+        completion_text=secret,
+    )
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=cfg,
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=MagicMock(),
+        enforce_limit_cb=AsyncMock(),
+        prompt_protection_service=service,
+        write_guard_cb=(lambda: early_gate == "writes_blocked"),
+    )
+    await handler.handle_memory_reflection(event, resp)
+    assert secret not in resp.completion_text
+    after_consume, _ = service.sanitize_response(
+        secret,
+        scope_id=f"scope-{early_gate}",
+    )
+    assert after_consume == secret
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["exception", "validation"])
+async def test_reflection_visible_sanitizer_failures_are_closed(failure) -> None:
+    from core.handlers.reflection_handler import ReflectionHandler
+
+    service = MagicMock()
+    if failure == "exception":
+        service.sanitize_response.side_effect = RuntimeError("sanitize failed")
+    else:
+        service.sanitize_response.return_value = (
+            "unsafe",
+            {"leaks_removed": [], "validation_passed": False},
+        )
+    cfg = MagicMock()
+    cfg.get.return_value = True
+    event = MagicMock()
+    event.unified_msg_origin = ""
+    event.get_extra.return_value = "scope-fail"
+    resp = SimpleNamespace(
+        role="assistant",
+        tools_call_name=None,
+        tools_call_extra_content=None,
+        completion_text="unsafe",
+    )
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=cfg,
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=MagicMock(),
+        enforce_limit_cb=AsyncMock(),
+        prompt_protection_service=service,
+    )
+    await handler.handle_memory_reflection(event, resp)
+    assert resp.completion_text == ""
+
+@pytest.mark.asyncio
+async def test_recall_scope_setter_exception_falls_back_without_leaking_token(
+    handler_case,
+) -> None:
+    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    case.event.set_extra.side_effect = RuntimeError("event seam failed")
+    case.handler._executor.execute = AsyncMock(return_value=InjectionExecutionResult(
+        outcome=InjectionOutcome.INJECTED,
+    ))
+    await case.handler.handle_memory_recall(case.event, case.request)
+    context = case.handler._executor.execute.await_args.args[2]
+    assert context.scope_id is None
+    assert "event seam failed" not in repr(case.recorder.record.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_reflection_scope_getter_exception_fails_visible_response_closed() -> None:
+    from core.handlers.reflection_handler import ReflectionHandler
+
+    event = MagicMock()
+    event.get_extra.side_effect = RuntimeError("event seam failed")
+    resp = SimpleNamespace(
+        role="assistant",
+        tools_call_name=None,
+        tools_call_extra_content=None,
+        completion_text="potentially unsafe",
+    )
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=MagicMock(),
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=MagicMock(),
+        enforce_limit_cb=AsyncMock(),
+        prompt_protection_service=MagicMock(),
+    )
+    await handler.handle_memory_reflection(event, resp)
+    assert resp.completion_text == ""

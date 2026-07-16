@@ -60,6 +60,7 @@ class InjectionExecutionContext:
     persona_filtered: bool = True
     context_headroom_chars: int = 10_000
     provider: Any | None = None
+    scope_id: str | None = None
 
 
 def _bounded_float(value: Any, default: float = 0.0) -> float:
@@ -169,8 +170,12 @@ class InjectionExecutor:
             delivery = DeliveryMode.EXTRA_USER_CONTENT
             fallback_applied = True
 
-        request_snapshot = (req.prompt, req.contexts, req.extra_user_content_parts)
         try:
+            request_snapshot = (
+                req.prompt,
+                req.contexts,
+                req.extra_user_content_parts,
+            )
             self._apply_delivery(req, delivery, protected_payload, context)
         except asyncio.CancelledError:
             raise
@@ -192,12 +197,18 @@ class InjectionExecutor:
             escaped_raw_payload = protected_payload[
                 len(_PROTECTION_PREFIX):-len(_PROTECTION_SUFFIX)
             ]
-            protection_state = self._snapshot_protection_state()
+            protection_state: dict[str, Any] | None = None
             try:
+                protection_state = self._snapshot_protection_state()
+                wrap_kwargs: dict[str, Any] = {
+                    "label": "memory_context",
+                    "register_for_filter": True,
+                }
+                if context.scope_id is not None:
+                    wrap_kwargs["scope_id"] = context.scope_id
                 self._prompt_protection.wrap_prompt(
                     escaped_raw_payload,
-                    label="memory_context",
-                    register_for_filter=True,
+                    **wrap_kwargs,
                 )
             except asyncio.CancelledError:
                 self._restore_request(req, request_snapshot)
@@ -237,21 +248,15 @@ class InjectionExecutor:
     def _restore_request(req: Any, snapshot: tuple[Any, Any, Any]) -> None:
         req.prompt, req.contexts, req.extra_user_content_parts = snapshot
 
-    def _snapshot_protection_state(self) -> dict[str, Any] | None:
-        try:
-            return deepcopy(vars(self._prompt_protection))
-        except Exception:
-            return None
+    def _snapshot_protection_state(self) -> dict[str, Any]:
+        return deepcopy(vars(self._prompt_protection))
 
     def _restore_protection_state(self, snapshot: dict[str, Any] | None) -> None:
         if snapshot is None:
             return
-        try:
-            state = vars(self._prompt_protection)
-            state.clear()
-            state.update(snapshot)
-        except Exception:
-            pass
+        state = vars(self._prompt_protection)
+        state.clear()
+        state.update(snapshot)
 
     @staticmethod
     def _result(
