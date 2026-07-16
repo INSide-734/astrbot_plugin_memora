@@ -156,30 +156,6 @@ class InjectionExecutor:
                 format_ms=(time.perf_counter() - format_started) * 1000.0,
             )
 
-        if self._prompt_protection is not None:
-            escaped_raw_payload = protected_payload[
-                len(_PROTECTION_PREFIX):-len(_PROTECTION_SUFFIX)
-            ]
-            try:
-                self._prompt_protection.wrap_prompt(
-                    escaped_raw_payload,
-                    label="memory_context",
-                    register_for_filter=True,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                return self._result(
-                    InjectionOutcome.ERROR,
-                    configured_budget,
-                    effective_budget,
-                    selected_count=len(selected),
-                    dropped_count=len(dropped),
-                    truncated_count=stats.truncated_count,
-                    error_code="PROTECTION_FAILED",
-                    format_ms=(time.perf_counter() - format_started) * 1000.0,
-                )
-
         format_ms = (time.perf_counter() - format_started) * 1000.0
         inject_started = time.perf_counter()
         delivery = decision.resolved_delivery
@@ -193,6 +169,7 @@ class InjectionExecutor:
             delivery = DeliveryMode.EXTRA_USER_CONTENT
             fallback_applied = True
 
+        request_snapshot = (req.prompt, req.contexts, req.extra_user_content_parts)
         try:
             self._apply_delivery(req, delivery, protected_payload, context)
         except asyncio.CancelledError:
@@ -211,6 +188,37 @@ class InjectionExecutor:
                 inject_ms=(time.perf_counter() - inject_started) * 1000.0,
             )
 
+        if self._prompt_protection is not None:
+            escaped_raw_payload = protected_payload[
+                len(_PROTECTION_PREFIX):-len(_PROTECTION_SUFFIX)
+            ]
+            protection_state = self._snapshot_protection_state()
+            try:
+                self._prompt_protection.wrap_prompt(
+                    escaped_raw_payload,
+                    label="memory_context",
+                    register_for_filter=True,
+                )
+            except asyncio.CancelledError:
+                self._restore_request(req, request_snapshot)
+                self._restore_protection_state(protection_state)
+                raise
+            except Exception:
+                self._restore_request(req, request_snapshot)
+                self._restore_protection_state(protection_state)
+                return self._result(
+                    InjectionOutcome.ERROR,
+                    configured_budget,
+                    effective_budget,
+                    selected_count=len(selected),
+                    dropped_count=len(dropped),
+                    truncated_count=stats.truncated_count,
+                    actual_resolved_delivery=delivery,
+                    error_code="PROTECTION_FAILED",
+                    format_ms=format_ms,
+                    inject_ms=(time.perf_counter() - inject_started) * 1000.0,
+                )
+
         return self._result(
             InjectionOutcome.FALLBACK if fallback_applied else InjectionOutcome.INJECTED,
             configured_budget,
@@ -224,6 +232,26 @@ class InjectionExecutor:
             format_ms=format_ms,
             inject_ms=(time.perf_counter() - inject_started) * 1000.0,
         )
+
+    @staticmethod
+    def _restore_request(req: Any, snapshot: tuple[Any, Any, Any]) -> None:
+        req.prompt, req.contexts, req.extra_user_content_parts = snapshot
+
+    def _snapshot_protection_state(self) -> dict[str, Any] | None:
+        try:
+            return deepcopy(vars(self._prompt_protection))
+        except Exception:
+            return None
+
+    def _restore_protection_state(self, snapshot: dict[str, Any] | None) -> None:
+        if snapshot is None:
+            return
+        try:
+            state = vars(self._prompt_protection)
+            state.clear()
+            state.update(snapshot)
+        except Exception:
+            pass
 
     @staticmethod
     def _result(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import TYPE_CHECKING
 
@@ -52,6 +53,45 @@ def _contains_injection(value: str) -> bool:
 
 def _is_memora_fake_call_id(value: object) -> bool:
     return isinstance(value, str) and _FAKE_TOOL_CALL_ID_PATTERN.fullmatch(value) is not None
+
+
+def _legacy_fake_tool_payload(value: str, expected_query: str) -> bool:
+    decoder = json.JSONDecoder()
+    payload = None
+    for match in re.finditer(r"\{", value):
+        try:
+            candidate, _ = decoder.raw_decode(value[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and "results" in candidate:
+            payload = candidate
+            break
+    if payload is None or payload.get("query") != expected_query:
+        return False
+    filters = payload.get("applied_filters")
+    results = payload.get("results")
+    count = payload.get("count")
+    if (
+        not isinstance(filters, dict)
+        or set(filters) != {"session_filtered", "persona_filtered"}
+        or not all(isinstance(flag, bool) for flag in filters.values())
+        or not isinstance(results, list)
+        or not results
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count != len(results)
+    ):
+        return False
+    result_keys = {
+        "id", "content", "score", "importance", "session_id", "persona_id",
+        "create_time", "last_access_time",
+    }
+    return all(
+        isinstance(result, dict)
+        and set(result) == result_keys
+        and isinstance(result.get("content"), str)
+        for result in results
+    )
 
 
 class InjectionCleaner:
@@ -353,19 +393,25 @@ class InjectionCleaner:
         if not isinstance(content, str):
             return False
         if _LEGACY_FAKE_TOOL_CALL_ID_PATTERN.fullmatch(call_id):
-            envelope_header = MEMORY_INJECTION_HEADER
-            envelope_footer = MEMORY_INJECTION_FOOTER
+            try:
+                arguments = json.loads(function.get("arguments", ""))
+            except (TypeError, json.JSONDecodeError):
+                return False
+            expected_query = (
+                arguments.get("query") if isinstance(arguments, dict) else None
+            )
+            if not isinstance(expected_query, str):
+                return False
+            valid_content = _legacy_fake_tool_payload(content, expected_query)
         else:
-            envelope_header = _VERIFIED_INJECTION_HEADER
-            envelope_footer = _VERIFIED_INJECTION_FOOTER
-        envelope_start = content.find(envelope_header)
-        envelope_end = content.find(
-            envelope_footer,
-            envelope_start + len(envelope_header),
-        )
+            envelope_start = content.find(_VERIFIED_INJECTION_HEADER)
+            envelope_end = content.find(
+                _VERIFIED_INJECTION_FOOTER,
+                envelope_start + len(_VERIFIED_INJECTION_HEADER),
+            )
+            valid_content = envelope_start >= 0 and envelope_end >= 0
         return (
             tool.get("tool_call_id") == call_id
             and tool.get("name") == FAKE_TOOL_CALL_NAME
-            and envelope_start >= 0
-            and envelope_end >= 0
+            and valid_content
         )

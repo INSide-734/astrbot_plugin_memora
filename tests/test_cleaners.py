@@ -623,24 +623,24 @@ def test_fake_tool_cleaner_preserves_non_exact_pairs(
     assert InjectionCleaner.remove_fake_tool_call_from_context(req, "s1") == 0
     assert req.contexts == contexts
 
-def test_fake_tool_cleaner_removes_legacy_12_hex_rag_pair() -> None:
-    legacy_id = f"{FAKE_TOOL_CALL_ID_PREFIX}abcdef123456"
-    contexts = [
-        {
-            "role": "assistant",
-            "tool_calls": [{
-                "id": legacy_id,
-                "type": "function",
-                "function": {"name": FAKE_TOOL_CALL_NAME, "arguments": "{}"},
-            }],
-        },
-        {
-            "role": "tool",
-            "tool_call_id": legacy_id,
-            "name": FAKE_TOOL_CALL_NAME,
-            "content": _injected_text("legacy memory"),
-        },
-    ]
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_fake_tool_cleaner_removes_real_legacy_json_pair(wrapped) -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.utils.memory_formatter import format_memories_for_fake_tool_call
+
+    contexts = format_memories_for_fake_tool_call(
+        [{
+            "id": "memory-1",
+            "content": "legacy memory",
+            "score": 0.9,
+            "metadata": {"session_id": "s1", "persona_id": "p1"},
+        }],
+        "legacy query",
+    )
+    if wrapped:
+        contexts[1]["content"] = PromptProtectionService(
+            enable_double_check=False
+        ).wrap_prompt(contexts[1]["content"], register_for_filter=False)
     req = _make_request(contexts=contexts)
     assert InjectionCleaner.remove_fake_tool_call_from_context(req, "s1") == 2
     assert req.contexts == []
@@ -662,6 +662,42 @@ def test_fake_tool_cleaner_preserves_legacy_id_without_rag_envelope() -> None:
             "tool_call_id": legacy_id,
             "name": FAKE_TOOL_CALL_NAME,
             "content": "not an injected result",
+        },
+    ]
+    req = _make_request(contexts=list(contexts))
+    assert InjectionCleaner.remove_fake_tool_call_from_context(req, "s1") == 0
+    assert req.contexts == contexts
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"query":"q","count":1,"results":[{"content":"foreign"}]}',
+        (
+            '{"query":"q","applied_filters":'
+            '{"session_filtered":true,"persona_filtered":true},'
+            '"count":0,"results":[]}'
+        ),
+    ],
+)
+def test_fake_tool_cleaner_preserves_non_memora_legacy_json(content) -> None:
+    legacy_id = f"{FAKE_TOOL_CALL_ID_PREFIX}abcdef123456"
+    contexts = [
+        {
+            "role": "assistant",
+            "tool_calls": [{
+                "id": legacy_id,
+                "type": "function",
+                "function": {
+                    "name": FAKE_TOOL_CALL_NAME,
+                    "arguments": '{"query":"q","k":5}',
+                },
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": legacy_id,
+            "name": FAKE_TOOL_CALL_NAME,
+            "content": content,
         },
     ]
     req = _make_request(contexts=list(contexts))
