@@ -257,19 +257,40 @@ async def test_close_wakes_long_interval_flush_and_is_idempotent(store, make_rec
 
 
 @pytest.mark.asyncio
-async def test_record_and_cleanup_are_rejected_after_close(store, make_record) -> None:
+async def test_record_is_rejected_as_failure_after_close(
+    store, make_record, monkeypatch
+) -> None:
+    recorder = InjectionDecisionRecorder(store)
+    await recorder.start()
+    await recorder.close(timeout=1.0)
+    failure_codes: list[str] = []
+    monkeypatch.setattr(recorder, "_safe_failure", failure_codes.append)
+    before = recorder.snapshot()
+
+    recorder.record(make_record("too-late"))
+
+    after = recorder.snapshot()
+    assert after["queue_size"] == 0
+    assert after["retained_size"] == 0
+    assert recorder.queued_decision_ids() == []
+    assert after["dropped_total"] == before["dropped_total"]
+    assert after["failures_total"] == before["failures_total"] + 1
+    assert failure_codes == ["closed"]
+    assert recorder._idle.is_set()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_is_rejected_after_close(store) -> None:
     recorder = InjectionDecisionRecorder(store)
     await recorder.start()
     await recorder.close(timeout=1.0)
     before = recorder.snapshot()
 
-    recorder.record(make_record("too-late"))
     recorder.schedule_cleanup(retention_days=7, max_rows=25)
 
     after = recorder.snapshot()
-    assert recorder.queued_decision_ids() == []
     assert after["cleanup_requested"] is False
-    assert after["dropped_total"] == before["dropped_total"] + 1
+    assert after["dropped_total"] == before["dropped_total"]
     assert after["failures_total"] == before["failures_total"] + 1
     assert recorder._idle.is_set()
 
