@@ -368,10 +368,10 @@ describe("ReviewQueue", () => {
     expect(within(screen.getByRole("region", { name: /Memory review|记忆复核|Ревью памяти/i })).getByText(/Loading|加载|Загрузка/i)).toBeTruthy();
 
     await act(async () => { resolveAction({ status: "error", message: "merge target missing" }); });
-    await waitFor(() => expect(showToast).toHaveBeenCalledWith("ApiRequestError: merge target missing", true));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith("Error: merge target missing", true));
     expect(await screen.findByText(/Confirm merge|确认合并/i)).toBeTruthy();
     expect(draft.value).toBe("mem-target-9");
-    expect(screen.getByRole("alert").textContent).toContain("ApiRequestError: merge target missing");
+    expect(screen.getByRole("alert").textContent).toContain("Error: merge target missing");
   });
 
   it("keeps pending and error feedback inside the stable memory review region", async () => {

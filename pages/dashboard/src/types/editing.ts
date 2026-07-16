@@ -33,7 +33,6 @@ export class ApiRequestError extends Error {
     data: Record<string, unknown> = {}
   ) {
     super(message);
-    this.name = "ApiRequestError";
     this.code = code;
     this.fieldErrors = fieldErrors;
     this.data = data;

@@ -14,5 +14,5 @@ export function ConfigUnsavedDialog({
 }: ConfigUnsavedDialogProps) {
   const { t } = useI18n();
 
-  return <UnsavedChangesDialog open={open} title={t("config.unsaved.title")} description={t("config.unsaved.description")} keepEditingLabel={t("config.unsaved.keepEditing")} discardLabel={t("config.unsaved.discard")} onKeepEditing={onCancel} onDiscard={onDiscard} />;
+  return <UnsavedChangesDialog open={open} title={t("config.unsaved.title")} description={t("config.unsaved.description")} closeLabel={t("common.close")} keepEditingLabel={t("config.unsaved.keepEditing")} discardLabel={t("config.unsaved.discard")} onKeepEditing={onCancel} onDiscard={onDiscard} />;
 }
