@@ -219,6 +219,16 @@ python scripts/check_all.py
 | `bot_language` | 界面语言 | `zh` |
 | 详见 `_conf_schema.json` | 完整配置列表 | — |
 
+## 自适应记忆注入
+
+- 注入路由可选择 Manual、Auto 或 Hybrid；新安装默认使用 `manual + balanced + auto delivery`。
+- 四种预设分别为 Tool First、Low Cost、Balanced 和 Quality；普通记忆的字符预算依次为 `0/800/1200/2400`，最大条数依次为 `0/2/4/6`。
+- 动态记忆绝不写入 System Prompt。注入载荷只在当前请求中临时存在，并始终受全局硬预算约束。
+- Dashboard 提供完整的 Injection Strategy 工作台，包含 Overview、Strategy Configuration 和 Decision History。
+- 决策元数据全量持久化到 SQLite 的 `injection_decisions` 表，但不会保存查询文本、记忆正文/ID 或原始身份标识。默认保留期为 30 天、上限为 100,000 行，两者均可配置。
+- 正常关闭时最多等待 5 秒刷新待写批次；进程崩溃时可能丢失最后一个尚未刷新的批次。
+- 这是破坏性配置变更：`recall_engine.injection_method` 已移除且不提供兼容迁移，管理员必须使用新的策略字段重新配置。
+
 ## 命令
 
 | 命令 | 说明 |

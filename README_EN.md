@@ -200,6 +200,16 @@ Developer setup and the unified quality gate are documented in `docs/DEV_SETUP.m
 python scripts/check_all.py
 ```
 
+## Adaptive memory injection
+
+- Injection routing is selectable as Manual, Auto, or Hybrid. New installations default to `manual + balanced + auto delivery`.
+- The four presets are Tool First, Low Cost, Balanced, and Quality. Their ordinary-memory character budgets are `0/800/1200/2400`, with maximum counts of `0/2/4/6`.
+- Dynamic memory never uses the System Prompt. Its payload is temporary to the current request and always constrained by a global hard budget.
+- The Dashboard provides a complete Injection Strategy workbench with Overview, Strategy Configuration, and Decision History.
+- Decision metadata is fully persisted in the SQLite `injection_decisions` table without query text, memory bodies/IDs, or raw identity values. Retention defaults to 30 days and 100,000 rows; both limits are configurable.
+- Normal shutdown waits up to five seconds to flush pending writes. A process crash may lose the final unflushed batch.
+- This is a breaking configuration change: `recall_engine.injection_method` has been removed with no compatibility migration, so administrators must reconfigure the new strategy fields.
+
 ## Commands
 
 | Command | Description |
