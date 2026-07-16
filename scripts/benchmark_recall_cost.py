@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Deterministic benchmark for adaptive memory-injection routing and budgets."""
-
+"""Deterministic benchmark for adaptive injection routing and execution."""
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import statistics
 import sys
@@ -15,222 +15,225 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.injection.models import PresetName, RequestSignals, RoutingMode
+from astrbot.api.provider import ProviderRequest
+
+from core.injection.executor import InjectionExecutionContext, InjectionExecutor
+from core.injection.models import (
+    DeliveryMode,
+    InjectionOutcome,
+    PresetName,
+    RequestSignals,
+    RoutingMode,
+)
 from core.injection.presets import PRESETS
 from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
-from core.utils.injection_budget import InjectionBudget, select_memories_with_budget
+from core.utils.injection_adapter import InjectionAdapter
 
 
 @dataclass(frozen=True, slots=True)
-class BenchmarkCase:
+class RoutingCase:
     expected: PresetName
     signals: RequestSignals
 
 
+class CountingProvider:
+    """Provider spy whose inference boundaries count actual LLM calls."""
+
+    def __init__(self) -> None:
+        self.inference_calls = 0
+        self.provider_config = {"type": "openai_chat_completion"}
+
+    def get_model(self) -> str:
+        return "benchmark-model"
+
+    async def text_chat(self, *_args: Any, **_kwargs: Any) -> str:
+        self.inference_calls += 1
+        return ""
+
+    async def completion(self, *_args: Any, **_kwargs: Any) -> str:
+        self.inference_calls += 1
+        return ""
+
+
 PROFILES = {
-    preset_name.value: {
+    name.value: {
         "memory_budget_chars": preset.memory_budget_chars,
         "memory_max_chars": preset.memory_max_chars,
         "metadata_max_chars": preset.metadata_max_chars,
         "max_memories": preset.max_memories,
-        "compact_header": preset.compact_header,
     }
-    for preset_name, preset in PRESETS.items()
+    for name, preset in PRESETS.items()
 }
 
 _CANDIDATES = [
-    {"content": "用户喜欢燕麦拿铁", "score": 0.94, "useful": True},
-    {"content": "用户常在周末喝咖啡", "score": 0.83, "useful": True},
-    {"content": "用户喜欢燕麦拿铁", "score": 0.72, "useful": False},
-    {"content": "普通对话背景", "score": 0.31, "useful": False},
+    {"content": "用户喜欢燕麦拿铁", "score": 0.94, "metadata": {}, "useful": True},
+    {"content": "用户常在周末喝咖啡", "score": 0.83, "metadata": {}, "useful": True},
+    {"content": "用户喜欢燕麦拿铁", "score": 0.72, "metadata": {}, "useful": False},
+    {"content": "普通对话背景", "score": 0.31, "metadata": {}, "useful": False},
 ]
 
 _ROUTING_CASES = (
-    BenchmarkCase(
-        PresetName.QUALITY,
-        RequestSignals(
-            query_intent="temporal",
-            explicit_history_request=True,
-            context_headroom_chars=PRESETS[PresetName.QUALITY].memory_budget_chars,
-            candidate_count=2,
-            top_confidence=0.9,
-            score_gap=0.2,
-            estimated_payload_chars=600,
-        ),
-    ),
-    BenchmarkCase(
-        PresetName.LOW_COST,
-        RequestSignals(
-            context_headroom_chars=PRESETS[PresetName.BALANCED].memory_budget_chars - 1,
-            candidate_count=2,
-            top_confidence=0.9,
-            score_gap=0.2,
-            estimated_payload_chars=600,
-        ),
-    ),
-    BenchmarkCase(
-        PresetName.BALANCED,
-        RequestSignals(
-            candidate_count=2,
-            top_confidence=0.9,
-            score_gap=0.2,
-            estimated_payload_chars=600,
-        ),
-    ),
-    BenchmarkCase(
-        PresetName.TOOL_FIRST,
-        RequestSignals(
-            tools_supported=True,
-            memory_tool_available=True,
-            candidate_count=2,
-            top_confidence=0.9,
-            score_gap=0.2,
-            estimated_payload_chars=600,
-        ),
-    ),
+    RoutingCase(PresetName.QUALITY, RequestSignals(query_intent="temporal", explicit_history_request=True, context_headroom_chars=2400, candidate_count=2, top_confidence=.9)),
+    RoutingCase(PresetName.LOW_COST, RequestSignals(context_headroom_chars=1199, candidate_count=2, top_confidence=.9)),
+    RoutingCase(PresetName.BALANCED, RequestSignals(candidate_count=2, top_confidence=.9)),
 )
 
 
-def _budget_for(preset_name: PresetName) -> InjectionBudget:
-    preset = PRESETS[preset_name]
-    return InjectionBudget(
-        total_chars=preset.memory_budget_chars,
-        memory_max_chars=preset.memory_max_chars,
-        metadata_max_chars=preset.metadata_max_chars,
-        compact_header=preset.compact_header,
+def _request() -> ProviderRequest:
+    return ProviderRequest(
+        prompt="benchmark",
+        extra_user_content_parts=[],
+        contexts=[],
+        system_prompt="",
     )
 
 
-def _selection_metrics(preset_name: PresetName) -> dict[str, float]:
-    preset = PRESETS[preset_name]
-    selected, _ = select_memories_with_budget(list(_CANDIDATES), _budget_for(preset_name))
-    selected = selected[: preset.max_memories]
-    selected_chars = sum(
-        min(len(str(item["content"])), preset.memory_max_chars)
-        + min(preset.metadata_max_chars, 180)
-        for item in selected
-    )
-    useful_chars = sum(
-        min(len(str(item["content"])), preset.memory_max_chars)
-        for item in selected
-        if item["useful"]
-    )
-    content_chars = sum(
-        min(len(str(item["content"])), preset.memory_max_chars) for item in selected
-    )
-    normalized_content = [str(item["content"]).casefold() for item in selected]
-    redundant_count = len(normalized_content) - len(set(normalized_content))
-    overflow = max(0, selected_chars - preset.memory_budget_chars)
-    expected_hit = preset.memory_budget_chars > 0 and preset.max_memories > 0
-    return {
-        "InjectionHit@Budget": float(bool(selected) == expected_hit),
-        "UsefulCharsRatio": round(useful_chars / content_chars, 6) if content_chars else 0.0,
-        "RedundancyRate": round(redundant_count / len(selected), 6) if selected else 0.0,
-        "BudgetOverflowRate": round(overflow / preset.memory_budget_chars, 6)
-        if preset.memory_budget_chars
-        else 0.0,
-    }
-
-
-def _strategy_metrics(profile_name: PresetName) -> dict[str, float | int | str]:
+async def _profile_metrics(
+    profile_name: PresetName,
+) -> tuple[dict[str, float | int], dict[str, float | int | str | bool | None]]:
     router = InjectionStrategyRouter()
-    manual_config = InjectionRoutingConfig(
-        mode=RoutingMode.MANUAL,
-        manual_preset=profile_name,
-    )
-    manual_signals = RequestSignals(
+    provider = CountingProvider()
+    adapter = InjectionAdapter()
+    signals = RequestSignals(
         tools_supported=True,
         memory_tool_available=True,
-        candidate_count=2,
-        top_confidence=0.9,
-        score_gap=0.2,
-        estimated_payload_chars=600,
+        candidate_count=len(_CANDIDATES),
+        top_confidence=.94,
+        score_gap=.11,
+        estimated_payload_chars=sum(len(item["content"]) for item in _CANDIDATES),
     )
-    manual_started = time.perf_counter()
-    manual_decision = router.route_final(manual_config, manual_signals)
-    latencies_ms = [(time.perf_counter() - manual_started) * 1000]
+    config = InjectionRoutingConfig(
+        mode=RoutingMode.MANUAL,
+        manual_preset=profile_name,
+        delivery_override=DeliveryMode.USER_MESSAGE_BEFORE,
+    )
+    started = time.perf_counter()
+    decision = router.route_final(config, signals)
+    latencies = [(time.perf_counter() - started) * 1000]
+    correct = int(
+        decision.configured_preset is profile_name
+        and decision.recommended_preset is profile_name
+        and decision.resolved_preset is profile_name
+    )
+    total = 1
 
-    correct = 0
-    tool_first_skips = 0
-    tool_first_cases = 0
     for case in _ROUTING_CASES:
         started = time.perf_counter()
-        decision = router.route_final(
-            InjectionRoutingConfig(mode=RoutingMode.AUTO),
-            case.signals,
-        )
-        latencies_ms.append((time.perf_counter() - started) * 1000)
-        correct += int(decision.resolved_preset is case.expected)
-        if case.expected is PresetName.TOOL_FIRST:
-            tool_first_cases += 1
-            tool_first_skips += int(decision.skip_passive_recall)
+        routed = router.route_final(InjectionRoutingConfig(mode=RoutingMode.AUTO), case.signals)
+        latencies.append((time.perf_counter() - started) * 1000)
+        correct += int(routed.resolved_preset is case.expected)
+        total += 1
 
-    return {
-        "PresetSelectionAccuracy": round(correct / len(_ROUTING_CASES), 6),
-        "ToolFirstPassiveRecallRate": round(
-            1.0 - (tool_first_skips / tool_first_cases), 6
+    preflight = router.route_preflight(
+        InjectionRoutingConfig(mode=RoutingMode.MANUAL, manual_preset=PresetName.TOOL_FIRST),
+        signals,
+    )
+    passive_rate = float(not preflight.skip_passive_recall)
+
+    req = _request()
+    context = InjectionExecutionContext(
+        query="benchmark",
+        memories=list(_CANDIDATES),
+        cognitive_context="",
+        prospective_context="",
+        cognitive_budget_chars=0,
+        prospective_budget_chars=0,
+        provider=provider,
+    )
+    result = await InjectionExecutor(adapter).execute(req, decision, context)
+    effective_budget = result.effective_budget_chars
+    overflow = max(0, result.actual_payload_chars - effective_budget)
+    content_chars = sum(len(item["content"]) for item in _CANDIDATES[: result.selected_count])
+    useful_chars = sum(
+        len(item["content"])
+        for item in _CANDIDATES[: result.selected_count]
+        if item["useful"]
+    )
+    selected_content = [item["content"] for item in _CANDIDATES[: result.selected_count]]
+    redundant = len(selected_content) - len(set(selected_content))
+    expected_hit = profile_name is not PresetName.TOOL_FIRST
+
+    metrics: dict[str, float | int] = {
+        "PresetSelectionAccuracy": round(correct / total, 6),
+        "InjectionHit@Budget": float(
+            (result.actual_payload_chars > 0) == expected_hit
         ),
-        "StrategyDecisionLatency": round(statistics.mean(latencies_ms), 6),
-        "ExtraLLMCalls": 0,
-        "manual_resolved_preset": manual_decision.resolved_preset.value,
+        "UsefulCharsRatio": (
+            round(useful_chars / content_chars, 6) if content_chars else 0.0
+        ),
+        "RedundancyRate": (
+            round(redundant / result.selected_count, 6)
+            if result.selected_count
+            else 0.0
+        ),
+        "BudgetOverflowRate": (
+            round(overflow / effective_budget, 6) if effective_budget else 0.0
+        ),
+        "ToolFirstPassiveRecallRate": passive_rate,
+        "StrategyDecisionLatency": round(statistics.mean(latencies), 6),
+        "ExtraLLMCalls": provider.inference_calls,
     }
+    diagnostics: dict[str, float | int | str | bool | None] = {
+        "execution_outcome": result.outcome.value,
+        "error_code": result.error_code,
+        "actual_payload_chars": result.actual_payload_chars,
+        "effective_budget_chars": effective_budget,
+        "manual_tool_first_skip_passive_recall": preflight.skip_passive_recall,
+        "inference_spy_count": provider.inference_calls,
+    }
+    return metrics, diagnostics
 
 
 def run_benchmark(profile_name: str) -> dict[str, Any]:
-    try:
-        preset_name = PresetName(profile_name)
-    except ValueError:
-        return {"error": f"Unknown profile: {profile_name}", "available": list(PROFILES)}
-
-    metrics = {
-        **_strategy_metrics(preset_name),
-        **_selection_metrics(preset_name),
-    }
+    preset = PresetName(profile_name)
+    metrics, diagnostics = asyncio.run(_profile_metrics(preset))
+    expected_outcome = (
+        InjectionOutcome.EMPTY.value
+        if preset is PresetName.TOOL_FIRST
+        else InjectionOutcome.INJECTED.value
+    )
     passed = (
         metrics["PresetSelectionAccuracy"] == 1.0
         and metrics["InjectionHit@Budget"] == 1.0
         and metrics["BudgetOverflowRate"] == 0.0
         and metrics["ToolFirstPassiveRecallRate"] == 0.0
         and metrics["ExtraLLMCalls"] == 0
+        and diagnostics["execution_outcome"] == expected_outcome
+        and diagnostics["error_code"] is None
+        and diagnostics["actual_payload_chars"]
+        <= diagnostics["effective_budget_chars"]
     )
     report = {
         "profile": profile_name,
         "config": PROFILES[profile_name],
         "metrics": metrics,
+        "diagnostics": diagnostics,
         "summary": {"all_checks_passed": passed},
     }
     print(f"\nMemora Recall Cost Benchmark: {profile_name}")
     for name, value in metrics.items():
+        print(f"  {name}: {value}")
+    for name, value in diagnostics.items():
         print(f"  {name}: {value}")
     print("  Result: " + ("ALL PASSED" if passed else "FAILED"))
     return report
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Memora adaptive recall cost benchmark")
-    parser.add_argument(
-        "--profile",
-        choices=list(PROFILES),
-        default=PresetName.BALANCED.value,
-        help="built-in strategy preset",
-    )
-    parser.add_argument("--output", type=str, default=None, help="write JSON report")
-    parser.add_argument("--all", action="store_true", help="run all four presets")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--profile", choices=list(PROFILES), default="balanced")
+    parser.add_argument("--output")
+    parser.add_argument("--all", action="store_true")
     args = parser.parse_args()
-
+    reports: Any
     if args.all:
         reports = {name: run_benchmark(name) for name in PROFILES}
-        passed = all(report["summary"]["all_checks_passed"] for report in reports.values())
-        report_payload: dict[str, Any] = reports
+        passed = all(item["summary"]["all_checks_passed"] for item in reports.values())
     else:
-        report = run_benchmark(args.profile)
-        passed = report["summary"]["all_checks_passed"]
-        report_payload = report
-
+        reports = run_benchmark(args.profile)
+        passed = reports["summary"]["all_checks_passed"]
     if args.output:
-        with open(args.output, "w", encoding="utf-8") as output_file:
-            json.dump(report_payload, output_file, indent=2, ensure_ascii=False)
-        print(f"Report written: {args.output}")
+        Path(args.output).write_text(json.dumps(reports, indent=2, ensure_ascii=False), encoding="utf-8")
     if not passed:
         raise SystemExit(1)
 

@@ -479,6 +479,37 @@ async def test_trace_contains_non_executing_injection_decision(
 
 
 @pytest.mark.asyncio
+async def test_trace_preview_normalizes_nonfinite_candidate_score(
+    page_api_with_fake_engine,
+):
+    engine = page_api_with_fake_engine.plugin.initializer.memory_engine
+    engine.debug_trace[0]["final_score"] = float("inf")
+    engine.search_memories = AsyncMock(
+        return_value=[
+            _FakeRecallResult(
+                doc_id=101,
+                content="用户喜欢喝拿铁",
+                final_score=float("inf"),
+                metadata={"memory_type": "preference"},
+            )
+        ]
+    )
+
+    response = await page_api_with_fake_engine.test_recall_with_trace_payload(
+        {"query": "coffee", "k": 5}
+    )
+
+    assert response["status"] == "ok"
+    injection = next(
+        stage
+        for stage in response["data"]["stages"]
+        if stage["name"] == "injection_decision"
+    )
+    assert injection["metadata"]["recommended_preset"] == "low_cost"
+    assert injection["metadata"]["resolved_preset"] == "low_cost"
+
+
+@pytest.mark.asyncio
 async def test_recall_trace_missing_engine_returns_error():
     plugin = MagicMock()
     plugin._ensure_plugin_ready = AsyncMock(return_value=(True, None))
