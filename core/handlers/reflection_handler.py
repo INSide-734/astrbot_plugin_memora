@@ -111,6 +111,7 @@ class ReflectionHandler:
                 logger.debug(f"[{session_id}] 模型返回空回复，跳过记录")
                 return
             response_text = self._sanitize_response_text(response_text, session_id)
+            resp.completion_text = response_text
             if not response_text or not response_text.strip():
                 logger.warning(
                     f"[{session_id}] 模型回复经安全清洗后为空，跳过记录"

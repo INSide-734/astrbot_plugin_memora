@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 import asyncio
-
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import json
 
 
 # ============================================================================
@@ -629,6 +628,70 @@ class TestReflectionHandlerPromptProtection:
         assert "system_internal" not in cleaned
         assert "内部记忆上下文" not in cleaned
         assert "正常回复" in cleaned
+
+    @pytest.mark.asyncio
+    async def test_registered_injection_is_removed_from_visible_and_stored_response(
+        self,
+    ) -> None:
+        from core.injection.executor import InjectionExecutionContext, InjectionExecutor
+        from core.security.prompt_sanitizer import PromptProtectionService
+        from core.utils.injection_adapter import InjectionAdapter
+        from core.handlers.reflection_handler import ReflectionHandler
+
+        from core.injection.models import PresetName, RequestSignals, RoutingMode
+        from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
+        secret = "outbound unique secret alpha beta gamma delta epsilon"
+        service = PromptProtectionService(enable_double_check=False)
+        req = SimpleNamespace(
+            prompt="question",
+            contexts=[],
+            extra_user_content_parts=[],
+        )
+        await InjectionExecutor(InjectionAdapter(), service).execute(
+            req,
+            InjectionStrategyRouter().route_final(
+                InjectionRoutingConfig(
+                    mode=RoutingMode.MANUAL,
+                    manual_preset=PresetName.BALANCED,
+                ),
+                RequestSignals(candidate_count=1, top_confidence=0.9),
+            ),
+            InjectionExecutionContext(
+                query="question",
+                memories=[{"content": secret, "score": 1.0, "metadata": {}}],
+            ),
+        )
+        cfg = MagicMock()
+        cfg.get.side_effect = lambda key, default=None: {
+            "security.sanitize_llm_response": True,
+            "security.double_check_enabled": False,
+        }.get(key, default)
+        conversation = MagicMock()
+        conversation.add_message_from_event = AsyncMock()
+        conversation.get_session_info = AsyncMock(return_value=None)
+        handler = ReflectionHandler(
+            context=MagicMock(),
+            config_manager=cfg,
+            memory_engine=MagicMock(),
+            memory_processor=MagicMock(),
+            conversation_manager=conversation,
+            enforce_limit_cb=AsyncMock(),
+            prompt_protection_service=service,
+        )
+        event = MagicMock()
+        event.unified_msg_origin = "session-1"
+        resp = SimpleNamespace(
+            role="assistant",
+            tools_call_name=None,
+            tools_call_extra_content=None,
+            completion_text=f"safe prefix {secret} safe suffix",
+        )
+
+        await handler.handle_memory_reflection(event, resp)
+
+        assert secret not in resp.completion_text
+        stored = conversation.add_message_from_event.await_args.kwargs["content"]
+        assert secret not in stored
 
     def test_sanitize_response_text_respects_disabled_config(self) -> None:
         from core.handlers.reflection_handler import ReflectionHandler

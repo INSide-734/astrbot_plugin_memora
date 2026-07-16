@@ -941,9 +941,58 @@ async def test_real_prompt_protection_filters_registered_unique_secret() -> None
 async def test_prompt_protection_cancellation_is_not_converted_to_error() -> None:
     protection = MagicMock()
     protection.wrap_prompt.side_effect = asyncio.CancelledError()
+    req = _request()
+    snapshot = (req.prompt, deepcopy(req.contexts), deepcopy(req.extra_user_content_parts))
     with pytest.raises(asyncio.CancelledError):
         await InjectionExecutor(InjectionAdapter(), protection).execute(
-            _request(),
+            req,
             _decision(),
             _context([{"content": "secret", "score": 1.0, "metadata": {}}]),
         )
+    assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
+
+
+@pytest.mark.asyncio
+async def test_registration_failure_after_mutation_rolls_back_and_does_not_filter() -> None:
+    from core.security.prompt_sanitizer import PromptProtectionService
+
+    req = _request()
+    snapshot = (req.prompt, deepcopy(req.contexts), deepcopy(req.extra_user_content_parts))
+    secret = "unregistered rollback secret alpha beta gamma delta epsilon"
+    protection = PromptProtectionService(enable_double_check=False)
+    original_wrap = protection.wrap_prompt
+
+    observed_mutation = False
+    def fail_after_observing_mutation(content, **kwargs):
+        nonlocal observed_mutation
+        observed_mutation = req.extra_user_content_parts != snapshot[2]
+        original_wrap(content, **kwargs)
+        raise RuntimeError("registration failed")
+    protection.wrap_prompt = fail_after_observing_mutation
+    result = await InjectionExecutor(InjectionAdapter(), protection).execute(
+        req,
+        _decision(),
+        _context([{"content": secret, "score": 1.0, "metadata": {}}]),
+    )
+    sanitized, report = protection.sanitize_response(secret)
+    assert result.error_code == "PROTECTION_FAILED"
+    assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
+    assert sanitized == secret
+    assert observed_mutation is True
+    assert report["leaks_removed"] == []
+
+
+@pytest.mark.asyncio
+async def test_assignment_failure_never_registers_prompt() -> None:
+    req = _FailingAssignmentRequest()
+    protection = MagicMock()
+    result = await InjectionExecutor(InjectionAdapter(), protection).execute(
+        req,
+        _decision(DeliveryMode.FAKE_TOOL_CALL),
+        _context(
+            [{"content": "memory", "score": 1.0, "metadata": {}}],
+            provider=_tool_capable_provider(),
+        ),
+    )
+    assert result.error_code == "MUTATION_FAILED"
+    protection.wrap_prompt.assert_not_called()
