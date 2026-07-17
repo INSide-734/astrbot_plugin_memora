@@ -107,6 +107,16 @@ def _changes_validation_error(field_errors: dict[str, str]):
     )
 
 
+def _sort_query_error(exc: ValueError):
+    message = str(exc)
+    field = "sort_order" if message == "sort_order must be asc or desc" else "sort_by"
+    return error_response(
+        message,
+        code="invalid_query",
+        field_errors={field: message},
+    )
+
+
 def _knowledge_changes_candidate(entry: KnowledgeEntry, changes: Any):
     if not isinstance(changes, dict):
         return None, _changes_validation_error({"changes": "必须是对象"})
@@ -196,11 +206,7 @@ class KnowledgeApiMixin:
                 default_order="desc",
             )
         except ValueError as exc:
-            return error_response(
-                str(exc),
-                code="invalid_query",
-                field_errors={"sort_by": str(exc)},
-            )
+            return _sort_query_error(exc)
         category = str(args.get("category", ""))
         entries, total = await manager.list_entries(
             limit=limit,
@@ -245,11 +251,7 @@ class KnowledgeApiMixin:
                 default_order="desc",
             )
         except ValueError as exc:
-            return error_response(
-                str(exc),
-                code="invalid_query",
-                field_errors={"sort_by": str(exc)},
-            )
+            return _sort_query_error(exc)
         category = str(args.get("category", ""))
         entries, total = await manager.search(
             query=query,

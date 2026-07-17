@@ -259,6 +259,44 @@ describe("KnowledgePage", () => {
     expect(localStorage.getItem("memora.table.knowledge.sort")).toBeNull();
   });
 
+  it("ignores a stale list response while the latest sorted request is pending", async () => {
+    const olderRequest = deferred<ReturnType<typeof ok>>();
+    const latestRequest = deferred<ReturnType<typeof ok>>();
+    bridge.apiGet
+      .mockImplementationOnce(() => olderRequest.promise)
+      .mockImplementationOnce(() => latestRequest.promise);
+
+    render(<KnowledgePage showToast={showToast} />);
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort Title ascending" }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      olderRequest.resolve(ok({
+        total: 1,
+        entries: [{ entry_id: "kb-old", title: "Old result", category: "fact" }],
+      }));
+      await olderRequest.promise;
+    });
+
+    expect(screen.queryByText("Old result")).toBeNull();
+    expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
+    expect(showToast).not.toHaveBeenCalled();
+
+    await act(async () => {
+      latestRequest.resolve(ok({
+        total: 1,
+        entries: [{ entry_id: "kb-new", title: "New result", category: "fact" }],
+      }));
+      await latestRequest.promise;
+    });
+
+    expect(await screen.findByText("New result")).toBeTruthy();
+    expect(screen.queryByText("Old result")).toBeNull();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
   it("returns to the previous valid page when deletion empties the current page", async () => {
     let offsetPageReads = 0;
     let deleted = false;
