@@ -120,7 +120,7 @@ export function InjectionStrategyPage({
   }, [onNavigate]);
 
   return (
-    <PageFrame variant="standard" aria-label={t("injection.title")}>
+    <PageFrame variant="dense" aria-label={t("injection.title")}>
       <PageHeader
         title={t("injection.title")}
         description={t("injection.subtitle")}
@@ -129,9 +129,9 @@ export function InjectionStrategyPage({
       <Tabs
         value={activeTab}
         onValueChange={requestTab}
-        className="min-h-0 flex-1 gap-0"
+        className="min-h-0 flex-1 gap-0 overflow-hidden"
       >
-        <div className="shrink-0 overflow-x-auto border-b px-4 sm:px-5 lg:px-6">
+        <div className="shrink-0 overflow-x-auto border-b bg-background px-4 sm:px-5 lg:px-6">
           <TabsList
             variant="line"
             aria-label={t("injection.tabs.label")}
@@ -152,9 +152,9 @@ export function InjectionStrategyPage({
           value="overview"
           id="injection-panel-overview"
           aria-labelledby="injection-tab-overview"
-          className="min-h-0 overflow-auto"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          <PageContent>
+          <PageContent width="constrained">
             <InjectionOverviewTab
               config={config}
               summary={summary}
@@ -167,9 +167,9 @@ export function InjectionStrategyPage({
           value="config"
           id="injection-panel-config"
           aria-labelledby="injection-tab-config"
-          className="min-h-0 overflow-auto"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          <PageContent>
+          <PageContent width="constrained">
             <InjectionConfigTab config={config} showToast={showToast} />
           </PageContent>
         </TabsContent>
@@ -177,9 +177,9 @@ export function InjectionStrategyPage({
           value="decisions"
           id="injection-panel-decisions"
           aria-labelledby="injection-tab-decisions"
-          className="min-h-0 overflow-auto"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          <PageContent>
+          <PageContent width="full" className="p-0">
             <InjectionDecisionsTab
               catalog={config.catalog}
               decisions={decisions}
