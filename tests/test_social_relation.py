@@ -20,6 +20,7 @@ from core.base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
+from core.base.list_sorting import SortQuery
 from core.social.models import (
     RELATION_CATEGORIES,
     RELATION_DIFFICULTY,
@@ -365,6 +366,64 @@ class TestRelationStoreCRUD:
         ))
         assert await store.count() == 1
         assert len(await store.list_all()) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_all_and_group_relations_use_stable_server_sorting(
+        self, tmp_db_path
+    ):
+        store = await _create_store(tmp_db_path)
+        for relation in (
+            SocialRelation(
+                from_user="zed",
+                to_user="one",
+                relation_type="colleague",
+                strength=0.4,
+                frequency=5,
+                last_interaction=100.0,
+                group_id="g1",
+            ),
+            SocialRelation(
+                from_user="alice",
+                to_user="two",
+                relation_type="friend",
+                strength=0.8,
+                frequency=10,
+                last_interaction=50.0,
+                group_id="g1",
+            ),
+            SocialRelation(
+                from_user="bob",
+                to_user="three",
+                relation_type="neighbor",
+                strength=0.6,
+                frequency=10,
+                last_interaction=150.0,
+                group_id="g2",
+            ),
+        ):
+            await store.upsert_relation(relation)
+
+        by_frequency = await store.list_all(
+            sort=SortQuery("frequency", "desc")
+        )
+        assert [relation.from_user for relation in by_frequency] == [
+            "alice",
+            "bob",
+            "zed",
+        ]
+
+        default_order = await store.list_all()
+        assert [relation.from_user for relation in default_order] == [
+            "bob",
+            "zed",
+            "alice",
+        ]
+
+        grouped = await store.get_group_relations(
+            "g1",
+            sort=SortQuery("last_interaction", "asc"),
+        )
+        assert [relation.from_user for relation in grouped] == ["alice", "zed"]
 
     def test_rejects_unapproved_table_identifier(self):
         store = RelationStore(db_path="social.db")

@@ -56,6 +56,7 @@ describe("SocialPage", () => {
   let showToast: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    localStorage.clear();
     bridge = {
       apiGet: vi.fn(),
       apiPost: vi.fn(),
@@ -136,7 +137,8 @@ describe("SocialPage", () => {
   }
 
   async function openRelationEditor() {
-    fireEvent.click(await screen.findByRole("button", { name: /open relation alice.*bob/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /row actions alice.*bob/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^view$/i }));
     return screen.findByRole("dialog", { name: /relation: alice.*bob/i });
   }
 
@@ -166,13 +168,66 @@ describe("SocialPage", () => {
     expect(screen.getByRole("tab", { name: /all/i }).getAttribute("aria-selected")).toBe("true");
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", { group_id: "group-1" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
+        group_id: "group-1",
+        sort_by: "last_interaction",
+        sort_order: "desc",
+      });
     });
 
     expect(await screen.findByText("alice")).toBeTruthy();
     expect(screen.getByText("bob")).toBeTruthy();
     expect(screen.getByText("50%")).toBeTruthy();
     expect(screen.getByText("project")).toBeTruthy();
+  });
+
+  it("sorts frequency on the server without persisting sort", async () => {
+    mockSocialList();
+    render(<SocialPage showToast={showToast} />);
+
+    await screen.findByText("alice");
+    const preferenceKey = "memora.table.social-relations.v1";
+    const storedBeforeSort = localStorage.getItem(preferenceKey);
+    selectRelation("alice", "bob");
+    fireEvent.click(screen.getByRole("button", { name: /Sort Frequency ascending/i }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/social/relations",
+      {
+        group_id: "group-1",
+        sort_by: "frequency",
+        sort_order: "asc",
+      },
+    ));
+    expect(screen.queryByText("1 selected")).toBeNull();
+
+    fireEvent.click((await screen.findByRole("button", { name: /Sort Frequency descending/i })));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/social/relations",
+      {
+        group_id: "group-1",
+        sort_by: "frequency",
+        sort_order: "desc",
+      },
+    ));
+    expect(localStorage.getItem(preferenceKey)).toBe(storedBeforeSort);
+  });
+
+  it("isolates row actions from row activation and deletes without opening detail", async () => {
+    mockSocialList();
+    render(<SocialPage showToast={showToast} />);
+
+    const rowActions = await screen.findByRole("button", { name: /row actions alice.*bob/i });
+    fireEvent.click(rowActions);
+    expect(screen.queryByRole("dialog", { name: /relation: alice.*bob/i })).toBeNull();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
+    const confirmation = await screen.findByRole("dialog", { name: /delete relation/i });
+    expect(screen.queryByRole("dialog", { name: /relation: alice.*bob/i })).toBeNull();
+    fireEvent.click(within(confirmation).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /delete relation/i })).toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: /row actions alice.*bob/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^view$/i }));
+    expect(await screen.findByRole("dialog", { name: /relation: alice.*bob/i })).toBeTruthy();
   });
 
   it("refetches the current group with the selected category tab", async () => {
@@ -190,6 +245,8 @@ describe("SocialPage", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
         group_id: "group-1",
         category: "career",
+        sort_by: "last_interaction",
+        sort_order: "desc",
       });
     });
     expect(screen.getByRole("tab", { name: /career/i }).getAttribute("aria-selected")).toBe("true");
@@ -593,7 +650,11 @@ describe("SocialPage", () => {
     fireEvent.click(await screen.findByRole("option", { name: /group-2/i }));
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", { group_id: "group-2" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
+        group_id: "group-2",
+        sort_by: "last_interaction",
+        sort_order: "desc",
+      });
     });
     expect(screen.queryByText("1 selected")).toBeNull();
   });
@@ -612,6 +673,8 @@ describe("SocialPage", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
         group_id: "group-1",
         category: "career",
+        sort_by: "last_interaction",
+        sort_order: "desc",
       });
     });
     expect(screen.queryByText("1 selected")).toBeNull();

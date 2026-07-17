@@ -9,6 +9,7 @@ from typing import Any
 from astrbot.api import logger
 
 from ..base.entity_editing import EntityValidationError, compute_entity_revision
+from ..base.list_sorting import SortQuery
 from .models import (
     RELATION_CATEGORIES,
     RELATION_DIFFICULTY,
@@ -192,10 +193,12 @@ class RelationManager:
         return await self._apply_delta(rel, delta, reason)
 
     async def get_relations_by_group(
-        self, group_id: str
+        self,
+        group_id: str,
+        sort: SortQuery = SortQuery("strength", "desc"),
     ) -> list[SocialRelation]:
-        """返回指定群组内的全部关系，按强度降序排列。"""
-        return await self._store.get_group_relations(group_id)
+        """返回指定群组内按指定稳定顺序排列的全部关系。"""
+        return await self._store.get_group_relations(group_id, sort=sort)
 
     async def get_user_network(
         self, user_id: str
@@ -239,9 +242,12 @@ class RelationManager:
         await self._store.upsert_relation(rel)
         return rel
 
-    async def list_all(self) -> list[SocialRelation]:
+    async def list_all(
+        self,
+        sort: SortQuery = SortQuery("last_interaction", "desc"),
+    ) -> list[SocialRelation]:
         """返回全部关系记录。"""
-        return await self._store.list_all()
+        return await self._store.list_all(sort=sort)
 
     async def list_group_ids(self) -> list[str]:
         """返回已持久化关系中所有非空且去重的群组 ID。"""

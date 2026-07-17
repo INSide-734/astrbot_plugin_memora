@@ -17,8 +17,24 @@ from ..base.entity_editing import (
     EntityNotFoundError,
     compute_entity_revision,
 )
+from ..base.list_sorting import SortQuery, order_by_clause
 from ..storage.base import BaseStore
 from .models import SocialRelation
+
+
+SOCIAL_SORT_COLUMNS = {
+    "from_user": "from_user COLLATE NOCASE",
+    "to_user": "to_user COLLATE NOCASE",
+    "group_id": "group_id COLLATE NOCASE",
+    "relation_type": "relation_type COLLATE NOCASE",
+    "strength": "strength",
+    "frequency": "frequency",
+    "last_interaction": "last_interaction",
+}
+_SOCIAL_SQL_COLUMNS = {
+    **SOCIAL_SORT_COLUMNS,
+    "id": "id",
+}
 
 
 class RelationStore(BaseStore):
@@ -446,8 +462,17 @@ class RelationStore(BaseStore):
                 return None
             return SocialRelation.from_row(self._row_to_dict(row))
 
-    async def get_group_relations(self, group_id: str) -> list[SocialRelation]:
+    async def get_group_relations(
+        self,
+        group_id: str,
+        sort: SortQuery = SortQuery("strength", "desc"),
+    ) -> list[SocialRelation]:
         """返回指定群组内的全部关系。"""
+        order_by = order_by_clause(
+            sort,
+            columns=_SOCIAL_SQL_COLUMNS,
+            tie_breaker="id",
+        )
         async with self._connect() as db:
             table_sql = self._table_sql
             cursor = await db.execute(
@@ -455,7 +480,7 @@ class RelationStore(BaseStore):
                 SELECT *
                 FROM {table_sql}
                 WHERE group_id = ?
-                ORDER BY strength DESC
+                ORDER BY {order_by}
                 """,
                 (group_id,),
             )
@@ -537,12 +562,20 @@ class RelationStore(BaseStore):
             await db.commit()
             return cursor.rowcount
 
-    async def list_all(self) -> list[SocialRelation]:
+    async def list_all(
+        self,
+        sort: SortQuery = SortQuery("last_interaction", "desc"),
+    ) -> list[SocialRelation]:
         """返回全部记录（便于调试或迁移）。"""
+        order_by = order_by_clause(
+            sort,
+            columns=_SOCIAL_SQL_COLUMNS,
+            tie_breaker="id",
+        )
         async with self._connect() as db:
             table_sql = self._table_sql
             cursor = await db.execute(
-                f"SELECT * FROM {table_sql} ORDER BY id"
+                f"SELECT * FROM {table_sql} ORDER BY {order_by}"
             )
             rows = await cursor.fetchall()
             return [SocialRelation.from_row(self._row_to_dict(r)) for r in rows]
@@ -569,4 +602,4 @@ class RelationStore(BaseStore):
             return [str(row[0]) for row in rows if row and row[0]]
 
 
-__all__ = ["RelationStore"]
+__all__ = ["RelationStore", "SOCIAL_SORT_COLUMNS"]

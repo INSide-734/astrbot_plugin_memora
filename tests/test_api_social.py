@@ -17,6 +17,7 @@ from core.base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
+from core.base.list_sorting import SortQuery
 
 
 def _mock_request(**args):
@@ -222,14 +223,47 @@ class TestSocialRelations:
             return_value=relations
         )
 
-        with patch("core.api.social_api.request", _mock_request(group_id="group-1")):
+        with patch(
+            "core.api.social_api.request",
+            _mock_request(
+                group_id="group-1",
+                sort_by="frequency",
+                sort_order="desc",
+            ),
+        ):
             result = await stub.get_social_relations()
 
         assert result["status"] == "ok"
         stub.plugin._relation_manager.get_relations_by_group.assert_awaited_once_with(
-            "group-1"
+            "group-1",
+            sort=SortQuery("frequency", "desc"),
         )
         assert result["data"]["relations"][0]["group_id"] == "group-1"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("sort_by", "sort_order", "field"),
+        [
+            ("missing", "asc", "sort_by"),
+            ("frequency", "DESC", "sort_order"),
+        ],
+    )
+    async def test_rejects_invalid_sort_values(
+        self, sort_by: str, sort_order: str, field: str
+    ) -> None:
+        stub = _make_stub()
+
+        with patch(
+            "core.api.social_api.request",
+            _mock_request(sort_by=sort_by, sort_order=sort_order),
+        ):
+            result = await stub.get_social_relations()
+
+        assert result["status"] == "error"
+        assert result["code"] == "invalid_query"
+        assert field in result["field_errors"]
+        stub.plugin._relation_manager.list_all.assert_not_called()
+        stub.plugin._relation_manager.get_relations_by_group.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_category_filter_reduces_results(self) -> None:
@@ -259,6 +293,9 @@ class TestSocialRelations:
             "rev-1",
             "rev-2",
         ]
+        stub.plugin._relation_manager.list_all.assert_called_once_with(
+            sort=SortQuery("last_interaction", "desc")
+        )
 
     @pytest.mark.asyncio
     async def test_unknown_relation_type_keeps_unknown_category(self) -> None:
