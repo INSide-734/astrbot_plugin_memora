@@ -1,0 +1,45 @@
+"""Tests for the shared allowlisted list-sort contract."""
+
+import pytest
+
+from core.base.list_sorting import SortQuery, order_by_clause, parse_sort_query
+
+
+ALLOWED = {"title": "title COLLATE NOCASE", "updated_at": "updated_at"}
+
+
+def test_parse_sort_query_uses_explicit_defaults() -> None:
+    assert parse_sort_query(
+        {},
+        allowed=ALLOWED,
+        default_by="updated_at",
+        default_order="desc",
+    ) == SortQuery("updated_at", "desc")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"sort_by": "title; DROP TABLE knowledge_entries"},
+        {"sort_by": "missing"},
+        {"sort_order": "DESC"},
+        {"sort_order": "sideways"},
+    ],
+)
+def test_parse_sort_query_rejects_unapproved_values(args: dict[str, str]) -> None:
+    with pytest.raises(ValueError):
+        parse_sort_query(
+            args,
+            allowed=ALLOWED,
+            default_by="updated_at",
+            default_order="desc",
+        )
+
+
+def test_order_clause_uses_only_allowlisted_columns_and_stable_tie_breaker() -> None:
+    sort = SortQuery("title", "asc")
+
+    assert (
+        order_by_clause(sort, columns=ALLOWED, tie_breaker="id")
+        == "title COLLATE NOCASE ASC, id ASC"
+    )
