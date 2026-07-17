@@ -3,7 +3,6 @@ import {
   functionalUpdate,
   getCoreRowModel,
   useReactTable,
-  type Column,
   type ColumnSizingState,
   type RowData,
   type RowSelectionState,
@@ -14,7 +13,6 @@ import {
   useCallback,
   useMemo,
   useState,
-  type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -32,12 +30,19 @@ import {
 import { selectionStateVariants } from "@/components/ui/selection-state";
 import { cn } from "@/lib/utils";
 import {
+  defaultTablePreferences,
   loadTablePreferences,
+  resetTablePreferences,
   sanitizeTablePreferences,
   saveTablePreferences,
   type TablePreferences,
 } from "./table-preferences";
 import type { DataTableColumn, DataTableSort } from "./table-types";
+import {
+  DataTableColumnHeader,
+  pinnedCellStyle,
+} from "./DataTableColumnHeader";
+import { DataTableViewOptions } from "./DataTableViewOptions";
 
 export interface DataTableProps<TData extends RowData> {
   tableId: string;
@@ -56,38 +61,15 @@ export interface DataTableProps<TData extends RowData> {
   pagination?: ReactNode;
 }
 
-function getPinningStyles<TData extends RowData, TValue>(
-  column: Column<TData, TValue>,
-): CSSProperties {
-  const pinned = column.getIsPinned();
-
-  return {
-    left: pinned === "left" ? `${column.getStart("left")}px` : undefined,
-    right: pinned === "right" ? `${column.getAfter("right")}px` : undefined,
-    position: pinned ? "sticky" : "relative",
-    width: column.getSize(),
-    zIndex: pinned ? 1 : 0,
-  };
-}
-
 function isInteractiveTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
     Boolean(
       target.closest(
-        "a,button,input,select,textarea,[role='button'],[role='checkbox'],[data-row-interactive]",
+        "a,button,input,select,textarea,[role='button'],[role='checkbox'],[role='menuitem'],[role='menuitemcheckbox'],[role='menuitemradio'],[data-row-interactive]",
       ),
     )
   );
-}
-
-function nextSortAction<TData extends RowData, TValue>(
-  column: Column<TData, TValue>,
-): "ascending" | "descending" | "clear" {
-  const sorted = column.getIsSorted();
-  if (sorted === "asc") return "descending";
-  if (sorted === "desc") return "clear";
-  return "ascending";
 }
 
 export function DataTable<TData extends RowData>({
@@ -196,6 +178,12 @@ export function DataTable<TData extends RowData>({
 
   const visibleColumnCount = Math.max(table.getVisibleLeafColumns().length, 1);
 
+  const resetView = () => {
+    setPreferences(defaultTablePreferences(descriptors));
+    setColumnSizing({});
+    resetTablePreferences(tableId);
+  };
+
   const activateRow = (
     event: MouseEvent<HTMLTableRowElement> | KeyboardEvent<HTMLTableRowElement>,
     row: TData,
@@ -210,11 +198,25 @@ export function DataTable<TData extends RowData>({
 
   return (
     <div className="flex min-w-0 flex-col gap-3" data-table-id={tableId}>
-      {toolbar}
+      <div className="flex flex-wrap items-center gap-2">
+        {toolbar ? <div className="min-w-0 flex-1">{toolbar}</div> : null}
+        <div className="ml-auto">
+          <DataTableViewOptions
+            table={table}
+            density={preferences.density}
+            onDensityChange={(density) =>
+              updatePreferences((current) => ({ ...current, density }))
+            }
+            onReset={resetView}
+          />
+        </div>
+      </div>
       <Table
         aria-busy={loading}
         data-density={preferences.density}
+        className="data-[density=compact]:[&_td]:py-1 data-[density=comfortable]:[&_td]:py-3"
         containerClassName="min-w-0"
+        style={{ minWidth: table.getTotalSize() }}
       >
         <TableHeader className="sticky top-0 z-20 bg-background">
           {table.getHeaderGroups().map((headerGroup) => (
@@ -233,20 +235,15 @@ export function DataTable<TData extends RowData>({
                     key={header.id}
                     colSpan={header.colSpan}
                     className={cn(pinned && "bg-background")}
-                    style={getPinningStyles(header.column)}
+                    style={{
+                      width: header.column.getSize(),
+                      ...pinnedCellStyle(header.column),
+                    }}
                   >
-                    {header.column.getCanSort() ? (
-                      <button
-                        type="button"
-                        className="inline-flex min-h-8 items-center rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        aria-label={`Sort ${header.column.columnDef.meta?.label ?? header.id} ${nextSortAction(header.column)}`}
-                        onClick={header.column.getToggleSortingHandler()}
-                      >
-                        {content}
-                      </button>
-                    ) : (
-                      content
-                    )}
+                    <DataTableColumnHeader
+                      header={header}
+                      title={content}
+                    />
                   </TableHead>
                 );
               })}
@@ -292,7 +289,10 @@ export function DataTable<TData extends RowData>({
                           pinned && "bg-background",
                           cell.column.columnDef.meta?.cellClassName,
                         )}
-                        style={getPinningStyles(cell.column)}
+                        style={{
+                          width: cell.column.getSize(),
+                          ...pinnedCellStyle(cell.column),
+                        }}
                       >
                         {flexRender(
                           cell.column.columnDef.cell,
