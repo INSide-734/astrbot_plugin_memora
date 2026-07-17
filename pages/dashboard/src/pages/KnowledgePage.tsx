@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { BookOpen, Plus, Search, Trash2, Pencil, X } from "lucide-react";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
@@ -9,8 +9,6 @@ import { Badge } from "@/components/ui/Badge";
 import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/Table";
-import { Checkbox } from "@/components/ui/checkbox";
 import { dashboardLocale, formatDashboardDate, formatDashboardNumber } from "@/lib/i18n";
 import { Textarea } from "@/components/ui/textarea";
 import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
@@ -18,6 +16,10 @@ import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
 import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { KnowledgeForm, type KnowledgeDraft } from "@/components/editing/forms/KnowledgeForm";
+import { DataTable } from "@/components/data-table/DataTable";
+import { DataTablePagination } from "@/components/data-table/DataTablePagination";
+import { actionsColumn, selectionColumn } from "@/components/data-table/data-table-columns";
+import type { DataTableColumn, DataTableSort } from "@/components/data-table/table-types";
 import { BULK_CONFIRMATION_THRESHOLD, editingErrorDetails, type FieldErrors } from "@/types/editing";
 import type { EntityNavigationTarget } from "@/types";
 
@@ -35,6 +37,7 @@ interface KnowledgeEntry {
   category?: string;
   confidence?: number;
   access_count?: number;
+  tags?: string[];
   updated_at?: string;
   created_at?: string;
 }
@@ -42,8 +45,10 @@ interface KnowledgeEntry {
 const CAT_LABELS: Record<string, string> = {};
 const EDIT_KB_LABELS: Record<string, string> = {};
 const PAGE_SIZE = 100;
+const DEFAULT_SORT: DataTableSort = { id: "updated_at", desc: true };
 const KNOWLEDGE_FORM_FIELDS = ["title", "content", "category", "confidence", "tags"] as const;
 const normalizeKnowledgeField = (name: string) => /^tags\.\d+$/.test(name) ? "tags" : name;
+const getEntryId = (entry: KnowledgeEntry) => entry.entry_id ?? entry.id ?? "";
 
 export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: KnowledgePageProps) {
   const { t, currentLang } = useI18n();
@@ -61,6 +66,7 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
+  const [sort, setSort] = useState<DataTableSort>(DEFAULT_SORT);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [loading, setLoading] = useState(false);
@@ -81,6 +87,7 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
   const [pendingClose, setPendingClose] = useState<"edit" | "create" | "selection" | null>(null);
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<KnowledgeEntry | null>(null);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const detailRequestRef = useRef(0);
 
@@ -90,9 +97,16 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
       const params = new URLSearchParams();
       params.set("limit", String(PAGE_SIZE));
       params.set("offset", String(page * PAGE_SIZE));
+      params.set("sort_by", sort.id);
+      params.set("sort_order", sort.desc ? "desc" : "asc");
       if (category) params.set("category", category);
       if (search) {
-        const searchParams = new URLSearchParams({ query: search, limit: String(PAGE_SIZE) });
+        const searchParams = new URLSearchParams({
+          query: search,
+          limit: String(PAGE_SIZE),
+          sort_by: sort.id,
+          sort_order: sort.desc ? "desc" : "asc",
+        });
         if (category) searchParams.set("category", category);
         const res = unwrapApiData(await apiRequest(`knowledge/search?${searchParams.toString()}`));
         const nextEntries = (res.entries ?? res.items ?? []) as KnowledgeEntry[];
@@ -112,11 +126,11 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
         setTotal(nextTotal);
       }
     } catch (e) { showToast(String(e), true); } finally { setLoading(false); }
-  }, [search, category, page, showToast]);
+  }, [search, category, page, showToast, sort]);
 
   useEffect(() => { fetchEntries(); }, [fetchEntries]);
 
-  const fetchDetail = useCallback(async (id: string) => {
+  const fetchDetail = useCallback(async (id: string, beginEdit = false) => {
     const requestId = ++detailRequestRef.current;
     try {
       const res = unwrapApiData(await apiRequest(`knowledge/detail?entry_id=${id}`));
@@ -124,7 +138,7 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
       const entry = (res.entry ?? res) as KnowledgeEntry;
       setDetail(entry);
       setEditDraft({ title: entry.title ?? "", content: entry.content ?? "", category: entry.category ?? "fact", confidence: Number(entry.confidence ?? 0), tags: (entry as KnowledgeEntry & { tags?: string[] }).tags ?? [] });
-      setEditMode(false);
+      setEditMode(beginEdit);
       setEditDirty(false);
       setEditFieldErrors({});
       setEditFormError(null);
@@ -169,7 +183,8 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
       await apiRequest("knowledge/delete", { method: "POST", body: { entry_id: id } });
       showToast(t("toast.entryDeleted"));
       setDeleteOpen(false);
-      setDetail(null);
+      setDeleteTarget(null);
+      if (detail && getEntryId(detail) === id) setDetail(null);
       fetchEntries();
     } catch (e) { showToast(String(e), true); }
   };
@@ -229,7 +244,7 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
     setCreateFormError(null);
   };
 
-  const requestDetail = (id: string) => {
+  const requestDetail = useCallback((id: string) => {
     if (id === (detail?.entry_id ?? detail?.id)) return;
     if (editDirty || createDirty) {
       setPendingSelection(id);
@@ -237,20 +252,7 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
       return;
     }
     void fetchDetail(id);
-  };
-
-  const toggleSelect = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
-
-  const toggleSelectAll = () => {
-    if (selected.size === entries.length) { setSelected(new Set()); }
-    else { setSelected(new Set(entries.map((e) => e.entry_id ?? e.id ?? ""))); }
-  };
+  }, [createDirty, detail, editDirty, fetchDetail]);
 
   const executeBatchDelete = async () => {
     if (!selected.size) return;
@@ -270,12 +272,118 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
     void executeBatchDelete();
   };
 
-  const getEntryId = (e: KnowledgeEntry) => e.entry_id ?? e.id ?? "";
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const changePage = (nextPage: number) => {
     setSelected(new Set());
     setPage(nextPage);
   };
+
+  const changeSort = useCallback((next: DataTableSort | null) => {
+    setSelected(new Set());
+    setPage(0);
+    setSort(next ?? DEFAULT_SORT);
+  }, []);
+
+  const columns = useMemo<DataTableColumn<KnowledgeEntry>[]>(() => [
+    selectionColumn({
+      label: t("kb.selectAll"),
+      rowLabel: (row) => t("kb.selectEntry", row.title),
+    }),
+    {
+      id: "title",
+      accessorKey: "title",
+      header: t("table.title"),
+      meta: {
+        label: t("table.title"),
+        serverSortKey: "title",
+        required: true,
+        defaultPin: "left",
+      },
+      cell: ({ row }) => (
+        <span
+          className="block max-w-[28rem] truncate font-medium"
+          title={row.original.title}
+        >
+          {row.original.title}
+        </span>
+      ),
+    },
+    {
+      id: "category",
+      accessorKey: "category",
+      header: t("table.category"),
+      meta: { label: t("table.category"), serverSortKey: "category" },
+      cell: ({ row }) => (
+        <Badge variant="secondary">
+          {CAT_LABELS[row.original.category ?? "fact"] ?? row.original.category}
+        </Badge>
+      ),
+    },
+    {
+      id: "confidence",
+      accessorKey: "confidence",
+      header: t("table.confidence"),
+      meta: {
+        label: t("table.confidence"),
+        serverSortKey: "confidence",
+        cellClassName: "text-xs tabular-nums",
+      },
+      cell: ({ row }) => formatDashboardNumber(row.original.confidence ?? 0, locale, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+    },
+    {
+      id: "updated_at",
+      accessorFn: (row) => row.updated_at ?? row.created_at,
+      header: t("table.updated"),
+      meta: {
+        label: t("table.updated"),
+        serverSortKey: "updated_at",
+        cellClassName: "text-xs text-muted-foreground",
+      },
+      cell: ({ row }) => formatDashboardDate(
+        row.original.updated_at ?? row.original.created_at,
+        locale,
+      ),
+    },
+    {
+      id: "access_count",
+      accessorKey: "access_count",
+      header: t("kb.accessCount"),
+      meta: {
+        label: t("kb.accessCount"),
+        serverSortKey: "access_count",
+        cellClassName: "tabular-nums",
+      },
+      cell: ({ row }) => row.original.access_count ?? 0,
+    },
+    actionsColumn({
+      label: t("table.actions"),
+      rowLabel: (row) => row.title,
+      actions: (row) => [
+        {
+          id: "view",
+          label: t("detail.view"),
+          onSelect: () => requestDetail(getEntryId(row)),
+        },
+        {
+          id: "edit",
+          label: t("detail.edit"),
+          onSelect: () => void fetchDetail(getEntryId(row), true),
+        },
+        {
+          id: "delete",
+          label: t("common.delete"),
+          destructive: true,
+          onSelect: () => {
+            setDeleteTarget(row);
+            setDeleteOpen(true);
+          },
+        },
+      ],
+    }),
+  ], [fetchDetail, locale, requestDetail, t]);
 
   return (
     <PageFrame variant="dense" aria-label={t("nav.knowledge")}>
@@ -306,43 +414,35 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
         </div>
       </PageToolbar>
 
-      <PageContent width="full" className="p-0">
-        {search ? <div className="border-b px-6 py-2 text-sm text-muted-foreground">{t("kb.searchResults", String(entries.length), String(total))}</div> : null}
-        {loading ? <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("common.loading")}</p> :
-         entries.length === 0 ? <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("table.noData")}</p> : (
-          <Table>
-            <TableHeader className="sticky top-0 bg-background">
-              <TableRow className="text-left text-xs font-medium uppercase text-muted-foreground">
-                <TableHead className="w-10 px-4"><Checkbox aria-label={selected.size === entries.length && entries.length > 0 ? t("kb.deselectAll") : t("kb.selectAll")} checked={selected.size === entries.length && entries.length > 0} onCheckedChange={toggleSelectAll} /></TableHead>
-                <TableHead className="px-4">{t("table.title")}</TableHead><TableHead>{t("table.category")}</TableHead>
-                <TableHead>{t("table.confidence")}</TableHead><TableHead>{t("table.updated")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {entries.map((e) => (
-                <TableRow key={getEntryId(e)} data-state={selected.has(getEntryId(e)) ? "selected" : undefined} className="cursor-pointer text-sm"
-                  onClick={() => requestDetail(getEntryId(e))}>
-                  <TableCell className="px-4" onClick={(ev) => ev.stopPropagation()}>
-                    <Checkbox aria-label={t("kb.selectEntry", e.title)} checked={selected.has(getEntryId(e))} onCheckedChange={() => toggleSelect(getEntryId(e))} />
-                  </TableCell>
-                  <TableCell className="px-4 font-medium">
-                    <Button variant="link" className="h-auto p-0 font-medium" aria-label={t("kb.openEntry", e.title)} onClick={(event) => { event.stopPropagation(); requestDetail(getEntryId(e)); }}>{e.title}</Button>
-                  </TableCell>
-                  <TableCell><Badge variant="secondary">{CAT_LABELS[e.category ?? "fact"] ?? e.category ?? t("category.fact")}</Badge></TableCell>
-                  <TableCell className="text-xs tabular-nums">{formatDashboardNumber(e.confidence ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{formatDashboardDate(e.updated_at ?? e.created_at, locale)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+      <PageContent width="full">
+        <DataTable
+          tableId="knowledge"
+          data={entries}
+          columns={columns}
+          getRowId={getEntryId}
+          sort={sort}
+          onSortChange={changeSort}
+          selectedRowIds={selected}
+          onSelectedRowIdsChange={setSelected}
+          currentRowId={detail ? getEntryId(detail) : null}
+          onRowActivate={(entry) => requestDetail(getEntryId(entry))}
+          loading={loading}
+          emptyLabel={t("table.noData")}
+          toolbar={search ? (
+            <span className="text-sm text-muted-foreground">
+              {t("kb.searchResults", String(entries.length), String(total))}
+            </span>
+          ) : null}
+          pagination={!search ? (
+            <DataTablePagination
+              page={page}
+              pageCount={totalPages}
+              total={total}
+              onPageChange={changePage}
+            />
+          ) : null}
+        />
       </PageContent>
-
-      {!search && <nav className="flex min-h-12 shrink-0 items-center justify-between border-t bg-background px-4 py-2 sm:px-5 lg:px-6" aria-label={t("kb.pagination")}>
-        <Button variant="outline" size="sm" aria-label={t("pagination.previousPage")} disabled={Boolean(search) || page === 0} onClick={() => changePage(Math.max(0, page - 1))}>{t("pagination.prev")}</Button>
-        <span className="text-sm text-muted-foreground">{t("pagination.pageOf", String(page + 1), String(totalPages))}</span>
-        <Button variant="outline" size="sm" aria-label={t("pagination.nextPage")} disabled={Boolean(search) || page + 1 >= totalPages} onClick={() => changePage(page + 1)}>{t("pagination.next")}</Button>
-      </nav>}
 
       {/* Batch bar */}
       {selected.size > 0 && (
@@ -353,10 +453,10 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
         </PageToolbar>
       )}
 
-      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) { if (editDirty) setPendingClose("edit"); else setDetail(null); } }} title={detail?.title ?? ""} description={detail ? (CAT_LABELS[detail.category ?? "fact"] ?? detail.category ?? "") : ""} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave onBeginEdit={() => { setEditFieldErrors({}); setEditFormError(null); setEditMode(true); }} onCancel={() => { if (detail) setEditDraft({ title: detail.title ?? "", content: detail.content ?? "", category: detail.category ?? "fact", confidence: Number(detail.confidence ?? 0), tags: (detail as KnowledgeEntry & { tags?: string[] }).tags ?? [] }); setEditFieldErrors({}); setEditFormError(null); setEditMode(false); setEditDirty(false); }} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: t("common.saving") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><p>{detail.content}</p><p>{t("table.category")}: {CAT_LABELS[detail.category ?? "fact"] ?? detail.category}</p><p>{t("table.confidence")}: {formatDashboardNumber(detail.confidence ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p><Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<KnowledgeForm value={editDraft} onChange={updateEditDraft} fieldErrors={editFieldErrors} formErrors={editFormError ? [editFormError] : []} disabled={editSubmitting} mode="edit" />} />
+      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) { if (editDirty) setPendingClose("edit"); else setDetail(null); } }} title={detail?.title ?? ""} description={detail ? (CAT_LABELS[detail.category ?? "fact"] ?? detail.category ?? "") : ""} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave onBeginEdit={() => { setEditFieldErrors({}); setEditFormError(null); setEditMode(true); }} onCancel={() => { if (detail) setEditDraft({ title: detail.title ?? "", content: detail.content ?? "", category: detail.category ?? "fact", confidence: Number(detail.confidence ?? 0), tags: detail.tags ?? [] }); setEditFieldErrors({}); setEditFormError(null); setEditMode(false); setEditDirty(false); }} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: t("common.saving") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><p>{detail.content}</p><p>{t("table.category")}: {CAT_LABELS[detail.category ?? "fact"] ?? detail.category}</p><p>{t("table.confidence")}: {formatDashboardNumber(detail.confidence ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p><Button variant="destructive" size="sm" onClick={() => { setDeleteTarget(detail); setDeleteOpen(true); }}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<KnowledgeForm value={editDraft} onChange={updateEditDraft} fieldErrors={editFieldErrors} formErrors={editFormError ? [editFormError] : []} disabled={editSubmitting} mode="edit" />} />
       <EntityCreateDialog open={showCreate} onOpenChange={(open) => { if (!open) { if (createDirty) setPendingClose("create"); else { resetNewEntry(); setShowCreate(false); } } }} title={t("detail.newEntry")} description={t("detail.newEntry")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(newEntry.title.trim())} onCancel={() => { resetNewEntry(); setShowCreate(false); }} onSubmit={createEntry} labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: t("detail.create"), submitting: t("common.saving") }} form={<KnowledgeForm value={newEntry} onChange={updateNewEntry} fieldErrors={createFieldErrors} formErrors={createFormError ? [createFormError] : []} disabled={createSubmitting} mode="create" />} />
       <UnsavedChangesDialog open={pendingClose !== null} title={t("config.unsaved.title")} description={t("config.unsaved.description")} keepEditingLabel={t("config.unsaved.keepEditing")} discardLabel={t("config.unsaved.discard")} onKeepEditing={() => { setPendingClose(null); setPendingSelection(null); }} onDiscard={() => { if (pendingClose === "selection" && pendingSelection) { setEditDirty(false); resetNewEntry(); setEditMode(false); setShowCreate(false); void fetchDetail(pendingSelection); } else if (pendingClose === "edit") { setEditDirty(false); setEditMode(false); setDetail(null); } else { resetNewEntry(); setShowCreate(false); } setPendingSelection(null); setPendingClose(null); }} />
-      <DeleteConfirmDialog open={deleteOpen} title={t("common.delete")} description={detail?.title ?? ""} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} onCancel={() => setDeleteOpen(false)} onConfirm={() => detail && void deleteEntry(detail.entry_id ?? detail.id ?? "")} />
+      <DeleteConfirmDialog open={deleteOpen} title={t("common.delete")} description={deleteTarget?.title ?? ""} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} onCancel={() => { setDeleteOpen(false); setDeleteTarget(null); }} onConfirm={() => deleteTarget && void deleteEntry(getEntryId(deleteTarget))} />
       <DeleteConfirmDialog open={batchDeleteOpen} title={t("filter.deleteSelected")} description={t("filter.deleteSelected")} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} confirmationRequirement={{ label: t("filter.deleteSelected"), expectedText: String(selected.size) }} onCancel={() => setBatchDeleteOpen(false)} onConfirm={() => { setBatchDeleteOpen(false); void executeBatchDelete(); }} />
     </PageFrame>
   );

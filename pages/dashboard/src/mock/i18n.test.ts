@@ -77,6 +77,7 @@ const REQUIRED_KEYS = [
   "search.results",
   "search.configLoading",
   "search.countLimited",
+  "kb.accessCount",
   "table.viewOptions",
   "table.columns",
   "table.density",

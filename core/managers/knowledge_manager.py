@@ -6,6 +6,7 @@ import time as _time
 
 from astrbot.api import logger
 
+from ..base.list_sorting import SortQuery
 from ..models.knowledge_models import KnowledgeEntry
 from ..storage.knowledge_store import KnowledgeStore
 
@@ -35,15 +36,31 @@ class KnowledgeManager:
         return await self._store.get(entry_id)
 
     async def search(
-        self, query: str, limit: int = 20, category: str = ""
+        self,
+        query: str,
+        limit: int = 20,
+        category: str = "",
+        sort: SortQuery = SortQuery("updated_at", "desc"),
     ) -> tuple[list[KnowledgeEntry], int]:
-        return await self._store.search(query, limit=limit, category=category)
+        return await self._store.search(
+            query,
+            limit=limit,
+            category=category,
+            sort=sort,
+        )
 
     async def list_entries(
-        self, limit: int = 50, offset: int = 0, category: str = ""
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        category: str = "",
+        sort: SortQuery = SortQuery("updated_at", "desc"),
     ) -> tuple[list[KnowledgeEntry], int]:
         return await self._store.list_entries(
-            limit=limit, offset=offset, category=category
+            limit=limit,
+            offset=offset,
+            category=category,
+            sort=sort,
         )
 
     async def update_entry(self, entry: KnowledgeEntry) -> bool:

@@ -2,6 +2,7 @@
 
 import pytest
 
+from core.base.list_sorting import SortQuery
 from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
 from core.storage.knowledge_store import KnowledgeStore
 
@@ -160,6 +161,42 @@ class TestKnowledgeStoreSearch:
         results, total = await store.list_entries(category="fact")
         assert total == 2
         assert all(r.category == KnowledgeType.FACT for r in results)
+
+    @pytest.mark.asyncio
+    async def test_list_entries_sorts_before_pagination(self, tmp_db_path):
+        store = KnowledgeStore(tmp_db_path)
+        await store.init_table()
+
+        for title in ("Gamma", "Alpha", "Beta"):
+            await store.insert(_make_entry(title=title))
+        async with store._connect() as db:
+            await db.execute("UPDATE knowledge_entries SET updated_at = 100")
+            await db.commit()
+
+        results, total = await store.list_entries(
+            limit=2,
+            offset=0,
+            sort=SortQuery("title", "asc"),
+        )
+
+        assert [entry.title for entry in results] == ["Alpha", "Beta"]
+        assert total == 3
+
+    @pytest.mark.asyncio
+    async def test_search_sorts_matches_before_limit(self, tmp_db_path):
+        store = KnowledgeStore(tmp_db_path)
+        await store.init_table()
+
+        for title, confidence in (("Low event", 0.2), ("High event", 0.9), ("Mid event", 0.6)):
+            await store.insert(_make_entry(title=title, confidence=confidence))
+
+        results, _ = await store.search(
+            "event",
+            limit=2,
+            sort=SortQuery("confidence", "desc"),
+        )
+
+        assert [entry.confidence for entry in results] == [0.9, 0.6]
 
 
 class TestKnowledgeStoreEdgeCases:

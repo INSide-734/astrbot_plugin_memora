@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.base.list_sorting import SortQuery
+
 
 def _mock_request(**args):
     mock = MagicMock()
@@ -32,6 +34,8 @@ def _make_mixin(*, plugin_ready: bool = True, has_store: bool = True):
             if has_store:
                 engine = MagicMock()
                 engine.knowledge_manager = MagicMock()
+                engine.knowledge_manager.list_entries = AsyncMock(return_value=([], 0))
+                engine.knowledge_manager.search = AsyncMock(return_value=([], 0))
             else:
                 engine = MagicMock(spec=[])
             return {"memory_engine": engine}, None
@@ -68,6 +72,24 @@ class TestKnowledgeValidation:
         with patch("core.api.knowledge_api.request", req):
             r = await _make_mixin(has_store=False).search_knowledge()
         assert r["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_list_rejects_invalid_sort_key(self) -> None:
+        req = _mock_request(sort_by="title;drop", sort_order="asc")
+        with patch("core.api.knowledge_api.request", req):
+            r = await _make_mixin().list_knowledge()
+        assert r["status"] == "error"
+        assert r["code"] == "invalid_query"
+        assert r["field_errors"]["sort_by"] == "sort_by is not supported"
+
+    @pytest.mark.asyncio
+    async def test_search_rejects_invalid_sort_order(self) -> None:
+        req = _mock_request(query="test", sort_by="title", sort_order="DESC")
+        with patch("core.api.knowledge_api.request", req):
+            r = await _make_mixin().search_knowledge()
+        assert r["status"] == "error"
+        assert r["code"] == "invalid_query"
+        assert r["field_errors"]["sort_by"] == "sort_order must be asc or desc"
 
     @pytest.mark.asyncio
     async def test_get_detail_missing_id(self) -> None:
@@ -144,31 +166,43 @@ class TestKnowledgeHappyPath:
     async def test_list_knowledge(self) -> None:
         req = _mock_request()
         mixin = _make_mixin()
+        manager = MagicMock()
+        manager.list_entries = AsyncMock(return_value=([], 0))
         async def _ready():
             engine = MagicMock()
-            manager = MagicMock()
-            manager.list_entries = AsyncMock(return_value=([], 0))
             engine.knowledge_manager = manager
             return {"memory_engine": engine}, None
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.knowledge_api.request", req):
             r = await mixin.list_knowledge()
         assert r["status"] == "ok"
+        manager.list_entries.assert_awaited_once_with(
+            limit=50,
+            offset=0,
+            category="",
+            sort=SortQuery("updated_at", "desc"),
+        )
 
     @pytest.mark.asyncio
     async def test_search_knowledge(self) -> None:
         req = _mock_request(query="test")
         mixin = _make_mixin()
+        manager = MagicMock()
+        manager.search = AsyncMock(return_value=([], 0))
         async def _ready():
             engine = MagicMock()
-            manager = MagicMock()
-            manager.search = AsyncMock(return_value=([], 0))
             engine.knowledge_manager = manager
             return {"memory_engine": engine}, None
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.knowledge_api.request", req):
             r = await mixin.search_knowledge()
         assert r["status"] == "ok"
+        manager.search.assert_awaited_once_with(
+            query="test",
+            limit=20,
+            category="",
+            sort=SortQuery("updated_at", "desc"),
+        )
 
     @pytest.mark.asyncio
     async def test_create_entry(self) -> None:
