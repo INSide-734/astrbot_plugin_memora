@@ -168,6 +168,39 @@ describe("selection-aware UI primitives", () => {
     expect(newlySelected.querySelector("svg")).toBeTruthy();
   });
 
+  it("derives the open Select width from its trigger at runtime", async () => {
+    const items = [
+      { label: "Short", value: "short" },
+      { label: "Long option", value: "long" },
+    ];
+    render(
+      <Select items={items} defaultValue="short">
+        <SelectTrigger aria-label="Adaptive width" className="w-28">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {items.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>,
+    );
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Adaptive width" }));
+    const content = (await screen.findByRole("listbox")).closest(
+      "[data-slot='select-content']",
+    );
+    const classes = content?.className.split(/\s+/) ?? [];
+
+    expect(classes).toContain("w-[var(--anchor-width)]");
+    expect(classes).toContain("min-w-[var(--anchor-width)]");
+    expect(classes).not.toContain("min-w-36");
+  });
+
   it("toggles an enabled Checkbox, preserves disabled state, and exposes focus", () => {
     render(
       <>

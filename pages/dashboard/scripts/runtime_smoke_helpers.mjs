@@ -17,6 +17,119 @@ function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+export function assertEditorReadiness(
+  { visibleTitles = [], loadingOverlayVisible, fixedFooterVisible },
+  { expectedTitle },
+) {
+  const issues = [];
+  if (!visibleTitles.some((title) => String(title).trim() === expectedTitle)) {
+    issues.push(`expected title "${expectedTitle}" is not visible`);
+  }
+  if (loadingOverlayVisible) {
+    issues.push("loading overlay is still visible");
+  }
+  if (!fixedFooterVisible) {
+    issues.push("fixed editor footer is not visible");
+  }
+  if (issues.length > 0) {
+    throw new Error(`Editor is not ready: ${issues.join("; ")}`);
+  }
+}
+
+export function assertDialogActions(
+  visibleActions,
+  expectedActions,
+  label = "dialog",
+) {
+  const actions = new Set(visibleActions.map((action) => String(action).trim()));
+  const missing = expectedActions.filter((action) => !actions.has(action));
+  if (missing.length > 0) {
+    throw new Error(`${label} is missing actions: ${missing.join(", ")}`);
+  }
+}
+
+const EDITING_RUNTIME_GET_ENDPOINTS = [
+  "page/social/relations",
+  "page/profiles",
+  "page/profiles/detail",
+  "page/jargon/candidates",
+  "page/jargon/meanings",
+  "page/jargon/stats",
+  "page/affection/status",
+  "page/affection/users",
+  "page/affection/moods/history",
+];
+
+const EDITING_RUNTIME_POST_ENDPOINTS = [
+  "page/social/create",
+  "page/social/update",
+  "page/social/delete",
+  "page/social/batch",
+  "page/profiles/create",
+  "page/profiles/update",
+  "page/profiles/delete",
+  "page/profiles/batch",
+  "page/jargon/create",
+  "page/jargon/update",
+  "page/jargon/delete",
+  "page/jargon/batch",
+  "page/affection/users/create",
+  "page/affection/users/update",
+  "page/affection/users/delete",
+  "page/affection/users/batch",
+  "page/affection/mood/set",
+  "page/affection/mood/reset",
+];
+
+export function assertEditingRuntimeCalls(calls) {
+  for (const endpoint of EDITING_RUNTIME_GET_ENDPOINTS) {
+    const call = calls.find(
+      (candidate) => candidate.method === "GET"
+        && candidate.endpoint === endpoint
+        && candidate.response?.status === "ok",
+    );
+    if (!call || !call.params || typeof call.params !== "object" || Array.isArray(call.params)) {
+      throw new Error(`Editing runtime smoke is missing a successful GET ${endpoint}`);
+    }
+  }
+
+  for (const endpoint of EDITING_RUNTIME_POST_ENDPOINTS) {
+    const call = calls.find(
+      (candidate) => candidate.method === "POST"
+        && candidate.endpoint === endpoint
+        && candidate.response?.status === "ok",
+    );
+    if (!call || !call.body || typeof call.body !== "object" || Array.isArray(call.body)) {
+      throw new Error(`Editing runtime smoke is missing a successful POST ${endpoint}`);
+    }
+  }
+
+  const invalidScore = calls.find(
+    (call) => call.method === "POST"
+      && call.endpoint === "page/affection/users/create"
+      && call.response?.code === "validation_error"
+      && typeof call.response?.field_errors?.affection_score === "string",
+  );
+  if (!invalidScore) {
+    throw new Error("Editing runtime smoke is missing affection_score validation_error coverage");
+  }
+
+  const staleConflict = calls.find(
+    (call) => call.method === "POST"
+      && call.response?.code === "edit_conflict"
+      && call.response?.data?.current_entity
+      && typeof call.response?.data?.current_revision === "string",
+  );
+  if (!staleConflict) {
+    throw new Error("Editing runtime smoke is missing an edit_conflict current-entity envelope");
+  }
+
+  return {
+    getEndpoints: EDITING_RUNTIME_GET_ENDPOINTS.length,
+    postEndpoints: EDITING_RUNTIME_POST_ENDPOINTS.length,
+  };
+}
+
 export function resolveRuntimeResourcePath(
   url,
   { runtimeOrigin, dashboardRoot },

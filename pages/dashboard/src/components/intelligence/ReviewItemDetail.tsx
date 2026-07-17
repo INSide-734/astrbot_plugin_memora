@@ -18,6 +18,7 @@ interface ReviewItemDetailProps {
   actions: ReviewAction[];
   loading?: boolean;
   submitting?: boolean;
+  activeAction?: ReviewActionValue | null;
   onAction: (
     action: ReviewActionValue,
     payload?: Record<string, unknown>,
@@ -55,7 +56,7 @@ function metadataEntries(metadata: Record<string, unknown>) {
   });
 }
 
-export function ReviewItemDetail({ item, actions, loading, submitting, onAction }: ReviewItemDetailProps) {
+export function ReviewItemDetail({ item, actions, loading, submitting, activeAction, onAction }: ReviewItemDetailProps) {
   const { t, currentLang } = useI18n();
   const [editContent, setEditContent] = useState("");
   const [mergeTarget, setMergeTarget] = useState("");
@@ -194,15 +195,15 @@ export function ReviewItemDetail({ item, actions, loading, submitting, onAction 
             <div className="mt-2 flex flex-wrap gap-2">
               <Button size="sm" variant="secondary" disabled={submitting} onClick={() => submitAction("approve", {}, false)}>
                 <Check size={13} />
-                {t("intelligence.review.approve")}
+                {submitting && activeAction === "approve" ? `${actionLabel("approve")}…` : t("intelligence.review.approve")}
               </Button>
               <Button size="sm" variant="secondary" disabled={submitting} onClick={() => submitAction("mark_safe", {}, false)}>
                 <ShieldCheck size={13} />
-                {t("intelligence.review.markSafe")}
+                {submitting && activeAction === "mark_safe" ? `${actionLabel("mark_safe")}…` : t("intelligence.review.markSafe")}
               </Button>
               <Button size="sm" variant="outline" disabled={submitting} onClick={() => submitAction("edit", { content: editContent }, false)}>
                 <FilePenLine size={13} />
-                {t("intelligence.review.edit")}
+                {submitting && activeAction === "edit" ? `${actionLabel("edit")}…` : t("intelligence.review.edit")}
               </Button>
               <Button
                 size="sm"
@@ -211,15 +212,15 @@ export function ReviewItemDetail({ item, actions, loading, submitting, onAction 
                 onClick={() => setConfirmAction("merge")}
               >
                 <GitMerge size={13} />
-                {t("intelligence.review.merge")}
+                {submitting && activeAction === "merge" ? `${actionLabel("merge")}…` : t("intelligence.review.merge")}
               </Button>
               <Button size="sm" variant="outline" disabled={submitting} onClick={() => setConfirmAction("archive")}>
                 <Archive size={13} />
-                {t("common.archive")}
+                {submitting && activeAction === "archive" ? `${actionLabel("archive")}…` : t("common.archive")}
               </Button>
               <Button size="sm" variant="destructive" disabled={submitting} onClick={() => setConfirmAction("delete")}>
                 <Trash2 size={13} />
-                {t("common.delete")}
+                {submitting && activeAction === "delete" ? `${actionLabel("delete")}…` : t("common.delete")}
               </Button>
             </div>
           </div>
@@ -231,7 +232,7 @@ export function ReviewItemDetail({ item, actions, loading, submitting, onAction 
               </span>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant={confirmAction === "delete" ? "destructive" : "secondary"} disabled={submitting || confirming} onClick={confirm}>
-                  {t("intelligence.review.confirm")}
+                  {submitting && activeAction === confirmAction ? `${actionLabel(confirmAction)}…` : t("intelligence.review.confirm")}
                 </Button>
                 <Button size="sm" variant="ghost" disabled={submitting || confirming} onClick={() => setConfirmAction(null)}>
                   {t("common.cancel")}

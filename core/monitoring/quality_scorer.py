@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import time
 from collections import deque
@@ -576,7 +577,8 @@ def _text_to_simple_embedding(text: str, dim: int = 64) -> list[float]:
     vec = [0.0] * dim
     tokens = _tokenize(text)
     for i, token in enumerate(tokens):
-        h = hash(token) % dim
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        h = int.from_bytes(digest[:8], byteorder="big", signed=False) % dim
         vec[h] += 1.0 / (i + 1)  # 位置越靠后，权重越低
     # 归一化
     mag = math.sqrt(sum(v * v for v in vec))

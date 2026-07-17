@@ -33,7 +33,7 @@ function staticTranslationKeys(filePath: string): string[] {
     if (
       ts.isCallExpression(node)
       && ts.isIdentifier(node.expression)
-      && node.expression.text === "t"
+      && (node.expression.text === "t" || node.expression.text === "label")
       && node.arguments.length > 0
     ) {
       const key = node.arguments[0];
@@ -285,6 +285,21 @@ const DYNAMIC_KEYS = [
   ].map((field) => `injection.detail.field.${field}`),
 ] as const;
 
+const STATIC_TRANSLATION_KEYS = [...new Set(
+  productionSourceFiles(SOURCE_ROOT).flatMap(staticTranslationKeys),
+)].sort();
+
+const REQUIRED_EDITING_KEYS = [...new Set([
+  ...STATIC_TRANSLATION_KEYS,
+  ...DYNAMIC_KEYS,
+  "social.newRelation",
+  "affection.restoreDefaultMood",
+])].sort();
+
+function missingOrBlankKeys(map: Record<string, string>, keys: readonly string[]): string[] {
+  return keys.filter((key) => typeof map[key] !== "string" || map[key].trim().length === 0);
+}
+
 function placeholders(value: string): string[] {
   return [...value.matchAll(/\{(\d+)\}/g)].map((match) => match[1]).sort();
 }
@@ -294,6 +309,19 @@ describe("dashboard i18n dictionaries", () => {
     const zhKeys = Object.keys(I18N_MAP).sort();
     expect(Object.keys(EN_MAP).sort()).toEqual(zhKeys);
     expect(Object.keys(RU_MAP).sort()).toEqual(zhKeys);
+  });
+
+  it("defines every required editing key with non-blank copy in all locales", () => {
+    const missing = {
+      zh: missingOrBlankKeys(I18N_MAP, REQUIRED_EDITING_KEYS),
+      en: missingOrBlankKeys(EN_MAP, REQUIRED_EDITING_KEYS),
+      ru: missingOrBlankKeys(RU_MAP, REQUIRED_EDITING_KEYS),
+    };
+
+    expect(
+      missing,
+      `missing or blank required editing translations:\n${JSON.stringify(missing, null, 2)}`,
+    ).toEqual({ zh: [], en: [], ru: [] });
   });
 
   it("contains every shared interaction key in all locales", () => {
@@ -372,7 +400,7 @@ describe("dashboard i18n dictionaries", () => {
   });
 
   it("defines every static production translation key in all locales", () => {
-    const keys = [...new Set(productionSourceFiles(SOURCE_ROOT).flatMap(staticTranslationKeys))].sort();
+    const keys = STATIC_TRANSLATION_KEYS;
 
     expect(keys.length).toBeGreaterThan(400);
     for (const key of keys) {

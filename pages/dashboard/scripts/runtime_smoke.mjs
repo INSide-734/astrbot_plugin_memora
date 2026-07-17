@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   assertConfigRuntimeCalls,
+  assertEditingRuntimeCalls,
   instrumentRuntimeBridge,
   resolveRuntimeResourcePath,
   waitFor,
@@ -46,6 +47,7 @@ const dom = new JSDOM(html, {
   pretendToBeVisual: true,
   virtualConsole,
   beforeParse(window) {
+    window.structuredClone = (value) => globalThis.structuredClone(value);
     window.ResizeObserver = class {
       observe() {}
       unobserve() {}
@@ -117,6 +119,216 @@ function editNumberField(pathName, value) {
   setInputValue(input, value);
 }
 
+function requireOkData(response, label) {
+  if (response?.status !== "ok" || !response.data || typeof response.data !== "object") {
+    throw new Error(`${label} failed: ${JSON.stringify(response)}`);
+  }
+  return response.data;
+}
+
+function requireEntityEnvelope(response, label) {
+  const data = requireOkData(response, label);
+  if (!data.entity || typeof data.entity !== "object" || typeof data.revision !== "string") {
+    throw new Error(`${label} did not return an entity revision envelope`);
+  }
+  return data;
+}
+
+async function exerciseEditingRuntimeRoutes(bridge, calls) {
+  const suffix = "task18-runtime";
+
+  const socialIdentity = {
+    from_user: `${suffix}-from`,
+    to_user: `${suffix}-to`,
+    relation_type: "colleague",
+    group_id: "group_001",
+  };
+  const socialCreated = requireEntityEnvelope(await bridge.apiPost("page/social/create", {
+    ...socialIdentity,
+    strength: 0.4,
+    tags: ["runtime"],
+  }), "social create");
+  requireOkData(await bridge.apiGet("page/social/relations", {
+    group_id: socialIdentity.group_id,
+  }), "social list");
+  const socialUpdated = requireEntityEnvelope(await bridge.apiPost("page/social/update", {
+    identity: socialIdentity,
+    changes: { strength: 0.75, tags: ["runtime", "updated"] },
+    expected_revision: socialCreated.revision,
+  }), "social update");
+  await bridge.apiPost("page/social/update", {
+    identity: socialIdentity,
+    changes: { strength: 0.1 },
+    expected_revision: socialCreated.revision,
+  });
+  requireOkData(await bridge.apiPost("page/social/delete", {
+    identity: socialIdentity,
+    expected_revision: socialUpdated.revision,
+  }), "social delete");
+  const socialBatchIdentity = { ...socialIdentity, from_user: `${suffix}-batch-from` };
+  const socialBatchCreated = requireEntityEnvelope(await bridge.apiPost("page/social/create", {
+    ...socialBatchIdentity,
+    strength: 0.5,
+    tags: [],
+  }), "social batch seed");
+  requireOkData(await bridge.apiPost("page/social/batch", {
+    action: "delete",
+    items: [{ identity: socialBatchIdentity, expected_revision: socialBatchCreated.revision }],
+    params: {},
+  }), "social batch");
+
+  const profileDraft = {
+    user_id: `${suffix}-profile`,
+    display_name: "Task 18 Runtime",
+    preferences: {
+      reply_style: "concise",
+      preferred_topics: ["runtime"],
+      avoided_topics: ["spoilers"],
+      active_hours: [9, 17],
+    },
+    tags: [{ category: "interest", value: "runtime", confidence: 0.9 }],
+  };
+  const profileCreated = requireEntityEnvelope(
+    await bridge.apiPost("page/profiles/create", profileDraft),
+    "profile create",
+  );
+  requireOkData(await bridge.apiGet("page/profiles", { limit: "100", offset: "0" }), "profile list");
+  requireOkData(await bridge.apiGet("page/profiles/detail", { user_id: profileDraft.user_id }), "profile detail");
+  const profileUpdated = requireEntityEnvelope(await bridge.apiPost("page/profiles/update", {
+    identity: { user_id: profileDraft.user_id },
+    changes: { display_name: "Task 18 Runtime Updated" },
+    expected_revision: profileCreated.revision,
+  }), "profile update");
+  requireOkData(await bridge.apiPost("page/profiles/delete", {
+    identity: { user_id: profileDraft.user_id },
+    expected_revision: profileUpdated.revision,
+  }), "profile delete");
+  const profileBatchDraft = { ...profileDraft, user_id: `${suffix}-profile-batch` };
+  const profileBatchCreated = requireEntityEnvelope(
+    await bridge.apiPost("page/profiles/create", profileBatchDraft),
+    "profile batch seed",
+  );
+  requireOkData(await bridge.apiPost("page/profiles/batch", {
+    action: "delete",
+    items: [{
+      identity: { user_id: profileBatchDraft.user_id },
+      expected_revision: profileBatchCreated.revision,
+    }],
+    params: {},
+  }), "profile batch");
+
+  requireOkData(await bridge.apiGet("page/jargon/candidates", { group_id: "group_001" }), "jargon candidates");
+  requireOkData(await bridge.apiGet("page/jargon/stats", { group_id: "group_001" }), "jargon stats");
+  const jargonDraft = {
+    term: `${suffix}-jargon`,
+    group_id: "group_001",
+    meaning: "Runtime smoke jargon",
+    confidence: 0.8,
+    is_jargon: true,
+    is_confirmed: false,
+    is_global: false,
+  };
+  const jargonIdentity = { term: jargonDraft.term, group_id: jargonDraft.group_id };
+  const jargonCreated = requireEntityEnvelope(
+    await bridge.apiPost("page/jargon/create", jargonDraft),
+    "jargon create",
+  );
+  requireOkData(await bridge.apiGet("page/jargon/meanings", {
+    group_id: jargonDraft.group_id,
+    confirmed_only: "false",
+  }), "jargon meanings");
+  const jargonUpdated = requireEntityEnvelope(await bridge.apiPost("page/jargon/update", {
+    identity: jargonIdentity,
+    changes: { meaning: "Updated runtime jargon" },
+    expected_revision: jargonCreated.revision,
+  }), "jargon update");
+  requireOkData(await bridge.apiPost("page/jargon/delete", {
+    identity: jargonIdentity,
+    expected_revision: jargonUpdated.revision,
+  }), "jargon delete");
+  const jargonBatchDraft = { ...jargonDraft, term: `${suffix}-jargon-batch` };
+  const jargonBatchIdentity = {
+    term: jargonBatchDraft.term,
+    group_id: jargonBatchDraft.group_id,
+  };
+  const jargonBatchCreated = requireEntityEnvelope(
+    await bridge.apiPost("page/jargon/create", jargonBatchDraft),
+    "jargon batch seed",
+  );
+  requireOkData(await bridge.apiPost("page/jargon/batch", {
+    action: "delete",
+    items: [{ identity: jargonBatchIdentity, expected_revision: jargonBatchCreated.revision }],
+  }), "jargon batch");
+
+  requireOkData(await bridge.apiGet("page/affection/status", { group_id: "group_001" }), "affection status");
+  await bridge.apiPost("page/affection/users/create", {
+    group_id: "group_001",
+    user_id: `${suffix}-invalid-score`,
+    affection_score: 101,
+  });
+  const affectionDraft = {
+    group_id: "group_001",
+    user_id: `${suffix}-affection`,
+    affection_score: 42,
+  };
+  const affectionIdentity = {
+    group_id: affectionDraft.group_id,
+    user_id: affectionDraft.user_id,
+  };
+  const affectionCreated = requireEntityEnvelope(
+    await bridge.apiPost("page/affection/users/create", affectionDraft),
+    "affection create",
+  );
+  requireOkData(await bridge.apiGet("page/affection/users", {
+    group_id: affectionDraft.group_id,
+    limit: "50",
+    offset: "0",
+  }), "affection users");
+  const affectionUpdated = requireEntityEnvelope(await bridge.apiPost("page/affection/users/update", {
+    identity: affectionIdentity,
+    changes: { affection_score: 55 },
+    expected_revision: affectionCreated.revision,
+  }), "affection update");
+  requireOkData(await bridge.apiPost("page/affection/users/delete", {
+    identity: affectionIdentity,
+    expected_revision: affectionUpdated.revision,
+  }), "affection delete");
+  const affectionBatchDraft = { ...affectionDraft, user_id: `${suffix}-affection-batch` };
+  const affectionBatchIdentity = {
+    group_id: affectionBatchDraft.group_id,
+    user_id: affectionBatchDraft.user_id,
+  };
+  const affectionBatchCreated = requireEntityEnvelope(
+    await bridge.apiPost("page/affection/users/create", affectionBatchDraft),
+    "affection batch seed",
+  );
+  requireOkData(await bridge.apiPost("page/affection/users/batch", {
+    action: "delete",
+    items: [{
+      identity: affectionBatchIdentity,
+      expected_revision: affectionBatchCreated.revision,
+    }],
+    params: {},
+  }), "affection batch");
+  requireOkData(await bridge.apiPost("page/affection/mood/set", {
+    group_id: "group_001",
+    mood_type: "happy",
+    intensity: 0.7,
+    duration_hours: 2.5,
+    description: "Task 18 runtime mood",
+  }), "mood set");
+  requireOkData(await bridge.apiGet("page/affection/moods/history", {
+    group_id: "group_001",
+    limit: "20",
+  }), "mood history");
+  requireOkData(
+    await bridge.apiPost("page/affection/mood/reset", { group_id: "group_001" }),
+    "mood reset",
+  );
+
+  return assertEditingRuntimeCalls(calls);
+}
+
 async function waitForRootText(expected, description, timeoutMs = 10_000) {
   const expectedItems = Array.isArray(expected) ? expected : [expected];
   try {
@@ -137,6 +349,7 @@ async function waitForRootText(expected, description, timeoutMs = 10_000) {
 }
 
 let configTrace;
+let editingTrace;
 try {
   await new Promise((resolve) => window.addEventListener("load", resolve, { once: true }));
   await delay(1000);
@@ -166,6 +379,8 @@ try {
       throw new Error("Runtime smoke lost the stale apply response");
     },
   });
+
+  editingTrace = await exerciseEditingRuntimeRoutes(bridge, calls);
 
   const routes = [
     ["#/graph", "知识图谱"],
@@ -311,5 +526,8 @@ try {
 
 console.log(
   `Dashboard config runtime trace passed: ${configTrace.initialRevision} -> ${configTrace.appliedRevision}; ${configTrace.initialInstanceId} -> ${configTrace.finalInstanceId}.`,
+);
+console.log(
+  `Dashboard editing runtime routes passed: ${editingTrace.getEndpoints} GET and ${editingTrace.postEndpoints} POST endpoints.`,
 );
 console.log("Dashboard runtime smoke passed.");

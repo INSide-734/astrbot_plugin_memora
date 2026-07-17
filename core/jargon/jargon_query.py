@@ -106,11 +106,18 @@ class JargonQueryService:
                 logger.debug(f"[JargonQuery] 缓存命中: {keyword}")
                 return cached
 
-        results = await self._store.search(keyword, group_id)
-        formatted = [self._meaning_to_dict(m) for m in results]
+        async with self._store.read_guard():
+            if use_cache:
+                cached = self._cache.get(cache_key)
+                if cached is not None:
+                    logger.debug(f"[JargonQuery] 缓存命中: {keyword}")
+                    return cached
 
-        self._cache.set(cache_key, formatted)
-        return formatted
+            results = await self._store.search(keyword, group_id)
+            formatted = [self._meaning_to_dict(m) for m in results]
+
+            self._cache.set(cache_key, formatted)
+            return formatted
 
     async def check_and_explain(
         self, text: str, group_id: str
@@ -140,28 +147,35 @@ class JargonQueryService:
         if cached is not None:
             return cached
 
-        # 获取群组所有已确认黑话
-        all_jargon = await self._store.list_by_group(group_id, confirmed_only=True)
+        async with self._store.read_guard():
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
 
-        # 只保留 is_jargon=True 的条目
-        jargon_entries = [j for j in all_jargon if j.is_jargon]
-        if not jargon_entries:
-            return None
+            # 获取群组所有已确认黑话
+            all_jargon = await self._store.list_by_group(
+                group_id, confirmed_only=True
+            )
 
-        # 匹配文本中的黑话
-        matched = self._match_jargon_in_text(text, jargon_entries)
-        if not matched:
-            return None
+            # 只保留 is_jargon=True 的条目
+            jargon_entries = [j for j in all_jargon if j.is_jargon]
+            if not jargon_entries:
+                return None
 
-        # 生成解释文本
-        lines = ["本群黑话参考："]
-        for jm in matched:
-            meaning_text = jm.meaning or "(含义暂未推断)"
-            lines.append(f'- "{jm.term}" = "{meaning_text}"')
+            # 匹配文本中的黑话
+            matched = self._match_jargon_in_text(text, jargon_entries)
+            if not matched:
+                return None
 
-        result = "\n".join(lines)
-        self._cache.set(cache_key, result)
-        return result
+            # 生成解释文本
+            lines = ["本群黑话参考："]
+            for jm in matched:
+                meaning_text = jm.meaning or "(含义暂未推断)"
+                lines.append(f'- "{jm.term}" = "{meaning_text}"')
+
+            result = "\n".join(lines)
+            self._cache.set(cache_key, result)
+            return result
 
     async def get_group_jargon(
         self, group_id: str, use_cache: bool = True
@@ -181,11 +195,19 @@ class JargonQueryService:
             if cached is not None:
                 return cached
 
-        results = await self._store.list_by_group(group_id, confirmed_only=True)
-        formatted = [self._meaning_to_dict(m) for m in results]
+        async with self._store.read_guard():
+            if use_cache:
+                cached = self._cache.get(cache_key)
+                if cached is not None:
+                    return cached
 
-        self._cache.set(cache_key, formatted)
-        return formatted
+            results = await self._store.list_by_group(
+                group_id, confirmed_only=True
+            )
+            formatted = [self._meaning_to_dict(m) for m in results]
+
+            self._cache.set(cache_key, formatted)
+            return formatted
 
     async def invalidate_cache(self, group_id: str | None = None) -> None:
         """使缓存失效。
@@ -198,14 +220,21 @@ class JargonQueryService:
             logger.debug("[JargonQuery] 已清除全部缓存")
             return
 
-        # 清除特定群组相关缓存
-        keys_to_remove = []
-        for key in list(self._cache._store.keys()):
-            if group_id in key:
-                keys_to_remove.append(key)
-        for key in keys_to_remove:
-            del self._cache._store[key]
+        self.invalidate_group(group_id)
         logger.debug(f"[JargonQuery] 已清除群 {group_id} 缓存")
+
+    def invalidate_group(self, group_id: str) -> None:
+        """同步清除且仅清除指定群组的所有查询缓存。"""
+
+        prefixes = (f"query:{group_id}:", f"explain:{group_id}:")
+        exact = f"group:{group_id}"
+        keys = [
+            key
+            for key in self._cache._store
+            if key == exact or key.startswith(prefixes)
+        ]
+        for key in keys:
+            self._cache._store.pop(key, None)
 
     # ------------------------------------------------------------------
     # 内部方法

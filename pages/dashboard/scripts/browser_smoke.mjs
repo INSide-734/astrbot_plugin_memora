@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  assertEditorViewport,
+  assertNoHorizontalOverflow as assertNoHorizontalOverflowMeasurements,
   BROWSER_LAUNCH_CANDIDATES,
   BRIDGE_CALL_SENSITIVE_FIELDS,
   createBrowserLaunchOptions,
@@ -11,7 +13,11 @@ import {
   instrumentBrowserBridge,
   ROUTE_LOADING_TEXT,
 } from "./browser_smoke_helpers.mjs";
-import { assertConfigRuntimeCalls } from "./runtime_smoke_helpers.mjs";
+import {
+  assertConfigRuntimeCalls,
+  assertDialogActions,
+  assertEditorReadiness,
+} from "./runtime_smoke_helpers.mjs";
 
 const dashboardRoot = process.cwd();
 const htmlPath = path.join(dashboardRoot, "index.html");
@@ -55,6 +61,12 @@ const SCREENSHOT_BASELINES = {
   "i18n-en-memory.png": { width: 1366, height: 900, minBytes: 10_000 },
   "i18n-ru-preview.png": { width: 1366, height: 900, minBytes: 10_000 },
   "i18n-ru-memory.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "editing-social-sheet.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "editing-social-conflict.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "editing-error-summary.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "editing-batch-toolbar.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "editing-mobile-affection.png": { width: 390, height: 844, minBytes: 10_000 },
+  "editing-mobile-mood.png": { width: 390, height: 844, minBytes: 10_000 },
 };
 
 const INJECTION_SMOKE_NOW_MS = Date.UTC(2026, 6, 15, 8, 0, 0);
@@ -278,6 +290,241 @@ function recallTraceDetailPayload(traceId = "trace-smoke-coffee") {
     created_at: 1_782_000_000,
     metadata: { provider: "mock", chat_type: "private" },
   };
+function cloneJson(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function createEditingBridgeState() {
+  return {
+    revision: 1,
+    armSocialConflict: false,
+    social: [],
+    affectionUsers: [
+      {
+        group_id: "group-smoke",
+        user_id: "task18-affection-user",
+        affection_score: 24,
+        affection_level: "FRIENDLY",
+        level_name: "友好",
+        interaction_count: 3,
+        last_interaction: 1_782_000_000,
+        revision: "browser-edit-revision-0001",
+      },
+    ],
+    currentMood: {
+      mood_type: "happy",
+      intensity: 0.7,
+      duration_hours: 4,
+      description: "浏览器 smoke 情绪",
+      start_time: 1_782_000_000,
+      is_active: true,
+    },
+    moodHistory: [],
+  };
+}
+
+let editingBridgeState = createEditingBridgeState();
+let editingBridgeEnabled = false;
+
+function resetEditingBridgeState() {
+  editingBridgeState = createEditingBridgeState();
+}
+
+function nextEditingRevision() {
+  editingBridgeState.revision += 1;
+  return `browser-edit-revision-${String(editingBridgeState.revision).padStart(4, "0")}`;
+}
+
+function editingResponse(response) {
+  return { __memoraEditingResponse: response };
+}
+
+function socialIdentity(value) {
+  return {
+    from_user: String(value?.from_user ?? ""),
+    to_user: String(value?.to_user ?? ""),
+    group_id: String(value?.group_id ?? ""),
+    relation_type: String(value?.relation_type ?? ""),
+  };
+}
+
+function sameSocialIdentity(left, right) {
+  const a = socialIdentity(left);
+  const b = socialIdentity(right);
+  return Object.keys(a).every((key) => a[key] === b[key]);
+}
+
+function editingBridgePayload(method, pathOnly, payload) {
+  if (!editingBridgeEnabled) return undefined;
+  if (method === "GET" && pathOnly === "social/relations") {
+    const groupId = String(payload?.group_id ?? "");
+    return editingResponse({
+      status: "ok",
+      data: { relations: cloneJson(editingBridgeState.social.filter((item) => !groupId || item.group_id === groupId)) },
+    });
+  }
+  if (method === "POST" && pathOnly === "social/create") {
+    if (payload?.from_user === "validation-error") {
+      return editingResponse({
+        status: "error",
+        code: "validation_error",
+        message: "请修正关系字段",
+        field_errors: { from_user: "该值用于浏览器校验测试" },
+      });
+    }
+    const entity = {
+      ...socialIdentity(payload),
+      strength: Number(payload?.strength ?? 0.5),
+      tags: Array.isArray(payload?.tags) ? [...payload.tags] : [],
+      frequency: 0,
+      last_interaction: 0,
+      category: "other",
+    };
+    const revision = nextEditingRevision();
+    editingBridgeState.social.unshift({ ...entity, revision });
+    return editingResponse({ status: "ok", data: { entity, revision } });
+  }
+  if (method === "POST" && pathOnly === "social/update") {
+    const index = editingBridgeState.social.findIndex((item) => sameSocialIdentity(item, payload?.identity));
+    const current = editingBridgeState.social[index];
+    if (!current) {
+      return editingResponse({ status: "error", code: "not_found", message: "关系不存在" });
+    }
+    if (editingBridgeState.armSocialConflict) {
+      editingBridgeState.armSocialConflict = false;
+      const currentRevision = nextEditingRevision();
+      const remote = { ...current, strength: Math.min(1, current.strength + 0.05), revision: currentRevision };
+      editingBridgeState.social[index] = remote;
+      const { revision: _revision, ...currentEntity } = remote;
+      return editingResponse({
+        status: "error",
+        code: "edit_conflict",
+        message: "关系已更新",
+        data: { current_entity: currentEntity, current_revision: currentRevision },
+      });
+    }
+    const changes = payload?.changes && typeof payload.changes === "object" ? payload.changes : {};
+    const revision = nextEditingRevision();
+    const updated = {
+      ...current,
+      ...changes,
+      tags: Array.isArray(changes.tags) ? [...changes.tags] : [...current.tags],
+      revision,
+    };
+    editingBridgeState.social[index] = updated;
+    const { revision: _revision, ...entity } = updated;
+    return editingResponse({ status: "ok", data: { entity, revision } });
+  }
+  if (method === "POST" && pathOnly === "social/batch") {
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    const succeededIds = [];
+    for (const item of items) {
+      const index = editingBridgeState.social.findIndex((entry) => sameSocialIdentity(entry, item.identity));
+      if (index < 0) continue;
+      const current = editingBridgeState.social[index];
+      const tags = Array.isArray(payload?.params?.tags) ? payload.params.tags : [];
+      editingBridgeState.social[index] = {
+        ...current,
+        tags: payload.action === "remove_tags"
+          ? current.tags.filter((tag) => !tags.includes(tag))
+          : [...new Set([...current.tags, ...tags])],
+        revision: nextEditingRevision(),
+      };
+      succeededIds.push(socialIdentity(current));
+    }
+    return editingResponse({
+      status: "ok",
+      data: {
+        total: items.length,
+        succeeded_count: succeededIds.length,
+        failed_count: items.length - succeededIds.length,
+        succeeded_ids: succeededIds,
+        failures: [],
+      },
+    });
+  }
+  if (method === "GET" && pathOnly === "affection/status") {
+    const topUsers = editingBridgeState.affectionUsers.slice(0, 5);
+    return editingResponse({
+      status: "ok",
+      data: {
+        group_id: "group-smoke",
+        total_affection: topUsers.reduce((total, user) => total + user.affection_score, 0),
+        max_total_affection: 100,
+        user_count: topUsers.length,
+        current_mood: cloneJson(editingBridgeState.currentMood),
+        top_users: cloneJson(topUsers),
+      },
+    });
+  }
+  if (method === "GET" && pathOnly === "affection/users") {
+    const offset = Number(payload?.offset ?? 0);
+    const limit = Number(payload?.limit ?? 50);
+    return editingResponse({
+      status: "ok",
+      data: {
+        group_id: String(payload?.group_id ?? "group-smoke"),
+        users: cloneJson(editingBridgeState.affectionUsers.slice(offset, offset + limit)),
+        total: editingBridgeState.affectionUsers.length,
+        limit,
+        offset,
+      },
+    });
+  }
+  if (method === "GET" && pathOnly === "affection/moods/history") {
+    return editingResponse({
+      status: "ok",
+      data: {
+        group_id: String(payload?.group_id ?? "group-smoke"),
+        limit: Number(payload?.limit ?? 50),
+        history: cloneJson(editingBridgeState.moodHistory),
+      },
+    });
+  }
+  if (method === "POST" && pathOnly === "affection/users/update") {
+    const identity = payload?.identity ?? {};
+    const index = editingBridgeState.affectionUsers.findIndex(
+      (user) => user.group_id === identity.group_id && user.user_id === identity.user_id,
+    );
+    const current = editingBridgeState.affectionUsers[index];
+    if (!current) return editingResponse({ status: "error", code: "not_found", message: "用户不存在" });
+    const revision = nextEditingRevision();
+    const score = Number(payload?.changes?.affection_score ?? current.affection_score);
+    const entity = {
+      ...current,
+      affection_score: score,
+      affection_level: score >= 50 ? "CLOSE" : "FRIENDLY",
+      level_name: score >= 50 ? "亲密" : "友好",
+      revision,
+    };
+    editingBridgeState.affectionUsers[index] = entity;
+    const { revision: _revision, ...serial } = entity;
+    return editingResponse({ status: "ok", data: { entity: serial, revision } });
+  }
+  if (method === "POST" && pathOnly === "affection/mood/set") {
+    editingBridgeState.currentMood = {
+      mood_type: String(payload?.mood_type ?? "calm"),
+      intensity: Number(payload?.intensity ?? 0.5),
+      duration_hours: Number(payload?.duration_hours ?? 4),
+      description: String(payload?.description ?? ""),
+      start_time: Date.now() / 1000,
+      is_active: true,
+    };
+    editingBridgeState.moodHistory.unshift(cloneJson(editingBridgeState.currentMood));
+    return editingResponse({ status: "ok", data: cloneJson(editingBridgeState.currentMood) });
+  }
+  if (method === "POST" && pathOnly === "affection/mood/reset") {
+    editingBridgeState.currentMood = {
+      mood_type: "calm",
+      intensity: 0.5,
+      duration_hours: 4,
+      description: "系统默认情绪",
+      start_time: Date.now() / 1000,
+      is_active: true,
+    };
+    return editingResponse({ status: "ok", data: cloneJson(editingBridgeState.currentMood) });
+  }
+  return undefined;
 }
 
 async function launchBrowser() {
@@ -297,7 +544,7 @@ async function launchBrowser() {
   );
 }
 
-function bridgePayload(endpoint, params = {}) {
+function bridgePayload(endpoint, params = {}, method = "GET") {
   const pathOnly = String(endpoint || "").replace(/^page\/?/, "");
   if (pathOnly === "injection-strategy/catalog") return injectionCatalogPayload();
   if (pathOnly === "injection-strategy/summary") return injectionSummaryPayload(params);
@@ -306,6 +553,8 @@ function bridgePayload(endpoint, params = {}) {
     return injectionDecisionDetailPayload(params.decision_id);
   }
   if (pathOnly === "recall/trace/detail") return recallTraceDetailPayload(params.trace_id);
+  const editingPayload = editingBridgePayload(method, pathOnly, params);
+  if (editingPayload !== undefined) return editingPayload;
   if (pathOnly === "stats") {
     return {
       total_memories: 12,
@@ -939,6 +1188,276 @@ async function captureBaselineScreenshot(page, screenshotPath, label) {
   return assertScreenshotMatchesBaseline(screenshot, path.basename(screenshotPath), label);
 }
 
+async function assertEditingDialogReady(page, title) {
+  const dialog = page.getByRole("dialog", { name: title, exact: true });
+  await dialog.waitFor({ state: "visible", timeout: 5_000 });
+  const form = dialog.locator("form").first();
+  if (await form.count()) {
+    await form.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+  }
+  const snapshot = await dialog.evaluate((element, expectedTitle) => {
+    const text = element.textContent ?? "";
+    const footer = element.querySelector('[data-testid="entity-editor-footer"]')
+      ?? element.querySelector("form + div");
+    return {
+      visibleTitles: [...element.querySelectorAll("h1, h2, h3")]
+        .map((titleElement) => titleElement.textContent?.replace(/\s+/g, " ").trim() ?? ""),
+      loadingOverlayVisible: ["加载中...", "Loading...", "Загрузка..."]
+        .some((loadingText) => text.includes(loadingText)),
+      fixedFooterVisible: Boolean(footer && footer.getBoundingClientRect().height > 0),
+      expectedTitle,
+    };
+  }, title);
+  assertEditorReadiness(snapshot, { expectedTitle: title });
+
+  if (await form.count() && await form.locator('[data-slot="field"]').count()) {
+    const geometry = await form.evaluate((element) => {
+      const fields = element.querySelectorAll('[data-slot="field"]');
+      const lastField = fields[fields.length - 1];
+      const viewportRect = element.getBoundingClientRect();
+      const fieldRect = lastField?.getBoundingClientRect();
+      return {
+        scrollViewport: { top: viewportRect.top, bottom: viewportRect.bottom },
+        lastField: { top: fieldRect?.top ?? Number.NaN, bottom: fieldRect?.bottom ?? Number.NaN },
+      };
+    });
+    assertEditorViewport(geometry);
+  }
+  return dialog;
+}
+
+async function assertMobileEditingOverflow(page, dialog, label) {
+  const measurements = await page.evaluate((dialogElement) => {
+    const targets = [
+      ["documentElement", document.documentElement],
+      ["body", document.body],
+      ["#root", document.querySelector("#root")],
+      ["editor", dialogElement],
+      ["editor form", dialogElement?.querySelector("form")],
+    ];
+    return targets.map(([targetLabel, element]) => ({
+      label: targetLabel,
+      clientWidth: element?.clientWidth ?? 0,
+      scrollWidth: element?.scrollWidth ?? 0,
+    }));
+  }, await dialog.elementHandle());
+  try {
+    assertNoHorizontalOverflowMeasurements(measurements);
+  } catch (error) {
+    throw new Error(`${label}: ${error.message}`);
+  }
+}
+
+async function captureEditingScreenshot(page, screenshotsDir, filename, label) {
+  await waitForVisualStability(page);
+  const screenshotPath = path.join(screenshotsDir, filename);
+  const screenshot = await page.screenshot({ path: screenshotPath, fullPage: false });
+  return assertScreenshotMatchesBaseline(screenshot, filename, label);
+}
+
+async function runUnifiedEditingSmoke(page, browser, errors, screenshotsDir) {
+  resetEditingBridgeState();
+  editingBridgeEnabled = true;
+  const screenshots = [];
+  const socialTitle = "关系：task18-alice → task18-bob";
+
+  try {
+    await page.bringToFront();
+    await page.evaluate(() => {
+      window.location.hash = "#/social";
+    });
+    await waitForRootText(page, ["社交关系", "新建关系"], "#/social:editing");
+
+    await page.getByRole("button", { name: "新建关系", exact: true }).click();
+    const createDialog = await assertEditingDialogReady(page, "新建关系");
+    await createDialog.getByLabel("发起用户", { exact: true }).fill("validation-error");
+    await createDialog.getByLabel("目标用户", { exact: true }).fill("task18-bob");
+    await createDialog.getByLabel("群组 ID", { exact: true }).fill("group-smoke");
+    await createDialog.getByRole("button", { name: "创建", exact: true }).click();
+
+    const validationSummary = createDialog.getByRole("alert");
+    await validationSummary.waitFor({ state: "visible", timeout: 5_000 });
+    if (await createDialog.getByRole("alert").count() !== 1) {
+      throw new Error("Social create must expose exactly one validation summary");
+    }
+    const validationText = (await validationSummary.textContent()) ?? "";
+    assertText(validationText, ["请修正以下字段", "该值用于浏览器校验测试"], "social-create-validation");
+    screenshots.push(
+      await captureEditingScreenshot(
+        page,
+        screenshotsDir,
+        "editing-error-summary.png",
+        "editing-error-summary",
+      ),
+    );
+
+    await createDialog.getByLabel("发起用户", { exact: true }).fill("task18-alice");
+    await createDialog.getByRole("button", { name: "创建", exact: true }).click();
+    await createDialog.waitFor({ state: "hidden", timeout: 5_000 });
+
+    let socialSheet = await assertEditingDialogReady(page, socialTitle);
+    screenshots.push(
+      await captureEditingScreenshot(
+        page,
+        screenshotsDir,
+        "editing-social-sheet.png",
+        "editing-social-sheet",
+      ),
+    );
+
+    await socialSheet.getByRole("button", { name: "编辑", exact: true }).click();
+    socialSheet = await assertEditingDialogReady(page, socialTitle);
+    await socialSheet.getByLabel("关系强度", { exact: true }).fill("0.75");
+    const tagInput = socialSheet.getByRole("textbox", { name: "标签", exact: true });
+    await tagInput.fill("task18-browser");
+    await tagInput.press("Enter");
+    await socialSheet.getByRole("button", { name: "保存", exact: true }).click();
+    await socialSheet.getByRole("button", { name: "编辑", exact: true }).waitFor({ state: "visible", timeout: 5_000 });
+    const savedRelation = editingBridgeState.social.find(
+      (relation) => relation.from_user === "task18-alice" && relation.to_user === "task18-bob",
+    );
+    if (savedRelation?.strength !== 0.75 || !savedRelation.tags.includes("task18-browser")) {
+      throw new Error("Social save did not persist the edited strength and tag");
+    }
+
+    await socialSheet.getByRole("button", { name: "编辑", exact: true }).click();
+    socialSheet = await assertEditingDialogReady(page, socialTitle);
+    await socialSheet.getByLabel("关系强度", { exact: true }).fill("0.76");
+    await socialSheet.getByRole("button", { name: "关闭", exact: true }).click();
+
+    let unsavedDialog = page.getByRole("dialog", { name: "要离开配置页吗？", exact: true });
+    await unsavedDialog.waitFor({ state: "visible", timeout: 5_000 });
+    assertDialogActions(
+      await unsavedDialog.getByRole("button").allTextContents(),
+      ["继续编辑", "放弃更改并离开"],
+      "social unsaved dialog",
+    );
+    await unsavedDialog.getByRole("button", { name: "继续编辑", exact: true }).click();
+    await unsavedDialog.waitFor({ state: "hidden", timeout: 5_000 });
+    await socialSheet.getByRole("button", { name: "关闭", exact: true }).click();
+    unsavedDialog = page.getByRole("dialog", { name: "要离开配置页吗？", exact: true });
+    await unsavedDialog.waitFor({ state: "visible", timeout: 5_000 });
+    await unsavedDialog.getByRole("button", { name: "放弃更改并离开", exact: true }).click();
+    await page.getByRole("dialog", { name: socialTitle, exact: true }).waitFor({ state: "hidden", timeout: 5_000 });
+
+    await page.getByRole("button", {
+      name: "打开关系 task18-alice task18-bob",
+      exact: true,
+    }).click();
+    socialSheet = await assertEditingDialogReady(page, socialTitle);
+    await socialSheet.getByRole("button", { name: "编辑", exact: true }).click();
+    socialSheet = await assertEditingDialogReady(page, socialTitle);
+    await socialSheet.getByLabel("关系强度", { exact: true }).fill("0.8");
+    editingBridgeState.armSocialConflict = true;
+    await socialSheet.getByRole("button", { name: "保存", exact: true }).click();
+
+    const conflictDialog = page.getByRole("dialog", { name: "关系编辑冲突", exact: true });
+    await conflictDialog.waitFor({ state: "visible", timeout: 5_000 });
+    assertDialogActions(
+      await conflictDialog.getByRole("button").allTextContents(),
+      ["载入 AstrBot 版本", "重新应用本地值"],
+      "social conflict dialog",
+    );
+    screenshots.push(
+      await captureEditingScreenshot(
+        page,
+        screenshotsDir,
+        "editing-social-conflict.png",
+        "editing-social-conflict",
+      ),
+    );
+    await conflictDialog.getByRole("button", { name: "载入 AstrBot 版本", exact: true }).click();
+    await conflictDialog.waitFor({ state: "hidden", timeout: 5_000 });
+    await socialSheet.getByRole("button", { name: "关闭", exact: true }).click();
+    await socialSheet.waitFor({ state: "hidden", timeout: 5_000 });
+
+    await page.getByRole("checkbox", {
+      name: "选择关系 task18-alice task18-bob",
+      exact: true,
+    }).click();
+    await page.getByText("已选择 1 项", { exact: true }).waitFor({ state: "visible", timeout: 5_000 });
+    await page.getByRole("button", { name: "编辑标签", exact: true }).waitFor({ state: "visible", timeout: 5_000 });
+    screenshots.push(
+      await captureEditingScreenshot(
+        page,
+        screenshotsDir,
+        "editing-batch-toolbar.png",
+        "editing-batch-toolbar",
+      ),
+    );
+
+    const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    try {
+      const mobilePage = await mobileContext.newPage();
+      collectPageErrors(mobilePage, errors);
+      await installBridge(mobilePage);
+      await mobilePage.goto(pathToFileURL(htmlPath).href, { waitUntil: "load" });
+      await mobilePage.bringToFront();
+      await mobilePage.waitForSelector("#root > *", { timeout: 10_000 });
+      await mobilePage.evaluate(() => {
+        window.location.hash = "#/affection";
+      });
+      await waitForRootText(
+        mobilePage,
+        ["好感度与情绪", "所有好感用户", "task18-affection-user"],
+        "#/affection:editing-mobile",
+      );
+
+      await mobilePage.getByRole("button", {
+        name: "编辑 task18-affection-user",
+        exact: true,
+      }).click();
+      const affectionTitle = "好感：task18-affection-user";
+      let affectionSheet = await assertEditingDialogReady(mobilePage, affectionTitle);
+      await affectionSheet.getByRole("button", { name: "编辑", exact: true }).click();
+      affectionSheet = await assertEditingDialogReady(mobilePage, affectionTitle);
+      await assertMobileEditingOverflow(mobilePage, affectionSheet, "mobile affection editor");
+      screenshots.push(
+        await captureEditingScreenshot(
+          mobilePage,
+          screenshotsDir,
+          "editing-mobile-affection.png",
+          "editing-mobile-affection",
+        ),
+      );
+      await affectionSheet.getByLabel("好感度", { exact: true }).fill("55");
+      await affectionSheet.getByRole("button", { name: "保存", exact: true }).click();
+      await affectionSheet.getByRole("button", { name: "编辑", exact: true }).waitFor({ state: "visible", timeout: 5_000 });
+      await affectionSheet.getByRole("button", { name: "关闭", exact: true }).click();
+      await affectionSheet.waitFor({ state: "hidden", timeout: 5_000 });
+
+      await mobilePage.getByRole("button", { name: "编辑情绪", exact: true }).click();
+      const moodDialog = await assertEditingDialogReady(mobilePage, "编辑情绪");
+      await assertMobileEditingOverflow(mobilePage, moodDialog, "mobile mood editor");
+      screenshots.push(
+        await captureEditingScreenshot(
+          mobilePage,
+          screenshotsDir,
+          "editing-mobile-mood.png",
+          "editing-mobile-mood",
+        ),
+      );
+      await moodDialog.getByLabel("情绪描述", { exact: true }).fill("Task 18 mobile mood");
+      await moodDialog.getByRole("button", { name: "设置情绪", exact: true }).click();
+      await moodDialog.waitFor({ state: "hidden", timeout: 5_000 });
+
+      await mobilePage.getByRole("button", { name: "恢复默认情绪", exact: true }).click();
+      const resetDialog = mobilePage.getByRole("dialog", { name: "恢复默认情绪", exact: true });
+      await resetDialog.waitFor({ state: "visible", timeout: 5_000 });
+      await resetDialog.getByRole("button", { name: "恢复默认情绪", exact: true }).click();
+      await resetDialog.waitFor({ state: "hidden", timeout: 5_000 });
+    } finally {
+      await mobileContext.close();
+    }
+
+    return screenshots;
+  } finally {
+    editingBridgeEnabled = false;
+  }
+}
+
 async function runGlobalSearchScrollAndTargetSmoke(page, screenshotsDir) {
   await page.keyboard.press("Control+K");
   const search = page.getByRole("combobox", { name: "全局搜索" });
@@ -1007,6 +1526,9 @@ async function runGlobalSearchScrollAndTargetSmoke(page, screenshotsDir) {
       "global-search-memory-target",
     ),
   );
+  const memoryDetail = page.getByRole("dialog", { name: "记忆详情", exact: true });
+  await memoryDetail.getByRole("button", { name: "关闭", exact: true }).click();
+  await memoryDetail.waitFor({ state: "hidden", timeout: 5_000 });
   return screenshots;
 }
 
@@ -1188,7 +1710,7 @@ function confirmationBar(page, confirmText) {
   return page
     .getByText(confirmText)
     .first()
-    .locator("xpath=ancestor::div[contains(@class, 'justify-between')][1]");
+    .locator("xpath=ancestor::*[@role='dialog'][1]");
 }
 
 async function assertConfirmationCancelsWithoutPost(
@@ -1956,9 +2478,9 @@ async function installBridge(page) {
         };
         window.__memoraBridgeCalls.push(call);
         try {
-          const response = window.__memoraBridgeOk(
-            await window.__memoraBridgePayload(endpoint, params),
-          );
+          const payload = await window.__memoraBridgePayload(endpoint, params, "GET");
+          const response = payload?.__memoraEditingResponse
+            ?? window.__memoraBridgeOk(payload);
           call.response = sanitizeBridgeCallValue(response);
           return response;
         } catch (error) {
@@ -1975,9 +2497,10 @@ async function installBridge(page) {
         window.__memoraBridgeCalls.push(call);
         window.__memoraPostCalls.push(String(endpoint || "").replace(/^page\/?/, ""));
         try {
-          const response = window.__memoraBridgeOk(
-            await window.__memoraBridgePayload(endpoint),
-          );
+          const snapshot = body === undefined ? {} : JSON.parse(JSON.stringify(body));
+          const payload = await window.__memoraBridgePayload(endpoint, snapshot, "POST");
+          const response = payload?.__memoraEditingResponse
+            ?? window.__memoraBridgeOk(payload);
           call.response = sanitizeBridgeCallValue(response);
           return response;
         } catch (error) {
@@ -2183,7 +2706,7 @@ try {
   const wideRoutes = [
     ["#/preview", ["数据预览", "记忆增长", "记忆构成", "模块资产", "group-smoke-primary"], "wide-preview.png", "wide-preview"],
     ["#/learning", ["自主学习", "83.0%", "retrieval_weight", "Formal greeting"], "wide-learning.png", "wide-learning"],
-    ["#/affection", ["好感度与情绪", "开心", "群聊今天的氛围很积极。", "alice"], "wide-affection.png", "wide-affection"],
+    ["#/affection", ["好感度与情绪", "开心", "群聊今天的氛围很积极。", "所有好感用户"], "wide-affection.png", "wide-affection"],
     ["#/social", ["社交关系", "alice", "bob", "pair", "project"], "wide-social.png", "wide-social"],
   ];
 
@@ -2201,6 +2724,10 @@ try {
 
   await widePage.close();
   await page.bringToFront();
+
+  baselineResults.push(
+    ...await runUnifiedEditingSmoke(page, browser, errors, screenshotsDir),
+  );
 
   await navigateSidebar(
     page,
@@ -2378,8 +2905,12 @@ try {
     await i18nContext.close();
   }
 
+  const manifestPath = path.join(
+    screenshotsDir,
+    "screenshot-baseline-manifest.json",
+  );
   await writeFile(
-    path.join(screenshotsDir, "screenshot-baseline-manifest.json"),
+    manifestPath,
     JSON.stringify(
       {
         generatedAt: new Date().toISOString(),
@@ -2392,6 +2923,9 @@ try {
     ),
     "utf8"
   );
+
+  console.log(`screenshotsDir=${screenshotsDir}`);
+  console.log(`manifest=${manifestPath}`);
 
   if (errors.length > 0) {
     throw new Error(`Dashboard browser smoke reported errors:\n${errors.join("\n")}`);

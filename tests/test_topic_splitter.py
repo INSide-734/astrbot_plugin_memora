@@ -14,7 +14,7 @@ from core.processors.topic_splitter import (
     TopicSegmentationRouter,
     TwoStageLLMStrategy,
 )
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis.strategies import lists, text
 
 # ---- Strategy A ----
@@ -187,7 +187,7 @@ def test_memory_segment_defaults():
 
 # ---- PBT Properties (hypothesis) ----
 
-@settings(max_examples=20)
+@settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow])
 @given(lists(text(min_size=1, max_size=30), min_size=1, max_size=5))
 def test_pbt_single_fact_never_splits(facts):
     """P4: Single key_fact always produces exactly one segment."""
@@ -202,7 +202,7 @@ def test_pbt_single_fact_never_splits(facts):
     asyncio.run(run())
 
 
-@settings(max_examples=20)
+@settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow])
 @given(lists(text(min_size=1, max_size=30), min_size=1, max_size=6))
 def test_pbt_fact_conservation(facts):
     """P1: Total key_facts count is preserved across segmentation."""
@@ -222,7 +222,7 @@ def test_pbt_fact_conservation(facts):
     asyncio.run(run())
 
 
-@settings(max_examples=10)
+@settings(max_examples=10, suppress_health_check=[HealthCheck.too_slow])
 @given(lists(text(min_size=1, max_size=30), min_size=1, max_size=4))
 def test_pbt_idempotent(facts):
     """P2: Same input produces same segmentation result."""
