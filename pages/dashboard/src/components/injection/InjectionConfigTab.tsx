@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Loader2 } from "lucide-react";
 
 import { ConfigConflictDialog } from "@/components/config/ConfigConflictDialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/Button";
 import {
   Field,
@@ -139,15 +140,13 @@ function PresetSelect({
           aria-invalid={Boolean(errorKey)}
           className="w-full"
         >
-          <SelectValue>
-            {() => t(`injection.preset.${draft[field]}`)}
-          </SelectValue>
+          <SelectValue />
         </SelectTrigger>
-        <SelectContent alignItemWithTrigger={false}>
+        <SelectContent>
           <SelectGroup>
-            {catalog.presets.map((preset) => (
-              <SelectItem key={preset.name} value={preset.name}>
-                {t(`injection.preset.${preset.name}`)}
+            {items.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
               </SelectItem>
             ))}
           </SelectGroup>
@@ -373,12 +372,14 @@ export function InjectionConfigTab({
       className="flex min-w-0 flex-col gap-5"
     >
       {config.status === "offline" || config.status === "error" ? (
-        <div
+        <Alert
           role={config.status === "error" ? "alert" : "status"}
-          className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
+          variant={config.status === "error" ? "destructive" : "default"}
         >
-          {t(`config.status.${config.status}`)}
-        </div>
+          <AlertDescription>
+            {t(`config.status.${config.status}`)}
+          </AlertDescription>
+        </Alert>
       ) : null}
 
       <form
@@ -436,17 +437,15 @@ export function InjectionConfigTab({
                 id="injection-deliveryOverride"
                 aria-label={t("injection.field.deliveryOverride")}
                 aria-invalid={Boolean(deliveryError)}
-                className="w-full max-w-md"
+                className="w-full"
               >
-                <SelectValue>
-                  {() => t(`injection.delivery.${draft.deliveryOverride}`)}
-                </SelectValue>
+                <SelectValue />
               </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
+              <SelectContent>
                 <SelectGroup>
-                  {deliveryOptions.map((delivery) => (
-                    <SelectItem key={delivery} value={delivery}>
-                      {t(`injection.delivery.${delivery}`)}
+                  {deliveryItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
                     </SelectItem>
                   ))}
                 </SelectGroup>
@@ -552,13 +551,13 @@ export function InjectionConfigTab({
                   aria-invalid={Boolean(retentionError)}
                   className="w-full"
                 >
-                  <SelectValue>{() => retentionLabel(draft.retentionDays)}</SelectValue>
+                  <SelectValue />
                 </SelectTrigger>
-                <SelectContent alignItemWithTrigger={false}>
+                <SelectContent>
                   <SelectGroup>
-                    {retentionOptions.map((days) => (
-                      <SelectItem key={days} value={String(days)}>
-                        {retentionLabel(days)}
+                    {retentionItems.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
                       </SelectItem>
                     ))}
                   </SelectGroup>
