@@ -12,7 +12,9 @@ from quart import request
 
 from astrbot.api import logger
 
+from ..base.list_sorting import parse_sort_query
 from ..models.knowledge_models import KnowledgeEntry, KnowledgeType
+from ..storage.knowledge_store import KNOWLEDGE_SORT_COLUMNS
 from .response_utils import error_response, ok_response
 
 
@@ -186,9 +188,25 @@ class KnowledgeApiMixin:
             offset = int(args.get("offset", 0))
         except (TypeError, ValueError):
             return error_response("limit 和 offset 必须为整数")
+        try:
+            sort = parse_sort_query(
+                args,
+                allowed=KNOWLEDGE_SORT_COLUMNS,
+                default_by="updated_at",
+                default_order="desc",
+            )
+        except ValueError as exc:
+            return error_response(
+                str(exc),
+                code="invalid_query",
+                field_errors={"sort_by": str(exc)},
+            )
         category = str(args.get("category", ""))
         entries, total = await manager.list_entries(
-            limit=limit, offset=offset, category=category
+            limit=limit,
+            offset=offset,
+            category=category,
+            sort=sort,
         )
         entries = _safe_entry_list(entries)
         total = _safe_total(total, 0)
@@ -219,9 +237,25 @@ class KnowledgeApiMixin:
             limit = int(args.get("limit", 20))
         except (TypeError, ValueError):
             return error_response("limit 必须为整数")
+        try:
+            sort = parse_sort_query(
+                args,
+                allowed=KNOWLEDGE_SORT_COLUMNS,
+                default_by="updated_at",
+                default_order="desc",
+            )
+        except ValueError as exc:
+            return error_response(
+                str(exc),
+                code="invalid_query",
+                field_errors={"sort_by": str(exc)},
+            )
         category = str(args.get("category", ""))
         entries, total = await manager.search(
-            query=query, limit=limit, category=category
+            query=query,
+            limit=limit,
+            category=category,
+            sort=sort,
         )
         entries = _safe_entry_list(entries)
         total = _safe_total(total, 0)

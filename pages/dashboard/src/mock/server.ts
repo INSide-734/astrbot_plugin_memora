@@ -760,22 +760,70 @@ function handleProfileDetail(userId: string): ApiResponse {
   return profile ? ok(structuredClone(profile)) : notFound("Profile not found");
 }
 
+const KNOWLEDGE_SORT_KEYS = new Set([
+  "title",
+  "category",
+  "confidence",
+  "updated_at",
+  "access_count",
+]);
+
+function sortKnowledgeEntries(
+  entries: typeof KNOWLEDGE_ENTRIES,
+  params: Record<string, string>,
+): typeof KNOWLEDGE_ENTRIES {
+  const sortBy = KNOWLEDGE_SORT_KEYS.has(params.sort_by)
+    ? params.sort_by
+    : "updated_at";
+  const direction = params.sort_order === "asc" ? 1 : -1;
+
+  return [...entries].sort((left, right) => {
+    let compared = 0;
+    if (sortBy === "title" || sortBy === "category") {
+      compared = String(left[sortBy] ?? "").localeCompare(
+        String(right[sortBy] ?? ""),
+        undefined,
+        { sensitivity: "base" },
+      );
+    } else if (sortBy === "confidence" || sortBy === "access_count") {
+      compared = Number(left[sortBy] ?? 0) - Number(right[sortBy] ?? 0);
+    } else {
+      compared = String(left.updated_at ?? "").localeCompare(
+        String(right.updated_at ?? ""),
+      );
+    }
+    return compared === 0
+      ? String(left.entry_id).localeCompare(String(right.entry_id))
+      : compared * direction;
+  });
+}
+
 function handleKnowledgeList(params: Record<string, string>): ApiResponse {
   let items = [...KNOWLEDGE_ENTRIES];
   if (params.category) {
     items = items.filter((e) => e.category === params.category);
   }
-  return ok({ entries: items, items, total: KNOWLEDGE_ENTRIES.length, count: KNOWLEDGE_ENTRIES.length });
+  const total = items.length;
+  const limit = parseInt(params.limit ?? "100", 10);
+  const offset = parseInt(params.offset ?? "0", 10);
+  items = sortKnowledgeEntries(items, params).slice(offset, offset + limit);
+  return ok({ entries: items, items, total, count: total, limit, offset });
 }
 
-function handleKnowledgeSearch(query: string): ApiResponse {
-  const q = query.toLowerCase();
-  const items = KNOWLEDGE_ENTRIES.filter(
+function handleKnowledgeSearch(params: Record<string, string>): ApiResponse {
+  const q = (params.query ?? "").toLowerCase();
+  let items = KNOWLEDGE_ENTRIES.filter(
     (e) =>
       e.title.toLowerCase().includes(q) ||
       (e.content ?? "").toLowerCase().includes(q)
   );
-  return ok({ entries: items, items });
+  if (params.category) {
+    items = items.filter((entry) => entry.category === params.category);
+  }
+  const total = items.length;
+  const limit = parseInt(params.limit ?? "100", 10);
+  items = sortKnowledgeEntries(items, params).slice(0, limit);
+  return ok({ entries: items, items, total, count: total, limit });
 }
 
 function handleKnowledgeDetail(entryId: string): ApiResponse {
@@ -1494,7 +1542,7 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   if (p === "profiles" || p.startsWith("profiles?")) return handleProfiles(params);
   if (p.startsWith("profiles/detail")) return handleProfileDetail(params.user_id ?? "");
   if (p === "knowledge" || p.startsWith("knowledge?")) return handleKnowledgeList(params);
-  if (p.startsWith("knowledge/search")) return handleKnowledgeSearch(params.query ?? "");
+  if (p.startsWith("knowledge/search")) return handleKnowledgeSearch(params);
   if (p.startsWith("knowledge/detail")) return handleKnowledgeDetail(params.entry_id ?? "");
   if (p === "notes" || p.startsWith("notes?")) return handleNotesList(params);
   if (p.startsWith("notes/search")) return handleNoteSearch(params.query ?? "");

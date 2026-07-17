@@ -6,8 +6,19 @@ import json
 import time
 from typing import Any
 
+from ..base.list_sorting import SortQuery, order_by_clause
 from ..models.knowledge_models import KnowledgeEntry, KnowledgeType
 from .base import BaseStore
+
+
+KNOWLEDGE_SORT_COLUMNS = {
+    "title": "title COLLATE NOCASE",
+    "category": "category COLLATE NOCASE",
+    "confidence": "confidence",
+    "updated_at": "updated_at",
+    "access_count": "access_count",
+}
+_KNOWLEDGE_SQL_COLUMNS = {**KNOWLEDGE_SORT_COLUMNS, "id": "id"}
 
 _CREATE_KB = """CREATE TABLE IF NOT EXISTS knowledge_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,22 +78,31 @@ class KnowledgeStore(BaseStore):
             return self._row_to_entry(row) if row else None
 
     async def search(
-        self, query: str, limit: int = 20, category: str = ""
+        self,
+        query: str,
+        limit: int = 20,
+        category: str = "",
+        sort: SortQuery = SortQuery("updated_at", "desc"),
     ) -> tuple[list[KnowledgeEntry], int]:
         like = f"%{query}%"
+        order_by = order_by_clause(
+            sort,
+            columns=_KNOWLEDGE_SQL_COLUMNS,
+            tie_breaker="id",
+        )
         async with self._connect() as db:
             if category:
                 cursor = await db.execute(
-                    """SELECT * FROM knowledge_entries
+                    f"""SELECT * FROM knowledge_entries
                        WHERE category = ? AND (title LIKE ? OR content LIKE ?)
-                       ORDER BY updated_at DESC LIMIT ?""",
+                       ORDER BY {order_by} LIMIT ?""",
                     (category, like, like, limit),
                 )
             else:
                 cursor = await db.execute(
-                    """SELECT * FROM knowledge_entries
+                    f"""SELECT * FROM knowledge_entries
                        WHERE title LIKE ? OR content LIKE ?
-                       ORDER BY updated_at DESC LIMIT ?""",
+                       ORDER BY {order_by} LIMIT ?""",
                     (like, like, limit),
                 )
             rows = await cursor.fetchall()
@@ -91,8 +111,17 @@ class KnowledgeStore(BaseStore):
         return [self._row_to_entry(r) for r in rows], total
 
     async def list_entries(
-        self, limit: int = 50, offset: int = 0, category: str = ""
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        category: str = "",
+        sort: SortQuery = SortQuery("updated_at", "desc"),
     ) -> tuple[list[KnowledgeEntry], int]:
+        order_by = order_by_clause(
+            sort,
+            columns=_KNOWLEDGE_SQL_COLUMNS,
+            tie_breaker="id",
+        )
         async with self._connect() as db:
             if category:
                 cursor = await db.execute(
@@ -101,15 +130,15 @@ class KnowledgeStore(BaseStore):
                 )
                 total = (await cursor.fetchone())[0]
                 cursor = await db.execute(
-                    """SELECT * FROM knowledge_entries
-                       WHERE category = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
+                    f"""SELECT * FROM knowledge_entries
+                       WHERE category = ? ORDER BY {order_by} LIMIT ? OFFSET ?""",
                     (category, limit, offset),
                 )
             else:
                 cursor = await db.execute("SELECT COUNT(*) FROM knowledge_entries")
                 total = (await cursor.fetchone())[0]
                 cursor = await db.execute(
-                    "SELECT * FROM knowledge_entries ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    f"SELECT * FROM knowledge_entries ORDER BY {order_by} LIMIT ? OFFSET ?",
                     (limit, offset),
                 )
             rows = await cursor.fetchall()
@@ -164,4 +193,4 @@ class KnowledgeStore(BaseStore):
         )
 
 
-__all__ = ["KnowledgeStore"]
+__all__ = ["KNOWLEDGE_SORT_COLUMNS", "KnowledgeStore"]

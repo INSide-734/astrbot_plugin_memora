@@ -27,11 +27,18 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
+async function knowledgeRow(title: string): Promise<HTMLTableRowElement> {
+  const row = (await screen.findByText(title, { selector: "span[title]" })).closest("tr");
+  if (!(row instanceof HTMLTableRowElement)) throw new Error(`Missing knowledge row: ${title}`);
+  return row;
+}
+
 describe("KnowledgePage", () => {
   let bridge: BridgeMock;
   let showToast: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    localStorage.clear();
     bridge = {
       apiGet: vi.fn(),
       apiPost: vi.fn(),
@@ -49,6 +56,7 @@ describe("KnowledgePage", () => {
 
   afterEach(() => {
     cleanup();
+    localStorage.clear();
     vi.restoreAllMocks();
     Object.defineProperty(window, "AstrBotPluginPage", {
       configurable: true,
@@ -94,7 +102,12 @@ describe("KnowledgePage", () => {
     expect(screen.getByRole("region").getAttribute("data-layout")).toBe("dense");
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", { limit: "100", offset: "0" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", {
+        limit: "100",
+        offset: "0",
+        sort_by: "updated_at",
+        sort_order: "desc",
+      });
     });
     expect(localeSpy).toHaveBeenCalledWith("en-US");
 
@@ -108,6 +121,8 @@ describe("KnowledgePage", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", {
         limit: "100",
         offset: "0",
+        sort_by: "updated_at",
+        sort_order: "desc",
         category: "concept",
       });
     });
@@ -120,6 +135,8 @@ describe("KnowledgePage", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge/search", {
         query: "python",
         limit: "100",
+        sort_by: "updated_at",
+        sort_order: "desc",
         category: "concept",
       });
     });
@@ -135,6 +152,8 @@ describe("KnowledgePage", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", {
         limit: "100",
         offset: "0",
+        sort_by: "updated_at",
+        sort_order: "desc",
         category: "concept",
       });
     });
@@ -166,7 +185,12 @@ describe("KnowledgePage", () => {
     expect(screen.queryByText("1 selected")).toBeNull();
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", { limit: "100", offset: "100" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", {
+        limit: "100",
+        offset: "100",
+        sort_by: "updated_at",
+        sort_order: "desc",
+      });
     });
 
     fireEvent.click(screen.getByRole("combobox"));
@@ -179,10 +203,60 @@ describe("KnowledgePage", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", {
         limit: "100",
         offset: "0",
+        sort_by: "updated_at",
+        sort_order: "desc",
         category: "concept",
       });
     });
     expect(screen.getByText("Page 1 of 3")).toBeTruthy();
+  });
+
+  it("sorts on the server, resets paging and selection, and only persists table view state", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path !== "page/knowledge") return Promise.resolve(ok({}));
+      return Promise.resolve(ok({
+        total: 201,
+        entries: [{
+          entry_id: `kb-${params.offset}`,
+          title: `Entry ${params.offset}`,
+          category: "fact",
+          confidence: 0.8,
+          access_count: 3,
+        }],
+      }));
+    });
+
+    render(<KnowledgePage showToast={showToast} />);
+
+    expect(await screen.findByText("Entry 0")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Entry 100")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select knowledge entry Entry 100" }));
+    expect(screen.getByText("1 selected")).toBeTruthy();
+
+    bridge.apiGet.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Sort Title ascending" }));
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge", {
+        limit: "100",
+        offset: "0",
+        sort_by: "title",
+        sort_order: "asc",
+      });
+    });
+    expect(screen.queryByText("1 selected")).toBeNull();
+    expect(screen.getByText("Page 1 of 3")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Table view" }));
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Category" }));
+
+    const preferences = JSON.parse(
+      localStorage.getItem("memora.table.knowledge.v1") ?? "null",
+    );
+    expect(preferences.columnVisibility.category).toBe(false);
+    expect(preferences).not.toHaveProperty("sort");
+    expect(localStorage.getItem("memora.table.knowledge.sort")).toBeNull();
   });
 
   it("returns to the previous valid page when deletion empties the current page", async () => {
@@ -299,7 +373,7 @@ describe("KnowledgePage", () => {
 
     render(<KnowledgePage showToast={showToast} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open knowledge entry Gamma entry" }));
+    fireEvent.click(await knowledgeRow("Gamma entry"));
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/knowledge/detail", { entry_id: "kb-9" });
@@ -565,16 +639,16 @@ describe("KnowledgePage", () => {
 
     render(<KnowledgePage showToast={showToast} />);
 
-    const firstEntryButton = await screen.findByRole("button", { name: "Open knowledge entry First entry" });
-    const secondEntryButton = screen.getByRole("button", { name: "Open knowledge entry Second entry" });
-    fireEvent.click(firstEntryButton);
+    const firstEntryRow = await knowledgeRow("First entry");
+    const secondEntryRow = await knowledgeRow("Second entry");
+    fireEvent.click(firstEntryRow);
     const firstDrawer = await screen.findByRole("dialog", { name: "First entry" });
     fireEvent.click(within(firstDrawer).getByRole("button", { name: /^edit$/i }));
     fireEvent.change(within(firstDrawer).getByLabelText("Title"), {
       target: { value: "Unsaved first title" },
     });
 
-    fireEvent.click(secondEntryButton);
+    fireEvent.click(secondEntryRow);
 
     expect(bridge.apiGet).not.toHaveBeenCalledWith("page/knowledge/detail", { entry_id: "kb-2" });
     expect(await screen.findByRole("dialog", { name: /leave configuration without saving/i })).toBeTruthy();
@@ -583,7 +657,7 @@ describe("KnowledgePage", () => {
     fireEvent.click(screen.getByRole("button", { name: /keep editing/i }));
     expect((within(firstDrawer).getByLabelText("Title") as HTMLInputElement).value).toBe("Unsaved first title");
 
-    fireEvent.click(secondEntryButton);
+    fireEvent.click(secondEntryRow);
     fireEvent.click(await screen.findByRole("button", { name: /discard changes and leave/i }));
 
     await waitFor(() => {
@@ -597,7 +671,7 @@ describe("KnowledgePage", () => {
     const detailRequestsBeforeCurrentSelection = bridge.apiGet.mock.calls.filter(
       ([path]) => path === "page/knowledge/detail",
     ).length;
-    fireEvent.click(secondEntryButton);
+    fireEvent.click(secondEntryRow);
     expect(bridge.apiGet.mock.calls.filter(
       ([path]) => path === "page/knowledge/detail",
     )).toHaveLength(detailRequestsBeforeCurrentSelection);
@@ -628,7 +702,7 @@ describe("KnowledgePage", () => {
 
     render(<KnowledgePage showToast={showToast} onDirtyChange={onDirtyChange} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open knowledge entry Baseline title" }));
+    fireEvent.click(await knowledgeRow("Baseline title"));
     const drawer = await screen.findByRole("dialog", { name: "Baseline title" });
     fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
     fireEvent.change(within(drawer).getByLabelText("Title"), {
@@ -673,7 +747,7 @@ describe("KnowledgePage", () => {
 
     const firstView = render(<KnowledgePage showToast={showToast} onDirtyChange={onDirtyChange} />);
     const firstCreateButton = await screen.findByRole("button", { name: /new entry/i });
-    fireEvent.click(screen.getByRole("button", { name: "Open knowledge entry Owner baseline" }));
+    fireEvent.click(await knowledgeRow("Owner baseline"));
     const firstDrawer = await screen.findByRole("dialog", { name: "Owner baseline" });
     fireEvent.click(within(firstDrawer).getByRole("button", { name: /^edit$/i }));
     fireEvent.change(within(firstDrawer).getByLabelText("Title"), { target: { value: "Dirty edit" } });
@@ -700,7 +774,7 @@ describe("KnowledgePage", () => {
     onDirtyChange.mockClear();
     const secondView = render(<KnowledgePage showToast={showToast} onDirtyChange={onDirtyChange} />);
     const secondCreateButton = await screen.findByRole("button", { name: /new entry/i });
-    fireEvent.click(screen.getByRole("button", { name: "Open knowledge entry Owner baseline" }));
+    fireEvent.click(await knowledgeRow("Owner baseline"));
     const cleanDrawer = await screen.findByRole("dialog", { name: "Owner baseline" });
     const cleanSheetClose = within(cleanDrawer).getByRole("button", { name: "Close" });
     fireEvent.click(secondCreateButton);
@@ -755,7 +829,7 @@ describe("KnowledgePage", () => {
 
     render(<KnowledgePage showToast={showToast} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open knowledge entry Original title" }));
+    fireEvent.click(await knowledgeRow("Original title"));
     const drawer = await screen.findByRole("dialog", { name: "Original title" });
     fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
     fireEvent.change(within(drawer).getByLabelText("Title"), { target: { value: "Rejected title" } });
@@ -873,7 +947,7 @@ describe("KnowledgePage", () => {
 
     render(<KnowledgePage showToast={showToast} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open knowledge entry Pending original" }));
+    fireEvent.click(await knowledgeRow("Pending original"));
     const drawer = await screen.findByRole("dialog", { name: "Pending original" });
     fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
     fireEvent.change(within(drawer).getByLabelText("Title"), { target: { value: "Pending update" } });
