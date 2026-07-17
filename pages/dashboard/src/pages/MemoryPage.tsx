@@ -6,18 +6,26 @@ import { apiRequest, unwrapApiData, normalizeImportance } from "@/lib/bridge";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
 import { Badge } from "@/components/ui/Badge";
 import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { Checkbox } from "@/components/ui/checkbox";
 import { selectionStateVariants } from "@/components/ui/selection-state";
 import { Textarea } from "@/components/ui/textarea";
+import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
+import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
+import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
+import { MemoryForm, type MemoryDraft } from "@/components/editing/forms/MemoryForm";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { useEntityEditor } from "@/hooks/useEntityEditor";
+import { BULK_CONFIRMATION_THRESHOLD } from "@/types/editing";
 import { dashboardLocale, formatDashboardDate, formatDashboardNumber, translateEnum } from "@/lib/i18n";
 import type { EntityNavigationTarget, MemoryItem } from "@/types";
 
 interface MemoryPageProps {
   showToast: (msg: string, isError?: boolean) => void;
   navigationTarget?: EntityNavigationTarget | null;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 const ROW_HEIGHT = 56;
@@ -26,9 +34,13 @@ const SCROLL_BUFFER = 15;
 const STATUS_LABELS: Record<string, string> = {};
 const EDIT_FIELD_LABELS: Record<string, string> = {};
 
-export function MemoryPage({ showToast, navigationTarget }: MemoryPageProps) {
+export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: MemoryPageProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
+  const pageSizeOptions = [20, 50, 100].map((size) => ({
+    value: String(size),
+    label: t(`common.perPage${size}`),
+  }));
 
   // Init label maps with i18n
   STATUS_LABELS.all = t("filter.statusAll");
@@ -49,9 +61,11 @@ export function MemoryPage({ showToast, navigationTarget }: MemoryPageProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<MemoryItem | null>(null);
-  const [editData, setEditData] = useState<Record<string, string>>({});
-  const [editField, setEditField] = useState("content");
   const [editReason, setEditReason] = useState("");
+  const [editDirty, setEditDirty] = useState(false);
+  const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false);
+  const [pendingSelection, setPendingSelection] = useState<string | null>(null);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const detailRequestRef = useRef(0);
 
   const fetchMemories = useCallback(async () => {
@@ -90,6 +104,7 @@ export function MemoryPage({ showToast, navigationTarget }: MemoryPageProps) {
 
   useEffect(() => {
     if (!navigationTarget) return;
+    if (editDirty && navigationTarget.id === detail?.id) return;
     void fetchDetail(navigationTarget.id);
   }, [fetchDetail, navigationTarget?.id, navigationTarget?.requestId]);
 
@@ -109,7 +124,7 @@ export function MemoryPage({ showToast, navigationTarget }: MemoryPageProps) {
     }
   };
 
-  const batchAction = async (action: "archive" | "delete") => {
+  const executeBatchAction = async (action: "archive" | "delete") => {
     if (!selected.size) return;
     try {
       const body = { memory_ids: Array.from(selected), action };
@@ -122,24 +137,47 @@ export function MemoryPage({ showToast, navigationTarget }: MemoryPageProps) {
     }
   };
 
-  const saveEdit = async () => {
-    if (!detail) return;
-    try {
-      await apiRequest("memory/update", {
+  const memoryDraft: MemoryDraft = {
+    content: String(detail?.content ?? detail?.summary ?? detail?.text ?? ""),
+    importance: Number(detail?.importance ?? 0),
+    type: String(detail?.type ?? "fact"),
+    status: String(detail?.status ?? "active"),
+  };
+  const editor = useEntityEditor<MemoryDraft>({
+    entity: memoryDraft,
+    onDirtyChange: setEditDirty,
+    submit: async (draft) => {
+      if (!detail) throw new Error("No memory selected");
+      const response = unwrapApiData(await apiRequest("memory/update", {
         method: "POST",
         body: {
           memory_id: detail.id,
-          field: editField,
-          value: editData[editField] ?? "",
+          changes: draft,
           reason: editReason,
         },
-      });
+      }));
+      const replacementId = typeof response.new_memory_id === "string" ? response.new_memory_id : null;
+      if (replacementId) await fetchDetail(replacementId);
       showToast(t("edit.success"));
-      setDetail(null);
-      fetchMemories();
-    } catch (e) {
-      showToast(String(e), true);
+      void fetchMemories();
+      return { entity: draft, revision: typeof response.revision === "string" ? response.revision : detail.id };
+    },
+  });
+
+  useEffect(() => {
+    onDirtyChange?.(editDirty);
+  }, [editDirty, onDirtyChange]);
+
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  const requestDetail = (id: string) => {
+    if (id === detail?.id) return;
+    if (editor.isDirty) {
+      setPendingSelection(id);
+      setCloseConfirmationOpen(true);
+      return;
     }
+    void fetchDetail(id);
   };
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -191,7 +229,7 @@ export function MemoryPage({ showToast, navigationTarget }: MemoryPageProps) {
             selectionStateVariants({ kind: "row", selected: selected.has(m.id) }),
           )}
           style={{ gridTemplateColumns: GRID_COLS }}
-          onClick={() => fetchDetail(m.id)}
+          onClick={() => requestDetail(m.id)}
         >
           <div className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
             <Checkbox aria-label={t("memory.selectItem", String(m.id))} checked={selected.has(m.id)} onCheckedChange={() => toggleSelect(m.id)} />
@@ -237,18 +275,22 @@ export function MemoryPage({ showToast, navigationTarget }: MemoryPageProps) {
         <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v ?? "all"); setPage(1); }}>
           <SelectTrigger><span>{STATUS_LABELS[statusFilter] ?? statusFilter}</span></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">{t("filter.statusAll")}</SelectItem>
-            <SelectItem value="active">{t("filter.statusActive")}</SelectItem>
-            <SelectItem value="archived">{t("filter.statusArchived")}</SelectItem>
-            <SelectItem value="deleted">{t("filter.statusDeleted")}</SelectItem>
+            <SelectGroup>
+              <SelectItem value="all">{t("filter.statusAll")}</SelectItem>
+              <SelectItem value="active">{t("filter.statusActive")}</SelectItem>
+              <SelectItem value="archived">{t("filter.statusArchived")}</SelectItem>
+              <SelectItem value="deleted">{t("filter.statusDeleted")}</SelectItem>
+            </SelectGroup>
           </SelectContent>
         </Select>
-        <Select value={String(pageSize)} onValueChange={(v) => { if (v) { setPageSize(Number(v)); setPage(1); } }}>
-          <SelectTrigger><span>{String(pageSize)}</span></SelectTrigger>
+        <Select items={pageSizeOptions} value={String(pageSize)} onValueChange={(v) => { if (v) { setPageSize(Number(v)); setPage(1); } }}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="20">{t("common.perPage20")}</SelectItem>
-            <SelectItem value="50">{t("common.perPage50")}</SelectItem>
-            <SelectItem value="100">{t("common.perPage100")}</SelectItem>
+            <SelectGroup>
+              {pageSizeOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              ))}
+            </SelectGroup>
           </SelectContent>
         </Select>
       </PageToolbar>
@@ -287,82 +329,34 @@ export function MemoryPage({ showToast, navigationTarget }: MemoryPageProps) {
       {selected.size > 0 && (
         <div className="flex items-center gap-3 border-t bg-muted/50 px-6 py-2.5 animate-slide-up">
           <span className="text-sm font-medium text-foreground">{t("select.selected", String(selected.size))}</span>
-          <Button variant="secondary" size="sm" onClick={() => batchAction("archive")}><Archive size={14} />{t("edit.statusArchived")}</Button>
-          <Button variant="destructive" size="sm" onClick={() => batchAction("delete")}><Trash2 size={14} />{t("filter.deleteSelected")}</Button>
+          <Button variant="secondary" size="sm" onClick={() => executeBatchAction("archive")}><Archive size={14} />{t("edit.statusArchived")}</Button>
+          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}><Trash2 size={14} />{t("filter.deleteSelected")}</Button>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X size={14} />{t("common.clear")}</Button>
         </div>
       )}
 
-      {/* Detail Panel */}
-      {detail && (
-        <div className="fixed inset-y-0 right-0 z-40 w-[420px] overflow-y-auto border-l bg-popover text-popover-foreground shadow-lg animate-slide-in-right">
-          <div className="flex items-center justify-between border-b px-5 py-3">
-            <h3 className="text-sm font-semibold">{t("detail.title")}</h3>
-            <Button variant="ghost" size="sm" aria-label={t("common.close")} title={t("common.close")} onClick={() => setDetail(null)}><X size={16} /></Button>
-          </div>
-          <div className="p-5 space-y-4">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">{t("table.id")}</label>
-              <p className="font-mono text-sm">{detail.id}</p>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">{t("detail.content")}</label>
-              <p className="text-sm whitespace-pre-wrap">{String(detail.content ?? detail.summary ?? detail.text ?? "")}</p>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.type")}</label><p className="text-sm">{detail.type ? translateEnum(t, "memory.type", detail.type) : "--"}</p></div>
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.importance")}</label><p className="text-sm">{formatDashboardNumber(normalizeImportance(Number(detail.importance ?? 0)), locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</p></div>
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.status")}</label><p className="text-sm">{STATUS_LABELS[String(detail.status ?? "active")] ?? String(detail.status ?? "")}</p></div>
-              <div><label className="text-xs font-medium text-muted-foreground">{t("table.created")}</label><p className="text-sm">{formatDashboardDate(detail.created_at, locale)}</p></div>
-            </div>
-
-            {/* Edit Form */}
-            <div className="space-y-3 border-t pt-4">
-              <h4 className="text-sm font-semibold">{t("detail.edit")}</h4>
-              <Select value={editField} onValueChange={(v) => v && setEditField(v)}>
-                <SelectTrigger><span>{EDIT_FIELD_LABELS[editField] ?? editField}</span></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="content">{t("field.content")}</SelectItem>
-                  <SelectItem value="importance">{t("table.importance")}</SelectItem>
-                  <SelectItem value="type">{t("table.type")}</SelectItem>
-                  <SelectItem value="status">{t("table.status")}</SelectItem>
-                </SelectContent>
-              </Select>
-              {editField === "content" && (
-                <Textarea
-                  rows={4}
-                  placeholder={t("edit.newContentPh")}
-                  value={editData.content ?? ""}
-                  onChange={(e) => setEditData({ ...editData, content: e.target.value })}
-                />
-              )}
-              {editField === "importance" && (
-                <Input type="number" min="0" max="10" step="0.1" value={editData.importance ?? "5"}
-                  onChange={(e) => setEditData({ ...editData, importance: e.target.value })} />
-              )}
-              {editField === "type" && (
-                <Input placeholder={t("edit.typePh")} value={editData.type ?? ""}
-                  onChange={(e) => setEditData({ ...editData, type: e.target.value })} />
-              )}
-              {editField === "status" && (
-                <Select value={editData.status ?? "active"} onValueChange={(v) => v && setEditData({ ...editData, status: v })}>
-                  <SelectTrigger><span>{STATUS_LABELS[editData.status ?? "active"] ?? (editData.status ?? "active")}</span></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">{t("filter.statusActive")}</SelectItem>
-                    <SelectItem value="archived">{t("filter.statusArchived")}</SelectItem>
-                    <SelectItem value="deleted">{t("filter.statusDeleted")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              )}
-              <Input placeholder={t("edit.reason")} value={editReason} onChange={(e) => setEditReason(e.target.value)} />
-              <div className="flex gap-2">
-                <Button size="sm" onClick={saveEdit}>{t("common.save")}</Button>
-                <Button variant="secondary" size="sm" onClick={() => setDetail(null)}>{t("common.cancel")}</Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <EntityEditorSheet
+        open={detail !== null}
+        onOpenChange={(open) => {
+          if (open || !detail) return;
+          if (editor.isDirty) setCloseConfirmationOpen(true);
+          else setDetail(null);
+        }}
+        title={t("detail.title")}
+        description={detail ? formatDashboardDate(detail.created_at, locale) : ""}
+        mode={editor.mode}
+        isDirty={editor.isDirty}
+        isSubmitting={editor.isSubmitting}
+        canSave
+        onBeginEdit={editor.beginEdit}
+        onCancel={editor.cancel}
+        onSave={() => void editor.save()}
+        labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: t("common.saving") }}
+        view={detail ? <div className="flex flex-col gap-4"><div><p className="text-xs text-muted-foreground">{t("table.id")}</p><p className="font-mono text-sm">{detail.id}</p></div><div><p className="text-xs text-muted-foreground">{t("detail.content")}</p><p className="whitespace-pre-wrap text-sm">{memoryDraft.content}</p></div><div className="grid grid-cols-2 gap-3 text-sm"><p>{t("table.type")}: {translateEnum(t, "memory.type", memoryDraft.type)}</p><p>{t("table.importance")}: {formatDashboardNumber(normalizeImportance(memoryDraft.importance), locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</p><p>{t("table.status")}: {STATUS_LABELS[memoryDraft.status] ?? memoryDraft.status}</p><p>{t("table.created")}: {formatDashboardDate(detail.created_at, locale)}</p></div></div> : null}
+        form={<><MemoryForm value={editor.draft} onChange={(draft) => { (Object.keys(draft) as (keyof MemoryDraft)[]).forEach((field) => editor.setField(field, draft[field])); }} fieldErrors={editor.fieldErrors} formErrors={editor.formError ? [editor.formError] : []} disabled={editor.isSubmitting} mode="edit" /><Field data-disabled={editor.isSubmitting}><FieldLabel htmlFor="memory-edit-reason">{t("edit.reason")}</FieldLabel><Input id="memory-edit-reason" placeholder={t("edit.reason")} disabled={editor.isSubmitting} value={editReason} onChange={(event) => setEditReason(event.currentTarget.value)} /></Field></>}
+      />
+      <UnsavedChangesDialog open={closeConfirmationOpen} title={t("config.unsaved.title")} description={t("config.unsaved.description")} keepEditingLabel={t("config.unsaved.keepEditing")} discardLabel={t("config.unsaved.discard")} onKeepEditing={() => { setCloseConfirmationOpen(false); setPendingSelection(null); }} onDiscard={() => { const next = pendingSelection; setCloseConfirmationOpen(false); setPendingSelection(null); editor.cancel(); if (next) void fetchDetail(next); else setDetail(null); }} />
+      <DeleteConfirmDialog open={batchDeleteOpen} title={t("filter.deleteSelected")} description={t("config.unsaved.description")} cancelLabel={t("common.cancel")} confirmLabel={t("common.delete")} confirmationRequirement={selected.size >= BULK_CONFIRMATION_THRESHOLD ? { label: t("filter.deleteSelected"), expectedText: String(selected.size) } : undefined} onCancel={() => setBatchDeleteOpen(false)} onConfirm={() => { setBatchDeleteOpen(false); void executeBatchAction("delete"); }} />
     </PageFrame>
   );
 }

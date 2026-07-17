@@ -283,18 +283,6 @@ export function ConfigPage({
     [],
   );
 
-  useEffect(() => {
-    if (!dirty) return;
-    const preventUnsavedClose = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", preventUnsavedClose);
-    return () => {
-      window.removeEventListener("beforeunload", preventUnsavedClose);
-    };
-  }, [dirty]);
-
   const goToSection = useCallback((id: string, path: string) => {
     const section = document.getElementById(id);
     if (!section) return;

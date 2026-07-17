@@ -85,6 +85,8 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
   const [history, setHistory] = useState<EvaluationReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const runningRef = useRef(false);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const failedCases = useMemo(
     () => (report?.cases ?? []).filter((row) => row.recall_at_k === 0),
@@ -141,6 +143,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
   };
 
   const runEvaluation = async () => {
+    if (runningRef.current) return;
     if (selectedDatasets.length === 0) {
       showToast(t("intelligence.evaluation.selectDataset"), true);
       return;
@@ -148,7 +151,9 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
 
     const nextK = clampK(k);
     setK(nextK);
+    runningRef.current = true;
     setRunning(true);
+    setRunError(null);
     try {
       const response = await apiRequest("evaluation/run", {
         method: "POST",
@@ -165,8 +170,11 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
       setHistory((current) => [nextReport, ...current.filter((item) => item.report_id !== nextReport.report_id)].slice(0, 10));
       showToast(t("intelligence.evaluation.reportReady", nextReport.report_id));
     } catch (error) {
-      showToast(t("common.errorPrefix", error instanceof Error ? error.message : String(error)), true);
+      const message = error instanceof Error ? error.message : String(error);
+      setRunError(message);
+      showToast(t("common.errorPrefix", message), true);
     } finally {
+      runningRef.current = false;
       setRunning(false);
     }
   };
@@ -285,6 +293,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
               {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
               {running ? t("intelligence.evaluation.running") : t("intelligence.evaluation.run")}
             </Button>
+            {runError ? <p role="alert" className="text-sm text-destructive">{runError}</p> : null}
           </div>
         </div>
 

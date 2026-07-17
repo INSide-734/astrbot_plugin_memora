@@ -87,6 +87,7 @@ export function ConfigConflictDialog({
 
         <div
           data-testid="config-conflict-paths"
+          aria-busy={!remoteReady}
           className="flex max-h-64 min-w-0 flex-col gap-4 overflow-y-auto pr-1"
         >
           <PathGroup

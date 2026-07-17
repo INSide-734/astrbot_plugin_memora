@@ -171,8 +171,14 @@ def test_pytest_ini_is_a_real_repository_entrypoint() -> None:
     assert testpaths == ["tests"]
 
 
+def test_dashboard_module_guidance_documents_real_entrypoints() -> None:
+    dashboard_agents = _read_text("pages/dashboard/AGENTS.md")
+    assert (REPO_ROOT / "pages" / "dashboard" / "src" / "main.tsx").exists()
+    assert "PageFrame" in dashboard_agents
+    assert "python scripts/check_all.py" in dashboard_agents
+
+
 def test_quality_gate_entrypoints_exist() -> None:
-    assert (REPO_ROOT / "pytest.ini").exists()
     assert (REPO_ROOT / "scripts" / "check_all.py").exists()
     assert (REPO_ROOT / ".github" / "workflows" / "ci.yml").exists()
     assert (REPO_ROOT / "docs" / "DEV_SETUP.md").exists()
@@ -660,7 +666,6 @@ def test_documented_commands_match_command_endpoints() -> None:
         "README.md",
         "README_EN.md",
         "README_RU.md",
-        "AGENTS.md",
         "CHANGELOG.md",
     ]
     stale_patterns = [

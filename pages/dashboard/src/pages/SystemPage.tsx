@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { BarChart3, Database, HardDrive, RotateCw, Trash2, Download, Wrench, FileJson, FileText, Undo2, CheckSquare } from "lucide-react";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
@@ -13,6 +13,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { selectionStateVariants } from "@/components/ui/selection-state";
 import { cn } from "@/lib/utils";
+import { ActionConfirmDialog } from "@/components/editing/ActionConfirmDialog";
 
 interface SystemPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -39,6 +40,37 @@ interface SystemStats {
   importance_distribution?: Record<string, number>;
   atom_types?: Record<string, number>;
   sessions?: Record<string, unknown>;
+}
+
+interface PendingSystemOperation {
+  readonly kind: "restore" | "delete" | "batch-delete" | "purge" | "install" | "build" | "reset-quality";
+  readonly title: string;
+  readonly description: string;
+  readonly endpoint: string;
+  readonly body?: Readonly<Record<string, unknown>>;
+  readonly selection?: readonly string[];
+  readonly successLabel: string;
+  readonly destructive: boolean;
+  readonly actionLabel: string;
+  readonly pendingLabel: string;
+}
+
+function readableError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function snapshotOperation(operation: PendingSystemOperation): PendingSystemOperation {
+  const body = operation.body
+    ? Object.freeze(Object.fromEntries(Object.entries(operation.body).map(([key, value]) => [
+        key,
+        Array.isArray(value) ? Object.freeze([...value]) : value,
+      ])))
+    : undefined;
+  return Object.freeze({
+    ...operation,
+    body,
+    selection: operation.selection ? Object.freeze([...operation.selection]) : undefined,
+  });
 }
 
 interface MetricsSummary {
@@ -147,11 +179,12 @@ export function SystemPage({ showToast }: SystemPageProps) {
   const [exportFormat, setExportFormat] = useState<"jsonl" | "markdown">("jsonl");
   const [exportProgress, setExportProgress] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [loading, setLoading] = useState(false);
-  const [restoring, setRestoring] = useState<string | null>(null);
   const [selectedBackups, setSelectedBackups] = useState<Set<string>>(new Set());
-  const [deleting, setDeleting] = useState(false);
-  // 内联确认状态（AstrBot webview 不支持 window.confirm）
-  const [confirmTarget, setConfirmTarget] = useState<{ type: "delete" | "batch-delete" | "restore"; name: string } | null>(null);
+  const [pendingOperation, setPendingOperation] = useState<PendingSystemOperation | null>(null);
+  const [operationPending, setOperationPending] = useState(false);
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const operationPendingRef = useRef(false);
+  const [qualityRefreshToken, setQualityRefreshToken] = useState(0);
   // v1.0.0+ tabs
   const [activeTab, setActiveTab] = useState<"overview" | "quality" | "delegation">("overview");
   // Dashboard 管理 (npm install / build)
@@ -159,7 +192,6 @@ export function SystemPage({ showToast }: SystemPageProps) {
   const [npmActionType, setNpmActionType] = useState<"install" | "build">("install");
   const [npmResult, setNpmResult] = useState<{ stdout: string; stderr: string; exit_code: number; success: boolean } | null>(null);
   const [npmError, setNpmError] = useState<string | null>(null);
-  const [npmConfirmAction, setNpmConfirmAction] = useState<"install" | "build" | null>(null);
 
   const fetchStats = useCallback(async () => {
     setLoading(true);
@@ -167,7 +199,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
       const res = unwrapApiData(await apiRequest("stats"));
       setStats(res as SystemStats);
     } catch (e) {
-      showToast(String(e), true);
+      showToast(readableError(e), true);
     } finally {
       setLoading(false);
     }
@@ -186,7 +218,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
       const data = unwrapApiData(await apiRequest("metrics/summary"));
       setMetrics(data as MetricsSummary);
     } catch (e) {
-      showToast(String(e), true);
+      showToast(readableError(e), true);
       setMetrics(null);
     }
   }, [showToast]);
@@ -197,13 +229,83 @@ export function SystemPage({ showToast }: SystemPageProps) {
     fetchMetrics();
   }, [fetchStats, fetchBackups, fetchMetrics]);
 
-  const action = async (endpoint: string, labelKey: string) => {
+  const runDirectAction = async (endpoint: string, labelKey: string) => {
     try {
-      await apiRequest(endpoint, { method: "POST" });
-      showToast(t("system.actionCompleted", t(labelKey)));
-      fetchStats();
-    } catch (e) {
-      showToast(String(e), true);
+      const data = unwrapApiData(await apiRequest(endpoint, { method: "POST" }));
+      showToast(String((data as Record<string, unknown>)?.message ?? t("system.actionCompleted", t(labelKey))));
+      void fetchStats();
+    } catch (error) {
+      showToast(readableError(error), true);
+    }
+  };
+
+  const requestPurge = () => {
+    const label = t("system.purgeDeleted");
+    openOperation({ kind: "purge", title: label, description: label, endpoint: "system/purge", successLabel: t("system.actionCompleted", label), destructive: true, actionLabel: label, pendingLabel: `${label}…` });
+  };
+
+  const requestQualityReset = () => {
+    const label = t("quality.reset");
+    openOperation({ kind: "reset-quality", title: label, description: t("toast.qualityReset"), endpoint: "quality/reset", successLabel: t("toast.qualityReset"), destructive: true, actionLabel: label, pendingLabel: `${label}…` });
+  };
+
+  const openOperation = (operation: PendingSystemOperation) => {
+    setOperationError(null);
+    setPendingOperation(snapshotOperation(operation));
+  };
+
+  const executeOperation = async () => {
+    const operation = pendingOperation;
+    if (!operation || operationPendingRef.current) return;
+    operationPendingRef.current = true;
+    setOperationPending(true);
+    setOperationError(null);
+    const npmKind = operation.kind === "install" || operation.kind === "build" ? operation.kind : null;
+    if (npmKind) {
+      setNpmAction(npmKind === "install" ? "installing" : "building");
+      setNpmActionType(npmKind);
+      setNpmResult(null);
+      setNpmError(null);
+    }
+    try {
+      const data = unwrapApiData(await apiRequest(operation.endpoint, { method: "POST", body: operation.body }));
+      if (npmKind) {
+        const result = data as { stdout: string; stderr: string; exit_code: number; success: boolean };
+        setNpmResult(result);
+        if (!result.success) {
+          const message = t("system.commandFailed", String(result.exit_code));
+          setOperationError(message);
+          setNpmError(message);
+          showToast(message, true);
+          return;
+        }
+        showToast(operation.successLabel);
+      } else {
+        showToast(String((data as Record<string, unknown>)?.message ?? operation.successLabel));
+      }
+      if (operation.kind === "delete" || operation.kind === "batch-delete") {
+        const completed = new Set(operation.selection ?? []);
+        setSelectedBackups((previous) => new Set(
+          Array.from(previous).filter((name) => !completed.has(name)),
+        ));
+      }
+      if (operation.kind === "reset-quality") {
+        setQualityRefreshToken((token) => token + 1);
+      }
+      setPendingOperation(null);
+      void fetchStats();
+      void fetchBackups();
+    } catch (error) {
+      const message = readableError(error);
+      setOperationError(message);
+      if (npmKind) {
+        setNpmError(message);
+        showToast(message, true);
+      }
+    } finally {
+      operationPendingRef.current = false;
+      setOperationPending(false);
+      if (npmKind) setNpmAction("idle");
     }
   };
 
@@ -218,24 +320,9 @@ export function SystemPage({ showToast }: SystemPageProps) {
   };
 
   const doRestoreBackup = async (backupName: string) => {
-    setConfirmTarget({ type: "restore", name: backupName });
+    openOperation({ kind: "restore", title: t("system.restoreBackup"), description: t("system.restoreConfirm", backupName), endpoint: "backup/restore", body: { name: backupName }, successLabel: t("system.restoreSuccess"), destructive: true, actionLabel: t("system.restoreBackup"), pendingLabel: `${t("system.restoreBackup")}…` });
   };
 
-  const confirmRestore = async (backupName: string) => {
-    setConfirmTarget(null);
-    setRestoring(backupName);
-    try {
-      const data = unwrapApiData(await apiRequest("backup/restore", {
-        method: "POST",
-        body: { name: backupName },
-      }));
-      showToast(String((data as Record<string, unknown>)?.message ?? t("system.restoreSuccess")));
-    } catch (e) {
-      showToast(String(e), true);
-    } finally {
-      setRestoring(null);
-    }
-  };
 
   const toggleSelectBackup = (name: string) => {
     setSelectedBackups((prev) => {
@@ -254,39 +341,16 @@ export function SystemPage({ showToast }: SystemPageProps) {
   };
 
   const doDeleteBackup = async (backupName: string) => {
-    setConfirmTarget({ type: "delete", name: backupName });
+    openOperation({ kind: "delete", title: t("common.delete"), description: t("system.deleteConfirm", backupName), endpoint: "backup/delete", body: { name: backupName }, selection: [backupName], successLabel: t("system.actionCompleted", t("common.delete")), destructive: true, actionLabel: t("detail.delete"), pendingLabel: `${t("detail.delete")}…` });
   };
 
-  const confirmDelete = async (backupName: string) => {
-    setConfirmTarget(null);
-    try {
-      await apiRequest("backup/delete", { method: "POST", body: { name: backupName } });
-      showToast(t("system.actionCompleted", t("common.delete")));
-      setSelectedBackups((prev) => { const n = new Set(prev); n.delete(backupName); return n; });
-      fetchBackups();
-    } catch (e) { showToast(String(e), true); }
-  };
 
   const doBatchDeleteBackups = async () => {
     if (selectedBackups.size === 0) return;
-    setConfirmTarget({ type: "batch-delete", name: String(selectedBackups.size) });
+    const names = Array.from(selectedBackups);
+    openOperation({ kind: "batch-delete", title: t("filter.deleteSelected"), description: t("system.batchDeleteConfirm", String(names.length)), endpoint: "backup/batch-delete", body: { names }, selection: names, successLabel: t("system.actionCompleted", t("filter.deleteSelected")), destructive: true, actionLabel: t("filter.deleteSelected"), pendingLabel: `${t("filter.deleteSelected")}…` });
   };
 
-  const confirmBatchDelete = async () => {
-    setConfirmTarget(null);
-    const names = Array.from(selectedBackups);
-    setDeleting(true);
-    try {
-      const data = unwrapApiData(await apiRequest("backup/batch-delete", {
-        method: "POST",
-        body: { names },
-      }));
-      showToast(String((data as Record<string, unknown>)?.message ?? t("system.actionCompleted", t("filter.deleteSelected"))));
-      setSelectedBackups(new Set());
-      fetchBackups();
-    } catch (e) { showToast(String(e), true); }
-    finally { setDeleting(false); }
-  };
 
   const exportData = async (format: "jsonl" | "markdown") => {
     setExportProgress("loading");
@@ -309,33 +373,12 @@ export function SystemPage({ showToast }: SystemPageProps) {
       showToast(t("system.exportCompleted", format.toUpperCase()));
     } catch (e) {
       setExportProgress("error");
-      showToast(String(e), true);
+      showToast(readableError(e), true);
     }
   };
 
-  const doNpmAction = async (action: "install" | "build") => {
-    setNpmConfirmAction(null);
-    setNpmAction(action === "install" ? "installing" : "building");
-    setNpmActionType(action);
-    setNpmResult(null);
-    setNpmError(null);
-    try {
-      const endpoint = action === "install" ? "dashboard/install" : "dashboard/build";
-      const data = unwrapApiData(await apiRequest(endpoint, { method: "POST" }));
-      const result = data as unknown as { stdout: string; stderr: string; exit_code: number; success: boolean };
-      setNpmResult(result);
-      if (result.success) {
-        showToast(t(action === "install" ? "system.installSuccess" : "system.buildSuccess"));
-      } else {
-        showToast(t("system.commandFailed", String(result.exit_code)), true);
-      }
-    } catch (e) {
-      const msg = String(e);
-      setNpmError(msg);
-      showToast(msg, true);
-    } finally {
-      setNpmAction("idle");
-    }
+  const doNpmAction = (action: "install" | "build") => {
+    openOperation({ kind: action, title: action === "install" ? t("system.installDeps") : t("system.buildPage"), description: action === "install" ? t("system.installConfirm") : t("system.buildConfirm"), endpoint: action === "install" ? "dashboard/install" : "dashboard/build", successLabel: t(action === "install" ? "system.installSuccess" : "system.buildSuccess"), destructive: false, actionLabel: action === "install" ? t("system.installDeps") : t("system.buildPage"), pendingLabel: action === "install" ? t("system.installing") : t("system.building") });
   };
 
   const s = stats ?? {};
@@ -376,15 +419,29 @@ export function SystemPage({ showToast }: SystemPageProps) {
         description={t("system.subtitle")}
         icon={<BarChart3 className="size-4" />}
         actions={<div className="flex flex-wrap justify-end gap-2">
-          <Button variant="secondary" size="sm" onClick={() => action("system/rebuild", "system.rebuildIndex")}><Wrench size={14} />{t("system.rebuildIndex")}</Button>
-          <Button variant="secondary" size="sm" onClick={() => action("system/purge", "system.purgeDeleted")}><Trash2 size={14} />{t("system.purgeDeleted")}</Button>
-          <Button variant="secondary" size="sm" onClick={() => action("system/compact", "system.compactDB")}><HardDrive size={14} />{t("system.compactDB")}</Button>
+          <Button variant="secondary" size="sm" onClick={() => void runDirectAction("system/rebuild", "system.rebuildIndex")}><Wrench size={14} />{t("system.rebuildIndex")}</Button>
+          <Button variant="secondary" size="sm" onClick={requestPurge} disabled={operationPending}><Trash2 size={14} />{t("system.purgeDeleted")}</Button>
+          <Button variant="secondary" size="sm" onClick={() => void runDirectAction("system/compact", "system.compactDB")}><HardDrive size={14} />{t("system.compactDB")}</Button>
           <Button variant="secondary" size="sm" onClick={doCreateBackup}><Download size={14} />{t("system.createBackup")}</Button>
           <span className="w-px bg-border" />
           <Button variant="secondary" size="sm" onClick={() => exportData("jsonl")}><FileJson size={14} />JSONL</Button>
           <Button variant="secondary" size="sm" onClick={() => exportData("markdown")}><FileText size={14} />Markdown</Button>
         </div>}
       />
+
+      {pendingOperation && <ActionConfirmDialog
+        open
+        title={pendingOperation.title}
+        description={pendingOperation.description}
+        cancelLabel={t("common.cancel")}
+        actionLabel={pendingOperation.actionLabel}
+        pendingLabel={pendingOperation.pendingLabel}
+        destructive={pendingOperation.destructive}
+        pending={operationPending}
+        error={operationError}
+        onCancel={() => setPendingOperation(null)}
+        onConfirm={executeOperation}
+      />}
 
       <Tabs
         value={activeTab}
@@ -559,34 +616,6 @@ export function SystemPage({ showToast }: SystemPageProps) {
 
         {/* Backups */}
           <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          {/* Inline confirmation bar (replaces window.confirm in AstrBot webview) */}
-          {confirmTarget && (
-            <div className="mb-3 flex items-center justify-between rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 px-4 py-2.5">
-              <span className="text-sm text-[var(--text-primary)]">
-                {confirmTarget.type === "delete" && t("system.deleteConfirm", confirmTarget.name)}
-                {confirmTarget.type === "batch-delete" && t("system.batchDeleteConfirm", confirmTarget.name)}
-                {confirmTarget.type === "restore" && t("system.restoreConfirm", confirmTarget.name)}
-              </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant={confirmTarget.type === "restore" ? "secondary" : "destructive"}
-                  size="sm"
-                  onClick={() => {
-                    if (confirmTarget.type === "delete") confirmDelete(confirmTarget.name);
-                    else if (confirmTarget.type === "batch-delete") confirmBatchDelete();
-                    else if (confirmTarget.type === "restore") confirmRestore(confirmTarget.name);
-                  }}
-                >
-                  {confirmTarget.type === "delete" ? t("detail.delete")
-                   : confirmTarget.type === "batch-delete" ? t("filter.deleteSelected")
-                   : t("system.restoreBackup")}
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setConfirmTarget(null)}>
-                  {t("common.cancel")}
-                </Button>
-              </div>
-            </div>
-          )}
           <h3 className="text-sm font-semibold mb-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span>{t("system.versionBackups")} {backups.length > 0 && `(${backups.length})`}</span>
@@ -609,13 +638,9 @@ export function SystemPage({ showToast }: SystemPageProps) {
                   variant="destructive"
                   size="sm"
                   onClick={doBatchDeleteBackups}
-                  disabled={deleting}
+                  disabled={operationPending}
                 >
-                  {deleting ? (
-                    <><RotateCw size={12} className="animate-spin mr-1" />...</>
-                  ) : (
-                    <><Trash2 size={12} className="mr-1" />{t("filter.deleteSelected")} ({selectedBackups.size})</>
-                  )}
+                  <Trash2 size={12} className="mr-1" />{t("filter.deleteSelected")} ({selectedBackups.size})
                 </Button>
               )}
               <Button variant="secondary" size="sm" onClick={doCreateBackup}><Download size={14} />{t("system.createBackup")}</Button>
@@ -659,18 +684,15 @@ export function SystemPage({ showToast }: SystemPageProps) {
                       variant="secondary"
                       size="sm"
                       onClick={() => doRestoreBackup(b.name)}
-                      disabled={restoring === b.name}
+                      disabled={operationPending}
                     >
-                      {restoring === b.name ? (
-                        <><RotateCw size={12} className="animate-spin mr-1" />...</>
-                      ) : (
-                        <><Undo2 size={12} className="mr-1" />{t("system.restoreBackup")}</>
-                      )}
+                      <Undo2 size={12} className="mr-1" />{t("system.restoreBackup")}
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => doDeleteBackup(b.name)}
+                      disabled={operationPending}
                     >
                       <Trash2 size={12} className="text-[var(--color-danger)]" />
                     </Button>
@@ -714,30 +736,11 @@ export function SystemPage({ showToast }: SystemPageProps) {
         {/* Dashboard 管理 (npm install / build) */}
           <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <h3 className="text-sm font-semibold mb-4 flex items-center gap-2"><Wrench size={16} />{t("system.dashboardManagement")}</h3>
-          {npmConfirmAction && (
-            <div className="mb-3 flex items-center justify-between rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 px-4 py-2.5">
-              <span className="text-sm text-[var(--text-primary)]">
-                {npmConfirmAction === "install" ? t("system.installConfirm") : t("system.buildConfirm")}
-              </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => doNpmAction(npmConfirmAction)}
-                >
-                  {npmConfirmAction === "install" ? t("system.installDeps") : t("system.buildPage")}
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setNpmConfirmAction(null)}>
-                  {t("common.cancel")}
-                </Button>
-              </div>
-            </div>
-          )}
           <div className="flex gap-3 mb-4">
             <Button
               size="sm"
-              onClick={() => setNpmConfirmAction("install")}
-              disabled={npmAction !== "idle"}
+              onClick={() => doNpmAction("install")}
+              disabled={npmAction !== "idle" || operationPending}
             >
               {npmAction === "installing" ? (
                 <><RotateCw size={14} className="animate-spin mr-1" />{t("system.installing")}</>
@@ -747,8 +750,8 @@ export function SystemPage({ showToast }: SystemPageProps) {
             </Button>
             <Button
               size="sm"
-              onClick={() => setNpmConfirmAction("build")}
-              disabled={npmAction !== "idle"}
+              onClick={() => doNpmAction("build")}
+              disabled={npmAction !== "idle" || operationPending}
             >
               {npmAction === "building" ? (
                 <><RotateCw size={14} className="animate-spin mr-1" />{t("system.building")}</>
@@ -784,7 +787,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
         </>)} {/* end overview tab */}
 
         {/* Quality Monitor Tab */}
-        {activeTab === "quality" && <QualityMonitorTab showToast={showToast} />}
+        {activeTab === "quality" && <QualityMonitorTab showToast={showToast} onResetRequested={requestQualityReset} refreshToken={qualityRefreshToken} resetPending={operationPending} />}
 
         {/* Delegation Tab */}
         {activeTab === "delegation" && <DelegationTab showToast={showToast} />}

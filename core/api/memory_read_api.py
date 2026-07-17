@@ -9,6 +9,7 @@ from astrbot.api import logger
 
 from ..storage.base import apply_perf_pragmas
 from ..utils.number_utils import clamp_float
+from .response_utils import error_response
 
 
 class MemoryReadApiMixin:
@@ -151,7 +152,15 @@ class MemoryReadApiMixin:
         except (TypeError, ValueError):
             return self._error("memory_id 必须是整数")
 
-        memory = await self._get_memory_record(memory_id)
+        try:
+            memory = await self._get_memory_record(memory_id)
+        except Exception as exc:
+            logger.error(
+                "[PageAPI] operation=get_memory_detail memory_id=%s error_class=%s",
+                memory_id,
+                type(exc).__name__,
+            )
+            return error_response("读取记忆失败", code="internal_error")
         if not isinstance(memory, dict) or not memory:
             return self._error("记忆不存在")
 

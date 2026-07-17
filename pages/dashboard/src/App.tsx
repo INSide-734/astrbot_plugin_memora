@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ConfigUnsavedDialog } from "@/components/config/ConfigUnsavedDialog";
+import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Button } from "@/components/ui/Button";
 import { Toast } from "@/components/ui/Toast";
@@ -93,13 +93,13 @@ export default function App() {
   const { t } = useI18n();
   const { toast, showToast } = useToast();
   const [currentPage, setCurrentPage] = useState<PageId>(getPageFromHash);
+  const [currentPageDirty, setCurrentPageDirty] = useState(false);
   const [pendingPage, setPendingPage] = useState<PageId | null>(null);
   const [navigationIntent, setNavigationIntent] =
     useState<PageNavigationIntent | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const currentPageRef = useRef(currentPage);
-  const editableDirtyRef = useRef(false);
-  const editableDirtyOwnerRef = useRef<PageId | null>(null);
+  const currentPageDirtyRef = useRef(false);
   const pendingPageRef = useRef<PageId | null>(null);
   const pendingIntentRef = useRef<PageNavigationIntent | undefined>(undefined);
   const pendingHistoryDeltaRef = useRef<number | null>(null);
@@ -132,22 +132,26 @@ export default function App() {
     applyPage(page, intent);
   }, [applyPage]);
 
-  const currentPageIsDirty = useCallback(() =>
-    editableDirtyRef.current
-    && editableDirtyOwnerRef.current === currentPageRef.current,
-  []);
-
   const navigate = useCallback((
     page: PageId,
     intent?: PageNavigationIntent,
   ) => {
     setMobileMenuOpen(false);
     if (page === currentPageRef.current) {
+      const currentEntityId = navigationIntent?.entityTarget?.id;
+      const requestedEntityId = intent?.entityTarget?.id;
+      if (currentPageDirtyRef.current && requestedEntityId && requestedEntityId !== currentEntityId) {
+        pendingPageRef.current = page;
+        pendingIntentRef.current = intent;
+        pendingHistoryDeltaRef.current = null;
+        setPendingPage(page);
+        return;
+      }
       if (intent) setNavigationIntent(intent);
       return;
     }
 
-    if (currentPageIsDirty()) {
+    if (currentPageDirtyRef.current) {
       pendingPageRef.current = page;
       pendingIntentRef.current = intent;
       pendingHistoryDeltaRef.current = null;
@@ -156,33 +160,18 @@ export default function App() {
     }
 
     commitNavigation(page, intent);
-  }, [commitNavigation, currentPageIsDirty]);
+  }, [commitNavigation, navigationIntent]);
 
-  const handleEditableDirtyChange = useCallback((owner: PageId, dirty: boolean) => {
-    if (dirty) {
-      editableDirtyOwnerRef.current = owner;
-      editableDirtyRef.current = true;
-      return;
-    }
-    if (editableDirtyOwnerRef.current !== owner) return;
+  const handleCurrentPageDirtyChange = useCallback((dirty: boolean) => {
+    currentPageDirtyRef.current = dirty;
+    setCurrentPageDirty(dirty);
+    if (dirty || pendingPageRef.current === null) return;
 
-    editableDirtyOwnerRef.current = null;
-    editableDirtyRef.current = false;
-    if (pendingPageRef.current !== null) {
-      pendingPageRef.current = null;
-      pendingIntentRef.current = undefined;
-      pendingHistoryDeltaRef.current = null;
-      setPendingPage(null);
-    }
+    pendingPageRef.current = null;
+    pendingIntentRef.current = undefined;
+    pendingHistoryDeltaRef.current = null;
+    setPendingPage(null);
   }, []);
-
-  const handleConfigDirtyChange = useCallback((dirty: boolean) => {
-    handleEditableDirtyChange("config", dirty);
-  }, [handleEditableDirtyChange]);
-
-  const handleInjectionDirtyChange = useCallback((dirty: boolean) => {
-    handleEditableDirtyChange("injection", dirty);
-  }, [handleEditableDirtyChange]);
 
   const cancelPendingNavigation = useCallback(() => {
     pendingPageRef.current = null;
@@ -198,8 +187,8 @@ export default function App() {
     pendingPageRef.current = null;
     pendingIntentRef.current = undefined;
     pendingHistoryDeltaRef.current = null;
-    editableDirtyRef.current = false;
-    editableDirtyOwnerRef.current = null;
+    currentPageDirtyRef.current = false;
+    setCurrentPageDirty(false);
     setPendingPage(null);
     if (historyDelta !== null) {
       replayingHistoryRef.current = true;
@@ -261,14 +250,14 @@ export default function App() {
       return;
     }
 
-    if (currentPageIsDirty()) {
+    if (currentPageDirtyRef.current) {
       blockHistoryNavigation(target, targetIndex);
       return;
     }
 
     if (targetIndex !== null) historyIndexRef.current = targetIndex;
     applyPage(target);
-  }, [applyPage, blockHistoryNavigation, currentPageIsDirty]);
+  }, [applyPage, blockHistoryNavigation]);
 
   useEffect(() => {
     const initialIndex = getHistoryIndex(window.history.state) ?? 0;
@@ -312,7 +301,8 @@ export default function App() {
         );
       }
 
-      if (target !== currentPageRef.current && currentPageIsDirty()) {
+      if (target !== currentPageRef.current
+        && currentPageDirtyRef.current) {
         pendingPageRef.current = target;
         pendingIntentRef.current = undefined;
         pendingHistoryDeltaRef.current = null;
@@ -336,7 +326,17 @@ export default function App() {
       window.removeEventListener("popstate", handlePopState);
       window.removeEventListener("hashchange", handleHashChange);
     };
-  }, [currentPageIsDirty, handleHistoryArrival]);
+  }, [handleHistoryArrival]);
+
+  useEffect(() => {
+    if (!currentPageDirty) return;
+    const preventUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventUnload);
+    return () => window.removeEventListener("beforeunload", preventUnload);
+  }, [currentPageDirty]);
 
   const showConfigToast = useCallback((
     message: string,
@@ -409,6 +409,7 @@ export default function App() {
                   <MemoryPage
                     showToast={showToast}
                     navigationTarget={navigationIntent?.entityTarget ?? null}
+                    onDirtyChange={handleCurrentPageDirtyChange}
                   />
                 )}
                 {currentPage === "timeline" && <TimelinePage showToast={showToast} />}
@@ -417,7 +418,7 @@ export default function App() {
                   <InjectionStrategyPage
                     showToast={showConfigToast}
                     onNavigate={navigate}
-                    onDirtyChange={handleInjectionDirtyChange}
+                    onDirtyChange={handleCurrentPageDirtyChange}
                     navigationTarget={navigationIntent?.injectionTarget ?? null}
                   />
                 )}
@@ -426,32 +427,29 @@ export default function App() {
                   <ConfigPage
                     navigationTarget={navigationIntent?.configTarget ?? null}
                     showToast={showConfigToast}
-                    onDirtyChange={handleConfigDirtyChange}
+                    onDirtyChange={handleCurrentPageDirtyChange}
                   />
                 )}
-                {currentPage === "profiles" && <ProfilesPage showToast={showToast} />}
+                {currentPage === "profiles" && <ProfilesPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
                 {currentPage === "knowledge" && (
                   <KnowledgePage
                     showToast={showToast}
                     navigationTarget={navigationIntent?.entityTarget ?? null}
+                    onDirtyChange={handleCurrentPageDirtyChange}
                   />
                 )}
                 {currentPage === "notes" && (
                   <NotesPage
                     showToast={showToast}
                     navigationTarget={navigationIntent?.entityTarget ?? null}
+                    onDirtyChange={handleCurrentPageDirtyChange}
                   />
                 )}
                 {currentPage === "learning" && <LearningPage showToast={showToast} />}
-                {currentPage === "jargon" && <JargonPage showToast={showToast} />}
-                {currentPage === "affection" && <AffectionPage showToast={showToast} />}
-                {currentPage === "social" && <SocialPage showToast={showToast} />}
-                {currentPage === "intelligence" && (
-                  <IntelligencePage
-                    showToast={showToast}
-                    navigationTarget={navigationIntent?.intelligenceTarget ?? null}
-                  />
-                )}
+                {currentPage === "jargon" && <JargonPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
+                {currentPage === "affection" && <AffectionPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
+                {currentPage === "social" && <SocialPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
+                {currentPage === "intelligence" && <IntelligencePage showToast={showToast} />}
                 </Suspense>
               </motion.div>
             </AnimatePresence>
@@ -460,9 +458,13 @@ export default function App() {
       </main>
 
       <Toast toast={toast} />
-      <ConfigUnsavedDialog
+      <UnsavedChangesDialog
         open={pendingPage !== null}
-        onCancel={cancelPendingNavigation}
+        title={t("config.unsaved.title")}
+        description={t("config.unsaved.description")}
+        keepEditingLabel={t("config.unsaved.keepEditing")}
+        discardLabel={t("config.unsaved.discard")}
+        onKeepEditing={cancelPendingNavigation}
         onDiscard={discardAndNavigate}
       />
     </div>

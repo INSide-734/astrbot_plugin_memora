@@ -272,6 +272,12 @@ class PluginPageApi(
             "页面接口：画像详情",
         )
         register(
+            f"{PAGE_API_PREFIX}/profiles/create",
+            self.create_profile,
+            ["POST"],
+            "页面接口：创建画像",
+        )
+        register(
             f"{PAGE_API_PREFIX}/profiles/update",
             self.update_profile,
             ["POST"],
@@ -690,6 +696,30 @@ class PluginPageApi(
             "页面接口：黑话统计",
         )
         register(
+            f"{PAGE_API_PREFIX}/jargon/create",
+            self.create_jargon,
+            ["POST"],
+            "页面接口：创建黑话",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/jargon/update",
+            self.update_jargon,
+            ["POST"],
+            "页面接口：更新黑话",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/jargon/delete",
+            self.delete_jargon,
+            ["POST"],
+            "页面接口：删除黑话",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/jargon/batch",
+            self.batch_jargon,
+            ["POST"],
+            "页面接口：批量处理黑话",
+        )
+        register(
             f"{PAGE_API_PREFIX}/jargon/confirm",
             self.confirm_jargon,
             ["POST"],
@@ -723,6 +753,54 @@ class PluginPageApi(
             ["GET"],
             "页面接口：好感度状态",
         )
+        register(
+            f"{PAGE_API_PREFIX}/affection/users",
+            self.list_affection_users,
+            ["GET"],
+            "页面接口：好感度用户列表",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/users/create",
+            self.create_affection_user,
+            ["POST"],
+            "页面接口：创建好感度用户",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/users/update",
+            self.update_affection_user,
+            ["POST"],
+            "页面接口：更新好感度用户",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/users/delete",
+            self.delete_affection_user,
+            ["POST"],
+            "页面接口：删除好感度用户",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/users/batch",
+            self.batch_affection_users,
+            ["POST"],
+            "页面接口：批量处理好感度用户",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/mood/set",
+            self.set_affection_mood,
+            ["POST"],
+            "页面接口：设置好感度情绪",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/mood/reset",
+            self.reset_affection_mood,
+            ["POST"],
+            "页面接口：重置好感度情绪",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/affection/moods/history",
+            self.get_affection_mood_history,
+            ["GET"],
+            "页面接口：好感度情绪历史",
+        )
 
         # ---- 社交关系 ----
         register(
@@ -730,6 +808,30 @@ class PluginPageApi(
             self.get_social_relations,
             ["GET"],
             "页面接口：社交关系列表",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/social/create",
+            self.create_social_relation,
+            ["POST"],
+            "页面接口：创建社交关系",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/social/update",
+            self.update_social_relation,
+            ["POST"],
+            "页面接口：更新社交关系",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/social/delete",
+            self.delete_social_relation,
+            ["POST"],
+            "页面接口：删除社交关系",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/social/batch",
+            self.batch_social_relations,
+            ["POST"],
+            "页面接口：批量编辑社交关系",
         )
 
         # ---- 表达模式 ----
@@ -1025,16 +1127,12 @@ class PluginPageApi(
             return memory
         if memory_engine.db_connection is None:
             return None
-        try:
-            cursor = await memory_engine.db_connection.execute(
-                "SELECT id, doc_id, text, metadata, created_at, updated_at "
-                "FROM documents WHERE id = ?",
-                (memory_id,),
-            )
-            row = await cursor.fetchone()
-        except Exception as e:
-            logger.warning(f"获取记忆详情失败（id={memory_id}）：{e}")
-            return None
+        cursor = await memory_engine.db_connection.execute(
+            "SELECT id, doc_id, text, metadata, created_at, updated_at "
+            "FROM documents WHERE id = ?",
+            (memory_id,),
+        )
+        row = await cursor.fetchone()
         if not row:
             return None
         return {
@@ -1085,19 +1183,30 @@ class PluginPageApi(
         except AttributeError:
             has_pending = False
         except Exception as exc:
-            logger.error(f"[页面接口] 检查恢复维护状态失败：{exc}", exc_info=True)
-            return error_response(f"维护状态检查失败: {exc}")
+            logger.error(
+                "[页面接口] operation=%s error_class=%s",
+                "maintenance_write_guard",
+                type(exc).__name__,
+            )
+            return error_response(
+                "维护状态检查失败，请稍后重试。",
+                code="maintenance_guard_failed",
+            )
         if not has_pending:
             return None
         pending_files = []
         try:
             pending_files = backup_manager.list_pending_restores()
         except Exception as exc:
-            logger.debug("[页面接口] 获取待恢复文件列表失败: %s", exc, exc_info=True)
+            logger.debug(
+                "[页面接口] operation=%s error_class=%s",
+                "maintenance_write_guard_list_pending",
+                type(exc).__name__,
+            )
             pending_files = []
         return error_response(
-            "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。"
-            f" 待恢复文件={pending_files}"
+            "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。",
+            code="maintenance_blocked",
         )
 
     @staticmethod
