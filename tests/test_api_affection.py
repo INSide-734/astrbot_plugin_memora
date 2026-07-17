@@ -8,6 +8,7 @@ import pytest
 
 from core.api.affection_api import AffectionApiMixin
 from core.base.entity_editing import EditConflictError
+from core.base.list_sorting import SortQuery
 
 
 def _mock_request(**args):
@@ -379,14 +380,28 @@ class TestAffectionEditing:
         manager.list_user_affections = AsyncMock(return_value=([_make_user("alice", "g1")], 12))
         manager.revision_for_affection = MagicMock(return_value="rev-1")
 
-        with patch("core.api.affection_api.request", _mock_request(group_id="g1", limit="10", offset="10")):
+        with patch(
+            "core.api.affection_api.request",
+            _mock_request(
+                group_id="g1",
+                limit="10",
+                offset="10",
+                sort_by="interaction_count",
+                sort_order="asc",
+            ),
+        ):
             result = await stub.list_affection_users()
 
         assert result["data"]["total"] == 12
         assert result["data"]["limit"] == 10
         assert result["data"]["offset"] == 10
         assert result["data"]["users"][0]["revision"] == "rev-1"
-        manager.list_user_affections.assert_awaited_once_with("g1", 10, 10)
+        manager.list_user_affections.assert_awaited_once_with(
+            "g1",
+            10,
+            10,
+            sort=SortQuery("interaction_count", "asc"),
+        )
 
         with patch("core.api.affection_api.request", _mock_request(limit="10", offset="0")):
             missing = await stub.list_affection_users()
@@ -404,6 +419,37 @@ class TestAffectionEditing:
 
         assert result["code"] == "validation_error"
         assert result["field_errors"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("handler_name", "sort_by", "sort_order", "field"),
+        [
+            ("list_affection_users", "missing", "asc", "sort_by"),
+            ("list_affection_users", "user_id", "DESC", "sort_order"),
+            ("get_affection_mood_history", "missing", "asc", "sort_by"),
+            ("get_affection_mood_history", "intensity", "sideways", "sort_order"),
+        ],
+    )
+    async def test_list_and_mood_history_reject_invalid_sort_values(
+        self, handler_name, sort_by, sort_order, field
+    ):
+        stub = _make_editing_stub()
+        setattr(stub, handler_name, getattr(AffectionApiMixin, handler_name).__get__(stub))
+
+        with patch(
+            "core.api.affection_api.request",
+            _mock_request(
+                group_id="g1",
+                limit="10",
+                offset="0",
+                sort_by=sort_by,
+                sort_order=sort_order,
+            ),
+        ):
+            result = await getattr(stub, handler_name)()
+
+        assert result["code"] == "invalid_query"
+        assert field in result["field_errors"]
 
     @pytest.mark.asyncio
     async def test_create_update_delete_use_manager_and_manager_revision(self):
@@ -523,10 +569,22 @@ class TestAffectionEditing:
         assert reset_result["data"]["mood_type"] == "happy"
         manager.reset_mood.assert_awaited_once_with("g1")
 
-        with patch("core.api.affection_api.request", _mock_request(group_id="g1", limit="3")):
+        with patch(
+            "core.api.affection_api.request",
+            _mock_request(
+                group_id="g1",
+                limit="3",
+                sort_by="intensity",
+                sort_order="asc",
+            ),
+        ):
             history_result = await stub.get_affection_mood_history()
         assert history_result["data"]["history"][0]["duration_hours"] == 2.5
-        manager.get_mood_history.assert_awaited_once_with("g1", 3)
+        manager.get_mood_history.assert_awaited_once_with(
+            "g1",
+            3,
+            sort=SortQuery("intensity", "asc"),
+        )
 
         with patch("core.api.affection_api.request", _request_json({"group_id": "g1", "mood_type": "unknown", "intensity": float("inf"), "duration_hours": 1})):
             invalid = await stub.set_affection_mood()

@@ -6,12 +6,15 @@ import { apiGet, apiPost, unwrapApiData } from "@/lib/bridge";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
 import { Progress } from "@/components/ui/Progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DataTable } from "@/components/data-table/DataTable";
+import { DataTablePagination } from "@/components/data-table/DataTablePagination";
+import { actionsColumn, selectionColumn } from "@/components/data-table/data-table-columns";
+import type { DataTableColumn, DataTableSort } from "@/components/data-table/table-types";
 import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { EditConflictDialog } from "@/components/editing/EditConflictDialog";
 import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
@@ -35,6 +38,8 @@ const emptyUser: AffectionDraft = { user_id: "", group_id: "", affection_score: 
 const emptyMood: MoodDraft = { group_id: "", mood_type: "", intensity: 0.5, duration_hours: 4, description: "" };
 const AFFECTION_FORM_FIELDS = ["user_id", "group_id", "affection_score"] as const;
 const MOOD_FORM_FIELDS = ["group_id", "mood_type", "intensity", "duration_hours", "description"] as const;
+const USER_DEFAULT_SORT: DataTableSort = { id: "affection_score", desc: true };
+const HISTORY_DEFAULT_SORT: DataTableSort = { id: "start_time", desc: true };
 const cloneUser = (v: AffectionDraft): AffectionDraft => ({ ...v });
 const cloneMood = (v: MoodDraft): MoodDraft => ({ ...v });
 const userKey = (u: Pick<User, "user_id" | "group_id">) => `${u.group_id}:${u.user_id}`;
@@ -81,6 +86,8 @@ export function AffectionPage({ showToast, onDirtyChange }: AffectionPageProps) 
   const [history, setHistory] = useState<History[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
+  const [userSort, setUserSort] = useState<DataTableSort>(USER_DEFAULT_SORT);
+  const [historySort, setHistorySort] = useState<DataTableSort>(HISTORY_DEFAULT_SORT);
   const [loading, setLoading] = useState(false);
   const generation = useRef(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -120,12 +127,23 @@ export function AffectionPage({ showToast, onDirtyChange }: AffectionPageProps) 
   const load = useCallback(async (requestedOffset = offset) => {
     if (!groupId) return;
     const current = ++loadGeneration.current;
-    setLoading(true); setSelected(new Set());
+    setLoading(true);
     try {
       const [statusResponse, usersResponse, historyResponse] = await Promise.all([
         apiGet("affection/status", { group_id: groupId }),
-        apiGet("affection/users", { group_id: groupId, limit: "50", offset: String(requestedOffset) }),
-        apiGet("affection/moods/history", { group_id: groupId, limit: "50" }),
+        apiGet("affection/users", {
+          group_id: groupId,
+          limit: "50",
+          offset: String(requestedOffset),
+          sort_by: userSort.id,
+          sort_order: userSort.desc ? "desc" : "asc",
+        }),
+        apiGet("affection/moods/history", {
+          group_id: groupId,
+          limit: "50",
+          sort_by: historySort.id,
+          sort_order: historySort.desc ? "desc" : "asc",
+        }),
       ]);
       const status = unwrapApiData<AffectionStatus>(statusResponse);
       const userData = unwrapApiData<{ users?: User[]; total?: number; limit?: number; offset?: number }>(usersResponse);
@@ -135,12 +153,20 @@ export function AffectionPage({ showToast, onDirtyChange }: AffectionPageProps) 
     } catch (error) {
       if (current === loadGeneration.current) { setData(null); setUsers([]); setHistory([]); showToast(`Error: ${errorMessage(error)}`, true); }
     } finally { if (current === loadGeneration.current) setLoading(false); }
-  }, [groupId, offset, showToast]);
+  }, [groupId, historySort, offset, showToast, userSort]);
 
-  useEffect(() => { void load(0); }, [groupId]);
-  const refresh = () => { setOffset(0); void load(0); };
+  useEffect(() => { void load(0); }, [groupId, historySort, userSort]);
+  const refresh = () => { setSelected(new Set()); setOffset(0); void load(0); };
   const changeGroup = (next: string) => { setSelected(new Set()); setOffset(0); setData(null); setGroupId(next); };
   const changePage = (next: number) => { setSelected(new Set()); setOffset(next); void load(next); };
+  const changeUserSort = useCallback((next: DataTableSort | null) => {
+    setSelected(new Set());
+    setOffset(0);
+    setUserSort(next ?? USER_DEFAULT_SORT);
+  }, []);
+  const changeHistorySort = useCallback((next: DataTableSort | null) => {
+    setHistorySort(next ?? HISTORY_DEFAULT_SORT);
+  }, []);
 
   const beginCreate = () => { setCreateDraft({ ...emptyUser, group_id: groupId }); setCreateError(""); setCreateFieldErrors({}); setCreateOpen(true); };
   const submitCreate = async () => {
@@ -153,7 +179,7 @@ export function AffectionPage({ showToast, onDirtyChange }: AffectionPageProps) 
       setUsers((old) => [entity, ...old.filter((u) => userKey(u) !== userKey(entity))]); setTotal((n) => n + 1); setDetail(entity); setEditBaseline({ group_id: entity.group_id, user_id: entity.user_id, affection_score: entity.affection_score }); setEditDraft({ group_id: entity.group_id, user_id: entity.user_id, affection_score: entity.affection_score }); setEditMode("view"); setCreateDraft(cloneUser(emptyUser)); setCreateOpen(false);
     } catch (error) { const details = editingErrorDetails(error, AFFECTION_FORM_FIELDS); setCreateError(details.formError ?? ""); setCreateFieldErrors(details.fieldErrors); } finally { setCreateSubmitting(false); }
   };
-  const openDetail = (user: User) => { setDetail(user); setEditBaseline({ group_id: user.group_id, user_id: user.user_id, affection_score: user.affection_score }); setEditDraft({ group_id: user.group_id, user_id: user.user_id, affection_score: user.affection_score }); setEditMode("view"); setEditError(""); setEditFieldErrors({}); };
+  const openDetail = (user: User, mode: "view" | "edit" = "view") => { setDetail(user); setEditBaseline({ group_id: user.group_id, user_id: user.user_id, affection_score: user.affection_score }); setEditDraft({ group_id: user.group_id, user_id: user.user_id, affection_score: user.affection_score }); setEditMode(mode); setEditError(""); setEditFieldErrors({}); };
   const beginEdit = () => { setEditError(""); setEditFieldErrors({}); setEditMode("edit"); };
   const saveEdit = async () => {
     if (!detail || editSubmitting) return;
@@ -182,14 +208,116 @@ export function AffectionPage({ showToast, onDirtyChange }: AffectionPageProps) 
   const mood = data?.current_mood; const moodType = String(mood?.mood_type ?? "").toUpperCase(); const moodMeta = MOOD_TYPES.find((m) => m.type === moodType);
   const cancelLabel = t("common.cancel");
   const deleteTitle = t("affection.deleteUser");
+  const userColumns = useMemo<DataTableColumn<User>[]>(() => [
+    selectionColumn({
+      label: t("affection.selectAll"),
+      rowLabel: (user) => t("affection.selectUser", user.user_id),
+    }),
+    {
+      id: "user_id",
+      accessorKey: "user_id",
+      header: t("table.userId"),
+      meta: {
+        label: t("table.userId"),
+        serverSortKey: "user_id",
+        required: true,
+        defaultPin: "left",
+      },
+    },
+    {
+      id: "affection_score",
+      accessorKey: "affection_score",
+      header: t("affection.score"),
+      meta: { label: t("affection.score"), serverSortKey: "affection_score" },
+    },
+    {
+      id: "level",
+      accessorFn: (user) => level(user),
+      header: t("affection.level"),
+      enableSorting: false,
+      meta: { label: t("affection.level") },
+      cell: ({ row }) => detail ? <span aria-label={level(row.original)} /> : level(row.original),
+    },
+    {
+      id: "interaction_count",
+      accessorKey: "interaction_count",
+      header: t("affection.interactions"),
+      meta: {
+        label: t("affection.interactions"),
+        serverSortKey: "interaction_count",
+      },
+    },
+    {
+      id: "last_interaction",
+      accessorKey: "last_interaction",
+      header: t("affection.lastInteraction"),
+      meta: {
+        label: t("affection.lastInteraction"),
+        serverSortKey: "last_interaction",
+      },
+    },
+    actionsColumn({
+      label: t("table.rowActions"),
+      rowLabel: (user) => `${t("table.rowActions")} ${user.user_id}`,
+      actions: (user) => [
+        { id: "view", label: t("detail.view"), onSelect: () => openDetail(user) },
+        { id: "edit", label: t("detail.edit"), onSelect: () => openDetail(user, "edit") },
+        {
+          id: "delete",
+          label: t("common.delete"),
+          destructive: true,
+          onSelect: () => setDeleteTarget(user),
+        },
+      ],
+    }),
+  ], [detail, t]);
+  const historyColumns = useMemo<DataTableColumn<History>[]>(() => [
+    {
+      id: "start_time",
+      accessorKey: "start_time",
+      header: t("affection.historyStart"),
+      meta: { label: t("affection.historyStart"), serverSortKey: "start_time" },
+    },
+    {
+      id: "duration_hours",
+      accessorKey: "duration_hours",
+      header: t("affection.moodDuration"),
+      meta: {
+        label: t("affection.moodDuration"),
+        serverSortKey: "duration_hours",
+      },
+    },
+    {
+      id: "mood_type",
+      accessorKey: "mood_type",
+      header: t("affection.moodType"),
+      meta: { label: t("affection.moodType"), serverSortKey: "mood_type" },
+      cell: ({ row }) => row.original.mood_type
+        ? t(`mood.${row.original.mood_type.toUpperCase()}`).toLowerCase()
+        : "—",
+    },
+    {
+      id: "intensity",
+      accessorKey: "intensity",
+      header: t("affection.moodIntensity"),
+      meta: { label: t("affection.moodIntensity"), serverSortKey: "intensity" },
+    },
+    {
+      id: "description",
+      accessorKey: "description",
+      header: t("affection.moodDescription"),
+      enableSorting: false,
+      meta: { label: t("affection.moodDescription") },
+    },
+  ], [t]);
 
   return <PageFrame variant="standard" aria-label={t("affection.title")} aria-hidden={false}><PageHeader title={t("affection.title")} icon={<Heart />} actions={<><Select items={groupItems} value={groupId} onValueChange={(v) => v && changeGroup(v)} disabled={!groups.length}><SelectTrigger className="w-36 text-xs"><SelectValue placeholder={t("jargon.allGroups")} /></SelectTrigger><SelectContent><SelectGroup>{groupItems.map((item) => <SelectItem key={item.value} value={item.value} onClick={() => changeGroup(item.value)}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select><Button variant="outline" onClick={refresh}><RefreshCw data-icon="inline-start" />{t("common.refresh")}</Button></>} />
     <PageContent className="flex flex-col gap-6 [&>*]:shrink-0">{loading ? <p className="py-12 text-center text-sm text-muted-foreground">{t("table.loading")}</p> : !data ? <p className="py-12 text-center text-sm text-muted-foreground">{t("affection.noData")}</p> : <>
       <MetricGrid minItemWidth="18rem"><Card><CardHeader><CardTitle className="flex items-center gap-2"><Smile />{t("affection.mood")}</CardTitle></CardHeader><CardContent className="flex flex-wrap items-center gap-6"><div className="flex min-w-0 items-center gap-3"><span className="text-4xl">{moodMeta?.emoji ?? "🤖"}</span><div><div className="text-lg font-semibold">{moodMeta ? t(`mood.${moodMeta.type}`) : mood?.mood_type ?? "—"}</div><div className="mt-0.5 text-xs text-muted-foreground">{mood?.description ?? ""}</div></div></div><div className="min-w-[10rem] flex-1"><div className="mb-1 flex items-center justify-between text-xs text-muted-foreground"><span>{t("affection.moodIntensity")}</span><span>{mood?.intensity != null ? formatDashboardPercent(mood.intensity, locale, { maximumFractionDigits: 0 }) : "—"}</span></div><Progress aria-label={t("affection.moodIntensity")} value={mood?.intensity ?? 0} className="h-2" /></div><Button size="sm" onClick={openMood}>{t("affection.moodTitle")}</Button></CardContent></Card><Card><CardHeader><CardTitle className="flex items-center gap-2"><Users />{t("affection.leaderboard")}</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-4"><div><div className="text-2xl font-semibold">{data.user_count}</div><div className="text-xs text-muted-foreground">{t("jargon.users")}</div></div><div><div className="text-2xl font-semibold">{data.total_affection}/{data.max_total_affection}</div><div className="text-xs text-muted-foreground">{t("affection.score")}</div></div></CardContent></Card></MetricGrid>
       <Card><CardHeader><CardTitle className="flex items-center gap-2"><Zap />{t("affection.emotions")}</CardTitle></CardHeader><CardContent><MetricGrid minItemWidth="7rem" className="gap-3">{MOOD_TYPES.map((mt) => <div key={mt.type} className={`flex flex-col items-center gap-1.5 rounded-md border p-3 ${moodType === mt.type ? "border-primary bg-primary/5" : "border-border"}`}><span className="text-xl">{mt.emoji}</span><span className="text-xs font-medium">{t(`mood.${mt.type}`)}</span>{moodType === mt.type ? <Badge>{t("status.active")}</Badge> : null}</div>)}</MetricGrid></CardContent></Card>
       <section aria-label={t("affection.leaderboard")}><Card className="gap-0 py-0"><CardHeader className="border-b py-4"><CardTitle><h2 className="flex items-center gap-2"><TrendingUp />{t("affection.leaderboard")}</h2></CardTitle></CardHeader><Table><TableHeader><TableRow><TableHead>#</TableHead><TableHead>{t("table.userId")}</TableHead><TableHead>{t("affection.score")}</TableHead><TableHead>{t("affection.level")}</TableHead><TableHead>{t("affection.interactions")}</TableHead></TableRow></TableHeader><TableBody>{data.top_users.map((u, i) => <TableRow key={userKey(u)}><TableCell>{i + 1}</TableCell><TableCell><span aria-label={u.user_id} /></TableCell><TableCell><Progress aria-label={`${u.user_id} ${t("affection.score")}`} value={u.affection_score} min={-100} max={100} /></TableCell><TableCell><Badge variant="secondary" aria-label={level(u)} /></TableCell><TableCell>{u.interaction_count}</TableCell></TableRow>)}</TableBody></Table></Card></section>
-      <Card className="gap-0 py-0"><CardHeader className="flex flex-row items-center justify-between border-b py-4"><CardTitle>{t("affection.allUsers")}</CardTitle><div className="flex gap-2"><Button onClick={beginCreate}>{t("affection.newUser")}</Button>{selected.size > 0 ? <><span>{t("affection.selected", String(selected.size))}</span><Button variant="destructive" disabled={deleteSubmitting} onClick={openBatchDelete}><Trash2 data-icon="inline-start" />{t("affection.deleteSelected")}</Button></> : null}</div></CardHeader><Table><TableHeader><TableRow><TableHead><Checkbox aria-label={t("affection.selectAll")} checked={users.length > 0 && selected.size === users.length} onCheckedChange={() => setSelected(selected.size === users.length ? new Set() : new Set(users.map(userKey)))} /></TableHead><TableHead>{t("table.userId")}</TableHead><TableHead>{t("affection.score")}</TableHead><TableHead>{t("affection.level")}</TableHead><TableHead>{t("table.actions")}</TableHead></TableRow></TableHeader><TableBody>{users.map((u) => <TableRow key={userKey(u)}><TableCell><Checkbox aria-label={t("affection.selectUser", u.user_id)} checked={selected.has(userKey(u))} onCheckedChange={() => setSelected((old) => { const n = new Set(old); n.has(userKey(u)) ? n.delete(userKey(u)) : n.add(userKey(u)); return n; })} /></TableCell><TableCell>{u.user_id}</TableCell><TableCell>{u.affection_score}</TableCell><TableCell>{detail ? <span aria-label={level(u)} /> : level(u)}</TableCell><TableCell><Button variant="ghost" size="sm" aria-label={`${t("detail.edit")} ${u.user_id}`} onClick={() => openDetail(u)}>{t("detail.view")}</Button><Button variant="ghost" size="sm" aria-label={`${t("common.delete")} ${u.user_id}`} onClick={() => setDeleteTarget(u)}>{t("common.delete")}</Button></TableCell></TableRow>)}</TableBody></Table><div className="flex items-center justify-end gap-2 p-3"><Button aria-label={t("pagination.previous")} disabled={offset <= 0} onClick={() => changePage(Math.max(0, offset - 50))}>{t("pagination.previous")}</Button><span>{offset + 1}-{Math.min(offset + 50, total || users.length)} / {total || users.length}</span><Button aria-label={t("pagination.next")} disabled={offset + 50 >= total} onClick={() => changePage(offset + 50)}>{t("pagination.next")}</Button></div></Card>
-      <Card><CardHeader><CardTitle><h2>{t("affection.moodHistory")}</h2></CardTitle></CardHeader><Table><TableHeader><TableRow><TableHead>{t("affection.historyStart")}</TableHead><TableHead>{t("affection.moodDuration")}</TableHead><TableHead>{t("affection.moodType")}</TableHead><TableHead>{t("affection.moodIntensity")}</TableHead><TableHead>{t("affection.moodDescription")}</TableHead></TableRow></TableHeader><TableBody>{history.map((h, i) => <TableRow key={`${h.start_time}-${i}`}><TableCell>{h.start_time}</TableCell><TableCell>{h.duration_hours}</TableCell><TableCell>{h.mood_type ? t(`mood.${h.mood_type.toUpperCase()}`).toLowerCase() : "—"}</TableCell><TableCell>{h.intensity}</TableCell><TableCell>{h.description}</TableCell></TableRow>)}</TableBody></Table></Card><div className="flex justify-end"><Button variant="outline" onClick={() => setResetOpen(true)}>{t("affection.restoreDefaultMood")}</Button></div>
+      <section aria-label={t("affection.allUsers")}><Card className="gap-0 py-0"><CardHeader className="flex flex-row items-center justify-between border-b py-4"><CardTitle>{t("affection.allUsers")}</CardTitle><div className="flex gap-2"><Button onClick={beginCreate}>{t("affection.newUser")}</Button>{selected.size > 0 ? <><span>{t("affection.selected", String(selected.size))}</span><Button variant="destructive" disabled={deleteSubmitting} onClick={openBatchDelete}><Trash2 data-icon="inline-start" />{t("affection.deleteSelected")}</Button></> : null}</div></CardHeader><CardContent className="p-4"><DataTable tableId="affection-users" data={users} columns={userColumns} getRowId={(user) => userKey(user)} sort={userSort} onSortChange={changeUserSort} selectedRowIds={selected} onSelectedRowIdsChange={setSelected} currentRowId={detail ? userKey(detail) : null} onRowActivate={(user) => openDetail(user)} loading={false} emptyLabel={t("table.noData")} pagination={<DataTablePagination page={Math.floor(offset / 50)} pageCount={Math.max(1, Math.ceil(total / 50))} total={total} onPageChange={(page) => changePage(page * 50)} />} /></CardContent></Card></section>
+      <section aria-label={t("affection.moodHistory")}><Card><CardHeader><CardTitle><h2>{t("affection.moodHistory")}</h2></CardTitle></CardHeader><CardContent><DataTable tableId="affection-mood-history" data={history} columns={historyColumns} getRowId={(item) => `${item.start_time}:${item.mood_type}:${item.description}`} sort={historySort} onSortChange={changeHistorySort} loading={false} emptyLabel={t("table.noData")} /></CardContent></Card></section><div className="flex justify-end"><Button variant="outline" onClick={() => setResetOpen(true)}>{t("affection.restoreDefaultMood")}</Button></div>
     </>}</PageContent>
     <EntityCreateDialog open={createOpen} onOpenChange={(open) => { if (!open && !createSubmitting) { setCreateOpen(false); setCreateDraft(cloneUser(emptyUser)); setCreateError(""); setCreateFieldErrors({}); } }} title={t("affection.newUser")} description={t("affection.createUserDescription")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(createDraft.user_id.trim() && createDraft.group_id.trim())} onCancel={() => { setCreateOpen(false); setCreateDraft(cloneUser(emptyUser)); setCreateError(""); setCreateFieldErrors({}); }} onSubmit={submitCreate} labels={{ close: t("common.close"), cancel: cancelLabel, submit: t("detail.create"), submitting: t("common.saving") }} form={<AffectionForm value={createDraft} onChange={(v) => { setCreateDraft({ group_id: v.group_id, user_id: v.user_id, affection_score: v.affection_score }); setCreateError(""); setCreateFieldErrors({}); }} fieldErrors={createFieldErrors} formErrors={createError ? [createError] : []} mode="create" disabled={createSubmitting} />} />
     <EntityEditorSheet open={Boolean(detail)} onOpenChange={(open) => { if (!open && !editSubmitting) { setDetail(null); setEditMode("view"); setEditError(""); setEditFieldErrors({}); } }} title={detail ? t("affection.detailTitle", detail.user_id) : t("affection.title")} description={t("affection.details")} mode={editMode} isDirty={editDirty} isSubmitting={editSubmitting} canSave={Boolean(detail?.revision)} onBeginEdit={beginEdit} onCancel={() => { if (detail) { setEditDraft(cloneUser(editBaseline)); setEditMode("view"); setEditError(""); setEditFieldErrors({}); } }} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: cancelLabel, save: t("common.save"), saving: t("common.saving") }} view={detail ? <div className="flex flex-col gap-4"><p><span>{t("affection.userId")}: </span><span>{detail.user_id}</span></p><p><span>{t("affection.groupId")}: </span><span>{detail.group_id}</span></p><p><span>{t("affection.score")}: </span><span>{detail.affection_score}</span></p><p><span>{t("affection.level")}: </span><span>{detail.affection_level}</span></p>{String(detail.level_name ?? "").trim() && detail.level_name !== detail.affection_level ? <p><span>{t("affection.levelName")}: </span><span>{detail.level_name}</span></p> : null}<Button variant="destructive" aria-label={`${t("common.delete")} ${detail.user_id}`} disabled={deleteSubmitting} onClick={() => setDeleteTarget(detail)}>{t("common.delete")} {detail.user_id}</Button></div> : null} form={<AffectionForm value={{ ...detail, ...editDraft }} onChange={(v) => { setEditDraft({ group_id: v.group_id, user_id: v.user_id, affection_score: v.affection_score }); setEditError(""); setEditFieldErrors({}); }} fieldErrors={editFieldErrors} formErrors={editError ? [editError] : []} mode="edit" disabled={editSubmitting} />} />

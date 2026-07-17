@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
 import pytest
@@ -21,6 +21,7 @@ from core.base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
+from core.base.list_sorting import SortQuery
 from core.affection.models import (
     AffectionLevel,
     BotMood,
@@ -166,6 +167,59 @@ class TestAffectionAdminOperations:
                 await manager.list_user_affections("g1", limit=True, offset=0)
             with pytest.raises(EntityValidationError):
                 await manager.list_user_affections("g1", limit=1, offset=-1)
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_list_user_affections_sorts_before_pagination_with_stable_ties(
+        self, tmp_db_path
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            for user_id, score in (("zoe", 10), ("alice", 30), ("bob", 30)):
+                await manager.create_user_affection_manual("g1", user_id, score)
+
+            users, total = await manager.list_user_affections(
+                "g1",
+                limit=2,
+                offset=1,
+                sort=SortQuery("user_id", "asc"),
+            )
+            assert total == 3
+            assert [user.user_id for user in users] == ["bob", "zoe"]
+
+            tied, _ = await manager.list_user_affections(
+                "g1",
+                limit=2,
+                offset=0,
+                sort=SortQuery("affection_score", "desc"),
+            )
+            assert [user.user_id for user in tied] == ["alice", "bob"]
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_list_user_affections_breaks_nocase_ties_with_raw_user_id(
+        self, tmp_db_path
+    ):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            manager = AffectionManager(store)
+            await manager.create_user_affection_manual("g1", "alice", 30)
+            await manager.create_user_affection_manual("g1", "Alice", 30)
+
+            users, total = await manager.list_user_affections(
+                "g1",
+                limit=2,
+                offset=0,
+                sort=SortQuery("user_id", "asc"),
+            )
+
+            assert total == 2
+            assert [user.user_id for user in users] == ["Alice", "alice"]
         finally:
             await store.close()
 
@@ -325,10 +379,16 @@ class TestMoodAdminOperations:
             await store.close()
 
     @pytest.mark.asyncio
-    async def test_reset_mood_appends_calm_history(self, tmp_db_path):
+    async def test_reset_mood_appends_calm_history(self, tmp_db_path, monkeypatch):
         store = AffectionStore(tmp_db_path)
         await store.initialize()
         try:
+            store_clock = MagicMock()
+            store_clock.time.side_effect = (100.0, 101.0)
+            monkeypatch.setattr(
+                "core.affection.affection_store.time",
+                store_clock,
+            )
             manager = AffectionManager(store)
             await manager.set_mood("g1", MoodType.HAPPY, intensity=0.8, description="Happy")
             reset = await manager.reset_mood("g1")
@@ -1157,6 +1217,28 @@ class TestAffectionStore:
             await store.save_bot_mood("g1", "happy", 0.8, "开心", 4.0)
             history = await store.get_mood_history("g1", limit=10)
             assert len(history) == 2
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_mood_history_sorts_before_limit_with_stable_id_ties(self, tmp_db_path):
+        store = AffectionStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.save_bot_mood("g1", "happy", 0.8, "high", 4.0)
+            await store.save_bot_mood("g1", "sad", 0.2, "first low", 4.0)
+            await store.save_bot_mood("g1", "calm", 0.2, "second low", 4.0)
+
+            history = await store.get_mood_history(
+                "g1",
+                limit=2,
+                sort=SortQuery("intensity", "asc"),
+            )
+
+            assert [row["description"] for row in history] == [
+                "first low",
+                "second low",
+            ]
         finally:
             await store.close()
 

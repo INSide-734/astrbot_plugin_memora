@@ -76,6 +76,7 @@ describe("AffectionPage", () => {
   let showToast: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    localStorage.clear();
     bridge = {
       apiGet: vi.fn(), apiPost: vi.fn(), getLocale: vi.fn().mockReturnValue("en-US"),
       getI18n: vi.fn().mockReturnValue({}), t: vi.fn((key: string) => key),
@@ -103,13 +104,23 @@ describe("AffectionPage", () => {
     await screen.findByText("alice");
   }
   function editor(name: RegExp | string) { return screen.getByRole("dialog", { name }); }
+  function openRowAction(userId: string, action: "View" | "Edit" | "Delete") {
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`row actions ${userId}`, "i") }));
+    fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(`^${action}$`, "i") }));
+  }
 
   it("loads status and the full users page with exact group pagination parameters", async () => {
     mockInitialData();
     render(<AffectionPage showToast={showToast} />);
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/affection/status", { group_id: "group-1" });
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/affection/users", { group_id: "group-1", limit: "50", offset: "0" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/affection/users", {
+        group_id: "group-1",
+        limit: "50",
+        offset: "0",
+        sort_by: "affection_score",
+        sort_order: "desc",
+      });
     });
     expect(await screen.findByText("Upbeat")).toBeTruthy();
     expect(screen.getByText("alice")).toBeTruthy();
@@ -125,7 +136,7 @@ describe("AffectionPage", () => {
     expect((await screen.findByRole("option", { name: "group-1 (12)" })).textContent).toContain("group-1 (12)");
   });
 
-  it("preserves the existing status, current mood, and leaderboard assertions", async () => {
+  it("keeps the business-ranked leaderboard as an unsortable base Table", async () => {
     mockInitialData();
     render(<AffectionPage showToast={showToast} />);
     const page = screen.getByRole("region", { name: /Affection|好感/ });
@@ -136,7 +147,39 @@ describe("AffectionPage", () => {
     expect(screen.getByRole("progressbar", { name: /intensity/i })).toBeTruthy();
     expect(screen.getByRole("progressbar", { name: /alice.*score/i })).toBeTruthy();
     expect(screen.getByText("Friendly")).toBeTruthy();
+    const leaderboard = screen.getByRole("region", { name: /leaderboard/i });
+    expect(within(leaderboard).queryByRole("button", { name: /Sort/ })).toBeNull();
     expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it("sorts all users and mood history independently on the server", async () => {
+    mockInitialData();
+    render(<AffectionPage showToast={showToast} />);
+
+    const allUsers = await screen.findByRole("region", { name: /all.*users/i });
+    fireEvent.click(within(allUsers).getByRole("button", { name: /Sort User ID ascending/ }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/affection/users",
+      {
+        group_id: "group-1",
+        limit: "50",
+        offset: "0",
+        sort_by: "user_id",
+        sort_order: "asc",
+      },
+    ));
+
+    const updatedHistory = await screen.findByRole("region", { name: /mood history/i });
+    fireEvent.click(within(updatedHistory).getByRole("button", { name: /Sort Intensity ascending/ }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/affection/moods/history",
+      {
+        group_id: "group-1",
+        limit: "50",
+        sort_by: "intensity",
+        sort_order: "asc",
+      },
+    ));
   });
 
   it("keeps the existing empty-state and status failure behavior", async () => {
@@ -175,16 +218,16 @@ describe("AffectionPage", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /select user-0/i }));
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
     expect(screen.queryByText(/selected/)).toBeNull();
-    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/affection/users", { group_id: "group-1", limit: "50", offset: "50" }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/affection/users", { group_id: "group-1", limit: "50", offset: "50", sort_by: "affection_score", sort_order: "desc" }));
     expect(await screen.findByText("user-50")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /previous page/i }));
-    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/affection/users", { group_id: "group-1", limit: "50", offset: "0" }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/affection/users", { group_id: "group-1", limit: "50", offset: "0", sort_by: "affection_score", sort_order: "desc" }));
   });
 
   it("keeps top users summary-only and puts edit actions only in the full users table", async () => {
     await renderLoaded();
     expect(within(screen.getByRole("heading", { name: /leaderboard/i }).closest("section") ?? document.body).queryByRole("button", { name: /edit/i })).toBeNull();
-    expect(screen.getByRole("button", { name: /edit alice/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /row actions alice/i })).toBeTruthy();
   });
 
   it("creates an affection user with the exact body and opens the authoritative result in view mode", async () => {
@@ -210,7 +253,7 @@ describe("AffectionPage", () => {
       ? Promise.resolve(ok({ users: [user()], total: 1, limit: 50, offset: Number(params.offset) }))
       : path === "page/affection/status" ? Promise.resolve(ok(status())) : Promise.resolve(ok({ groups: [{ group_id: "group-1" }] })));
     bridge.apiPost.mockResolvedValue(ok({ entity: user({ affection_score: 77, affection_level: "VIP", level_name: "VIP", revision: "rev-2" }), revision: "rev-2" }));
-    fireEvent.click(screen.getByRole("button", { name: /edit alice/i }));
+    openRowAction("alice", "View");
     const sheet = editor(/affection.*alice/i);
     fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
     expect(within(sheet).getByLabelText("User ID")).toHaveProperty("disabled", true);
@@ -233,7 +276,7 @@ describe("AffectionPage", () => {
       expect(await screen.findByText(`${operation} offline`)).toBeTruthy();
       expect(within(dialog).getByDisplayValue("alice")).toBeTruthy();
     } else {
-      fireEvent.click(screen.getByRole("button", { name: /edit alice/i }));
+      openRowAction("alice", "View");
       const sheet = editor(/affection.*alice/i);
       fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
       fireEvent.change(within(sheet).getByLabelText(/affection score/i), { target: { value: "77" } });
@@ -247,7 +290,7 @@ describe("AffectionPage", () => {
   it("propagates prefixed affection update errors to one linked summary", async () => {
     await renderLoaded();
     bridge.apiPost.mockRejectedValue(new ApiRequestError("Invalid affection", "validation_error", { "changes.affection_score": "score rejected" }));
-    fireEvent.click(screen.getByRole("button", { name: /edit alice/i }));
+    openRowAction("alice", "View");
     const sheet = editor(/affection.*alice/i);
     fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
     fireEvent.change(within(sheet).getByLabelText(/affection score/i), { target: { value: "77" } });
@@ -262,7 +305,7 @@ describe("AffectionPage", () => {
   it("offers load-latest and reapply-local choices for edit conflicts", async () => {
     await renderLoaded();
     bridge.apiPost.mockResolvedValue({ status: "error", code: "edit_conflict", message: "Concurrent update", data: { current_entity: user({ affection_score: 55 }), current_revision: "rev-remote" } });
-    fireEvent.click(screen.getByRole("button", { name: /edit alice/i }));
+    openRowAction("alice", "View");
     const sheet = editor(/affection.*alice/i);
     fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
     fireEvent.change(within(sheet).getByLabelText(/affection score/i), { target: { value: "77" } });
@@ -279,7 +322,7 @@ describe("AffectionPage", () => {
 
   it("requires explicit delete confirmation and sends exact identity and revision", async () => {
     await renderLoaded(); bridge.apiPost.mockResolvedValue(ok({}));
-    fireEvent.click(screen.getByRole("button", { name: /delete alice/i }));
+    openRowAction("alice", "Delete");
     const confirm = await screen.findByRole("dialog", { name: /delete/i });
     expect(within(confirm).getByRole("button", { name: /confirm|delete/i })).toHaveProperty("disabled", true);
     fireEvent.click(within(confirm).getByRole("button", { name: /confirm|delete/i }));
@@ -292,7 +335,7 @@ describe("AffectionPage", () => {
   it("accepts backend identity field order for affection single delete", async () => {
     await renderLoaded();
     bridge.apiPost.mockResolvedValue(ok({ deleted: true, identity: { group_id: "group-1", user_id: "alice" } }));
-    fireEvent.click(screen.getByRole("button", { name: /delete alice/i }));
+    openRowAction("alice", "Delete");
     const confirm = await screen.findByRole("dialog", { name: /delete affection user/i });
     fireEvent.change(within(confirm).getByRole("textbox"), { target: { value: "alice" } });
     fireEvent.click(within(confirm).getByRole("button", { name: /delete/i }));
@@ -303,7 +346,7 @@ describe("AffectionPage", () => {
   it("keeps affection single-delete context after malformed success", async () => {
     await renderLoaded();
     bridge.apiPost.mockResolvedValue(ok({}));
-    fireEvent.click(screen.getByRole("button", { name: /delete alice/i }));
+    openRowAction("alice", "Delete");
     const confirm = await screen.findByRole("dialog", { name: /delete affection user/i });
     fireEvent.change(within(confirm).getByRole("textbox"), { target: { value: "alice" } });
     fireEvent.click(within(confirm).getByRole("button", { name: /delete/i }));
@@ -368,7 +411,7 @@ describe("AffectionPage", () => {
   it("shows a toast and keeps the single-delete confirmation open after failure", async () => {
     await renderLoaded();
     bridge.apiPost.mockRejectedValue(new Error("single delete offline"));
-    fireEvent.click(screen.getByRole("button", { name: /delete alice/i }));
+    openRowAction("alice", "Delete");
     const confirm = await screen.findByRole("dialog", { name: /delete affection user/i });
     fireEvent.change(within(confirm).getByRole("textbox"), { target: { value: "alice" } });
     fireEvent.click(within(confirm).getByRole("button", { name: /delete/i }));
@@ -582,7 +625,7 @@ describe("AffectionPage", () => {
       : path === "page/affection/status" ? Promise.resolve(ok(status()))
       : Promise.resolve(ok({ history: [{ start_time: 100, duration_hours: 4, mood_type: "happy", intensity: 0.5, description: "..." }] })));
     render(<AffectionPage showToast={showToast} />);
-    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/affection/moods/history", { group_id: "group-1", limit: "50" }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/affection/moods/history", { group_id: "group-1", limit: "50", sort_by: "start_time", sort_order: "desc" }));
     expect(await screen.findByText("...")).toBeTruthy();
     expect(screen.getByText("100")).toBeTruthy(); expect(screen.getByText("4")).toBeTruthy(); expect(screen.getByText("happy")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /edit.*history|delete.*history/i })).toBeNull();
@@ -656,7 +699,7 @@ describe("AffectionPage", () => {
 
   it("prevents duplicate update and delete requests while their writes are pending", async () => {
     await renderLoaded(); const request = deferred<ReturnType<typeof ok>>(); bridge.apiPost.mockReturnValue(request.promise);
-    fireEvent.click(screen.getByRole("button", { name: /edit alice/i }));
+    openRowAction("alice", "View");
     const sheet = editor(/affection.*alice/i); fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
     fireEvent.change(within(sheet).getByLabelText(/affection score/i), { target: { value: "77" } });
     const save = within(sheet).getByRole("button", { name: /^save$/i }); fireEvent.click(save); fireEvent.click(save);
@@ -665,7 +708,7 @@ describe("AffectionPage", () => {
     await act(async () => { request.resolve(ok({ entity: user({ affection_score: 77 }), revision: "rev-2" })); await request.promise; });
 
     const deleteRequest = deferred<ReturnType<typeof ok>>(); bridge.apiPost.mockReturnValue(deleteRequest.promise);
-    fireEvent.click(screen.getByRole("button", { name: /delete alice/i }));
+    fireEvent.click(within(sheet).getByRole("button", { name: /delete alice/i }));
     const confirm = await screen.findByRole("dialog", { name: /delete/i }); fireEvent.change(within(confirm).getByRole("textbox"), { target: { value: "alice" } });
     const remove = within(confirm).getByRole("button", { name: /confirm|delete/i }); fireEvent.click(remove); fireEvent.click(remove);
     await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledTimes(2));
@@ -682,7 +725,7 @@ describe("AffectionPage", () => {
     expect(within(createDialog).getByDisplayValue("alice")).toBeTruthy();
 
     fireEvent.click(within(createDialog).getByRole("button", { name: /^cancel$/i }));
-    fireEvent.click(screen.getByRole("button", { name: /edit alice/i }));
+    openRowAction("alice", "View");
     const sheet = editor(/affection.*alice/i); fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
     fireEvent.change(within(sheet).getByLabelText(/affection score/i), { target: { value: "77" } });
     fireEvent.click(within(sheet).getByRole("button", { name: /^save$/i }));
@@ -740,7 +783,7 @@ describe("AffectionPage", () => {
       data: { current_entity: user({ affection_score: 55 }), current_revision: "rev-remote" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: `${AFFECTION_SENTINELS["detail.edit"]} alice` }));
+    openRowAction("alice", "View");
     const sheet = editor(/alice/);
     fireEvent.click(within(sheet).getByRole("button", { name: AFFECTION_SENTINELS["detail.edit"] }));
     fireEvent.change(within(sheet).getByLabelText(AFFECTION_SENTINELS["affection.score"]), { target: { value: "77" } });

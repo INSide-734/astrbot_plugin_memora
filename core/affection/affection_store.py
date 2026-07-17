@@ -16,7 +16,30 @@ from ..base.entity_editing import (
     EntityNotFoundError,
     compute_entity_revision,
 )
+from ..base.list_sorting import SortQuery, order_by_clause
 from ..storage.base_store import BaseStore
+
+
+AFFECTION_USER_SORT_COLUMNS = {
+    "user_id": "user_id COLLATE NOCASE",
+    "affection_score": "affection_score",
+    "interaction_count": "interaction_count",
+    "last_interaction": "last_interaction",
+}
+MOOD_HISTORY_SORT_COLUMNS = {
+    "start_time": "start_time",
+    "duration_hours": "duration_hours",
+    "mood_type": "mood_type COLLATE NOCASE",
+    "intensity": "intensity",
+}
+_AFFECTION_USER_SQL_COLUMNS = {
+    **AFFECTION_USER_SORT_COLUMNS,
+    "_user_id_tie": "user_id",
+}
+_MOOD_HISTORY_SQL_COLUMNS = {
+    **MOOD_HISTORY_SORT_COLUMNS,
+    "id": "id",
+}
 
 
 # ---- 表结构 ----------------------------------------------------------------------------
@@ -259,18 +282,26 @@ class AffectionStore(BaseStore):
             return True
 
     async def list_affections(
-        self, group_id: str, limit: int, offset: int
+        self,
+        group_id: str,
+        limit: int,
+        offset: int,
+        sort: SortQuery = SortQuery("affection_score", "desc"),
     ) -> tuple[list[dict], int]:
         """按稳定顺序分页返回群组好感度记录与总数。"""
+        order_by = order_by_clause(
+            sort,
+            columns=_AFFECTION_USER_SQL_COLUMNS,
+            tie_breaker="_user_id_tie",
+        )
         async with self._read_snapshot():
             total = await self._fetch_scalar(
                 "SELECT COUNT(*) FROM user_affection WHERE group_id = ?",
                 (group_id,),
             )
             rows = await self._fetch_all(
-                """SELECT * FROM user_affection WHERE group_id = ?
-                   ORDER BY affection_score DESC, user_id ASC, group_id ASC
-                   LIMIT ? OFFSET ?""",
+                f"""SELECT * FROM user_affection WHERE group_id = ?
+                   ORDER BY {order_by} LIMIT ? OFFSET ?""",
                 (group_id, limit, offset),
             )
             return rows, int(total or 0)
@@ -392,12 +423,19 @@ class AffectionStore(BaseStore):
         )
 
     async def get_mood_history(
-        self, group_id: str, limit: int = 20
+        self,
+        group_id: str,
+        limit: int = 20,
+        sort: SortQuery = SortQuery("start_time", "desc"),
     ) -> list[dict]:
         """返回指定群组最近的情绪历史记录。"""
+        order_by = order_by_clause(
+            sort,
+            columns=_MOOD_HISTORY_SQL_COLUMNS,
+            tie_breaker="id",
+        )
         return await self._fetch_all(
-            "SELECT * FROM bot_mood WHERE group_id = ? "
-            "ORDER BY start_time DESC, id DESC LIMIT ?",
+            f"SELECT * FROM bot_mood WHERE group_id = ? ORDER BY {order_by} LIMIT ?",
             (group_id, limit),
         )
 
@@ -421,4 +459,8 @@ class AffectionStore(BaseStore):
             await self._execute("VACUUM")
 
 
-__all__ = ["AffectionStore"]
+__all__ = [
+    "AFFECTION_USER_SORT_COLUMNS",
+    "MOOD_HISTORY_SORT_COLUMNS",
+    "AffectionStore",
+]

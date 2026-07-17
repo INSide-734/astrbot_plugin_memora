@@ -9,12 +9,17 @@ from astrbot.api import logger
 from quart import request
 
 from ..affection.models import MoodType
+from ..affection.affection_store import (
+    AFFECTION_USER_SORT_COLUMNS,
+    MOOD_HISTORY_SORT_COLUMNS,
+)
 from ..base.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     EntityValidationError,
 )
+from ..base.list_sorting import parse_sort_query
 from .editing_utils import (
     bounded_int,
     conflict_error,
@@ -37,6 +42,16 @@ _BATCH_ITEM_FIELDS = frozenset({"identity", "expected_revision"})
 _BATCH_ACTIONS = frozenset({"delete"})
 _MAX_BATCH_ITEMS = 100
 _MAX_PAGE_SIZE = 100
+
+
+def _sort_query_error(exc: ValueError):
+    message = str(exc)
+    field = "sort_order" if message == "sort_order must be asc or desc" else "sort_by"
+    return error_response(
+        message,
+        code="invalid_query",
+        field_errors={field: message},
+    )
 
 
 def _affection_user_to_dict(user: Any) -> dict[str, Any]:
@@ -327,7 +342,21 @@ class AffectionApiMixin:
             )
             if error:
                 return error
-            users, total = await manager.list_user_affections(group_id, limit, offset)
+            try:
+                sort = parse_sort_query(
+                    request.args,
+                    allowed=AFFECTION_USER_SORT_COLUMNS,
+                    default_by="affection_score",
+                    default_order="desc",
+                )
+            except ValueError as exc:
+                return _sort_query_error(exc)
+            users, total = await manager.list_user_affections(
+                group_id,
+                limit,
+                offset,
+                sort=sort,
+            )
             serialized = []
             for user in users:
                 entity = _safe_affection_user_to_dict(user)
@@ -650,7 +679,16 @@ class AffectionApiMixin:
             )
             if error:
                 return error
-            history = await manager.get_mood_history(group_id, limit)
+            try:
+                sort = parse_sort_query(
+                    request.args,
+                    allowed=MOOD_HISTORY_SORT_COLUMNS,
+                    default_by="start_time",
+                    default_order="desc",
+                )
+            except ValueError as exc:
+                return _sort_query_error(exc)
+            history = await manager.get_mood_history(group_id, limit, sort=sort)
             return ok_response(
                 {
                     "group_id": group_id,
