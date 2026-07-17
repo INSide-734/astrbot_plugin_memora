@@ -279,6 +279,17 @@ def test_dashboard_browser_smoke_covers_injection_strategy_workbench() -> None:
         assert marker in browser_smoke, marker
 
 
+def test_dashboard_browser_smoke_trace_diagnostics_are_metadata_only() -> None:
+    browser_smoke = _read_text("pages/dashboard/scripts/browser_smoke.mjs")
+    start = browser_smoke.index("const traceState = await page.evaluate")
+    end = browser_smoke.index("await waitForRootText", start)
+    trace_diagnostics = browser_smoke[start:end]
+
+    assert "traceCallCount" in trace_diagnostics
+    assert "rootText" not in trace_diagnostics
+    assert "calls:" not in trace_diagnostics
+
+
 def test_injection_overview_charts_use_valid_tokens_and_deterministic_motion() -> None:
     overview = _read_text(
         "pages/dashboard/src/components/injection/InjectionOverviewTab.tsx"

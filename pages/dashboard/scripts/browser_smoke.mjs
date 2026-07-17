@@ -2083,9 +2083,8 @@ async function runInjectionStrategySmoke(page, screenshotsDir) {
     const traceState = await page.evaluate(() => ({
       hash: window.location.hash,
       selectedTab: document.querySelector('[role="tab"][aria-selected="true"]')?.id ?? null,
-      rootText: document.getElementById("root")?.innerText ?? "",
-      calls: (window.__memoraBridgeCalls ?? []).filter((call) =>
-        call.endpoint.includes("recall/trace")),
+      traceCallCount: (window.__memoraBridgeCalls ?? []).filter((call) =>
+        call.endpoint === "page/recall/trace/detail").length,
     }));
     throw new Error(`Injection Trace navigation did not settle: ${JSON.stringify(traceState)}`, {
       cause: error,
@@ -2096,10 +2095,9 @@ async function runInjectionStrategySmoke(page, screenshotsDir) {
       call.endpoint === "page/recall/trace/detail")
   ));
   if (traceCalls.length !== 1) {
-    throw new Error(`Injection Trace navigation issued unexpected calls: ${JSON.stringify({
-      count: traceCalls.length,
-      calls: traceCalls,
-    })}`);
+    throw new Error(
+      `Injection Trace navigation issued ${traceCalls.length} detail calls; expected 1`,
+    );
   }
   await waitForRootText(
     page,
