@@ -79,14 +79,18 @@ export function sanitizeTablePreferences(
 
   const defaultLeft = defaults.columnPinning.left ?? [];
   const defaultRight = defaults.columnPinning.right ?? [];
-  const left = uniqueKnownIds([
-    ...defaultLeft,
-    ...uniqueKnownIds(value.columnPinning?.left),
-  ]).filter((id) => !defaultRight.includes(id));
-  const right = uniqueKnownIds([
-    ...uniqueKnownIds(value.columnPinning?.right),
-    ...defaultRight,
-  ]).filter((id) => !left.includes(id));
+  const sanitizePinnedSide = (rawPins: unknown, defaultPins: string[]) => {
+    if (!Array.isArray(rawPins)) return [...defaultPins];
+    const knownPins = uniqueKnownIds(rawPins);
+    return rawPins.length > 0 && knownPins.length === 0
+      ? [...defaultPins]
+      : knownPins;
+  };
+  const left = sanitizePinnedSide(value.columnPinning?.left, defaultLeft);
+  const right = sanitizePinnedSide(
+    value.columnPinning?.right,
+    defaultRight,
+  ).filter((id) => !left.includes(id));
 
   return {
     schemaVersion: TABLE_PREFERENCE_SCHEMA,
