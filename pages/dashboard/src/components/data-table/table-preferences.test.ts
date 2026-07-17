@@ -69,4 +69,29 @@ describe("table preferences", () => {
     resetTablePreferences("knowledge");
     expect(localStorage.getItem("memora.table.knowledge.v1")).toBeNull();
   });
+
+  it("uses default pins for reset but preserves an explicit unpinned layout", () => {
+    expect(sanitizeTablePreferences(null, columns).columnPinning).toEqual({
+      left: ["select", "title"],
+      right: ["actions"],
+    });
+
+    const unpinned = sanitizeTablePreferences(
+      {
+        schemaVersion: 1,
+        density: "standard",
+        columnVisibility: {},
+        columnOrder: columns.map(({ id }) => id),
+        columnPinning: { left: [], right: [] },
+      },
+      columns,
+    );
+
+    expect(unpinned.columnPinning).toEqual({ left: [], right: [] });
+    saveTablePreferences("knowledge", unpinned, columns);
+    expect(loadTablePreferences("knowledge", columns).columnPinning).toEqual({
+      left: [],
+      right: [],
+    });
+  });
 });
