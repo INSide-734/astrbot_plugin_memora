@@ -67,10 +67,33 @@ export function DataTableViewOptions<TData extends RowData>({
   const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
   const columns = table.getAllLeafColumns();
   const order = table.getState().columnOrder;
+  const pinning = table.getState().columnPinning;
+  const leftOrder = pinning.left ?? [];
+  const rightOrder = pinning.right ?? [];
+  const pinnedIds = new Set([...leftOrder, ...rightOrder]);
+  const centerOrder = order.filter((id) => !pinnedIds.has(id));
+  const columnsById = new Map(columns.map((column) => [column.id, column]));
+  const orderedColumns = [...leftOrder, ...centerOrder, ...rightOrder]
+    .map((id) => columnsById.get(id))
+    .filter((column): column is (typeof columns)[number] => Boolean(column));
 
   const preventMenuSelection = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
+  };
+
+  const moveTo = (id: string, targetId: string) => {
+    const pin = table.getColumn(id)?.getIsPinned();
+    const targetPin = table.getColumn(targetId)?.getIsPinned();
+    if (pin !== targetPin) return;
+    if (pin) {
+      table.setColumnPinning((current) => ({
+        ...current,
+        [pin]: moveColumn(current[pin] ?? [], id, targetId),
+      }));
+      return;
+    }
+    table.setColumnOrder(moveColumn(order, id, targetId));
   };
 
   const moveBy = (
@@ -79,15 +102,17 @@ export function DataTableViewOptions<TData extends RowData>({
     direction: -1 | 1,
   ) => {
     preventMenuSelection(event);
-    const index = order.indexOf(id);
-    const target = order[index + direction];
-    if (target) table.setColumnOrder(moveColumn(order, id, target));
+    const pin = table.getColumn(id)?.getIsPinned();
+    const activeOrder = pin ? pinning[pin] ?? [] : centerOrder;
+    const index = activeOrder.indexOf(id);
+    const target = activeOrder[index + direction];
+    if (target) moveTo(id, target);
   };
 
   const dropColumn = (event: DragEvent<HTMLDivElement>, targetId: string) => {
     event.preventDefault();
     const draggedId = draggedColumnId ?? event.dataTransfer.getData("text/plain");
-    if (draggedId) table.setColumnOrder(moveColumn(order, draggedId, targetId));
+    if (draggedId) moveTo(draggedId, targetId);
     setDraggedColumnId(null);
   };
 
@@ -106,11 +131,12 @@ export function DataTableViewOptions<TData extends RowData>({
       >
         <DropdownMenuGroup>
           <DropdownMenuLabel>{t("table.columns")}</DropdownMenuLabel>
-          {columns.map((column) => {
+          {orderedColumns.map((column) => {
             const label = column.columnDef.meta?.label ?? column.id;
-            const index = order.indexOf(column.id);
             const required = Boolean(column.columnDef.meta?.required);
             const pin = column.getIsPinned();
+            const activeOrder = pin ? pinning[pin] ?? [] : centerOrder;
+            const index = activeOrder.indexOf(column.id);
             return (
               <div
                 key={column.id}
@@ -158,7 +184,7 @@ export function DataTableViewOptions<TData extends RowData>({
                       label,
                       currentLang(),
                     )}
-                    disabled={index < 0 || index >= order.length - 1}
+                    disabled={index < 0 || index >= activeOrder.length - 1}
                     onClick={(event) => moveBy(event, column.id, 1)}
                   >
                     <ArrowRight aria-hidden="true" />
