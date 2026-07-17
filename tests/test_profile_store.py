@@ -14,6 +14,7 @@ from core.base.entity_editing import (
     EntityNotFoundError,
     compute_entity_revision,
 )
+from core.base.list_sorting import SortQuery
 from core.models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
 from core.storage.profile_store import ProfileStore
 
@@ -188,6 +189,73 @@ class TestProfileStoreCRUD:
         profiles, total = await store.list_profiles(limit=3, offset=0)
         assert len(profiles) == 3
         assert total == 5
+
+    @pytest.mark.asyncio
+    async def test_list_profiles_sorts_display_names_before_pagination(self, tmp_db_path):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+
+        await store.create_profile("user-gamma", "Gamma")
+        await store.create_profile("user-alpha", "Alpha")
+        await store.create_profile("user-beta", "Beta")
+
+        profiles, total = await store.list_profiles(
+            limit=2,
+            sort=SortQuery("display_name", "asc"),
+        )
+
+        assert [profile.display_name for profile in profiles] == ["Alpha", "Beta"]
+        assert total == 3
+
+    @pytest.mark.asyncio
+    async def test_list_profiles_sorts_message_totals_descending(self, tmp_db_path):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+
+        for user_id, total_messages in (("user-low", 2), ("user-high", 9), ("user-mid", 5)):
+            profile = await store.create_profile(user_id)
+            profile.total_messages = total_messages
+            await store.update_profile(profile)
+
+        profiles, _ = await store.list_profiles(
+            sort=SortQuery("total_messages", "desc"),
+        )
+
+        assert [profile.user_id for profile in profiles] == [
+            "user-high",
+            "user-mid",
+            "user-low",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_list_profiles_sorts_last_seen_descending_with_stable_user_id_ties(
+        self, tmp_db_path
+    ):
+        store = ProfileStore(tmp_db_path)
+        await store.init_table()
+
+        for user_id in ("user-b", "user-a", "user-newest"):
+            await store.create_profile(user_id)
+        async with store._connect() as db:
+            await db.execute(
+                "UPDATE user_profiles SET last_seen_at = 100 WHERE user_id IN (?, ?)",
+                ("user-a", "user-b"),
+            )
+            await db.execute(
+                "UPDATE user_profiles SET last_seen_at = 200 WHERE user_id = ?",
+                ("user-newest",),
+            )
+            await db.commit()
+
+        profiles, _ = await store.list_profiles(
+            sort=SortQuery("last_seen_at", "desc"),
+        )
+
+        assert [profile.user_id for profile in profiles] == [
+            "user-newest",
+            "user-a",
+            "user-b",
+        ]
 
     @pytest.mark.asyncio
     async def test_delete_profile(self, tmp_db_path):

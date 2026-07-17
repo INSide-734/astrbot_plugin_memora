@@ -8,6 +8,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..base.list_sorting import SortQuery
 from ..base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
@@ -196,9 +197,12 @@ class ProfileManager:
         return total
 
     async def list_profiles(
-        self, limit: int = 50, offset: int = 0
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        sort: SortQuery = SortQuery("last_seen_at", "desc"),
     ) -> tuple[list[UserProfile], int]:
-        return await self._store.list_profiles(limit=limit, offset=offset)
+        return await self._store.list_profiles(limit=limit, offset=offset, sort=sort)
 
     @staticmethod
     def _normalize_text(

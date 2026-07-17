@@ -13,8 +13,19 @@ from ..base.entity_editing import (
     EntityNotFoundError,
     compute_entity_revision,
 )
+from ..base.list_sorting import SortQuery, order_by_clause
 from ..models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
 from .base import BaseStore
+
+
+PROFILE_SORT_COLUMNS = {
+    "user_id": "user_id COLLATE NOCASE",
+    "display_name": "display_name COLLATE NOCASE",
+    "total_messages": "total_messages",
+    "total_sessions": "total_sessions",
+    "first_seen_at": "first_seen_at",
+    "last_seen_at": "last_seen_at",
+}
 
 _CREATE_PROFILES = """
 CREATE TABLE IF NOT EXISTS user_profiles (
@@ -467,13 +478,21 @@ class ProfileStore(BaseStore):
             await db.commit()
 
     async def list_profiles(
-        self, limit: int = 50, offset: int = 0
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        sort: SortQuery = SortQuery("last_seen_at", "desc"),
     ) -> tuple[list[UserProfile], int]:
+        order_by = order_by_clause(
+            sort,
+            columns=PROFILE_SORT_COLUMNS,
+            tie_breaker="user_id",
+        )
         async with self._connect() as db:
             cursor = await db.execute("SELECT COUNT(*) FROM user_profiles")
             total = (await cursor.fetchone())[0]
             cursor = await db.execute(
-                "SELECT * FROM user_profiles ORDER BY last_seen_at DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM user_profiles ORDER BY {order_by} LIMIT ? OFFSET ?",
                 (limit, offset),
             )
             rows = await cursor.fetchall()
@@ -636,4 +655,4 @@ class ProfileStore(BaseStore):
         )
 
 
-__all__ = ["ProfileStore"]
+__all__ = ["PROFILE_SORT_COLUMNS", "ProfileStore"]

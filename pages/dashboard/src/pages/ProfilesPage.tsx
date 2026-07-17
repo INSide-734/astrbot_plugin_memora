@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Tag, Trash2, X } from "lucide-react";
 
 import { useI18n } from "@/hooks/useI18n";
@@ -14,9 +14,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/Dialog";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/Table";
 import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
+import { DataTable } from "@/components/data-table/DataTable";
+import { DataTablePagination } from "@/components/data-table/DataTablePagination";
+import { actionsColumn, selectionColumn } from "@/components/data-table/data-table-columns";
+import type { DataTableColumn, DataTableSort } from "@/components/data-table/table-types";
 import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { EditConflictDialog } from "@/components/editing/EditConflictDialog";
 import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
@@ -77,6 +79,7 @@ function hasSameBatchItems(left: ProfileBatchItem[], right: ProfileBatchItem[]):
 }
 
 const PAGE_SIZE = 100;
+const DEFAULT_SORT: DataTableSort = { id: "last_seen_at", desc: true };
 const EMPTY_PROFILE_DRAFT: ProfileDraft = {
   user_id: "",
   display_name: "",
@@ -237,6 +240,7 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
+  const [sort, setSort] = useState<DataTableSort>(DEFAULT_SORT);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<Profile | null>(null);
@@ -278,8 +282,14 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
     const generation = ++profilesLoadGeneration.current;
     setLoading(true);
     try {
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(page * PAGE_SIZE),
+        sort_by: sort.id,
+        sort_order: sort.desc ? "desc" : "asc",
+      });
       const response = profileListResponse(unwrapApiData(
-        await apiRequest(`profiles?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`)
+        await apiRequest(`profiles?${params.toString()}`)
       ), label("profiles.invalidList", "Invalid profile list response"));
       const nextProfiles = response.profiles ?? response.items ?? [];
       const nextTotal = Number(response.total ?? nextProfiles.length);
@@ -299,11 +309,11 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
     } finally {
       if (generation === profilesLoadGeneration.current) setLoading(false);
     }
-  }, [page, showToast]);
+  }, [page, showToast, sort]);
 
   useEffect(() => { void fetchProfiles(); }, [fetchProfiles]);
 
-  const openDetail = async (userId: string) => {
+  const openDetail = async (userId: string, beginEdit = false) => {
     try {
       const response = unwrapApiData(
         await apiRequest(`profiles/detail?user_id=${encodeURIComponent(userId)}`)
@@ -320,7 +330,7 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
       setDetail(profile);
       setEditBaseline(baseline);
       setEditDraft(cloneDraft(baseline));
-      setEditMode(false);
+      setEditMode(beginEdit);
       setEditFieldErrors({});
       setEditFormError(null);
     } catch (error) {
@@ -595,8 +605,100 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
     setSelected(new Set());
     setPage(nextPage);
   };
+  const changeSort = useCallback((next: DataTableSort | null) => {
+    setSelected(new Set());
+    setPage(0);
+    setSort(next ?? DEFAULT_SORT);
+  }, []);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const allSelected = profiles.length > 0 && selected.size === profiles.length;
+  const columns = useMemo<DataTableColumn<Profile>[]>(() => [
+    selectionColumn({
+      label: t("profiles.selectAll"),
+      rowLabel: (profile) => t("profiles.selectProfile", profile.display_name ?? profile.user_id),
+    }),
+    {
+      id: "user_id",
+      accessorKey: "user_id",
+      header: t("table.userId"),
+      meta: {
+        label: t("table.userId"),
+        serverSortKey: "user_id",
+        required: true,
+        defaultPin: "left",
+        cellClassName: "font-mono text-xs text-muted-foreground",
+      },
+    },
+    {
+      id: "display_name",
+      accessorKey: "display_name",
+      header: t("table.name"),
+      meta: { label: t("table.name"), serverSortKey: "display_name" },
+      cell: ({ row }) => (
+        <Button
+          variant="link"
+          className="h-auto p-0 font-medium"
+          aria-label={t("profiles.openProfile", row.original.display_name ?? row.original.user_id)}
+          onClick={() => void openDetail(row.original.user_id)}
+        >
+          {row.original.display_name ?? "--"}
+        </Button>
+      ),
+    },
+    {
+      id: "tags",
+      accessorFn: profileTagTotal,
+      header: t("table.tags"),
+      enableSorting: false,
+      meta: { label: t("table.tags") },
+      cell: ({ row }) => <Badge>{profileTagTotal(row.original)}</Badge>,
+    },
+    {
+      id: "top_interests",
+      accessorKey: "top_interests",
+      header: t("table.interests"),
+      enableSorting: false,
+      meta: { label: t("table.interests") },
+      cell: ({ row }) => (
+        <div className="flex flex-wrap gap-1">
+          {(row.original.top_interests ?? []).slice(0, 3).map((interest) => (
+            <Badge key={interest} variant="secondary">{interest}</Badge>
+          ))}
+        </div>
+      ),
+    },
+    {
+      id: "last_seen_at",
+      accessorFn: (profile) => profile.last_seen,
+      header: t("table.lastSeen"),
+      meta: {
+        label: t("table.lastSeen"),
+        serverSortKey: "last_seen_at",
+        cellClassName: "text-xs text-muted-foreground",
+      },
+      cell: ({ row }) => formatDashboardDate(row.original.last_seen, locale),
+    },
+    actionsColumn({
+      label: t("table.rowActions"),
+      rowLabel: (profile) => profile.display_name ?? profile.user_id,
+      actions: (profile) => [
+        { id: "view", label: t("detail.view"), onSelect: () => void openDetail(profile.user_id) },
+        { id: "edit", label: t("detail.edit"), onSelect: () => void openDetail(profile.user_id, true) },
+        {
+          id: "delete",
+          label: t("common.delete"),
+          destructive: true,
+          onSelect: () => {
+            const baseline = profileDraft(profile);
+            setDetail(profile);
+            setEditBaseline(baseline);
+            setEditDraft(cloneDraft(baseline));
+            setEditMode(false);
+            setDeleteOpen(true);
+          },
+        },
+      ],
+    }),
+  ], [locale, t]);
 
   return (
     <PageFrame variant="dense" aria-label={t("nav.profiles")}>
@@ -613,30 +715,30 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
         </MetricGrid>
       </div>
 
-      <PageContent width="full" className="p-0">
-        {loading ? <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("common.loading")}</p> : null}
-        {!loading && profiles.length === 0 ? <p className="px-6 py-12 text-center text-sm text-muted-foreground">{t("table.noData")}</p> : null}
-        {!loading && profiles.length > 0 ? <Table>
-          <TableHeader className="sticky top-0 bg-background"><TableRow className="text-left text-xs font-medium uppercase text-muted-foreground">
-            <TableHead className="w-10 px-4"><Checkbox aria-label={allSelected ? t("profiles.deselectAll") : t("profiles.selectAll")} checked={allSelected} onCheckedChange={() => setSelected(allSelected ? new Set() : new Set(profiles.map((profile) => profile.user_id)))} /></TableHead>
-            <TableHead className="px-4">{t("table.userId")}</TableHead><TableHead>{t("table.name")}</TableHead><TableHead>{t("table.tags")}</TableHead><TableHead>{t("table.interests")}</TableHead><TableHead>{t("table.lastSeen")}</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>{profiles.map((profile) => <TableRow key={profile.user_id} data-state={selected.has(profile.user_id) ? "selected" : undefined} className="cursor-pointer text-sm" onClick={() => void openDetail(profile.user_id)}>
-            <TableCell className="px-4" onClick={(event) => event.stopPropagation()}><Checkbox aria-label={t("profiles.selectProfile", profile.display_name ?? profile.user_id)} checked={selected.has(profile.user_id)} onCheckedChange={() => setSelected((previous) => { const next = new Set(previous); next.has(profile.user_id) ? next.delete(profile.user_id) : next.add(profile.user_id); return next; })} /></TableCell>
-            <TableCell className="px-4 font-mono text-xs text-muted-foreground">{profile.user_id}</TableCell>
-            <TableCell className="font-medium"><Button variant="link" className="h-auto p-0 font-medium" aria-label={t("profiles.openProfile", profile.display_name ?? profile.user_id)} onClick={(event) => { event.stopPropagation(); void openDetail(profile.user_id); }}>{profile.display_name ?? "--"}</Button></TableCell>
-            <TableCell><Badge>{profileTagTotal(profile)}</Badge></TableCell>
-            <TableCell className="max-w-xs"><div className="flex flex-wrap gap-1">{(profile.top_interests ?? []).slice(0, 3).map((interest) => <Badge key={interest} variant="secondary">{interest}</Badge>)}</div></TableCell>
-            <TableCell className="text-xs text-muted-foreground">{formatDashboardDate(profile.last_seen, locale)}</TableCell>
-          </TableRow>)}</TableBody>
-        </Table> : null}
+      <PageContent width="full">
+        <DataTable
+          tableId="profiles"
+          data={profiles}
+          columns={columns}
+          getRowId={(profile) => profile.user_id}
+          sort={sort}
+          onSortChange={changeSort}
+          selectedRowIds={selected}
+          onSelectedRowIdsChange={setSelected}
+          currentRowId={detail?.user_id ?? null}
+          onRowActivate={(profile) => void openDetail(profile.user_id)}
+          loading={loading}
+          emptyLabel={t("table.noData")}
+          pagination={(
+            <DataTablePagination
+              page={page}
+              pageCount={totalPages}
+              total={total}
+              onPageChange={changePage}
+            />
+          )}
+        />
       </PageContent>
-
-      <nav className="flex min-h-12 shrink-0 items-center justify-between border-t bg-background px-4 py-2 sm:px-5 lg:px-6" aria-label={t("profiles.pagination")}>
-        <Button variant="outline" size="sm" aria-label={t("pagination.previousPage")} disabled={page === 0} onClick={() => changePage(Math.max(0, page - 1))}>{t("pagination.prev")}</Button>
-        <span className="text-sm text-muted-foreground">{t("pagination.pageOf", String(page + 1), String(totalPages))}</span>
-        <Button variant="outline" size="sm" aria-label={t("pagination.nextPage")} disabled={page + 1 >= totalPages} onClick={() => changePage(page + 1)}>{t("pagination.next")}</Button>
-      </nav>
 
       {selected.size > 0 ? <PageToolbar className="border-b-0 border-t bg-muted/40 animate-slide-up">
         <span className="text-sm font-medium">{t("select.selected", String(selected.size))}</span>
