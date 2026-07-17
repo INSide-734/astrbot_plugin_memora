@@ -6,7 +6,7 @@ import { apiRequest, unwrapApiData, normalizeImportance } from "@/lib/bridge";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
 import { Badge } from "@/components/ui/Badge";
 import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -37,6 +37,10 @@ const EDIT_FIELD_LABELS: Record<string, string> = {};
 export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: MemoryPageProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
+  const pageSizeOptions = [20, 50, 100].map((size) => ({
+    value: String(size),
+    label: t(`common.perPage${size}`),
+  }));
 
   // Init label maps with i18n
   STATUS_LABELS.all = t("filter.statusAll");
@@ -271,18 +275,22 @@ export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: Memor
         <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v ?? "all"); setPage(1); }}>
           <SelectTrigger><span>{STATUS_LABELS[statusFilter] ?? statusFilter}</span></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">{t("filter.statusAll")}</SelectItem>
-            <SelectItem value="active">{t("filter.statusActive")}</SelectItem>
-            <SelectItem value="archived">{t("filter.statusArchived")}</SelectItem>
-            <SelectItem value="deleted">{t("filter.statusDeleted")}</SelectItem>
+            <SelectGroup>
+              <SelectItem value="all">{t("filter.statusAll")}</SelectItem>
+              <SelectItem value="active">{t("filter.statusActive")}</SelectItem>
+              <SelectItem value="archived">{t("filter.statusArchived")}</SelectItem>
+              <SelectItem value="deleted">{t("filter.statusDeleted")}</SelectItem>
+            </SelectGroup>
           </SelectContent>
         </Select>
-        <Select value={String(pageSize)} onValueChange={(v) => { if (v) { setPageSize(Number(v)); setPage(1); } }}>
-          <SelectTrigger><span>{String(pageSize)}</span></SelectTrigger>
+        <Select items={pageSizeOptions} value={String(pageSize)} onValueChange={(v) => { if (v) { setPageSize(Number(v)); setPage(1); } }}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="20">{t("common.perPage20")}</SelectItem>
-            <SelectItem value="50">{t("common.perPage50")}</SelectItem>
-            <SelectItem value="100">{t("common.perPage100")}</SelectItem>
+            <SelectGroup>
+              {pageSizeOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              ))}
+            </SelectGroup>
           </SelectContent>
         </Select>
       </PageToolbar>

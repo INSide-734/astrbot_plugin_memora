@@ -115,6 +115,16 @@ describe("AffectionPage", () => {
     expect(screen.getByText("alice")).toBeTruthy();
   });
 
+  it("shows the same selected group label as the menu option", async () => {
+    mockInitialData();
+    render(<AffectionPage showToast={showToast} />);
+
+    const trigger = screen.getByRole("combobox");
+    await waitFor(() => expect(trigger.textContent).toContain("group-1 (12)"));
+    fireEvent.click(trigger);
+    expect((await screen.findByRole("option", { name: "group-1 (12)" })).textContent).toContain("group-1 (12)");
+  });
+
   it("preserves the existing status, current mood, and leaderboard assertions", async () => {
     mockInitialData();
     render(<AffectionPage showToast={showToast} />);

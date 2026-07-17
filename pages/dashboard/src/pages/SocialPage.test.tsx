@@ -144,6 +144,16 @@ describe("SocialPage", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: new RegExp(`select relation ${fromUser}.*${toUser}`, "i") }));
   }
 
+  it("shows the same selected group label as the menu option", async () => {
+    mockSocialList();
+    render(<SocialPage showToast={showToast} />);
+
+    const trigger = screen.getByRole("combobox");
+    await waitFor(() => expect(trigger.textContent).toContain("group-1 (12)"));
+    fireEvent.click(trigger);
+    expect((await screen.findByRole("option", { name: "group-1 (12)" })).textContent).toContain("group-1 (12)");
+  });
+
   it("loads the first group, keeps category tabs, and displays returned relation details", async () => {
     mockSocialList();
 

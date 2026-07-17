@@ -15,7 +15,11 @@ vi.mock("@/hooks/useI18n", async () => {
   return {
     useI18n: () => ({
       t: (key: string, ...args: string[]) => {
-        let value = key === "relation.colleague" ? "Workmate" : (EN_MAP[key] ?? key);
+        let value = key === "relation.colleague"
+          ? "Workmate"
+          : key === "status.active"
+            ? "Currently active"
+            : (EN_MAP[key] ?? key);
         args.forEach((arg, index) => {
           value = value.replace(new RegExp(`\\{${index}\\}`, "g"), () => arg);
         });
@@ -209,6 +213,27 @@ describe("domain editing forms", () => {
     expect(screen.queryByText(/168\.0/)).toBeNull();
     expect(screen.queryByLabelText("Start time")).toBeNull();
   });
+
+  it("shows the selected mood with the same localized label inside and outside the menu", () => {
+    render(<MoodForm value={{ group_id: "g1", mood_type: "happy", intensity: 0.5, duration_hours: 4, description: "steady" }} onChange={vi.fn()} fieldErrors={{}} mode="create" />);
+
+    const trigger = screen.getByRole("combobox", { name: "Mood type" });
+    const selectedLabel = trigger.querySelector("[data-slot='select-value']");
+    expect(selectedLabel?.textContent).toBe("Happy");
+    fireEvent.click(trigger);
+    expect(screen.getByRole("option", { name: "Happy" }).textContent).toBe(selectedLabel?.textContent);
+  });
+
+  it("shows the selected relation with the same localized label inside and outside the menu", () => {
+    render(<SocialRelationForm value={{ from_user: "alice", to_user: "bob", group_id: "g1", relation_type: "colleague", strength: 0.5, tags: [] }} onChange={vi.fn()} fieldErrors={{}} mode="create" />);
+
+    const trigger = screen.getByRole("combobox", { name: "Relation type" });
+    const selectedLabel = trigger.querySelector("[data-slot='select-value']");
+    expect(selectedLabel?.textContent).toBe("Workmate");
+    fireEvent.click(trigger);
+    expect(screen.getByRole("option", { name: "Workmate" }).textContent).toBe(selectedLabel?.textContent);
+  });
+
   it("shows every editable memory field at once and connects validation", () => {
     render(
       <MemoryForm
@@ -265,6 +290,16 @@ describe("domain editing forms", () => {
     expect(screen.getByLabelText("Content")).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "Tags" })).toBeTruthy();
     expect(screen.getByLabelText("Status")).toBeTruthy();
+  });
+
+  it("shows the selected note status with the same label inside and outside the menu", () => {
+    render(<NoteForm value={{ title: "Daily", content: "Summary", tags: [], status: "active" }} onChange={vi.fn()} fieldErrors={{}} mode="edit" />);
+
+    const trigger = screen.getByRole("combobox", { name: "Status" });
+    const selectedLabel = trigger.querySelector("[data-slot='select-value']");
+    expect(selectedLabel?.textContent).toBe("Currently active");
+    fireEvent.click(trigger);
+    expect(screen.getByRole("option", { name: "Currently active" }).textContent).toBe(selectedLabel?.textContent);
   });
 
   it("renders and links field errors for every domain form control", () => {

@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/Dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/Progress";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
@@ -512,6 +512,7 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
     { value: "all", label: label("social.allCategories", "All Categories") },
     ...Object.keys(RELATION_CATEGORIES).map((value) => ({ value, label: label(`social.category.${value}`, value) })),
   ];
+  const groupItems = groups.map((group) => ({ value: group.group_id, label: `${group.group_id}${group.message_count ? ` (${group.message_count})` : ""}` }));
   const allSelected = relations.length > 0 && selected.size === relations.length;
 
   const relationTable = loading ? (
@@ -557,9 +558,9 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
         title={t("social.title")}
         icon={<UsersRound />}
         actions={<>
-          <Select value={groupId} onValueChange={(value) => { if (value) { setSelected(new Set()); setGroupId(value); } }} disabled={groups.length === 0}>
-            <SelectTrigger className="w-36 text-xs"><span>{groupId || t("jargon.allGroups")}</span></SelectTrigger>
-            <SelectContent><SelectGroup>{groups.length > 0 ? groups.map((group) => <SelectItem key={group.group_id} value={group.group_id} onClick={() => { setSelected(new Set()); setGroupId(group.group_id); }}>{group.group_id}{group.message_count ? ` (${group.message_count})` : ""}</SelectItem>) : <SelectItem value="loading">—</SelectItem>}</SelectGroup></SelectContent>
+          <Select items={groupItems} value={groupId} onValueChange={(value) => { if (value) { setSelected(new Set()); setGroupId(value); } }} disabled={groups.length === 0}>
+            <SelectTrigger className="w-36 text-xs"><SelectValue placeholder={t("jargon.allGroups")} /></SelectTrigger>
+            <SelectContent><SelectGroup>{groupItems.length > 0 ? groupItems.map((item) => <SelectItem key={item.value} value={item.value} onClick={() => { setSelected(new Set()); setGroupId(item.value); }}>{item.label}</SelectItem>) : <SelectItem value="loading">—</SelectItem>}</SelectGroup></SelectContent>
           </Select>
           <Button variant="outline" onClick={() => void loadRelations()}><RefreshCw data-icon="inline-start" />{t("common.refresh")}</Button>
           <Button onClick={openCreate}>{label("social.newRelation", "New Relation")}</Button>

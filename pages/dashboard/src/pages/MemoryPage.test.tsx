@@ -131,6 +131,29 @@ describe("MemoryPage", () => {
     expect(screen.getByText("Page 2/2 · 25 total")).toBeTruthy();
   });
 
+  it("shows the selected page size with the same label inside and outside the menu", async () => {
+    bridge.apiGet.mockResolvedValue(ok({ items: [], total: 0 }));
+
+    render(<MemoryPage showToast={showToast} />);
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/memories", {
+        page: "1",
+        page_size: "20",
+      });
+    });
+
+    const pageSizeTrigger = screen.getAllByRole("combobox")[1];
+    fireEvent.click(pageSizeTrigger);
+    const selectedOption = await screen.findByRole("option", {
+      name: "20 per page",
+    });
+
+    expect(pageSizeTrigger.textContent).toContain(
+      selectedOption.textContent?.trim(),
+    );
+  });
+
   it("translates known memory types and preserves unknown backend types", async () => {
     bridge.t?.mockImplementation((key: string) => key === "dashboard.memory.type.fact" ? "Fact memory" : key);
     bridge.apiGet.mockResolvedValue(ok({
