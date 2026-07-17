@@ -16,6 +16,9 @@ from ..base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
+from ..base.list_sorting import parse_sort_query
+from ..jargon.jargon_store import JARGON_MEANING_SORT_COLUMNS
+from ..jargon.statistical_filter import JARGON_CANDIDATE_SORT_FIELDS
 from .editing_utils import (
     conflict_error,
     entity_ok,
@@ -193,6 +196,16 @@ def _validation_error(exc: EntityValidationError) -> dict[str, Any]:
         "黑话数据校验失败",
         code="validation_error",
         field_errors=exc.field_errors,
+    )
+
+
+def _sort_query_error(exc: ValueError) -> dict[str, Any]:
+    message = str(exc)
+    field = "sort_order" if message == "sort_order must be asc or desc" else "sort_by"
+    return error_response(
+        message,
+        code="invalid_query",
+        field_errors={field: message},
     )
 
 
@@ -611,7 +624,16 @@ class JargonApiMixin:
             if err:
                 return err
             limit = _parse_limit(args.get("limit", 20), default=20, maximum=100)
-            candidates = jf.get_candidates(group_id, limit=limit)
+            try:
+                sort = parse_sort_query(
+                    args,
+                    allowed=JARGON_CANDIDATE_SORT_FIELDS,
+                    default_by="score",
+                    default_order="desc",
+                )
+            except ValueError as exc:
+                return _sort_query_error(exc)
+            candidates = jf.get_candidates(group_id, limit=limit, sort=sort)
             candidates = _safe_list_items(candidates)
             serialized_candidates = [
                 item
@@ -652,7 +674,20 @@ class JargonApiMixin:
 
         try:
             confirmed_only = args.get("confirmed_only", "true").lower() != "false"
-            meanings = await store.list_by_group(group_id, confirmed_only=confirmed_only)
+            try:
+                sort = parse_sort_query(
+                    args,
+                    allowed=JARGON_MEANING_SORT_COLUMNS,
+                    default_by="updated_at",
+                    default_order="desc",
+                )
+            except ValueError as exc:
+                return _sort_query_error(exc)
+            meanings = await store.list_by_group(
+                group_id,
+                confirmed_only=confirmed_only,
+                sort=sort,
+            )
             meanings = _safe_list_items(meanings)
             serialized_meanings = []
             for meaning in meanings:

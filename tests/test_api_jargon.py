@@ -22,6 +22,7 @@ from core.base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
+from core.base.list_sorting import SortQuery
 from core.jargon.jargon_admin_service import JargonAdminService
 from core.jargon.jargon_query import JargonQueryService
 from core.jargon.jargon_store import JargonStore
@@ -176,6 +177,55 @@ class TestJargonCandidates:
         assert "revision" not in result["data"]["candidates"][0]
 
     @pytest.mark.asyncio
+    async def test_forwards_candidate_sort_without_offset(self) -> None:
+        stub = _make_stub(candidates=[_make_jargon_candidate()])
+        mock_req = _make_mock_request(
+            group_id="g1",
+            limit="2",
+            sort_by="frequency",
+            sort_order="asc",
+        )
+
+        with patch("core.api.jargon_api.request", mock_req):
+            result = await stub.get_jargon_candidates()
+
+        assert result["status"] == "ok"
+        assert "offset" not in result["data"]
+        stub.plugin._jargon_filter.get_candidates.assert_called_once_with(
+            "g1",
+            limit=2,
+            sort=SortQuery("frequency", "asc"),
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("sort_by", "sort_order", "field"),
+        [
+            ("missing", "asc", "sort_by"),
+            ("score", "DESC", "sort_order"),
+        ],
+    )
+    async def test_rejects_invalid_candidate_sort_before_read(
+        self,
+        sort_by: str,
+        sort_order: str,
+        field: str,
+    ) -> None:
+        stub = _make_stub()
+        mock_req = _make_mock_request(
+            group_id="g1",
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+
+        with patch("core.api.jargon_api.request", mock_req):
+            result = await stub.get_jargon_candidates()
+
+        assert result["code"] == "invalid_query"
+        assert field in result["field_errors"]
+        stub.plugin._jargon_filter.get_candidates.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_no_filter_returns_error(self) -> None:
         stub = _make_stub(has_filter=False, has_store=False)
         mock_req = _make_mock_request(group_id="g1")
@@ -191,7 +241,11 @@ class TestJargonCandidates:
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.get_jargon_candidates()
         assert result["status"] == "ok"
-        stub.plugin._jargon_filter.get_candidates.assert_called_once_with("g1", limit=20)
+        stub.plugin._jargon_filter.get_candidates.assert_called_once_with(
+            "g1",
+            limit=20,
+            sort=SortQuery("score", "desc"),
+        )
         assert len(result["data"]["candidates"]) == 2
 
     @pytest.mark.asyncio
@@ -302,6 +356,60 @@ class TestJargonMeanings:
             "rev-躺平",
         ]
         assert service.revision_for.call_args_list[0].args == (meanings[0],)
+        stub.plugin._jargon_store.list_by_group.assert_awaited_once_with(
+            "g1",
+            confirmed_only=True,
+            sort=SortQuery("updated_at", "desc"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_forwards_meaning_sort_without_offset(self) -> None:
+        stub = _make_stub(meanings=[_make_jargon_meaning()])
+        mock_req = _make_mock_request(
+            group_id="g1",
+            confirmed_only="false",
+            sort_by="term",
+            sort_order="asc",
+        )
+
+        with patch("core.api.jargon_api.request", mock_req):
+            result = await stub.get_jargon_meanings()
+
+        assert result["status"] == "ok"
+        assert "offset" not in result["data"]
+        stub.plugin._jargon_store.list_by_group.assert_awaited_once_with(
+            "g1",
+            confirmed_only=False,
+            sort=SortQuery("term", "asc"),
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("sort_by", "sort_order", "field"),
+        [
+            ("missing", "asc", "sort_by"),
+            ("updated_at", "DESC", "sort_order"),
+        ],
+    )
+    async def test_rejects_invalid_meaning_sort_before_read(
+        self,
+        sort_by: str,
+        sort_order: str,
+        field: str,
+    ) -> None:
+        stub = _make_stub()
+        mock_req = _make_mock_request(
+            group_id="g1",
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+
+        with patch("core.api.jargon_api.request", mock_req):
+            result = await stub.get_jargon_meanings()
+
+        assert result["code"] == "invalid_query"
+        assert field in result["field_errors"]
+        stub.plugin._jargon_store.list_by_group.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_store_returns_error(self) -> None:

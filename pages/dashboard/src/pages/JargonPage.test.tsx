@@ -48,6 +48,7 @@ describe("JargonPage", () => {
   let showToast: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    localStorage.clear();
     bridge = {
       apiGet: vi.fn(),
       apiPost: vi.fn(),
@@ -71,6 +72,11 @@ describe("JargonPage", () => {
       value: undefined,
     });
   });
+
+  async function openCandidateAction(term: string, action: string) {
+    fireEvent.click(screen.getByRole("button", { name: `Row actions ${term}` }));
+    return screen.findByRole("menuitem", { name: action });
+  }
 
   it("shows the same selected group label as the menu option", async () => {
     bridge.apiGet.mockImplementation((path: string) => {
@@ -104,7 +110,12 @@ describe("JargonPage", () => {
         }));
       }
       if (path === "page/jargon/candidates") {
-        expect(params).toEqual({ group_id: "group-1", limit: "50" });
+        expect(params).toEqual({
+          group_id: "group-1",
+          limit: "50",
+          sort_by: "score",
+          sort_order: "desc",
+        });
         return Promise.resolve(ok({
           candidates: [
             {
@@ -135,13 +146,12 @@ describe("JargonPage", () => {
 
     expect(await screen.findByText("$& $$")).toBeTruthy();
     expect(screen.getByText("82%")).toBeTruthy();
-    expect(screen.getByText("$& $$ means a deployment shortcut")).toBeTruthy();
     expect(screen.getAllByText("3").length).toBeGreaterThanOrEqual(1);
     const tabs = screen.getByRole("tablist", { name: "Jargon views" });
     expect(tabs).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Candidates" }).getAttribute("aria-selected")).toBe("true");
 
-    fireEvent.click(screen.getByTitle("Confirm"));
+    fireEvent.click(await openCandidateAction("$& $$", "Confirm"));
 
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/jargon/confirm", {
@@ -167,7 +177,12 @@ describe("JargonPage", () => {
         return Promise.resolve(ok({ candidates: [] }));
       }
       if (path === "page/jargon/meanings") {
-        expect(params).toEqual({ group_id: "group-1", confirmed_only: "false" });
+        expect(params).toEqual({
+          group_id: "group-1",
+          confirmed_only: "false",
+          sort_by: "updated_at",
+          sort_order: "desc",
+        });
         return Promise.resolve(ok({
           meanings: [
             {
@@ -220,6 +235,98 @@ describe("JargonPage", () => {
     expect(screen.getByText("91%")).toBeTruthy();
   });
 
+  it("sorts both jargon tables on the server without offset or pagination", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/groups") {
+        return Promise.resolve(ok({ groups: [{ group_id: "g1" }] }));
+      }
+      if (path === "page/jargon/candidates") {
+        return Promise.resolve(ok({ candidates: [{
+          term: "candidate",
+          group_id: "g1",
+          score: 0.8,
+          frequency: 4,
+          unique_users: 2,
+          first_seen: 10,
+          context_examples: [],
+        }] }));
+      }
+      if (path === "page/jargon/meanings") {
+        return Promise.resolve(ok({ meanings: [{
+          term: "meaning",
+          group_id: "g1",
+          meaning: "expanded meaning",
+          confidence: 0.7,
+          is_jargon: true,
+          is_confirmed: true,
+          is_global: false,
+          is_complete: true,
+          count: 3,
+          last_inference_count: 2,
+          created_at: 10,
+          updated_at: 11,
+          context_examples: [],
+          revision: "rev-1",
+        }] }));
+      }
+      return Promise.resolve(ok({ total_terms: 1, candidate_count: 1, store_confirmed: 1 }));
+    });
+
+    render(<JargonPage showToast={showToast} />);
+    await screen.findByText("candidate");
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/jargon/candidates",
+      {
+        group_id: "g1",
+        limit: "50",
+        sort_by: "score",
+        sort_order: "desc",
+      },
+    ));
+
+    const candidatePreference = localStorage.getItem("memora.table.jargon-candidates.v1");
+    fireEvent.click(screen.getByRole("button", { name: /Sort Frequency ascending/i }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/jargon/candidates",
+      {
+        group_id: "g1",
+        limit: "50",
+        sort_by: "frequency",
+        sort_order: "asc",
+      },
+    ));
+    expect(localStorage.getItem("memora.table.jargon-candidates.v1")).toBe(candidatePreference);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Confirmed" }));
+    expect(await screen.findByText("expanded meaning")).toBeTruthy();
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/jargon/meanings",
+      {
+        group_id: "g1",
+        confirmed_only: "false",
+        sort_by: "updated_at",
+        sort_order: "desc",
+      },
+    ));
+
+    fireEvent.click(screen.getByLabelText("select meaning"));
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    const meaningPreference = localStorage.getItem("memora.table.jargon-meanings.v1");
+    fireEvent.click(screen.getByRole("button", { name: /Sort Count ascending/i }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/jargon/meanings",
+      {
+        group_id: "g1",
+        confirmed_only: "false",
+        sort_by: "count",
+        sort_order: "asc",
+      },
+    ));
+    expect(screen.queryByText("1 selected")).toBeNull();
+    expect(localStorage.getItem("memora.table.jargon-meanings.v1")).toBe(meaningPreference);
+    expect(screen.queryByRole("navigation", { name: /pagination/i })).toBeNull();
+  });
+
   it("starts mining and reports API failures through the toast handler", async () => {
     bridge.apiGet.mockImplementation((path: string) => {
       if (path === "page/groups") {
@@ -255,8 +362,8 @@ describe("JargonPage", () => {
   const showMeanings = async () => { render(<JargonPage showToast={showToast} />); fireEvent.click(await screen.findByRole("tab", { name: "Confirmed" })); await waitFor(() => expect(document.getElementById("jargon-meanings-panel")).toBeTruthy()); };
 
   it("New Jargon appears only in meanings context", async () => { setup(); render(<JargonPage showToast={showToast} />); await screen.findByText("No candidates found"); expect(screen.queryByRole("button", { name: /new jargon/i })).toBeNull(); fireEvent.click(screen.getByRole("tab", { name: "Confirmed" })); expect(await screen.findByRole("button", { name: /new jargon/i })).toBeTruthy(); });
-  it("candidate confirm uses exact body and refetches all resources", async () => { setup(); bridge.apiGet.mockImplementation((path: string) => path === "page/groups" ? Promise.resolve(ok({ groups: [{ group_id: "g1" }] })) : path === "page/jargon/candidates" ? Promise.resolve(ok({ candidates: [{ term: "candidate", group_id: "g1", score: .8, frequency: 2, unique_users: 1, context_examples: [] }] })) : Promise.resolve(ok({ total_terms: 1, candidate_count: 1, store_confirmed: 0 }))); bridge.apiPost.mockResolvedValue(ok({})); render(<JargonPage showToast={showToast} />); await screen.findByText("candidate"); fireEvent.click(screen.getByTitle("Confirm")); await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith("page/jargon/confirm", { term: "candidate", group_id: "g1", confirmed: true })); await waitFor(() => expect(bridge.apiGet.mock.calls.filter(([p]) => ["page/jargon/candidates", "page/jargon/meanings", "page/jargon/stats"].includes(p)).length).toBeGreaterThan(3)); });
-  it("candidate reject uses exact false body", async () => { setup(); bridge.apiGet.mockImplementation((path: string) => path === "page/groups" ? Promise.resolve(ok({ groups: [{ group_id: "g1" }] })) : path === "page/jargon/candidates" ? Promise.resolve(ok({ candidates: [{ term: "reject-me", group_id: "g1", score: .4, frequency: 1, unique_users: 1, context_examples: [] }] })) : Promise.resolve(ok({ total_terms: 1, candidate_count: 1, store_confirmed: 0 }))); bridge.apiPost.mockResolvedValue(ok({})); render(<JargonPage showToast={showToast} />); await screen.findByText("reject-me"); fireEvent.click(screen.getByTitle("Reject")); await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith("page/jargon/confirm", { term: "reject-me", group_id: "g1", confirmed: false })); });
+  it("candidate confirm uses exact body and refetches all resources", async () => { setup(); bridge.apiGet.mockImplementation((path: string) => path === "page/groups" ? Promise.resolve(ok({ groups: [{ group_id: "g1" }] })) : path === "page/jargon/candidates" ? Promise.resolve(ok({ candidates: [{ term: "candidate", group_id: "g1", score: .8, frequency: 2, unique_users: 1, context_examples: [] }] })) : Promise.resolve(ok({ total_terms: 1, candidate_count: 1, store_confirmed: 0 }))); bridge.apiPost.mockResolvedValue(ok({})); render(<JargonPage showToast={showToast} />); await screen.findByText("candidate"); fireEvent.click(await openCandidateAction("candidate", "Confirm")); await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith("page/jargon/confirm", { term: "candidate", group_id: "g1", confirmed: true })); await waitFor(() => expect(bridge.apiGet.mock.calls.filter(([p]) => ["page/jargon/candidates", "page/jargon/meanings", "page/jargon/stats"].includes(p)).length).toBeGreaterThan(3)); });
+  it("candidate reject uses exact false body", async () => { setup(); bridge.apiGet.mockImplementation((path: string) => path === "page/groups" ? Promise.resolve(ok({ groups: [{ group_id: "g1" }] })) : path === "page/jargon/candidates" ? Promise.resolve(ok({ candidates: [{ term: "reject-me", group_id: "g1", score: .4, frequency: 1, unique_users: 1, context_examples: [] }] })) : Promise.resolve(ok({ total_terms: 1, candidate_count: 1, store_confirmed: 0 }))); bridge.apiPost.mockResolvedValue(ok({})); render(<JargonPage showToast={showToast} />); await screen.findByText("reject-me"); fireEvent.click(await openCandidateAction("reject-me", "Reject")); await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith("page/jargon/confirm", { term: "reject-me", group_id: "g1", confirmed: false })); });
   it("stored detail opens with context and remains view-only", async () => { setup(); await showMeanings(); fireEvent.click(screen.getByRole("button", { name: "view term" })); expect(await screen.findByText("term context")).toBeTruthy(); expect(screen.queryByRole("textbox", { name: "Meaning" })).toBeNull(); });
   it("create sends full draft defaults and returned entity revision", async () => { setup([]); bridge.apiPost.mockResolvedValue(ok({ entity: meaning("new", "r2"), revision: "r2" })); await showMeanings(); fireEvent.click(screen.getByRole("button", { name: /new jargon/i })); expect(screen.getByRole("switch", { name: "Is jargon" }).getAttribute("aria-checked")).toBe("true"); expect(screen.getByRole("switch", { name: "Is confirmed" }).getAttribute("aria-checked")).toBe("true"); expect(screen.getByRole("switch", { name: "Is global" }).getAttribute("aria-checked")).toBe("false"); fireEvent.change(screen.getByLabelText("Term"), { target: { value: "new" } }); fireEvent.change(screen.getByLabelText("Meaning"), { target: { value: "new meaning" } }); fireEvent.click(screen.getByRole("button", { name: "Create" })); await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith("page/jargon/create", { term: "new", group_id: "g1", meaning: "new meaning", confidence: 0, is_jargon: true, is_confirmed: true, is_global: false })); });
   it("create failure retains full draft and visible error", async () => { setup([]); bridge.apiPost.mockRejectedValue(new Error("offline")); await showMeanings(); fireEvent.click(screen.getByRole("button", { name: /new jargon/i })); fireEvent.change(screen.getByLabelText("Term"), { target: { value: "draft" } }); fireEvent.change(screen.getByLabelText("Meaning"), { target: { value: "draft meaning" } }); fireEvent.click(screen.getByRole("button", { name: "Create" })); await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("offline")); expect(screen.getByDisplayValue("draft")).toBeTruthy(); });
@@ -303,13 +410,15 @@ describe("JargonPage", () => {
     bridge.apiPost.mockReturnValueOnce(request.promise).mockRejectedValueOnce(new Error("confirm offline"));
     render(<JargonPage showToast={showToast} />);
     await screen.findByText("candidate");
-    fireEvent.click(screen.getByTitle("Confirm"));
-    fireEvent.click(screen.getByTitle("Reject"));
+    fireEvent.click(await openCandidateAction("candidate", "Confirm"));
+    const disabledReject = await openCandidateAction("candidate", "Reject");
+    expect(disabledReject.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(disabledReject);
     await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledTimes(1));
-    expect((screen.getByTitle("Confirm") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
     request.resolve(ok({}));
     await waitFor(() => expect(showToast).toHaveBeenCalled());
-    fireEvent.click(screen.getByTitle("Confirm"));
+    fireEvent.click(await openCandidateAction("candidate", "Confirm"));
     await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledTimes(2));
   });
 

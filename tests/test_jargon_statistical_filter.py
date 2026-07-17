@@ -7,8 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from core.base.list_sorting import SortQuery
 from core.jargon.models import JargonCandidate, JargonStats
-from core.jargon.statistical_filter import JargonStatisticalFilter
+from core.jargon.statistical_filter import (
+    JARGON_CANDIDATE_SORT_FIELDS,
+    JargonStatisticalFilter,
+)
 
 
 class TestUpdate:
@@ -246,6 +250,29 @@ class TestGetCandidates:
 
         candidates = f.get_candidates("g1", limit=3)
         assert len(candidates) <= 3
+
+    def test_sorts_full_candidate_set_before_applying_limit(self) -> None:
+        f = JargonStatisticalFilter()
+        f._group_term_freq["g1"].update(
+            {"high-frequency": 9, "middle-frequency": 6, "low-frequency": 3}
+        )
+        for term in f._group_term_freq["g1"]:
+            f._user_term_freq["g1"][term]["user-1"] = 1
+            f._term_first_seen["g1"][term] = 100.0
+
+        with patch.object(f, "_calc_burst_score", return_value=1.0):
+            candidates = f.get_candidates(
+                "g1",
+                limit=2,
+                sort=SortQuery("frequency", "asc"),
+            )
+
+        assert [candidate.frequency for candidate in candidates] == [3, 6]
+
+    def test_exposes_only_the_approved_candidate_sort_fields(self) -> None:
+        assert JARGON_CANDIDATE_SORT_FIELDS == frozenset(
+            {"term", "score", "frequency", "unique_users", "first_seen"}
+        )
 
     def test_returns_jargon_candidate_objects(self) -> None:
         f = JargonStatisticalFilter()

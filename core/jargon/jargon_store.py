@@ -23,6 +23,7 @@ from ..base.entity_editing import (
     EntityValidationError,
     compute_entity_revision,
 )
+from ..base.list_sorting import SortQuery, order_by_clause
 from ..storage.base_store import BaseStore
 from .models import JargonMeaning
 
@@ -55,6 +56,14 @@ _JARGON_TERM_INDEX = (
     "CREATE INDEX IF NOT EXISTS idx_jargon_terms_group "
     "ON jargon_terms(group_id, term);"
 )
+
+JARGON_MEANING_SORT_COLUMNS = {
+    "term": "term COLLATE NOCASE",
+    "confidence": "confidence",
+    "count": "count",
+    "created_at": "created_at",
+    "updated_at": "updated_at",
+}
 
 
 def _meaning_revision_payload(meaning: JargonMeaning) -> dict[str, Any]:
@@ -381,22 +390,31 @@ class JargonStore(BaseStore):
         return self._row_to_meaning(row)
 
     async def list_by_group(
-        self, group_id: str, confirmed_only: bool = True
+        self,
+        group_id: str,
+        confirmed_only: bool = True,
+        sort: SortQuery = SortQuery("updated_at", "desc"),
     ) -> list[JargonMeaning]:
         """列出群组所有黑话。
 
         Args:
             group_id: 群组 ID。
             confirmed_only: 若 True 则仅返回已确认的条目。
+            sort: 经过白名单校验的单列排序定义。
 
         Returns:
             该群组所有匹配的 JargonMeaning 列表。
         """
-        rows = await self._fetch_all(
-            "SELECT * FROM jargon_terms WHERE group_id = ?"
-            + (" AND is_confirmed = 1" if confirmed_only else ""),
-            (group_id,),
+        order_by = order_by_clause(
+            sort,
+            columns=JARGON_MEANING_SORT_COLUMNS,
+            tie_breaker="term",
         )
+        query = "SELECT * FROM jargon_terms WHERE group_id = ?"
+        if confirmed_only:
+            query += " AND is_confirmed = 1"
+        query += f" ORDER BY {order_by}"
+        rows = await self._fetch_all(query, (group_id,))
         return [self._row_to_meaning(r) for r in rows]
 
     async def search(
