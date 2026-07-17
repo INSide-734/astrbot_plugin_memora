@@ -219,6 +219,7 @@ describe("DataTable", () => {
       JSON.parse(localStorage.getItem("memora.table.controls.v1") ?? "null")
         .columnVisibility.category,
     ).toBe(false);
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Category" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Move Updated left" }));
     const movedPreferences = JSON.parse(
@@ -227,12 +228,73 @@ describe("DataTable", () => {
     expect(movedPreferences.columnOrder.indexOf("updated")).toBeLessThan(
       movedPreferences.columnOrder.indexOf("category"),
     );
+    let headers = screen.getAllByRole("columnheader");
+    expect(
+      headers.indexOf(screen.getByRole("columnheader", { name: /Updated/ })),
+    ).toBeLessThan(
+      headers.indexOf(screen.getByRole("columnheader", { name: /Category/ })),
+    );
+    let columnOptions = screen.getAllByRole("menuitemcheckbox");
+    expect(
+      columnOptions.indexOf(
+        screen.getByRole("menuitemcheckbox", { name: "Updated" }),
+      ),
+    ).toBeLessThan(
+      columnOptions.indexOf(
+        screen.getByRole("menuitemcheckbox", { name: "Category" }),
+      ),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Pin Updated right" }));
     expect(screen.getByRole("button", { name: "Unpin Updated" })).toBeTruthy();
     expect(
       JSON.parse(localStorage.getItem("memora.table.controls.v1") ?? "null")
         .columnPinning.right,
     ).toContain("updated");
+    fireEvent.click(screen.getByRole("button", { name: "Move Updated left" }));
+    headers = screen.getAllByRole("columnheader");
+    expect(
+      headers.indexOf(screen.getByRole("columnheader", { name: /Updated/ })),
+    ).toBeLessThan(
+      headers.indexOf(screen.getByRole("columnheader", { name: /Actions/ })),
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Move Updated left" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    columnOptions = screen.getAllByRole("menuitemcheckbox");
+    expect(
+      columnOptions.indexOf(
+        screen.getByRole("menuitemcheckbox", { name: "Category" }),
+      ),
+    ).toBeLessThan(
+      columnOptions.indexOf(
+        screen.getByRole("menuitemcheckbox", { name: "Updated" }),
+      ),
+    );
+    expect(
+      columnOptions.indexOf(
+        screen.getByRole("menuitemcheckbox", { name: "Updated" }),
+      ),
+    ).toBeLessThan(
+      columnOptions.indexOf(
+        screen.getByRole("menuitemcheckbox", { name: "Actions" }),
+      ),
+    );
+
+    const preferencesBeforeCrossPartitionDrop = JSON.parse(
+      localStorage.getItem("memora.table.controls.v1") ?? "null",
+    );
+    const categoryOption = screen
+      .getByRole("menuitemcheckbox", { name: "Category" })
+      .closest("[draggable='true']");
+    expect(categoryOption).toBeTruthy();
+    fireEvent.drop(categoryOption as Element, {
+      dataTransfer: { getData: () => "updated" },
+    });
+    expect(
+      JSON.parse(localStorage.getItem("memora.table.controls.v1") ?? "null"),
+    ).toEqual(preferencesBeforeCrossPartitionDrop);
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Compact" }));
     expect(screen.getByRole("table").getAttribute("data-density")).toBe("compact");
     expect(
