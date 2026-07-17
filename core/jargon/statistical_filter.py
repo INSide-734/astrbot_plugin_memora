@@ -13,13 +13,14 @@
 from __future__ import annotations
 
 import math
+from operator import attrgetter
 import re
 import time
 from collections import defaultdict
-from typing import Any
 
 from astrbot.api import logger
 
+from ..base.list_sorting import SortQuery
 from .models import JargonCandidate, JargonStats
 
 # ---------------------------------------------------------------------------
@@ -48,6 +49,13 @@ _WEIGHT_CONCENTRATION = 0.3
 
 # 候选词最低综合评分阈值
 _CANDIDATE_SCORE_THRESHOLD = 0.35
+
+JARGON_CANDIDATE_SORT_FIELDS = frozenset(
+    {"term", "score", "frequency", "unique_users", "first_seen"}
+)
+_CANDIDATE_SORT_GETTERS = {
+    field: attrgetter(field) for field in JARGON_CANDIDATE_SORT_FIELDS
+}
 
 # 常见中文词/虚词 frozenset（在 stopword 检查中使用）
 _STOPWORDS: frozenset[str] = frozenset(
@@ -341,7 +349,11 @@ class JargonStatisticalFilter:
                 ctx_list.append(text)
 
     def get_candidates(
-        self, group_id: str, limit: int = 20, exclude_terms: set[str] | None = None
+        self,
+        group_id: str,
+        limit: int = 20,
+        exclude_terms: set[str] | None = None,
+        sort: SortQuery = SortQuery("score", "desc"),
     ) -> list[JargonCandidate]:
         """为指定群组返回 Top N 候选黑话词（按综合评分降序）。
 
@@ -354,17 +366,24 @@ class JargonStatisticalFilter:
             group_id: 要分析的群组。
             limit: 最多返回候选数。
             exclude_terms: 要排除的 term 集合（如已确认的黑话）。
+            sort: 经过白名单校验的单列排序定义。
 
         返回:
-            按 score 降序排列的 JargonCandidate 列表。
+            按指定字段排序后的 JargonCandidate 列表。
         """
+        sort_key = _CANDIDATE_SORT_GETTERS.get(sort.by)
+        if sort_key is None:
+            raise ValueError("sort_by is not supported")
+        if sort.order not in {"asc", "desc"}:
+            raise ValueError("sort_order must be asc or desc")
+
         group_freq = self._group_term_freq.get(group_id)
         if not group_freq:
             return []
 
         exclude = exclude_terms or set()
         num_groups = max(len(self._group_term_freq), 1)
-        candidates: list[dict[str, Any]] = []
+        candidates: list[JargonCandidate] = []
 
         for term, freq in group_freq.items():
             if freq < _MIN_FREQUENCY:
@@ -404,35 +423,22 @@ class JargonStatisticalFilter:
             )
 
             candidates.append(
-                {
-                    "term": term,
-                    "score": round(score, 4),
-                    "frequency": freq,
-                    "unique_users": unique_users,
-                    "idf_score": round(idf, 4),
-                    "burst_score": round(burst_score, 4),
-                    "concentration_score": round(concentration, 4),
-                    "first_seen": first_seen,
-                    "context_examples": ctx_list,
-                }
+                JargonCandidate(
+                    term=term,
+                    group_id=group_id,
+                    score=round(score, 4),
+                    frequency=freq,
+                    unique_users=unique_users,
+                    idf_score=round(idf, 4),
+                    burst_score=round(burst_score, 4),
+                    concentration_score=round(concentration, 4),
+                    first_seen=first_seen,
+                    context_examples=ctx_list,
+                )
             )
 
-        candidates.sort(key=lambda x: x["score"], reverse=True)
-        return [
-            JargonCandidate(
-                term=c["term"],
-                group_id=group_id,
-                score=c["score"],
-                frequency=c["frequency"],
-                unique_users=c["unique_users"],
-                idf_score=c["idf_score"],
-                burst_score=c["burst_score"],
-                concentration_score=c["concentration_score"],
-                first_seen=c["first_seen"],
-                context_examples=c["context_examples"],
-            )
-            for c in candidates[:limit]
-        ]
+        candidates.sort(key=sort_key, reverse=sort.order == "desc")
+        return candidates[:limit]
 
     def get_stats(self, group_id: str) -> JargonStats:
         """获取群组统计摘要。
@@ -612,5 +618,6 @@ class JargonStatisticalFilter:
 
 
 __all__ = [
+    "JARGON_CANDIDATE_SORT_FIELDS",
     "JargonStatisticalFilter",
 ]
