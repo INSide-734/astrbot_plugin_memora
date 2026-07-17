@@ -41,12 +41,15 @@ def order_by_clause(
     columns: Mapping[str, str],
     tie_breaker: str,
 ) -> str:
-    """Build an ORDER BY fragment from fixed SQL expressions only."""
+    """Build an ORDER BY fragment from keys in a fixed SQL-expression mapping."""
     column = columns.get(sort.by)
     if column is None:
         raise ValueError("sort_by is not supported")
     if sort.order not in {"asc", "desc"}:
         raise ValueError("sort_order must be asc or desc")
+    tie_breaker_column = columns.get(tie_breaker)
+    if tie_breaker_column is None:
+        raise ValueError("tie_breaker is not supported")
 
     direction = "ASC" if sort.order == "asc" else "DESC"
-    return f"{column} {direction}, {tie_breaker} ASC"
+    return f"{column} {direction}, {tie_breaker_column} ASC"
