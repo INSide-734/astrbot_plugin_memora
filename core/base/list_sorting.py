@@ -45,6 +45,8 @@ def order_by_clause(
     column = columns.get(sort.by)
     if column is None:
         raise ValueError("sort_by is not supported")
+    if sort.order not in {"asc", "desc"}:
+        raise ValueError("sort_order must be asc or desc")
 
     direction = "ASC" if sort.order == "asc" else "DESC"
     return f"{column} {direction}, {tie_breaker} ASC"
