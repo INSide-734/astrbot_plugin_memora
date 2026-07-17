@@ -183,6 +183,20 @@ class TestKnowledgeStoreSearch:
         assert total == 3
 
     @pytest.mark.asyncio
+    async def test_list_entries_uses_id_as_the_stable_tie_breaker(self, tmp_db_path):
+        store = KnowledgeStore(tmp_db_path)
+        await store.init_table()
+
+        first_id = await store.insert(_make_entry(title="Same title"))
+        second_id = await store.insert(_make_entry(title="Same title"))
+
+        results, _ = await store.list_entries(
+            sort=SortQuery("title", "asc"),
+        )
+
+        assert [entry.entry_id for entry in results] == [first_id, second_id]
+
+    @pytest.mark.asyncio
     async def test_search_sorts_matches_before_limit(self, tmp_db_path):
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()

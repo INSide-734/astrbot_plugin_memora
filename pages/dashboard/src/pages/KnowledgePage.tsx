@@ -89,9 +89,11 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeEntry | null>(null);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const listRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
 
   const fetchEntries = useCallback(async () => {
+    const requestId = ++listRequestRef.current;
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -110,12 +112,14 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
         if (category) searchParams.set("category", category);
         const res = unwrapApiData(await apiRequest(`knowledge/search?${searchParams.toString()}`));
         const nextEntries = (res.entries ?? res.items ?? []) as KnowledgeEntry[];
+        if (requestId !== listRequestRef.current) return;
         setEntries(nextEntries);
         setTotal(Number(res.total ?? nextEntries.length));
       } else {
         const res = unwrapApiData(await apiRequest(`knowledge?${params.toString()}`));
         const nextEntries = (res.entries ?? res.items ?? []) as KnowledgeEntry[];
         const nextTotal = Number(res.total ?? nextEntries.length);
+        if (requestId !== listRequestRef.current) return;
         if (page > 0 && nextEntries.length === 0 && nextTotal <= page * PAGE_SIZE) {
           setSelected(new Set());
           setTotal(nextTotal);
@@ -125,7 +129,11 @@ export function KnowledgePage({ showToast, navigationTarget, onDirtyChange }: Kn
         setEntries(nextEntries);
         setTotal(nextTotal);
       }
-    } catch (e) { showToast(String(e), true); } finally { setLoading(false); }
+    } catch (e) {
+      if (requestId === listRequestRef.current) showToast(String(e), true);
+    } finally {
+      if (requestId === listRequestRef.current) setLoading(false);
+    }
   }, [search, category, page, showToast, sort]);
 
   useEffect(() => { fetchEntries(); }, [fetchEntries]);

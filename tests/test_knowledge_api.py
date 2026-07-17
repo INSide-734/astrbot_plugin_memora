@@ -89,7 +89,7 @@ class TestKnowledgeValidation:
             r = await _make_mixin().search_knowledge()
         assert r["status"] == "error"
         assert r["code"] == "invalid_query"
-        assert r["field_errors"]["sort_by"] == "sort_order must be asc or desc"
+        assert r["field_errors"]["sort_order"] == "sort_order must be asc or desc"
 
     @pytest.mark.asyncio
     async def test_get_detail_missing_id(self) -> None:
