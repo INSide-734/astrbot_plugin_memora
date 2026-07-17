@@ -43,3 +43,10 @@ def test_order_clause_uses_only_allowlisted_columns_and_stable_tie_breaker() -> 
         order_by_clause(sort, columns=ALLOWED, tie_breaker="id")
         == "title COLLATE NOCASE ASC, id ASC"
     )
+
+
+def test_order_clause_rejects_a_sort_query_with_an_invalid_direction() -> None:
+    sort = SortQuery("title", "sideways")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="sort_order"):
+        order_by_clause(sort, columns=ALLOWED, tie_breaker="id")
