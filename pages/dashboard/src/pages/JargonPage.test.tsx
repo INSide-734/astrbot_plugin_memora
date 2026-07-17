@@ -72,6 +72,22 @@ describe("JargonPage", () => {
     });
   });
 
+  it("shows the same selected group label as the menu option", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/groups") return Promise.resolve(ok({ groups: [{ group_id: "group-1", message_count: 12 }] }));
+      if (path === "page/jargon/candidates") return Promise.resolve(ok({ candidates: [] }));
+      if (path === "page/jargon/meanings") return Promise.resolve(ok({ meanings: [] }));
+      return Promise.resolve(ok({ total_terms: 0, candidate_count: 0, store_confirmed: 0 }));
+    });
+
+    render(<JargonPage showToast={showToast} />);
+
+    const trigger = screen.getByRole("combobox");
+    await waitFor(() => expect(trigger.textContent).toContain("group-1 (12)"));
+    fireEvent.click(trigger);
+    expect((await screen.findByRole("option", { name: "group-1 (12)" })).textContent).toContain("group-1 (12)");
+  });
+
   it("loads stats and candidate rows, then confirms a candidate", async () => {
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/groups") {
