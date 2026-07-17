@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from astrbot.api import logger
 
 from ..base.entity_editing import EntityValidationError, compute_entity_revision
+from ..base.list_sorting import SortQuery
 from .models import (
     AffectionLevel,
     BotMood,
@@ -299,12 +300,19 @@ class AffectionManager:
             self.DEFAULT_INTENSITY,
         )
 
-    async def get_mood_history(self, group_id: Any, limit: Any = 20) -> list[BotMood]:
+    async def get_mood_history(
+        self,
+        group_id: Any,
+        limit: Any = 20,
+        sort: SortQuery = SortQuery("start_time", "desc"),
+    ) -> list[BotMood]:
         """返回按最新优先排序的已持久化情绪历史。"""
         normalized_group_id = self._normalize_identity(group_id, "group_id")
         normalized_limit = self._normalize_pagination(limit, "limit", minimum=1)
         records = await self._store.get_mood_history(
-            normalized_group_id, limit=normalized_limit
+            normalized_group_id,
+            limit=normalized_limit,
+            sort=sort,
         )
         return [
             mood
@@ -372,14 +380,21 @@ class AffectionManager:
         )
 
     async def list_user_affections(
-        self, group_id: Any, limit: Any = 50, offset: Any = 0
+        self,
+        group_id: Any,
+        limit: Any = 50,
+        offset: Any = 0,
+        sort: SortQuery = SortQuery("affection_score", "desc"),
     ) -> tuple[list[UserAffection], int]:
         """分页列出群组用户好感度，使用稳定的存储排序。"""
         normalized_group_id = self._normalize_identity(group_id, "group_id")
         normalized_limit = self._normalize_pagination(limit, "limit", minimum=1)
         normalized_offset = self._normalize_pagination(offset, "offset", minimum=0)
         records, total = await self._store.list_affections(
-            normalized_group_id, normalized_limit, normalized_offset
+            normalized_group_id,
+            normalized_limit,
+            normalized_offset,
+            sort=sort,
         )
         return [self._affection_from_record(record) for record in records], total
 
