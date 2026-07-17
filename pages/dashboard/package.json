@@ -10,7 +10,7 @@
     "smoke:runtime": "node scripts/runtime_smoke.mjs",
     "smoke:browser": "node scripts/browser_smoke.mjs",
     "preview": "vite preview",
-    "test": "vitest run --environment jsdom",
+    "test": "vitest run --environment jsdom --maxWorkers=4",
     "test:watch": "vitest --environment jsdom"
   },
   "dependencies": {
