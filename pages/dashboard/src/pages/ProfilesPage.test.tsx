@@ -32,6 +32,7 @@ describe("ProfilesPage", () => {
   let showToast: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    localStorage.clear();
     bridge = {
       apiGet: vi.fn(),
       apiPost: vi.fn(),
@@ -106,6 +107,78 @@ describe("ProfilesPage", () => {
     expect(localeSpy).toHaveBeenCalledWith("en-US");
     expect(screen.getByRole("navigation", { name: "Pagination" })).toBeTruthy();
     expect(screen.queryByRole("toolbar")).toBeNull();
+  });
+
+  it("recovers corrupt table preferences with required and pinned profile columns", async () => {
+    localStorage.setItem("memora.table.profiles.v1", "{not-json");
+    bridge.apiGet.mockResolvedValue(ok({
+      total: 1,
+      profiles: [{ user_id: "alice", display_name: "Alice" }],
+    }));
+
+    render(<ProfilesPage showToast={showToast} />);
+
+    expect(await screen.findByText("Alice")).toBeTruthy();
+    const actionsHeader = screen.getByRole("columnheader", { name: /Row actions$/ });
+    expect(actionsHeader.style.position).toBe("sticky");
+    expect(actionsHeader.style.right).toBe("0px");
+
+    fireEvent.click(screen.getByRole("button", { name: "Table view" }));
+    const userIdOption = screen.getByRole("menuitemcheckbox", { name: "User ID" });
+    expect(userIdOption.getAttribute("aria-checked")).toBe("true");
+    expect(userIdOption.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("button", { name: "Unpin Row actions" })).toBeTruthy();
+  });
+
+  it("isolates profile row view, edit, and delete actions from row activation", async () => {
+    bridge.apiGet.mockImplementation((path: string) => Promise.resolve(ok(
+      path === "page/profiles/detail"
+        ? {
+            user_id: "alice",
+            display_name: "Alice",
+            revision: "rev-1",
+            preferences: {},
+            tags: [],
+          }
+        : {
+            total: 1,
+            profiles: [{ user_id: "alice", display_name: "Alice", revision: "rev-1" }],
+          },
+    )));
+    const detailCalls = () => bridge.apiGet.mock.calls.filter(
+      ([path]) => path === "page/profiles/detail",
+    );
+
+    render(<ProfilesPage showToast={showToast} />);
+
+    const row = (await screen.findByText("Alice")).closest("tr");
+    expect(row).not.toBeNull();
+    const openActions = () => fireEvent.click(
+      within(row as HTMLElement).getByRole("button", { name: "Alice" }),
+    );
+
+    openActions();
+    expect(detailCalls()).toHaveLength(0);
+    fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await waitFor(() => expect(detailCalls()).toHaveLength(1));
+    let drawer = await screen.findByRole("dialog", { name: "Profile: Alice" });
+    fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Profile: Alice" })).toBeNull());
+    await waitFor(() => expect(document.querySelector("[data-base-ui-inert]")).toBeNull());
+
+    openActions();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+    await waitFor(() => expect(detailCalls()).toHaveLength(2));
+    drawer = await screen.findByRole("dialog", { name: "Profile: Alice" });
+    expect((within(drawer).getByLabelText("Name") as HTMLInputElement).disabled).toBe(false);
+    fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Profile: Alice" })).toBeNull());
+    await waitFor(() => expect(document.querySelector("[data-base-ui-inert]")).toBeNull());
+
+    openActions();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(await screen.findAllByText("Delete Profile")).toHaveLength(2);
+    expect(detailCalls()).toHaveLength(2);
   });
 
   it("counts canonical tags without tag_count", async () => {
