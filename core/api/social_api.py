@@ -17,6 +17,8 @@ from ..base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
+from ..base.list_sorting import parse_sort_query
+from ..social.relation_store import SOCIAL_SORT_COLUMNS
 from .editing_utils import (
     conflict_error,
     entity_ok,
@@ -232,6 +234,16 @@ def _validation_error(exc: EntityValidationError) -> dict[str, Any]:
     )
 
 
+def _sort_query_error(exc: ValueError) -> dict[str, Any]:
+    message = str(exc)
+    field = "sort_order" if message == "sort_order must be asc or desc" else "sort_by"
+    return error_response(
+        message,
+        code="invalid_query",
+        field_errors={field: message},
+    )
+
+
 def _component_unavailable() -> dict[str, Any]:
     return error_response("关系管理器不可用", code="component_unavailable")
 
@@ -376,12 +388,23 @@ class SocialApiMixin:
         args = request.args
         group_id = (args.get("group_id", "") or "").strip()
         category = (args.get("category", "") or "").strip().lower()
+        try:
+            sort = parse_sort_query(
+                args,
+                allowed=SOCIAL_SORT_COLUMNS,
+                default_by="last_interaction",
+                default_order="desc",
+            )
+        except ValueError as exc:
+            return _sort_query_error(exc)
 
         try:
             if group_id:
-                relations = manager.get_relations_by_group(group_id)
+                relations = manager.get_relations_by_group(group_id, sort=sort)
             else:
-                relations = manager.list_all() if hasattr(manager, "list_all") else []
+                relations = (
+                    manager.list_all(sort=sort) if hasattr(manager, "list_all") else []
+                )
             if inspect.isawaitable(relations):
                 relations = await relations
 
