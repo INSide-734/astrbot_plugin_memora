@@ -8,6 +8,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 
+import { PageToolbar } from "@/components/layout/PageLayout";
 import { Button } from "@/components/ui/Button";
 import {
   Field,
@@ -218,8 +219,11 @@ function DecisionFilters({
   };
 
   return (
-    <div className="min-w-0 space-y-4 rounded-lg border p-4">
-      <FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <PageToolbar
+      aria-label={t("injection.tabs.decisions")}
+      className="h-auto items-start"
+    >
+      <FieldGroup className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Field data-invalid={invalidRange}>
           <FieldLabel htmlFor="injection-filter-from">
             {t("injection.filter.from")}
@@ -310,13 +314,17 @@ function DecisionFilters({
           t={t}
         />
       </FieldGroup>
-      <div className="flex justify-end">
-        <Button type="button" variant="outline" size="sm" onClick={clear}>
-          <RotateCcw data-icon="inline-start" />
-          {t("injection.actions.clearFilters")}
-        </Button>
-      </div>
-    </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="self-end"
+        onClick={clear}
+      >
+        <RotateCcw data-icon="inline-start" />
+        {t("injection.actions.clearFilters")}
+      </Button>
+    </PageToolbar>
   );
 }
 
@@ -539,32 +547,34 @@ export function InjectionDecisionsTab({
   return (
     <section
       aria-label={t("injection.tabs.decisions")}
-      className="flex min-w-0 flex-col gap-5"
+      className="flex min-w-0 flex-col"
     >
       <DecisionFilters decisions={decisions} t={t} />
-      {!catalog || decisions.status === "loading" ? (
-        <DecisionTableLoading t={t} />
-      ) : decisions.status === "error" ? (
-        <StatePanel
-          state="error"
-          title={t("injection.state.error")}
-          description={decisions.error ?? undefined}
-          actionLabel={t("common.retry")}
-          onAction={() => { void decisions.refresh(); }}
-        />
-      ) : !decisions.page || decisions.page.items.length === 0 ? (
-        <StatePanel state="empty" title={t("injection.state.empty")} />
-      ) : (
-        <>
-          <DecisionTable
-            decisions={decisions}
-            locale={locale}
-            onOpenDecision={onOpenDecision}
-            t={t}
+      <div className="flex min-w-0 flex-col gap-5 px-4 py-4 sm:px-5 sm:py-5 lg:px-6 lg:py-6">
+        {!catalog || decisions.status === "loading" ? (
+          <DecisionTableLoading t={t} />
+        ) : decisions.status === "error" ? (
+          <StatePanel
+            state="error"
+            title={t("injection.state.error")}
+            description={decisions.error ?? undefined}
+            actionLabel={t("common.retry")}
+            onAction={() => { void decisions.refresh(); }}
           />
-          <DecisionPagination decisions={decisions} t={t} />
-        </>
-      )}
+        ) : !decisions.page || decisions.page.items.length === 0 ? (
+          <StatePanel state="empty" title={t("injection.state.empty")} />
+        ) : (
+          <>
+            <DecisionTable
+              decisions={decisions}
+              locale={locale}
+              onOpenDecision={onOpenDecision}
+              t={t}
+            />
+            <DecisionPagination decisions={decisions} t={t} />
+          </>
+        )}
+      </div>
     </section>
   );
 }

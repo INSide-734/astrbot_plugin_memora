@@ -302,11 +302,49 @@ describe("InjectionStrategyPage", () => {
     cleanup();
   });
 
-  it("uses the standard page frame and protects a dirty configuration tab", () => {
+  it("uses a dense frame with one vertical scroll owner and per-tab widths", () => {
     renderPage();
-    expect(
-      screen.getByLabelText("injection.title").getAttribute("data-layout"),
-    ).toBe("standard");
+
+    const frame = screen.getByLabelText("injection.title");
+    expect(frame.getAttribute("data-layout")).toBe("dense");
+    expect(frame.querySelector('[data-slot="page-header"]')?.className)
+      .toContain("shrink-0");
+    expect(screen.getByRole("tablist", {
+      name: "injection.tabs.label",
+    }).parentElement?.className).toContain("shrink-0");
+
+    const overviewPanel = document.getElementById("injection-panel-overview");
+    expect(overviewPanel?.classList.contains("flex")).toBe(true);
+    expect(overviewPanel?.classList.contains("flex-col")).toBe(true);
+    expect(overviewPanel?.className).toContain("overflow-hidden");
+    expect(overviewPanel?.className).not.toContain("overflow-auto");
+    const overviewContent = overviewPanel?.querySelector(
+      '[data-slot="page-content"]',
+    );
+    expect(overviewContent?.className).toContain("overflow-auto");
+    expect(overviewContent?.className).toContain("max-w-[1440px]");
+
+    fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.config" }));
+    const configPanel = document.getElementById("injection-panel-config");
+    expect(configPanel?.className).toContain("overflow-hidden");
+    expect(configPanel?.querySelector('[data-slot="page-content"]')?.className)
+      .toContain("max-w-[1440px]");
+
+    fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.decisions" }));
+    const decisionsPanel = document.getElementById("injection-panel-decisions");
+    const decisionsContent = decisionsPanel?.querySelector(
+      '[data-slot="page-content"]',
+    );
+    expect(decisionsPanel?.className).toContain("overflow-hidden");
+    expect(decisionsContent?.className).toContain("overflow-auto");
+    expect(decisionsContent?.className).not.toContain("max-w-[1440px]");
+    expect(within(decisionsPanel as HTMLElement).getByRole("toolbar", {
+      name: "injection.tabs.decisions",
+    }).getAttribute("data-slot")).toBe("page-toolbar");
+  });
+
+  it("protects a dirty configuration tab", () => {
+    renderPage();
 
     fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.config" }));
     hooks.config.dirty = true;
