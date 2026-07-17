@@ -35,6 +35,7 @@ const SCREENSHOT_BASELINES = {
   "injection-config-conflict.png": { width: 1366, height: 900, minBytes: 10_000 },
   "injection-decisions.png": { width: 1366, height: 900, minBytes: 10_000 },
   "mobile-injection-detail.png": { width: 390, height: 844, minBytes: 10_000 },
+  "wide-injection-overview.png": { width: 2048, height: 1152, minBytes: 10_000 },
   "global-search-scroll.png": { width: 1366, height: 900, minBytes: 10_000 },
   "global-search-memory-target.png": { width: 1366, height: 900, minBytes: 10_000 },
   "graph.png": { width: 1366, height: 900, minBytes: 10_000 },
@@ -290,6 +291,7 @@ function recallTraceDetailPayload(traceId = "trace-smoke-coffee") {
     created_at: 1_782_000_000,
     metadata: { provider: "mock", chat_type: "private" },
   };
+}
 function cloneJson(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
@@ -546,6 +548,22 @@ async function launchBrowser() {
 
 function bridgePayload(endpoint, params = {}, method = "GET") {
   const pathOnly = String(endpoint || "").replace(/^page\/?/, "");
+  if (pathOnly === "config/schema") {
+    return {
+      plugin_name: "astrbot_plugin_memora",
+      schema: {},
+      provider_options: { llm: [], embedding: [] },
+      capabilities: { hot_reload: true },
+    };
+  }
+  if (pathOnly === "config/state") {
+    return {
+      changed: params.revision !== "browser-smoke-config",
+      config: {},
+      revision: "browser-smoke-config",
+      instance_id: "browser-smoke-instance",
+    };
+  }
   if (pathOnly === "injection-strategy/catalog") return injectionCatalogPayload();
   if (pathOnly === "injection-strategy/summary") return injectionSummaryPayload(params);
   if (pathOnly === "injection-strategy/decisions") return injectionDecisionPagePayload(params);
@@ -1941,14 +1959,33 @@ async function getBrowserBridgeCalls(page) {
 }
 
 async function waitForInjectionSettled(page, label) {
-  await page.waitForFunction(
-    (loadingTexts) => {
-      const text = document.querySelector("#root")?.innerText ?? "";
-      return loadingTexts.every((item) => !text.includes(item));
-    },
-    ROUTE_LOADING_TEXT,
-    { timeout: 10_000 },
-  );
+  try {
+    await page.waitForFunction(
+      (loadingTexts) => {
+        const root = document.querySelector("#root");
+        const text = root?.innerText ?? "";
+        return loadingTexts.every((item) => !text.includes(item))
+          && !root?.querySelector('[data-slot="skeleton"]');
+      },
+      ROUTE_LOADING_TEXT,
+      { timeout: 10_000 },
+    );
+  } catch (error) {
+    const state = await page.evaluate((loadingTexts) => {
+      const root = document.querySelector("#root");
+      const text = root?.innerText ?? "";
+      return {
+        loadingText: loadingTexts.filter((item) => text.includes(item)),
+        skeletons: [...(root?.querySelectorAll('[data-slot="skeleton"]') ?? [])]
+          .map((element) => element.getAttribute("class")),
+        calls: (window.__memoraBridgeCalls ?? []).map((call) => ({
+          endpoint: call.endpoint,
+          method: call.method,
+        })),
+      };
+    }, ROUTE_LOADING_TEXT);
+    throw new Error(`${label} did not settle: ${JSON.stringify(state)}`, { cause: error });
+  }
   const rootText = await page.locator("#root").innerText();
   const lingering = ROUTE_LOADING_TEXT.filter((item) => rootText.includes(item));
   if (lingering.length > 0) {
@@ -2030,17 +2067,40 @@ async function runInjectionStrategySmoke(page, screenshotsDir) {
     undefined,
     { timeout: 5_000 },
   );
-  await page.waitForFunction(
-    () => {
-      const traceCalls = (window.__memoraBridgeCalls ?? []).filter((call) =>
-        call.endpoint === "page/recall/trace/detail");
-      return document.getElementById("intelligence-tab-recallTrace")
-        ?.getAttribute("aria-selected") === "true"
-        && traceCalls.length === 1;
-    },
-    undefined,
-    { timeout: 5_000 },
-  );
+  try {
+    await page.waitForFunction(
+      () => {
+        const traceCalls = (window.__memoraBridgeCalls ?? []).filter((call) =>
+          call.endpoint === "page/recall/trace/detail");
+        return document.getElementById("intelligence-tab-recallTrace")
+          ?.getAttribute("aria-selected") === "true"
+          && traceCalls.length >= 1;
+      },
+      undefined,
+      { timeout: 5_000 },
+    );
+  } catch (error) {
+    const traceState = await page.evaluate(() => ({
+      hash: window.location.hash,
+      selectedTab: document.querySelector('[role="tab"][aria-selected="true"]')?.id ?? null,
+      rootText: document.getElementById("root")?.innerText ?? "",
+      calls: (window.__memoraBridgeCalls ?? []).filter((call) =>
+        call.endpoint.includes("recall/trace")),
+    }));
+    throw new Error(`Injection Trace navigation did not settle: ${JSON.stringify(traceState)}`, {
+      cause: error,
+    });
+  }
+  const traceCalls = await page.evaluate(() => (
+    (window.__memoraBridgeCalls ?? []).filter((call) =>
+      call.endpoint === "page/recall/trace/detail")
+  ));
+  if (traceCalls.length !== 1) {
+    throw new Error(`Injection Trace navigation issued unexpected calls: ${JSON.stringify({
+      count: traceCalls.length,
+      calls: traceCalls,
+    })}`);
+  }
   await waitForRootText(
     page,
     ["召回链路", "trace-mock-coffee"],
@@ -2160,8 +2220,6 @@ async function runMobileInjectionStrategySmoke(page, screenshotsDir) {
   await detailTrigger.click();
   const sheet = page.getByRole("dialog", { name: "注入决策详情", exact: true });
   await sheet.waitFor({ state: "visible", timeout: 5_000 });
-  await sheet.getByRole("heading", { name: "阶段耗时", exact: true })
-    .waitFor({ state: "visible", timeout: 5_000 });
   const box = await sheet.boundingBox();
   const viewportWidth = await page.evaluate(
     () => window.visualViewport?.width ?? window.innerWidth,
@@ -2177,16 +2235,70 @@ async function runMobileInjectionStrategySmoke(page, screenshotsDir) {
       `Mobile injection detail is not full width: ${JSON.stringify({ box, viewportWidth })}`,
     );
   }
-  const before = await sheet.evaluate((element) => ({
+  const header = sheet.locator('[data-slot="sheet-header"]');
+  const body = sheet.locator('[data-slot="injection-decision-body"]');
+  const footer = sheet.locator('[data-slot="sheet-footer"]');
+  await Promise.all([
+    header.waitFor({ state: "visible", timeout: 5_000 }),
+    body.waitFor({ state: "visible", timeout: 5_000 }),
+    footer.waitFor({ state: "visible", timeout: 5_000 }),
+  ]);
+  await page.waitForFunction(
+    () => {
+      const element = document.querySelector('[data-slot="injection-decision-body"]');
+      return element && element.scrollHeight > element.clientHeight;
+    },
+    undefined,
+    { timeout: 5_000 },
+  );
+  const before = await body.evaluate((element) => ({
     scrollTop: element.scrollTop,
     scrollHeight: element.scrollHeight,
     clientHeight: element.clientHeight,
   }));
-  await sheet.getByRole("heading", { name: "阶段耗时", exact: true }).scrollIntoViewIfNeeded();
-  await sheet.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
-  const after = await sheet.evaluate((element) => element.scrollTop);
+  await body.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.getByText("注入耗时", { exact: true }).last().waitFor({
+    state: "visible",
+    timeout: 5_000,
+  });
+  const after = await body.evaluate((element) => element.scrollTop);
   if (before.scrollHeight <= before.clientHeight || after <= before.scrollTop) {
-    throw new Error("Mobile injection detail Sheet did not scroll to its final timing section");
+    const scrollState = await body.evaluate((element) => ({
+      overflowY: getComputedStyle(element).overflowY,
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+    }));
+    throw new Error(`Mobile injection detail Sheet did not scroll to its final timing section: ${JSON.stringify({
+      before,
+      after,
+      scrollState,
+    })}`);
+  }
+  const viewport = page.viewportSize();
+  const [headerBox, bodyBox, footerBox] = await Promise.all([
+    header.boundingBox(),
+    body.boundingBox(),
+    footer.boundingBox(),
+  ]);
+  if (
+    !viewport
+    || !headerBox
+    || !bodyBox
+    || !footerBox
+    || headerBox.y < 0
+    || footerBox.y + footerBox.height > viewport.height
+    || bodyBox.y < headerBox.y + headerBox.height - 1
+    || bodyBox.y + bodyBox.height > footerBox.y + 1
+  ) {
+    throw new Error(`Mobile injection Sheet regions are clipped: ${JSON.stringify({
+      viewport,
+      headerBox,
+      bodyBox,
+      footerBox,
+    })}`);
   }
   await assertNoHorizontalOverflow(page, "#/injection:mobile-detail");
   const result = await captureBaselineScreenshot(
@@ -2202,6 +2314,59 @@ async function runMobileInjectionStrategySmoke(page, screenshotsDir) {
     { timeout: 5_000 },
   );
   return result;
+}
+
+async function runWideInjectionStrategySmoke(page, screenshotsDir) {
+  await page.evaluate(() => {
+    window.location.hash = "#/injection";
+  });
+  await waitForRootText(
+    page,
+    ["注入策略", "概览", "策略配置", "决策记录"],
+    "#/injection:wide-overview",
+  );
+  await waitForInjectionSettled(page, "#/injection:wide-overview");
+
+  const overviewContent = page.locator(
+    '#injection-panel-overview [data-slot="page-content"]',
+  );
+  const overviewBox = await overviewContent.boundingBox();
+  const viewport = page.viewportSize();
+  if (
+    !viewport
+    || !overviewBox
+    || overviewBox.width > 1441
+    || Math.abs(
+      (overviewBox.x + overviewBox.width / 2) - viewport.width / 2,
+    ) > 256
+  ) {
+    throw new Error(`Wide Injection Overview is not constrained: ${JSON.stringify({
+      viewport,
+      overviewBox,
+    })}`);
+  }
+
+  const screenshot = await captureBaselineScreenshot(
+    page,
+    path.join(screenshotsDir, "wide-injection-overview.png"),
+    "wide-injection-overview",
+  );
+
+  await page.getByRole("tab", { name: "决策记录", exact: true }).click();
+  const decisionsContent = page.locator(
+    '#injection-panel-decisions [data-slot="page-content"]',
+  );
+  const decisionsBox = await decisionsContent.boundingBox();
+  if (!decisionsBox || decisionsBox.width <= overviewBox.width) {
+    throw new Error(`Wide Decision History did not use full width: ${JSON.stringify({
+      overviewBox,
+      decisionsBox,
+    })}`);
+  }
+  await assertNoHorizontalOverflow(page, "#/injection:wide-decisions");
+
+  await page.getByRole("tab", { name: "概览", exact: true }).click();
+  return screenshot;
 }
 
 async function runDesktopConfigSmoke(browser, errors, screenshotsDir) {
@@ -2721,6 +2886,10 @@ try {
       )
     );
   }
+
+  baselineResults.push(
+    await runWideInjectionStrategySmoke(widePage, screenshotsDir),
+  );
 
   await widePage.close();
   await page.bringToFront();

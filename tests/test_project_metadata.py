@@ -269,6 +269,15 @@ def test_dashboard_browser_smoke_covers_injection_strategy_workbench() -> None:
     for marker in required_markers:
         assert marker in browser_smoke
 
+    for marker in (
+        "runWideInjectionStrategySmoke",
+        "wide-injection-overview.png",
+        '[data-slot="injection-decision-body"]',
+        '[data-slot="sheet-header"]',
+        '[data-slot="sheet-footer"]',
+    ):
+        assert marker in browser_smoke, marker
+
 
 def test_injection_overview_charts_use_valid_tokens_and_deterministic_motion() -> None:
     overview = _read_text(
