@@ -45,6 +45,24 @@ def test_order_clause_uses_only_allowlisted_columns_and_stable_tie_breaker() -> 
     )
 
 
+def test_order_clause_uses_descending_direction() -> None:
+    sort = SortQuery("updated_at", "desc")
+
+    assert (
+        order_by_clause(sort, columns=ALLOWED, tie_breaker="id")
+        == "updated_at DESC, id ASC"
+    )
+
+
+def test_order_clause_rejects_key_missing_from_column_mapping() -> None:
+    with pytest.raises(ValueError, match="sort_by"):
+        order_by_clause(
+            SortQuery("missing", "asc"),
+            columns=ALLOWED,
+            tie_breaker="id",
+        )
+
+
 def test_order_clause_rejects_a_sort_query_with_an_invalid_direction() -> None:
     sort = SortQuery("title", "sideways")  # type: ignore[arg-type]
 
