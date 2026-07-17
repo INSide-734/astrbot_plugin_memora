@@ -1116,17 +1116,64 @@ describe("InjectionStrategyPage", () => {
     expect(hooks.config.change).toHaveBeenCalledWith("retentionDays", 90);
   });
 
-  it("keeps usable configuration visible during offline refresh failures", () => {
-    hooks.config.status = "offline";
-    renderConfigTab();
+  it.each(["offline", "error"] as const)(
+    "keeps the configuration draft visible in the shared Alert during %s",
+    (status) => {
+      hooks.config.status = status;
+      hooks.config.dirty = true;
+      hooks.config.draft = draftFixture({
+        routingMode: "manual",
+        manualPreset: "quality",
+      });
+      renderConfigTab();
 
-    expect(
-      screen.getByRole("region", { name: "injection.tabs.config" }),
-    ).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toContain(
-      "config.status.offline",
-    );
-    expect(hooks.config.discard).not.toHaveBeenCalled();
+      const notice = status === "error"
+        ? screen.getByRole("alert")
+        : screen.getByRole("status");
+      expect(notice.getAttribute("data-slot")).toBe("alert");
+      expect(
+        notice.querySelector('[data-slot="alert-description"]'),
+      ).toBeTruthy();
+      expect(screen.getByRole("combobox", {
+        name: "injection.field.manualPreset",
+      }).textContent).toContain("injection.preset.quality");
+      expect(screen.getByRole("button", {
+        name: "injection.actions.discard",
+      })).toBeTruthy();
+    },
+  );
+
+  it("renders selected labels from each Select items collection", () => {
+    hooks.config.draft = draftFixture({
+      routingMode: "manual",
+      manualPreset: "quality",
+      deliveryOverride: "user_message_before",
+      retentionDays: 90,
+    });
+    renderPage();
+
+    expect(screen.getByRole("combobox", {
+      name: "injection.overview.window",
+    }).textContent).toContain("injection.window.24h");
+
+    fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.config" }));
+    expect(screen.getByRole("combobox", {
+      name: "injection.field.manualPreset",
+    }).textContent).toContain("injection.preset.quality");
+    expect(screen.getByRole("combobox", {
+      name: "injection.field.deliveryOverride",
+    }).textContent).toContain("injection.delivery.user_message_before");
+    expect(screen.getByRole("combobox", {
+      name: "injection.field.retentionDays",
+    }).textContent).toContain("90");
+
+    fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.decisions" }));
+    expect(screen.getByRole("combobox", {
+      name: "injection.filter.routingMode",
+    }).textContent).toContain("injection.filter.all");
+    expect(screen.getByRole("combobox", {
+      name: "injection.pagination.pageSize",
+    }).textContent).toContain("25");
   });
 
   it("resolves conflict explicitly and cannot dismiss it silently", () => {

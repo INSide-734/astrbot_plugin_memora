@@ -302,17 +302,15 @@ export function InjectionOverviewTab({
           >
             <SelectTrigger
               aria-label={t("injection.overview.window")}
-              className="mt-1 w-36"
+              className="w-full"
             >
-              <SelectValue>
-                {() => t(`injection.window.${summary.windowValue}`)}
-              </SelectValue>
+              <SelectValue />
             </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
+            <SelectContent>
               <SelectGroup>
-                {WINDOW_OPTIONS.map((windowValue) => (
-                  <SelectItem key={windowValue} value={windowValue}>
-                    {t(`injection.window.${windowValue}`)}
+                {windowItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
                   </SelectItem>
                 ))}
               </SelectGroup>

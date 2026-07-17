@@ -151,11 +151,9 @@ function FilterSelect({
           aria-label={label}
           className="w-full"
         >
-          <SelectValue>
-            {() => items.find((item) => item.value === selected)?.label ?? selected}
-          </SelectValue>
+          <SelectValue />
         </SelectTrigger>
-        <SelectContent alignItemWithTrigger={false}>
+        <SelectContent>
           <SelectGroup>
             {items.map((item) => (
               <SelectItem key={item.value} value={item.value}>
@@ -496,14 +494,16 @@ function DecisionPagination({
         >
           <SelectTrigger
             aria-label={t("injection.pagination.pageSize")}
-            className="w-20"
+            className="w-full"
           >
-            <SelectValue>{() => String(decisions.limit)}</SelectValue>
+            <SelectValue />
           </SelectTrigger>
-          <SelectContent alignItemWithTrigger={false}>
+          <SelectContent>
             <SelectGroup>
-              {pageSizes.map((size) => (
-                <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+              {items.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
               ))}
             </SelectGroup>
           </SelectContent>
