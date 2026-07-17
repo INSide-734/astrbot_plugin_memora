@@ -4,9 +4,11 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Separator } from "@/components/ui/separator";
 import { useI18n } from "@/hooks/useI18n";
 import type { useInjectionDecisions } from "@/hooks/useInjectionDecisions";
 import {
@@ -131,26 +133,18 @@ function formatDetailValue(
 }
 
 function DetailContent({
-  catalog,
   detail,
   locale,
-  onOpenTrace,
   t,
 }: {
-  catalog: InjectionStrategyCatalog | null;
   detail: InjectionDecisionDetail;
   locale: string;
-  onOpenTrace: (traceId: string) => void;
   t: Translate;
 }) {
-  const canOpenTrace = Boolean(
-    detail.trace_id && catalog?.recall_trace_available,
-  );
-
   return (
     <div className="flex flex-col gap-6 p-5">
       {detailSections.map((section) => (
-        <section key={section.title} className="space-y-3">
+        <section key={section.title} className="flex flex-col gap-3">
           <h3 className="text-sm font-semibold text-foreground">
             {t(`injection.detail.${section.title}`)}
           </h3>
@@ -171,18 +165,6 @@ function DetailContent({
           </dl>
         </section>
       ))}
-      <div className="flex justify-end border-t pt-4">
-        <Button
-          type="button"
-          variant="outline"
-          disabled={!canOpenTrace}
-          onClick={() => {
-            if (detail.trace_id && canOpenTrace) onOpenTrace(detail.trace_id);
-          }}
-        >
-          {t("injection.actions.openTrace")}
-        </Button>
-      </div>
     </div>
   );
 }
@@ -197,6 +179,8 @@ export function InjectionDecisionSheet({
 }: InjectionDecisionSheetProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
+  const traceId = decisions.detail?.trace_id ?? null;
+  const canOpenTrace = Boolean(traceId && catalog?.recall_trace_available);
 
   return (
     <Sheet
@@ -207,35 +191,51 @@ export function InjectionDecisionSheet({
     >
       <SheetContent
         side="right"
-        className="w-full max-w-full overflow-y-auto sm:max-w-xl"
+        className="w-full max-w-full overflow-hidden sm:max-w-xl"
       >
-        <SheetHeader>
+        <SheetHeader className="shrink-0">
           <SheetTitle>{t("injection.detail.title")}</SheetTitle>
           <SheetDescription>{t("injection.detail.description")}</SheetDescription>
         </SheetHeader>
-        {decisions.detailStatus === "loading" || decisions.detailStatus === "idle" ? (
-          <StatePanel state="loading" title={t("injection.state.loading")} />
-        ) : decisions.detailStatus === "error" ? (
-          <StatePanel
-            state="error"
-            title={t("injection.state.error")}
-            description={decisions.detailError ?? undefined}
-            actionLabel={t("injection.detail.retry")}
-            onAction={selectedDecisionId
-              ? () => { void decisions.loadDetail(selectedDecisionId); }
-              : undefined}
-          />
-        ) : decisions.detail ? (
-          <DetailContent
-            catalog={catalog}
-            detail={decisions.detail}
-            locale={locale}
-            onOpenTrace={onOpenTrace}
-            t={t}
-          />
-        ) : (
-          <StatePanel state="empty" title={t("injection.state.empty")} />
-        )}
+        <div
+          data-slot="injection-decision-body"
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
+          {decisions.detailStatus === "loading" || decisions.detailStatus === "idle" ? (
+            <StatePanel state="loading" title={t("injection.state.loading")} />
+          ) : decisions.detailStatus === "error" ? (
+            <StatePanel
+              state="error"
+              title={t("injection.state.error")}
+              description={decisions.detailError ?? undefined}
+              actionLabel={t("injection.detail.retry")}
+              onAction={selectedDecisionId
+                ? () => { void decisions.loadDetail(selectedDecisionId); }
+                : undefined}
+            />
+          ) : decisions.detail ? (
+            <DetailContent
+              detail={decisions.detail}
+              locale={locale}
+              t={t}
+            />
+          ) : (
+            <StatePanel state="empty" title={t("injection.state.empty")} />
+          )}
+        </div>
+        <Separator className="shrink-0" />
+        <SheetFooter className="shrink-0 border-t-0">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!canOpenTrace}
+            onClick={() => {
+              if (traceId && canOpenTrace) onOpenTrace(traceId);
+            }}
+          >
+            {t("injection.actions.openTrace")}
+          </Button>
+        </SheetFooter>
       </SheetContent>
     </Sheet>
   );

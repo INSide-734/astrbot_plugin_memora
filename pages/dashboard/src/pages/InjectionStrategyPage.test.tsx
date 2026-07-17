@@ -841,6 +841,43 @@ describe("InjectionStrategyPage", () => {
     }
   });
 
+  it("keeps the decision Sheet header and footer outside its scrolling body", () => {
+    hooks.decisions.detailStatus = "success";
+    hooks.decisions.detail = decisionDetail({
+      decision_id: "decision-layout",
+      trace_id: "trace-layout",
+    });
+    renderDecisionsTab();
+    fireEvent.click(screen.getByRole("button", {
+      name: "injection.decisions.openDetail",
+    }));
+
+    const sheet = screen.getByRole("dialog", { name: "injection.detail.title" });
+    const header = sheet.querySelector('[data-slot="sheet-header"]');
+    const body = sheet.querySelector('[data-slot="injection-decision-body"]');
+    const separator = sheet.querySelector('[data-slot="separator"]');
+    const footer = sheet.querySelector('[data-slot="sheet-footer"]');
+    expect(sheet.className).toContain("overflow-hidden");
+    expect(sheet.className).not.toContain("overflow-y-auto");
+    expect(header?.className).toContain("shrink-0");
+    expect(body?.className).toContain("min-h-0");
+    expect(body?.className).toContain("flex-1");
+    expect(body?.className).toContain("overflow-y-auto");
+    expect(separator).toBeTruthy();
+    expect(footer?.className).toContain("shrink-0");
+    expect(within(footer as HTMLElement).getByRole("button", {
+      name: "injection.actions.openTrace",
+    })).toBeTruthy();
+
+    const children = Array.from(sheet.children);
+    expect(children.indexOf(header as Element))
+      .toBeLessThan(children.indexOf(body as Element));
+    expect(children.indexOf(body as Element))
+      .toBeLessThan(children.indexOf(separator as Element));
+    expect(children.indexOf(separator as Element))
+      .toBeLessThan(children.indexOf(footer as Element));
+  });
+
   it("keeps the detail sheet open across loading errors and retry", () => {
     renderDecisionsTab();
     fireEvent.click(
