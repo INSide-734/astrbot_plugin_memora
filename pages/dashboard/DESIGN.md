@@ -2,11 +2,11 @@
 
 > 状态：当前分支设计基线（含兼容层与已知边界）
 >
-> 基线分支：codex/dashboard-unified-editing-crud
+> 基线分支：codex/adaptive-memory-injection（基于 codex/dashboard-unified-editing-crud 统一页面基线）
 >
 > 最后核对：2026-07-17
 >
-> 适用范围：pages/dashboard 内的应用壳、15 个功能页面、共享 UI、统一编辑流程与后续新增页面
+> 适用范围：pages/dashboard 内的应用壳、16 个功能页面、共享 UI、统一编辑流程与后续新增页面
 
 ## 1. 文档目的
 
@@ -125,7 +125,7 @@ flowchart TB
 | 导航组 | 页面 |
 |---|---|
 | Overview | Preview |
-| Memory | Graph、Memory、Timeline、Recall、Knowledge、Notes |
+| Memory | Graph、Memory、Timeline、Recall、Injection、Knowledge、Notes |
 | Insights | Intelligence、Learning、Jargon |
 | Relationships | Profiles、Affection、Social |
 | System | System、Config |
@@ -266,6 +266,7 @@ PageFrame workspace
 | MemoryPage | memory | dense | 筛选、虚拟列表、批量、详情编辑 |
 | TimelinePage | timeline | standard | 时间线与连续滚动 |
 | RecallPage | recall | standard | 查询、召回结果和诊断 |
+| InjectionStrategyPage | injection | dense | 概览、策略配置和决策历史工作台 |
 | KnowledgePage | knowledge | dense | 筛选、分页、详情编辑 |
 | NotesPage | notes | standard | 列表/搜索、详情编辑和创建 |
 | IntelligencePage | intelligence | standard | 四个治理工作区 Tab |
@@ -278,6 +279,22 @@ PageFrame workspace
 | ConfigPage | config | dense | 分组导航、长表单、revision 和应用状态 |
 
 页面模板是滚动与密度契约，不等于视觉主题。相同组件在三种模板中必须使用同一 token 和状态行为。
+
+### 8.1 InjectionStrategyPage 工作台契约
+
+InjectionStrategyPage 使用 dense 模板，并保持固定 PageHeader 与 Overview、Strategy Configuration、Decision History 三个顶层 Tab。活跃 Tab 内容是页面内部唯一滚动所有者；PageFrame、Tabs 和 PageContent 不得形成嵌套或重复滚动。Overview 与 Strategy Configuration 使用 constrained 内容宽度，Decision History 使用 full 宽度并为表格建立受控横向滚动边界。
+
+本节是 InjectionStrategyPage 页面模板、内容宽度与滚动所有权的当前权威；早期功能规格中与 `standard` 模板或整页滚动有关的描述由本节取代。
+
+三个 Tab 遵守以下领域约束：
+
+- **Overview**：保留六项指标、两个真实数据图表和三类最近事件。指标使用 MetricGrid，图表使用完整 Card composition，加载、空数据和错误使用 StatePanel。时间窗口 Select 使用 `items + SelectValue + SelectGroup` 的单一 label 数据源，Popup 自动匹配 Trigger 宽度。
+- **Strategy Configuration**：保留纯手动、自动与混合路由切换、预设对比、交付方式、高级策略预设与覆盖，以及可配置保留期。表单继续组合 FieldSet、FieldGroup、Field、Input、Switch、Select 和 Table；所有 Select 遵守第 10.4 节的单一 `items`/label 数据源与 Popup 匹配 Trigger 宽度契约。离线与错误提示使用共享 Alert。未保存修改和 revision 冲突进入共享编辑流程，保存失败或冲突时必须保留草稿。该页面不引入 Schema 表单生成器或新的通用表单抽象。
+- **Decision History**：筛选区使用 PageToolbar，保留全部筛选字段和后端真分页。筛选与分页 Select 遵守第 10.4 节；数据表独立横向滚动，窄屏不得隐藏核心查看操作。loading、empty、error、retry 和 stale-response 保护均属于行为契约。
+
+Overview、Decision History 和决策详情必须通过 Page API 读取 SQLite 全量持久化结果；不得以客户端样本、仅内存聚合或 mock 数据作为生产数据源。可配置保留期与最大行数通过 Strategy Configuration 保存，筛选和分页由后端执行。
+
+决策详情使用受控 Sheet，并固定为 `shrink-0` Header、`min-h-0 flex-1 overflow-y-auto` Body、`shrink-0` Footer 三段结构。Footer 使用 SheetFooter，并以 Separator 与正文分隔；不得让整个 SheetContent 连同标题一起滚动。Sheet 必须保留 Title、Description、焦点恢复和 Recall Trace 跳转，在 390px 视口下最后一个字段和底部按钮均不得被遮挡。
 
 ## 9. 视觉语言
 
@@ -581,6 +598,14 @@ Toast 用于短暂结果，不承担必须阅读的校验或冲突信息。长�
 - 可滑动手势必须有可见按钮替代。
 - 软键盘出现时，当前字段和底部动作仍应可滚动到视口内。
 
+### 13.4 InjectionStrategyPage 三档验收
+
+| 视口 | 验收重点 |
+|---|---|
+| 390 × 844 | 顶层 Tab 可横向访问且不挤压页面；配置字段和操作可完整滚动；决策表在自身边界内横向滚动且查看操作可见；详情 Sheet 的 Header/Footer 保持可见，最后字段不被遮挡 |
+| 1366 × 900 | PageHeader 与三 Tab 稳定，活跃内容承担唯一纵向滚动；Overview 和 Strategy Configuration 保持 constrained，Decision History 使用 full 宽度且分页可见 |
+| 2048 × 1152 | constrained 内容不被无意义拉宽；Overview 图表保持可比较尺度；Decision History 利用可用宽度但仍保留表格滚动边界，并生成独立宽屏截图基线 |
+
 ## 14. 动效
 
 动效只表达状态变化，不作为装饰。
@@ -686,6 +711,9 @@ Toast 用于短暂结果，不承担必须阅读的校验或冲突信息。长�
 - 脏状态、取消、保存、创建和重复提交保护。
 - 查询变化后的选择清理。
 - 移动端弹层结构。
+- Injection 顶层 Tab、唯一滚动所有权和 constrained/full 内容模式。
+- Injection 配置保存失败、未保存修改和 revision 冲突时的草稿保留。
+- Injection 决策真分页、筛选、retry、stale-response 保护和详情 Sheet 三段结构。
 
 ### 18.2 Browser smoke
 
@@ -698,8 +726,11 @@ Toast 用于短暂结果，不承担必须阅读的校验或冲突信息。长�
 - 中文、英文和俄文。
 - Graph、Memory、Jargon、System、Intelligence 等核心页面。
 - Config loading/conflict。
+- Injection Overview、Strategy Configuration、Decision History 和决策详情 Sheet；现有四张截图为 `injection-overview.png`、`injection-config-conflict.png`、`injection-decisions.png` 和 `mobile-injection-detail.png`。
 - 全局搜索滚动与精确导航。
 - 编辑 Sheet、冲突、错误摘要、批量 Toolbar、移动 Affection/Mood。
+
+Injection 页面对齐完成后，必须在现有四张截图之外增加 2048 × 1152 独立宽屏基线。
 
 截图验收必须人工检查：
 
@@ -824,6 +855,7 @@ python scripts/check_all.py
 | 2026-07-14 | 使用共享编辑生命周期 + 领域表单 | 统一草稿、校验、冲突和移动端交互，同时保留领域语义 | CRUD 页面复用 editing 组件 |
 | 2026-07-17 | Select Popup 自动匹配 Trigger，label 使用单一 items 数据源 | 消除打开/关闭宽度和文案漂移 | 所有 Select 遵守第 10.4 节 |
 | 2026-07-17 | 将当前分支设计整理为统一页面规范 | 为新增页面、审查和后续迁移提供单一设计契约 | 设计级变更同步维护本文档 |
+| 2026-07-17 | InjectionStrategyPage 使用 dense 三 Tab 工作台 | 固定滚动所有权、内容宽度、配置草稿和决策详情弹层契约 | 注入工作台按第 8.1、13.4 和 18 节验收 |
 
 ## 23. 相关文件
 
@@ -842,4 +874,5 @@ python scripts/check_all.py
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-17 | 将 InjectionStrategyPage 纳入 16 页统一基线，补充 dense 三 Tab、唯一滚动、配置与决策 Sheet、三档视口和 browser smoke 契约。 |
 | 2026-07-17 | 基于当前 Dashboard 分支、统一 CRUD、Select 修复和 browser smoke 基线，建立第一版统一页面设计规范。 |
