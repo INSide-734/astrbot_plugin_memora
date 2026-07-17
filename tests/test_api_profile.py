@@ -19,6 +19,7 @@ from core.base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
+from core.base.list_sorting import SortQuery
 from core.managers.profile_manager import ProfileManager
 from core.storage.profile_store import ProfileStore
 
@@ -111,6 +112,30 @@ class TestProfileValidation:
             mixin = _make_mixin()
             result = await mixin.list_profiles()
         assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("sort_by", "sort_order", "field"),
+        [
+            ("display_name; DROP TABLE user_profiles", "asc", "sort_by"),
+            ("missing", "asc", "sort_by"),
+            ("display_name", "DESC", "sort_order"),
+            ("display_name", "sideways", "sort_order"),
+        ],
+    )
+    async def test_list_rejects_invalid_sort_values(
+        self, sort_by: str, sort_order: str, field: str
+    ) -> None:
+        req = _mock_request(sort_by=sort_by, sort_order=sort_order)
+        mixin = _make_mixin()
+
+        with patch("core.api.profile_api.request", req):
+            result = await mixin.list_profiles()
+
+        assert result["status"] == "error"
+        assert result["code"] == "invalid_query"
+        assert field in result["field_errors"]
+        mixin.profile_manager.list_profiles.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_get_detail_requires_user_id(self) -> None:
@@ -370,6 +395,26 @@ class TestProfileHappyPath:
             result = await mixin.list_profiles()
         assert result["status"] == "ok"
         assert result["data"]["total"] == 1
+
+    @pytest.mark.asyncio
+    async def test_list_forwards_valid_sort_query(self) -> None:
+        req = _mock_request(
+            limit="25",
+            offset="50",
+            sort_by="total_messages",
+            sort_order="desc",
+        )
+        mixin = _make_mixin()
+
+        with patch("core.api.profile_api.request", req):
+            result = await mixin.list_profiles()
+
+        assert result["status"] == "ok"
+        mixin.profile_manager.list_profiles.assert_awaited_once_with(
+            limit=25,
+            offset=50,
+            sort=SortQuery("total_messages", "desc"),
+        )
 
     @pytest.mark.asyncio
     async def test_list_skips_malformed_profile_items(self) -> None:

@@ -11,6 +11,7 @@ from quart import request
 
 from astrbot.api import logger
 
+from ..base.list_sorting import parse_sort_query
 from ..base.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
@@ -18,6 +19,7 @@ from ..base.entity_editing import (
     EntityValidationError,
 )
 from ..models.user_profile import TagCategory, UserTag
+from ..storage.profile_store import PROFILE_SORT_COLUMNS
 from .editing_utils import (
     conflict_error,
     entity_ok,
@@ -189,6 +191,16 @@ def _safe_total(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _sort_query_error(exc: ValueError):
+    message = str(exc)
+    field = "sort_order" if message == "sort_order must be asc or desc" else "sort_by"
+    return error_response(
+        message,
+        code="invalid_query",
+        field_errors={field: message},
+    )
 
 
 def _profile_response_or_error(profile: Any, *, revision: str | None = None):
@@ -483,7 +495,20 @@ class ProfileApiMixin:
             offset = int(args.get("offset", 0))
         except (TypeError, ValueError):
             return error_response("limit 和 offset 必须为整数")
-        profiles, total = await manager.list_profiles(limit=limit, offset=offset)
+        try:
+            sort = parse_sort_query(
+                args,
+                allowed=PROFILE_SORT_COLUMNS,
+                default_by="last_seen_at",
+                default_order="desc",
+            )
+        except ValueError as exc:
+            return _sort_query_error(exc)
+        profiles, total = await manager.list_profiles(
+            limit=limit,
+            offset=offset,
+            sort=sort,
+        )
         serialized_profiles: list[dict[str, Any]] = []
         for profile in _safe_profile_list(profiles):
             item = _safe_profile_to_dict(profile)

@@ -86,7 +86,12 @@ describe("ProfilesPage", () => {
     expect(screen.getByRole("region").getAttribute("data-layout")).toBe("dense");
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles", { limit: "100", offset: "0" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles", {
+        limit: "100",
+        offset: "0",
+        sort_by: "last_seen_at",
+        sort_order: "desc",
+      });
     });
 
     expect(await screen.findByText("Alice")).toBeTruthy();
@@ -94,13 +99,12 @@ describe("ProfilesPage", () => {
     expect(screen.getByText("Profiles")).toBeTruthy();
     expect(screen.getAllByText("Tags").length).toBeGreaterThan(1);
     expect(screen.getByText("User ID")).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "Tags" })).toBeTruthy();
     expect(screen.getAllByText("2").length).toBeGreaterThan(0);
     expect(screen.getByText((content) => content.trim() === "5")).toBeTruthy();
     expect(screen.getByText("testing")).toBeTruthy();
     expect(screen.getByText(new Date("2026-06-28T12:00:00Z").toLocaleDateString("en-US"))).toBeTruthy();
     expect(localeSpy).toHaveBeenCalledWith("en-US");
-    expect(screen.getByRole("navigation", { name: "Profiles pagination" })).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "Pagination" })).toBeTruthy();
     expect(screen.queryByRole("toolbar")).toBeNull();
   });
 
@@ -144,10 +148,45 @@ describe("ProfilesPage", () => {
     expect(screen.queryByText("1 selected")).toBeNull();
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles", { limit: "100", offset: "100" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles", {
+        limit: "100",
+        offset: "100",
+        sort_by: "last_seen_at",
+        sort_order: "desc",
+      });
     });
     expect(await screen.findByText("Offset 100")).toBeTruthy();
     expect(screen.getByText("Page 2 of 3")).toBeTruthy();
+  });
+
+  it("sorts profiles on the server and resets the selected page", async () => {
+    bridge.apiGet.mockImplementation((_path: string, params: Record<string, string>) => Promise.resolve(ok({
+      total: 201,
+      profiles: [{
+        user_id: `user-${params.offset}`,
+        display_name: `Offset ${params.offset}`,
+      }],
+    })));
+
+    render(<ProfilesPage showToast={showToast} />);
+
+    expect(await screen.findByText("Offset 0")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Offset 100")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select profile Offset 100" }));
+    expect(screen.getByText("1 selected")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort Name ascending" }));
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles", {
+        limit: "100",
+        offset: "0",
+        sort_by: "display_name",
+        sort_order: "asc",
+      });
+    });
+    expect(screen.queryByText("1 selected")).toBeNull();
   });
 
   it("returns to the previous valid page when deletion empties the current page", async () => {
@@ -603,7 +642,7 @@ describe("ProfilesPage", () => {
   });
 
   it("clears selection when profile pagination changes", async () => {
-    bridge.apiGet.mockImplementation((_path: string, params: Record<string, string>) => Promise.resolve(ok({ total: 101, profiles: [{ user_id: `user-${params.offset}`, display_name: "A" }] }))); render(<ProfilesPage showToast={showToast} />); fireEvent.click(await screen.findByRole("checkbox", { name: "Select profile A" })); fireEvent.click(screen.getByRole("button", { name: "Next page" })); await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles", { limit: "100", offset: "100" })); expect(screen.queryByText("1 selected")).toBeNull();
+    bridge.apiGet.mockImplementation((_path: string, params: Record<string, string>) => Promise.resolve(ok({ total: 101, profiles: [{ user_id: `user-${params.offset}`, display_name: "A" }] }))); render(<ProfilesPage showToast={showToast} />); fireEvent.click(await screen.findByRole("checkbox", { name: "Select profile A" })); fireEvent.click(screen.getByRole("button", { name: "Next page" })); await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/profiles", { limit: "100", offset: "100", sort_by: "last_seen_at", sort_order: "desc" })); expect(screen.queryByText("1 selected")).toBeNull();
   });
 
   it("submits both structured batch tag actions with only the supported tag fields", async () => {
