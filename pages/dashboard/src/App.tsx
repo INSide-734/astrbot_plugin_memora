@@ -449,7 +449,12 @@ export default function App() {
                 {currentPage === "jargon" && <JargonPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
                 {currentPage === "affection" && <AffectionPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
                 {currentPage === "social" && <SocialPage showToast={showToast} onDirtyChange={handleCurrentPageDirtyChange} />}
-                {currentPage === "intelligence" && <IntelligencePage showToast={showToast} />}
+                {currentPage === "intelligence" && (
+                  <IntelligencePage
+                    showToast={showToast}
+                    navigationTarget={navigationIntent?.intelligenceTarget ?? null}
+                  />
+                )}
                 </Suspense>
               </motion.div>
             </AnimatePresence>

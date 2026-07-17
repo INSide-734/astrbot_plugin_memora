@@ -140,7 +140,22 @@ vi.mock("@/pages/SocialPage", () => ({
   SocialPage: () => <div>Social Page</div>,
 }));
 vi.mock("@/pages/IntelligencePage", () => ({
-  IntelligencePage: () => <div>Intelligence Page</div>,
+  IntelligencePage: ({ navigationTarget }: {
+    navigationTarget?: {
+      requestId: number;
+      tab: string;
+      traceId?: string;
+    } | null;
+  }) => (
+    <div>
+      <p>Intelligence Page</p>
+      <output data-testid="intelligence-navigation-target">
+        {navigationTarget
+          ? `${navigationTarget.requestId}:${navigationTarget.tab}:${navigationTarget.traceId}`
+          : "none"}
+      </output>
+    </div>
+  ),
 }));
 vi.mock("@/pages/InjectionStrategyPage", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
@@ -175,6 +190,19 @@ vi.mock("@/pages/InjectionStrategyPage", async () => {
             onClick={() => onDirtyChange?.(true)}
           >
             Make injection dirty
+          </button>
+          <button
+            type="button"
+            data-testid="open-injection-trace"
+            onClick={() => onNavigate?.("intelligence", {
+              intelligenceTarget: {
+                requestId: 42,
+                tab: "recallTrace",
+                traceId: "trace-from-injection",
+              },
+            })}
+          >
+            Open injection trace
           </button>
         </div>
       );
@@ -351,6 +379,20 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByTestId("injection-callback-stability").textContent).toBe("stable");
     });
+  });
+
+  it("passes the Injection Recall Trace target across page navigation", async () => {
+    window.location.hash = "#/injection";
+    render(<App />);
+    expect(await screen.findByText("Injection Strategy Page")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("open-injection-trace"));
+
+    await waitFor(() => expect(window.location.hash).toBe("#/intelligence"));
+    expect(await screen.findByText("Intelligence Page")).toBeTruthy();
+    expect(screen.getByTestId("intelligence-navigation-target").textContent).toBe(
+      "42:recallTrace:trace-from-injection",
+    );
   });
 
   it("passes a stable dirty callback and compatible toast command to ConfigPage", async () => {
