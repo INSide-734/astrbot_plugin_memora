@@ -54,4 +54,3 @@ def test_safe_candidates_drops_invalid_projection_without_dropping_memory() -> N
     assert "derived_projections" not in safe["metadata"]
     assert safe["content"] == "canonical"
     assert safe["id"] == 18
-
