@@ -16,6 +16,7 @@ from ..managers.memory_evolution_manager import MemoryEvolutionManager
 from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_processor import MemoryProcessor
 from ..retrieval.derived_relation_expander import DerivedRelationExpander
+from ..retrieval.projection_reader import ProjectionReader
 from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
@@ -79,6 +80,7 @@ class ComponentFactory:
         memory_evolution_store = MemoryEvolutionStore(str(db_path))
         await memory_evolution_store.initialize()
         derived_expander = None
+        projection_reader = None
         if (
             bool(evolution_config.get("enabled", False))
             and str(evolution_config.get("mode", "disabled")) in {"readonly", "active"}
@@ -94,6 +96,13 @@ class ComponentFactory:
                     int(evolution_config.get("max_query_expansions", 8)),
                 ),
             )
+            projection_reader = ProjectionReader(
+                memory_evolution_store,
+                projection_limit=max(
+                    0,
+                    int(evolution_config.get("max_query_expansions", 8)),
+                ),
+            )
 
         logger.info(f"数据库已初始化。数据目录: {self.data_dir}")
 
@@ -105,6 +114,7 @@ class ComponentFactory:
         engine_config = self._build_engine_config(stopwords_dir, graph_memory_enabled)
         engine_config["memory_evolution"] = evolution_config
         engine_config["derived_expander"] = derived_expander
+        engine_config["projection_reader"] = projection_reader
         memory_engine = MemoryEngine(
             db_path=str(db_path),
             faiss_db=db,
