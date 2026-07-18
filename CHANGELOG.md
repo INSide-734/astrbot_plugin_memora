@@ -17,6 +17,14 @@ Memora 项目的所有重要变更都将记录在此文件中。
 - **关闭与崩溃语义** — 正常关闭最多等待 5 秒刷新待写批次；进程崩溃可能丢失最后一个未刷新的批次。
 - **无旧配置迁移** — `recall_engine.injection_method` 已移除且没有兼容迁移；升级后必须用新字段重新配置，必要时可先采用 `manual + balanced`。
 
+### feat: Dashboard 全站数据表与实体编辑器重构
+
+- **统一 DataTable** — 数据密集页面改用基于 TanStack React Table 的共享 DataTable，统一列头排序、选择列、操作列、横向滚动、当前详情行和键盘行激活。
+- **服务端排序契约** — 列表排序通过 allowlist 传递 `sort_by`/`sort_order`，在真实 `limit`/`offset` 分页前完成，并使用稳定 tie-breaker；排序、筛选、分页或查询变化会清除不可见行选择。
+- **选择性视图持久化** — 每张表按 `memora.table.<tableId>.v1` 只保存密度、列显隐、列顺序和左右固定列；排序、筛选、分页、选择和列宽不写入持久化状态，损坏偏好会安全回退并保护 required 列。
+- **统一实体详情编辑** — Knowledge、Memory、Notes、Profiles、Social、Jargon 和 Affection 详情统一使用 42rem 响应式 EntityEditorSheet，view/edit 共用一个 Sheet，body 独立滚动，危险/次要动作固定在 footer，并保留脏状态、重复提交保护和 revision 冲突流程。
+- **视觉验收覆盖** — 增加知识库表格默认/列视图、实体查看/编辑、移动端表格/编辑器、宽屏画像、暗色社交表格和紧凑注入决策表的 browser smoke 基线。
+
 ### docs: 路线图 Milestone A 事实同步
 
 - **当前事实入口** — 新增 `docs/QUALITY_GATE_STATUS.md`，记录最近一次 L0-L2 与统一 gate 的结果、耗时和失败归因。

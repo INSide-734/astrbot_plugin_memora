@@ -258,7 +258,7 @@ Memora 为 AstrBot Agent 系统提供以下工具：
 
 ## Dashboard
 
-Memora 提供完整的 Web 管理面板，基于 React + Vite + Tailwind CSS + shadcn/ui 构建。
+Memora 提供完整的 Web 管理面板，基于 React + Vite + Tailwind CSS + shadcn/ui 构建。数据密集页面统一使用基于 TanStack React Table 的 DataTable，支持服务端排序、真实分页、列显隐/顺序/固定和密度偏好；实体详情与编辑统一使用可滚动、可访问的 EntityEditorSheet。
 
 ### 启动开发服务器
 
@@ -321,6 +321,7 @@ npm run test      # Vitest: bridge + hooks
 - **构建**: Vite
 - **样式**: Tailwind CSS
 - **组件**: shadcn/ui
+- **数据表格**: TanStack React Table（DataTable 共享封装）
 - **状态管理**: React Context + Hooks
 - **图表**: Recharts
 

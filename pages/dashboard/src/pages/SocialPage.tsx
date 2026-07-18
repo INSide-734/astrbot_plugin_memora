@@ -6,7 +6,6 @@ import { useGroups } from "@/hooks/useGroups";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Card } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -640,26 +639,24 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
   const relationTable = loading && relations.length === 0 ? (
     <p className="py-12 text-center text-sm text-muted-foreground">{label("table.loading", "Loading")}</p>
   ) : (
-    <Card className="gap-0 py-0">
-      <DataTable
-        tableId="social-relations"
-        data={relations}
-        columns={columns}
-        getRowId={(relation) => relationKey(relation)}
-        sort={sort}
-        onSortChange={changeSort}
-        selectedRowIds={selected}
-        onSelectedRowIdsChange={setSelected}
-        currentRowId={detail ? relationKey(detail) : null}
-        onRowActivate={(relation) => openDetail(relation)}
-        loading={loading}
-        emptyLabel={label("social.noData", "No relations found")}
-      />
-    </Card>
+    <DataTable
+      tableId="social-relations"
+      data={relations}
+      columns={columns}
+      getRowId={(relation) => relationKey(relation)}
+      sort={sort}
+      onSortChange={changeSort}
+      selectedRowIds={selected}
+      onSelectedRowIdsChange={setSelected}
+      currentRowId={detail ? relationKey(detail) : null}
+      onRowActivate={(relation) => openDetail(relation)}
+      loading={loading}
+      emptyLabel={label("social.noData", "No relations found")}
+    />
   );
 
   return (
-    <PageFrame variant="standard" aria-label={t("social.title")}>
+    <PageFrame variant="dense" aria-label={t("social.title")}>
       <PageHeader
         title={t("social.title")}
         icon={<UsersRound />}
@@ -674,7 +671,7 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
       />
       <Tabs value={category} onValueChange={(value) => { setSelected(new Set()); setCategory(value); }} className="min-h-0 flex-1 gap-0">
         <PageToolbar className="flex-nowrap overflow-x-auto bg-background"><TabsList variant="line" aria-label={t("social.category")} className="h-9 min-w-max">{categories.map((item) => <TabsTrigger key={item.value} value={item.value} className="px-3 text-xs">{item.label}</TabsTrigger>)}</TabsList></PageToolbar>
-        {categories.map((item) => <TabsContent key={item.value} value={item.value} className="min-h-0 overflow-auto"><PageContent>{relationTable}</PageContent></TabsContent>)}
+        {categories.map((item) => <TabsContent key={item.value} value={item.value} className="min-h-0 flex-1 overflow-hidden"><PageContent width="full">{relationTable}</PageContent></TabsContent>)}
       </Tabs>
 
       {selected.size > 0 ? <PageToolbar className="border-b-0 border-t bg-muted/40"><span className="text-sm font-medium">{label("select.selected", `${selected.size} selected`, String(selected.size))}</span><Button variant="outline" size="sm" onClick={openBatchTag}>{label("social.editTags", "Edit Tags")}</Button><Button variant="destructive" size="sm" disabled={batchDeleteSubmitting} onClick={() => void executeBatchDelete()}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button><Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X data-icon="inline-start" />{t("common.clear")}</Button></PageToolbar> : null}
