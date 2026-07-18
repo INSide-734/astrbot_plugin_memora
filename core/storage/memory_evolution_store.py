@@ -393,7 +393,15 @@ class MemoryEvolutionStore(BaseStore):
     ) -> list[ProjectionBundle]:
         """读取命中 seed 的 active projection 及其 source mapping。"""
 
-        ids = tuple(dict.fromkeys(int(seed_id) for seed_id in seed_ids))
+        ids = tuple(
+            dict.fromkeys(
+                seed_id
+                for seed_id in seed_ids
+                if isinstance(seed_id, int)
+                and not isinstance(seed_id, bool)
+                and seed_id >= 0
+            )
+        )
         if not ids or limit <= 0:
             return []
         placeholders = ",".join("?" for _ in ids)
@@ -425,19 +433,27 @@ class MemoryEvolutionStore(BaseStore):
         sources_by_projection: dict[str, list[ProjectionSourceView]] = {
             projection_id: [] for projection_id in projection_ids
         }
+        invalid_projection_ids: set[str] = set()
         for source_row in source_rows:
-            source = ProjectionSourceView(
-                str(source_row["projection_id"]),
-                int(source_row["memory_id"]),
-                str(source_row["revision_token"]),
-                str(source_row["source_role"]),
-                int(source_row["ordinal"]),
-            )
+            projection_id = str(source_row["projection_id"])
+            try:
+                source = ProjectionSourceView(
+                    projection_id,
+                    int(source_row["memory_id"]),
+                    str(source_row["revision_token"]),
+                    str(source_row["source_role"]),
+                    int(source_row["ordinal"]),
+                )
+            except (TypeError, ValueError, OverflowError):
+                invalid_projection_ids.add(projection_id)
+                continue
             sources_by_projection[source.projection_id].append(source)
 
         bundles: list[ProjectionBundle] = []
         for row in rows:
             projection_id = str(row["projection_id"])
+            if projection_id in invalid_projection_ids:
+                continue
             sources = tuple(sources_by_projection.get(projection_id, ()))
             if not sources:
                 continue
