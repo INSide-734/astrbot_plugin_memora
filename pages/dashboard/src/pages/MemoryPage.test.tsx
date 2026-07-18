@@ -270,9 +270,12 @@ describe("MemoryPage", () => {
     const detailTitle = await screen.findByText("Memory Detail");
     const drawer = detailTitle.closest("div")?.parentElement;
     if (!drawer) throw new Error("expected detail drawer");
-    expect(within(drawer).getByText(new Date("2026-06-28T12:00:00Z").toLocaleDateString("en-US"))).toBeTruthy();
+    expect(within(drawer).getAllByText(new Date("2026-06-28T12:00:00Z").toLocaleDateString("en-US")).length).toBeGreaterThan(0);
+    expect(within(drawer).getByTestId("entity-editor-footer")).toBeTruthy();
+    expect(within(drawer).queryByText(EN_MAP["detail.unsaved"])).toBeNull();
 
     fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    expect(screen.getByText("Memory Detail")).toBe(detailTitle);
     expect(within(drawer).queryByLabelText("Choose field to edit")).toBeNull();
     expect(within(drawer).getByLabelText("Content")).toBeTruthy();
     expect(within(drawer).getByLabelText("Importance")).toBeTruthy();
@@ -282,6 +285,7 @@ describe("MemoryPage", () => {
     fireEvent.change(within(drawer).getByLabelText("Content"), {
       target: { value: "Rewritten content" },
     });
+    expect(within(drawer).getByText(EN_MAP["detail.unsaved"])).toBeTruthy();
     fireEvent.change(within(drawer).getByPlaceholderText("Reason"), {
       target: { value: "Fix incorrect wording" },
     });

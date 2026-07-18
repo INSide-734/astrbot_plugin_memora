@@ -311,7 +311,7 @@ describe("SocialPage", () => {
         tags: ["trusted"],
       });
     });
-    expect(await screen.findByText("trusted")).toBeTruthy();
+    expect((await screen.findAllByText("trusted")).length).toBeGreaterThan(0);
     expect(await screen.findByRole("dialog", { name: /relation: alice.*bob/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^save$/i })).toBeNull();
   });
@@ -343,11 +343,18 @@ describe("SocialPage", () => {
     render(<SocialPage showToast={showToast} />);
 
     const sheet = await openRelationEditor();
+    const footer = within(sheet).getByTestId("entity-editor-footer");
+    const body = within(sheet).getByTestId("entity-editor-body");
+    expect(within(footer).getByRole("button", { name: /^delete$/i })).toBeTruthy();
+    expect(within(body).queryByRole("button", { name: /^delete$/i })).toBeNull();
+    expect(within(sheet).queryByText(/unsaved/i)).toBeNull();
     fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
+    expect(screen.getByRole("dialog", { name: /relation: alice.*bob/i })).toBe(sheet);
     expect(within(sheet).getByLabelText("From user")).toHaveProperty("disabled", true);
     expect(within(sheet).getByLabelText("To user")).toHaveProperty("disabled", true);
     expect(within(sheet).getByLabelText("Group ID")).toHaveProperty("disabled", true);
     await fillRelationDraft(sheet, { relation_type: "best_friend", strength: "0.8", tags: ["trusted"] });
+    expect(within(sheet).getByText(/unsaved/i)).toBeTruthy();
     fireEvent.click(within(sheet).getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
@@ -367,7 +374,7 @@ describe("SocialPage", () => {
       });
     });
     expect(await screen.findByRole("button", { name: /^edit$/i })).toBeTruthy();
-    expect(screen.getByText("trusted")).toBeTruthy();
+    expect(screen.getAllByText("trusted").length).toBeGreaterThan(0);
   });
 
   it("normalizes update field errors into one linked validation summary", async () => {

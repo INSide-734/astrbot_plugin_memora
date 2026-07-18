@@ -418,8 +418,14 @@ describe("KnowledgePage", () => {
     });
 
     const drawer = await screen.findByRole("dialog", { name: "Gamma entry" });
+    const footer = within(drawer).getByTestId("entity-editor-footer");
+    const body = within(drawer).getByTestId("entity-editor-body");
+    expect(within(footer).getByRole("button", { name: /^delete$/i })).toBeTruthy();
+    expect(within(body).queryByRole("button", { name: /^delete$/i })).toBeNull();
+    expect(within(drawer).queryByText(EN_MAP["detail.unsaved"])).toBeNull();
 
     fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    expect(screen.getByRole("dialog", { name: "Gamma entry" })).toBe(drawer);
     expect(within(drawer).queryByLabelText("Choose field to edit")).toBeNull();
     expect(within(drawer).getByLabelText("Title")).toBeTruthy();
     expect(within(drawer).getByLabelText("Content")).toBeTruthy();
@@ -429,6 +435,7 @@ describe("KnowledgePage", () => {
     fireEvent.change(within(drawer).getByLabelText("Title"), {
       target: { value: "Renamed entry" },
     });
+    expect(within(drawer).getByText(EN_MAP["detail.unsaved"])).toBeTruthy();
     fireEvent.click(within(drawer).getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
