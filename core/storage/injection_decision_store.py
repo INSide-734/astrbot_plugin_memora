@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..base.list_sorting import SortQuery, order_by_clause
 from ..injection.models import InjectionDecisionRecord
 from .base_store import BaseStore
 
@@ -53,6 +54,20 @@ _SELECT_COLUMNS = ", ".join(_COLUMNS)
 _LIST_COLUMNS = tuple(column for column in _COLUMNS if column != "reason_codes_json")
 _SELECT_LIST_COLUMNS = ", ".join(_LIST_COLUMNS)
 
+INJECTION_DECISION_SORT_COLUMNS = {
+    "created_at_ms": "created_at_ms",
+    "routing_mode": "routing_mode COLLATE NOCASE",
+    "resolved_preset": "resolved_preset COLLATE NOCASE",
+    "provider_type": "provider_type COLLATE NOCASE",
+    "outcome": "outcome COLLATE NOCASE",
+    "actual_payload_chars": "actual_payload_chars",
+    "decision_ms": "decision_ms",
+}
+_INJECTION_DECISION_SQL_COLUMNS = {
+    **INJECTION_DECISION_SORT_COLUMNS,
+    "decision_id": "decision_id",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class DecisionQuery:
@@ -68,6 +83,8 @@ class DecisionQuery:
     primary_reason: str | None = None
     fallback_applied: bool | None = None
     outcome: str | None = None
+    sort_by: str = "created_at_ms"
+    sort_order: str = "desc"
 
     def __post_init__(self) -> None:
         if self.offset < 0:
@@ -76,6 +93,10 @@ class DecisionQuery:
             raise ValueError("limit must be between 1 and 100")
         if self.from_ms is not None and self.to_ms is not None and self.from_ms > self.to_ms:
             raise ValueError("from_ms must not exceed to_ms")
+        if self.sort_by not in INJECTION_DECISION_SORT_COLUMNS:
+            raise ValueError("sort_by is not supported")
+        if self.sort_order not in {"asc", "desc"}:
+            raise ValueError("sort_order must be asc or desc")
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,9 +256,14 @@ class InjectionDecisionStore(BaseStore):
             "SELECT COUNT(*) FROM injection_decisions" + where,
             params,
         ) or 0)
+        order_by = order_by_clause(
+            SortQuery(query.sort_by, query.sort_order),
+            columns=_INJECTION_DECISION_SQL_COLUMNS,
+            tie_breaker="decision_id",
+        )
         rows = await self._fetch_all(
             f"SELECT {_SELECT_LIST_COLUMNS} FROM injection_decisions{where} "
-            "ORDER BY created_at_ms DESC, decision_id DESC LIMIT ? OFFSET ?",
+            f"ORDER BY {order_by} LIMIT ? OFFSET ?",
             params + (query.limit, query.offset),
         )
         return DecisionPage(
@@ -403,5 +429,6 @@ __all__ = [
     "CleanupResult",
     "DecisionPage",
     "DecisionQuery",
+    "INJECTION_DECISION_SORT_COLUMNS",
     "InjectionDecisionStore",
 ]

@@ -227,7 +227,10 @@ function PresetComparison({
   t: Translate;
 }) {
   return (
-    <div className="max-w-full overflow-x-auto rounded-lg border">
+    <div
+      className="max-w-full overflow-x-auto rounded-lg border"
+      data-testid="preset-comparison"
+    >
       <Table
         aria-label={t("injection.config.presetComparison")}
         className="min-w-[48rem]"

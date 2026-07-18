@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   AlertTriangle,
@@ -9,6 +9,9 @@ import {
 } from "lucide-react";
 
 import { PageToolbar } from "@/components/layout/PageLayout";
+import { DataTable } from "@/components/data-table/DataTable";
+import { actionsColumn } from "@/components/data-table/data-table-columns";
+import type { DataTableColumn } from "@/components/data-table/table-types";
 import { Button } from "@/components/ui/Button";
 import {
   Field,
@@ -97,6 +100,7 @@ const decisionColumns = [
   "outcome",
   "payloadChars",
   "totalMs",
+  "actions",
 ] as const;
 
 function totalDecisionMs(item: InjectionDecisionListItem): number {
@@ -380,12 +384,12 @@ function DecisionTableLoading({ t }: { t: Translate }) {
 
 function DecisionTable({
   decisions,
-  locale,
+  columns,
   onOpenDecision,
   t,
 }: {
   decisions: ReturnType<typeof useInjectionDecisions>;
-  locale: string;
+  columns: DataTableColumn<InjectionDecisionListItem>[];
   onOpenDecision: (decisionId: string) => void;
   t: Translate;
 }) {
@@ -396,63 +400,19 @@ function DecisionTable({
       className="max-w-full overflow-x-auto rounded-lg border"
       data-testid="decision-table-scroll"
     >
-      <Table className="min-w-[64rem]" aria-label={t("injection.tabs.decisions")}>
-        <TableHeader>
-          <TableRow>
-            {decisionColumns.map((column) => (
-              <TableHead key={column}>{t(`injection.column.${column}`)}</TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {decisions.page.items.map((item) => (
-            <TableRow key={item.decision_id}>
-              <TableCell>
-                <div className="flex flex-col items-start gap-2">
-                  <span>{formatDashboardDateTime(item.created_at_ms, locale)}</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onOpenDecision(item.decision_id)}
-                  >
-                    {t("injection.decisions.openDetail")}
-                  </Button>
-                </div>
-              </TableCell>
-              <TableCell>{t(`injection.mode.${item.routing_mode}`)}</TableCell>
-              <TableCell>{t(`injection.preset.${item.resolved_preset}`)}</TableCell>
-              <TableCell>{item.provider_type}</TableCell>
-              <TableCell>
-                {translateEnum(
-                  t,
-                  "injection.reason",
-                  item.primary_reason,
-                  item.primary_reason,
-                )}
-              </TableCell>
-              <TableCell>
-                <StatusText
-                  icon={item.fallback_applied ? AlertTriangle : MinusCircle}
-                  label={item.fallback_applied ? t("common.yes") : t("common.no")}
-                />
-              </TableCell>
-              <TableCell>
-                <StatusText
-                  icon={outcomeIcon(item.outcome)}
-                  label={t(`injection.outcome.${item.outcome}`)}
-                />
-              </TableCell>
-              <TableCell>{formatDashboardNumber(item.actual_payload_chars, locale)}</TableCell>
-              <TableCell>
-                {formatDashboardNumber(totalDecisionMs(item), locale, {
-                  maximumFractionDigits: 2,
-                })}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <DataTable
+        tableId="injection-decisions"
+        data={decisions.page.items}
+        columns={columns}
+        getRowId={(item) => item.decision_id}
+        sort={decisions.sort}
+        onSortChange={decisions.setSort}
+        currentRowId={decisions.detail?.decision_id ?? null}
+        onRowActivate={(item) => onOpenDecision(item.decision_id)}
+        loading={decisions.status === "loading"}
+        emptyLabel={t("injection.state.empty")}
+        pagination={<DecisionPagination decisions={decisions} t={t} />}
+      />
     </div>
   );
 }
@@ -543,6 +503,130 @@ export function InjectionDecisionsTab({
 }: InjectionDecisionsTabProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
+  const decisionTableColumns = useMemo<DataTableColumn<InjectionDecisionListItem>[]>(
+    () => [
+      {
+        id: "created_at_ms",
+        accessorKey: "created_at_ms",
+        header: t("injection.column.time"),
+        meta: {
+          label: t("injection.column.time"),
+          serverSortKey: "created_at_ms",
+        },
+        cell: ({ row }) => formatDashboardDateTime(row.original.created_at_ms, locale),
+      },
+      {
+        id: "routing_mode",
+        accessorKey: "routing_mode",
+        header: t("injection.column.mode"),
+        meta: {
+          label: t("injection.column.mode"),
+          serverSortKey: "routing_mode",
+        },
+        cell: ({ row }) => t(`injection.mode.${row.original.routing_mode}`),
+      },
+      {
+        id: "resolved_preset",
+        accessorKey: "resolved_preset",
+        header: t("injection.column.preset"),
+        meta: {
+          label: t("injection.column.preset"),
+          serverSortKey: "resolved_preset",
+        },
+        cell: ({ row }) => t(`injection.preset.${row.original.resolved_preset}`),
+      },
+      {
+        id: "provider_type",
+        accessorKey: "provider_type",
+        header: t("injection.column.provider"),
+        meta: {
+          label: t("injection.column.provider"),
+          serverSortKey: "provider_type",
+        },
+      },
+      {
+        id: "primary_reason",
+        accessorKey: "primary_reason",
+        header: t("injection.column.reason"),
+        enableSorting: false,
+        meta: { label: t("injection.column.reason") },
+        cell: ({ row }) => translateEnum(
+          t,
+          "injection.reason",
+          row.original.primary_reason,
+          row.original.primary_reason,
+        ),
+      },
+      {
+        id: "fallback_applied",
+        accessorKey: "fallback_applied",
+        header: t("injection.column.fallback"),
+        enableSorting: false,
+        meta: { label: t("injection.column.fallback") },
+        cell: ({ row }) => (
+          <StatusText
+            icon={row.original.fallback_applied ? AlertTriangle : MinusCircle}
+            label={row.original.fallback_applied ? t("common.yes") : t("common.no")}
+          />
+        ),
+      },
+      {
+        id: "outcome",
+        accessorKey: "outcome",
+        header: t("injection.column.outcome"),
+        meta: {
+          label: t("injection.column.outcome"),
+          serverSortKey: "outcome",
+        },
+        cell: ({ row }) => (
+          <StatusText
+            icon={outcomeIcon(row.original.outcome)}
+            label={t(`injection.outcome.${row.original.outcome}`)}
+          />
+        ),
+      },
+      {
+        id: "actual_payload_chars",
+        accessorKey: "actual_payload_chars",
+        header: t("injection.column.payloadChars"),
+        meta: {
+          label: t("injection.column.payloadChars"),
+          serverSortKey: "actual_payload_chars",
+          cellClassName: "text-right tabular-nums",
+        },
+        cell: ({ row }) => formatDashboardNumber(
+          row.original.actual_payload_chars,
+          locale,
+        ),
+      },
+      {
+        id: "decision_ms",
+        accessorKey: "decision_ms",
+        header: t("injection.column.totalMs"),
+        meta: {
+          label: t("injection.column.totalMs"),
+          serverSortKey: "decision_ms",
+          cellClassName: "text-right tabular-nums",
+        },
+        cell: ({ row }) => formatDashboardNumber(totalDecisionMs(row.original), locale, {
+          maximumFractionDigits: 2,
+        }),
+      },
+      {
+        ...actionsColumn({
+          label: t("injection.column.actions"),
+          rowLabel: () => t("injection.decisions.openDetail"),
+          actions: (item) => [{
+            id: "open-detail",
+            label: t("injection.decisions.openDetail"),
+            onSelect: () => onOpenDecision(item.decision_id),
+          }],
+        }),
+        header: t("injection.column.actions"),
+      },
+    ],
+    [locale, onOpenDecision, t],
+  );
 
   return (
     <section
@@ -567,11 +651,10 @@ export function InjectionDecisionsTab({
           <>
             <DecisionTable
               decisions={decisions}
-              locale={locale}
+              columns={decisionTableColumns}
               onOpenDecision={onOpenDecision}
               t={t}
             />
-            <DecisionPagination decisions={decisions} t={t} />
           </>
         )}
       </div>

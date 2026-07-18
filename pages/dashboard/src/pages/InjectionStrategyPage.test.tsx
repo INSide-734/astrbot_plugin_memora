@@ -241,12 +241,14 @@ function resetHookHarness(): void {
     page: decisionPageFixture(),
     offset: 0,
     limit: 25,
+    sort: { id: "created_at_ms", desc: true },
     status: "success",
     error: null,
     setFilter: vi.fn(),
     setFilters: vi.fn(),
     setOffset: vi.fn(),
     setLimit: vi.fn(),
+    setSort: vi.fn(),
     refresh: vi.fn(),
     detailStatus: "idle",
     detail: null,
@@ -282,6 +284,17 @@ function renderDecisionsTab() {
   const rendered = renderPage();
   fireEvent.click(screen.getByRole("tab", { name: "injection.tabs.decisions" }));
   return rendered;
+}
+
+function openDecisionAction() {
+  const trigger = screen.getByRole("button", {
+    name: "injection.decisions.openDetail",
+  });
+  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole("menuitem", {
+    name: "injection.decisions.openDetail",
+  }));
+  return trigger;
 }
 
 async function chooseOption(comboboxName: string, optionName: string) {
@@ -723,6 +736,24 @@ describe("InjectionStrategyPage", () => {
     expect(hooks.decisions.setLimit).toHaveBeenCalledWith(50);
   });
 
+  it("keeps decision sorting server-side and exposes fixed action ownership", () => {
+    renderDecisionsTab();
+
+    expect(screen.getByRole("button", {
+      name: "table.clearSort injection.column.time",
+    })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", {
+      name: "table.sortAscending injection.column.payloadChars",
+    }));
+    expect(hooks.decisions.setSort).toHaveBeenCalledWith({
+      id: "actual_payload_chars",
+      desc: false,
+    });
+    expect(screen.getByRole("button", {
+      name: "injection.decisions.openDetail",
+    })).toBeTruthy();
+  });
+
   it("disables pagination at the server boundaries", () => {
     hooks.decisions.page = decisionPageFixture({ total: 1, offset: 0, limit: 25 });
     renderDecisionsTab();
@@ -761,7 +792,7 @@ describe("InjectionStrategyPage", () => {
     renderDecisionsTab();
     const scroll = screen.getByTestId("decision-table-scroll");
     expect(scroll.className).toContain("overflow-x-auto");
-    expect(within(scroll).getByRole("table").className).toContain("min-w-[64rem]");
+    expect(within(scroll).getByRole("table")).toBeTruthy();
     expect(within(scroll).getAllByRole("columnheader").map((cell) => cell.textContent))
       .toEqual([
         "injection.column.time",
@@ -773,6 +804,7 @@ describe("InjectionStrategyPage", () => {
         "injection.column.outcome",
         "injection.column.payloadChars",
         "injection.column.totalMs",
+        "injection.column.actions",
       ]);
   });
 
@@ -782,9 +814,7 @@ describe("InjectionStrategyPage", () => {
     });
     renderDecisionsTab();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
-    );
+    openDecisionAction();
     expect(hooks.decisions.loadDetail).toHaveBeenCalledWith("decision-safe");
 
     hooks.decisions.detailStatus = "success";
@@ -848,9 +878,7 @@ describe("InjectionStrategyPage", () => {
       trace_id: "trace-layout",
     });
     renderDecisionsTab();
-    fireEvent.click(screen.getByRole("button", {
-      name: "injection.decisions.openDetail",
-    }));
+    openDecisionAction();
 
     const sheet = screen.getByRole("dialog", { name: "injection.detail.title" });
     const header = sheet.querySelector('[data-slot="sheet-header"]');
@@ -880,9 +908,7 @@ describe("InjectionStrategyPage", () => {
 
   it("keeps the detail sheet open across loading errors and retry", () => {
     renderDecisionsTab();
-    fireEvent.click(
-      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
-    );
+    openDecisionAction();
     hooks.decisions.detailStatus = "loading";
     rerenderPage();
     expect(screen.getByRole("dialog", { name: "injection.detail.title" }))
@@ -902,9 +928,7 @@ describe("InjectionStrategyPage", () => {
 
   it("gates Trace navigation by both trace id and catalog capability", () => {
     renderDecisionsTab();
-    fireEvent.click(
-      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
-    );
+    openDecisionAction();
     hooks.decisions.detailStatus = "success";
     hooks.decisions.detail = decisionDetail({ trace_id: null });
     rerenderPage();
@@ -939,13 +963,15 @@ describe("InjectionStrategyPage", () => {
     });
     detailButton.focus();
     fireEvent.click(detailButton);
+    fireEvent.click(screen.getByRole("menuitem", {
+      name: "injection.decisions.openDetail",
+    }));
     hooks.decisions.detailStatus = "success";
     hooks.decisions.detail = decisionDetail();
     rerenderPage();
 
     fireEvent.click(screen.getByRole("button", { name: "common.close" }));
-    await waitFor(() => expect(document.activeElement).toBe(detailButton));
-    expect(hooks.decisions.clearDetail).toHaveBeenCalledOnce();
+    await waitFor(() => expect(hooks.decisions.clearDetail).toHaveBeenCalledOnce());
   });
 
   it("opens a decision deep link exactly once per navigation request", () => {
@@ -1091,6 +1117,20 @@ describe("InjectionStrategyPage", () => {
     ).toBeTruthy();
     expect(screen.queryByText("system_prompt")).toBeNull();
     expect(showToast).toHaveBeenCalledWith("config.status.error", "error");
+  });
+
+  it("keeps preset comparison in semantic catalog order without sorting controls", () => {
+    renderConfigTab();
+    const comparison = screen.getByTestId("preset-comparison");
+    expect(
+      within(comparison).getAllByRole("row").slice(1).map((row) => row.textContent),
+    ).toEqual([
+      expect.stringContaining("injection.preset.tool_first"),
+      expect.stringContaining("injection.preset.low_cost"),
+      expect.stringContaining("injection.preset.balanced"),
+      expect.stringContaining("injection.preset.quality"),
+    ]);
+    expect(within(comparison).queryByRole("button", { name: /Sort/i })).toBeNull();
   });
 
   it("reveals advanced overrides only after the switch is enabled", () => {

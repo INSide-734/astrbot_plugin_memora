@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { DataTableSort } from "@/components/data-table/table-types";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import {
   DEFAULT_INJECTION_FILTERS,
@@ -37,6 +38,11 @@ interface UseInjectionDecisionsOptions {
   initialLimit?: number;
 }
 
+const DEFAULT_DECISION_SORT: DataTableSort = {
+  id: "created_at_ms",
+  desc: true,
+};
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -54,11 +60,14 @@ function clampOffset(value: number): number {
 function decisionQuery(
   filters: InjectionDecisionFilters,
   offset: number,
-  limit: number
+  limit: number,
+  sort: DataTableSort,
 ): string {
   const params = new URLSearchParams({
     offset: String(offset),
     limit: String(limit),
+    sort_by: sort.id,
+    sort_order: sort.desc ? "desc" : "asc",
   });
   for (const key of Object.keys(
     FILTER_PARAM
@@ -81,6 +90,7 @@ export function useInjectionDecisions(
   const [limit, setLimitState] = useState(() =>
     clampLimit(options.initialLimit ?? 25)
   );
+  const [sort, setSortState] = useState<DataTableSort>(DEFAULT_DECISION_SORT);
   const [listState, setListState] = useState<ListState>({
     status: "loading",
     page: null,
@@ -116,7 +126,8 @@ export function useInjectionDecisions(
         `injection-strategy/decisions?${decisionQuery(
           filters,
           offset,
-          limit
+          limit,
+          sort,
         )}`,
         { retries: 0 }
       );
@@ -133,7 +144,7 @@ export function useInjectionDecisions(
         }));
       }
     }
-  }, [filters, limit, offset]);
+  }, [filters, limit, offset, sort]);
 
   useEffect(() => {
     void refresh();
@@ -161,6 +172,11 @@ export function useInjectionDecisions(
 
   const setLimit = useCallback((next: number) => {
     setLimitState(clampLimit(next));
+    setOffsetState(0);
+  }, []);
+
+  const setSort = useCallback((next: DataTableSort | null) => {
+    setSortState(next ?? DEFAULT_DECISION_SORT);
     setOffsetState(0);
   }, []);
 
@@ -199,12 +215,14 @@ export function useInjectionDecisions(
     page: listState.page,
     offset,
     limit,
+    sort,
     status: listState.status,
     error: listState.error,
     setFilter,
     setFilters,
     setOffset,
     setLimit,
+    setSort,
     refresh,
     detailStatus: detailState.status,
     detail: detailState.data,

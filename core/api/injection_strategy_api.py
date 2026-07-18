@@ -9,11 +9,13 @@ from uuid import UUID
 from astrbot.api import logger
 from quart import request
 
+from ..base.list_sorting import parse_sort_query
 from ..injection.models import DeliveryMode, InjectionOutcome, RoutingMode
 from ..injection.presets import PRESETS
 from ..storage.injection_decision_store import (
     DecisionPage,
     DecisionQuery,
+    INJECTION_DECISION_SORT_COLUMNS,
     InjectionDecisionStore,
 )
 from ..utils.injection_adapter import InjectionAdapter
@@ -33,6 +35,8 @@ _LIST_QUERY_FIELDS = frozenset(
         "primary_reason",
         "fallback_applied",
         "outcome",
+        "sort_by",
+        "sort_order",
     }
 )
 _RECENT_EVENT_FIELDS = (
@@ -272,6 +276,12 @@ class InjectionStrategyApiMixin:
         fallback_applied = InjectionStrategyApiMixin._optional_bool(
             payload, "fallback_applied"
         )
+        sort = parse_sort_query(
+            payload,
+            allowed=INJECTION_DECISION_SORT_COLUMNS,
+            default_by="created_at_ms",
+            default_order="desc",
+        )
         return DecisionQuery(
             offset=offset,
             limit=limit,
@@ -283,6 +293,8 @@ class InjectionStrategyApiMixin:
             primary_reason=primary_reason,
             fallback_applied=fallback_applied,
             outcome=outcome,
+            sort_by=sort.by,
+            sort_order=sort.order,
         )
 
     @staticmethod
