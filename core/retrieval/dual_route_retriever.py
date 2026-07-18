@@ -7,6 +7,7 @@ import contextlib
 import inspect
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..models.memory_evolution import ExpansionBudget, ScopeContext
@@ -14,6 +15,7 @@ from ..models.recall_strategy import RecallStrategy
 from .graph_retriever import GraphRetriever
 from .hybrid_retriever import HybridRetriever
 from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
+from .projection_reader import ProjectionBudget, ProjectionScope
 from .rrf_fusion import HybridResult
 
 if TYPE_CHECKING:
@@ -33,6 +35,7 @@ class DualRouteRetriever:
         profile_manager=None,
         reranker=None,
         derived_expander=None,
+        projection_reader=None,
     ):
         self.document_retriever = document_retriever
         self.graph_retriever = graph_retriever
@@ -52,6 +55,7 @@ class DualRouteRetriever:
         # v2.5: 可插拔重排序器（MMR / Cross-Encoder / LLM / Hybrid）
         self.reranker = reranker
         self.derived_expander = derived_expander
+        self.projection_reader = projection_reader
         self._reranker_strategy = self.config.get("reranker.strategy", "mmr")
         # 阶段计时存储（每次 search() 后更新）
         self.last_search_timing: dict[str, float] = {}
@@ -159,6 +163,43 @@ class DualRouteRetriever:
                             ),
                         ),
                         max_items=len(merged) + max_expansions,
+                    ),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                merged = baseline
+
+        if (
+            self.projection_reader is not None
+            and bool(evolution_config.get("enabled", False))
+            and str(evolution_config.get("mode", "disabled")) in {"readonly", "active"}
+            and merged
+        ):
+            baseline = list(merged)
+            try:
+                projection_budget_chars = max(
+                    0,
+                    int(evolution_config.get("projection_budget_chars", 2_000)),
+                )
+                projection_limit = max(
+                    0,
+                    int(evolution_config.get("max_query_expansions", 8)),
+                )
+                merged = await self.projection_reader.attach(
+                    merged,
+                    scope=ProjectionScope(
+                        scope_key=session_id or persona_id or f"{chat_type}:default",
+                        privacy_level=(
+                            "shared" if chat_type == "group" else "confidential"
+                        ),
+                        now=datetime.now(timezone.utc),
+                    ),
+                    budget=ProjectionBudget(
+                        max_chars=projection_budget_chars,
+                        max_items=projection_limit,
+                        max_per_candidate=4,
+                        max_summary_chars=min(600, projection_budget_chars),
                     ),
                 )
             except asyncio.CancelledError:

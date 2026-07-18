@@ -196,6 +196,76 @@ class TestDualRouteRetriever:
         expander.expand.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_projection_reader_runs_before_reranker(
+        self,
+        doc_retriever: AsyncMock,
+        graph_retriever: AsyncMock,
+        memory_loader: AsyncMock,
+    ) -> None:
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+
+        direct = _make_hybrid(1, 0.9, "直接证据")
+        attached = _make_hybrid(
+            1,
+            0.9,
+            "直接证据",
+            {"derived_projections": [{"type": "episode_summary", "summary": "摘要", "confidence": 0.8}]},
+        )
+        relation_result = _make_hybrid(2, 0.7, "关系证据")
+        doc_retriever.search.return_value = [direct]
+        projection_reader = MagicMock()
+        projection_reader.attach = AsyncMock(return_value=[attached, relation_result])
+        order: list[str] = []
+
+        async def rerank(values, k, *, query):
+            order.append("rerank")
+            assert values[0].metadata["derived_projections"]
+            return values
+
+        reranker = MagicMock()
+        reranker.rerank = rerank
+        retriever = DualRouteRetriever(
+            document_retriever=doc_retriever,
+            graph_retriever=graph_retriever,
+            memory_loader=memory_loader,
+            config={"memory_evolution": {"enabled": True, "mode": "readonly"}},
+            reranker=reranker,
+            projection_reader=projection_reader,
+        )
+
+        results = await retriever.search("查询", k=5, session_id="private:user-a")
+
+        assert [item.doc_id for item in results] == [1, 2]
+        projection_reader.attach.assert_awaited_once()
+        assert order == ["rerank"]
+
+    @pytest.mark.asyncio
+    async def test_projection_reader_is_not_called_in_shadow_mode(
+        self,
+        doc_retriever: AsyncMock,
+        graph_retriever: AsyncMock,
+        memory_loader: AsyncMock,
+    ) -> None:
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+
+        direct = _make_hybrid(1, 0.9, "直接证据")
+        doc_retriever.search.return_value = [direct]
+        projection_reader = MagicMock()
+        projection_reader.attach = AsyncMock(side_effect=AssertionError("观察模式不应读取 projection"))
+        retriever = DualRouteRetriever(
+            document_retriever=doc_retriever,
+            graph_retriever=graph_retriever,
+            memory_loader=memory_loader,
+            config={"memory_evolution": {"enabled": True, "mode": "shadow"}},
+            projection_reader=projection_reader,
+        )
+
+        results = await retriever.search("查询", k=5, session_id="private:user-a")
+
+        assert [item.doc_id for item in results] == [1]
+        projection_reader.attach.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_search_both_routes(self, retriever: Any, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock) -> None:
         """双路均有结果时应合并；仅图路命中的文档需要通过 memory_loader 回填。"""
         doc_retriever.search.return_value = [

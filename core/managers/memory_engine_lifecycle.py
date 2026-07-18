@@ -307,6 +307,7 @@ class MemoryEngineLifecycleMixin:
                 profile_manager=self.profile_manager,
                 reranker=reranker,
                 derived_expander=self.config.get("derived_expander"),
+                projection_reader=self.config.get("projection_reader"),
             )
 
         # D4：实时 SSE 事件流。
