@@ -140,6 +140,64 @@ class TestFormatMemoriesForInjection:
         result = format_memories_for_injection([mem_obj])
         assert result == ""
 
+    def test_projection_uses_allowlist_and_metadata_budget(self):
+        text, stats = format_memories_for_injection(
+            [
+                {
+                    "content": "canonical text",
+                    "score": 0.9,
+                    "metadata": {
+                        "importance": 0.8,
+                        "derived_projections": [
+                            {
+                                "type": "episode_summary",
+                                "summary": "先迁移，再灰度发布。",
+                                "confidence": 0.86,
+                                "projection_id": "内部编号",
+                                "source_memory_ids": [17, 18],
+                            }
+                        ],
+                    },
+                }
+            ],
+            budget=InjectionBudget(
+                total_chars=800,
+                memory_max_chars=300,
+                metadata_max_chars=180,
+                include_key_facts=False,
+                include_topics=False,
+                include_participants=False,
+                compact_header=True,
+            ),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Projection: [episode_summary, confidence=0.86] 先迁移，再灰度发布。" in text
+        assert "projection_id" not in text
+        assert "source_memory_ids" not in text
+        assert stats.chars == len(text)
+
+    def test_projection_is_omitted_at_content_level_none(self):
+        text, _ = format_memories_for_injection(
+            [
+                {
+                    "content": "canonical",
+                    "metadata": {
+                        "derived_projections": [
+                            {"type": "episode_summary", "summary": "不应出现", "confidence": 0.9}
+                        ]
+                    },
+                }
+            ],
+            budget=InjectionBudget(
+                total_chars=800,
+                memory_max_chars=300,
+                metadata_max_chars=180,
+            ),
+            content_level=ContentLevel.NONE,
+        )
+        assert text == ""
+
 
 class TestFormatMemoriesForFakeToolCall:
     """测试 format_memories_for_fake_tool_call."""
@@ -248,6 +306,38 @@ class TestFormatMemoriesForFakeToolCall:
         content = json.loads(result[1]["content"])
         assert content["applied_filters"]["session_filtered"] is False
         assert content["applied_filters"]["persona_filtered"] is True
+
+    def test_fake_tool_call_keeps_projection_on_canonical_result(self):
+        result = format_memories_for_fake_tool_call(
+            [
+                {
+                    "id": 17,
+                    "content": "canonical",
+                    "score": 0.9,
+                    "metadata": {
+                        "importance": 0.8,
+                        "derived_projections": [
+                            {
+                                "type": "episode_summary",
+                                "summary": "摘要",
+                                "confidence": 0.86,
+                                "projection_id": "内部编号",
+                                "source_memory_ids": [17, 18],
+                            }
+                        ],
+                    },
+                }
+            ],
+            "查询",
+        )
+        payload = json.loads(result[1]["content"])
+        canonical = payload["results"][0]
+        assert canonical["id"] == 17
+        assert canonical["derived_projections"] == [
+            {"type": "episode_summary", "summary": "摘要", "confidence": 0.86}
+        ]
+        assert "projection_id" not in canonical
+        assert "source_memory_ids" not in canonical
 
 
 class TestFormatMemoriesForFakeToolCallDeepSeekV4:
