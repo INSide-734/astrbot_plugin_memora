@@ -4,6 +4,7 @@
 """
 
 import json
+import math
 import uuid
 from datetime import datetime
 from typing import Any
@@ -21,6 +22,73 @@ from .injection_budget import (
     format_full_header,
     truncate_preserving_sentence,
 )
+
+
+_PROJECTION_TYPES = frozenset(
+    {"episode_summary", "preference_state", "relationship_state", "conflict_set"}
+)
+
+
+def _safe_projection_objects(
+    metadata: dict[str, Any], *, max_chars: int = 600
+) -> list[dict[str, Any]]:
+    """提取 projection 的固定可见字段，不序列化内部 source 信息。"""
+
+    raw = metadata.get("derived_projections")
+    if not isinstance(raw, list) or max_chars <= 0:
+        return []
+    safe: list[dict[str, Any]] = []
+    used_chars = 0
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        projection_type = item.get("type")
+        summary = item.get("summary")
+        if projection_type not in _PROJECTION_TYPES or not isinstance(summary, str):
+            continue
+        summary = summary.strip()
+        if not summary:
+            continue
+        try:
+            confidence = float(item.get("confidence"))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(confidence):
+            continue
+        confidence = max(0.0, min(1.0, confidence))
+        item_chars = len(projection_type) + len(summary) + 24
+        if used_chars + item_chars > max_chars:
+            continue
+        safe.append(
+            {
+                "type": projection_type,
+                "summary": summary,
+                "confidence": confidence,
+            }
+        )
+        used_chars += item_chars
+    return safe
+
+
+def _format_projection_lines(
+    metadata: dict[str, Any], *, max_chars: int
+) -> list[str]:
+    """将 projection 转为受 metadata 字符预算约束的注释行。"""
+
+    safe = _safe_projection_objects(metadata, max_chars=max_chars)
+    lines: list[str] = []
+    used_chars = 0
+    for item in safe:
+        line = (
+            f"Projection: [{item['type']}, confidence={item['confidence']:.2f}] "
+            f"{item['summary']}"
+        )
+        separator = 3 if lines else 0
+        if used_chars + separator + len(line) > max_chars:
+            continue
+        lines.append(line)
+        used_chars += separator + len(line)
+    return lines
 
 
 def format_memories_for_injection(
@@ -175,6 +243,15 @@ def format_memories_for_injection(
 
                 entry_parts.append(content)
 
+            projection_cap = (
+                budget.metadata_max_chars if use_budget else 1_200
+            )
+            for projection_line in _format_projection_lines(
+                metadata,
+                max_chars=max(0, projection_cap - metadata_chars),
+            ):
+                append_metadata(projection_line)
+
             if metadata_parts:
                 entry_parts.insert(1, " | ".join(metadata_parts))
 
@@ -310,6 +387,9 @@ def format_memories_for_fake_tool_call(
                 "last_access_time": metadata.get("last_access_time"),
             }
         )
+        safe_projection = _safe_projection_objects(metadata)
+        if safe_projection:
+            serialized_results[-1]["derived_projections"] = safe_projection
 
     tool_result_json = json.dumps(
         {
