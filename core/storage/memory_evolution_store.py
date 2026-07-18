@@ -1,7 +1,7 @@
-"""SQLite persistence for derived memory-evolution objects.
+"""派生记忆演化对象的 SQLite 持久化。
 
-This store deliberately keeps the evidence plane (``documents``) untouched.
-Derived rows are versioned by source revision and can be invalidated/rebuilt.
+本 Store 保持证据平面的 ``documents`` 不变；派生行按 source revision
+保存，并支持失效和重建。
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def _parse(value: str | None) -> datetime | None:
 
 
 class MemoryEvolutionStore(BaseStore):
-    """Persistent local store for jobs, relations, projections and mappings."""
+    """保存 job、relation、projection 和 source mapping 的本地 Store。"""
 
     async def _create_tables(self) -> None:
         await self.connection.executescript(

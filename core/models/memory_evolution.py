@@ -1,9 +1,7 @@
-"""Domain contracts for evidence-grounded memory evolution.
+"""证据锚定记忆演化的领域契约。
 
-The models in this module are deliberately persistence- and provider-agnostic.
-They carry the small amount of local validation needed to keep malformed
-proposals from crossing component boundaries; storage and policy validation
-remain responsibilities of their owning components.
+本模块的模型不依赖持久化和 Provider，只承担阻止格式错误的 proposal
+跨越组件边界所需的最小本地校验；存储一致性和策略校验由各自组件负责。
 """
 
 from __future__ import annotations
@@ -70,7 +68,7 @@ def _check_interval(start: datetime | None, end: datetime | None) -> None:
 
 @dataclass(frozen=True)
 class MemorySourceRef:
-    """A canonical memory snapshot used as evidence for a proposal."""
+    """作为 proposal 证据的 canonical memory 快照。"""
 
     memory_id: int
     revision_token: str
@@ -94,7 +92,7 @@ class MemorySourceRef:
 
     @property
     def revision(self) -> str:
-        """Compatibility alias for code using the design document's name."""
+        """为沿用设计文档命名的调用方提供兼容别名。"""
 
         return self.revision_token
 
@@ -205,7 +203,7 @@ class EvolutionSignal:
 
     @property
     def source(self) -> MemorySourceRef:
-        """Return a canonical source view for consumers that need one."""
+        """为需要 source 视图的调用方返回 canonical source。"""
 
         if self.occurred_at is None:
             raise ValueError("occurred_at is required to build a source")
