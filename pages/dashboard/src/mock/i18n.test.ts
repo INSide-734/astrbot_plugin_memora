@@ -48,6 +48,29 @@ function staticTranslationKeys(filePath: string): string[] {
   return keys;
 }
 
+const TABLE_KEYS = [
+  "table.viewOptions",
+  "table.columns",
+  "table.density",
+  "table.densityCompact",
+  "table.densityStandard",
+  "table.densityComfortable",
+  "table.pinLeft",
+  "table.pinRight",
+  "table.unpin",
+  "table.moveLeft",
+  "table.moveRight",
+  "table.resetView",
+  "table.sortAscending",
+  "table.sortDescending",
+  "table.clearSort",
+  "table.resizeColumn",
+  "table.rowActions",
+  "detail.unsaved",
+  "detail.viewMode",
+  "detail.editMode",
+] as const;
+
 const REQUIRED_KEYS = [
   "common.close",
   "header.openMenu",
@@ -78,26 +101,7 @@ const REQUIRED_KEYS = [
   "search.configLoading",
   "search.countLimited",
   "kb.accessCount",
-  "table.viewOptions",
-  "table.columns",
-  "table.density",
-  "table.densityCompact",
-  "table.densityStandard",
-  "table.densityComfortable",
-  "table.pinLeft",
-  "table.pinRight",
-  "table.unpin",
-  "table.moveLeft",
-  "table.moveRight",
-  "table.resetView",
-  "table.sortAscending",
-  "table.sortDescending",
-  "table.clearSort",
-  "table.resizeColumn",
-  "table.rowActions",
-  "detail.unsaved",
-  "detail.viewMode",
-  "detail.editMode",
+  ...TABLE_KEYS,
 ] as const;
 
 const INJECTION_REQUIRED_KEYS = [
