@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Brain, RotateCw, MessageSquareText, ArrowRightLeft } from "lucide-react";
 import { useI18n } from "@/hooks/useI18n";
 import { useGroups } from "@/hooks/useGroups";
@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/Progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/Select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DataTable } from "@/components/data-table/DataTable";
+import type { DataTableColumn, DataTableSort } from "@/components/data-table/table-types";
 import { dashboardLocale, formatDashboardDateTime, formatDashboardNumber, formatDashboardPercent, translateEnum } from "@/lib/i18n";
 import { ActionConfirmDialog } from "@/components/editing/ActionConfirmDialog";
 
@@ -26,12 +27,26 @@ interface LearningStats {
   history?: Array<{ timestamp: string; action: string; detail: string }>;
 }
 
+interface ExpressionPatternRow {
+  pattern_id: number;
+  situation: string;
+  expression: string;
+  weight: number;
+  usage_count: number;
+  created_at: number;
+  last_used_at: number;
+  group_id: string;
+}
+
+const DEFAULT_EXPRESSION_SORT: DataTableSort = { id: "weight", desc: true };
+
 export function LearningPage({ showToast }: LearningPageProps) {
   const { t, currentLang } = useI18n();
   const { groups, groupId, setGroupId } = useGroups();
   const [stats, setStats] = useState<LearningStats | null>(null);
   const [loading, setLoading] = useState(false);
-  const [expressionPatterns, setExpressionPatterns] = useState<Array<{ pattern_id: number; situation: string; expression: string; weight: number; usage_count: number; group_id: string }>>([]);
+  const [expressionPatterns, setExpressionPatterns] = useState<ExpressionPatternRow[]>([]);
+  const [expressionSort, setExpressionSort] = useState<DataTableSort>(DEFAULT_EXPRESSION_SORT);
   const [exprLoading, setExprLoading] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetPending, setResetPending] = useState(false);
@@ -68,9 +83,14 @@ export function LearningPage({ showToast }: LearningPageProps) {
     }
     setExprLoading(true);
     try {
-      const res = unwrapApiData(await apiRequest(`expression/patterns?group_id=${groupId}`));
+      const query = new URLSearchParams({
+        group_id: groupId,
+        sort_by: expressionSort.id,
+        sort_order: expressionSort.desc ? "desc" : "asc",
+      });
+      const res = unwrapApiData(await apiRequest(`expression/patterns?${query.toString()}`));
       if (expressionRequestRef.current === requestId) {
-        setExpressionPatterns((res.patterns ?? []) as Array<{ pattern_id: number; situation: string; expression: string; weight: number; usage_count: number; group_id: string }>);
+        setExpressionPatterns((res.patterns ?? []) as ExpressionPatternRow[]);
       }
     } catch {
       // Expression errors remain non-blocking for the learning overview.
@@ -79,9 +99,10 @@ export function LearningPage({ showToast }: LearningPageProps) {
         setExprLoading(false);
       }
     }
-  }, [groupId]);
+  }, [expressionSort, groupId]);
 
-  useEffect(() => { fetchStats(); fetchExpressions(); }, [fetchStats, fetchExpressions]);
+  useEffect(() => { fetchStats(); }, [fetchStats]);
+  useEffect(() => { fetchExpressions(); }, [fetchExpressions]);
 
   const resetLearning = async () => {
     if (resetPendingRef.current) return;
@@ -105,6 +126,66 @@ export function LearningPage({ showToast }: LearningPageProps) {
 
   const s = stats ?? {};
   const locale = dashboardLocale(currentLang());
+  const changeExpressionSort = useCallback((next: DataTableSort | null) => {
+    if (next?.id === "usage_count" && expressionSort.id !== "usage_count" && !next.desc) {
+      setExpressionSort({ id: "usage_count", desc: true });
+      return;
+    }
+    setExpressionSort(next ?? DEFAULT_EXPRESSION_SORT);
+  }, [expressionSort.id]);
+  const expressionColumns = useMemo<DataTableColumn<ExpressionPatternRow>[]>(() => [
+    {
+      id: "situation",
+      accessorKey: "situation",
+      header: t("expression.situation"),
+      meta: {
+        label: t("expression.situation"),
+        serverSortKey: "situation",
+        required: true,
+        defaultPin: "left",
+        cellClassName: "text-xs font-medium",
+      },
+    },
+    {
+      id: "expression",
+      accessorKey: "expression",
+      header: t("expression.expression"),
+      meta: {
+        label: t("expression.expression"),
+        serverSortKey: "expression",
+        cellClassName: "max-w-[20rem] text-xs text-muted-foreground",
+      },
+      cell: ({ row }) => <span className="block truncate"><ArrowRightLeft className="mr-1 inline" />{row.original.expression}</span>,
+    },
+    {
+      id: "weight",
+      accessorKey: "weight",
+      header: t("expression.weight"),
+      meta: { label: t("expression.weight"), serverSortKey: "weight" },
+      cell: ({ row }) => <div className="flex items-center gap-2"><Progress aria-label={`${row.original.situation} ${row.original.expression} ${t("expression.weight")} ${row.original.pattern_id}`} value={row.original.weight} className="h-1.5 w-16" /><span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(row.original.weight, locale, { maximumFractionDigits: 0 })}</span></div>,
+    },
+    {
+      id: "usage_count",
+      accessorKey: "usage_count",
+      header: t("expression.usage"),
+      sortDescFirst: true,
+      meta: { label: t("expression.usage"), serverSortKey: "usage_count", cellClassName: "text-right text-xs tabular-nums text-muted-foreground" },
+    },
+    {
+      id: "created_at",
+      accessorKey: "created_at",
+      header: t("table.created"),
+      meta: { label: t("table.created"), serverSortKey: "created_at" },
+      cell: ({ row }) => row.original.created_at ? formatDashboardDateTime(row.original.created_at, locale) : "—",
+    },
+    {
+      id: "last_used_at",
+      accessorKey: "last_used_at",
+      header: t("table.updated"),
+      meta: { label: t("table.updated"), serverSortKey: "last_used_at" },
+      cell: ({ row }) => row.original.last_used_at ? formatDashboardDateTime(row.original.last_used_at, locale) : "—",
+    },
+  ], [locale, t]);
 
   return (
     <PageFrame variant="standard" aria-label={t("nav.learning")}>
@@ -184,7 +265,7 @@ export function LearningPage({ showToast }: LearningPageProps) {
               <span className="text-sm font-semibold text-foreground">{t("expression.title")}</span>
               <span className="text-xs text-muted-foreground">({expressionPatterns.length} {t("expression.patterns").toLowerCase()})</span>
             </div>
-            <Select value={groupId} onValueChange={(v) => v && setGroupId(v)} disabled={groups.length === 0}>
+            <Select value={groupId} onValueChange={(v) => { if (v) { setExpressionSort(DEFAULT_EXPRESSION_SORT); setGroupId(v); } }} disabled={groups.length === 0}>
               <SelectTrigger size="sm" className="w-36 text-xs"><span>{groupId || t("jargon.allGroups")}</span></SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -197,38 +278,16 @@ export function LearningPage({ showToast }: LearningPageProps) {
               </SelectContent>
             </Select>
           </PageToolbar>
-          {exprLoading ? (
-            <p className="px-5 py-8 text-center text-xs text-muted-foreground">{t("table.loading")}</p>
-          ) : expressionPatterns.length === 0 ? (
-            <p className="px-5 py-8 text-center text-xs text-muted-foreground">{t("expression.noData")}</p>
-          ) : (
-            <Table>
-              <TableHeader><TableRow>
-                  <TableHead>{t("expression.situation")}</TableHead>
-                  <TableHead>{t("expression.expression")}</TableHead>
-                  <TableHead>{t("expression.weight")}</TableHead>
-                  <TableHead className="text-right">{t("expression.usage")}</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {expressionPatterns.map((p) => (
-                  <TableRow key={p.pattern_id}>
-                    <TableCell className="text-xs font-medium">{p.situation}</TableCell>
-                    <TableCell className="max-w-[20rem] truncate text-xs text-muted-foreground">
-                      <ArrowRightLeft className="mr-1 inline" />
-                      {p.expression}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Progress aria-label={`${p.situation} ${p.expression} ${t("expression.weight")} ${p.pattern_id}`} value={p.weight} className="h-1.5 w-16" />
-                        <span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(p.weight, locale, { maximumFractionDigits: 0 })}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{p.usage_count}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <DataTable
+            tableId="expression-patterns"
+            data={expressionPatterns}
+            columns={expressionColumns}
+            getRowId={(pattern) => String(pattern.pattern_id)}
+            sort={expressionSort}
+            onSortChange={changeExpressionSort}
+            loading={exprLoading}
+            emptyLabel={t("expression.noData")}
+          />
         </Card>
       </PageContent>
     </PageFrame>

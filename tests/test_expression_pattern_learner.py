@@ -18,9 +18,10 @@ import time
 
 import pytest
 
+from core.base.list_sorting import SortQuery
 from core.expression.models import ExpressionPattern, GroupState, PatternScope
 from core.expression.pattern_learner import ExpressionPatternLearner
-from core.expression.pattern_store import ExpressionPatternStore
+from core.expression.pattern_store import EXPRESSION_SORT_COLUMNS, ExpressionPatternStore
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +670,57 @@ class TestStoreCRUD:
         result = await store.get_by_scope(PatternScope("g1", "default"), limit=5)
         assert len(result) == 5
         assert result[0].weight > result[-1].weight
+
+    @pytest.mark.asyncio
+    async def test_get_top_sorts_full_scope_before_limit(self, tmp_db_path):
+        store = await _new_store(tmp_db_path)
+        for index, usage_count in enumerate((9, 3, 6)):
+            await store.upsert(
+                ExpressionPattern(
+                    situation=f"s{index}",
+                    expression=f"e{index}",
+                    group_id="g1",
+                    persona_id="default",
+                    weight=float(index + 1),
+                    usage_count=usage_count,
+                )
+            )
+
+        result = await store.get_top_by_weight(
+            PatternScope("g1", "default"),
+            limit=2,
+            sort=SortQuery("usage_count", "asc"),
+        )
+
+        assert [pattern.usage_count for pattern in result] == [3, 6]
+
+    @pytest.mark.asyncio
+    async def test_get_top_keeps_weight_descending_default(self, tmp_db_path):
+        store = await _new_store(tmp_db_path)
+        for index, weight in enumerate((1.0, 5.0, 3.0)):
+            await store.upsert(
+                ExpressionPattern(
+                    situation=f"s{index}",
+                    expression=f"e{index}",
+                    group_id="g1",
+                    persona_id="default",
+                    weight=weight,
+                )
+            )
+
+        result = await store.get_top_by_weight(PatternScope("g1", "default"), limit=2)
+
+        assert [pattern.weight for pattern in result] == [5.0, 3.0]
+
+    def test_expression_sort_columns_are_fixed(self):
+        assert EXPRESSION_SORT_COLUMNS == {
+            "situation": "situation COLLATE NOCASE",
+            "expression": "expression COLLATE NOCASE",
+            "weight": "weight",
+            "usage_count": "usage_count",
+            "created_at": "created_at",
+            "last_used_at": "last_used_at",
+        }
 
 
 # ---------------------------------------------------------------------------
