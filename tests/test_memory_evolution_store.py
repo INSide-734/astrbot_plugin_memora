@@ -66,6 +66,65 @@ async def test_apply_plan_and_query(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_projection_bundle_returns_source_mapping_for_supporting_seed(tmp_path):
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    await store.apply_derived_plan(valid_plan())
+
+    bundles = await store.active_projection_bundles_for_seeds([18])
+
+    assert len(bundles) == 1
+    bundle = bundles[0]
+    assert bundle.projection.projection_id == "p1"
+    assert bundle.projection.source_memory_ids == (17, 18)
+    assert [(source.memory_id, source.role, source.ordinal) for source in bundle.sources] == [
+        (17, "primary", 0),
+        (18, "supporting", 1),
+    ]
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_projection_bundle_filters_scope_state_and_orders_ties(tmp_path):
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    await store.apply_derived_plan(valid_plan())
+    await store.apply_derived_plan(
+        DerivedApplyPlan(
+            projections=(
+                ProjectionView(
+                    "p0", ProjectionType.PREFERENCE_STATE, "preference", (18, 19),
+                    "scope", "shared", .8,
+                ),
+                ProjectionView(
+                    "p3", ProjectionType.RELATIONSHIP_STATE, "relationship", (18, 20),
+                    "scope", "shared", .8,
+                ),
+                ProjectionView(
+                    "inactive", ProjectionType.EPISODE_SUMMARY, "inactive", (18, 21),
+                    "scope", "shared", .99, DerivedState.INVALIDATED,
+                ),
+            ),
+            projection_sources=(
+                ProjectionSourceView("p0", 18, "r18", "primary", 0),
+                ProjectionSourceView("p0", 19, "r19", "supporting", 1),
+                ProjectionSourceView("p3", 18, "r18", "primary", 0),
+                ProjectionSourceView("p3", 20, "r20", "supporting", 1),
+                ProjectionSourceView("inactive", 18, "r18", "primary", 0),
+                ProjectionSourceView("inactive", 21, "r21", "supporting", 1),
+            ),
+        )
+    )
+
+    bundles = await store.active_projection_bundles_for_seeds([18], scope_key="scope")
+
+    assert [bundle.projection.projection_id for bundle in bundles] == ["p0", "p1", "p3"]
+    assert await store.active_projection_bundles_for_seeds([18], scope_key="other") == []
+    assert await store.active_projection_bundles_for_seeds([18], limit=0) == []
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_idempotent_enqueue_and_expired_lease(tmp_path):
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
