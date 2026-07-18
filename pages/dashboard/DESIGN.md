@@ -4,7 +4,7 @@
 >
 > 基线分支：codex/adaptive-memory-injection（基于 codex/dashboard-unified-editing-crud 统一页面基线）
 >
-> 最后核对：2026-07-17
+> 最后核对：2026-07-18
 >
 > 适用范围：pages/dashboard 内的应用壳、16 个功能页面、共享 UI、统一编辑流程与后续新增页面
 
@@ -211,7 +211,7 @@ flowchart TD
 
 ### 7.2 standard
 
-用于概览、分析、时间序列、关系和系统操作页面。
+用于概览、分析、时间序列、情绪和系统操作页面。
 
 ~~~text
 PageFrame standard
@@ -274,11 +274,13 @@ PageFrame workspace
 | JargonPage | jargon | dense | 群组、双 Tab、表格和 CRUD |
 | ProfilesPage | profiles | dense | 分页、结构化画像和标签编辑 |
 | AffectionPage | affection | standard | 情绪、指标、排行榜和用户 CRUD |
-| SocialPage | social | standard | 分类 Tab、关系列表和 CRUD |
+| SocialPage | social | dense | 固定分类 Tab、全宽关系列表和 CRUD |
 | SystemPage | system | standard | 系统 Tab、备份、维护和确认 |
 | ConfigPage | config | dense | 分组导航、长表单、revision 和应用状态 |
 
 页面模板是滚动与密度契约，不等于视觉主题。相同组件在三种模板中必须使用同一 token 和状态行为。
+
+SocialPage 保留领域分类 Tab，但遵循 dense 数据页契约：PageHeader 与分类工具栏固定，只有活动分类的 `PageContent width="full"` 负责纵向滚动；DataTable 直接位于内容区，不使用无独立分组语义的 Card 包裹。分类切换继续清除隐藏选择。
 
 ### 8.1 InjectionStrategyPage 工作台契约
 
@@ -462,11 +464,17 @@ const items = source.map((item) => ({
 
 ### 10.6 Table、列表和选择
 
-- 表头使用语义 Table 组件；数值、状态和操作列保持稳定对齐。
+- 数据列表优先使用 `src/components/data-table/DataTable`，它基于 TanStack React Table 并复用语义 Table、列头、选择列、操作列和视图偏好菜单。页面为每张表提供稳定的 `tableId`、`meta.label` 和稳定的 `getRowId`；数值、状态和操作列保持稳定对齐。
+- DataTable 的排序是受控的单列服务端排序。列头只发出 `sort_by`/`sort_order`，页面将列 ID 映射到后端 allowlist；后端必须在 `limit`/`offset` 分页前排序，并用稳定的主键或领域 ID 做 tie-breaker。取消排序恢复领域默认排序；不得在客户端对已分页数据二次排序，也不得把任意列名转发到 SQL 或 Page API。
+- 视图偏好是选择性持久化：`memora.table.<tableId>.v1` 只保存密度（compact/standard/comfortable）、列显隐、列顺序和左右固定列。排序、查询、筛选、分页、行选择及拖拽调整后的列宽均为当前会话临时状态；未知列、损坏 JSON 和隐藏 required 列在加载时必须被清理，重置视图必须删除该表的偏好键。
+- 无内部 toolbar 内容时，表格视图入口使用表头区域右上角的紧凑图标按钮，最后一个表头为其预留空间；不得让单个视图按钮独占表格上方一整行。有 toolbar 内容时，完整按钮与 toolbar 内容保持同排。入口必须保持可访问名称和 title，且不得跟随列移动或固定操作重新挂载，以免中断已打开的视图菜单。
+- 密度档位必须形成可测量的空间差异：compact/standard/comfortable 的表头高度分别为 32/40/48px，数据单元格纵向内边距分别为 4/8/12px。生产 CSS 的选择器必须以带 `data-density` 的 table 为作用域；browser smoke 必须比较计算后高度和内边距，不能只断言属性切换。
+- 固定列使用 sticky 单元格和计算后的左右偏移；选择列默认固定到左侧，操作列默认固定到右侧。固定单元格必须保持背景、层级和边界阴影，不能遮挡相邻内容或造成横向滚动时的重叠。
 - 行选择 Checkbox 必须有可读名称。
 - 点击 Checkbox 只改变选择，不打开详情。
 - 整行可点击时仍保留明确的“查看”或行尾操作。
-- 查询、群组、筛选和页码变化时清除不可见选择。
+- 当前详情行使用 `aria-current` 与 current-item selection token 标识；键盘 Enter/Space 与点击行具有同等查看行为，交互控件本身不会触发行激活。
+- 查询、群组、筛选、排序和页码变化时清除不可见选择。
 - 批量栏说明选中数量，并只暴露可安全验证的动作。
 - 窄屏优先使用受控横向滚动；不得压缩列到无法识别，也不得隐藏核心操作。
 
@@ -520,7 +528,9 @@ Sheet 和 Dialog 都使用：
 - min-h-0、flex-1、overflow-y-auto 内容区。
 - shrink-to-content、可换行的底部操作区。
 
-移动端最后一个字段不得被底栏遮挡。Sheet 宽度不超过 min(100vw, 32rem)，创建 Dialog 使用视口相对最大高和宽。
+`EntityEditorSheet` 统一使用 `w-full sm:max-w-[42rem]`，因此宽度不超过 `min(100vw, 42rem)`；移动端占满可用宽度，桌面端提供足够的结构化详情和表单空间。Header 只负责标题、描述、脏状态和关闭；body 只负责 view/form 内容并独立纵向滚动；footer 负责 view 模式的次要/危险动作或 edit 模式的取消、保存和提交状态。领域页面不得把单条删除、归档等动作塞回可滚动 body，也不得为 view → edit 创建第二个 Sheet 实例。
+
+移动端最后一个字段不得被底栏遮挡。Footer 使用安全区 padding、可换行布局和固定可见的主要操作；提交中禁止重复保存和关闭。创建 Dialog 继续使用视口相对最大高和宽。
 
 ### 11.4 校验
 
@@ -711,6 +721,10 @@ Toast 用于短暂结果，不承担必须阅读的校验或冲突信息。长�
 - 脏状态、取消、保存、创建和重复提交保护。
 - 查询变化后的选择清理。
 - 移动端弹层结构。
+- DataTable 的排序循环、服务端排序参数、稳定 tie-breaker、真实分页和筛选/排序后的选择清理。
+- DataTable 视图偏好的 schema 校验、损坏 localStorage 回退、required 列保护、固定列和重置视图。
+- DataTable 的行键盘激活、当前详情行标识、选择/操作控件不冒泡和列头可访问名称。
+- DataTable 视图入口不独占空 toolbar 行，且三档密度在真实浏览器中产生可测量的表头高度和单元格纵向间距变化。
 - Injection 顶层 Tab、唯一滚动所有权和 constrained/full 内容模式。
 - Injection 配置保存失败、未保存修改和 revision 冲突时的草稿保留。
 - Injection 决策真分页、筛选、retry、stale-response 保护和详情 Sheet 三段结构。
@@ -727,6 +741,7 @@ Toast 用于短暂结果，不承担必须阅读的校验或冲突信息。长�
 - Graph、Memory、Jargon、System、Intelligence 等核心页面。
 - Config loading/conflict。
 - Injection Overview、Strategy Configuration、Decision History 和决策详情 Sheet；现有四张截图为 `injection-overview.png`、`injection-config-conflict.png`、`injection-decisions.png` 和 `mobile-injection-detail.png`。
+- DataTable 与实体编辑器：`knowledge-table-default.png`、`knowledge-table-columns.png`、`knowledge-editor-view.png`、`knowledge-editor-edit.png`、`mobile-knowledge-table.png`、`mobile-knowledge-editor.png`、`wide-profiles-table.png`、`dark-social-table.png` 和 `injection-decisions-compact.png`。
 - 全局搜索滚动与精确导航。
 - 编辑 Sheet、冲突、错误摘要、批量 Toolbar、移动 Affection/Mood。
 
@@ -737,7 +752,9 @@ Injection 页面对齐完成后，必须在现有四张截图之外增加 2048 �
 - 页面内容进入视口。
 - 没有残留 Loading 遮罩或加载文案。
 - 没有根级横向溢出。
+- sticky cells 不重叠，表格横向滚动保持在受控容器内，排序结果与服务端响应顺序一致。
 - 固定底栏没有遮挡最后字段。
+- Sheet body 能独立纵向滚动，header/footer 不随 body 消失；移动端 footer 不遮挡最后一个字段。
 - 长翻译没有破坏关键动作。
 - Graph 画布、移动 Sidebar 和弹层布局可用。
 
@@ -777,6 +794,8 @@ python scripts/check_all.py
 组件：
 
 - [ ] 优先使用现有 shadcn/Base UI 组件。
+- [ ] 数据列表使用 DataTable，提供稳定 tableId、meta.label、getRowId 和 allowlisted 服务端排序；不要在客户端二次排序分页结果。
+- [ ] 视图偏好只选择性持久化密度、列显隐、列顺序和固定列；校验 schema、保护 required 列并提供重置视图。
 - [ ] 使用语义颜色和 rounded-lg 上限。
 - [ ] Button variant 与动作层级一致。
 - [ ] Select 使用 items、SelectValue、SelectGroup，并保证内外 label 同源。
@@ -785,6 +804,7 @@ python scripts/check_all.py
 状态与编辑：
 
 - [ ] initial/loading/refreshing/empty/error/submitting/success 均有设计。
+- [ ] EntityEditorSheet 保持同一实例完成 view → edit；header/body/footer 分工明确，body 独立滚动，单条危险动作位于 footer。
 - [ ] 写操作保留草稿并防止重复提交。
 - [ ] revision 冲突使用共享流程。
 - [ ] 删除和批量动作使用正确确认等级。
@@ -820,6 +840,9 @@ python scripts/check_all.py
 - 以 z-9999、绝对定位或 overflow hidden 修补浮层。
 - 仅有 hover 的操作、不可见焦点或 placeholder 充当 label。
 - 移动端隐藏创建、保存、删除、筛选或冲突处理。
+- 在客户端对已分页表格二次排序、把未经 allowlist 校验的列名转发到后端，或伪造 offset 分页。
+- 将排序、筛选、分页、行选择或列宽写入表格视图偏好，或让损坏偏好覆盖 required 列。
+- 在 EntityEditorSheet 的可滚动 body 放置单条删除/归档等危险动作，或在 view → edit 时创建第二个 Sheet。
 - 保存失败后关闭编辑器或清空草稿。
 - 未人工检查截图就宣称 browser smoke 完成。
 
@@ -856,6 +879,9 @@ python scripts/check_all.py
 | 2026-07-17 | Select Popup 自动匹配 Trigger，label 使用单一 items 数据源 | 消除打开/关闭宽度和文案漂移 | 所有 Select 遵守第 10.4 节 |
 | 2026-07-17 | 将当前分支设计整理为统一页面规范 | 为新增页面、审查和后续迁移提供单一设计契约 | 设计级变更同步维护本文档 |
 | 2026-07-17 | InjectionStrategyPage 使用 dense 三 Tab 工作台 | 固定滚动所有权、内容宽度、配置草稿和决策详情弹层契约 | 注入工作台按第 8.1、13.4 和 18 节验收 |
+| 2026-07-18 | 全站数据表统一使用 DataTable 与单列服务端排序 | 在保留领域页面状态的前提下统一列视图、固定列、排序和真实分页边界 | 表格视图偏好只选择性持久化，排序和选择保持临时态 |
+| 2026-07-18 | EntityEditorSheet 固定为 42rem 三段结构 | 让长详情和编辑表单在桌面有足够空间，在移动端保持独立滚动与 footer 可见 | view/edit 共用同一 Sheet，危险动作统一放入 footer |
+| 2026-07-18 | SocialPage 对齐 dense 数据页布局 | 消除旧 Card、受限宽度和整页滚动造成的列表视觉差异 | 保留分类 Tab，活动分类使用全宽内容区并成为唯一滚动者 |
 
 ## 23. 相关文件
 
@@ -874,5 +900,7 @@ python scripts/check_all.py
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-18 | 完成全站 DataTable 与 EntityEditorSheet 设计契约，补充选择性持久化、服务端排序、固定列、42rem Sheet 三段结构和视觉验收截图。 |
+| 2026-07-18 | SocialPage 改用 dense 模板与全宽活动内容区，移除关系列表的装饰性 Card。 |
 | 2026-07-17 | 将 InjectionStrategyPage 纳入 16 页统一基线，补充 dense 三 Tab、唯一滚动、配置与决策 Sheet、三档视口和 browser smoke 契约。 |
 | 2026-07-17 | 基于当前 Dashboard 分支、统一 CRUD、Select 修复和 browser smoke 基线，建立第一版统一页面设计规范。 |

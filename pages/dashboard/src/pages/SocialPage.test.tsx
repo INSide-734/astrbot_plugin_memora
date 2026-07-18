@@ -156,13 +156,13 @@ describe("SocialPage", () => {
     expect((await screen.findByRole("option", { name: "group-1 (12)" })).textContent).toContain("group-1 (12)");
   });
 
-  it("loads the first group, keeps category tabs, and displays returned relation details", async () => {
+  it("uses the shared dense full-width table workspace without a redundant card", async () => {
     mockSocialList();
 
     render(<SocialPage showToast={showToast} />);
 
     const page = screen.getByRole("region", { name: /social/i });
-    expect(page.getAttribute("data-layout")).toBe("standard");
+    expect(page.getAttribute("data-layout")).toBe("dense");
     expect(page.querySelector('[data-slot="page-header"]')).toBeTruthy();
     expect(screen.getByRole("tablist", { name: /categor/i })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /all/i }).getAttribute("aria-selected")).toBe("true");
@@ -175,7 +175,12 @@ describe("SocialPage", () => {
       });
     });
 
-    expect(await screen.findByText("alice")).toBeTruthy();
+    const table = (await screen.findByText("alice")).closest("table");
+    const content = table?.closest('[data-slot="page-content"]');
+    expect(table).toBeTruthy();
+    expect(content).toBeTruthy();
+    expect(content?.className).not.toContain("max-w-[1440px]");
+    expect(page.querySelector('[data-slot="card"]')).toBeNull();
     expect(screen.getByText("bob")).toBeTruthy();
     expect(screen.getByText("50%")).toBeTruthy();
     expect(screen.getByText("project")).toBeTruthy();

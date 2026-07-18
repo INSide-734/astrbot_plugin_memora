@@ -68,6 +68,15 @@ const SCREENSHOT_BASELINES = {
   "editing-batch-toolbar.png": { width: 1366, height: 900, minBytes: 10_000 },
   "editing-mobile-affection.png": { width: 390, height: 844, minBytes: 10_000 },
   "editing-mobile-mood.png": { width: 390, height: 844, minBytes: 10_000 },
+  "knowledge-table-default.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "knowledge-table-columns.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "knowledge-editor-view.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "knowledge-editor-edit.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "mobile-knowledge-table.png": { width: 390, height: 844, minBytes: 10_000 },
+  "mobile-knowledge-editor.png": { width: 390, height: 844, minBytes: 10_000 },
+  "wide-profiles-table.png": { width: 2048, height: 1152, minBytes: 10_000 },
+  "dark-social-table.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "injection-decisions-compact.png": { width: 1366, height: 900, minBytes: 10_000 },
 };
 
 const INJECTION_SMOKE_NOW_MS = Date.UTC(2026, 6, 15, 8, 0, 0);
@@ -117,6 +126,62 @@ const INJECTION_SMOKE_DECISIONS = Array.from({ length: 72 }, (_, index) => {
     inject_ms: 0.3 + (index % 3) * 0.1,
   };
 });
+
+// Keep the browser fixture dense enough to exercise column visibility, pinning,
+// server-side sorting and the shared entity editor without relying on the
+// backend runtime. The IDs and timestamps are intentionally deterministic so
+// screenshots remain stable across runs.
+let KNOWLEDGE_SMOKE_ENTRIES = Array.from({ length: 18 }, (_, index) => {
+  const id = `knowledge-smoke-${String(index + 1).padStart(2, "0")}`;
+  const category = ["fact", "concept", "rule", "event", "procedure"][index % 5];
+  return {
+    entry_id: id,
+    title: `浏览器 smoke 知识 ${String(index + 1).padStart(2, "0")}`,
+    content: `用于浏览器验收的知识条目 ${index + 1}，包含稳定的详情内容。`,
+    category,
+    confidence: Number((0.55 + (index % 5) * 0.09).toFixed(2)),
+    access_count: 3 + index * 2,
+    tags: index % 2 === 0 ? ["browser", category] : ["smoke"],
+    updated_at: `2026-07-${String(18 - Math.floor(index / 3)).padStart(2, "0")}T${String(8 + (index % 10)).padStart(2, "0")}:00:00Z`,
+    created_at: `2026-07-${String(16 - Math.floor(index / 3)).padStart(2, "0")}T08:00:00Z`,
+  };
+});
+
+function sortKnowledgeSmokeEntries(entries, params = {}) {
+  const sortBy = String(params.sort_by ?? "updated_at");
+  const descending = String(params.sort_order ?? "desc") === "desc";
+  const allowed = new Set(["title", "category", "confidence", "updated_at", "access_count"]);
+  const key = allowed.has(sortBy) ? sortBy : "updated_at";
+  return [...entries].sort((left, right) => {
+    let comparison = 0;
+    if (key === "confidence" || key === "access_count") {
+      comparison = Number(left[key] ?? 0) - Number(right[key] ?? 0);
+    } else {
+      comparison = String(left[key] ?? "").localeCompare(String(right[key] ?? ""));
+    }
+    if (comparison === 0) comparison = String(left.entry_id).localeCompare(String(right.entry_id));
+    return descending ? -comparison : comparison;
+  });
+}
+
+function knowledgeSmokeListPayload(params = {}) {
+  const query = String(params.query ?? "").trim().toLocaleLowerCase();
+  const category = String(params.category ?? "").trim();
+  const filtered = KNOWLEDGE_SMOKE_ENTRIES.filter((entry) => {
+    if (category && entry.category !== category) return false;
+    if (!query) return true;
+    return `${entry.title} ${entry.content}`.toLocaleLowerCase().includes(query);
+  });
+  const sorted = sortKnowledgeSmokeEntries(filtered, params);
+  const offset = Math.max(0, Number(params.offset ?? 0));
+  const limit = Math.max(1, Number(params.limit ?? 100));
+  return {
+    entries: sorted.slice(offset, offset + limit).map((entry) => ({ ...entry, tags: [...entry.tags] })),
+    total: sorted.length,
+    offset,
+    limit,
+  };
+}
 
 function injectionCatalogPayload() {
   const preset = (
@@ -686,7 +751,7 @@ function bridgePayload(endpoint, params = {}, method = "GET") {
       },
     };
   }
-  if (pathOnly === "knowledge/search") return { entries: [], total: 0 };
+  if (pathOnly === "knowledge/search") return knowledgeSmokeListPayload(params);
   if (pathOnly === "notes/search") return { notes: [], total: 0 };
   if (pathOnly === "jargon/stats") return { total_terms: 1, confirmed_terms: 0 };
   if (pathOnly === "jargon/candidates") {
@@ -694,8 +759,37 @@ function bridgePayload(endpoint, params = {}, method = "GET") {
   }
   if (pathOnly === "jargon/meanings") return { meanings: [] };
   if (pathOnly === "groups") return { groups: [{ group_id: "group-smoke" }] };
-  if (pathOnly === "profiles") return { profiles: [{ user_id: "user-smoke" }], total: 1 };
-  if (pathOnly === "knowledge") return { items: [{ id: 1, title: "Smoke knowledge" }], total: 1 };
+  if (pathOnly === "profiles") {
+    const profiles = Array.from({ length: 8 }, (_, index) => ({
+      user_id: `profile-smoke-${index + 1}`,
+      display_name: `Profile smoke ${index + 1}`,
+      message_count: 20 - index,
+      last_seen: "2026-07-18T08:00:00Z",
+      group_id: "group-smoke",
+      revision: `profile-revision-${index + 1}`,
+      tags: index % 2 === 0 ? ["browser", "smoke"] : ["smoke"],
+      preferences: { tone: index % 2 === 0 ? "concise" : "friendly" },
+    }));
+    return { profiles, total: profiles.length };
+  }
+  if (pathOnly === "knowledge") return knowledgeSmokeListPayload(params);
+  if (pathOnly === "knowledge/detail") {
+    const entry = KNOWLEDGE_SMOKE_ENTRIES.find((item) => item.entry_id === String(params.entry_id));
+    return entry ? { entry: { ...entry, tags: [...entry.tags] } } : { entry: {} };
+  }
+  if (pathOnly === "knowledge/update" && method === "POST") {
+    const entryId = String(params.entry_id ?? "");
+    const index = KNOWLEDGE_SMOKE_ENTRIES.findIndex((item) => item.entry_id === entryId);
+    if (index < 0) return { status: "error", code: "not_found", message: "知识不存在" };
+    const changes = params.changes && typeof params.changes === "object" ? params.changes : {};
+    KNOWLEDGE_SMOKE_ENTRIES[index] = {
+      ...KNOWLEDGE_SMOKE_ENTRIES[index],
+      ...changes,
+      entry_id: entryId,
+      tags: Array.isArray(changes.tags) ? [...changes.tags] : [...KNOWLEDGE_SMOKE_ENTRIES[index].tags],
+    };
+    return { entry: { ...KNOWLEDGE_SMOKE_ENTRIES[index], tags: [...KNOWLEDGE_SMOKE_ENTRIES[index].tags] }, revision: `knowledge-revision-${entryId}` };
+  }
   if (pathOnly === "notes") return { notes: [{ id: 1, title: "Smoke note" }], total: 1, active_count: 1 };
   if (pathOnly === "learning/status") {
     return {
@@ -1097,6 +1191,38 @@ async function assertNoHorizontalOverflow(page, label) {
   }
 }
 
+async function assertSocialTableWorkspace(page) {
+  const tableRoot = page.locator('[data-table-id="social-relations"]');
+  await tableRoot.waitFor({ state: "visible", timeout: 5_000 });
+  const workspace = await tableRoot.evaluate((root) => {
+    const frame = root.closest('[data-slot="page-frame"]');
+    const content = root.closest('[data-slot="page-content"]');
+    const panel = root.closest('[role="tabpanel"]');
+    const frameRect = frame?.getBoundingClientRect();
+    const contentRect = content?.getBoundingClientRect();
+    return {
+      layout: frame?.getAttribute("data-layout") ?? null,
+      hasCard: Boolean(root.closest('[data-slot="card"]')),
+      frameWidth: frameRect?.width ?? 0,
+      contentWidth: contentRect?.width ?? 0,
+      contentOverflowY: content ? getComputedStyle(content).overflowY : null,
+      panelOverflowY: panel ? getComputedStyle(panel).overflowY : null,
+    };
+  });
+  if (
+    workspace.layout !== "dense"
+    || workspace.hasCard
+    || workspace.frameWidth <= 0
+    || workspace.contentWidth <= 1441
+    || workspace.frameWidth - workspace.contentWidth > 1
+    || !["auto", "scroll"].includes(workspace.contentOverflowY)
+    || workspace.panelOverflowY !== "hidden"
+  ) {
+    throw new Error(`Social table workspace is not dense and full width: ${JSON.stringify(workspace)}`);
+  }
+  await assertNoHorizontalOverflow(page, "#/social:wide-table");
+}
+
 function assertScreenshotLooksNonEmpty(buffer, label) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 10_000) {
     throw new Error(`Dashboard browser smoke screenshot is unexpectedly small for ${label}`);
@@ -1275,6 +1401,169 @@ async function captureEditingScreenshot(page, screenshotsDir, filename, label) {
   return assertScreenshotMatchesBaseline(screenshot, filename, label);
 }
 
+async function assertPinnedTableCellsDoNotOverlap(table, label) {
+  const groups = await table.evaluate((element) => {
+    const rows = [
+      element.querySelector("thead tr"),
+      element.querySelector("tbody tr"),
+    ].filter(Boolean);
+    return rows.flatMap((row) => {
+      const left = [];
+      const right = [];
+      row.querySelectorAll("th,td").forEach((cell) => {
+        const style = window.getComputedStyle(cell);
+        if (style.position !== "sticky") return;
+        const rect = cell.getBoundingClientRect();
+        if (style.left !== "auto") left.push({ left: rect.left, right: rect.right });
+        if (style.right !== "auto") right.push({ left: rect.left, right: rect.right });
+      });
+      return [left, right];
+    });
+  });
+  for (const [index, cells] of groups.entries()) {
+    const sorted = [...cells].sort((left, right) => left.left - right.left);
+    for (let cursor = 1; cursor < sorted.length; cursor += 1) {
+      if (sorted[cursor - 1].right > sorted[cursor].left + 1) {
+        throw new Error(`${label} has overlapping sticky cells in group ${index}`);
+      }
+    }
+  }
+}
+
+async function assertEditorSheetStructure(page, dialog, label) {
+  const geometry = await dialog.evaluate((element) => {
+    const body = element.querySelector('[data-testid="entity-editor-body"]');
+    const footer = element.querySelector('[data-testid="entity-editor-footer"]');
+    const bodyRect = body?.getBoundingClientRect();
+    const footerRect = footer?.getBoundingClientRect();
+    return {
+      bodyOverflowY: body ? window.getComputedStyle(body).overflowY : "",
+      bodyClientHeight: body?.clientHeight ?? 0,
+      bodyScrollHeight: body?.scrollHeight ?? 0,
+      bodyBottom: bodyRect?.bottom ?? 0,
+      footerTop: footerRect?.top ?? 0,
+      footerBottom: footerRect?.bottom ?? 0,
+      footerHeight: footerRect?.height ?? 0,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  if (geometry.bodyOverflowY !== "auto" && geometry.bodyOverflowY !== "scroll") {
+    throw new Error(`${label} editor body is not independently scrollable: ${JSON.stringify(geometry)}`);
+  }
+  if (geometry.footerHeight <= 0 || geometry.footerBottom > geometry.viewportHeight + 1) {
+    throw new Error(`${label} editor footer is not visible: ${JSON.stringify(geometry)}`);
+  }
+  if (geometry.footerTop < geometry.bodyBottom - 1) {
+    throw new Error(`${label} editor body overlaps footer: ${JSON.stringify(geometry)}`);
+  }
+}
+
+async function runKnowledgeTableSmoke(page, browser, errors, screenshotsDir) {
+  const screenshots = [];
+  await navigateSidebar(page, "知识库", "#/knowledge", ["知识库", "新建条目"]);
+  await page.locator('[data-table-id="knowledge"]').waitFor({ state: "visible", timeout: 10_000 });
+  await page.waitForFunction(() => {
+    const table = document.querySelector('[data-table-id="knowledge"] table');
+    return Boolean(table && table.querySelectorAll("tbody tr").length >= 10)
+      && !document.querySelector('[data-table-id="knowledge"] [role="status"]');
+  }, undefined, { timeout: 10_000 });
+  await assertNoHorizontalOverflow(page, "#/knowledge:table");
+  await assertPinnedTableCellsDoNotOverlap(
+    page.locator('[data-table-id="knowledge"] table'),
+    "knowledge table",
+  );
+  screenshots.push(await captureBaselineScreenshot(
+    page,
+    path.join(screenshotsDir, "knowledge-table-default.png"),
+    "knowledge-table-default",
+  ));
+
+  const table = page.locator('[data-table-id="knowledge"]');
+  await page.getByRole("button", { name: "表格视图", exact: true }).click();
+  const columnMenu = page.getByRole("menu");
+  await columnMenu.getByRole("menuitemcheckbox", { name: "置信度", exact: true }).click();
+  await columnMenu.getByRole("menuitemcheckbox", { name: "访问次数", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => {
+    const headers = [...document.querySelectorAll('[data-table-id="knowledge"] thead th')]
+      .map((header) => header.textContent ?? "");
+    return !headers.some((header) => header.includes("置信度"))
+      && !headers.some((header) => header.includes("访问次数"));
+  }, undefined, { timeout: 5_000 });
+  await assertPinnedTableCellsDoNotOverlap(table.locator("table"), "knowledge columns view");
+  screenshots.push(await captureBaselineScreenshot(
+    page,
+    path.join(screenshotsDir, "knowledge-table-columns.png"),
+    "knowledge-table-columns",
+  ));
+
+  const firstRow = table.locator("tbody tr").first();
+  const title = (await firstRow.locator("td").nth(1).innerText()).trim();
+  await firstRow.click();
+  const editor = await assertEditingDialogReady(page, title);
+  await assertEditorSheetStructure(page, editor, "knowledge view");
+  screenshots.push(await captureEditingScreenshot(
+    page,
+    screenshotsDir,
+    "knowledge-editor-view.png",
+    "knowledge-editor-view",
+  ));
+  await editor.getByRole("button", { name: "编辑", exact: true }).click();
+  const editingEditor = await assertEditingDialogReady(page, title);
+  await editingEditor.getByLabel("内容", { exact: true }).fill("浏览器 smoke 编辑后的知识内容");
+  await assertEditorSheetStructure(page, editingEditor, "knowledge edit");
+  if (!(await editingEditor.textContent()).includes("未保存")) {
+    throw new Error("Knowledge editor did not expose its dirty status");
+  }
+  screenshots.push(await captureEditingScreenshot(
+    page,
+    screenshotsDir,
+    "knowledge-editor-edit.png",
+    "knowledge-editor-edit",
+  ));
+  await editingEditor.getByRole("button", { name: "取消", exact: true }).click();
+  await editingEditor.getByRole("button", { name: "关闭", exact: true }).click();
+  await editingEditor.waitFor({ state: "hidden", timeout: 5_000 });
+
+  const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  try {
+    const mobilePage = await mobileContext.newPage();
+    collectPageErrors(mobilePage, errors);
+    await installBridge(mobilePage);
+    await mobilePage.goto(`${pathToFileURL(htmlPath).href}#/knowledge`, { waitUntil: "load" });
+    await mobilePage.bringToFront();
+    await mobilePage.waitForSelector("#root > *", { timeout: 10_000 });
+    await waitForRootText(mobilePage, ["知识库", "新建条目"], "#/knowledge:mobile");
+    const mobileTable = mobilePage.locator('[data-table-id="knowledge"]');
+    await mobileTable.waitFor({ state: "visible", timeout: 10_000 });
+    await mobilePage.waitForFunction(() => document.querySelectorAll('[data-table-id="knowledge"] tbody tr').length >= 10);
+    await assertNoHorizontalOverflow(mobilePage, "#/knowledge:mobile-table");
+    await assertPinnedTableCellsDoNotOverlap(mobileTable.locator("table"), "mobile knowledge table");
+    screenshots.push(await captureBaselineScreenshot(
+      mobilePage,
+      path.join(screenshotsDir, "mobile-knowledge-table.png"),
+      "mobile-knowledge-table",
+    ));
+    const mobileRow = mobileTable.locator("tbody tr").first();
+    const mobileTitle = (await mobileRow.locator("td").nth(1).innerText()).trim();
+    await mobileRow.click();
+    let mobileEditor = await assertEditingDialogReady(mobilePage, mobileTitle);
+    await mobileEditor.getByRole("button", { name: "编辑", exact: true }).click();
+    mobileEditor = await assertEditingDialogReady(mobilePage, mobileTitle);
+    await assertMobileEditingOverflow(mobilePage, mobileEditor, "mobile knowledge editor");
+    await assertEditorSheetStructure(mobilePage, mobileEditor, "mobile knowledge editor");
+    screenshots.push(await captureEditingScreenshot(
+      mobilePage,
+      screenshotsDir,
+      "mobile-knowledge-editor.png",
+      "mobile-knowledge-editor",
+    ));
+  } finally {
+    await mobileContext.close();
+  }
+  return screenshots;
+}
+
 async function runUnifiedEditingSmoke(page, browser, errors, screenshotsDir) {
   resetEditingBridgeState();
   editingBridgeEnabled = true;
@@ -1360,10 +1649,11 @@ async function runUnifiedEditingSmoke(page, browser, errors, screenshotsDir) {
     await unsavedDialog.getByRole("button", { name: "放弃更改并离开", exact: true }).click();
     await page.getByRole("dialog", { name: socialTitle, exact: true }).waitFor({ state: "hidden", timeout: 5_000 });
 
-    await page.getByRole("button", {
-      name: "打开关系 task18-alice task18-bob",
-      exact: true,
-    }).click();
+    await page.getByRole("row")
+      .filter({ hasText: "task18-alice" })
+      .filter({ hasText: "task18-bob" })
+      .first()
+      .click();
     socialSheet = await assertEditingDialogReady(page, socialTitle);
     await socialSheet.getByRole("button", { name: "编辑", exact: true }).click();
     socialSheet = await assertEditingDialogReady(page, socialTitle);
@@ -1423,10 +1713,11 @@ async function runUnifiedEditingSmoke(page, browser, errors, screenshotsDir) {
         "#/affection:editing-mobile",
       );
 
-      await mobilePage.getByRole("button", {
-        name: "编辑 task18-affection-user",
-        exact: true,
-      }).click();
+      const affectionRow = mobilePage.getByRole("row")
+        .filter({ hasText: "task18-affection-user" })
+        .first();
+      await affectionRow.focus();
+      await affectionRow.press("Enter");
       const affectionTitle = "好感：task18-affection-user";
       let affectionSheet = await assertEditingDialogReady(mobilePage, affectionTitle);
       await affectionSheet.getByRole("button", { name: "编辑", exact: true }).click();
@@ -2037,7 +2328,16 @@ async function runInjectionStrategySmoke(page, screenshotsDir) {
     { timeout: 5_000 },
   );
   const pagination = page.getByRole("navigation", { name: "决策记录分页", exact: true });
-  await pagination.waitFor({ state: "visible", timeout: 5_000 });
+  try {
+    await pagination.waitFor({ state: "visible", timeout: 5_000 });
+  } catch (error) {
+    const diagnostics = await page.evaluate(() => ({
+      rootText: document.querySelector("#root")?.innerText?.slice(-1600) ?? "",
+      calls: (window.__memoraBridgeCalls ?? []).filter((call) => call.endpoint === "page/injection-strategy/decisions").map((call) => ({ params: call.params, total: call.response?.data?.total, itemCount: call.response?.data?.items?.length })),
+      navs: [...document.querySelectorAll("nav")].map((element) => ({ aria: element.getAttribute("aria-label"), text: element.textContent })),
+    }));
+    throw new Error(`Decision pagination did not render: ${JSON.stringify(diagnostics)}`, { cause: error });
+  }
   await pagination.getByRole("button", { name: "下一页", exact: true }).click();
   await page.waitForFunction(
     () => (window.__memoraBridgeCalls ?? []).some((call) =>
@@ -2050,6 +2350,7 @@ async function runInjectionStrategySmoke(page, screenshotsDir) {
 
   const detailTrigger = page.getByRole("button", { name: "查看决策详情", exact: true }).nth(2);
   await detailTrigger.click();
+  await page.getByRole("menuitem", { name: "查看决策详情", exact: true }).click();
   const detailSheet = page.getByRole("dialog", { name: "注入决策详情", exact: true });
   await detailSheet.waitFor({ state: "visible", timeout: 5_000 });
   await detailSheet.getByRole("heading", { name: "阶段耗时", exact: true })
@@ -2060,6 +2361,66 @@ async function runInjectionStrategySmoke(page, screenshotsDir) {
     "injection-decisions",
   ));
   await assertNoHorizontalOverflow(page, "#/injection:decisions");
+
+  await detailSheet.getByRole("button", { name: "关闭", exact: true }).click();
+  await detailSheet.waitFor({ state: "hidden", timeout: 5_000 });
+  const decisionsTable = page.locator('[data-table-id="injection-decisions"]');
+  const readDecisionDensityMetrics = () => decisionsTable.evaluate((root) => {
+    const header = root.querySelector("thead th");
+    const cell = root.querySelector("tbody td");
+    if (!(header instanceof HTMLElement) || !(cell instanceof HTMLElement)) {
+      throw new Error("Decision table density cells are unavailable");
+    }
+    return {
+      headerHeight: header.getBoundingClientRect().height,
+      cellPaddingTop: Number.parseFloat(getComputedStyle(cell).paddingTop),
+    };
+  });
+  const standardDensityMetrics = await readDecisionDensityMetrics();
+  await decisionsTable.getByRole("button", { name: "表格视图", exact: true }).click();
+  const decisionsMenu = page.getByRole("menu");
+  await decisionsMenu.getByRole("menuitemradio", { name: "紧凑", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(
+    () => document.querySelector('[data-table-id="injection-decisions"] table')?.getAttribute("data-density") === "compact",
+    undefined,
+    { timeout: 5_000 },
+  );
+  const compactDensityMetrics = await readDecisionDensityMetrics();
+  if (compactDensityMetrics.headerHeight >= standardDensityMetrics.headerHeight
+    || compactDensityMetrics.cellPaddingTop >= standardDensityMetrics.cellPaddingTop) {
+    throw new Error(`Compact density did not reduce spacing: ${JSON.stringify({ standardDensityMetrics, compactDensityMetrics })}`);
+  }
+  await decisionsTable.getByRole("button", { name: "表格视图", exact: true }).click();
+  await page.getByRole("menu").getByRole("menuitemradio", { name: "宽松", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(
+    () => document.querySelector('[data-table-id="injection-decisions"] table')?.getAttribute("data-density") === "comfortable",
+    undefined,
+    { timeout: 5_000 },
+  );
+  const comfortableDensityMetrics = await readDecisionDensityMetrics();
+  if (comfortableDensityMetrics.headerHeight <= standardDensityMetrics.headerHeight
+    || comfortableDensityMetrics.cellPaddingTop <= standardDensityMetrics.cellPaddingTop) {
+    throw new Error(`Comfortable density did not increase spacing: ${JSON.stringify({ standardDensityMetrics, comfortableDensityMetrics })}`);
+  }
+  await decisionsTable.getByRole("button", { name: "表格视图", exact: true }).click();
+  await page.getByRole("menu").getByRole("menuitemradio", { name: "紧凑", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(
+    () => document.querySelector('[data-table-id="injection-decisions"] table')?.getAttribute("data-density") === "compact",
+    undefined,
+    { timeout: 5_000 },
+  );
+  screenshots.push(await captureBaselineScreenshot(
+    page,
+    path.join(screenshotsDir, "injection-decisions-compact.png"),
+    "injection-decisions-compact",
+  ));
+
+  await page.getByRole("button", { name: "查看决策详情", exact: true }).nth(2).click();
+  await page.getByRole("menuitem", { name: "查看决策详情", exact: true }).click();
+  await detailSheet.waitFor({ state: "visible", timeout: 5_000 });
 
   await detailSheet.getByRole("button", { name: "打开召回追踪", exact: true }).click();
   await page.waitForFunction(
@@ -2216,6 +2577,7 @@ async function runMobileInjectionStrategySmoke(page, screenshotsDir) {
   const detailTrigger = page.getByRole("button", { name: "查看决策详情", exact: true }).first();
   await detailTrigger.waitFor({ state: "visible", timeout: 5_000 });
   await detailTrigger.click();
+  await page.getByRole("menuitem", { name: "查看决策详情", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "注入决策详情", exact: true });
   await sheet.waitFor({ state: "visible", timeout: 5_000 });
   const box = await sheet.boundingBox();
@@ -2752,6 +3114,9 @@ try {
   baselineResults.push(
     ...await runGlobalSearchScrollAndTargetSmoke(page, screenshotsDir),
   );
+  baselineResults.push(
+    ...await runKnowledgeTableSmoke(page, browser, errors, screenshotsDir),
+  );
 
   const routes = [
     ["数据预览", "#/preview", ["数据预览", "记忆增长", "模块资产", "活跃会话"], "preview.png"],
@@ -2871,6 +3236,7 @@ try {
     ["#/learning", ["自主学习", "83.0%", "retrieval_weight", "Formal greeting"], "wide-learning.png", "wide-learning"],
     ["#/affection", ["好感度与情绪", "开心", "群聊今天的氛围很积极。", "所有好感用户"], "wide-affection.png", "wide-affection"],
     ["#/social", ["社交关系", "alice", "bob", "pair", "project"], "wide-social.png", "wide-social"],
+    ["#/profiles", ["用户画像", "Profile smoke 1", "Profile smoke 8"], "wide-profiles-table.png", "wide-profiles-table"],
   ];
 
   for (const [hash, expectedText, filename, routeLabel] of wideRoutes) {
@@ -2883,6 +3249,9 @@ try {
         routeLabel
       )
     );
+    if (hash === "#/social") {
+      await assertSocialTableWorkspace(widePage);
+    }
   }
 
   baselineResults.push(
@@ -3007,6 +3376,16 @@ try {
       ["数据预览", "记忆增长", "记忆构成", "模块资产"],
       path.join(screenshotsDir, "dark-preview.png"),
       "dark-preview"
+    )
+  );
+
+  baselineResults.push(
+    await captureRoute(
+      page,
+      "#/social",
+      ["社交关系", "alice", "bob", "pair", "project"],
+      path.join(screenshotsDir, "dark-social-table.png"),
+      "dark-social-table",
     )
   );
 

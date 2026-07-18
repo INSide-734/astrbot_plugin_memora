@@ -30,6 +30,7 @@ interface DataTableViewOptionsProps<TData extends RowData> {
   density: DataTableDensity;
   onDensityChange(density: DataTableDensity): void;
   onReset(): void;
+  compact?: boolean;
 }
 
 export function moveColumn(
@@ -62,6 +63,7 @@ export function DataTableViewOptions<TData extends RowData>({
   density,
   onDensityChange,
   onReset,
+  compact = false,
 }: DataTableViewOptionsProps<TData>) {
   const { currentLang, t } = useI18n();
   const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
@@ -120,10 +122,14 @@ export function DataTableViewOptions<TData extends RowData>({
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={t("table.viewOptions")}
-        className={buttonVariants({ variant: "outline", size: "sm" })}
+        title={compact ? t("table.viewOptions") : undefined}
+        className={buttonVariants({
+          variant: compact ? "ghost" : "outline",
+          size: compact ? "icon-sm" : "sm",
+        })}
       >
         <SlidersHorizontal data-icon="inline-start" aria-hidden="true" />
-        {t("table.viewOptions")}
+        <span className={compact ? "sr-only" : undefined}>{t("table.viewOptions")}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"

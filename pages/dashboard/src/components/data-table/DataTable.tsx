@@ -196,126 +196,145 @@ export function DataTable<TData extends RowData>({
     onRowActivate(row);
   };
 
+  const viewOptions = (compact = false) => (
+    <DataTableViewOptions
+      table={table}
+      density={preferences.density}
+      onDensityChange={(density) =>
+        updatePreferences((current) => ({ ...current, density }))
+      }
+      onReset={resetView}
+      compact={compact}
+    />
+  );
+  const headerGroups = table.getHeaderGroups();
+
   return (
     <div className="flex min-w-0 flex-col gap-3" data-table-id={tableId}>
-      <div className="flex flex-wrap items-center gap-2">
-        {toolbar ? <div className="min-w-0 flex-1">{toolbar}</div> : null}
-        <div className="ml-auto">
-          <DataTableViewOptions
-            table={table}
-            density={preferences.density}
-            onDensityChange={(density) =>
-              updatePreferences((current) => ({ ...current, density }))
-            }
-            onReset={resetView}
-          />
+      {toolbar ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="min-w-0 flex-1">{toolbar}</div>
+          <div className="ml-auto shrink-0">{viewOptions()}</div>
         </div>
-      </div>
-      <Table
-        aria-busy={loading}
-        data-density={preferences.density}
-        className="data-[density=compact]:[&_td]:py-1 data-[density=comfortable]:[&_td]:py-3"
-        containerClassName="min-w-0"
-        style={{ minWidth: table.getTotalSize() }}
-      >
-        <TableHeader className="sticky top-0 z-20 bg-background">
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header) => {
-                const pinned = header.column.getIsPinned();
-                const content = header.isPlaceholder
-                  ? null
-                  : flexRender(
-                      header.column.columnDef.header,
-                      header.getContext(),
-                    );
+      ) : null}
+      <div className="relative min-w-0">
+        {!toolbar ? (
+          <div data-slot="data-table-view-overlay" className="absolute right-2 top-1.5 z-30">
+            {viewOptions(true)}
+          </div>
+        ) : null}
+        <Table
+          aria-busy={loading}
+          data-density={preferences.density}
+          className="[&[data-density=compact]_th]:h-8 [&[data-density=compact]_td]:py-1 [&[data-density=comfortable]_th]:h-12 [&[data-density=comfortable]_td]:py-3"
+          containerClassName="min-w-0"
+          style={{ minWidth: table.getTotalSize() }}
+        >
+          <TableHeader className="sticky top-0 z-20 bg-background">
+            {headerGroups.map((headerGroup, groupIndex) => (
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header, headerIndex) => {
+                  const pinned = header.column.getIsPinned();
+                  const content = header.isPlaceholder
+                    ? null
+                    : flexRender(
+                        header.column.columnDef.header,
+                        header.getContext(),
+                      );
 
+                  return (
+                    <TableHead
+                      key={header.id}
+                      colSpan={header.colSpan}
+                      className={cn(
+                        pinned && "bg-background",
+                        !toolbar &&
+                          groupIndex === headerGroups.length - 1 &&
+                          headerIndex === headerGroup.headers.length - 1 &&
+                          "pr-12",
+                      )}
+                      style={{
+                        width: header.column.getSize(),
+                        ...pinnedCellStyle(header.column),
+                      }}
+                    >
+                      <DataTableColumnHeader
+                        header={header}
+                        title={content}
+                      />
+                    </TableHead>
+                  );
+                })}
+              </TableRow>
+            ))}
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={visibleColumnCount} className="h-24">
+                  <div role="status" className="flex flex-col gap-2" aria-busy="true">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-2/3" />
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : table.getRowModel().rows.length ? (
+              table.getRowModel().rows.map((row) => {
+                const current = row.id === currentRowId;
                 return (
-                  <TableHead
-                    key={header.id}
-                    colSpan={header.colSpan}
-                    className={cn(pinned && "bg-background")}
-                    style={{
-                      width: header.column.getSize(),
-                      ...pinnedCellStyle(header.column),
-                    }}
+                  <TableRow
+                    key={row.id}
+                    aria-current={current ? "true" : undefined}
+                    data-state={row.getIsSelected() ? "selected" : undefined}
+                    tabIndex={onRowActivate ? 0 : undefined}
+                    className={cn(
+                      onRowActivate &&
+                        "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                      selectionStateVariants({
+                        kind: "current-item",
+                        selected: current,
+                      }),
+                    )}
+                    onClick={(event) => activateRow(event, row.original)}
+                    onKeyDown={(event) => activateRow(event, row.original)}
                   >
-                    <DataTableColumnHeader
-                      header={header}
-                      title={content}
-                    />
-                  </TableHead>
+                    {row.getVisibleCells().map((cell) => {
+                      const pinned = cell.column.getIsPinned();
+                      return (
+                        <TableCell
+                          key={cell.id}
+                          className={cn(
+                            pinned && "bg-background",
+                            cell.column.columnDef.meta?.cellClassName,
+                          )}
+                          style={{
+                            width: cell.column.getSize(),
+                            ...pinnedCellStyle(cell.column),
+                          }}
+                        >
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext(),
+                          )}
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
                 );
-              })}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {loading ? (
-            <TableRow>
-              <TableCell colSpan={visibleColumnCount} className="h-24">
-                <div role="status" className="flex flex-col gap-2" aria-busy="true">
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-2/3" />
-                </div>
-              </TableCell>
-            </TableRow>
-          ) : table.getRowModel().rows.length ? (
-            table.getRowModel().rows.map((row) => {
-              const current = row.id === currentRowId;
-              return (
-                <TableRow
-                  key={row.id}
-                  aria-current={current ? "true" : undefined}
-                  data-state={row.getIsSelected() ? "selected" : undefined}
-                  tabIndex={onRowActivate ? 0 : undefined}
-                  className={cn(
-                    onRowActivate &&
-                      "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                    selectionStateVariants({
-                      kind: "current-item",
-                      selected: current,
-                    }),
-                  )}
-                  onClick={(event) => activateRow(event, row.original)}
-                  onKeyDown={(event) => activateRow(event, row.original)}
+              })
+            ) : (
+              <TableRow>
+                <TableCell
+                  colSpan={visibleColumnCount}
+                  className="h-24 text-center text-muted-foreground"
                 >
-                  {row.getVisibleCells().map((cell) => {
-                    const pinned = cell.column.getIsPinned();
-                    return (
-                      <TableCell
-                        key={cell.id}
-                        className={cn(
-                          pinned && "bg-background",
-                          cell.column.columnDef.meta?.cellClassName,
-                        )}
-                        style={{
-                          width: cell.column.getSize(),
-                          ...pinnedCellStyle(cell.column),
-                        }}
-                      >
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext(),
-                        )}
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
-              );
-            })
-          ) : (
-            <TableRow>
-              <TableCell
-                colSpan={visibleColumnCount}
-                className="h-24 text-center text-muted-foreground"
-              >
-                {emptyLabel}
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+                  {emptyLabel}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
       {pagination}
     </div>
   );

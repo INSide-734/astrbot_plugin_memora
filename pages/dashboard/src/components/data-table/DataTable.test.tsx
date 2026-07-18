@@ -77,6 +77,46 @@ describe("DataTable", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => cleanup());
 
+  it("integrates view options into the table header area when no toolbar is provided", () => {
+    render(
+      <DataTable
+        tableId="header-view-options"
+        data={[{ id: "1", title: "Alpha" }]}
+        columns={columns}
+        getRowId={(row) => row.id}
+        sort={null}
+        onSortChange={vi.fn()}
+        loading={false}
+        emptyLabel="No rows"
+      />,
+    );
+
+    const viewOptions = screen.getByRole("button", { name: "Table view" });
+    expect(viewOptions.closest('[data-slot="data-table-view-overlay"]')).not.toBeNull();
+    expect(viewOptions.closest("th")).toBeNull();
+  });
+
+  it("scopes density spacing selectors to the table instead of individual cells", () => {
+    render(
+      <DataTable
+        tableId="density-selectors"
+        data={[{ id: "1", title: "Alpha" }]}
+        columns={columns}
+        getRowId={(row) => row.id}
+        sort={null}
+        onSortChange={vi.fn()}
+        loading={false}
+        emptyLabel="No rows"
+      />,
+    );
+
+    const className = screen.getByRole("table").className;
+    expect(className).toContain("[&[data-density=compact]_th]:h-8");
+    expect(className).toContain("[&[data-density=compact]_td]:py-1");
+    expect(className).toContain("[&[data-density=comfortable]_th]:h-12");
+    expect(className).toContain("[&[data-density=comfortable]_td]:py-3");
+  });
+
   it("keeps server order while exposing controlled sort, selection, activation, and density", () => {
     const onRowActivate = vi.fn();
     const onSelectionChange = vi.fn();
