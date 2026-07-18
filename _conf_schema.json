@@ -1010,6 +1010,142 @@
             }
         }
     },
+    "memory_evolution": {
+        "description": "记忆演化",
+        "hint": "控制后台记忆演化、派生关系写入和一跳检索扩展。默认关闭，不影响现有 canonical 记忆链路。",
+        "type": "object",
+        "items": {
+            "enabled": {
+                "description": "启用记忆演化",
+                "hint": "开启后才会创建演化 worker 和派生关系读取扩展。",
+                "type": "bool",
+                "default": false
+            },
+            "mode": {
+                "description": "记忆演化模式",
+                "hint": "disabled: 关闭；shadow: 仅观察；readonly: 允许读取派生关系；active: 允许写入通过校验的派生对象。",
+                "type": "string",
+                "options": ["disabled", "shadow", "readonly", "active"],
+                "default": "disabled"
+            },
+            "trigger_threshold": {
+                "description": "演化触发阈值",
+                "hint": "记忆重要性或候选关系置信度低于此值时不触发。",
+                "type": "float",
+                "default": 0.7,
+                "min": 0.0,
+                "max": 1.0
+            },
+            "batch_size": {
+                "description": "演化批量大小",
+                "hint": "单个任务读取的候选记忆数量。",
+                "type": "int",
+                "default": 16,
+                "min": 1,
+                "max": 100
+            },
+            "candidate_limit": {
+                "description": "关系候选上限",
+                "hint": "单个种子允许扩展的关系候选数量。",
+                "type": "int",
+                "default": 16,
+                "min": 1,
+                "max": 100
+            },
+            "max_pending_jobs": {
+                "description": "待处理任务上限",
+                "hint": "超过上限后暂缓新增演化任务。设为 0 可完全阻止入队。",
+                "type": "int",
+                "default": 100,
+                "min": 0,
+                "max": 10000
+            },
+            "max_attempts": {
+                "description": "最大重试次数",
+                "hint": "单个后台任务失败后的最大尝试次数。",
+                "type": "int",
+                "default": 3,
+                "min": 1,
+                "max": 20
+            },
+            "lease_seconds": {
+                "description": "任务租约时长（秒）",
+                "hint": "worker 领取任务后保持租约的时间。",
+                "type": "int",
+                "default": 120,
+                "min": 1,
+                "max": 3600
+            },
+            "retry_base_delay_seconds": {
+                "description": "重试基础延迟（秒）",
+                "hint": "后台任务指数退避的基础延迟。",
+                "type": "int",
+                "default": 10,
+                "min": 1,
+                "max": 3600
+            },
+            "consolidation_debounce_seconds": {
+                "description": "演化去抖窗口（秒）",
+                "hint": "同一记忆在窗口内的重复演化信号会合并。",
+                "type": "int",
+                "default": 60,
+                "min": 1,
+                "max": 86400
+            },
+            "max_input_chars": {
+                "description": "演化输入字符上限",
+                "hint": "发送给演化模型的证据总字符数上限。",
+                "type": "int",
+                "default": 12000,
+                "min": 1,
+                "max": 100000
+            },
+            "max_output_relations": {
+                "description": "关系输出上限",
+                "hint": "单次演化最多生成的关系数量。",
+                "type": "int",
+                "default": 16,
+                "min": 0,
+                "max": 64
+            },
+            "max_output_projections": {
+                "description": "投影输出上限",
+                "hint": "单次演化最多生成的投影数量。",
+                "type": "int",
+                "default": 4,
+                "min": 0,
+                "max": 16
+            },
+            "max_query_expansions": {
+                "description": "查询扩展上限",
+                "hint": "单次查询最多追加的派生记忆数量。",
+                "type": "int",
+                "default": 8,
+                "min": 0,
+                "max": 100
+            },
+            "projection_budget_chars": {
+                "description": "投影摘要字符预算",
+                "hint": "单个投影摘要允许使用的最大字符数。",
+                "type": "int",
+                "default": 1600,
+                "min": 1,
+                "max": 10000
+            },
+            "require_review_for_high_impact": {
+                "description": "高影响关系需要复核",
+                "hint": "开启后高影响关系不会自动激活。",
+                "type": "bool",
+                "default": true
+            },
+            "auto_active_relation_types": {
+                "description": "自动激活的关系类型",
+                "hint": "达到阈值后允许自动激活的低影响关系类型。",
+                "type": "array",
+                "default": ["same_episode", "supports", "related"]
+            }
+        }
+    },
     "reranker": {
         "description": "重排序模型",
         "hint": "检索后对候选记忆进行精细重排序，提升 Top-K 精度",

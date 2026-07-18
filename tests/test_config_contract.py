@@ -1,4 +1,4 @@
-"""Configuration persistence and schema contract tests."""
+"""配置持久化与 schema 契约测试。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _MISSING = object()
 
 
 class SavingConfig(dict[str, Any]):
-    """Faithful mutable config double with AstrBot's synchronous save boundary."""
+    """模拟 AstrBot 同步保存边界的可变配置对象。"""
 
     def __init__(self, *args: Any, fail_save: bool = False, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -34,7 +34,7 @@ class SavingConfig(dict[str, Any]):
 
 
 class BlockingSavingConfig(SavingConfig):
-    """Persistence double that exposes deterministic thread boundaries."""
+    """暴露确定性线程边界的持久化模拟对象。"""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -228,6 +228,24 @@ def test_memora_config_preserves_every_schema_leaf_and_default() -> None:
     )
 
 
+def test_memory_evolution_defaults_to_disabled() -> None:
+    from core.base.config_validator import MemoraConfig
+
+    config = MemoraConfig()
+
+    assert config.memory_evolution.enabled is False
+    assert config.memory_evolution.mode == "disabled"
+
+
+def test_memory_evolution_rejects_unknown_mode() -> None:
+    from pydantic import ValidationError
+
+    from core.base.config_validator import MemoraConfig
+
+    with pytest.raises(ValidationError):
+        MemoraConfig(memory_evolution={"mode": "running"})
+
+
 def test_hybrid_preset_order_is_rejected() -> None:
     from pydantic import ValidationError
 
@@ -329,7 +347,7 @@ def test_schema_numeric_bounds_match_every_pydantic_constraint() -> None:
     model_bounds = _model_numeric_bounds()
     schema_bounds = _schema_numeric_bounds(schema)
 
-    assert len(model_bounds) == 72
+    assert len(model_bounds) == 85
     assert schema_bounds == model_bounds
 
 
