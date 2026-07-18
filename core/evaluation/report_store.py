@@ -15,24 +15,24 @@ from typing import Any
 import aiosqlite
 
 
-_PERF_PRAGMAS: tuple[tuple[str, str], ...] = (
-    ("foreign_keys", "ON"),
-    ("journal_mode", "WAL"),
-    ("synchronous", "NORMAL"),
-    ("busy_timeout", "30000"),
-    ("cache_size", "-65536"),
-    ("temp_store", "MEMORY"),
-    ("mmap_size", "268435456"),
+_PERF_PRAGMAS: tuple[str, ...] = (
+    "PRAGMA foreign_keys = ON",
+    "PRAGMA journal_mode = WAL",
+    "PRAGMA synchronous = NORMAL",
+    "PRAGMA busy_timeout = 30000",
+    "PRAGMA cache_size = -65536",
+    "PRAGMA temp_store = MEMORY",
+    "PRAGMA mmap_size = 268435456",
 )
 
 
 async def _apply_perf_pragmas(conn: aiosqlite.Connection) -> None:
     """设置 SQLite 性能参数，且不导入依赖 AstrBot 的存储模块。
 
-    `key` 与 `value` 只来自上方硬编码元组，不接收配置、请求或夹具输入。
+    `statement` 只来自上方硬编码元组，不接收配置、请求或夹具输入。
     """
-    for key, value in _PERF_PRAGMAS:
-        await conn.execute(f"PRAGMA {key} = {value}")
+    for statement in _PERF_PRAGMAS:
+        await conn.execute(statement)
 
 
 class EvaluationReportStore:
