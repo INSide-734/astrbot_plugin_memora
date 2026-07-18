@@ -10,6 +10,7 @@ from core.base.entity_editing import (
     EntityValidationError,
     compute_entity_revision,
 )
+from core.base.list_sorting import SortQuery
 from core.managers.profile_manager import ProfileManager
 from core.models.user_profile import (
     TagCategory,
@@ -835,4 +836,8 @@ class TestProfileQuery:
         result, total = await mgr.list_profiles(limit=10, offset=0)
         assert len(result) == 2
         assert total == 2
-        store.list_profiles.assert_called_once_with(limit=10, offset=0)
+        store.list_profiles.assert_called_once_with(
+            limit=10,
+            offset=0,
+            sort=SortQuery("last_seen_at", "desc"),
+        )
