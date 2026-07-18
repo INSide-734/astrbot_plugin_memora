@@ -27,7 +27,10 @@ _PERF_PRAGMAS: tuple[tuple[str, str], ...] = (
 
 
 async def _apply_perf_pragmas(conn: aiosqlite.Connection) -> None:
-    """设置 SQLite 性能参数，且不导入依赖 AstrBot 的存储模块。"""
+    """设置 SQLite 性能参数，且不导入依赖 AstrBot 的存储模块。
+
+    `key` 与 `value` 只来自上方硬编码元组，不接收配置、请求或夹具输入。
+    """
     for key, value in _PERF_PRAGMAS:
         await conn.execute(f"PRAGMA {key} = {value}")
 
