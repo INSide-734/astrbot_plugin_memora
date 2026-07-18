@@ -19,6 +19,7 @@ from ..models.memory_evolution import (
     JobState,
     MemoryEvolutionJob,
     ProjectionSourceView,
+    ProjectionBundle,
     ProjectionType,
     ProjectionView,
     RelationType,
@@ -376,25 +377,76 @@ class MemoryEvolutionStore(BaseStore):
         return [_relation(r) for r in rows]
 
     async def active_projections_for_seeds(self, seed_ids: Iterable[int], scope_key: str | None = None, limit: int = 100) -> list[ProjectionView]:
-        ids = tuple(seed_ids)
-        if not ids:
+        bundles = await self.active_projection_bundles_for_seeds(
+            seed_ids,
+            scope_key=scope_key,
+            limit=limit,
+        )
+        return [bundle.projection for bundle in bundles]
+
+    async def active_projection_bundles_for_seeds(
+        self,
+        seed_ids: Iterable[int],
+        *,
+        scope_key: str | None = None,
+        limit: int = 100,
+    ) -> list[ProjectionBundle]:
+        """读取命中 seed 的 active projection 及其 source mapping。"""
+
+        ids = tuple(dict.fromkeys(int(seed_id) for seed_id in seed_ids))
+        if not ids or limit <= 0:
             return []
-        placeholders = ",".join("?" for _ in ids); params: list = [*ids, DerivedState.ACTIVE.value]
+        placeholders = ",".join("?" for _ in ids)
+        params: list[object] = [*ids, DerivedState.ACTIVE.value]
         clause = f"source.memory_id IN ({placeholders}) AND projection.state=?"
-        if scope_key:
-            clause += " AND projection.scope_key=?"; params.append(scope_key)
+        if scope_key is not None:
+            clause += " AND projection.scope_key=?"
+            params.append(scope_key)
         rows = await self._fetch_all(
             "SELECT DISTINCT projection.* FROM memory_projections AS projection "
             "JOIN memory_projection_sources AS source "
             "ON source.projection_id=projection.projection_id "
-            f"WHERE {clause} ORDER BY projection.confidence DESC LIMIT ?",
+            f"WHERE {clause} "
+            "ORDER BY projection.confidence DESC, projection.projection_id ASC LIMIT ?",
             (*params, limit),
         )
-        out = []
+        if not rows:
+            return []
+
+        projection_ids = tuple(str(row["projection_id"]) for row in rows)
+        projection_placeholders = ",".join("?" for _ in projection_ids)
+        source_rows = await self._fetch_all(
+            "SELECT projection_id,memory_id,revision_token,source_role,ordinal "
+            "FROM memory_projection_sources "
+            f"WHERE projection_id IN ({projection_placeholders}) "
+            "ORDER BY projection_id ASC, ordinal ASC, memory_id ASC",
+            projection_ids,
+        )
+        sources_by_projection: dict[str, list[ProjectionSourceView]] = {
+            projection_id: [] for projection_id in projection_ids
+        }
+        for source_row in source_rows:
+            source = ProjectionSourceView(
+                str(source_row["projection_id"]),
+                int(source_row["memory_id"]),
+                str(source_row["revision_token"]),
+                str(source_row["source_role"]),
+                int(source_row["ordinal"]),
+            )
+            sources_by_projection[source.projection_id].append(source)
+
+        bundles: list[ProjectionBundle] = []
         for row in rows:
-            source_rows = await self._fetch_all("SELECT memory_id FROM memory_projection_sources WHERE projection_id=? ORDER BY ordinal", (row["projection_id"],))
-            out.append(_projection(row, tuple(int(x["memory_id"]) for x in source_rows)))
-        return out
+            projection_id = str(row["projection_id"])
+            sources = tuple(sources_by_projection.get(projection_id, ()))
+            if not sources:
+                continue
+            projection = _projection(
+                row,
+                tuple(source.memory_id for source in sources),
+            )
+            bundles.append(ProjectionBundle(projection, sources))
+        return bundles
 
     async def invalidate_for_source_revision(self, memory_id: int, revision_token: str) -> int:
         if not self.connection:

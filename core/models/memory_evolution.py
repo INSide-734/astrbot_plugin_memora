@@ -384,6 +384,22 @@ class ProjectionSourceView:
             raise ValueError("ordinal must be non-negative")
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectionBundle:
+    """读取侧使用的 projection 与 source mapping 组合。"""
+
+    projection: ProjectionView
+    sources: tuple[ProjectionSourceView, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "sources", tuple(self.sources))
+        if not self.sources:
+            raise ValueError("projection bundle must include source mappings")
+        projection_id = self.projection.projection_id
+        if any(source.projection_id != projection_id for source in self.sources):
+            raise ValueError("projection bundle source ids must match projection")
+
+
 __all__ = [
     "DerivedApplyPlan",
     "DerivedState",
@@ -399,6 +415,7 @@ __all__ = [
     "MemoryRelationProposal",
     "MemorySourceRef",
     "ProjectionType",
+    "ProjectionBundle",
     "ProjectionView",
     "ProjectionSourceView",
     "RelationType",
