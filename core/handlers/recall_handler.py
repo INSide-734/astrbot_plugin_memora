@@ -521,6 +521,45 @@ class RecallHandler:
         return len(text) if isinstance(text, str) else 0
 
     @staticmethod
+    def _safe_projection_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+        """只保留可进入模型上下文的 projection 三字段。"""
+
+        raw = metadata.get("derived_projections")
+        if not isinstance(raw, list):
+            return {}
+        allowed_types = {
+            "episode_summary",
+            "preference_state",
+            "relationship_state",
+            "conflict_set",
+        }
+        safe: list[dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            projection_type = item.get("type")
+            summary = item.get("summary")
+            if projection_type not in allowed_types or not isinstance(summary, str):
+                continue
+            summary = summary.strip()
+            if not summary:
+                continue
+            try:
+                confidence = float(item.get("confidence"))
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(confidence):
+                continue
+            safe.append(
+                {
+                    "type": projection_type,
+                    "summary": summary,
+                    "confidence": max(0.0, min(1.0, confidence)),
+                }
+            )
+        return {"derived_projections": safe} if safe else {}
+
+    @staticmethod
     def _safe_candidates(candidates: list[Any]) -> list[dict[str, Any]]:
         safe: list[dict[str, Any]] = []
         for candidate in candidates:
@@ -528,6 +567,11 @@ class RecallHandler:
             metadata = getattr(candidate, "metadata", None)
             if not isinstance(metadata, dict):
                 metadata = {}
+            else:
+                metadata = dict(metadata)
+                safe_projection = RecallHandler._safe_projection_metadata(metadata)
+                metadata.pop("derived_projections", None)
+                metadata.update(safe_projection)
             raw_score = getattr(candidate, "final_score", 0.0)
             try:
                 score = float(raw_score)
