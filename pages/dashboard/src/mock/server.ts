@@ -31,6 +31,56 @@ function err(message: string, code?: string, data?: unknown, field_errors?: Reco
   return { status: "error", message, ...(code ? { code } : {}), ...(data === undefined ? {} : { data: structuredClone(data) }), ...(field_errors ? { field_errors: structuredClone(field_errors) } : {}) };
 }
 
+type SortValue = string | number | boolean | null | undefined;
+type SortGetter<T> = (record: T) => SortValue;
+
+/**
+ * Apply the same single-column, allowlisted sorting contract as the Page API.
+ * Keeping this in the mock is important: browser smoke must exercise the
+ * server-side ordering before limit/offset rather than accidentally relying on
+ * whatever order a fixture happened to use.
+ */
+function sortRecords<T>(
+  records: readonly T[],
+  params: Record<string, string>,
+  allowed: Record<string, SortGetter<T>>,
+  defaultBy: string,
+  defaultOrder: "asc" | "desc",
+  tieBreaker: SortGetter<T>,
+): { items: T[] } | { error: ApiResponse } {
+  const sortBy = params.sort_by ?? defaultBy;
+  const sortOrder = params.sort_order ?? defaultOrder;
+  if (!Object.prototype.hasOwnProperty.call(allowed, sortBy)) {
+    return { error: err("sort_by is not supported", "invalid_query", undefined, { sort_by: "sort_by is not supported" }) };
+  }
+  if (sortOrder !== "asc" && sortOrder !== "desc") {
+    return { error: err("sort_order must be asc or desc", "invalid_query", undefined, { sort_order: "sort_order must be asc or desc" }) };
+  }
+
+  const direction = sortOrder === "asc" ? 1 : -1;
+  const compare = (left: SortValue, right: SortValue): number => {
+    if (left === right) return 0;
+    if (left === null || left === undefined) return -1;
+    if (right === null || right === undefined) return 1;
+    if (typeof left === "number" && typeof right === "number") {
+      if (Number.isNaN(left) && Number.isNaN(right)) return 0;
+      if (Number.isNaN(left)) return -1;
+      if (Number.isNaN(right)) return 1;
+      return left - right;
+    }
+    if (typeof left === "boolean" && typeof right === "boolean") return Number(left) - Number(right);
+    return String(left).localeCompare(String(right), undefined, { sensitivity: "base" });
+  };
+
+  return {
+    items: [...records].sort((left, right) => {
+      const primary = compare(allowed[sortBy](left), allowed[sortBy](right));
+      if (primary !== 0) return primary * direction;
+      return compare(tieBreaker(left), tieBreaker(right));
+    }),
+  };
+}
+
 type MutableRecord = Record<string, any>;
 interface ProfileCreateRequest extends Record<string, unknown> { user_id?: unknown; display_name?: unknown; preferences?: unknown; tags?: unknown }
 interface ProfileChanges extends Record<string, unknown> { display_name?: unknown; preferences?: unknown; tags?: unknown }
@@ -751,7 +801,26 @@ function handleGraphSearch(params: Record<string, string>): ApiResponse {
 function handleProfiles(params: Record<string, string>): ApiResponse {
   const limit = parseInt(params.limit ?? "100", 10);
   const offset = parseInt(params.offset ?? "0", 10);
-  const items = PROFILES.slice(offset, offset + limit);
+  const profileSort = sortRecords(
+    PROFILES,
+    params,
+    {
+      user_id: (profile) => profile.user_id,
+      display_name: (profile) => profile.display_name,
+      total_messages: (profile) => (profile as MutableRecord).total_messages ?? profile.message_count ?? 0,
+      total_sessions: (profile) => (profile as MutableRecord).total_sessions ?? 0,
+      first_seen_at: (profile) => (profile as MutableRecord).first_seen_at ?? 0,
+      last_seen_at: (profile) => {
+        const value = (profile as MutableRecord).last_seen_at ?? (profile as MutableRecord).last_seen ?? (profile as MutableRecord).last_active;
+        return typeof value === "string" ? Date.parse(value) : value ?? 0;
+      },
+    },
+    "last_seen_at",
+    "desc",
+    (profile) => profile.user_id,
+  );
+  if ("error" in profileSort) return profileSort.error;
+  const items = profileSort.items.slice(offset, offset + limit);
   return ok({ profiles: items, total: PROFILES.length, count: PROFILES.length, limit, offset });
 }
 
@@ -760,42 +829,24 @@ function handleProfileDetail(userId: string): ApiResponse {
   return profile ? ok(structuredClone(profile)) : notFound("Profile not found");
 }
 
-const KNOWLEDGE_SORT_KEYS = new Set([
-  "title",
-  "category",
-  "confidence",
-  "updated_at",
-  "access_count",
-]);
-
 function sortKnowledgeEntries(
   entries: typeof KNOWLEDGE_ENTRIES,
   params: Record<string, string>,
-): typeof KNOWLEDGE_ENTRIES {
-  const sortBy = KNOWLEDGE_SORT_KEYS.has(params.sort_by)
-    ? params.sort_by
-    : "updated_at";
-  const direction = params.sort_order === "asc" ? 1 : -1;
-
-  return [...entries].sort((left, right) => {
-    let compared = 0;
-    if (sortBy === "title" || sortBy === "category") {
-      compared = String(left[sortBy] ?? "").localeCompare(
-        String(right[sortBy] ?? ""),
-        undefined,
-        { sensitivity: "base" },
-      );
-    } else if (sortBy === "confidence" || sortBy === "access_count") {
-      compared = Number(left[sortBy] ?? 0) - Number(right[sortBy] ?? 0);
-    } else {
-      compared = String(left.updated_at ?? "").localeCompare(
-        String(right.updated_at ?? ""),
-      );
-    }
-    return compared === 0
-      ? String(left.entry_id).localeCompare(String(right.entry_id))
-      : compared * direction;
-  });
+): { items: typeof KNOWLEDGE_ENTRIES } | { error: ApiResponse } {
+  return sortRecords(
+    entries,
+    params,
+    {
+      title: (entry) => entry.title,
+      category: (entry) => entry.category,
+      confidence: (entry) => entry.confidence,
+      updated_at: (entry) => entry.updated_at,
+      access_count: (entry) => entry.access_count,
+    },
+    "updated_at",
+    "desc",
+    (entry) => entry.entry_id,
+  );
 }
 
 function handleKnowledgeList(params: Record<string, string>): ApiResponse {
@@ -806,7 +857,9 @@ function handleKnowledgeList(params: Record<string, string>): ApiResponse {
   const total = items.length;
   const limit = parseInt(params.limit ?? "100", 10);
   const offset = parseInt(params.offset ?? "0", 10);
-  items = sortKnowledgeEntries(items, params).slice(offset, offset + limit);
+  const sorted = sortKnowledgeEntries(items, params);
+  if ("error" in sorted) return sorted.error;
+  items = sorted.items.slice(offset, offset + limit);
   return ok({ entries: items, items, total, count: total, limit, offset });
 }
 
@@ -822,7 +875,9 @@ function handleKnowledgeSearch(params: Record<string, string>): ApiResponse {
   }
   const total = items.length;
   const limit = parseInt(params.limit ?? "100", 10);
-  items = sortKnowledgeEntries(items, params).slice(0, limit);
+  const sorted = sortKnowledgeEntries(items, params);
+  if ("error" in sorted) return sorted.error;
+  items = sorted.items.slice(0, limit);
   return ok({ entries: items, items, total, count: total, limit });
 }
 
@@ -1227,6 +1282,8 @@ const INJECTION_OUTCOMES: InjectionOutcome[] = [
 const INJECTION_LIST_QUERY_FIELDS = new Set([
   "offset",
   "limit",
+  "sort_by",
+  "sort_order",
   "from_ms",
   "to_ms",
   "routing_mode",
@@ -1484,13 +1541,26 @@ function handleInjectionDecisions(params: Record<string, string>): ApiResponse {
       .filter((row) => !primaryReason || row.primary_reason === primaryReason)
       .filter((row) => fallbackApplied === undefined
         || row.fallback_applied === fallbackApplied)
-      .filter((row) => !outcome || row.outcome === outcome)
-      .sort((left, right) => (
-        right.created_at_ms - left.created_at_ms
-        || right.decision_id.localeCompare(left.decision_id)
-      ));
+      .filter((row) => !outcome || row.outcome === outcome);
+    const sorted = sortRecords(
+      rows,
+      params,
+      {
+        created_at_ms: (row) => row.created_at_ms,
+        routing_mode: (row) => row.routing_mode,
+        resolved_preset: (row) => row.resolved_preset,
+        provider_type: (row) => row.provider_type,
+        outcome: (row) => row.outcome,
+        actual_payload_chars: (row) => row.actual_payload_chars,
+        decision_ms: (row) => row.decision_ms,
+      },
+      "created_at_ms",
+      "desc",
+      (row) => row.decision_id,
+    );
+    if ("error" in sorted) return sorted.error;
     return ok({
-      items: rows.slice(offset, offset + limit).map(toInjectionListItem),
+      items: sorted.items.slice(offset, offset + limit).map(toInjectionListItem),
       total: rows.length,
       offset,
       limit,
@@ -1572,12 +1642,41 @@ export async function handleApiGet(path: string, params: Record<string, string> 
     if (!Number.isInteger(offset) || offset < 0 || offset > 1_000_000) errors.offset = "必须在 0 到 1000000 之间";
     if (Object.keys(errors).length) return validation(errors);
     const users = affectionUsers(params.group_id);
-    return ok({ group_id: params.group_id, users: users.slice(offset, offset + limit), total: users.length, limit, offset });
+    const sorted = sortRecords(
+      users,
+      params,
+      {
+        user_id: (user) => user.user_id,
+        affection_score: (user) => user.affection_score,
+        interaction_count: (user) => user.interaction_count,
+        last_interaction: (user) => user.last_interaction,
+      },
+      "affection_score",
+      "desc",
+      (user) => user.user_id,
+    );
+    if ("error" in sorted) return sorted.error;
+    return ok({ group_id: params.group_id, users: sorted.items.slice(offset, offset + limit), total: users.length, limit, offset });
   }
   if (p === "affection/moods/history" || p.startsWith("affection/moods/history?")) {
     if (!params.group_id?.trim()) return validation({ group_id: "不能为空" });
     const limit = Number(params.limit ?? 20); if (!Number.isInteger(limit) || limit < 1 || limit > 100) return validation({ limit: "必须在 1 到 100 之间" });
-    const history = moodHistory.filter((mood) => mood.group_id === params.group_id).slice().reverse().slice(0, limit).map(({ group_id: _group, ...mood }) => mood);
+    const filteredHistory = moodHistory.filter((mood) => mood.group_id === params.group_id);
+    const sorted = sortRecords(
+      filteredHistory,
+      params,
+      {
+        start_time: (mood) => mood.start_time,
+        duration_hours: (mood) => mood.duration_hours,
+        mood_type: (mood) => mood.mood_type,
+        intensity: (mood) => mood.intensity,
+      },
+      "start_time",
+      "desc",
+      (mood) => mood.start_time,
+    );
+    if ("error" in sorted) return sorted.error;
+    const history = sorted.items.slice(0, limit).map(({ group_id: _group, ...mood }) => mood);
     return ok({ group_id: params.group_id, limit, history });
   }
   if (p === "social/relations" || p.startsWith("social/relations?")) return handleSocialRelations(params);
@@ -1741,7 +1840,22 @@ function handleJargonCandidates(params: Record<string, string>): ApiResponse {
   let items = [...JARGON_CANDIDATES];
   if (groupId) items = items.filter((c) => c.group_id === groupId);
   const limit = parseInt(params.limit ?? "20", 10);
-  return ok({ candidates: items.slice(0, limit), total: items.length, group_id: groupId ?? "" });
+  const sorted = sortRecords(
+    items,
+    params,
+    {
+      term: (candidate) => candidate.term,
+      score: (candidate) => candidate.score,
+      frequency: (candidate) => candidate.frequency,
+      unique_users: (candidate) => candidate.unique_users,
+      first_seen: (candidate) => candidate.first_seen,
+    },
+    "score",
+    "desc",
+    (candidate) => candidate.term,
+  );
+  if ("error" in sorted) return sorted.error;
+  return ok({ candidates: sorted.items.slice(0, limit), total: items.length, group_id: groupId ?? "" });
 }
 
 function handleJargonMeanings(params: Record<string, string>): ApiResponse {
@@ -1750,7 +1864,22 @@ function handleJargonMeanings(params: Record<string, string>): ApiResponse {
   let items = [...JARGON_MEANINGS];
   if (groupId) items = items.filter((m) => m.group_id === groupId);
   if (confirmedOnly) items = items.filter((m) => m.is_confirmed);
-  return ok({ meanings: items, total: items.length, group_id: groupId ?? "" });
+  const sorted = sortRecords(
+    items,
+    params,
+    {
+      term: (meaning) => meaning.term,
+      confidence: (meaning) => meaning.confidence,
+      count: (meaning) => meaning.count,
+      created_at: (meaning) => meaning.created_at,
+      updated_at: (meaning) => meaning.updated_at,
+    },
+    "updated_at",
+    "desc",
+    (meaning) => meaning.term,
+  );
+  if ("error" in sorted) return sorted.error;
+  return ok({ meanings: sorted.items, total: items.length, group_id: groupId ?? "" });
 }
 
 function handleJargonStats(params: Record<string, string>): ApiResponse {
@@ -1802,7 +1931,24 @@ function handleSocialRelations(params: Record<string, string>): ApiResponse {
   let items = [...SOCIAL_RELATIONS];
   if (params.group_id) items = items.filter((r) => r.group_id === params.group_id);
   if (params.category && params.category !== "all") items = items.filter((r) => r.category === params.category);
-  return ok({ relations: items, total: items.length });
+  const sorted = sortRecords(
+    items,
+    params,
+    {
+      from_user: (relation) => relation.from_user,
+      to_user: (relation) => relation.to_user,
+      group_id: (relation) => relation.group_id,
+      relation_type: (relation) => relation.relation_type,
+      strength: (relation) => relation.strength,
+      frequency: (relation) => relation.frequency,
+      last_interaction: (relation) => relation.last_interaction,
+    },
+    "last_interaction",
+    "desc",
+    (relation) => `${relation.from_user}\u0000${relation.to_user}\u0000${relation.relation_type}\u0000${relation.group_id}`,
+  );
+  if ("error" in sorted) return sorted.error;
+  return ok({ relations: sorted.items, total: items.length });
 }
 
 function handleQualityStats(): ApiResponse {
@@ -1846,7 +1992,23 @@ function handleDelegationStatus(): ApiResponse {
 function handleExpressionPatterns(params: Record<string, string>): ApiResponse {
   const groupId = params.group_id ?? "group_001";
   const items = EXPRESSION_PATTERNS.filter((p) => p.group_id === groupId);
-  return ok({ patterns: items, total: EXPRESSION_PATTERNS.length, group_patterns: items.length, group_id: groupId });
+  const sorted = sortRecords(
+    items,
+    params,
+    {
+      situation: (pattern) => pattern.situation,
+      expression: (pattern) => pattern.expression,
+      weight: (pattern) => pattern.weight,
+      usage_count: (pattern) => pattern.usage_count,
+      created_at: (pattern) => pattern.created_at,
+      last_used_at: (pattern) => pattern.last_used_at,
+    },
+    "weight",
+    "desc",
+    (pattern) => pattern.pattern_id,
+  );
+  if ("error" in sorted) return sorted.error;
+  return ok({ patterns: sorted.items, total: EXPRESSION_PATTERNS.length, group_patterns: items.length, group_id: groupId });
 }
 
 function handleGroups(): ApiResponse {

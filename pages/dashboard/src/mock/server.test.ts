@@ -196,6 +196,90 @@ describe("mutable mock reset and revision allocator", () => {
   });
 });
 
+describe("server-side mock sorting", () => {
+  it("sorts before applying pagination for every DataTable-backed list", async () => {
+    const allKnowledge = okData(await get("knowledge", {
+      sort_by: "confidence",
+      sort_order: "asc",
+      limit: "100",
+      offset: "0",
+    })).entries as JsonObject[];
+    const knowledgePage = okData(await get("knowledge", {
+      sort_by: "confidence",
+      sort_order: "asc",
+      limit: "1",
+      offset: "2",
+    })).entries as JsonObject[];
+    expect(knowledgePage).toEqual([allKnowledge[2]]);
+
+    const allProfiles = okData(await get("profiles", {
+      sort_by: "display_name",
+      sort_order: "asc",
+      limit: "100",
+      offset: "0",
+    })).profiles as JsonObject[];
+    const profilePage = okData(await get("profiles", {
+      sort_by: "display_name",
+      sort_order: "asc",
+      limit: "1",
+      offset: "1",
+    })).profiles as JsonObject[];
+    expect(profilePage).toEqual([allProfiles[1]]);
+
+    const allCandidates = okData(await get("jargon/candidates", {
+      group_id: "group_001",
+      sort_by: "frequency",
+      sort_order: "asc",
+      limit: "100",
+    })).candidates as JsonObject[];
+    const candidatePage = okData(await get("jargon/candidates", {
+      group_id: "group_001",
+      sort_by: "frequency",
+      sort_order: "asc",
+      limit: "1",
+    })).candidates as JsonObject[];
+    expect(candidatePage).toEqual([allCandidates[0]]);
+
+    const allAffection = okData(await get("affection/users", {
+      group_id: "group_001",
+      sort_by: "interaction_count",
+      sort_order: "asc",
+      limit: "100",
+      offset: "0",
+    })).users as JsonObject[];
+    const affectionPage = okData(await get("affection/users", {
+      group_id: "group_001",
+      sort_by: "interaction_count",
+      sort_order: "asc",
+      limit: "1",
+      offset: "1",
+    })).users as JsonObject[];
+    expect(affectionPage).toEqual([allAffection[1]]);
+  });
+
+  it("rejects unsupported sort fields without echoing query input", async () => {
+    const response = await get("knowledge", {
+      sort_by: "title;DROP TABLE knowledge",
+      sort_order: "asc",
+      limit: "1",
+      offset: "0",
+    });
+    expect(response).toEqual({
+      status: "error",
+      code: "invalid_query",
+      message: "sort_by is not supported",
+      field_errors: { sort_by: "sort_by is not supported" },
+    });
+    expect(JSON.stringify(response)).not.toContain("title;DROP TABLE knowledge");
+
+    expect(await get("profiles", { sort_by: "display_name", sort_order: "sideways" })).toMatchObject({
+      status: "error",
+      code: "invalid_query",
+      field_errors: { sort_order: "sort_order must be asc or desc" },
+    });
+  });
+});
+
 describe("social CRUD and batch contracts", () => {
   it("persists create, list, update, stale conflict, and delete with exact identity envelopes", async () => {
     const identity = socialIdentity("crud");
