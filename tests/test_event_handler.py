@@ -9,7 +9,7 @@ import pytest
 
 
 class TestEventHandlerConstruction:
-    """Tests for EventHandler.__init__ and component wiring."""
+    """验证 EventHandler 初始化与子组件装配。"""
 
     def test_event_handler_creates_sub_handlers(self) -> None:
         from core.event_handler import EventHandler
@@ -49,9 +49,88 @@ class TestEventHandlerConstruction:
         assert handler.memory_processor is proc
         assert handler.conversation_manager is conv
 
+    def test_event_handler_passes_evolution_manager_to_reflection(self) -> None:
+        from core.event_handler import EventHandler
+
+        manager = MagicMock()
+        handler = EventHandler(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            memory_engine=MagicMock(),
+            memory_processor=MagicMock(),
+            conversation_manager=MagicMock(),
+            memory_evolution_manager=manager,
+        )
+
+        assert handler._memory_evolution_manager is manager
+        assert handler._reflection_handler._memory_evolution_manager is manager
+
+    @pytest.mark.asyncio
+    async def test_reflection_schedules_only_after_reloaded_canonical_source(self) -> None:
+        from core.handlers.reflection_handler import ReflectionHandler
+
+        source = MagicMock(memory_id=17)
+        manager = MagicMock()
+        manager.store.load_sources = AsyncMock(return_value=[source])
+        manager.schedule_consider = AsyncMock()
+        handler = ReflectionHandler(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            memory_engine=MagicMock(),
+            memory_processor=MagicMock(),
+            conversation_manager=MagicMock(),
+            enforce_limit_cb=MagicMock(),
+            memory_evolution_manager=manager,
+        )
+
+        await handler._schedule_evolution_after_write(17)
+
+        manager.store.load_sources.assert_awaited_once_with((17,))
+        manager.schedule_consider.assert_awaited_once_with(source)
+
+    @pytest.mark.asyncio
+    async def test_reflection_skips_schedule_when_canonical_source_missing(self) -> None:
+        from core.handlers.reflection_handler import ReflectionHandler
+
+        manager = MagicMock()
+        manager.store.load_sources = AsyncMock(return_value=[])
+        manager.schedule_consider = AsyncMock()
+        handler = ReflectionHandler(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            memory_engine=MagicMock(),
+            memory_processor=MagicMock(),
+            conversation_manager=MagicMock(),
+            enforce_limit_cb=MagicMock(),
+            memory_evolution_manager=manager,
+        )
+
+        await handler._schedule_evolution_after_write(17)
+
+        manager.schedule_consider.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reflection_schedule_propagates_cancelled_error(self) -> None:
+        from core.handlers.reflection_handler import ReflectionHandler
+
+        manager = MagicMock()
+        manager.store.load_sources = AsyncMock(side_effect=asyncio.CancelledError())
+        handler = ReflectionHandler(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            memory_engine=MagicMock(),
+            memory_processor=MagicMock(),
+            conversation_manager=MagicMock(),
+            enforce_limit_cb=MagicMock(),
+            memory_evolution_manager=manager,
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await handler._schedule_evolution_after_write(17)
+
 
 class TestEventHandlerShutdown:
-    """Tests for shutdown() and session reset."""
+    """验证关闭与会话重置行为。"""
 
     @pytest.mark.asyncio
     async def test_shutdown_delegates_to_reflection_handler(self) -> None:
@@ -64,7 +143,7 @@ class TestEventHandlerShutdown:
             memory_processor=MagicMock(),
             conversation_manager=MagicMock(),
         )
-        # Replace the reflection handler shutdown with a mock
+        # 用替身隔离反思处理器的关闭行为。
         handler._reflection_handler.shutdown = AsyncMock()
         await handler.shutdown()
         handler._reflection_handler.shutdown.assert_awaited_once()
@@ -191,13 +270,13 @@ class TestEventHandlerShutdown:
         event = MagicMock()
         event.unified_msg_origin = "test-session-001"
 
-        # Should not raise; error is caught and logged
+        # 普通错误会被记录，不应向调用方抛出。
         await handler.handle_session_reset(event)
         conv.clear_session.assert_awaited_once()
 
 
 class TestEventHandlerGroupMessages:
-    """Tests for handle_all_group_messages."""
+    """验证群聊消息捕获入口。"""
 
     @pytest.mark.asyncio
     async def test_skips_when_full_group_capture_disabled(self) -> None:
@@ -216,7 +295,7 @@ class TestEventHandlerGroupMessages:
         event = MagicMock()
 
         await handler.handle_all_group_messages(event)
-        # Should return early, not extract content
+        # 功能关闭时应提前返回，不提取消息内容。
         assert event.get_message_type.call_count == 0
 
     @pytest.mark.asyncio
@@ -238,7 +317,7 @@ class TestEventHandlerGroupMessages:
         event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
 
         await handler.handle_all_group_messages(event)
-        # Should return early on non-group message
+        # 非群聊消息应提前返回。
         assert event.get_sender_id.call_count == 0
 
     @pytest.mark.asyncio
@@ -262,11 +341,11 @@ class TestEventHandlerGroupMessages:
         event.get_self_id.return_value = "bot_self"
 
         await handler.handle_all_group_messages(event)
-        # Should skip when sender is self
+        # 发送者为机器人自身时应跳过。
 
 
 class TestEventHandlerMemoryRecall:
-    """Tests for handle_memory_recall delegation."""
+    """验证记忆召回委托。"""
 
     @pytest.mark.asyncio
     async def test_delegates_to_recall_handler(self) -> None:
@@ -291,7 +370,7 @@ class TestEventHandlerMemoryRecall:
 
 
 class TestEventHandlerMemoryReflection:
-    """Tests for handle_memory_reflection delegation."""
+    """验证记忆反思委托。"""
 
     @pytest.mark.asyncio
     async def test_delegates_to_reflection_handler(self) -> None:
@@ -316,7 +395,7 @@ class TestEventHandlerMemoryReflection:
 
 
 class TestEnforceMessageLimit:
-    """Tests for _enforce_message_limit."""
+    """验证消息数量上限维护。"""
 
     @pytest.mark.asyncio
     async def test_skips_when_no_conversation_manager(self) -> None:
@@ -329,7 +408,7 @@ class TestEnforceMessageLimit:
             memory_processor=MagicMock(),
             conversation_manager=None,
         )
-        # Should return early, not calling store methods
+        # 未超过上限时应提前返回，不调用 Store 清理方法。
         result = await handler._enforce_message_limit("test-session")
         assert result is None
 

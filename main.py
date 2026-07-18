@@ -126,12 +126,12 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         return task
 
     def supports_plugin_reload(self) -> bool:
-        """Return whether this AstrBot runtime exposes plugin reload support."""
+        """返回当前 AstrBot 运行时是否提供插件重载能力。"""
         star_manager = getattr(self.context, "_star_manager", None)
         return callable(getattr(star_manager, "reload", None))
 
     def schedule_plugin_reload(self) -> bool:
-        """Schedule a delayed untracked reload so the HTTP response can finish."""
+        """安排延迟且不纳入关停追踪的重载，让 HTTP 响应先完成。"""
         star_manager = getattr(self.context, "_star_manager", None)
         reload_plugin = getattr(star_manager, "reload", None)
         if not callable(reload_plugin):
@@ -242,6 +242,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     perf_tracker=self._perf_tracker,
                     injection_recorder=self.initializer.injection_decision_recorder,
                     memory_tool_available=memory_tool_available,
+                    memory_evolution_manager=getattr(
+                        self.initializer, "memory_evolution_manager", None
+                    ),
                 )
 
             # 创建命令处理器（幂等）
@@ -409,7 +412,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         return True, ""
 
     def get_readiness_snapshot(self) -> dict[str, Any]:
-        """Return a non-blocking diagnostic snapshot for status/help/webui paths."""
+        """为状态、帮助和 WebUI 路径返回非阻塞诊断快照。"""
         snapshot = self.initializer.get_readiness_snapshot()
         snapshot["runtime_ready"] = {
             "event_handler": self.event_handler is not None,
@@ -559,6 +562,12 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 self.event_handler.shutdown(),
                 timeout=STEP_TIMEOUT,
             )
+
+        await _safe_step(
+            "关闭记忆演化组件",
+            self.initializer.close_memory_evolution_components(),
+            timeout=STEP_TIMEOUT,
+        )
 
         await _safe_step(
             "关闭注入决策组件",

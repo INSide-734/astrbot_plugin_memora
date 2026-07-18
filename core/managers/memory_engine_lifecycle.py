@@ -76,7 +76,7 @@ class MemoryEngineLifecycleMixin:
         from ..storage.base import apply_perf_pragmas
 
         await apply_perf_pragmas(self.db_connection)
-        # 降低 WAL checkpoint 频率 — 减少写阻塞 (lifecycle-specific)
+        # 降低 WAL checkpoint 频率，减少生命周期初始化阶段的写阻塞。
         await self.db_connection.execute("PRAGMA wal_autocheckpoint = 1000")
         for mod in (
             self._write_journal,
@@ -306,9 +306,10 @@ class MemoryEngineLifecycleMixin:
                 personalized_ranker=self.personalized_ranker,
                 profile_manager=self.profile_manager,
                 reranker=reranker,
+                derived_expander=self.config.get("derived_expander"),
             )
 
-        # D4: real-time SSE stream
+        # D4：实时 SSE 事件流。
         from ..api.realtime_api import RealtimeSSE
 
         self.sse = RealtimeSSE(self)
