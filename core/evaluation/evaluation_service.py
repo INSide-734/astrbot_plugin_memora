@@ -1,8 +1,10 @@
-"""Service layer for retrieval evaluation runs and reports."""
+"""检索评测运行与报告的服务层。"""
 
 from __future__ import annotations
 
 import inspect
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,13 +21,14 @@ from .retrieval_quality import (
 
 
 _SUPPORTED_VARIANTS = frozenset(
-    {"baseline", "graph_expansion_off", "topic_expansion_off"}
+    {"baseline", "A", "B", "C", "graph_expansion_off", "topic_expansion_off"}
 )
 _METRICS = ("recall_at_k", "mrr", "ndcg_at_k", "p95_latency_ms")
 _VARIANT_CONFIG_KEYS = {
     "graph_expansion_off": "recall_engine.chain_graph_expansion_enabled",
     "topic_expansion_off": "recall_engine.chain_topic_expansion_enabled",
 }
+_EVOLUTION_VARIANT_MODES = {"B": "readonly", "C": "active"}
 _CACHE_ATTRS = (
     "_retrieval",
     "retrieval_optimizer",
@@ -38,7 +41,7 @@ _MISSING = object()
 
 
 class EvaluationService:
-    """Run retrieval fixtures against a MemoryEngine-like object."""
+    """针对 MemoryEngine 类对象运行检索夹具。"""
 
     def __init__(
         self,
@@ -52,12 +55,12 @@ class EvaluationService:
         self.store = EvaluationReportStore(db_path) if db_path else None
 
     async def initialize(self) -> None:
-        """Initialize persistence when a report store is configured."""
+        """配置报告存储时初始化持久化。"""
         if self.store is not None:
             await self.store.initialize()
 
     def list_datasets(self) -> dict[str, list[dict[str, Any]]]:
-        """Return metadata for available JSONL evaluation fixtures."""
+        """返回可用 JSONL 评测夹具的元数据。"""
         datasets = []
         for name, cases in self._load_datasets().items():
             path = self.fixture_dir / f"{name}.jsonl"
@@ -93,7 +96,7 @@ class EvaluationService:
         baseline: str | None,
         save_report: bool,
     ) -> dict[str, Any]:
-        """Evaluate selected datasets and optionally persist the report."""
+        """评测选定数据集，并按需持久化报告。"""
         safe_k = self._clamp_k(k)
         selected_cases_by_dataset = self._select_datasets(datasets)
         cases = [
@@ -111,7 +114,7 @@ class EvaluationService:
 
         for variant_name in requested_variants:
             await self._clear_evaluation_caches()
-            if variant_name == "baseline":
+            if variant_name in {"baseline", "A"}:
                 report = await evaluate_cases(
                     cases,
                     make_memory_engine_retriever(self.engine),
@@ -122,6 +125,10 @@ class EvaluationService:
                     variant_name,
                     report,
                 )
+                variants_payload[variant_name]["summary"]["configuration_hash"] = (
+                    self._configuration_hash()
+                )
+                variants_payload[variant_name]["summary"]["variant"] = variant_name
                 continue
 
             async with self._configured_variant(variant_name) as can_run:
@@ -142,6 +149,10 @@ class EvaluationService:
                     variant_name,
                     report,
                 )
+                variants_payload[variant_name]["summary"]["configuration_hash"] = (
+                    self._configuration_hash()
+                )
+                variants_payload[variant_name]["summary"]["variant"] = variant_name
 
         if baseline_name not in completed_reports:
             return {
@@ -157,6 +168,8 @@ class EvaluationService:
 
         baseline_report = completed_reports[baseline_name]
         summary = self._report_summary(baseline_report)
+        summary["configuration_hash"] = self._configuration_hash()
+        summary["variant"] = baseline_name
         report_payload = {
             "baseline": baseline_name,
             "summary": summary,
@@ -179,13 +192,13 @@ class EvaluationService:
         }
 
     async def list_reports(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Return persisted report metadata when persistence is available."""
+        """报告存储可用时返回已持久化的报告元数据。"""
         if self.store is None:
             return []
         return await self.store.list_reports(limit=limit)
 
     async def get_report(self, report_id: str) -> dict[str, Any] | None:
-        """Load a persisted report by ID."""
+        """按标识读取已持久化报告。"""
         if self.store is None:
             return None
         return await self.store.get_report(report_id)
@@ -195,7 +208,7 @@ class EvaluationService:
         report_id_a: str,
         report_id_b: str,
     ) -> dict[str, Any] | None:
-        """Return metric deltas from report A to report B."""
+        """返回报告 A 到报告 B 的指标差异。"""
         if self.store is None:
             return None
         report_a = await self.store.get_report(report_id_a)
@@ -259,6 +272,10 @@ class EvaluationService:
 
     @asynccontextmanager
     async def _configured_variant(self, name: str):
+        if name in _EVOLUTION_VARIANT_MODES:
+            async with self._configured_evolution_mode(_EVOLUTION_VARIANT_MODES[name]) as can_run:
+                yield can_run
+            return
         setting = _VARIANT_CONFIG_KEYS.get(name)
         if not setting:
             yield False
@@ -297,8 +314,46 @@ class EvaluationService:
                 await maybe_result
             await self._clear_evaluation_caches()
 
+    @asynccontextmanager
+    async def _configured_evolution_mode(self, mode: str):
+        """临时设置 B/C 变体的记忆演化模式，并在退出时恢复。"""
+        config = getattr(self.engine, "config", None)
+        if isinstance(config, dict) and isinstance(config.get("memory_evolution"), dict):
+            evolution_config = config["memory_evolution"]
+            had_mode = "mode" in evolution_config
+            original = evolution_config.get("mode")
+            try:
+                evolution_config["mode"] = mode
+                yield True
+            finally:
+                if had_mode:
+                    evolution_config["mode"] = original
+                else:
+                    evolution_config.pop("mode", None)
+                await self._clear_evaluation_caches()
+            return
+
+        get_config = getattr(self.engine, "get_config", None)
+        set_config = getattr(self.engine, "set_config", None)
+        if not callable(get_config) or not callable(set_config):
+            yield False
+            return
+
+        setting = "memory_evolution.mode"
+        original = get_config(setting, _MISSING)
+        try:
+            maybe_result = set_config(setting, mode)
+            if inspect.isawaitable(maybe_result):
+                await maybe_result
+            yield True
+        finally:
+            maybe_result = set_config(setting, original)
+            if inspect.isawaitable(maybe_result):
+                await maybe_result
+            await self._clear_evaluation_caches()
+
     async def _clear_evaluation_caches(self) -> None:
-        """Best-effort cache isolation for ablation variants."""
+        """尽力隔离消融变体之间的缓存。"""
         seen: set[int] = set()
         targets: list[Any] = [self.engine]
         index = 0
@@ -343,17 +398,57 @@ class EvaluationService:
 
     @staticmethod
     def _report_summary(report: EvaluationReport) -> dict[str, Any]:
-        return {
+        summary = {
             "total_cases": report.total_cases,
             "k": report.k,
             "recall_at_k": report.recall_at_k,
+            "precision_at_k": report.precision_at_k,
             "mrr": report.mrr,
             "ndcg_at_k": report.ndcg_at_k,
+            "multi_hop_recall": report.multi_hop_recall,
+            "single_hop_recall": report.single_hop_recall,
+            "noise_negative_false_hit": report.noise_negative_false_hit,
+            "temporal_consistency": report.temporal_consistency,
+            "conflict_accuracy": report.conflict_accuracy,
+            "source_supported_projection_rate": report.source_supported_projection_rate,
+            "answer_faithfulness": report.answer_faithfulness,
+            "answer_relevancy": report.answer_relevancy,
+            "p50_latency_ms": report.p50_latency_ms,
             "p95_latency_ms": report.p95_latency_ms,
+            "provider_calls": report.provider_calls,
+            "token_cost": report.token_cost,
+            "reason_code_aggregates": dict(report.reason_code_aggregates),
             "dataset_breakdown": EvaluationReportStore._normalize_json_value(
                 report.dataset_breakdown
             ),
         }
+        return summary
+
+    def _configuration_hash(self) -> str:
+        """计算匿名配置摘要，不将配置原文写入评测报告。"""
+        config = getattr(self.engine, "config", {})
+        if not isinstance(config, Mapping):
+            config = {"config_type": type(config).__name__}
+        encoded = json.dumps(
+            self._redact_config(dict(config)),
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _redact_config(cls, config: Mapping[str, Any]) -> dict[str, Any]:
+        redacted: dict[str, Any] = {}
+        for key, value in config.items():
+            key_text = str(key)
+            if any(token in key_text.lower() for token in ("key", "token", "secret", "password")):
+                redacted[key_text] = "<已隐藏>"
+            elif isinstance(value, Mapping):
+                redacted[key_text] = cls._redact_config(value)
+            else:
+                redacted[key_text] = value
+        return redacted
 
     @staticmethod
     def _report_cases(report: EvaluationReport) -> list[dict[str, Any]]:

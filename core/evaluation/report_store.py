@@ -1,4 +1,4 @@
-"""Persistent storage for retrieval evaluation reports."""
+"""检索评测报告的持久化存储。"""
 
 from __future__ import annotations
 
@@ -27,13 +27,13 @@ _PERF_PRAGMAS: tuple[tuple[str, str], ...] = (
 
 
 async def _apply_perf_pragmas(conn: aiosqlite.Connection) -> None:
-    """Apply SQLite pragmas without importing AstrBot-dependent storage modules."""
+    """设置 SQLite 性能参数，且不导入依赖 AstrBot 的存储模块。"""
     for key, value in _PERF_PRAGMAS:
         await conn.execute(f"PRAGMA {key} = {value}")
 
 
 class EvaluationReportStore:
-    """Persist evaluation reports and case-level results in SQLite."""
+    """将评测报告和样本级结果持久化到 SQLite。"""
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = str(db_path)
@@ -49,7 +49,7 @@ class EvaluationReportStore:
             await db.close()
 
     async def initialize(self) -> None:
-        """Create report persistence tables and indexes."""
+        """创建报告持久化所需的数据表和索引。"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         async with self._connect() as db:
             await db.execute(
@@ -88,7 +88,7 @@ class EvaluationReportStore:
             await db.commit()
 
     async def save_report(self, report: Mapping[str, Any] | Any) -> str:
-        """Persist a report and return its generated report ID."""
+        """持久化报告并返回生成的报告标识。"""
         normalized_report = self._normalize_json_value(report)
         if not isinstance(normalized_report, dict):
             raise TypeError("Evaluation report must normalize to a mapping")
@@ -152,7 +152,7 @@ class EvaluationReportStore:
         return report_id
 
     async def get_report(self, report_id: str) -> dict[str, Any] | None:
-        """Load a full report, including case-level results."""
+        """读取完整报告，包括样本级结果。"""
         async with self._connect() as db:
             cursor = await db.execute(
                 """
@@ -188,7 +188,7 @@ class EvaluationReportStore:
         return report
 
     async def list_reports(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Return newest report metadata without full case payloads."""
+        """返回最新报告的元数据，不展开完整样本内容。"""
         safe_limit = max(1, int(limit))
         async with self._connect() as db:
             cursor = await db.execute(
@@ -245,9 +245,22 @@ class EvaluationReportStore:
             "total_cases",
             "k",
             "recall_at_k",
+            "precision_at_k",
             "mrr",
             "ndcg_at_k",
+            "multi_hop_recall",
+            "single_hop_recall",
+            "noise_negative_false_hit",
+            "temporal_consistency",
+            "conflict_accuracy",
+            "source_supported_projection_rate",
+            "answer_faithfulness",
+            "answer_relevancy",
+            "p50_latency_ms",
             "p95_latency_ms",
+            "provider_calls",
+            "token_cost",
+            "reason_code_aggregates",
             "dataset_breakdown",
         )
         return {
