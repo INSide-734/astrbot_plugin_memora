@@ -66,17 +66,18 @@ describe("ProfilesPage", () => {
           user_id: "user-1",
           display_name: "Alice",
           tag_count: 3,
-          top_interests: ["testing", "python"],
+          tags: [
+            { category: "knowledge", value: "Python 开发者", confidence: 0.95 },
+            { category: "custom", value: "后端工程师", confidence: 0.9 },
+          ],
+          top_interests: ["legacy-interest"],
           last_seen: "2026-06-28T12:00:00Z",
         },
         {
           user_id: "user-2",
           display_name: "Bob",
-          tags: [
-            { name: "ops", confidence: 0.8 },
-            { name: "graphs", confidence: 0.5 },
-          ],
-          top_interests: ["ops"],
+          tags: ["ops", "graphs"],
+          top_interests: ["legacy-interest-bob"],
           last_seen: "2026-06-27T12:00:00Z",
         },
       ],
@@ -98,15 +99,47 @@ describe("ProfilesPage", () => {
     expect(await screen.findByText("Alice")).toBeTruthy();
     expect(screen.getByText("Bob")).toBeTruthy();
     expect(screen.getByText("Profiles")).toBeTruthy();
-    expect(screen.getAllByText("Tags").length).toBeGreaterThan(1);
+    expect(screen.getByText("Tags", { selector: "span.truncate" })).toBeTruthy();
+    expect(screen.getAllByText("Tag count").length).toBeGreaterThan(1);
     expect(screen.getByText("User ID")).toBeTruthy();
     expect(screen.getAllByText("2").length).toBeGreaterThan(0);
     expect(screen.getByText((content) => content.trim() === "5")).toBeTruthy();
-    expect(screen.getByText("testing")).toBeTruthy();
+    expect(screen.getByText("Python 开发者")).toBeTruthy();
+    expect(screen.getByText("ops")).toBeTruthy();
+    expect(screen.queryByText("legacy-interest")).toBeNull();
+    expect(screen.queryByText("legacy-interest-bob")).toBeNull();
     expect(screen.getByText(new Date("2026-06-28T12:00:00Z").toLocaleDateString("en-US"))).toBeTruthy();
     expect(localeSpy).toHaveBeenCalledWith("en-US");
     expect(screen.getByRole("navigation", { name: "Pagination" })).toBeTruthy();
     expect(screen.queryByRole("toolbar")).toBeNull();
+  });
+
+  it("shows structured tag metadata in the profile detail view", async () => {
+    bridge.apiGet.mockImplementation((path: string) => Promise.resolve(ok(
+      path === "page/profiles/detail"
+        ? {
+            user_id: "alice",
+            display_name: "Alice",
+            revision: "rev-1",
+            preferences: {},
+            tags: [
+              { category: "knowledge", value: "Python", confidence: 0.95 },
+              { category: "custom", value: "Backend", confidence: 0.8 },
+            ],
+          }
+        : { total: 1, profiles: [{ user_id: "alice", display_name: "Alice", revision: "rev-1" }] },
+    )));
+
+    render(<ProfilesPage showToast={showToast} />);
+    fireEvent.click(await screen.findByRole("button", { name: /open profile alice/i }));
+    const drawer = await screen.findByRole("dialog", { name: "Profile: Alice" });
+
+    expect(within(drawer).getAllByText("Tag category")).toHaveLength(2);
+    expect(within(drawer).getAllByText("Tag value")).toHaveLength(2);
+    expect(within(drawer).getAllByText("Tag confidence")).toHaveLength(2);
+    expect(within(drawer).getByText("knowledge")).toBeTruthy();
+    expect(within(drawer).getByText("Python")).toBeTruthy();
+    expect(within(drawer).getByText("95%")).toBeTruthy();
   });
 
   it("recovers corrupt table preferences with required and pinned profile columns", async () => {

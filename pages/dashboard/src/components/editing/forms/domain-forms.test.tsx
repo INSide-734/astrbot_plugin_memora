@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { KnowledgeForm } from "./KnowledgeForm";
@@ -119,7 +119,34 @@ describe("domain editing forms", () => {
 
     render(<ProfileForm value={value} onChange={vi.fn()} mode="create" fieldErrors={{ tags: "bad tags" }} />);
 
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Tag category")));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getAllByLabelText("Tag category")[0]));
+  });
+
+  it("renders each Profile tag as a labeled responsive group", () => {
+    const value = {
+      ...profileValue,
+      tags: [
+        profileValue.tags[0],
+        { category: "skill", value: "typescript", confidence: 0.9 },
+        { category: "interest", value: "", confidence: 0.5 },
+      ],
+    };
+
+    render(<ProfileForm value={value} onChange={vi.fn()} mode="edit" fieldErrors={{}} />);
+
+    const groups = screen.getAllByRole("group", { name: /^Tag [123]$/ });
+    expect(groups).toHaveLength(3);
+    expect(within(groups[0]).getByText("Tag 1")).toBeTruthy();
+    expect(within(groups[0]).getByLabelText("Tag category")).toHaveProperty("value", "interest");
+    expect(within(groups[0]).getByLabelText("Tag value")).toHaveProperty("value", "testing");
+    expect(within(groups[0]).getByLabelText("Tag confidence")).toHaveProperty("value", "0.8");
+    expect(within(groups[1]).getByText("Tag 2")).toBeTruthy();
+    expect(within(groups[1]).getByLabelText("Tag category 2")).toHaveProperty("value", "skill");
+    expect(within(groups[1]).getByLabelText("Tag value 2")).toHaveProperty("value", "typescript");
+    expect(within(groups[1]).getByLabelText("Tag confidence 2")).toHaveProperty("value", "0.9");
+    expect(within(groups[2]).getByText("Tag 3")).toBeTruthy();
+    expect(within(groups[2]).getByLabelText("Tag value 3")).toHaveProperty("value", "");
+    expect(within(groups[2]).getByPlaceholderText("Enter a tag value")).toBeTruthy();
   });
 
   it("removes detached Profile tag controls from the focus registry", async () => {

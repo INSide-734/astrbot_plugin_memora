@@ -23,10 +23,10 @@ import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { EditConflictDialog } from "@/components/editing/EditConflictDialog";
 import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
 import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
-import { DetailField, DetailGrid, DetailSection, DetailTags } from "@/components/editing/EntityDetail";
+import { DetailField, DetailGrid, DetailSection } from "@/components/editing/EntityDetail";
 import { ProfileForm } from "@/components/editing/forms/ProfileForm";
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
-import { dashboardLocale, formatDashboardDate } from "@/lib/i18n";
+import { dashboardLocale, formatDashboardDate, formatDashboardPercent } from "@/lib/i18n";
 import { ApiRequestError, BULK_CONFIRMATION_THRESHOLD, editingErrorDetails, type BatchResult, type EntityEnvelope, type FieldErrors } from "@/types/editing";
 import type { ProfileDraft } from "@/types";
 
@@ -42,13 +42,15 @@ interface ProfileTag {
   confidence: number;
 }
 
+type ProfileTagValue = ProfileTag | string;
+
 interface Profile {
   user_id: string;
   display_name?: string;
   revision?: string;
   group_id?: string;
   tag_count?: number;
-  tags?: ProfileTag[];
+  tags?: ProfileTagValue[];
   top_interests?: string[];
   preferences?: Partial<ProfileDraft["preferences"]>;
   last_seen?: string;
@@ -68,6 +70,18 @@ type ProfileDeleteResponse = { deleted?: boolean; identity?: ProfileIdentity };
 type ProfileBatchFailure = { identity: ProfileIdentity; code: string; message: string };
 type ProfileBatchResponse = Omit<BatchResult<ProfileIdentity>, "failures"> & { failures: ProfileBatchFailure[] };
 type ProfileBatchItem = { identity: ProfileIdentity; expected_revision?: string };
+
+function profileTagValue(tag: ProfileTagValue): string {
+  return typeof tag === "string" ? tag : tag.value ?? tag.name ?? "";
+}
+
+function profileTagCategory(tag: ProfileTagValue): string {
+  return typeof tag === "string" ? "interest" : tag.category ?? "interest";
+}
+
+function profileTagConfidence(tag: ProfileTagValue): number {
+  return typeof tag === "string" ? 0.5 : Number(tag.confidence ?? 0.5);
+}
 
 function batchItemKey(item: ProfileBatchItem): string {
   return JSON.stringify([item.identity, item.expected_revision]);
@@ -114,9 +128,9 @@ function profileDraft(profile: Profile): ProfileDraft {
       active_hours: [...(preferences.active_hours ?? [])],
     },
     tags: (profile.tags ?? []).map((tag) => ({
-      category: tag.category ?? "interest",
-      value: tag.value ?? tag.name ?? "",
-      confidence: Number(tag.confidence ?? 0.5),
+      category: profileTagCategory(tag),
+      value: profileTagValue(tag),
+      confidence: profileTagConfidence(tag),
     })),
   };
 }
@@ -228,7 +242,7 @@ function hasProfileRevision(profile: Profile | undefined): profile is Profile & 
 }
 
 function profileTagTotal(profile: Profile): number {
-  return profile.tag_count ?? (profile.tags?.filter((tag) => typeof tag.value === "string" || typeof tag.name === "string").length ?? 0);
+  return profile.tag_count ?? (profile.tags?.filter((tag) => Boolean(profileTagValue(tag).trim())).length ?? 0);
 }
 
 export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
@@ -646,26 +660,30 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
       ),
     },
     {
-      id: "tags",
+      id: "tag_count",
       accessorFn: profileTagTotal,
-      header: t("table.tags"),
+      header: t("table.tagCount"),
       enableSorting: false,
-      meta: { label: t("table.tags") },
+      meta: { label: t("table.tagCount") },
       cell: ({ row }) => <Badge>{profileTagTotal(row.original)}</Badge>,
     },
     {
-      id: "top_interests",
-      accessorKey: "top_interests",
-      header: t("table.interests"),
+      id: "tags",
+      accessorKey: "tags",
+      header: t("table.tags"),
       enableSorting: false,
-      meta: { label: t("table.interests") },
-      cell: ({ row }) => (
-        <div className="flex flex-wrap gap-1">
-          {(row.original.top_interests ?? []).slice(0, 3).map((interest) => (
-            <Badge key={interest} variant="secondary">{interest}</Badge>
-          ))}
-        </div>
-      ),
+      meta: { label: t("table.tags") },
+      cell: ({ row }) => {
+        const tagValues = (row.original.tags ?? [])
+          .map(profileTagValue)
+          .filter(Boolean);
+        const values = tagValues.length ? tagValues : (row.original.top_interests ?? []);
+        return values.length ? (
+          <div className="flex flex-wrap gap-1">
+            {values.slice(0, 3).map((tag, index) => <Badge key={`${tag}-${index}`} variant="secondary">{tag}</Badge>)}
+          </div>
+        ) : <span className="text-sm text-muted-foreground">--</span>;
+      },
     },
     {
       id: "last_seen_at",
@@ -712,7 +730,7 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
       <div className="flex min-h-12 shrink-0 items-center border-b bg-muted/30 px-4 py-2 sm:px-5 lg:px-6">
         <MetricGrid minItemWidth="8rem" className="w-full max-w-md gap-3">
           <div><div className="text-lg font-bold tabular-nums">{total}</div><div className="text-xs text-muted-foreground">{t("stats.profiles")}</div></div>
-          <div><div className="text-lg font-bold tabular-nums">{profiles.reduce((sum, profile) => sum + profileTagTotal(profile), 0)}</div><div className="text-xs text-muted-foreground">{t("table.tags")}</div></div>
+          <div><div className="text-lg font-bold tabular-nums">{profiles.reduce((sum, profile) => sum + profileTagTotal(profile), 0)}</div><div className="text-xs text-muted-foreground">{t("table.tagCount")}</div></div>
         </MetricGrid>
       </div>
 
@@ -771,7 +789,25 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
             <DetailField label={label("profile.groupId", "Group ID")}>{detail.group_id || "--"}</DetailField>
             <DetailField label={t("detail.revision")}>{detail.revision || "--"}</DetailField>
           </DetailGrid>
-          <DetailSection title={t("table.tags")}><DetailTags tags={(detail.tags ?? []).map((tag) => tag.value ?? tag.name ?? "").filter(Boolean)} /></DetailSection>
+          <DetailSection title={t("table.tags")}>
+            <div className="space-y-2">
+              {(detail.tags ?? []).length ? (detail.tags ?? []).map((tag, index) => {
+                const category = profileTagCategory(tag).trim() || "--";
+                const value = profileTagValue(tag).trim() || "--";
+                const confidenceValue = profileTagConfidence(tag);
+                const confidence = Number.isFinite(confidenceValue)
+                  ? formatDashboardPercent(confidenceValue, locale, { maximumFractionDigits: 0 })
+                  : "--";
+                return (
+                  <div key={`${category}-${value}-${index}`} className="grid min-w-0 gap-3 rounded-lg border border-border/70 bg-muted/20 p-3 sm:grid-cols-[minmax(8rem,0.9fr)_minmax(0,1.8fr)_minmax(8rem,0.8fr)]">
+                    <DetailField label={label("profile.tagCategory", "Tag category")}>{category}</DetailField>
+                    <DetailField label={label("profile.tagValue", "Tag value")}>{value}</DetailField>
+                    <DetailField label={label("profile.tagConfidence", "Tag confidence")}>{confidence}</DetailField>
+                  </div>
+                );
+              }) : <span className="text-sm text-muted-foreground">--</span>}
+            </div>
+          </DetailSection>
           <DetailSection title={label("profile.preferences", "Preferences")}><DetailGrid><DetailField label={t("profile.replyStyle")}>{detail.preferences?.reply_style || "--"}</DetailField><DetailField label={t("profile.preferredTopics")}>{detail.preferences?.preferred_topics?.join(", ") || "--"}</DetailField><DetailField label={t("profile.avoidedTopics")}>{detail.preferences?.avoided_topics?.join(", ") || "--"}</DetailField></DetailGrid></DetailSection>
         </div> : null}
         viewActions={detail ? <Button variant="destructive" size="sm" onClick={() => { if (hasProfileRevision(detail)) setDeleteOpen(true); else void executeSingleDelete(); }}><Trash2 data-icon="inline-start" />{hasProfileRevision(detail) ? t("common.delete") : t("detail.deleteProfile")}</Button> : null}
