@@ -163,7 +163,12 @@ describe("useInjectionDecisions", () => {
 
     expect(bridge.apiGet).toHaveBeenCalledWith(
       "page/injection-strategy/decisions",
-      { offset: "0", limit: "100" }
+      {
+        offset: "0",
+        limit: "100",
+        sort_by: "created_at_ms",
+        sort_order: "desc",
+      }
     );
     act(() => hook.result.current.setOffset(-5));
     expect(hook.result.current.offset).toBe(0);
@@ -192,8 +197,36 @@ describe("useInjectionDecisions", () => {
     expect(hook.result.current.page?.items[0].decision_id).toBe("new");
     expect(bridge.apiGet).toHaveBeenLastCalledWith(
       "page/injection-strategy/decisions",
-      { offset: "0", limit: "25", outcome: "error" }
+      {
+        offset: "0",
+        limit: "25",
+        outcome: "error",
+        sort_by: "created_at_ms",
+        sort_order: "desc",
+      }
     );
+  });
+
+  it("resets offset and requests the selected server sort without persistence", async () => {
+    const hook = renderHook(() => useInjectionDecisions({ initialLimit: 25 }));
+    await waitFor(() => expect(hook.result.current.status).toBe("success"));
+
+    act(() => hook.result.current.setOffset(50));
+    await waitFor(() => expect(hook.result.current.offset).toBe(50));
+    act(() => hook.result.current.setSort({ id: "outcome", desc: false }));
+
+    await waitFor(() => expect(hook.result.current.offset).toBe(0));
+    expect(hook.result.current.sort).toEqual({ id: "outcome", desc: false });
+    expect(bridge.apiGet).toHaveBeenLastCalledWith(
+      "page/injection-strategy/decisions",
+      {
+        offset: "0",
+        limit: "25",
+        sort_by: "outcome",
+        sort_order: "asc",
+      },
+    );
+    expect(localStorage.length).toBe(0);
   });
 
   it("keeps detail generations independent from the list and clear invalidates late detail", async () => {

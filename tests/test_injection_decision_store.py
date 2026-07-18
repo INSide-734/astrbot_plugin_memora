@@ -9,7 +9,11 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from core.injection.models import InjectionDecisionRecord
-from core.storage.injection_decision_store import DecisionQuery, InjectionDecisionStore
+from core.storage.injection_decision_store import (
+    INJECTION_DECISION_SORT_COLUMNS,
+    DecisionQuery,
+    InjectionDecisionStore,
+)
 
 
 def record(decision_id: str, created_at_ms: int, **overrides) -> InjectionDecisionRecord:
@@ -157,7 +161,7 @@ async def test_batch_is_idempotent_and_list_is_stable(tmp_path) -> None:
         assert await store.insert_many(rows) == 0
         page = await store.list_decisions(DecisionQuery(offset=0, limit=100))
         assert page.total == 2
-        assert [item["decision_id"] for item in page.items] == ["b", "a"]
+        assert [item["decision_id"] for item in page.items] == ["a", "b"]
     finally:
         await store.close()
 
@@ -182,6 +186,8 @@ def test_decision_query_is_frozen_and_validates_pagination_and_window() -> None:
         {"limit": 0},
         {"limit": 101},
         {"from_ms": 20, "to_ms": 10},
+        {"sort_by": "query"},
+        {"sort_order": "sideways"},
     ):
         with pytest.raises(ValueError):
             DecisionQuery(**values)
@@ -200,10 +206,47 @@ async def test_list_pagination_is_stable_and_reports_unpaged_total(tmp_path) -> 
         assert first.total == second.total == 4
         assert first.offset == 0 and first.limit == 2
         assert second.offset == 2 and second.limit == 2
-        assert [item["decision_id"] for item in first.items] == ["c", "b"]
-        assert [item["decision_id"] for item in second.items] == ["a", "old"]
+        assert [item["decision_id"] for item in first.items] == ["a", "b"]
+        assert [item["decision_id"] for item in second.items] == ["c", "old"]
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_sort_happens_before_limit_and_uses_public_allowlist(tmp_path) -> None:
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        await store.insert_many(
+            [
+                record("high", 1, actual_payload_chars=900),
+                record("low", 2, actual_payload_chars=100),
+                record("middle", 3, actual_payload_chars=500),
+            ]
+        )
+        page = await store.list_decisions(
+            DecisionQuery(
+                offset=0,
+                limit=2,
+                sort_by="actual_payload_chars",
+                sort_order="asc",
+            )
+        )
+        assert [item["decision_id"] for item in page.items] == ["low", "middle"]
+    finally:
+        await store.close()
+
+
+def test_injection_decision_sort_columns_are_fixed() -> None:
+    assert INJECTION_DECISION_SORT_COLUMNS == {
+        "created_at_ms": "created_at_ms",
+        "routing_mode": "routing_mode COLLATE NOCASE",
+        "resolved_preset": "resolved_preset COLLATE NOCASE",
+        "provider_type": "provider_type COLLATE NOCASE",
+        "outcome": "outcome COLLATE NOCASE",
+        "actual_payload_chars": "actual_payload_chars",
+        "decision_ms": "decision_ms",
+    }
 
 
 @pytest.mark.asyncio
@@ -426,6 +469,6 @@ async def test_row_cap_uses_stable_created_at_and_id_order(tmp_path) -> None:
         assert result.deleted_expired == 0
         assert result.deleted_overflow == 1
         page = await store.list_decisions(DecisionQuery())
-        assert [item["decision_id"] for item in page.items] == ["c", "b"]
+        assert [item["decision_id"] for item in page.items] == ["b", "c"]
     finally:
         await store.close()
