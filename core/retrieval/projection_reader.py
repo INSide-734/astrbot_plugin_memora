@@ -132,8 +132,18 @@ class ProjectionReader:
         total_chars = 0
         now = _as_utc(scope.now)
 
+        valid_bundles: list[ProjectionBundle] = []
+        for bundle in bundles:
+            try:
+                if isinstance(bundle, ProjectionBundle) and _valid_projection_bundle(
+                    bundle.projection, bundle.sources
+                ):
+                    valid_bundles.append(bundle)
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                continue
+
         ordered_bundles = sorted(
-            bundles,
+            valid_bundles,
             key=lambda bundle: (
                 -_safe_confidence(bundle.projection.confidence),
                 _projection_type_value(bundle.projection.projection_type),
@@ -144,8 +154,6 @@ class ProjectionReader:
             projection = bundle.projection
             projection_id = str(projection.projection_id)
             if projection_id in seen_projection_ids:
-                continue
-            if not _valid_projection_bundle(projection, bundle.sources):
                 continue
             if projection.state is not DerivedState.ACTIVE:
                 continue
@@ -232,7 +240,8 @@ def _copy_candidate(candidate: HybridResult) -> HybridResult:
 def _valid_projection_bundle(projection: Any, mappings: tuple[Any, ...]) -> bool:
     if not isinstance(projection, ProjectionView):
         return False
-    if not math.isfinite(float(projection.confidence)) or not 0.0 <= float(projection.confidence) <= 1.0:
+    confidence = float(projection.confidence)
+    if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
         return False
     if not isinstance(projection.projection_type, ProjectionType):
         return False
@@ -283,7 +292,11 @@ def _valid_at(
 def _privacy_allowed(item_level: str, request_level: str) -> bool:
     item_value = _PRIVACY_ORDER.get(item_level)
     request_value = _PRIVACY_ORDER.get(request_level)
-    return item_value is not None and request_value is not None and item_value <= request_value
+    return (
+        item_value is not None
+        and request_value is not None
+        and item_value <= request_value
+    )
 
 
 def _projection_type_value(value: Any) -> str:
