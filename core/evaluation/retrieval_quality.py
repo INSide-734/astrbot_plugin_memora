@@ -1,4 +1,4 @@
-"""Offline retrieval quality evaluation helpers."""
+"""离线检索质量评测辅助函数。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from typing import Any
 
 @dataclass(slots=True)
 class EvaluationCase:
-    """One retrieval evaluation query and its relevant document IDs."""
+    """一条检索评测查询及其相关文档标识。"""
 
     case_id: str
     query: str
@@ -25,7 +25,7 @@ class EvaluationCase:
 
 @dataclass(slots=True)
 class RetrievedDocument:
-    """Minimal retrieved document shape used by the evaluator."""
+    """评测器使用的最小检索文档结构。"""
 
     doc_id: str
     score: float = 0.0
@@ -34,7 +34,7 @@ class RetrievedDocument:
 
 @dataclass(slots=True)
 class EvaluationResult:
-    """Per-case retrieval quality result."""
+    """单个样本的检索质量结果。"""
 
     case_id: str
     query: str
@@ -45,11 +45,13 @@ class EvaluationResult:
     ndcg_at_k: float
     latency_ms: float
     metadata: dict[str, Any] = field(default_factory=dict)
+    precision_at_k: float = 0.0
+    advanced_metrics: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
 class EvaluationReport:
-    """Aggregate retrieval quality report."""
+    """聚合后的检索质量报告。"""
 
     total_cases: int
     k: int
@@ -59,11 +61,47 @@ class EvaluationReport:
     p95_latency_ms: float | None
     cases: list[EvaluationResult]
     dataset_breakdown: dict[str, dict[str, float | int]]
+    precision_at_k: float = 0.0
+    multi_hop_recall: float = 0.0
+    single_hop_recall: float = 0.0
+    noise_negative_false_hit: float = 0.0
+    temporal_consistency: float = 0.0
+    conflict_accuracy: float = 0.0
+    source_supported_projection_rate: float = 0.0
+    answer_faithfulness: float = 0.0
+    answer_relevancy: float = 0.0
+    p50_latency_ms: float | None = None
+    provider_calls: float = 0.0
+    token_cost: float = 0.0
+    reason_code_aggregates: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def metrics(self) -> dict[str, Any]:
+        """返回报告中的统一质量与成本指标。"""
+        return {
+            "recall_at_k": self.recall_at_k,
+            "precision_at_k": self.precision_at_k,
+            "mrr": self.mrr,
+            "ndcg_at_k": self.ndcg_at_k,
+            "multi_hop_recall": self.multi_hop_recall,
+            "single_hop_recall": self.single_hop_recall,
+            "noise_negative_false_hit": self.noise_negative_false_hit,
+            "temporal_consistency": self.temporal_consistency,
+            "conflict_accuracy": self.conflict_accuracy,
+            "source_supported_projection_rate": self.source_supported_projection_rate,
+            "answer_faithfulness": self.answer_faithfulness,
+            "answer_relevancy": self.answer_relevancy,
+            "p50_latency_ms": self.p50_latency_ms,
+            "p95_latency_ms": self.p95_latency_ms,
+            "provider_calls": self.provider_calls,
+            "token_cost": self.token_cost,
+            "reason_code_aggregates": dict(self.reason_code_aggregates),
+        }
 
 
 @dataclass(slots=True)
 class VariantComparison:
-    """Evaluation reports and deltas for one ablation run."""
+    """一次消融运行的评测报告及指标差异。"""
 
     baseline: "AblationReport"
     variants: dict[str, "AblationReport"]
@@ -73,7 +111,7 @@ class VariantComparison:
 
 @dataclass(slots=True)
 class AblationReport:
-    """Minimal comparable metric set for ablation studies."""
+    """消融实验可比较的最小指标集合。"""
 
     name: str
     recall_at_k: float
@@ -118,11 +156,11 @@ RetrieverFn = Callable[[EvaluationCase, int], Sequence[Any] | Awaitable[Sequence
 
 
 def make_memory_engine_retriever(engine: Any) -> RetrieverFn:
-    """Adapt a MemoryEngine-like object to the evaluation retriever protocol.
+    """将 MemoryEngine 类对象适配为评测器检索协议。
 
-    Case metadata is mapped to ``MemoryEngine.search_memories`` keyword
-    arguments so offline fixtures can exercise private/group context, memory
-    type filters, user personalization, emotion context, and chain depth.
+    样本元数据会映射到 ``MemoryEngine.search_memories`` 的关键字参数，
+    以便离线夹具覆盖私聊/群聊上下文、记忆类型过滤、用户个性化、情绪上下文
+    和链路深度。
     """
 
     async def _retriever(case: EvaluationCase, k: int) -> Sequence[Any]:
@@ -152,7 +190,7 @@ async def evaluate_variants(
     k: int,
     baseline_name: str | None = None,
 ) -> VariantComparison:
-    """Evaluate several retrieval variants and return baseline deltas."""
+    """评测多个检索变体并返回相对基线的差异。"""
     if not variants:
         raise ValueError("At least one retrieval variant is required")
 
@@ -187,7 +225,7 @@ async def evaluate_variants(
 
 
 def load_jsonl_cases(path: str | Path) -> list[EvaluationCase]:
-    """Load retrieval evaluation cases from a JSONL file."""
+    """从 JSONL 文件加载检索评测样本。"""
     file_path = Path(path)
     cases: list[EvaluationCase] = []
     for line_number, line in enumerate(file_path.read_text(encoding="utf-8").splitlines(), start=1):
@@ -203,7 +241,7 @@ def load_jsonl_cases(path: str | Path) -> list[EvaluationCase]:
 
 
 def load_fixture_dir(path: str | Path) -> dict[str, list[EvaluationCase]]:
-    """Load all retrieval JSONL fixtures in a directory grouped by dataset name."""
+    """加载目录中的全部检索 JSONL 夹具，并按数据集名称分组。"""
     root = Path(path)
     datasets: dict[str, list[EvaluationCase]] = {}
     for file_path in sorted(root.glob("*.jsonl")):
@@ -219,7 +257,7 @@ def compare_reports(
     baseline: AblationReport,
     variant: AblationReport,
 ) -> dict[str, float | str | None]:
-    """Return metric deltas from baseline to variant."""
+    """返回变体相对基线的指标差异。"""
     return {
         "baseline": baseline.name,
         "variant": variant.name,
@@ -239,11 +277,10 @@ def recall_at_k(
     *,
     k: int,
 ) -> float:
-    """Return whether any relevant doc appears in the top-k results.
+    """返回前 K 个结果中是否出现任一相关文档。
 
-    This is query-level Recall@K for retrieval evaluation, not set recall over
-    all relevant labels. It answers: did this query retrieve at least one known
-    relevant memory within K?
+    这是查询级 Recall@K，而不是对全部相关标签计算集合召回率；它回答的是：
+    本次查询是否在前 K 个结果内找到了至少一条已知相关记忆？
     """
     relevant = _normalize_doc_id_set(relevant_doc_ids)
     if not relevant or k <= 0:
@@ -256,7 +293,7 @@ def reciprocal_rank(
     ranked_doc_ids: Sequence[Any],
     relevant_doc_ids: Iterable[Any],
 ) -> float:
-    """Return reciprocal rank of the first relevant result."""
+    """返回第一个相关结果的倒数排名。"""
     relevant = _normalize_doc_id_set(relevant_doc_ids)
     if not relevant:
         return 0.0
@@ -272,7 +309,7 @@ def ndcg_at_k(
     *,
     k: int,
 ) -> float:
-    """Compute binary-relevance nDCG@K."""
+    """计算二值相关性的 nDCG@K。"""
     relevant = _normalize_doc_id_set(relevant_doc_ids)
     if not relevant or k <= 0:
         return 0.0
@@ -295,7 +332,7 @@ async def evaluate_cases(
     *,
     k: int,
 ) -> EvaluationReport:
-    """Evaluate retrieval quality for *cases* using an async or sync retriever."""
+    """使用异步或同步检索器评测给定样本的检索质量。"""
     results: list[EvaluationResult] = []
     for case in cases:
         started_at = time.perf_counter()
@@ -306,6 +343,9 @@ async def evaluate_cases(
         ranked_doc_ids = [_document_id(item) for item in list(retrieved or [])[:k]]
         latency_ms = _latency_from_case(case, measured_latency_ms)
         case_metrics = _score_case(case, ranked_doc_ids, k=k)
+        advanced_metrics = _advanced_case_metrics(case, ranked_doc_ids, k=k)
+        result_metadata = dict(case.metadata)
+        result_metadata["observed_metrics"] = dict(advanced_metrics)
         results.append(
             EvaluationResult(
                 case_id=case.case_id,
@@ -316,9 +356,13 @@ async def evaluate_cases(
                 reciprocal_rank=case_metrics["reciprocal_rank"],
                 ndcg_at_k=case_metrics["ndcg_at_k"],
                 latency_ms=round(latency_ms, 4),
-                metadata=dict(case.metadata),
+                metadata=result_metadata,
+                precision_at_k=case_metrics["precision_at_k"],
+                advanced_metrics=advanced_metrics,
             )
         )
+
+    advanced = _aggregate_advanced_metrics(results)
 
     return EvaluationReport(
         total_cases=len(results),
@@ -329,6 +373,19 @@ async def evaluate_cases(
         p95_latency_ms=_percentile([item.latency_ms for item in results], 95),
         cases=results,
         dataset_breakdown=_dataset_breakdown(results),
+        precision_at_k=_mean(item.precision_at_k for item in results),
+        multi_hop_recall=advanced["multi_hop_recall"],
+        single_hop_recall=advanced["single_hop_recall"],
+        noise_negative_false_hit=advanced["noise_negative_false_hit"],
+        temporal_consistency=advanced["temporal_consistency"],
+        conflict_accuracy=advanced["conflict_accuracy"],
+        source_supported_projection_rate=advanced["source_supported_projection_rate"],
+        answer_faithfulness=advanced["answer_faithfulness"],
+        answer_relevancy=advanced["answer_relevancy"],
+        p50_latency_ms=_percentile([item.latency_ms for item in results], 50),
+        provider_calls=advanced["provider_calls"],
+        token_cost=advanced["token_cost"],
+        reason_code_aggregates=_reason_code_aggregates(results),
     )
 
 
@@ -423,13 +480,137 @@ def _score_case(case: EvaluationCase, ranked_doc_ids: Sequence[str], *, k: int) 
             "recall_at_k": score,
             "reciprocal_rank": score,
             "ndcg_at_k": score,
+            "precision_at_k": score,
         }
 
+    top_k = ranked_doc_ids[:k]
+    relevant = _normalize_doc_id_set(case.relevant_doc_ids)
+    precision = (
+        len({_normalize_doc_id(doc_id) for doc_id in top_k} & relevant) / len(top_k)
+        if top_k
+        else 0.0
+    )
     return {
         "recall_at_k": recall_at_k(ranked_doc_ids, case.relevant_doc_ids, k=k),
         "reciprocal_rank": reciprocal_rank(ranked_doc_ids, case.relevant_doc_ids),
         "ndcg_at_k": ndcg_at_k(ranked_doc_ids, case.relevant_doc_ids, k=k),
+        "precision_at_k": round(precision, 4),
     }
+
+
+def _advanced_case_metrics(
+    case: EvaluationCase,
+    ranked_doc_ids: Sequence[str],
+    *,
+    k: int,
+) -> dict[str, float]:
+    """根据匿名标注计算可选的演化质量指标。"""
+    metadata = case.metadata or {}
+    top_k = [_normalize_doc_id(item) for item in ranked_doc_ids[:k]]
+    ranked = set(top_k)
+    hit = recall_at_k(top_k, case.relevant_doc_ids, k=k)
+    group = str(metadata.get("evaluation_group") or metadata.get("scenario") or "").lower()
+    metrics: dict[str, float] = {}
+    if group in {"multi_hop", "多跳"} or metadata.get("requires_relation") is True:
+        metrics["multi_hop_recall"] = hit
+    if group in {"single_hop", "direct", "single-hop", "单跳"}:
+        metrics["single_hop_recall"] = hit
+
+    if metadata.get("expected_no_hit") is True:
+        metrics["noise_negative_false_hit"] = 1.0 if top_k else 0.0
+
+    temporal_ids = _normalize_doc_id_set(metadata.get("temporal_relevant_doc_ids", []))
+    if temporal_ids:
+        metrics["temporal_consistency"] = 1.0 if ranked & temporal_ids else 0.0
+    elif "temporal_consistency" in metadata:
+        metrics["temporal_consistency"] = _bounded_metric(metadata["temporal_consistency"])
+
+    conflict_ids = _normalize_doc_id_set(metadata.get("conflict_doc_ids", []))
+    if conflict_ids:
+        metrics["conflict_accuracy"] = 1.0 if conflict_ids <= ranked else 0.0
+    elif "conflict_accuracy" in metadata:
+        metrics["conflict_accuracy"] = _bounded_metric(metadata["conflict_accuracy"])
+
+    projection_sources = _normalize_doc_id_set(metadata.get("projection_source_ids", []))
+    if projection_sources:
+        metrics["source_supported_projection_rate"] = (
+            len(projection_sources & ranked) / len(projection_sources)
+        )
+    elif "source_supported_projection_rate" in metadata:
+        metrics["source_supported_projection_rate"] = _bounded_metric(
+            metadata["source_supported_projection_rate"]
+        )
+
+    for name in ("answer_faithfulness", "answer_relevancy"):
+        if name in metadata:
+            metrics[name] = _bounded_metric(metadata[name])
+
+    for name in ("provider_calls", "token_cost"):
+        if name in metadata:
+            metrics[name] = _nonnegative_metric(metadata[name])
+    return {key: round(value, 4) for key, value in metrics.items()}
+
+
+def _aggregate_advanced_metrics(results: Sequence[EvaluationResult]) -> dict[str, float]:
+    names = (
+        "multi_hop_recall",
+        "single_hop_recall",
+        "noise_negative_false_hit",
+        "temporal_consistency",
+        "conflict_accuracy",
+        "source_supported_projection_rate",
+        "answer_faithfulness",
+        "answer_relevancy",
+    )
+    aggregated = {
+        name: _mean(
+            result.advanced_metrics[name]
+            for result in results
+            if name in result.advanced_metrics
+        )
+        for name in names
+    }
+    aggregated["provider_calls"] = _mean(
+        result.advanced_metrics["provider_calls"]
+        for result in results
+        if "provider_calls" in result.advanced_metrics
+    )
+    aggregated["token_cost"] = _mean(
+        result.advanced_metrics["token_cost"]
+        for result in results
+        if "token_cost" in result.advanced_metrics
+    )
+    return aggregated
+
+
+def _reason_code_aggregates(results: Sequence[EvaluationResult]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for result in results:
+        reasons = result.metadata.get("reason_codes", [])
+        if isinstance(reasons, str):
+            reasons = [reasons]
+        if not isinstance(reasons, Iterable):
+            continue
+        for reason in reasons:
+            normalized = str(reason or "").strip()
+            if normalized:
+                counts[normalized] += 1
+    return dict(sorted(counts.items()))
+
+
+def _bounded_metric(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, parsed))
+
+
+def _nonnegative_metric(value: Any) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _mean(values: Iterable[float]) -> float:

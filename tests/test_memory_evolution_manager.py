@@ -93,6 +93,7 @@ async def test_disabled_mode_does_not_enqueue(manager):
     decision = await manager.schedule_consider(source(17))
     assert decision.reason_code == "mode_disabled"
     assert await manager.store.pending_count() == 0
+    manager.consolidator.propose.assert_not_awaited()
 
 
 @pytest.mark.asyncio

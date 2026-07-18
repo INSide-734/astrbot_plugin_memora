@@ -170,6 +170,32 @@ class TestDualRouteRetriever:
         assert [item.doc_id for item in results] == [1]
 
     @pytest.mark.asyncio
+    async def test_search_does_not_expose_shadow_candidates(
+        self,
+        doc_retriever: AsyncMock,
+        graph_retriever: AsyncMock,
+        memory_loader: AsyncMock,
+    ) -> None:
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+
+        direct = _make_hybrid(1, 0.9, "直接证据")
+        doc_retriever.search.return_value = [direct]
+        expander = MagicMock()
+        expander.expand = AsyncMock(side_effect=AssertionError("观察模式不应进入回答上下文"))
+        retriever = DualRouteRetriever(
+            document_retriever=doc_retriever,
+            graph_retriever=graph_retriever,
+            memory_loader=memory_loader,
+            config={"memory_evolution": {"enabled": True, "mode": "shadow"}},
+            derived_expander=expander,
+        )
+
+        results = await retriever.search("测试", k=5)
+
+        assert [item.doc_id for item in results] == [1]
+        expander.expand.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_search_both_routes(self, retriever: Any, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock) -> None:
         """双路均有结果时应合并；仅图路命中的文档需要通过 memory_loader 回填。"""
         doc_retriever.search.return_value = [
@@ -212,7 +238,7 @@ class TestDualRouteRetriever:
         results = await retriever.search("test", k=10, chat_type="group")
         doc_ids = {r.doc_id for r in results}
         assert 1 in doc_ids
-        assert 2 not in doc_ids  # confidential filtered
+        assert 2 not in doc_ids  # confidential 记忆已过滤
 
     @pytest.mark.asyncio
     async def test_privacy_filter_private_chat(self, retriever: Any, doc_retriever: AsyncMock) -> None:
@@ -224,7 +250,7 @@ class TestDualRouteRetriever:
         results = await retriever.search("test", k=10, chat_type="private")
         doc_ids = {r.doc_id for r in results}
         assert 1 in doc_ids
-        assert 2 in doc_ids  # confidential allowed
+        assert 2 in doc_ids  # 私聊允许 confidential 记忆
 
     def test_route_weights_for_relation_query(self, retriever: Any) -> None:
         """关系关键词应提高图路权重。"""
@@ -290,7 +316,7 @@ class TestDualRouteRetriever:
         filtered = retriever._filter_by_privacy(results, "group")
         assert len(filtered) == 1
 
-    # ── edge-case / uncovered-path tests ──────────────────────────────
+    # ── 边界与未覆盖路径测试 ───────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_graph_only_no_doc_results_uses_graph_fallback(
@@ -519,7 +545,7 @@ class TestDualRouteRetriever:
             reranker=mock_reranker,
         )
         results = await retriever.search("test", k=5)
-        # falls back to sort by final_score
+        # 异常时回退到按 final_score 排序。
         assert len(results) == 2
         assert results[0].final_score >= results[1].final_score
 
@@ -534,7 +560,7 @@ class TestDualRouteRetriever:
             _make_hybrid(1, 0.9, "ok", {"importance": 0.5}),
         ]
         graph_retriever.search.return_value = [
-            _make_graph(2, 0.8, "", {}),  # no content, no metadata → needs loader
+            _make_graph(2, 0.8, "", {}),  # 没有正文和元数据，需要通过 loader 回填。
         ]
         memory_loader.side_effect = RuntimeError("load failure")
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
@@ -554,16 +580,16 @@ class TestDualRouteRetriever:
             _make_hybrid(1, 0.9, "ok", {"importance": 0.5}),
         ]
         graph_retriever.search.return_value = [
-            _make_graph(2, 0.8, "", {}),  # no content, no metadata
+            _make_graph(2, 0.8, "", {}),  # 没有正文和元数据。
         ]
         memory_loader.return_value = None
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         results = await retriever.search("test", k=5)
         doc_ids = {r.doc_id for r in results}
         assert 1 in doc_ids
-        assert 2 not in doc_ids  # skipped
+        assert 2 not in doc_ids  # 已跳过该文档。
 
-    # ── LLM intent routing tests ──────────────────────────────────────
+    # ── LLM intent 路由测试 ───────────────────────────────────────────
 
     def test_llm_intent_relationship(self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock) -> None:
         """LLM intent=relationship 时应提高图路权重。"""
@@ -623,7 +649,7 @@ class TestDualRouteRetriever:
         assert graph_w == max(0.1, base_graph - 0.1)
 
     def test_llm_intent_default_no_override(self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock) -> None:
-        """LLM intent=default falls through to keyword matching."""
+        """LLM intent=default 时回退到关键词匹配。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
 
@@ -650,12 +676,12 @@ class TestDualRouteRetriever:
         assert doc_w == 0.0
         assert graph_w == 0.0
 
-    # ── _build_score_breakdown coverage ───────────────────────────────
+    # ── _build_score_breakdown 覆盖测试 ───────────────────────────────
 
     def test_build_score_breakdown_with_graph_breakdown(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """_build_score_breakdown includes graph_result score_breakdown (line 305)."""
+        """_build_score_breakdown 应包含 graph_result 的 score_breakdown。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
 
@@ -709,7 +735,7 @@ class TestDualRouteRetriever:
             route_bonus=0.0, final_score=0.7,
             intent="",
         )
-        # doc_signal=0 → document_route_score is 0.0
+        # doc_signal=0 时，document_route_score 应为 0.0。
         assert breakdown.get("document_route_score") == 0.0
         assert "graph_keyword_score" in breakdown
         assert "graph_vector_score" in breakdown

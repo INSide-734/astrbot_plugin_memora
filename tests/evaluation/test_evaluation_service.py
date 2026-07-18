@@ -294,6 +294,49 @@ async def test_evaluation_service_ablation_variants_use_real_config_keys(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_evaluation_service_runs_memory_evolution_variants_a_b_c(tmp_path):
+    from core.evaluation.retrieval_quality import load_fixture_dir
+
+    cases = load_fixture_dir("tests/fixtures/retrieval")["memory_evolution"]
+    relevant_by_query = {
+        case.query: next(iter(case.relevant_doc_ids))
+        for case in cases
+        if not case.metadata.get("expected_no_hit")
+    }
+
+    class EvolutionEngine:
+        def __init__(self) -> None:
+            self.config = {"memory_evolution": {"enabled": True, "mode": "disabled"}}
+
+        async def search_memories(self, **kwargs):
+            doc_id = relevant_by_query.get(kwargs["query"])
+            return [] if doc_id is None else [{"doc_id": doc_id, "score": 1.0}]
+
+    engine = EvolutionEngine()
+    service = EvaluationService(
+        engine=engine,
+        fixture_dir="tests/fixtures/retrieval",
+        db_path=tmp_path / "reports.db",
+    )
+    await service.initialize()
+
+    result = await service.run_evaluation(
+        datasets=["memory_evolution"],
+        k=3,
+        variants=["A", "B", "C"],
+        baseline="A",
+        save_report=False,
+    )
+
+    assert result["baseline"] == "A"
+    assert set(result["variants"]) == {"baseline", "A", "B", "C"}
+    assert all(item["status"] == "completed" for item in result["variants"].values())
+    assert all(len(item["summary"]["configuration_hash"]) == 64 for item in result["variants"].values())
+    assert engine.config["memory_evolution"]["mode"] == "disabled"
+    assert result["summary"]["variant"] == "A"
+
+
+@pytest.mark.asyncio
 async def test_evaluation_service_clears_caches_between_variants(tmp_path):
     fixture_dir = tmp_path / "fixtures"
     _write_single_case_fixture(fixture_dir, ["mem-graph-off"])

@@ -81,7 +81,7 @@ class ComponentFactory:
         derived_expander = None
         if (
             bool(evolution_config.get("enabled", False))
-            and str(evolution_config.get("mode", "disabled")) != "disabled"
+            and str(evolution_config.get("mode", "disabled")) in {"readonly", "active"}
         ):
             derived_expander = DerivedRelationExpander(
                 memory_evolution_store,

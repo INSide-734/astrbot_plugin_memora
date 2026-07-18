@@ -131,7 +131,7 @@ class DualRouteRetriever:
         if (
             self.derived_expander is not None
             and bool(evolution_config.get("enabled", False))
-            and str(evolution_config.get("mode", "disabled")) != "disabled"
+            and str(evolution_config.get("mode", "disabled")) in {"readonly", "active"}
             and merged
         ):
             baseline = list(merged)

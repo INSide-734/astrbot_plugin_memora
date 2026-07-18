@@ -41,6 +41,7 @@ def test_load_fixture_dir_reads_all_required_roadmap_datasets() -> None:
         "group_topic_shift",
         "graph_relation",
         "emotion_context",
+        "memory_evolution",
         "noise_negative",
     }
     assert all(len(cases) >= 2 for cases in cases_by_dataset.values())
@@ -73,6 +74,25 @@ def test_retrieval_fixtures_cover_realistic_routing_metadata() -> None:
         case.metadata.get("expected_no_hit") is True
         for case in cases_by_dataset["noise_negative"]
     )
+
+
+def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels() -> None:
+    cases = load_fixture_dir(FIXTURE_ROOT)["memory_evolution"]
+
+    assert len(cases) == 10
+    assert {case.metadata["scenario"] for case in cases} >= {
+        "direct",
+        "same_episode",
+        "preference_change",
+        "conflict_set",
+        "multi_hop",
+        "noise_negative",
+        "cross_scope",
+        "prompt_injection",
+    }
+    assert all(case.metadata["scope"].startswith(("private:", "group:")) for case in cases)
+    assert all(case.metadata["privacy_level"] in {"shared", "confidential"} for case in cases)
+    assert not any("user-" in case.query or "session-" in case.query for case in cases)
 
 
 def test_ranking_metrics_handle_relevant_documents_at_different_ranks() -> None:
@@ -155,6 +175,42 @@ async def test_evaluate_cases_scores_expected_no_hit_when_retriever_returns_noth
     assert report.mrr == 1.0
     assert report.ndcg_at_k == 1.0
     assert report.dataset_breakdown["noise_negative"]["recall_at_k"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_evaluate_cases_reports_evolution_quality_and_cost_metrics() -> None:
+    cases = load_fixture_dir(FIXTURE_ROOT)["memory_evolution"]
+
+    async def fake_retriever(case: EvaluationCase, _k: int) -> list[RetrievedDocument]:
+        if case.metadata.get("expected_no_hit"):
+            return []
+        return [RetrievedDocument(next(iter(case.relevant_doc_ids)), 1.0)]
+
+    report = await evaluate_cases(cases, fake_retriever, k=3)
+
+    assert report.recall_at_k == pytest.approx(1.0)
+    assert report.precision_at_k == pytest.approx(1.0)
+    assert report.multi_hop_recall == 1.0
+    assert report.single_hop_recall == 1.0
+    assert report.noise_negative_false_hit == 0.0
+    assert report.temporal_consistency == 1.0
+    assert report.conflict_accuracy == 1.0
+    assert report.answer_faithfulness == 1.0
+    assert report.answer_relevancy == 1.0
+    assert set(report.metrics) >= {
+        "recall_at_k",
+        "precision_at_k",
+        "mrr",
+        "ndcg_at_k",
+        "multi_hop_recall",
+        "single_hop_recall",
+        "noise_negative_false_hit",
+        "temporal_consistency",
+        "conflict_accuracy",
+        "source_supported_projection_rate",
+        "provider_calls",
+        "token_cost",
+    }
 
 
 def test_compare_reports_returns_ablation_deltas() -> None:
