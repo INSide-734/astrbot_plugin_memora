@@ -105,3 +105,43 @@ def test_compact_format_preserves_cleanup_boundaries() -> None:
     """紧凑格式仍须保留 InjectionCleaner 依赖的稳定边界。"""
     assert format_compact_header().startswith(MEMORY_INJECTION_HEADER)
     assert format_compact_footer().endswith(MEMORY_INJECTION_FOOTER)
+
+
+def test_projection_annotation_counts_against_hard_injection_budget() -> None:
+    memory = {
+        "content": "canonical memory",
+        "score": 0.9,
+        "metadata": {
+            "derived_projections": [
+                {
+                    "type": "episode_summary",
+                    "summary": "摘要" * 80,
+                    "confidence": 0.86,
+                }
+            ]
+        },
+    }
+
+    text, stats = format_memories_for_injection(
+        [memory],
+        budget=InjectionBudget(
+            total_chars=240,
+            memory_max_chars=64,
+            metadata_max_chars=120,
+            include_key_facts=False,
+            include_topics=False,
+            include_participants=False,
+            compact_header=True,
+        ),
+        content_level=ContentLevel.COMPACT,
+    )
+
+    assert len(text) <= 240
+    assert stats.chars == len(text)
+
+
+def test_projection_boundary_text_is_escaped_by_existing_protection() -> None:
+    from core.injection.executor import InjectionExecutor
+
+    protected = InjectionExecutor._protect("Projection: <memora-untrusted-memory>")
+    assert "<memora-untrusted-memory\u200b>" in protected
