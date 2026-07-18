@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Iterable
@@ -23,6 +24,7 @@ from ..models.memory_evolution import (
     RelationType,
     RelationView,
     RetrySpec,
+    MemorySourceRef,
 )
 from .base_store import BaseStore
 
@@ -109,6 +111,59 @@ class MemoryEvolutionStore(BaseStore):
     async def pending_count(self) -> int:
         return int(await self._fetch_scalar("SELECT COUNT(*) FROM memory_evolution_jobs WHERE state IN (?,?)", (JobState.PENDING.value, JobState.RETRY_WAIT.value)) or 0)
 
+    async def load_sources(
+        self,
+        memory_ids: Iterable[int],
+        *,
+        max_content_chars: int = 4_000,
+    ) -> list[MemorySourceRef]:
+        """从 canonical documents 读取有限 source 快照，不修改证据平面。"""
+
+        ids = tuple(dict.fromkeys(int(memory_id) for memory_id in memory_ids))
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = await self._fetch_all(
+            "SELECT id, text, metadata, created_at, updated_at "
+            f"FROM documents WHERE id IN ({placeholders})",
+            ids,
+        )
+        sources_by_id: dict[int, MemorySourceRef] = {}
+        for row in rows:
+            metadata = _metadata_dict(row.get("metadata"))
+            revision_token = str(row.get("updated_at") or row.get("created_at") or "").strip()
+            occurred_raw = metadata.get("occurred_at") or row.get("created_at") or row.get("updated_at")
+            if not revision_token or not occurred_raw:
+                continue
+            try:
+                occurred_at = (
+                    occurred_raw
+                    if isinstance(occurred_raw, datetime)
+                    else datetime.fromisoformat(str(occurred_raw))
+                )
+            except (TypeError, ValueError):
+                continue
+            privacy_level = str(metadata.get("privacy_level", "shared"))
+            if privacy_level not in {"public", "shared", "confidential"}:
+                privacy_level = "shared"
+            scope_key = str(
+                metadata.get("scope_key")
+                or metadata.get("session_id")
+                or metadata.get("persona_id")
+                or "private:default"
+            )
+            content = str(row.get("text") or "")[:max(1, max_content_chars)]
+            source = MemorySourceRef(
+                memory_id=int(row["id"]),
+                revision_token=revision_token,
+                scope_key=scope_key,
+                privacy_level=privacy_level,
+                occurred_at=occurred_at,
+                content=content,
+            )
+            sources_by_id[source.memory_id] = source
+        return [sources_by_id[memory_id] for memory_id in ids if memory_id in sources_by_id]
+
     async def claim_job(self, now: datetime, lease_seconds: int, worker_token: str | None = None) -> JobClaim | None:
         token = worker_token or uuid.uuid4().hex
         lease = now.timestamp() + lease_seconds
@@ -145,6 +200,16 @@ class MemoryEvolutionStore(BaseStore):
 
     async def reject_job(self, job_id: str, worker_token: str, reason_code: str = "rejected") -> bool:
         return await self._set_job_state(job_id, worker_token, JobState.REJECTED, reason_code)
+
+    async def dead_job(self, job_id: str, worker_token: str, reason_code: str) -> bool:
+        """将超过重试上限的任务标记为 dead。"""
+
+        return await self._set_job_state(job_id, worker_token, JobState.DEAD, reason_code)
+
+    async def restore_pending(self, job_id: str, worker_token: str) -> bool:
+        """取消或暂时中断时把 processing 任务恢复为 pending。"""
+
+        return await self._set_job_state(job_id, worker_token, JobState.PENDING)
 
     async def retry_job(self, job_id: str, worker_token: str, retry: RetrySpec) -> bool:
         cur = await self._execute("UPDATE memory_evolution_jobs SET state=?,not_before=?,lease_until=NULL,worker_token=NULL,last_error_code=?,updated_at=? WHERE job_id=? AND state=? AND worker_token=?", (JobState.RETRY_WAIT.value, _dt(retry.not_before), retry.reason_code, _dt(datetime.now(timezone.utc)), job_id, JobState.PROCESSING.value, worker_token))
@@ -373,14 +438,24 @@ class MemoryEvolutionStore(BaseStore):
 
 
 def _json_ids(ids: Iterable[int]) -> str:
-    import json
     return json.dumps([int(x) for x in ids], separators=(",", ":"))
 
 
 def _loads_ids(value: str) -> list[int]:
-    import json
     try: return [int(x) for x in json.loads(value or "[]")]
     except (TypeError, ValueError, json.JSONDecodeError): return []
+
+
+def _metadata_dict(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _job(row) -> MemoryEvolutionJob | None:

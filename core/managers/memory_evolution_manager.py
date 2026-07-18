@@ -62,6 +62,10 @@ class MemoryEvolutionManager:
         )
         self.max_input_chars = max(1, _as_int(config.get("max_input_chars"), 12_000))
         self.candidate_limit = max(1, _as_int(config.get("candidate_limit"), 16))
+        self.confidence_threshold = min(
+            1.0,
+            max(0.0, _as_float(config.get("trigger_threshold"), 0.7)),
+        )
         configured_active = config.get(
             "auto_active_relation_types",
             [item.value for item in self._LOW_IMPACT],
@@ -72,6 +76,11 @@ class MemoryEvolutionManager:
         )
         self._worker_task: asyncio.Task | None = None
         self._stopping = False
+        self._accepted = 0
+        self._rejected = 0
+        self._retry = 0
+        self._dead = 0
+        self._reason_codes: dict[str, int] = {}
 
     @property
     def mode(self) -> str:
@@ -146,7 +155,10 @@ class MemoryEvolutionManager:
         except asyncio.CancelledError:
             raise
         except EvolutionProposalRejected as exc:
-            await self.store.reject_job(claim.job_id, claim.worker_token, _reason(exc))
+            reason_code = _reason(exc)
+            await self.store.reject_job(claim.job_id, claim.worker_token, reason_code)
+            self._rejected += 1
+            self._record_reason(reason_code)
         except Exception as exc:
             await self._handle_retry(claim, exc)
         return True
@@ -154,6 +166,10 @@ class MemoryEvolutionManager:
     async def process_claim(self, claim: JobClaim) -> None:
         """处理单个 claim；业务拒绝和可恢复错误交给 run_once 分类。"""
 
+        renewal_task = asyncio.create_task(
+            self._renew_claim_lease(claim),
+            name="memory-evolution-lease-renewal",
+        )
         try:
             sources = await self.store.load_sources(
                 claim.source_ids,
@@ -161,13 +177,28 @@ class MemoryEvolutionManager:
             )
             if not sources:
                 raise EvolutionProposalRejected("source_not_found")
+            if any(source.scope_key != claim.scope_key for source in sources):
+                raise EvolutionProposalRejected("scope_mismatch")
             proposal = await self.consolidator.propose(sources)
-            plan = self._proposal_to_plan(proposal, sources)
+            fresh_sources = await self.store.load_sources(
+                claim.source_ids,
+                max_content_chars=self.max_input_chars,
+            )
+            if not _same_source_revisions(sources, fresh_sources):
+                raise EvolutionProposalRejected("source_revision_changed")
+            plan = self._proposal_to_plan(proposal, fresh_sources)
             await self.store.apply_derived_plan(plan)
             await self.store.complete_job(claim.job_id, claim.worker_token)
+            self._accepted += 1
         except asyncio.CancelledError:
             await self.store.restore_pending(claim.job_id, claim.worker_token)
             raise
+        finally:
+            renewal_task.cancel()
+            try:
+                await renewal_task
+            except asyncio.CancelledError:
+                pass
 
     async def reconcile_recent_sources(self, sources: Iterable[MemorySourceRef]) -> int:
         """对近期 canonical source 补偿缺失的演化 job。"""
@@ -184,9 +215,21 @@ class MemoryEvolutionManager:
 
         return {
             "mode": self.mode,
-            "worker_running": self._worker_task is not None,
-            "max_attempts": self.max_attempts,
-            "lease_seconds": self.lease_seconds,
+            "state_counts": {
+                "completed": self._accepted,
+                "rejected": self._rejected,
+                "retry_wait": self._retry,
+                "dead": self._dead,
+            },
+            "queue_lag_seconds": None,
+            "type_counts": {},
+            "accepted": self._accepted,
+            "rejected": self._rejected,
+            "retry": self._retry,
+            "dead": self._dead,
+            "reason_codes": dict(self._reason_codes),
+            "token_totals": {"input": 0, "output": 0},
+            "latency_buckets": {},
         }
 
     async def _worker_loop(self) -> None:
@@ -195,21 +238,45 @@ class MemoryEvolutionManager:
             if not did_work:
                 await asyncio.sleep(self.poll_interval_seconds)
 
+    async def _renew_claim_lease(self, claim: JobClaim) -> None:
+        interval = max(0.05, self.lease_seconds / 3)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                renewed = await self.store.renew_lease(
+                    claim.job_id,
+                    claim.worker_token,
+                    datetime.now(timezone.utc) + timedelta(seconds=self.lease_seconds),
+                )
+            except Exception:
+                return
+            if not renewed:
+                return
+
     async def _handle_retry(self, claim: JobClaim, error: Exception) -> None:
         if claim.attempt_count >= self.max_attempts:
-            await self.store.dead_job(claim.job_id, claim.worker_token, "max_attempts")
+            reason_code = "max_attempts"
+            await self.store.dead_job(claim.job_id, claim.worker_token, reason_code)
+            self._dead += 1
+            self._record_reason(reason_code)
             return
         delay = self.retry_base_delay_seconds * (2 ** max(0, claim.attempt_count - 1))
         delay += random.uniform(0.0, 1.0)
+        reason_code = _reason(error)
         await self.store.retry_job(
             claim.job_id,
             claim.worker_token,
             RetrySpec(
                 datetime.now(timezone.utc) + timedelta(seconds=delay),
                 claim.attempt_count,
-                _reason(error),
+                reason_code,
             ),
         )
+        self._retry += 1
+        self._record_reason(reason_code)
+
+    def _record_reason(self, reason_code: str) -> None:
+        self._reason_codes[reason_code] = self._reason_codes.get(reason_code, 0) + 1
 
     def _proposal_to_plan(
         self,
@@ -220,7 +287,7 @@ class MemoryEvolutionManager:
         relations: list[RelationView] = []
         projections: list[ProjectionView] = []
         projection_sources: list[ProjectionSourceView] = []
-        seen_edges: set[tuple[int, int, RelationType]] = set()
+        seen_edges: set[tuple[int, int]] = set()
 
         for item in proposal.relations[: self.candidate_limit]:
             source = _alias(aliases, item.source_alias)
@@ -228,15 +295,22 @@ class MemoryEvolutionManager:
             if source.memory_id == target.memory_id:
                 raise EvolutionProposalRejected("self_relation")
             _ensure_compatible(source, target)
-            edge = (source.memory_id, target.memory_id, item.relation_type)
-            reverse = (target.memory_id, source.memory_id, item.relation_type)
-            if edge in seen_edges or reverse in seen_edges:
+            edge = (source.memory_id, target.memory_id)
+            reverse = (target.memory_id, source.memory_id)
+            if edge in seen_edges or reverse in seen_edges or _path_exists(
+                seen_edges, target.memory_id, source.memory_id
+            ):
                 raise EvolutionProposalRejected("duplicate_or_cycle")
             seen_edges.add(edge)
             state = (
                 DerivedState.ACTIVE
                 if item.relation_type in self.auto_active_relation_types
                 and item.relation_type in self._LOW_IMPACT
+                and item.confidence >= self.confidence_threshold
+                and not (
+                    item.relation_type in self._HIGH_IMPACT
+                    and self.require_review_for_high_impact
+                )
                 else DerivedState.CANDIDATE
             )
             relation_id = _stable_id(
@@ -269,22 +343,42 @@ class MemoryEvolutionManager:
             if len({source.memory_id for source in projection_sources_for_item}) != len(projection_sources_for_item):
                 raise EvolutionProposalRejected("duplicate_projection_source")
             _ensure_scope_compatible(*projection_sources_for_item)
+            if (
+                item.projection_type is ProjectionType.CONFLICT_SET
+                and len(projection_sources_for_item) < 3
+            ):
+                raise EvolutionProposalRejected("conflict_source_roles")
             projection_id = _stable_id(
                 "projection",
                 item.projection_type.value,
-                *(source.memory_id for source in projection_sources_for_item),
+                *(
+                    part
+                    for source in projection_sources_for_item
+                    for part in (source.memory_id, source.revision_token)
+                ),
+            )
+            projection_state = (
+                DerivedState.CANDIDATE
+                if item.projection_type is ProjectionType.CONFLICT_SET
+                or item.confidence < self.confidence_threshold
+                else DerivedState.ACTIVE
             )
             projections.append(
                 _projection_view(
                     projection_id,
                     item,
                     projection_sources_for_item,
+                    projection_state,
                 )
             )
             for ordinal, source in enumerate(projection_sources_for_item):
                 role = "primary" if ordinal == 0 else "supporting"
                 if item.projection_type is ProjectionType.CONFLICT_SET:
-                    role = "primary" if ordinal == 0 else ("conflict_left" if ordinal == 1 else "conflict_right")
+                    role = {
+                        0: "primary",
+                        1: "conflict_left",
+                        2: "conflict_right",
+                    }.get(ordinal, "supporting")
                 projection_sources.append(
                     ProjectionSourceView(
                         projection_id,
@@ -309,8 +403,10 @@ def _alias(aliases: Mapping[str, MemorySourceRef], name: str) -> MemorySourceRef
     return source
 
 
-def _ensure_scope_compatible(first: MemorySourceRef, second: MemorySourceRef) -> None:
-    if first.scope_key != second.scope_key:
+def _ensure_scope_compatible(*sources: MemorySourceRef) -> None:
+    if not sources:
+        raise EvolutionProposalRejected("source_not_found")
+    if any(source.scope_key != sources[0].scope_key for source in sources[1:]):
         raise EvolutionProposalRejected("scope_mismatch")
 
 
@@ -327,6 +423,7 @@ def _projection_view(
     projection_id: str,
     item: MemoryProjectionProposal,
     sources: list[MemorySourceRef],
+    state: DerivedState,
 ) -> ProjectionView:
     return ProjectionView(
         projection_id,
@@ -336,10 +433,41 @@ def _projection_view(
         sources[0].scope_key,
         _strictest_privacy(*sources),
         item.confidence,
-        DerivedState.ACTIVE,
+        state,
         item.valid_from,
         item.valid_to,
     )
+
+
+def _path_exists(
+    edges: set[tuple[int, int]],
+    start: int,
+    target: int,
+) -> bool:
+    pending = [start]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if current == target:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        pending.extend(next_node for left, next_node in edges if left == current)
+    return False
+
+
+def _same_source_revisions(
+    previous: list[MemorySourceRef],
+    current: list[MemorySourceRef],
+) -> bool:
+    previous_revisions = {
+        source.memory_id: source.revision_token for source in previous
+    }
+    current_revisions = {
+        source.memory_id: source.revision_token for source in current
+    }
+    return previous_revisions == current_revisions and len(previous) == len(current)
 
 
 def _stable_id(prefix: str, *parts: object) -> str:
@@ -361,7 +489,19 @@ def _parse_relation_types(values: Any) -> frozenset[RelationType]:
 
 def _reason(error: Exception) -> str:
     if isinstance(error, EvolutionProposalRejected):
-        return str(error) or "proposal_rejected"
+        code = str(error)
+        if code in {
+            "source_not_found",
+            "scope_mismatch",
+            "source_revision_changed",
+            "unknown_alias",
+            "self_relation",
+            "duplicate_or_cycle",
+            "duplicate_projection_source",
+            "conflict_source_roles",
+        }:
+            return code
+        return "proposal_rejected"
     if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
         return "provider_timeout"
     if isinstance(error, ConnectionError):

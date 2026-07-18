@@ -11,6 +11,7 @@ from core.managers.memory_evolution_manager import MemoryEvolutionManager
 from core.managers.memory_evolution_manager import EvolutionProposalRejected
 from core.models.memory_evolution import (
     EvolutionProposal,
+    JobState,
     MemoryProjectionProposal,
     MemoryRelationProposal,
     MemorySourceRef,
@@ -22,10 +23,14 @@ from core.storage.memory_evolution_store import MemoryEvolutionStore
 UTC = timezone.utc
 
 
-def source(memory_id: int, scope: str = "private:user-a") -> MemorySourceRef:
+def source(
+    memory_id: int,
+    scope: str = "private:user-a",
+    revision: str | None = None,
+) -> MemorySourceRef:
     return MemorySourceRef(
         memory_id,
-        f"r-{memory_id}",
+        revision or f"r-{memory_id}",
         scope,
         "shared",
         datetime(2026, 7, 18, tzinfo=UTC),
@@ -170,6 +175,97 @@ async def test_scope_mismatch_is_rejected(manager):
 
 
 @pytest.mark.asyncio
+async def test_low_confidence_low_impact_relation_stays_candidate(manager):
+    proposal = EvolutionProposal(
+        relations=(
+            MemoryRelationProposal("M1", "M2", "same_episode", 0.1, None, None, None),
+        )
+    )
+    plan = manager._proposal_to_plan(proposal, [source(17), source(18)])
+    assert plan.relations[0].state.value == "candidate"
+
+
+@pytest.mark.asyncio
+async def test_three_node_cycle_is_rejected(manager):
+    proposal = EvolutionProposal(
+        relations=(
+            MemoryRelationProposal("M1", "M2", "causes", 0.9, None, None, None),
+            MemoryRelationProposal("M2", "M3", "causes", 0.9, None, None, None),
+            MemoryRelationProposal("M3", "M1", "causes", 0.9, None, None, None),
+        )
+    )
+    with pytest.raises(EvolutionProposalRejected, match="duplicate_or_cycle"):
+        manager._proposal_to_plan(proposal, [source(17), source(18), source(19)])
+
+
+@pytest.mark.asyncio
+async def test_conflict_projection_requires_both_conflict_sides(manager):
+    proposal = EvolutionProposal(
+        projections=(
+            MemoryProjectionProposal(
+                "conflict_set",
+                ("M1", "M2"),
+                None,
+                "两条证据存在冲突。",
+                0.9,
+                None,
+                None,
+            ),
+        )
+    )
+    with pytest.raises(EvolutionProposalRejected, match="conflict_source_roles"):
+        manager._proposal_to_plan(proposal, [source(17), source(18)])
+
+
+@pytest.mark.asyncio
+async def test_source_revision_change_is_rejected_before_apply(manager):
+    from core.models.memory_evolution import JobSpec
+
+    manager.consolidator.propose.return_value = EvolutionProposal()
+    manager.store.load_sources = AsyncMock(
+        side_effect=[[source(17)], [source(17, revision="r-17-new")]]
+    )
+    job = await manager.store.enqueue_job(
+        JobSpec("private:user-a", "bucket", (17,), "revision-race", datetime.now(UTC))
+    )
+    assert await manager.run_once() is True
+    stored = await manager.store.get_job(job.job_id)
+    assert stored is not None
+    assert stored.state is JobState.REJECTED
+    assert manager.store.load_sources.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_processing_renews_lease(manager):
+    from core.models.memory_evolution import JobSpec
+
+    manager.lease_seconds = 1
+    await seed_documents(manager.store, source(17))
+    job = await manager.store.enqueue_job(
+        JobSpec("private:user-a", "bucket", (17,), "lease-renewal", datetime.now(UTC))
+    )
+    claim = await manager.store.claim_job(datetime.now(UTC), manager.lease_seconds)
+    assert claim is not None
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_propose(_sources):
+        started.set()
+        await release.wait()
+        return EvolutionProposal()
+
+    manager.consolidator.propose.side_effect = slow_propose
+    manager.store.renew_lease = AsyncMock(return_value=True)
+    task = asyncio.create_task(manager.process_claim(claim))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.sleep(0.45)
+    release.set()
+    await task
+    assert manager.store.renew_lease.await_count >= 1
+    assert (await manager.store.get_job(job.job_id)).state is JobState.COMPLETED
+
+
+@pytest.mark.asyncio
 async def test_provider_failure_retries_then_reaches_dead(tmp_path):
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
@@ -197,14 +293,26 @@ async def test_provider_failure_retries_then_reaches_dead(tmp_path):
 @pytest.mark.asyncio
 async def test_worker_lifecycle_and_status_snapshot_exclude_sensitive_fields(manager):
     snapshot = manager.get_status_snapshot()
-    assert set(snapshot) == {"mode", "worker_running", "max_attempts", "lease_seconds"}
+    assert set(snapshot) == {
+        "mode",
+        "state_counts",
+        "queue_lag_seconds",
+        "type_counts",
+        "accepted",
+        "rejected",
+        "retry",
+        "dead",
+        "reason_codes",
+        "token_totals",
+        "latency_buckets",
+    }
     assert "query" not in snapshot
     assert "prompt" not in snapshot
     assert "content" not in snapshot
     await manager.start()
-    assert manager.get_status_snapshot()["worker_running"] is True
+    assert manager._worker_task is not None
     await manager.stop()
-    assert manager.get_status_snapshot()["worker_running"] is False
+    assert manager._worker_task is None
 
 
 @pytest.mark.asyncio
