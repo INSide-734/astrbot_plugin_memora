@@ -8,8 +8,20 @@ from typing import Any
 
 import aiosqlite
 
+from ..base.list_sorting import SortQuery, order_by_clause
 from ..storage.base import apply_perf_pragmas
 from .models import ExpressionPattern, PatternScope
+
+
+EXPRESSION_SORT_COLUMNS = {
+    "situation": "situation COLLATE NOCASE",
+    "expression": "expression COLLATE NOCASE",
+    "weight": "weight",
+    "usage_count": "usage_count",
+    "created_at": "created_at",
+    "last_used_at": "last_used_at",
+}
+_EXPRESSION_SQL_COLUMNS = {**EXPRESSION_SORT_COLUMNS, "id": "id"}
 
 
 class ExpressionPatternStore:
@@ -197,9 +209,27 @@ class ExpressionPatternStore:
         self,
         scope: PatternScope,
         limit: int = 10,
+        sort: SortQuery = SortQuery("weight", "desc"),
     ) -> list[ExpressionPattern]:
-        """获取指定作用域下权重最高的前 N 条模式。"""
-        return await self.get_by_scope(scope, limit=limit)
+        """按指定字段排序并返回作用域内前 N 条模式。"""
+        order_by = order_by_clause(
+            sort,
+            columns=_EXPRESSION_SQL_COLUMNS,
+            tie_breaker="id",
+        )
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                f"""
+                SELECT * FROM expression_patterns
+                WHERE group_id = ? AND persona_id = ? AND user_id IS ?
+                ORDER BY {order_by}
+                LIMIT ?
+                """,
+                (scope.group_id, scope.persona_id, scope.user_id, limit),
+            )
+            rows = await cursor.fetchall()
+            return [self._row_to_pattern(dict(row)) for row in rows]
 
     async def delete_below_weight(
         self,
@@ -272,4 +302,4 @@ class ExpressionPatternStore:
         return await self.get_by_scope(scope, limit=999999)
 
 
-__all__ = ["ExpressionPatternStore"]
+__all__ = ["EXPRESSION_SORT_COLUMNS", "ExpressionPatternStore"]

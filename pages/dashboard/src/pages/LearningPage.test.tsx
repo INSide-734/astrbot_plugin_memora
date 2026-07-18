@@ -26,6 +26,7 @@ describe("LearningPage", () => {
   let showToast: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    localStorage.clear();
     bridge = {
       apiGet: vi.fn(),
       apiPost: vi.fn(),
@@ -104,7 +105,11 @@ describe("LearningPage", () => {
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/groups", {});
       expect(bridge.apiGet).toHaveBeenCalledWith("page/learning/status", {});
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", { group_id: "group-1" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", {
+        group_id: "group-1",
+        sort_by: "weight",
+        sort_order: "desc",
+      });
     });
 
     expect(await screen.findByText("83.0%")).toBeTruthy();
@@ -130,6 +135,66 @@ describe("LearningPage", () => {
     expect(document.querySelector('[data-slot="learning-details"]')?.className).toContain("xl:grid-cols-2");
     expect(screen.getAllByRole("progressbar").every((meter) => meter.getAttribute("data-slot") === "progress")).toBe(true);
     expect(screen.getByText("6")).toBeTruthy();
+  });
+
+  it("sorts expression patterns on the server without persisting transient state", async () => {
+    const initial = deferred<ReturnType<typeof ok<{ patterns: Array<Record<string, unknown>> }>>>();
+    const sorted = deferred<ReturnType<typeof ok<{ patterns: Array<Record<string, unknown>> }>>>();
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/groups") {
+        return Promise.resolve(ok({ groups: [{ group_id: "group-1", message_count: 1 }] }));
+      }
+      if (path === "page/learning/status") return Promise.resolve(ok({ hit_rate: 0.5 }));
+      if (path === "page/expression/patterns") {
+        return params.sort_by === "usage_count" ? sorted.promise : initial.promise;
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<LearningPage showToast={showToast} />);
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/expression/patterns",
+      { group_id: "group-1", sort_by: "weight", sort_order: "desc" },
+    ));
+
+    const storedPreferences = localStorage.getItem("memora.table.expression-patterns.v1");
+    fireEvent.click(screen.getByRole("button", { name: /Sort Uses ascending/i }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/expression/patterns",
+      { group_id: "group-1", sort_by: "usage_count", sort_order: "desc" },
+    ));
+    expect(localStorage.getItem("memora.table.expression-patterns.v1")).toBe(storedPreferences);
+
+    await act(async () => {
+      sorted.resolve(ok({ patterns: [{
+        pattern_id: 2,
+        group_id: "group-1",
+        situation: "Sorted",
+        expression: "latest sorted response",
+        weight: 0.7,
+        usage_count: 8,
+        created_at: 10,
+        last_used_at: 20,
+      }] }));
+    });
+    expect(await screen.findByText("latest sorted response")).toBeTruthy();
+
+    await act(async () => {
+      initial.resolve(ok({ patterns: [{
+        pattern_id: 1,
+        group_id: "group-1",
+        situation: "Stale",
+        expression: "stale default response",
+        weight: 0.9,
+        usage_count: 1,
+        created_at: 5,
+        last_used_at: 6,
+      }] }));
+    });
+    expect(screen.getByText("latest sorted response")).toBeTruthy();
+    expect(screen.queryByText("stale default response")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Row actions/i })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: /pagination/i })).toBeNull();
   });
 
   it("requires confirmation before resetting learning and refreshes stats after success", async () => {
@@ -245,12 +310,25 @@ describe("LearningPage", () => {
 
     expect(await screen.findByText("Formal greeting")).toBeTruthy();
 
+    fireEvent.click(screen.getByRole("button", { name: /Sort Uses ascending/i }));
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", {
+        group_id: "group-1",
+        sort_by: "usage_count",
+        sort_order: "desc",
+      });
+    });
+
     const hiddenSelectInput = document.querySelector('input[aria-hidden="true"]') as HTMLInputElement | null;
     if (!hiddenSelectInput) throw new Error("expected hidden group select input");
     fireEvent.change(hiddenSelectInput, { target: { value: "group-2" } });
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", { group_id: "group-2" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", {
+        group_id: "group-2",
+        sort_by: "weight",
+        sort_order: "desc",
+      });
     });
 
     expect(await screen.findByText("Casual wrap-up")).toBeTruthy();
@@ -297,10 +375,18 @@ describe("LearningPage", () => {
       return Promise.resolve(ok({}));
     });
     render(<LearningPage showToast={showToast} />);
-    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", { group_id: "group-1" }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", {
+      group_id: "group-1",
+      sort_by: "weight",
+      sort_order: "desc",
+    }));
     const input = document.querySelector('input[aria-hidden="true"]') as HTMLInputElement;
     fireEvent.change(input, { target: { value: "group-2" } });
-    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", { group_id: "group-2" }));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith("page/expression/patterns", {
+      group_id: "group-2",
+      sort_by: "weight",
+      sort_order: "desc",
+    }));
     await act(async () => { group2.resolve(ok({ patterns: [{ pattern_id: 2, group_id: "group-2", situation: "Second", expression: "group two latest", weight: 0.7, usage_count: 2 }] })); });
     expect(await screen.findByText("group two latest")).toBeTruthy();
     await act(async () => { group1.resolve(ok({ patterns: [{ pattern_id: 1, group_id: "group-1", situation: "First", expression: "group one stale", weight: 0.4, usage_count: 1 }] })); });

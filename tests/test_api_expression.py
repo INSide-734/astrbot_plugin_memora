@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.api.expression_api import ExpressionApiMixin
+from core.base.list_sorting import SortQuery
 
 
 def _make_mock_request(**args):
@@ -52,8 +53,11 @@ class TestExpressionPatterns:
             _get_expression_store = ExpressionApiMixin._get_expression_store
 
         stub = Stub()
-        stub.plugin = MagicMock()
-        stub.plugin._expression_learner = learner
+        stub.plugin = SimpleNamespace(
+            _expression_learner=learner,
+            _expression_store=None,
+            initializer=None,
+        )
 
         mock_req = _make_mock_request(group_id="room-1", limit="-1")
         with patch("core.api.expression_api.request", mock_req):
@@ -87,9 +91,90 @@ class TestExpressionPatterns:
             result = await stub.get_expression_patterns()
 
         assert result["status"] == "ok"
+        store.get_top_by_weight.assert_awaited_once()
         _, kwargs = store.get_top_by_weight.await_args
-        assert kwargs["limit"] == 20
+        assert kwargs == {"limit": 20, "sort": SortQuery("weight", "desc")}
         assert result["data"]["total"] == 1
+
+    @pytest.mark.asyncio
+    async def test_forwards_explicit_sort_to_store_before_limit(self) -> None:
+        store = MagicMock()
+        store.get_top_by_weight = AsyncMock(return_value=[_make_pattern(pattern_id=23)])
+        store.count_by_scope = AsyncMock(return_value=1)
+        learner = MagicMock()
+        learner.get_patterns_for_injection = AsyncMock(return_value=[_make_pattern(pattern_id=99)])
+
+        class Stub:
+            get_expression_patterns = ExpressionApiMixin.get_expression_patterns
+            _get_expression_learner = ExpressionApiMixin._get_expression_learner
+            _get_expression_store = ExpressionApiMixin._get_expression_store
+
+        stub = Stub()
+        stub.plugin = SimpleNamespace(
+            _expression_learner=learner,
+            _expression_store=store,
+            initializer=None,
+        )
+
+        mock_req = _make_mock_request(
+            group_id="room-2",
+            sort_by="usage_count",
+            sort_order="desc",
+        )
+        with patch("core.api.expression_api.request", mock_req):
+            result = await stub.get_expression_patterns()
+
+        assert result["status"] == "ok"
+        _, kwargs = store.get_top_by_weight.await_args
+        assert kwargs == {
+            "limit": 20,
+            "sort": SortQuery("usage_count", "desc"),
+        }
+        learner.get_patterns_for_injection.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("sort_by", "sort_order", "field"),
+        [
+            ("missing", "asc", "sort_by"),
+            ("weight", "DESC", "sort_order"),
+        ],
+    )
+    async def test_rejects_invalid_sort_before_domain_read(
+        self,
+        sort_by: str,
+        sort_order: str,
+        field: str,
+    ) -> None:
+        store = MagicMock()
+        store.get_top_by_weight = AsyncMock()
+        learner = MagicMock()
+        learner.get_patterns_for_injection = AsyncMock()
+
+        class Stub:
+            get_expression_patterns = ExpressionApiMixin.get_expression_patterns
+            _get_expression_learner = ExpressionApiMixin._get_expression_learner
+            _get_expression_store = ExpressionApiMixin._get_expression_store
+
+        stub = Stub()
+        stub.plugin = SimpleNamespace(
+            _expression_learner=learner,
+            _expression_store=store,
+            initializer=None,
+        )
+
+        mock_req = _make_mock_request(
+            group_id="room-2",
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        with patch("core.api.expression_api.request", mock_req):
+            result = await stub.get_expression_patterns()
+
+        assert result["code"] == "invalid_query"
+        assert field in result["field_errors"]
+        store.get_top_by_weight.assert_not_awaited()
+        learner.get_patterns_for_injection.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_learner_skips_malformed_pattern_items(self) -> None:

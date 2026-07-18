@@ -7,6 +7,8 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
+from ..base.list_sorting import SortQuery, parse_sort_query
+from ..expression.pattern_store import EXPRESSION_SORT_COLUMNS
 from .response_utils import error_response, ok_response
 
 
@@ -58,6 +60,16 @@ def _safe_total(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _sort_query_error(exc: ValueError) -> dict[str, Any]:
+    message = str(exc)
+    field = "sort_order" if message == "sort_order must be asc or desc" else "sort_by"
+    return error_response(
+        message,
+        code="invalid_query",
+        field_errors={field: message},
+    )
 
 
 class ExpressionApiMixin:
@@ -117,10 +129,22 @@ class ExpressionApiMixin:
         group_id = (args.get("group_id", "") or "").strip()
         persona_id = (args.get("persona_id", "") or "").strip()
         limit = _parse_limit(args.get("limit", 20))
+        try:
+            sort = parse_sort_query(
+                args,
+                allowed=EXPRESSION_SORT_COLUMNS,
+                default_by="weight",
+                default_order="desc",
+            )
+        except ValueError as exc:
+            return _sort_query_error(exc)
 
-        # 优先走 learner（其具备 get_patterns_for_injection 能力）
+        # 既有 learner 路径仅支持权重降序；其他排序必须由 store 在 LIMIT 前完成。
         learner = self._get_expression_learner()
-        if learner is not None and hasattr(learner, "get_patterns_for_injection"):
+        if sort == SortQuery("weight", "desc") and learner is not None and hasattr(
+            learner,
+            "get_patterns_for_injection",
+        ):
             try:
                 patterns = await learner.get_patterns_for_injection(
                     group_id=group_id or "default",
@@ -144,7 +168,6 @@ class ExpressionApiMixin:
             except Exception as e:
                 logger.warning(f"[ExpressionApi] 调用 learner.get_patterns_for_injection 失败: {e}")
 
-        # 回退：直接读取 store
         store = self._get_expression_store()
         if store is None:
             return error_response("表达模式存储不可用")
@@ -157,7 +180,11 @@ class ExpressionApiMixin:
                 persona_id=persona_id or "default",
                 user_id=None,
             )
-            patterns = await store.get_top_by_weight(scope, limit=limit)
+            patterns = await store.get_top_by_weight(
+                scope,
+                limit=limit,
+                sort=sort,
+            )
             patterns = _safe_pattern_list(patterns)
             serialized_patterns = [
                 item
