@@ -255,10 +255,17 @@ describe("AffectionPage", () => {
     bridge.apiPost.mockResolvedValue(ok({ entity: user({ affection_score: 77, affection_level: "VIP", level_name: "VIP", revision: "rev-2" }), revision: "rev-2" }));
     openRowAction("alice", "View");
     const sheet = editor(/affection.*alice/i);
+    const footer = within(sheet).getByTestId("entity-editor-footer");
+    const body = within(sheet).getByTestId("entity-editor-body");
+    expect(within(footer).getByRole("button", { name: /delete alice/i })).toBeTruthy();
+    expect(within(body).queryByRole("button", { name: /delete alice/i })).toBeNull();
+    expect(within(sheet).queryByText(/unsaved/i)).toBeNull();
     fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
+    expect(screen.getByRole("dialog", { name: /affection.*alice/i })).toBe(sheet);
     expect(within(sheet).getByLabelText("User ID")).toHaveProperty("disabled", true);
     expect(within(sheet).getByLabelText("Group ID")).toHaveProperty("disabled", true);
     fireEvent.change(within(sheet).getByLabelText(/affection score/i), { target: { value: "77" } });
+    expect(within(sheet).getByText(/unsaved/i)).toBeTruthy();
     fireEvent.click(within(sheet).getByRole("button", { name: /^save$/i }));
     await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith("page/affection/users/update", { identity: { user_id: "alice", group_id: "group-1" }, changes: { affection_score: 77 }, expected_revision: "rev-1" }));
     expect(await screen.findByText("VIP")).toBeTruthy();

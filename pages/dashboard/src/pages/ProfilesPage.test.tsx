@@ -419,7 +419,17 @@ describe("ProfilesPage", () => {
     expect(within(drawer).getByText("user-9")).toBeTruthy();
     expect(within(drawer).getByText("12")).toBeTruthy();
     expect(within(drawer).getByText("graphs")).toBeTruthy();
-    expect(within(drawer).getByText("92%")).toBeTruthy();
+    const footer = within(drawer).getByTestId("entity-editor-footer");
+    const body = within(drawer).getByTestId("entity-editor-body");
+    expect(within(footer).getByRole("button", { name: /delete profile/i })).toBeTruthy();
+    expect(within(body).queryByRole("button", { name: /delete profile/i })).toBeNull();
+    expect(within(drawer).queryByText(EN_MAP["detail.unsaved"])).toBeNull();
+
+    fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    expect(screen.getByRole("dialog", { name: "Profile: $& $$ Gamma" })).toBe(drawer);
+    fireEvent.change(within(drawer).getByLabelText("Name"), { target: { value: "Edited Gamma" } });
+    expect(within(drawer).getByText(EN_MAP["detail.unsaved"])).toBeTruthy();
+    fireEvent.click(within(drawer).getByRole("button", { name: /^cancel$/i }));
 
     fireEvent.click(within(drawer).getByRole("button", { name: /delete profile/i }));
 
@@ -481,7 +491,7 @@ describe("ProfilesPage", () => {
         tags: [{ category: "interest", value: "testing", confidence: 0.8 }],
       });
     });
-    expect(await screen.findByText("Alice")).toBeTruthy();
+    expect((await screen.findAllByText("Alice")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("1", { selector: ".text-lg.font-bold.tabular-nums" })).toHaveLength(2);
     expect(await screen.findByRole("dialog", { name: "Profile: Alice" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^save$/i })).toBeNull();

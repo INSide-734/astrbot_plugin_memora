@@ -23,9 +23,10 @@ import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { EditConflictDialog } from "@/components/editing/EditConflictDialog";
 import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
 import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
+import { DetailField, DetailGrid, DetailSection, DetailTags } from "@/components/editing/EntityDetail";
 import { ProfileForm } from "@/components/editing/forms/ProfileForm";
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
-import { dashboardLocale, formatDashboardDate, formatDashboardPercent } from "@/lib/i18n";
+import { dashboardLocale, formatDashboardDate } from "@/lib/i18n";
 import { ApiRequestError, BULK_CONFIRMATION_THRESHOLD, editingErrorDetails, type BatchResult, type EntityEnvelope, type FieldErrors } from "@/types/editing";
 import type { ProfileDraft } from "@/types";
 
@@ -760,11 +761,20 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
         onCancel={cancelEdit}
         onSave={saveEdit}
         labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: label("common.saving", "Saving...") }}
-        view={detail ? <div className="flex flex-col gap-4 text-sm">
-          <div className="grid grid-cols-2 gap-3"><div><span className="text-xs font-medium text-muted-foreground">{t("table.userId")}</span><p className="font-mono text-sm">{detail.user_id}</p></div><div><span className="text-xs font-medium text-muted-foreground">{t("table.messages")}</span><p>{detail.message_count ?? "--"}</p></div></div>
-          {detail.tags?.length ? <div><h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold"><Tag />{t("table.tags")}</h4><div className="flex flex-col gap-1.5">{detail.tags.map((tag, index) => <div key={`${tag.value ?? tag.name}-${index}`} className="flex items-center justify-between"><span>{tag.value ?? tag.name}</span><span>{formatDashboardPercent(tag.confidence ?? 0, locale, { maximumFractionDigits: 0 })}</span></div>)}</div></div> : null}
-          <Button variant="destructive" size="sm" onClick={() => { if (hasProfileRevision(detail)) setDeleteOpen(true); else void executeSingleDelete(); }}><Trash2 data-icon="inline-start" />{hasProfileRevision(detail) ? t("common.delete") : t("detail.deleteProfile")}</Button>
+        status={editDirty ? t("detail.unsaved") : null}
+        view={detail ? <div className="space-y-6">
+          <DetailGrid>
+            <DetailField label={t("table.userId")}><span className="font-mono">{detail.user_id}</span></DetailField>
+            <DetailField label={label("profile.displayName", "Display name")}>{detail.display_name || "--"}</DetailField>
+            <DetailField label={t("table.messages")}>{detail.message_count ?? "--"}</DetailField>
+            <DetailField label={t("table.lastSeen")}>{detail.last_seen ? formatDashboardDate(detail.last_seen, locale) : "--"}</DetailField>
+            <DetailField label={label("profile.groupId", "Group ID")}>{detail.group_id || "--"}</DetailField>
+            <DetailField label={t("detail.revision")}>{detail.revision || "--"}</DetailField>
+          </DetailGrid>
+          <DetailSection title={t("table.tags")}><DetailTags tags={(detail.tags ?? []).map((tag) => tag.value ?? tag.name ?? "").filter(Boolean)} /></DetailSection>
+          <DetailSection title={label("profile.preferences", "Preferences")}><DetailGrid><DetailField label={t("profile.replyStyle")}>{detail.preferences?.reply_style || "--"}</DetailField><DetailField label={t("profile.preferredTopics")}>{detail.preferences?.preferred_topics?.join(", ") || "--"}</DetailField><DetailField label={t("profile.avoidedTopics")}>{detail.preferences?.avoided_topics?.join(", ") || "--"}</DetailField></DetailGrid></DetailSection>
         </div> : null}
+        viewActions={detail ? <Button variant="destructive" size="sm" onClick={() => { if (hasProfileRevision(detail)) setDeleteOpen(true); else void executeSingleDelete(); }}><Trash2 data-icon="inline-start" />{hasProfileRevision(detail) ? t("common.delete") : t("detail.deleteProfile")}</Button> : null}
         form={<ProfileForm value={editDraft} onChange={(next) => { setEditDraft(next); setEditFieldErrors({}); setEditFormError(null); }} fieldErrors={editFieldErrors} formErrors={editFormError ? [editFormError] : []} disabled={editSubmitting} mode="edit" />}
       />
 

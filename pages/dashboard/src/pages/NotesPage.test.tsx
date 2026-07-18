@@ -240,8 +240,15 @@ describe("NotesPage", () => {
       `Updated: ${new Date("2026-06-28T12:00:00Z").toLocaleDateString("en-US")}`,
     )).toBeTruthy();
     expect(within(drawer).getByText("v2")).toBeTruthy();
+    const footer = within(drawer).getByTestId("entity-editor-footer");
+    const body = within(drawer).getByTestId("entity-editor-body");
+    expect(within(footer).getByRole("button", { name: /archive/i })).toBeTruthy();
+    expect(within(footer).getByRole("button", { name: /^delete$/i })).toBeTruthy();
+    expect(within(body).queryByRole("button", { name: /archive|delete/i })).toBeNull();
+    expect(within(drawer).queryByText(EN_MAP["detail.unsaved"])).toBeNull();
 
     fireEvent.click(within(drawer).getByRole("button", { name: /^edit$/i }));
+    expect(screen.getByRole("dialog", { name: "Gamma note" })).toBe(drawer);
     expect(within(drawer).queryByLabelText("Choose field to edit")).toBeNull();
     expect(within(drawer).getByLabelText("Title")).toBeTruthy();
     expect(within(drawer).getByLabelText("Content")).toBeTruthy();
@@ -251,6 +258,7 @@ describe("NotesPage", () => {
     fireEvent.change(within(drawer).getByLabelText("Title"), {
       target: { value: "Updated gamma note" },
     });
+    expect(within(drawer).getByText(EN_MAP["detail.unsaved"])).toBeTruthy();
     fireEvent.click(within(drawer).getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
