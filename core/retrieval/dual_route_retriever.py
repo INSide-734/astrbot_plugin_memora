@@ -9,6 +9,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from ..models.memory_evolution import ExpansionBudget, ScopeContext
 from ..models.recall_strategy import RecallStrategy
 from .graph_retriever import GraphRetriever
 from .hybrid_retriever import HybridRetriever
@@ -123,6 +124,49 @@ class DualRouteRetriever:
             except Exception:
                 pass  # 个性化排序失败不影响主流程
 
+        _t_expansion_start = time.perf_counter()
+        evolution_config = self.config.get("memory_evolution", {})
+        if not isinstance(evolution_config, dict):
+            evolution_config = {}
+        if (
+            self.derived_expander is not None
+            and bool(evolution_config.get("enabled", False))
+            and str(evolution_config.get("mode", "disabled")) != "disabled"
+            and merged
+        ):
+            baseline = list(merged)
+            try:
+                max_expansions = max(
+                    0,
+                    int(evolution_config.get("max_query_expansions", 8)),
+                )
+                merged = await self.derived_expander.expand(
+                    merged,
+                    scope=ScopeContext(
+                        scope_key=session_id or persona_id or f"{chat_type}:default",
+                        privacy_level=(
+                            "shared" if chat_type == "group" else "confidential"
+                        ),
+                    ),
+                    budget=ExpansionBudget(
+                        max_chars=max(
+                            0,
+                            int(
+                                evolution_config.get(
+                                    "projection_budget_chars",
+                                    2_000,
+                                )
+                            ),
+                        ),
+                        max_items=len(merged) + max_expansions,
+                    ),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                merged = baseline
+        expansion_ms = (time.perf_counter() - _t_expansion_start) * 1000.0
+
         # v2.5 可插拔重排序 — MMR / Cross-Encoder / LLM / Hybrid
         _t_rerank_start = time.perf_counter()
         if self.reranker and len(merged) > 1:
@@ -136,6 +180,7 @@ class DualRouteRetriever:
             "document_route_ms": document_route_ms,
             "graph_route_ms": graph_route_ms,
             "merge_ms": merge_ms,
+            "derived_expansion_ms": expansion_ms,
             "rerank_ms": rerank_ms,
         }
 
