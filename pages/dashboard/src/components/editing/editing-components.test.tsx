@@ -1,5 +1,6 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
@@ -8,6 +9,13 @@ import { EditConflictDialog } from "./EditConflictDialog";
 import { EditFormLayout, InlineFieldError } from "./EditFormLayout";
 import { EntityCreateDialog } from "./EntityCreateDialog";
 import { EntityEditorSheet } from "./EntityEditorSheet";
+import {
+  DetailField,
+  DetailGrid,
+  DetailSection,
+  DetailTags,
+  DetailText,
+} from "./EntityDetail";
 import { TagEditor } from "./TagEditor";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { Button } from "@/components/ui/Button";
@@ -34,11 +42,15 @@ function EditorHarness({
   canSave = true,
   initialMode = "view",
   onSave = vi.fn(),
+  status,
+  viewActions,
 }: {
   submitting?: boolean;
   canSave?: boolean;
   initialMode?: "view" | "edit";
   onSave?: () => void | Promise<void>;
+  status?: ReactNode;
+  viewActions?: ReactNode;
 }) {
   const [open, setOpen] = useState(true);
   const [mode, setMode] = useState<"view" | "edit">(initialMode);
@@ -71,6 +83,8 @@ function EditorHarness({
           setMode("view");
         }}
         onSave={onSave}
+        status={status}
+        viewActions={viewActions}
         view={<p>Old</p>}
         form={
           <label>
@@ -102,6 +116,24 @@ function EditorHarness({
 }
 
 describe("EntityEditorSheet", () => {
+  it("keeps header, body, and footer layout stable with status and view actions", () => {
+    render(
+      <EditorHarness
+        status={<span>Unsaved</span>}
+        viewActions={<Button type="button">Delete</Button>}
+      />,
+    );
+
+    expect(screen.getByTestId("entity-editor-header").className).toContain("shrink-0");
+    expect(screen.getByTestId("entity-editor-body").className).toContain("overflow-y-auto");
+    const footer = screen.getByTestId("entity-editor-footer");
+    expect(within(footer).getByRole("button", { name: "Delete" })).toBeTruthy();
+    expect(within(footer).getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(screen.getByText("Unsaved")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Profile" }).className)
+      .toContain("sm:max-w-[42rem]");
+  });
+
   it("opens in view mode, then reveals the form and fixed footer when editing", () => {
     render(<EditorHarness />);
 
@@ -214,6 +246,41 @@ describe("EntityEditorSheet", () => {
     fireEvent.keyDown(screen.getByLabelText("Name"), { key: "Enter", ctrlKey: true });
     fireEvent.keyDown(screen.getByLabelText("Name"), { key: "Delete", ctrlKey: true });
     expect(onSave).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("EntityDetail", () => {
+  it("renders responsive detail primitives and explicit empty values", () => {
+    render(
+      <DetailSection title="Metadata">
+        <DetailGrid>
+          <DetailField label="Empty" />
+          <DetailField label="Description">
+            <DetailText>line one\nline two</DetailText>
+          </DetailField>
+        </DetailGrid>
+        <DetailTags tags={["alpha", "beta"]} />
+      </DetailSection>,
+    );
+
+    expect(screen.getByText("Metadata")).toBeTruthy();
+    expect(screen.getByText("--")).toBeTruthy();
+    const detailText = screen.getByText(/line one/);
+    expect(detailText.className).toContain("whitespace-pre-wrap");
+    expect(detailText.className).toContain("break-words");
+    expect(screen.getByText("alpha")).toBeTruthy();
+    expect(screen.getByText("beta")).toBeTruthy();
+
+    const grid = screen.getByText("Empty").closest("dl");
+    expect(grid?.className).toContain("grid-cols-1");
+    expect(grid?.className).toContain("sm:grid-cols-2");
+  });
+
+  it("renders an empty tag state without creating a phantom badge", () => {
+    render(<DetailTags tags={[]} emptyLabel="No tags" />);
+
+    expect(screen.getByText("No tags")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
 
