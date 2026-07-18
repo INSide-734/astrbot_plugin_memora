@@ -70,7 +70,7 @@ class TestDualRouteRetriever:
 
     @pytest.mark.asyncio
     async def test_search_doc_only(self, retriever: Any, doc_retriever: AsyncMock) -> None:
-        """When only document route returns results, those are returned."""
+        """仅文档路返回结果时，应原样返回这些结果。"""
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "doc result"),
         ]
@@ -79,15 +79,106 @@ class TestDualRouteRetriever:
         assert results[0].doc_id == 1
 
     @pytest.mark.asyncio
+    async def test_search_applies_derived_expansion_before_return(
+        self,
+        doc_retriever: AsyncMock,
+        graph_retriever: AsyncMock,
+        memory_loader: AsyncMock,
+    ) -> None:
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+
+        direct = _make_hybrid(1, 0.9, "直接证据")
+        derived = _make_hybrid(2, 0.7, "一跳证据")
+        doc_retriever.search.return_value = [direct]
+        expander = MagicMock()
+        expander.expand = AsyncMock(return_value=[direct, derived])
+        retriever = DualRouteRetriever(
+            document_retriever=doc_retriever,
+            graph_retriever=graph_retriever,
+            memory_loader=memory_loader,
+            config={
+                "memory_evolution": {
+                    "enabled": True,
+                    "mode": "readonly",
+                    "max_query_expansions": 4,
+                    "projection_budget_chars": 500,
+                }
+            },
+            derived_expander=expander,
+        )
+
+        results = await retriever.search(
+            "测试",
+            k=5,
+            session_id="private:user-a",
+        )
+
+        assert [item.doc_id for item in results] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_search_keeps_baseline_when_derived_expansion_fails(
+        self,
+        doc_retriever: AsyncMock,
+        graph_retriever: AsyncMock,
+        memory_loader: AsyncMock,
+    ) -> None:
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+
+        direct = _make_hybrid(1, 0.9, "直接证据")
+        doc_retriever.search.return_value = [direct]
+        expander = MagicMock()
+        expander.expand = AsyncMock(side_effect=RuntimeError("扩展失败"))
+        retriever = DualRouteRetriever(
+            document_retriever=doc_retriever,
+            graph_retriever=graph_retriever,
+            memory_loader=memory_loader,
+            config={"memory_evolution": {"enabled": True, "mode": "readonly"}},
+            derived_expander=expander,
+        )
+
+        results = await retriever.search(
+            "测试",
+            k=5,
+            session_id="private:user-a",
+        )
+
+        assert [item.doc_id for item in results] == [1]
+
+    @pytest.mark.asyncio
+    async def test_search_does_not_expand_in_disabled_mode(
+        self,
+        doc_retriever: AsyncMock,
+        graph_retriever: AsyncMock,
+        memory_loader: AsyncMock,
+    ) -> None:
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+
+        direct = _make_hybrid(1, 0.9, "直接证据")
+        doc_retriever.search.return_value = [direct]
+        expander = MagicMock()
+        expander.expand = AsyncMock(side_effect=AssertionError("禁用模式不应调用扩展器"))
+        retriever = DualRouteRetriever(
+            document_retriever=doc_retriever,
+            graph_retriever=graph_retriever,
+            memory_loader=memory_loader,
+            config={"memory_evolution": {"enabled": False, "mode": "disabled"}},
+            derived_expander=expander,
+        )
+
+        results = await retriever.search("测试", k=5)
+
+        assert [item.doc_id for item in results] == [1]
+
+    @pytest.mark.asyncio
     async def test_search_both_routes(self, retriever: Any, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock) -> None:
-        """When both routes return, results are merged. Graph-only docs need memory_loader."""
+        """双路均有结果时应合并；仅图路命中的文档需要通过 memory_loader 回填。"""
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "doc result"),
         ]
         graph_retriever.search.return_value = [
             _make_graph(2, 0.8, "graph result"),
         ]
-        # Doc-only results have content directly; graph-only results need content from memory_loader
+        # 文档路结果自带正文；仅图路结果需要由 memory_loader 回填正文。
         memory_loader.return_value = {"text": "graph result loaded", "metadata": {}}
 
         results = await retriever.search("test", k=5)
@@ -98,7 +189,7 @@ class TestDualRouteRetriever:
 
     @pytest.mark.asyncio
     async def test_search_cross_route_bonus(self, retriever: Any, doc_retriever: AsyncMock, graph_retriever: AsyncMock) -> None:
-        """Same doc_id in both routes gets cross-route bonus."""
+        """同一 doc_id 同时命中两路时应获得跨路加分。"""
         shared_meta = {"importance": 0.7}
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.8, "shared content", shared_meta, bm25=0.7, vector=0.6),
@@ -106,14 +197,14 @@ class TestDualRouteRetriever:
         graph_retriever.search.return_value = [
             _make_graph(1, 0.7, "shared content", shared_meta, kw_score=0.6, vec_score=0.5),
         ]
-        # Same doc_id in both routes — doc_result provides content and non-empty metadata
+        # 两路命中同一 doc_id 时，文档路结果提供正文和非空 metadata。
         results = await retriever.search("test", k=5)
         assert len(results) == 1
         assert results[0].doc_id == 1
 
     @pytest.mark.asyncio
     async def test_privacy_filter_group_chat(self, retriever: Any, doc_retriever: AsyncMock) -> None:
-        """Group chat filters out confidential memories."""
+        """群聊应过滤 confidential 记忆。"""
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "public", {"privacy_level": "shared"}),
             _make_hybrid(2, 0.8, "secret", {"privacy_level": "confidential"}),
@@ -125,7 +216,7 @@ class TestDualRouteRetriever:
 
     @pytest.mark.asyncio
     async def test_privacy_filter_private_chat(self, retriever: Any, doc_retriever: AsyncMock) -> None:
-        """Private chat does NOT filter confidential memories."""
+        """私聊不应过滤 confidential 记忆。"""
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "public", {"privacy_level": "shared"}),
             _make_hybrid(2, 0.8, "secret", {"privacy_level": "confidential"}),
@@ -136,24 +227,24 @@ class TestDualRouteRetriever:
         assert 2 in doc_ids  # confidential allowed
 
     def test_route_weights_for_relation_query(self, retriever: Any) -> None:
-        """Relation keywords shift weight toward graph route."""
+        """关系关键词应提高图路权重。"""
         doc_w, graph_w, intent = retriever._route_weights_for_query("他是谁")
         assert graph_w > doc_w
         assert "relationship" in intent
 
     def test_route_weights_for_factual_query(self, retriever: Any) -> None:
-        """Factual keywords shift weight toward document route."""
+        """事实关键词应提高文档路权重。"""
         doc_w, graph_w, intent = retriever._route_weights_for_query("这是什么东西")
         assert doc_w > graph_w
         assert "factual" in intent
 
     def test_route_weights_for_temporal_query(self, retriever: Any) -> None:
-        """Temporal keywords shift weight toward graph route."""
+        """时间关键词应提高图路权重。"""
         doc_w, graph_w, intent = retriever._route_weights_for_query("昨天发生了什么")
         assert "temporal" in intent
 
     def test_route_weights_dynamic_disabled(self, retriever: Any) -> None:
-        """When dynamic_route_weighting is disabled, fixed weights are used."""
+        """禁用动态路由权重时应使用固定权重。"""
         retriever.dynamic_route_weighting = False
         doc_w, graph_w, intent = retriever._route_weights_for_query("他是谁")
         assert intent == "fixed"
@@ -167,7 +258,7 @@ class TestDualRouteRetriever:
         ("relationship_review", 0.30, 0.70),
     ])
     def test_strategy_weights(self, retriever: Any, strategy: str, expected_doc: float, expected_graph: float) -> None:
-        """Each RecallStrategy maps to pre-defined document/graph weights."""
+        """每个 RecallStrategy 都应映射到预定义的文档/图路权重。"""
         from core.models.recall_strategy import RecallStrategy
         s = RecallStrategy(strategy)
         doc_w, graph_w = retriever._compute_strategy_weights(s)
@@ -176,7 +267,7 @@ class TestDualRouteRetriever:
 
     @pytest.mark.asyncio
     async def test_search_with_query_intent(self, retriever: Any, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock) -> None:
-        """query_intent overrides keyword-based weight adjustment."""
+        """query_intent 应覆盖基于关键词的权重调整。"""
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "content"),
         ]
@@ -192,7 +283,7 @@ class TestDualRouteRetriever:
         assert len(results) >= 1
 
     def test_filter_by_privacy_empty_metadata(self, retriever: Any) -> None:
-        """Memories without privacy_level are treated as shared."""
+        """缺少 privacy_level 的记忆应按 shared 处理。"""
         results = [
             _make_hybrid(1, 0.9, "no metadata", {}),
         ]
@@ -205,7 +296,7 @@ class TestDualRouteRetriever:
     async def test_graph_only_no_doc_results_uses_graph_fallback(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """When no doc_results but graph_results exist, graph route is a fallback."""
+        """没有文档路结果而有图路结果时，应使用图路作为降级结果。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = []
@@ -239,7 +330,7 @@ class TestDualRouteRetriever:
     async def test_persona_boost_enabled(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """When persona_interpretation is enabled, matching persona gets boost (lines 103, 146-154)."""
+        """启用 persona_interpretation 时，匹配当前人格的记忆应获得加分。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
@@ -254,14 +345,14 @@ class TestDualRouteRetriever:
         )
         results = await retriever.search("test", k=5, persona_id="p1")
         assert len(results) >= 1
-        # final_score should be boosted (capped at 1.0)
+        # final_score 应加分并限制在 1.0 以内。
         assert results[0].final_score <= 1.0
 
     @pytest.mark.asyncio
     async def test_persona_boost_disabled_by_config(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """persona_interpretation disabled → no boost applied."""
+        """禁用 persona_interpretation 时不应加分。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
@@ -282,7 +373,7 @@ class TestDualRouteRetriever:
     async def test_personalized_ranking_path(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """Personalized ranker is called when user_id + ranker + profile_manager present (lines 107-112)."""
+        """提供 user_id、ranker 和 profile_manager 时应调用个性化排序器。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
@@ -307,7 +398,7 @@ class TestDualRouteRetriever:
     async def test_personalized_ranking_suppresses_exception(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """Personalized ranking failure does not break search (line 112)."""
+        """个性化排序失败不应中断检索。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
@@ -330,7 +421,7 @@ class TestDualRouteRetriever:
     async def test_reranker_path(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """Reranker is called when present and results > 1 (lines 116-117)."""
+        """存在重排序器且结果多于一条时应调用它。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
@@ -351,7 +442,7 @@ class TestDualRouteRetriever:
     async def test_async_reranker_is_awaited_and_receives_query(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """Async rerankers, including LLM rerankers, are awaited with the query."""
+        """异步重排序器（包括 LLM 重排序器）应携带 query 等待完成。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
@@ -385,7 +476,7 @@ class TestDualRouteRetriever:
     async def test_async_reranker_failure_falls_back_to_score_sort(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """Exceptions raised after awaiting an async reranker do not break search."""
+        """异步重排序器等待后抛出异常时不应中断检索。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
@@ -413,7 +504,7 @@ class TestDualRouteRetriever:
     async def test_reranker_suppresses_exception(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """Reranker failure does not break search (line 117)."""
+        """重排序失败不应中断检索。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
@@ -436,7 +527,7 @@ class TestDualRouteRetriever:
     async def test_memory_loader_exception_yields_none(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """When memory_loader raises, doc_id is skipped via loaded=None (line 208, 242)."""
+        """memory_loader 抛错时，doc_id 应因 loaded=None 被跳过。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
@@ -448,7 +539,7 @@ class TestDualRouteRetriever:
         memory_loader.side_effect = RuntimeError("load failure")
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         results = await retriever.search("test", k=5)
-        # doc_id=1 should be present (has content+metadata); doc_id=2 should be skipped
+        # doc_id=1 应保留（有正文和 metadata）；doc_id=2 应跳过。
         doc_ids = {r.doc_id for r in results}
         assert 1 in doc_ids
 
@@ -456,7 +547,7 @@ class TestDualRouteRetriever:
     async def test_memory_loader_returns_none_skips_doc(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """When memory_loader returns None, the doc is skipped (line 242)."""
+        """memory_loader 返回 None 时应跳过该文档。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
@@ -475,7 +566,7 @@ class TestDualRouteRetriever:
     # ── LLM intent routing tests ──────────────────────────────────────
 
     def test_llm_intent_relationship(self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock) -> None:
-        """LLM intent=relationship shifts weight to graph (line 349-354)."""
+        """LLM intent=relationship 时应提高图路权重。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         base_doc = retriever.document_route_weight
@@ -490,7 +581,7 @@ class TestDualRouteRetriever:
         assert graph_w == min(0.85, base_graph + 0.25)
 
     def test_llm_intent_temporal(self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock) -> None:
-        """LLM intent=temporal shifts weight slightly to graph (line 355-360)."""
+        """LLM intent=temporal 时应略微提高图路权重。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         base_doc = retriever.document_route_weight
@@ -504,7 +595,7 @@ class TestDualRouteRetriever:
         assert graph_w == min(0.85, base_graph + 0.15)
 
     def test_llm_intent_factual(self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock) -> None:
-        """LLM intent=factual shifts weight to document (line 361-366)."""
+        """LLM intent=factual 时应提高文档路权重。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         base_doc = retriever.document_route_weight
@@ -518,7 +609,7 @@ class TestDualRouteRetriever:
         assert graph_w == max(0.1, base_graph - 0.2)
 
     def test_llm_intent_preference(self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock) -> None:
-        """LLM intent=preference shifts weight slightly to document (line 367-372)."""
+        """LLM intent=preference 时应略微提高文档路权重。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         base_doc = retriever.document_route_weight
@@ -539,20 +630,20 @@ class TestDualRouteRetriever:
         class _Intent:
             intent = "default"
         doc_w, graph_w, intent = retriever._route_weights_for_query("random text", query_intent=_Intent())
-        # Should not be prefixed with "llm:"
+        # 不应添加 "llm:" 前缀。
         assert not intent.startswith("llm:")
 
     def test_zero_total_weight_fallback(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """When total weight <= 0, fallback to fixed base weights (line 404)."""
+        """总权重小于等于 0 时应回退到固定基础权重。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
         retriever = DualRouteRetriever(
             doc_retriever, graph_retriever, memory_loader,
             config={"document_route_weight": 0.0, "graph_route_weight": 0.0},
         )
-        # With zero weights, normalization would produce 0/0, but keyword hits adjust.
-        # Force dynamic off to test the total<=0 fallback directly.
+        # 权重为 0 时归一化会产生 0/0，但关键词命中会调整权重。
+        # 强制关闭动态权重，直接测试总权重小于等于 0 的回退。
         retriever.dynamic_route_weighting = False
         doc_w, graph_w, intent = retriever._route_weights_for_query("random text")
         assert intent == "fixed"
@@ -587,7 +678,7 @@ class TestDualRouteRetriever:
     async def test_search_with_strategy_triggers_compute_weights(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """Passing strategy to search() triggers _compute_strategy_weights (line 165-166)."""
+        """向 search() 传入 strategy 时应触发 _compute_strategy_weights。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
         from core.models.recall_strategy import RecallStrategy
 
@@ -601,12 +692,12 @@ class TestDualRouteRetriever:
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         results = await retriever.search("test", k=5, strategy=RecallStrategy.RELATIONSHIP_REVIEW)
         assert len(results) >= 1
-        # With RELATIONSHIP_REVIEW strategy, graph_weight should be dominant (0.70)
+        # RELATIONSHIP_REVIEW 策略下 graph_weight 应占主导（0.70）。
 
     def test_build_score_breakdown_no_doc_result(
         self, doc_retriever: AsyncMock, graph_retriever: AsyncMock, memory_loader: AsyncMock
     ) -> None:
-        """_build_score_breakdown with None doc_result — document_* fields still present (line 318-324)."""
+        """doc_result 为 None 时，_build_score_breakdown 仍应保留 document_* 字段。"""
         from core.retrieval.dual_route_retriever import DualRouteRetriever
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
 
