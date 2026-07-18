@@ -54,6 +54,8 @@ class PluginInitializer:
         self.backfill_scheduler: BackfillScheduler | None = None
         self.injection_decision_store: InjectionDecisionStore | None = None
         self.injection_decision_recorder: InjectionDecisionRecorder | None = None
+        self.memory_evolution_store: Any | None = None
+        self.memory_evolution_manager: Any | None = None
         self.affection_store: Any | None = None
         self.affection_manager: Any | None = None
         self.expression_store: Any | None = None
@@ -70,6 +72,7 @@ class PluginInitializer:
         self._initialization_complete = False
         self._initialization_lock = asyncio.Lock()
         self._injection_close_lock = asyncio.Lock()
+        self._evolution_close_lock = asyncio.Lock()
         self._initialization_failed = False
         self._initialization_error: str | None = None
 
@@ -141,6 +144,7 @@ class PluginInitializer:
         """执行完整初始化流程"""
         logger.info("开始完整初始化流程...")
         owns_injection_components = False
+        owns_evolution_components = False
         try:
             faiss_cls = self._faiss_checker.load_vec_db_class()
             components = await self._component_factory.build_all(
@@ -161,7 +165,12 @@ class PluginInitializer:
             self.injection_decision_recorder = components[
                 "injection_decision_recorder"
             ]
+            self.memory_evolution_store = components.get("memory_evolution_store")
+            self.memory_evolution_manager = components.get("memory_evolution_manager")
             owns_injection_components = True
+            owns_evolution_components = bool(
+                self.memory_evolution_store or self.memory_evolution_manager
+            )
             self.prompt_protection = self._create_prompt_protection_service()
             self.memory_processor.prompt_protection_service = self.prompt_protection
             await self._initialize_cognitive_components()
@@ -185,6 +194,14 @@ class PluginInitializer:
             self._initialization_complete = True
             logger.info("记忆插件初始化成功。")
         except BaseException as e:
+            if owns_evolution_components:
+                try:
+                    await self.close_memory_evolution_components()
+                except BaseException:
+                    logger.error(
+                        "初始化失败后关闭记忆演化组件失败",
+                        exc_info=True,
+                    )
             if owns_injection_components:
                 try:
                     await self.close_injection_components()
@@ -317,6 +334,8 @@ class PluginInitializer:
                 "memory_processor": self.memory_processor is not None,
                 "conversation_manager": self.conversation_manager is not None,
                 "index_validator": self.index_validator is not None,
+                "memory_evolution_store": self.memory_evolution_store is not None,
+                "memory_evolution_manager": self.memory_evolution_manager is not None,
             },
         }
 
@@ -381,6 +400,35 @@ class PluginInitializer:
                 else:
                     if self.injection_decision_store is store:
                         self.injection_decision_store = None
+
+            if first_error is not None:
+                raise first_error
+
+    async def close_memory_evolution_components(self) -> None:
+        """按 manager 后 Store 的顺序关闭记忆演化组件。"""
+
+        async with self._evolution_close_lock:
+            first_error: BaseException | None = None
+            manager = self.memory_evolution_manager
+            if manager is not None:
+                try:
+                    await manager.stop()
+                except BaseException as exc:
+                    first_error = exc
+                else:
+                    if self.memory_evolution_manager is manager:
+                        self.memory_evolution_manager = None
+
+            store = self.memory_evolution_store
+            if store is not None:
+                try:
+                    await store.close()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
+                else:
+                    if self.memory_evolution_store is store:
+                        self.memory_evolution_store = None
 
             if first_error is not None:
                 raise first_error

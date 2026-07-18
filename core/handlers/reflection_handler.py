@@ -45,6 +45,7 @@ class ReflectionHandler:
         relation_manager: Any | None = None,
         prompt_protection_service: Any | None = None,
         write_guard_cb: Any | None = None,
+        memory_evolution_manager: Any | None = None,
     ) -> None:
         self._context = context
         self._config_manager = config_manager
@@ -58,6 +59,7 @@ class ReflectionHandler:
         self._relation_manager = relation_manager
         self._prompt_protection = prompt_protection_service
         self._write_guard_cb = write_guard_cb
+        self._memory_evolution_manager = memory_evolution_manager
 
         self._storage_tasks: set[asyncio.Task] = set()
         self._storage_sessions_inflight: set[str] = set()
@@ -332,7 +334,7 @@ class ReflectionHandler:
         protection_required: bool = False,
         event: AstrMessageEvent | None = None,
     ) -> str:
-        """Sanitize the user-visible response and consume its request scope."""
+        """清理用户可见回复，并消费与该请求关联的保护作用域。"""
         try:
             if protection_required:
                 if self._prompt_protection is None:
@@ -748,7 +750,7 @@ class ReflectionHandler:
                             "message_count": end_index - start_index,
                         }
                         try:
-                            await self._memory_engine.add_memory(
+                            memory_id = await self._memory_engine.add_memory(
                                 content=mem["content"],
                                 session_id=session_id,
                                 persona_id=persona_id,
@@ -756,6 +758,7 @@ class ReflectionHandler:
                                 metadata=metadata,
                                 atoms=mem.get("atoms", []),
                             )
+                            await self._schedule_evolution_after_write(memory_id)
                             if idempotency_key:
                                 successful_keys.add(idempotency_key)
                             return True
@@ -895,6 +898,21 @@ class ReflectionHandler:
             f"[{session_id}] 记录待重试总结：范围=[{start_index}:{end_index}]，"
             f"重试次数={new_retry_count}/3"
         )
+
+    async def _schedule_evolution_after_write(self, memory_id: int) -> None:
+        """从 canonical Store 重读 source 后再通知记忆演化管理器。"""
+
+        manager = self._memory_evolution_manager
+        if manager is None:
+            return
+        try:
+            sources = await manager.store.load_sources((int(memory_id),))
+            if sources:
+                await manager.schedule_consider(sources[0])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("canonical 写入成功，但记忆演化任务调度失败")
 
     @staticmethod
     def _memory_idempotency_key(

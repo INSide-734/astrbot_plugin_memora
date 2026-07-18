@@ -1,8 +1,8 @@
-"""测试插件初始化与版本检查 modules.
+"""测试插件初始化与版本检查模块。
 
-Covers:
-- core/plugin_initializer.py — PluginInitializer
-- core/version_check.py — version parsing and comparison
+覆盖范围：
+- core/plugin_initializer.py — PluginInitializer；
+- core/version_check.py — 版本解析与比较。
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ class TestVersionLt:
     def test_different_width_versions(self) -> None:
         from core.version_check import _version_lt
 
-        # "4" should be treated as (4,0,0) vs (4,0,1)
+        # 单独的 "4" 按 (4, 0, 0) 与 (4, 0, 1) 比较。
         assert _version_lt("4", "4.0.1") is True
         assert _version_lt("4.0.1", "4") is False
 
@@ -172,7 +172,7 @@ class TestDetectAstrbotVersion:
     """测试 _detect_astrbot_version()."""
 
     def test_returns_none_when_package_not_found(self) -> None:
-        """当 importlib_metadata can't find the package."""
+        """验证 importlib_metadata 找不到包时的结果。"""
         import importlib.metadata
 
         with patch.object(
@@ -180,7 +180,7 @@ class TestDetectAstrbotVersion:
             "version",
             side_effect=importlib.metadata.PackageNotFoundError,
         ):
-            # Reload the module to re-run _detect_astrbot_version()
+            # 重新加载模块以再次执行 _detect_astrbot_version()。
             import importlib
             import core.version_check
 
@@ -188,7 +188,7 @@ class TestDetectAstrbotVersion:
             assert core.version_check._detect_astrbot_version() is None
 
     def test_returns_version_when_package_found(self) -> None:
-        """当 importlib_metadata finds the package."""
+        """验证 importlib_metadata 找到包时的结果。"""
         import importlib.metadata
 
         with patch.object(
@@ -204,7 +204,7 @@ class TestDetectAstrbotVersion:
 
 
 class TestModuleConstants:
-    """测试 module-level constants."""
+    """测试模块级常量。"""
 
     def test_min_version_is_defined(self) -> None:
         from core.version_check import _MIN_ASTRBOT_VERSION
@@ -307,7 +307,7 @@ class TestPluginInitializerConstruction:
         assert result is False
 
     def test_stop_scheduler_with_none_scheduler(self) -> None:
-        """stop_scheduler should be a no-op when decay_scheduler is None."""
+        """衰减调度器为空时，stop_scheduler 应直接返回。"""
         from core.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
@@ -317,7 +317,7 @@ class TestPluginInitializerConstruction:
         )
         import asyncio
 
-        # Should not raise
+        # 不应抛出异常。
         asyncio.run(init.stop_scheduler())
 
     def test_stop_scheduler_with_active_scheduler(self) -> None:
@@ -1082,6 +1082,7 @@ class TestInjectionDecisionLifecycle:
         assert components["injection_decision_recorder"] is injection_components[
             "injection_decision_recorder"
         ]
+        await components["memory_evolution_store"].close()
 
     @pytest.mark.asyncio
     async def test_plugin_initializer_retains_and_closes_injection_components_once(
@@ -1427,3 +1428,36 @@ class TestMemoraInjectionLifecycle:
         memory_tool_type.assert_called_once()
         plugin.context.add_llm_tools.assert_not_called()
         command_handler_type.assert_called_once()
+
+
+class TestMemoryEvolutionLifecycle:
+    """验证记忆演化组件的就绪快照与关闭顺序。"""
+
+    @pytest.mark.asyncio
+    async def test_close_stops_manager_before_store(self) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), ".")
+        close_order: list[str] = []
+        manager = MagicMock()
+        manager.stop = AsyncMock(side_effect=lambda: close_order.append("manager"))
+        store = MagicMock()
+        store.close = AsyncMock(side_effect=lambda: close_order.append("store"))
+        initializer.memory_evolution_manager = manager
+        initializer.memory_evolution_store = store
+
+        await initializer.close_memory_evolution_components()
+
+        manager.stop.assert_awaited_once()
+        store.close.assert_awaited_once()
+        assert close_order == ["manager", "store"]
+
+    def test_readiness_contains_only_evolution_component_booleans(self) -> None:
+        from core.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), ".")
+        snapshot = initializer.get_readiness_snapshot()
+
+        components = snapshot["components_ready"]
+        assert components["memory_evolution_store"] is False
+        assert components["memory_evolution_manager"] is False

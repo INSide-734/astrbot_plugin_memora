@@ -31,6 +31,7 @@ class DualRouteRetriever:
         personalized_ranker=None,
         profile_manager=None,
         reranker=None,
+        derived_expander=None,
     ):
         self.document_retriever = document_retriever
         self.graph_retriever = graph_retriever
@@ -49,6 +50,7 @@ class DualRouteRetriever:
         self.profile_manager = profile_manager
         # v2.5: 可插拔重排序器（MMR / Cross-Encoder / LLM / Hybrid）
         self.reranker = reranker
+        self.derived_expander = derived_expander
         self._reranker_strategy = self.config.get("reranker.strategy", "mmr")
         # 阶段计时存储（每次 search() 后更新）
         self.last_search_timing: dict[str, float] = {}
@@ -146,7 +148,7 @@ class DualRouteRetriever:
         *,
         query: str,
     ) -> list[HybridResult]:
-        """Run sync or async rerankers without letting failures break recall."""
+        """兼容同步和异步重排序器，失败时保持基础召回结果。"""
         fallback = list(results)
         fallback.sort(key=lambda item: item.final_score, reverse=True)
         try:
@@ -375,7 +377,7 @@ class DualRouteRetriever:
         query: str,
         query_intent: QueryIntent | None = None,
     ) -> tuple[float, float, str]:
-        """Adjust document/graph weights using LLM intent (R1) or keyword fallback."""
+        """根据 LLM 意图（R1）或关键词降级结果调整文档/图路权重。"""
         base_document = self.document_route_weight
         base_graph = self.graph_route_weight
         if not self.dynamic_route_weighting:

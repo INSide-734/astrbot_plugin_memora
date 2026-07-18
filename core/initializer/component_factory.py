@@ -11,10 +11,14 @@ from ..injection.recorder import InjectionDecisionRecorder
 from ..managers.backup_manager import BackupManager
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
+from ..managers.memory_evolution_gate import MemoryEvolutionGate
+from ..managers.memory_evolution_manager import MemoryEvolutionManager
+from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_processor import MemoryProcessor
 from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
+from ..storage.memory_evolution_store import MemoryEvolutionStore
 from ..validators.index_validator import IndexValidator
 
 
@@ -42,6 +46,9 @@ class ComponentFactory:
         graph_doc_path = data_dir_path / "memora_graph_documents.db"
         graph_index_path = data_dir_path / "memora_graph.index"
         graph_memory_enabled = self.config_manager.get("graph_memory.enabled", True)
+        evolution_config = self.config_manager.get_section("memory_evolution")
+        if not isinstance(evolution_config, dict):
+            evolution_config = {}
 
         if not embedding_provider:
             raise ProviderNotReadyError("Embedding Provider 未初始化")
@@ -68,6 +75,9 @@ class ComponentFactory:
         else:
             await db.initialize()
 
+        memory_evolution_store = MemoryEvolutionStore(str(db_path))
+        await memory_evolution_store.initialize()
+
         logger.info(f"数据库已初始化。数据目录: {self.data_dir}")
 
         backup_manager = BackupManager(self.data_dir)
@@ -76,6 +86,8 @@ class ComponentFactory:
         stopwords_dir.mkdir(parents=True, exist_ok=True)
 
         engine_config = self._build_engine_config(stopwords_dir, graph_memory_enabled)
+        engine_config["memory_evolution"] = evolution_config
+        engine_config["derived_expander"] = None
         memory_engine = MemoryEngine(
             db_path=str(db_path),
             faiss_db=db,
@@ -120,6 +132,20 @@ class ComponentFactory:
         )
         logger.info("MemoryProcessor 已初始化")
 
+        memory_evolution_gate = MemoryEvolutionGate(evolution_config)
+        memory_evolution_consolidator = MemoryConsolidator(
+            memory_processor.llm_client.call_llm_with_retry,
+            evolution_config,
+        )
+        memory_evolution_manager = MemoryEvolutionManager(
+            memory_evolution_store,
+            memory_evolution_gate,
+            memory_evolution_consolidator,
+            evolution_config,
+        )
+        if memory_evolution_manager.mode != "disabled":
+            await memory_evolution_manager.start()
+
         index_validator = IndexValidator(str(db_path), db)
         await db_setup.auto_rebuild_index_if_needed(index_validator, memory_engine)
 
@@ -158,6 +184,8 @@ class ComponentFactory:
                 memory_engine,
                 graph_db,
                 db,
+                memory_evolution_manager,
+                memory_evolution_store,
             )
             raise
 
@@ -170,6 +198,8 @@ class ComponentFactory:
             "conversation_manager": conversation_manager,
             "index_validator": index_validator,
             "decay_scheduler": decay_scheduler,
+            "memory_evolution_store": memory_evolution_store,
+            "memory_evolution_manager": memory_evolution_manager,
             **injection_components,
         }
 
@@ -180,8 +210,12 @@ class ComponentFactory:
         memory_engine,
         graph_db,
         db,
+        memory_evolution_manager=None,
+        memory_evolution_store=None,
     ) -> None:
         cleanup_steps = (
+            ("MemoryEvolutionManager", memory_evolution_manager, "stop"),
+            ("MemoryEvolutionStore", memory_evolution_store, "close"),
             ("DecayScheduler", decay_scheduler, "stop"),
             ("ConversationStore", conversation_store, "close"),
             ("MemoryEngine", memory_engine, "close"),

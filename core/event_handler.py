@@ -50,6 +50,7 @@ class EventHandler:
         perf_tracker: Any | None = None,
         injection_recorder: InjectionDecisionRecorder | None = None,
         memory_tool_available: bool = False,
+        memory_evolution_manager: Any | None = None,
     ) -> None:
         self.context = context
         self.config_manager = config_manager
@@ -63,6 +64,7 @@ class EventHandler:
         self._write_guard_cb = write_guard_cb
         self._injection_recorder = injection_recorder
         self._memory_tool_available = memory_tool_available
+        self._memory_evolution_manager = memory_evolution_manager
 
         self._dedup = DedupManager(max_size=1000, ttl=300)
         self._extractor = MessageContentExtractor()
@@ -99,6 +101,7 @@ class EventHandler:
             relation_manager=relation_manager,
             prompt_protection_service=prompt_protection_service,
             write_guard_cb=write_guard_cb,
+            memory_evolution_manager=memory_evolution_manager,
         )
 
     @property
