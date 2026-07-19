@@ -410,6 +410,26 @@ class TestMemoraPluginConfig:
         assert len(second.instance_id) == 32
         assert first.instance_id != second.instance_id
 
+    def test_configures_debug_reporting_with_configured_data_dir(self) -> None:
+        """调试开关沿用配置值，并把 AstrBot 数据目录传给记录器。"""
+        MemoraPlugin = _load_memora_plugin_class()
+        module = sys.modules[MemoraPlugin.__module__]
+        astrbot_config = {"debug": True}
+
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ), patch.object(module, "set_debug_mode") as set_debug_mode:
+            MemoraPlugin(MagicMock(), astrbot_config)
+
+        set_debug_mode.assert_called_once_with(
+            True,
+            data_dir=str(Path(__file__).resolve().parents[1] / ".pytest_memora_data"),
+        )
+
 
 class TestMemoraPluginReloadScheduling:
     """配置应用后的插件重载必须延迟执行且不进入常规任务集合。"""
