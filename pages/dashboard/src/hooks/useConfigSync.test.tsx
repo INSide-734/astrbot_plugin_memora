@@ -216,6 +216,21 @@ describe("useConfigSync", () => {
     expect(hook.result.current.dirtyPaths).toEqual([]);
   });
 
+  it("loads configuration data unwrapped by the AstrBot page bridge", async () => {
+    schemaHandler = async () =>
+      schemaSuccess().data as unknown as ApiResponse;
+    stateHandler = async () =>
+      stateSuccess(BASE_CONFIG).data as unknown as ApiResponse;
+
+    const hook = renderSync();
+
+    await waitForLoaded(hook);
+    expect(hook.result.current.schemaData).toEqual(schemaSuccess().data);
+    expect(hook.result.current.baseConfig).toEqual(BASE_CONFIG);
+    expect(hook.result.current.revision).toBe("rev-1");
+    expect(hook.result.current.instanceId).toBe("instance-1");
+  });
+
   it("changes a field immutably and exposes sorted dirty/local paths", async () => {
     const hook = renderSync();
     await waitForLoaded(hook);
