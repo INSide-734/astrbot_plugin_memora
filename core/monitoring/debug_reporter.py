@@ -20,6 +20,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Iterator
 
+from astrbot.api import logger as _astrbot_logger
+
 MAX_BYTES = 5 * 1024 * 1024
 BACKUP_COUNT = 2
 FILE_NAME = "memora-debug.jsonl"
@@ -104,9 +106,6 @@ _ENUM_FIELDS = {
 }
 _MAX_NUMBER = 10**12
 
-_logger = logging.getLogger("astrbot_plugin_memora.debug")
-_logger.setLevel(logging.INFO)
-_logger.propagate = True
 _lock = threading.RLock()
 _enabled = False
 _file_handler: RotatingFileHandler | None = None
@@ -125,7 +124,6 @@ def _close_file_handler() -> None:
     _file_handler = None
     if handler is not None:
         try:
-            _logger.removeHandler(handler)
             handler.close()
         except Exception:
             pass
@@ -139,15 +137,11 @@ def _exception_location(exception: BaseException) -> dict[str, Any]:
     """提取不含路径和参数的最后一个调用位置。"""
     traceback = exception.__traceback__
     selected = None
-    last = None
     while traceback is not None:
-        last = traceback
         module = str(traceback.tb_frame.f_globals.get("__name__", ""))
         if module == "main" or module.startswith("core") or module.startswith("astrbot_plugin_memora"):
             selected = traceback
         traceback = traceback.tb_next
-    if selected is None:
-        selected = last
     if selected is None:
         return {}
     frame = selected.tb_frame
@@ -181,39 +175,42 @@ def _emit_serialized(serialized: str) -> None:
     """向两个 sink 写入已规范化的同一条 JSON。"""
     global _file_handler
     try:
-        _logger.info("[MemoraDebug] %s", serialized)
+        _astrbot_logger.info("[MemoraDebug] %s", serialized)
     except Exception:
         pass
-    handler = _file_handler
-    if handler is None:
-        return
-    try:
-        # 文件中保留纯 JSON，便于用户直接使用 json.loads 逐行检查。
-        record = logging.LogRecord(
-            name=_logger.name,
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg=serialized,
-            args=(),
-            exc_info=None,
-        )
-        handler.handle(record)
-    except Exception as exception:
-        with _lock:
+    with _lock:
+        handler = _file_handler
+        if handler is None:
+            return
+        try:
+            # 文件中保留纯 JSON，便于用户直接使用 json.loads 逐行检查。
+            record = logging.LogRecord(
+                name="astrbot_plugin_memora.debug_reporter",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=serialized,
+                args=(),
+                exc_info=None,
+            )
+            handler.handle(record)
+        except Exception as exception:
             if _file_handler is handler:
                 _close_file_handler()
-        disabled_event = {
-            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "schema_version": SCHEMA_VERSION,
-            "event": "debug_file_sink_disabled",
-            "operation_token": _operation_token.get() or _new_token(),
-            "exception_type": _safe_exception_type(exception),
-        }
-        try:
-            _logger.info("[MemoraDebug] %s", json.dumps(disabled_event, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
-        except Exception:
-            pass
+            disabled_event = {
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "schema_version": SCHEMA_VERSION,
+                "event": "debug_file_sink_disabled",
+                "operation_token": _operation_token.get() or _new_token(),
+                "exception_type": _safe_exception_type(exception),
+            }
+            try:
+                _astrbot_logger.info(
+                    "[MemoraDebug] %s",
+                    json.dumps(disabled_event, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+                )
+            except Exception:
+                pass
 
 
 def _emit_rejection(reason_code: str) -> None:
