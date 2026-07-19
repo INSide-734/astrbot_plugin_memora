@@ -1,40 +1,69 @@
-# Python
+# Python 缓存与构建产物
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 *.egg-info/
+*.egg
 dist/
 build/
-*.egg
-*.pyc
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.pytest_memora_data/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.tox/
+.nox/
 
-# Virtualenv
+# Python 虚拟环境
 venv/
 .venv/
 
-# IDE
+# Node 与 Dashboard 本地产物
+node_modules/
+pages/dashboard/assets/
+pages/dashboard/.vite/
+pages/dashboard/coverage/
+pages/dashboard/playwright-report/
+pages/dashboard/test-results/
+
+# IDE 与编辑器临时文件
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# OS
+# 操作系统文件
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Plugin runtime
+# 本地环境变量与凭据
+.env
+.env.*
+!.env.example
+
+# 插件运行时数据与索引
 .plugin_version
-storage/*.db
-storage/*.db-journal
-storage/*.index
-storage/*.bin
-pages/dashboard/assets/
+storage/**/*.db*
+storage/**/*.index
+storage/**/*.bin
+storage/**/*.sqlite*
+
+# 项目本地工具状态与临时目录
 .context/
 .ccg/
 .claude/
 .codegraph/
-openspec/
-data/
 .agents/
 .worktrees/
 .codex/
-node_modules/
+openspec/
+.tmp-*/
+
+# 本地数据目录
+data/
