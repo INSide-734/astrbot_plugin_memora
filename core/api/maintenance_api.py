@@ -11,6 +11,7 @@ from collections.abc import Mapping
 
 from astrbot.api import logger
 
+from .backup_api import BackupApiMixin
 from .response_utils import error_response, ok_response
 from ..validators.persistence_health_validator import PersistenceHealthValidator
 
@@ -287,204 +288,13 @@ class MaintenanceApiMixin:
             logger.error(f"压缩数据库失败: {e}")
             return error_response(f"压缩数据库失败：{e}")
 
-    async def create_backup(self):
-        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
-        if guard:
-            return guard
-        engines, err = await self._ensure_plugin_ready()
-        if err:
-            return err
-        try:
-            plugin = self.plugin
-            if (
-                hasattr(plugin, "_backup_manager")
-                and plugin._backup_manager is not None
-            ):
-                backup_path = await plugin._backup_manager.create_backup()
-                return ok_response({"message": "备份创建完成", "path": backup_path})
-            return error_response("备份管理器不可用")
-        except Exception as e:
-            logger.error(f"创建备份失败: {e}")
-            return error_response(f"创建备份失败：{e}")
-
-    async def list_backups(self):
-        """返回备份列表（供 SystemPage 展示）。"""
-        try:
-            plugin = self.plugin
-            if (
-                hasattr(plugin, "_backup_manager")
-                and plugin._backup_manager is not None
-            ):
-                data_dir = str(plugin._backup_manager.data_dir)
-            else:
-                data_dir = (
-                    self.plugin.initializer.data_dir if self.plugin.initializer else ""
-                )
-            if not data_dir:
-                return ok_response({"backups": [], "total": 0})
-            from ..managers.backup_manager import BackupManager
-
-            backups = BackupManager.list_backups(data_dir)
-            backups = MaintenanceApiMixin._coerce_result_list(backups)
-            return ok_response({"backups": backups, "total": len(backups)})
-        except Exception as e:
-            logger.error(f"获取备份列表失败: {e}")
-            return error_response(f"获取备份列表失败：{e}")
-
-    async def delete_backup(self):
-        """删除单个备份。"""
-        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
-        if guard:
-            return guard
-        from quart import request
-        from ..managers.backup_manager import BackupManager
-
-        payload = await request.get_json(silent=True) or {}
-        payload, error = MaintenanceApiMixin._json_object_payload_or_error(payload)
-        if error:
-            return error
-        backup_name = str(payload.get("name", "")).strip()
-        if not backup_name:
-            return error_response("缺少备份名称")
-        try:
-            backup_name = BackupManager.validate_backup_name(backup_name)
-        except ValueError as e:
-            return error_response(str(e))
-
-        try:
-            plugin = self.plugin
-            if not hasattr(plugin, "_backup_manager") or plugin._backup_manager is None:
-                return error_response("备份管理器不可用")
-            deleted = plugin._backup_manager.delete_backup(backup_name)
-            if not deleted:
-                return error_response(f"未找到备份：{backup_name}")
-            return ok_response(
-                {"message": f"已删除备份 {backup_name}", "name": backup_name}
-            )
-        except ValueError as e:
-            return error_response(str(e))
-        except Exception as e:
-            logger.error(f"删除备份失败: {e}")
-            return error_response(f"删除备份失败：{e}")
-
-    async def batch_delete_backups(self):
-        """批量删除备份。"""
-        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
-        if guard:
-            return guard
-        from quart import request
-        from ..managers.backup_manager import BackupManager
-
-        payload = await request.get_json(silent=True) or {}
-        payload, error = MaintenanceApiMixin._json_object_payload_or_error(payload)
-        if error:
-            return error
-        names: list[str] = payload.get("names", []) or []
-        if not isinstance(names, list):
-            return error_response("names 必须为列表")
-        if not names:
-            return error_response("缺少待删除的备份名称列表")
-
-        try:
-            plugin = self.plugin
-            if not hasattr(plugin, "_backup_manager") or plugin._backup_manager is None:
-                return error_response("备份管理器不可用")
-            bm = plugin._backup_manager
-            deleted, failed = 0, 0
-            for name in names:
-                try:
-                    normalized_name = BackupManager.validate_backup_name(name)
-                    if bm.delete_backup(normalized_name):
-                        deleted += 1
-                    else:
-                        failed += 1
-                except ValueError as exc:
-                    logger.debug(
-                        "[维护接口] 批量删除时发现非法备份名: %s",
-                        exc,
-                        exc_info=True,
-                    )
-                    failed += 1
-                except Exception as exc:
-                    logger.error(
-                        "[维护接口] 删除备份失败，名称=%s: %s",
-                        name,
-                        exc,
-                        exc_info=True,
-                    )
-                    failed += 1
-            return ok_response(
-                {
-                    "message": f"已删除 {deleted}/{len(names)} 个备份",
-                    "deleted": deleted,
-                    "failed": failed,
-                }
-            )
-        except Exception as e:
-            logger.error(f"批量删除备份失败: {e}")
-            return error_response(f"批量删除备份失败：{e}")
-
-    async def restore_backup(self):
-        """从指定备份目录暂存恢复数据，重启后在 DB 打开前生效。"""
-        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
-        if guard:
-            return guard
-        from quart import request
-        from ..managers.backup_manager import BackupManager
-
-        payload = await request.get_json(silent=True) or {}
-        payload, error = MaintenanceApiMixin._json_object_payload_or_error(payload)
-        if error:
-            return error
-        backup_name = str(payload.get("name", "")).strip()
-        if not backup_name:
-            return error_response("缺少备份名称")
-        try:
-            backup_name = BackupManager.validate_backup_name(backup_name)
-        except ValueError as e:
-            return error_response(str(e))
-
-        try:
-            plugin = self.plugin
-            if not hasattr(plugin, "_backup_manager") or plugin._backup_manager is None:
-                return error_response("备份管理器不可用")
-            bm = plugin._backup_manager
-            result = bm.stage_restore(backup_name)
-            if not isinstance(result, dict):
-                result = {}
-            staged = MaintenanceApiMixin._coerce_result_int(result.get("staged", 0), 0)
-            skipped = MaintenanceApiMixin._coerce_result_int(result.get("skipped", 0), 0)
-            staged_files = MaintenanceApiMixin._coerce_result_str_list(
-                result.get("staged_files", [])
-            )
-            skipped_files = MaintenanceApiMixin._coerce_result_str_list(
-                result.get("skipped_files", [])
-            )
-            if staged <= 0:
-                return error_response(f"备份 {backup_name} 中没有可恢复文件")
-            msg = (
-                f"已暂存 {staged} 个恢复文件，{skipped} 个文件已跳过。"
-                f"请重启 AstrBot 完成恢复；重启前写入操作已进入维护保护。"
-            )
-            logger.info(f"[备份管理] {msg}")
-            return ok_response(
-                {
-                    "message": msg,
-                    "restored": 0,
-                    "staged": staged,
-                    "skipped": skipped,
-                    "pending": True,
-                    "staged_files": staged_files,
-                    "skipped_files": skipped_files,
-                }
-            )
-        except FileNotFoundError as e:
-            return error_response(str(e))
-        except ValueError as e:
-            return error_response(str(e))
-        except Exception as e:
-            logger.error(f"恢复备份失败: {e}")
-            return error_response(f"恢复备份失败：{e}")
+    create_backup = BackupApiMixin.create_backup
+    list_backups = BackupApiMixin.list_backups
+    delete_backup = BackupApiMixin.delete_backup
+    batch_delete_backups = BackupApiMixin.batch_delete_backups
+    restore_backup = BackupApiMixin.restore_backup
+    get_backup_status = BackupApiMixin.get_backup_status
+    cancel_restore = BackupApiMixin.cancel_restore
 
     async def export_memories(self):
         """导出记忆为 JSONL 或 Markdown（返回内联内容用于浏览器下载）。"""

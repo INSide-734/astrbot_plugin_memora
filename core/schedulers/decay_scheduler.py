@@ -66,6 +66,15 @@ class DecayScheduler:
         self._task: asyncio.Task | None = None
         self._startup_task: asyncio.Task | None = None
         self._running = False
+        self.last_backup_result: dict[str, object] = {
+            "status": "idle",
+            "reason_code": None,
+        }
+        self.last_backup_prune: dict[str, object] = {
+            "removed": [],
+            "skipped": [],
+            "failed": [],
+        }
 
     @staticmethod
     def _log_task_exception(task: asyncio.Task) -> None:
@@ -315,43 +324,63 @@ class DecayScheduler:
             logger.warning(f"[衰减调度] 前瞻记忆扫描异常: {e}")
 
     async def _run_backup(self) -> None:
-        """执行数据库备份并清理过期备份"""
+        """执行定时备份并委托管理器清理过期备份。"""
         if not self.backup_manager:
             return
         try:
-            backup_path = await self.backup_manager.create_backup()
-            if backup_path:
-                logger.info(f"[衰减调度] 每日备份完成: {backup_path}")
-                await self._cleanup_old_backups()
-            else:
-                logger.warning("[衰减调度] 每日备份失败")
-        except Exception as e:
-            logger.error(f"[衰减调度] 备份异常: {e}", exc_info=True)
+            result = await self.backup_manager.create_backup(kind="scheduled")
+        except Exception as exc:
+            self.last_backup_result = {
+                "status": "failed",
+                "reason_code": "backup_create_failed",
+            }
+            logger.error(
+                "[衰减调度] 定时备份失败 error_class=%s",
+                type(exc).__name__,
+            )
+            return
+
+        if not result:
+            self.last_backup_result = {
+                "status": "failed",
+                "reason_code": "backup_create_failed",
+            }
+            logger.warning("[衰减调度] 定时备份失败")
+            return
+
+        backup_name = result.get("name") if isinstance(result, dict) else None
+        self.last_backup_result = {
+            "status": "succeeded",
+            "name": str(backup_name) if backup_name else None,
+        }
+        logger.info("[衰减调度] 定时备份完成")
+        try:
+            prune_result = self.backup_manager.prune_backups(
+                keep_days=self.backup_keep_days
+            )
+            self.last_backup_prune = (
+                prune_result if isinstance(prune_result, dict) else {"removed": []}
+            )
+        except Exception:
+            self.last_backup_prune = {
+                "removed": [],
+                "skipped": [],
+                "failed": [{"reason_code": "backup_prune_failed"}],
+            }
+            logger.warning("[衰减调度] 定时备份清理失败")
 
     async def _cleanup_old_backups(self) -> None:
-        """删除超过保留天数的旧备份文件"""
+        """兼容旧调用，转交 BackupManager 的保留策略。"""
         if not self.backup_manager:
             return
         try:
-            backup_dir = self.data_dir / "backups"
-            if not backup_dir.exists():
-                return
-
-            cutoff = datetime.now().timestamp() - self.backup_keep_days * 86400
-            removed = 0
-            for f in backup_dir.iterdir():
-                if f.is_dir() and f.stat().st_mtime < cutoff:
-                    import shutil
-
-                    shutil.rmtree(f)
-                    removed += 1
-
-            if removed:
-                logger.info(
-                    f"[衰减调度] 清理过期备份 {removed} 个（保留 {self.backup_keep_days} 天）"
-                )
-        except Exception as e:
-            logger.warning(f"[衰减调度] 清理旧备份失败: {e}")
+            result = self.backup_manager.prune_backups(
+                keep_days=self.backup_keep_days
+            )
+            if isinstance(result, dict):
+                self.last_backup_prune = result
+        except Exception:
+            logger.warning("[衰减调度] 定时备份清理失败")
 
     def _seconds_until_next_run(self) -> float:
         """计算距离下次执行的秒数"""

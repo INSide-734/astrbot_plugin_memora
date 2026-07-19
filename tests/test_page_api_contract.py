@@ -151,6 +151,26 @@ def test_dashboard_critical_system_endpoints_are_covered() -> None:
     )
 
 
+def test_backup_restore_status_and_cancel_routes_are_registered_under_both_prefixes() -> None:
+    plugin = MagicMock()
+    api = PluginPageApi(plugin)
+    api.register_routes()
+
+    registered = {
+        (call.args[0], tuple(call.args[2]))
+        for call in plugin.context.register_web_api.call_args_list
+    }
+    for prefix in (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES):
+        assert (f"{prefix}/backup/status", ("GET",)) in registered
+        assert (f"{prefix}/backup/restore/cancel", ("POST",)) in registered
+        assert (f"{prefix}/backup/status", ("POST",)) not in registered
+        assert (f"{prefix}/backup/restore/cancel", ("GET",)) not in registered
+
+    metadata = {item["path"]: item for item in api.get_route_metadata()}
+    assert metadata[f"{PAGE_API_PREFIX}/backup/status"]["risk"] == "read"
+    assert metadata[f"{PAGE_API_PREFIX}/backup/restore/cancel"]["risk"] == "destructive"
+
+
 def test_social_write_contract_is_post_only_under_every_page_prefix() -> None:
     plugin = MagicMock()
     api = PluginPageApi(plugin)

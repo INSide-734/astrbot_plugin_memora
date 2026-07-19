@@ -85,8 +85,8 @@ type MutableRecord = Record<string, any>;
 interface ProfileCreateRequest extends Record<string, unknown> { user_id?: unknown; display_name?: unknown; preferences?: unknown; tags?: unknown }
 interface ProfileChanges extends Record<string, unknown> { display_name?: unknown; preferences?: unknown; tags?: unknown }
 const MOCK_BACKUPS: Array<Record<string, unknown>> = [
-  { name: "v2.3.0", directory: "/backups/v2.3.0", file_count: 6, plugin_version: "2.3.0", backup_timestamp: "2026-06-01T10:00:00Z", files: ["memora.db", "conversations.db"] },
-  { name: "manual_20260613_120000", directory: "/backups/manual_20260613_120000", file_count: 6, plugin_version: "2.4.2", backup_timestamp: "2026-06-13T12:00:00Z", files: ["memora.db", "conversations.db"] },
+  { name: "v2.3.0", backup_type: "version_change", file_count: 6, plugin_version: "2.3.0", created_at: "2026-06-01T10:00:00Z", status: "ready", integrity: "verified", total_size_bytes: 2_700_000, can_restore: true, can_hot_restore: true, files: ["memora.db", "conversations.db"] },
+  { name: "manual_20260613_120000", backup_type: "manual", file_count: 6, plugin_version: "2.4.2", created_at: "2026-06-13T12:00:00Z", status: "ready", integrity: "legacy_unverified", total_size_bytes: 2_600_000, can_restore: true, can_hot_restore: true, warning_codes: ["legacy_unverified"], files: ["memora.db", "conversations.db"] },
 ];
 const MUTABLE_SEEDS = structuredClone({ MEMORIES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_MEANINGS, AFFECTION_DATA, SOCIAL_RELATIONS, EVALUATION_REPORTS, REVIEW_ITEMS, REVIEW_ACTIONS, MOCK_BACKUPS });
 let nextEntityRevision = 1;
@@ -96,6 +96,8 @@ const withoutRevision = (value: MutableRecord): MutableRecord => {
   const { revision: _revision, ...entity } = value;
   return structuredClone(entity);
 };
+let mockRestoreStatus: MutableRecord | null = null;
+let mockRestorePollCount = 0;
 const envelope = (value: MutableRecord): ApiResponse => ok({ entity: withoutRevision(value), revision: value.revision });
 const validation = (field_errors: Record<string, string>): ApiResponse => err("Validation failed", "validation_error", undefined, field_errors);
 const notFound = (message: string): ApiResponse => err(message, "not_found");
@@ -123,6 +125,8 @@ export function resetMockServerState(): void {
   for (const key of Object.keys(REVIEW_ACTIONS)) delete REVIEW_ACTIONS[key];
   Object.assign(REVIEW_ACTIONS, seeds.REVIEW_ACTIONS);
   nextEntityRevision = 1;
+  mockRestoreStatus = null;
+  mockRestorePollCount = 0;
   moodHistory.splice(0);
   configServer.controls.reset();
   _topicSegConfig = structuredClone(INITIAL_TOPIC_SEG_CONFIG);
@@ -1210,7 +1214,27 @@ function handleLearningStatus(): ApiResponse {
 }
 
 function handleBackupList(): ApiResponse {
-  return ok({ backups: MOCK_BACKUPS, total: MOCK_BACKUPS.length });
+  return ok({
+    backups: MOCK_BACKUPS,
+    total: MOCK_BACKUPS.length,
+    capabilities: { hot_reload: true },
+    pending_restore: mockRestoreStatus,
+  });
+}
+
+function handleBackupStatus(params: Record<string, string>): ApiResponse {
+  if (!mockRestoreStatus || params.operation_id !== mockRestoreStatus.operation_id) {
+    return err("restore operation not found", "restore_not_found");
+  }
+  if (mockRestoreStatus.restore_status === "reload_scheduled") {
+    mockRestoreStatus = { ...mockRestoreStatus, restore_status: "validating" };
+  } else if (mockRestoreStatus.restore_status === "validating") {
+    mockRestorePollCount += 1;
+    if (mockRestorePollCount >= 1) {
+      mockRestoreStatus = { ...mockRestoreStatus, restore_status: "succeeded" };
+    }
+  }
+  return ok(structuredClone(mockRestoreStatus));
 }
 
 function handleBackupDelete(body: Record<string, unknown>): ApiResponse {
@@ -1225,12 +1249,24 @@ function handleBackupDelete(body: Record<string, unknown>): ApiResponse {
 function handleBackupBatchDelete(body: Record<string, unknown>): ApiResponse {
   const names = body.names as string[];
   if (!names?.length) return err("names required");
-  let deleted = 0;
+  const deletedNames: string[] = [];
+  const failedItems: Array<{ name: string; reason_code: string }> = [];
   for (const name of names) {
     const idx = MOCK_BACKUPS.findIndex((b) => b.name === name);
-    if (idx !== -1) { MOCK_BACKUPS.splice(idx, 1); deleted++; }
+    if (idx !== -1) {
+      MOCK_BACKUPS.splice(idx, 1);
+      deletedNames.push(name);
+    } else {
+      failedItems.push({ name, reason_code: "backup_not_found" });
+    }
   }
-  return ok({ message: `deleted ${deleted}/${names.length}`, deleted, failed: names.length - deleted });
+  return ok({
+    message: `deleted ${deletedNames.length}/${names.length}`,
+    deleted: deletedNames.length,
+    failed: failedItems.length,
+    deleted_names: deletedNames,
+    failed_items: failedItems,
+  });
 }
 
 function handleBackupRestore(body: Record<string, unknown>): ApiResponse {
@@ -1238,7 +1274,29 @@ function handleBackupRestore(body: Record<string, unknown>): ApiResponse {
   if (!name) return err("backup name required");
   const found = MOCK_BACKUPS.find((b) => b.name === name);
   if (!found) return err(`backup not found: ${name}`);
-  return ok({ message: `restored ${found.file_count} files from ${name}`, restored: found.file_count });
+  const applyMode = body.apply_mode === "reload" ? "reload" : "restart";
+  mockRestorePollCount = 0;
+  mockRestoreStatus = {
+    operation_id: `mock_restore_${Date.now()}`,
+    source_backup_name: name,
+    restore_status: applyMode === "reload" ? "reload_scheduled" : "staged",
+    apply_mode: applyMode,
+    reload_scheduled: applyMode === "reload",
+    requires_manual_restart: applyMode !== "reload",
+    reason_code: found.integrity === "legacy_unverified" ? "legacy_unverified" : null,
+  };
+  return ok(structuredClone(mockRestoreStatus));
+}
+
+function handleBackupRestoreCancel(body: Record<string, unknown>): ApiResponse {
+  if (!mockRestoreStatus || body.operation_id !== mockRestoreStatus.operation_id) {
+    return err("restore operation not found", "restore_not_found");
+  }
+  if (mockRestoreStatus.restore_status !== "staged") {
+    return err("restore cannot be cancelled", "restore_cancel_not_allowed");
+  }
+  mockRestoreStatus = { ...mockRestoreStatus, restore_status: "cancelled" };
+  return ok({ ...mockRestoreStatus, message: "restore cancelled" });
 }
 
 function handleExportMemories(body: Record<string, unknown>): ApiResponse {
@@ -1618,6 +1676,7 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   if (p.startsWith("notes/search")) return handleNoteSearch(params.query ?? "");
   if (p.startsWith("notes/detail")) return handleNoteDetail(params.note_id ?? "");
   if (p === "backup/list" || p.startsWith("backup/list")) return handleBackupList();
+  if (p === "backup/status" || p.startsWith("backup/status?")) return handleBackupStatus(params);
   if (p === "learning/status" || p.startsWith("learning/status")) return handleLearningStatus();
   if (p === "recall/trace/detail" || p.startsWith("recall/trace/detail")) return handleRecallTraceDetail();
   if (p === "evaluation/datasets" || p.startsWith("evaluation/datasets")) return handleEvaluationDatasets();
@@ -1726,6 +1785,7 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   if (p === "system/compact") return ok({ compacted: true });
   if (p === "backup/create") return ok({ backup: { name: `backup_${Date.now()}`, size: 2_600_000, created: new Date().toISOString() } });
   if (p === "backup/restore") return handleBackupRestore(data);
+  if (p === "backup/restore/cancel") return handleBackupRestoreCancel(data);
   if (p === "backup/delete") return handleBackupDelete(data);
   if (p === "backup/batch-delete") return handleBackupBatchDelete(data);
   if (p === "export/memories") return handleExportMemories(data);

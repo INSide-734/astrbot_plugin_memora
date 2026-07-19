@@ -1,8 +1,4 @@
-"""备份与恢复领域模型。
-
-这些类型只描述备份操作的稳定边界；页面 API 应由管理器生成脱敏字典，
-不要直接把 ``Path`` 或内部事务日志暴露给调用方。
-"""
+"""备份与恢复事务的共享类型。"""
 
 from __future__ import annotations
 
@@ -21,7 +17,7 @@ class BackupType(StrEnum):
 
 
 class FileRole(StrEnum):
-    """备份文件在恢复链中的职责。"""
+    """备份文件在数据链中的职责。"""
 
     CANONICAL = "canonical"
     OPERATIONAL = "operational"
@@ -38,7 +34,7 @@ class BackupIntegrity(StrEnum):
 
 
 class RestoreStatus(StrEnum):
-    """恢复事务对外公开的阶段。"""
+    """恢复事务对外暴露的阶段。"""
 
     STAGED = "staged"
     RELOAD_SCHEDULED = "reload_scheduled"
@@ -53,7 +49,7 @@ class RestoreStatus(StrEnum):
 
 
 class BackupOperationError(RuntimeError):
-    """备份/恢复操作失败，异常消息只允许稳定的用户安全摘要。"""
+    """备份或恢复操作失败。"""
 
 
 @dataclass(frozen=True)
@@ -71,7 +67,7 @@ class SnapshotResult:
 
 @dataclass(frozen=True)
 class RestoreFileProgress:
-    """恢复事务中单个文件的持久化进度。"""
+    """恢复事务中单个文件的应用进度。"""
 
     name: str
     role: FileRole
@@ -82,7 +78,7 @@ class RestoreFileProgress:
 
 @dataclass
 class RestorePlan:
-    """恢复事务计划的内存表示。"""
+    """可持久化的恢复计划。"""
 
     operation_id: str
     source_backup_name: str
@@ -93,15 +89,3 @@ class RestorePlan:
     reason_code: str | None = None
     reload_scheduled: bool = False
     requires_manual_restart: bool = False
-
-
-__all__ = [
-    "BackupOperationError",
-    "BackupIntegrity",
-    "BackupType",
-    "FileRole",
-    "RestoreFileProgress",
-    "RestorePlan",
-    "RestoreStatus",
-    "SnapshotResult",
-]
