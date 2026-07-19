@@ -437,6 +437,32 @@ class TestMemoraPluginReloadScheduling:
         assert plugin._background_tasks == set()
 
     @pytest.mark.asyncio
+    async def test_backup_restore_reload_marks_schedule_failure(self) -> None:
+        context = MagicMock()
+        reload_called = asyncio.Event()
+
+        async def reload_plugin(_name: str) -> bool:
+            reload_called.set()
+            return False
+
+        context._star_manager = types.SimpleNamespace(reload=reload_plugin)
+        plugin = self._make_plugin(context)
+        plugin._backup_manager.mark_reload_scheduled = MagicMock()
+        module = sys.modules[plugin.__class__.__module__]
+
+        async def no_delay(_delay: float) -> None:
+            return None
+
+        with patch.object(module.asyncio, "sleep", side_effect=no_delay):
+            assert plugin.schedule_backup_restore_reload("operation-1234") is True
+            await asyncio.wait_for(reload_called.wait(), timeout=1.0)
+            await asyncio.sleep(0)
+
+        plugin._backup_manager.mark_reload_scheduled.assert_called_once_with(
+            "operation-1234", False
+        )
+
+    @pytest.mark.asyncio
     async def test_delays_reload_and_uses_memora_plugin_name(self) -> None:
         context = MagicMock()
         reload_called = asyncio.Event()
