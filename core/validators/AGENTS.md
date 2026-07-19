@@ -2,7 +2,7 @@
 
 # Validators 模块上下文
 
-**最后更新：** 2026-07-17  
+**最后更新：** 2026-07-19
 **源码范围：** `core/validators/*.py`（7 个 Python 文件）
 
 ## 职责与边界
@@ -125,7 +125,7 @@ sequenceDiagram
 3. FTS 表名必须保留封闭白名单；动态 `IN` 只拼接内部生成的 `?`，ID 作为参数传入。
 4. 重建前不得删除/覆盖唯一的 documents 源数据；旧 FAISS 应在新索引通过失败阈值后才替换。
 5. 健康报告中的孤儿 ID、计数与部署路径仍属于运维敏感信息，API 层必须鉴权。
-6. 备份恢复仅在 documents 为空等受控路径使用；不能用陈旧备份覆盖非空主表。
+6. 备份恢复由 `BackupManager` 的事务状态机控制；不能在 validator 内直接覆盖 `documents`。恢复前必须完成 pre-restore 保护、manifest/checksum/`quick_check` 校验，并由启动生命周期在维护写保护下应用；FAISS/FTS/图索引属于可重建派生数据。
 
 ## 异常与并发约束
 

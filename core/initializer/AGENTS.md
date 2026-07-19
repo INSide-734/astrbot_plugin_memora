@@ -27,6 +27,7 @@ flowchart TD
     CF --> CS[ConversationStore / ConversationManager]
     CF --> MP[MemoryProcessor]
     CF --> IV[IndexValidator / DatabaseSetup]
+    CF --> BM[BackupManager]
     CF --> DS[DecayScheduler]
     CF --> IDS[InjectionDecisionStore / Recorder]
 ```
@@ -47,6 +48,12 @@ flowchart TD
 | `DatabaseSetup` | `repair_message_counts(store)` | 调用 `sync_message_counts()` 修复会话计数；失败记录但不阻断启动 |
 | `ComponentFactory` | `build_all(...) -> dict` | 返回数据库、引擎、处理器、备份/会话/索引/衰减、Memory Evolution 及注入决策组件字典 |
 
+## 启动前备份与恢复
+
+`main.py::_initialize_plugin()` 在调用 `PluginInitializer.initialize()` 前，先由插件级 `BackupManager` 执行 `backup_if_needed_async()`，再应用 `apply_pending_restores()` 中已暂存的恢复事务。恢复应用必须在 provider、`MemoryEngine` 和页面/命令处理器发布前完成；manifest、checksum、SQLite `quick_check` 或原子替换失败时，交由 `BackupManager` 状态机进入失败/回滚路径，不得发布半恢复运行时。
+
+初始化器及 `_ensure_runtime_components()` 全部成功后，主插件才调用 `mark_restore_succeeded()`；初始化失败或运行时组件不完整时调用 `mark_restore_startup_failure_if_needed(...)`，让恢复事务保留可诊断的失败/回滚状态。`ComponentFactory` 仍负责构造并返回 `BackupManager`，并将其传给 `DecayScheduler` 供自动备份使用；调度器不得自行应用恢复或直接替换数据目录。
+
 ## 装配顺序与持久化
 
 1. 验证 Embedding 与聊天 Provider；缺失或类型不符抛 `ProviderNotReadyError`。
@@ -56,7 +63,7 @@ flowchart TD
 5. 初始化 `conversations.db` 与 `ConversationManager`，随后修复 `message_count`。
 6. 构造 `MemoryProcessor`，再以其带重试 LLM 调用构造 `MemoryConsolidator`；`MemoryEvolutionGate` 会把 `enabled=false` 归一为 disabled，Manager 仅在归一后的 mode 非 disabled 时启动单 worker。
 7. 构造 `IndexValidator`，执行一致性检查，并异步加载停用词。
-8. 当衰减或自动清理启用时启动 `DecayScheduler`。
+8. 当衰减、自动清理或 `backup_settings.enabled` 启用时启动 `DecayScheduler`；自动备份可以独立于衰减运行。
 9. 在 `memora.db` 上初始化 `InjectionDecisionStore` 和有界异步 `InjectionDecisionRecorder`，应用保留天数与最大行数并安排清理。
 
 若第 9 步失败，工厂按 Memory Evolution Manager、Memory Evolution Store、调度器、会话存储、引擎、图 DB、主 DB 的顺序尽力回滚；各关闭失败只记录日志，原异常继续传播。不要把这一局部回滚误写成覆盖前面所有装配阶段的通用事务。
@@ -89,7 +96,7 @@ python -m pytest tests/test_plugin_init.py tests/test_memory_evolution_gate.py -
 python -m pytest tests/test_config_contract.py tests/test_api_config.py -q
 ```
 
-重点保护：Provider 迟到后回调、重复重试抑制/取消、FAISS 探测失败、维度隔离、组件字典完整性、Memory Evolution mode/读取器装配与 manager→store 关闭顺序、注入存储启动/失败回滚、配置 revision 冲突。仅改本模块时先跑第一个命令；涉及配置装配契约时再跑第二个。
+重点保护：Provider 迟到后回调、重复重试抑制/取消、FAISS 探测失败、维度隔离、组件字典完整性、备份管理器与自动备份调度装配、Memory Evolution mode/读取器装配与 manager→store 关闭顺序、注入存储启动/失败回滚、配置 revision 冲突。仅改本模块时先跑第一个命令；涉及配置装配契约时再跑第二个。
 
 ## 相关上下文
 
