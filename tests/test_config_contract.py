@@ -228,6 +228,22 @@ def test_memora_config_preserves_every_schema_leaf_and_default() -> None:
     )
 
 
+def test_debug_defaults_to_disabled_and_matches_schema() -> None:
+    """调试开关默认关闭，并与根级 schema 保持一致。"""
+    from core.base.config_validator import MemoraConfig
+
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+
+    assert schema["debug"] == {
+        "description": "调试模式（问题报告）",
+        "hint": "仅在用户报告问题时开启。会输出不含对话、记忆、身份或 Provider 敏感信息的详细诊断日志，并写入轮转文件。问题复现后请关闭。",
+        "type": "bool",
+        "default": False,
+    }
+    assert MemoraConfig().debug is False
+    assert MemoraConfig(debug=True).debug is True
+
+
 def test_memory_evolution_defaults_to_disabled() -> None:
     from core.base.config_validator import MemoraConfig
 
