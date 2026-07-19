@@ -15,6 +15,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
+from .backup_models import FileRole
 from ..utils.version import PLUGIN_VERSION  # single source of truth: metadata.yaml
 
 _VERSION_FILE = ".plugin_version"
@@ -32,6 +33,16 @@ _BACKUP_PATTERNS: list[str] = [
     "*.db-wal",
     "*.db-shm",
 ]
+
+# 新格式备份使用固定文件规格；旧 glob 模式仍保留给兼容路径。
+_BACKUP_FILE_SPECS: dict[str, tuple[FileRole, str, bool]] = {
+    "memora.db": (FileRole.CANONICAL, "sqlite", True),
+    "conversations.db": (FileRole.OPERATIONAL, "sqlite", False),
+    "decay_state.json": (FileRole.OPERATIONAL, "regular", False),
+    "memora.index": (FileRole.DERIVED, "regular", False),
+    "memora_graph.index": (FileRole.DERIVED, "regular", False),
+    "memora_graph_documents.db": (FileRole.DERIVED, "sqlite", False),
+}
 
 
 class BackupManager:
