@@ -1,84 +1,212 @@
-# Memora Dashboard
+[根级 AGENTS.md](../../AGENTS.md) > `pages` > **dashboard**
 
-## 模块职责
+# Memora Dashboard 开发上下文
 
-`pages/dashboard` 是 Memora 的 React 18 管理面板。它运行在 AstrBot 插件页面桥接环境中，通过 `src/lib/bridge.ts` 调用后端，并必须保持 Vite 生成的 classic-script 单 bundle 产物格式。
+## 职责与边界
 
-## 应用结构
+`pages/dashboard` 是 Memora 的 React 管理面板。它在 AstrBot 插件页面桥接环境中运行，负责查看、检索、编辑和观测记忆系统；后端契约由 `core/page_api.py` 聚合并由 `core/api/*_api.py` mixin 实现。
 
-- `src/App.tsx`: 全局应用壳、Hash 路由、移动端菜单、实时状态与全局搜索。
-- `src/components/layout/Sidebar.tsx`: 五组可折叠导航，桌面端支持图标收起模式。
-- `src/components/layout/PageLayout.tsx`: 所有页面共享的布局原语。
-- `src/pages/`: 16 个功能页面；每个页面必须使用 `PageFrame`。
-- `src/components/ui/`: shadcn/ui 本地组件，基础 primitive 为 Base UI，图标库为 Lucide。
-- `src/index.css`: shadcn 语义 token、亮暗主题和旧 token 兼容别名。
+- 本文件是 Dashboard 的模块级权威上下文；同时继承根级 `../../AGENTS.md`。
+- Dashboard 代码只应写入 `pages/dashboard/src/`、`pages/dashboard/scripts/` 和本目录构建配置。跨模块 API 变更必须同步核对 `core/page_api.py`、对应 `core/api/*_api.py` 与 `tests/test_page_api*.py`，不能只改前端请求形状。
+- 不要手改或提交生成物：`node_modules/`、`dist/`、截图输出、缓存、coverage、`index.html` 和 `tsconfig.tsbuildinfo`。生产产物由构建与 artifact gate 生成。
+- 保持 AstrBot bridge、Hash URL、API envelope、三语言 key、SSE 事件和 classic-script 单 bundle 为兼容契约；布局重构不得顺带改变这些契约。
 
-## 统一布局
+## 技术栈与入口
 
-页面必须从以下三种模板中选择，不应重新实现独立的页面壳：
+- React 18.3、React DOM 18.3、TypeScript 5.6、Vite 6、Tailwind CSS 3.4、PostCSS。
+- shadcn 本地组件以 `@base-ui/react` 1.5 primitives 为基础，不是 Radix；样式组合使用 CVA、`clsx`、`tailwind-merge` 和 `tw-animate-css`。
+- 图谱使用 `@antv/g6` / `@antv/layout`；图标使用 Lucide；动画使用 Framer Motion；图表使用 Recharts；长列表可使用 TanStack Virtual；Toast 使用 Sonner。
+- Geist variable font；`next-themes` 管理亮暗主题并与 AstrBot 宿主主题同步。
+- `src/main.tsx` 是入口，`src/App.tsx` 是全局壳、懒加载路由、移动菜单、SSE 状态与全局搜索的所有者。
+- `src/lib/bridge.ts` 把相对请求转换为 AstrBot 的 `page/` endpoint，并统一解析 `status`、`data`、`error`、`code`、`field_errors` 等 envelope。
 
-| 模板 | 适用页面 | 行为 |
-|------|----------|------|
-| `standard` | 概览、时间线、召回、笔记、洞察、情绪、系统页 | 内容区自然滚动，最大宽度 1440px |
-| `dense` | 记忆、知识库、画像、黑话、社交关系、注入策略等高密度数据与配置页 | 固定页头/顶层切换，活跃内容或表格区域独立滚动 |
-| `workspace` | 图谱等工具型页面 | 占满可用空间，使用稳定网格与最小尺寸约束 |
+## 目录地图
 
-标准组合顺序为 `PageFrame`、`PageHeader`、可选 `PageToolbar`、`PageContent`。指标集合使用 `MetricGrid`；加载、空数据和错误状态使用 `Skeleton` 或 `StatePanel`。
+| 路径 | 责任 |
+|---|---|
+| `src/pages/` | 16 个功能页面；页面必须使用共享 `PageFrame` |
+| `src/components/layout/` | `Sidebar`、`PageFrame`、`PageHeader`、`PageToolbar`、`PageContent`、指标和状态布局原语 |
+| `src/components/ui/` | Base UI-backed shadcn 本地组件；优先复用，不手写等价控件 |
+| `src/components/intelligence/` | 评测、召回追踪、诊断、复核队列 |
+| `src/components/system/` | 系统观测、委托与质量管理 |
+| `src/hooks/` | 主题、i18n、SSE、编辑、配置同步及各资源数据流 |
+| `src/lib/` | bridge、导航、i18n、常量和纯工具 |
+| `src/mock/` | browser/runtime smoke 的确定性 bridge 与三语言模拟数据 |
+| `src/types/` | 页面、API、编辑和领域类型 |
+| `src/index.css` | shadcn 语义 token、亮暗主题、Geist 和旧 token 兼容别名 |
+| `scripts/` | runtime/browser smoke、helper 与截图基线断言 |
 
-## 视觉规范
+## 16 个 Hash 路由与五组导航
 
-- 使用 shadcn 语义类：`bg-background`、`bg-card`、`text-foreground`、`text-muted-foreground`、`border-border`、`bg-primary`。
-- 旧的 `--color-*` 与 `--text-*` 只作为复杂旧面板的兼容别名，不得在新代码中增加消费者。
-- 主题为中性黑白体系；成功、警告、错误等功能状态色可以保留。
-- 最大常规圆角为 8px，即 Tailwind `rounded-lg`；不要新增 `rounded-xl`、`rounded-2xl` 或 `rounded-3xl`。
-- 卡片只用于独立对象、指标和明确分组，不把普通页面段落包装成浮动卡片，也不嵌套卡片。
-- 使用 Geist 字体；页面标题、面板标题和正文必须保持层级，不按视口宽度缩放字号。
+`src/App.tsx` 的 `HASH_TO_PAGE` 和 `src/lib/navigation.ts` 必须一起维护。URL 形如 `#/memory`；空、未知或无效 hash 当前回退到 `graph`。不要引入第二套路由器。
 
-## 组件规范
+| 导航组 | Hash 路由 | 页面职责 |
+|---|---|---|
+| Overview | `#/preview` | 数据预览、增长与资产概览 |
+| Memory | `#/graph` | 知识图谱工作区 |
+| Memory | `#/memory` | 记忆搜索、筛选、编辑和批量操作 |
+| Memory | `#/timeline` | 时间线 |
+| Memory | `#/recall` | 召回测试与解释 |
+| Memory | `#/injection` | 注入策略、配置与决策历史 |
+| Memory | `#/knowledge` | 知识库管理 |
+| Memory | `#/notes` | 笔记管理 |
+| Insights | `#/intelligence` | 评测、追踪、诊断与复核 |
+| Insights | `#/learning` | 自主学习状态 |
+| Insights | `#/jargon` | 黑话候选、释义与管理 |
+| Relationships | `#/profiles` | 用户画像 |
+| Relationships | `#/affection` | 好感度与情绪 |
+| Relationships | `#/social` | 社交关系 |
+| System | `#/system` | 运行观测、Provider 和系统操作 |
+| System | `#/config` | 插件配置编辑与冲突处理 |
 
-- 优先复用 `src/components/ui` 中已有的 shadcn 组件，不手写等价的按钮、复选框、文本域、表格、Dialog 或 Sheet。
-- 数据列表优先复用 `src/components/data-table/DataTable`（基于 TanStack React Table）。列定义必须提供本地化 `meta.label`，选择列和操作列使用共享工厂，并为表格提供稳定的 `tableId` 与可访问的行名称。
-- 图标命令使用 `Button` 的 icon size 与 Lucide 图标，并提供 `aria-label`/`title`。
-- Dialog 和 Sheet 必须包含可访问名称；表格选择框、进度条和分页导航必须有明确的可访问名称。
-- 2 到 7 个互斥选项使用 Tabs、ToggleGroup 或等价分段控件；数值范围可以使用滑杆。
-- 详情使用受控 Sheet，创建/确认流程使用 Dialog；不得恢复已删除的自定义 `Modal`。
-- 所有页面必须在桌面端和移动端保持可滚动、无重叠、无横向内容挤压。固定格式区域应设置 `minmax`、最小宽高或横向滚动边界。
+导航组固定为 Overview、Memory、Insights、Relationships、System。新增或移动页面时同时更新 `PageId`、懒加载映射、hash 映射、导航、三语言文案、全局搜索、mock、单测和 browser smoke；保留脏表单前进/后退保护与 history index 行为。
 
-## 导航与行为契约
+## 前后端真实数据流
 
-导航固定为五组：Overview、Memory、Insights、Relationships、System。Hash 路由、三语言 key、SSE 状态和 AstrBot bridge 请求形状属于兼容契约，布局重构不得改变。
+```mermaid
+flowchart LR
+    U[Dashboard 用户] --> A[src/App.tsx\nHash 路由与全局壳]
+    A --> P[src/pages\n16 个 PageFrame 页面]
+    P --> H[src/hooks\n查询 编辑 配置 SSE]
+    H --> B[src/lib/bridge.ts]
+    B --> X[AstrBot page bridge]
+    X --> E[core/page_api.py\n/astrbot_plugin_memora/page/*]
+    E --> M[core/api/*_api.py mixins]
+    M --> S[(SQLite / stores / services)]
+    S --> M --> E --> X --> B --> H --> P
+```
 
-知识库列表和画像使用后端 `limit`/`offset` 真分页。知识库搜索和黑话候选接口没有 offset，不得伪造分页。DataTable 的排序是受控的单列服务端排序：页面只传递后端 allowlist 允许的 `sort_by`/`sort_order`，服务端必须在分页前排序并使用稳定 tie-breaker；不得在客户端对当前页重新排序，也不得接受任意列名。查询范围、筛选条件、排序或页码变化时必须清除隐藏选择，避免对不可见数据执行批量操作。
+```mermaid
+sequenceDiagram
+    participant UI as Config/Edit UI
+    participant Hook as Sync Hook
+    participant Bridge as bridge.ts
+    participant API as Page API
+    participant Store as Store
+    UI->>Hook: 保存草稿
+    Hook->>Bridge: changes + base_revision / expected_revision
+    Bridge->>API: page/* POST
+    API->>Store: compare revision then write
+    alt revision 匹配
+        Store-->>API: 新 revision 与实体
+        API-->>Hook: status=ok, data
+        Hook-->>UI: 提交并清除 dirty/selection
+    else revision 冲突
+        API-->>Hook: config_conflict / edit_conflict + remote
+        Hook-->>UI: 保留本地草稿并展示冲突动作
+    end
+```
 
-DataTable 的视图偏好采用选择性持久化：`memora.table.<tableId>.v1` 只保存密度、列显隐、列顺序和左右固定列；排序、查询、筛选、分页、行选择和列宽保持当前会话临时态。加载偏好时必须丢弃未知列、强制恢复 required 列，并为损坏数据回退默认视图；“重置视图”同时清除该表的本地偏好。
+## PageFrame、滚动与响应式
 
-DataTable 没有内部 toolbar 内容时，视图入口必须收纳到表头区域右上角，不得为单个按钮额外占用一整行；有 toolbar 内容时与其保持同排。compact/standard/comfortable 三档密度必须真实改变表头高度和数据单元格的纵向内边距，浏览器验证应比较计算后尺寸，不能只检查 `data-density` 属性。
+所有功能页面从三种模板中选用，不得重新实现页面壳：
 
-SocialPage 使用 `dense` 模板并保留分类 Tab；PageHeader 与分类工具栏固定，活动分类的 `PageContent width="full"` 是唯一纵向滚动者。关系列表直接使用 DataTable，不额外包裹只起装饰作用的 Card。
+| 模板 | 典型页面 | 契约 |
+|---|---|---|
+| `standard` | Preview、Timeline、Recall、Notes、Intelligence、Learning、Affection、Social、System | 内容自然滚动，常规最大宽度 1440px |
+| `dense` | Memory、Injection、Knowledge、Profiles、Jargon、Config 等高密度数据/配置页 | 固定页头或顶层切换；活跃内容/表格区是唯一纵向滚动者 |
+| `workspace` | Graph | 占满可用空间，以稳定网格和明确最小宽高约束画布 |
 
-InjectionStrategyPage 位于 Memory 组并使用 `dense` 模板。固定 PageHeader 与 Overview、Strategy Configuration、Decision History 三个顶层 Tab；各活跃 Tab 的 PageContent 是唯一纵向滚动者。Overview/Config 使用 constrained 宽度，Decision History 使用 full 宽度和受控横向表格滚动。概览、列表与详情读取 SQLite 全量持久化结果的 Page API；配置保存继续保留 revision、草稿和冲突处理。
+标准组合顺序是 `PageFrame` → `PageHeader` → 可选 `PageToolbar` → `PageContent`。指标用 `MetricGrid`；加载、空数据和错误用 `Skeleton` 或 `StatePanel`。桌面与 390px 移动端都必须可滚动、无遮挡、无页面级横向溢出；宽表和固定格式工作区应在局部使用 `minmax`、最小尺寸或受控横向滚动。
 
-## 测试与验证
+Injection 页面固定为 `dense`：PageHeader 下有 Overview、Strategy Configuration、Decision History 三个顶层 Tab。每个活跃 Tab 的 `PageContent` 是唯一纵向滚动者；Overview/Config 为 constrained 宽度，Decision History 为 full 宽度且只有表格容器承担横向滚动。决策列表/概览/详情读取 SQLite 全量持久化 Page API，详情使用受控 Sheet 并固定底栏。
 
-行为变更使用 Vitest + React Testing Library 先写失败测试。直接运行 Vitest 时必须指定 jsdom；优先使用项目脚本：
+## 主题、组件与可访问性
+
+- 新代码使用 `bg-background`、`bg-card`、`text-foreground`、`text-muted-foreground`、`border-border`、`bg-primary` 等语义类。
+- 旧 `--color-*`、`--text-*` 仅是复杂旧面板兼容别名，不新增消费者。
+- 主题为中性黑白；成功、警告、错误等功能状态色可保留。宿主主题优先，用户手动覆盖持久化到 localStorage。
+- 常规最大圆角是 `rounded-lg`（8px）；不要新增 `rounded-xl`、`rounded-2xl`、`rounded-3xl`。
+- 卡片只表示独立对象、指标或明确分组；不把普通段落卡片化，不嵌套卡片。
+- 标题、面板标题、正文保持稳定排版层级，不按视口宽度缩放字号。
+- 优先复用 `src/components/ui/` 的 Button、Checkbox、Input、Textarea、Table、Tabs、ToggleGroup、Dialog、Sheet 等；不得恢复自定义 Modal。
+- 详情使用受控 Sheet；创建、确认和破坏性操作使用 Dialog。Dialog/Sheet 必须有可访问名称；纯图标按钮有 `aria-label`/`title`；选择框、进度条和分页导航有明确名称。
+- 2–7 个互斥选项用 Tabs、ToggleGroup 或等价分段控件；数值范围可用 Slider。
+
+## 三语言与实时状态
+
+语言为 `zh`、`en`、`ru`，切换顺序是 zh → en → ru。导航、标题、操作、状态、验证错误、分页及空态都必须通过现有 i18n key；禁止只补一种语言或在 JSX 中散落新的用户可见硬编码。更新 key 时同步 `src/lib/i18n.ts`、相关 hook/mock、页面测试和 browser smoke。
+
+实时连接由 `useRealtimeStream` 使用 SSE，而不是 WebSocket；保持连接状态、未读计数、事件处理及 cleanup 契约。页面不应各自创建重复连接。
+
+## Page API、写回与冲突
+
+- Page API 总入口为 `/astrbot_plugin_memora/page/*`；前端调用 bridge 时沿用当前相对路径，不手工重复拼接宿主前缀。
+- 读取、编辑和批量动作必须尊重统一 envelope；不得把 `error`、`code` 或 `field_errors` 吞成成功空数据。
+- 配置保存发送 `base_revision` + 最小 `changes`，而不是覆盖整个远端配置。遇到 `config_conflict` 时保留草稿，支持接受远端/丢弃本地、查看差异和基于最新 revision 重放本地修改。
+- 实体编辑发送 `expected_revision`；服务端比较 revision 后原子写入。`conflict` / `edit_conflict` 必须展示远端快照及用户可控的解决路径，不能静默 last-write-wins。
+- 成功写回后用服务端返回实体/revision 更新缓存并清理 dirty；失败保留用户输入和字段级错误。高影响批量操作必须显式确认。
+
+## 服务端筛选、分页与选择清理
+
+- Knowledge 普通列表与 Profiles 使用服务端 `limit` / `offset` 真分页，服务端返回 total/边界决定翻页；不要先拉全量再在客户端伪分页。
+- Knowledge search 没有 `offset`；Jargon candidates/meanings 也没有 `offset`。不得向这些端点虚构 offset 或展示无法兑现的页码。
+- 查询、范围、筛选、排序、数据集、page size 或页码变化时，清除已经不可见的选择；刷新/删除/写回后也要按返回数据收敛 selection。
+- 批量动作只能作用于当前可验证的选中 ID，绝不能保留隐藏页选择并对用户不可见的数据执行。
+
+## 构建与产物契约
+
+Vite 对宿主生成 IIFE classic script，使用 `inlineDynamicImports` 把 lazy 页面合入单 bundle，并移除 `type="module"` / `crossorigin`。artifact gate 要求最终恰好一个 JS 和一个 CSS 引用，并拒绝陈旧 hash 产物。不要通过改 gate 掩盖错误产物。
+
+本地安装与开发：
 
 ```bash
+cd pages/dashboard
+npm ci
+npm run dev
+```
+
+与改动匹配的精确验证顺序：
+
+```bash
+cd pages/dashboard
 npm test
 npm run build
 npm run check:artifacts
 npm run smoke:runtime
 npm run smoke:browser
-```
-
-浏览器 smoke 后必须检查截图内容，尤其是 Graph 画布、移动端侧栏和加载遮罩。Injection 页面必须人工检查 `injection-overview.png`、`injection-config-conflict.png`、`injection-decisions.png`、`mobile-injection-detail.png` 和 2048px 的 `wide-injection-overview.png`；数据表与编辑器还必须检查 `knowledge-table-default.png`、`knowledge-table-columns.png`、`knowledge-editor-view.png`、`knowledge-editor-edit.png`、`mobile-knowledge-table.png`、`mobile-knowledge-editor.png`、`wide-profiles-table.png`、`dark-social-table.png` 和 `injection-decisions-compact.png`。重点确认唯一滚动所有权、服务端排序后的稳定行序、sticky 单元格不重叠、表格横向边界、配置冲突草稿、Sheet body 独立滚动、移动端最后字段不被 footer 遮挡以及固定底栏始终可见。仓库级最终门禁为：
-
-```bash
+cd ../..
 python scripts/check_all.py
 ```
 
-## 变更记录
+直接调用 Vitest 时必须指定 jsdom，例如：
 
-| 日期 | 变更 | 描述 |
-|------|------|------|
-| 2026-07-17 | Injection 策略工作台对齐 | 页面总数更新为 16；注入页采用 dense 三 Tab、单滚动所有者、SQLite/Page API 数据源与五张 browser smoke 基线 |
-| 2026-07-10 | Dashboard 布局与视觉系统统一 | 引入三类页面模板、五组导航、shadcn 语义主题、统一数据页/详情面板与响应式约束 |
+```bash
+cd pages/dashboard
+npx vitest run --environment jsdom src/pages/MemoryPage.test.tsx
+```
+
+行为变更先写能失败的 Vitest + React Testing Library 测试。构建不能替代 runtime smoke，runtime smoke 不能替代真实 Playwright browser smoke；仓库级 `python scripts/check_all.py` 是最终门禁，不是开发时缩小反馈环的替代品。
+
+## Browser smoke 与 40 张截图
+
+`scripts/browser_smoke.mjs` 在桌面 1366×900、移动 390×844、宽屏 2048×1152 下验证页面，并覆盖暗色、zh/en/ru、Graph、全局搜索、编辑/配置 revision 冲突、确认流程、横向溢出、加载稳定性和控制台/page error。脚本定义的 40 张基线全部必须生成、尺寸匹配且超过最低字节阈值：
+
+- 配置/注入/搜索（10）：`config.png`、`config-conflict.png`、`mobile-config.png`、`injection-overview.png`、`injection-config-conflict.png`、`injection-decisions.png`、`mobile-injection-detail.png`、`wide-injection-overview.png`、`global-search-scroll.png`、`global-search-memory-target.png`。
+- 主要页面/智能控制台（11）：`graph.png`、`memory.png`、`system.png`、`jargon.png`、`intelligence-evaluation.png`、`intelligence-trace.png`、`intelligence-diagnostics.png`、`intelligence-review.png`、`mobile-system.png`、`mobile-jargon.png`、`system-confirmation.png`。
+- 主题/预览/宽屏（9）：`dark-learning.png`、`dark-system.png`、`preview.png`、`mobile-preview.png`、`dark-preview.png`、`wide-preview.png`、`wide-learning.png`、`wide-affection.png`、`wide-social.png`。
+- i18n/编辑（10）：`i18n-en-preview.png`、`i18n-en-memory.png`、`i18n-ru-preview.png`、`i18n-ru-memory.png`、`editing-social-sheet.png`、`editing-social-conflict.png`、`editing-error-summary.png`、`editing-batch-toolbar.png`、`editing-mobile-affection.png`、`editing-mobile-mood.png`。
+
+Browser smoke 通过后仍须人工打开 40 张图片，不能只看 exit code/字节数。重点检查：
+
+1. Graph 画布实际可见且尺寸稳定，不是空白、遮罩或截断。
+2. 移动侧栏、Dialog/Sheet、固定底栏、关闭按钮和背景滚动锁无重叠。
+3. 页面加载遮罩已消失；没有截图到 Skeleton、spinner 或过渡中间态。
+4. 暗色对比度、三语言文本溢出、桌面/移动/2048px 网格与局部横向滚动正确。
+5. `injection-overview.png`、`injection-config-conflict.png`、`injection-decisions.png`、`mobile-injection-detail.png`、`wide-injection-overview.png` 的唯一滚动所有权、冲突草稿、宽表边界和详情 Sheet 固定底栏正确。
+6. 编辑冲突、字段错误汇总、批量工具栏与高影响确认清晰且操作目标一致。
+
+## 修改清单
+
+新增或改页面时至少核对：路由与五组导航、PageFrame 模板、滚动所有权、所有三语言 key、bridge/API 契约、loading/empty/error、服务端分页、选择清理、键盘/可访问名称、移动/宽屏/暗色、单测、runtime smoke、browser smoke 与人工截图。不要留下备用实现、旧组件别名、失效路由或未使用翻译 key。
+
+## 深层模块导航
+
+以下目录有独立职责，进入目录后继续读取对应上下文：
+
+- [`src/pages/AGENTS.md`](./src/pages/AGENTS.md)：路由页面、PageFrame 分层与页面级测试。
+- [`src/components/AGENTS.md`](./src/components/AGENTS.md)：共享布局、功能组件、UI 原语和编辑组件边界。
+- [`src/components/editing/AGENTS.md`](./src/components/editing/AGENTS.md)：实体编辑器、冲突草稿、字段错误与批量工具栏。
+- [`src/lib/AGENTS.md`](./src/lib/AGENTS.md)：bridge、配置/i18n、导航、搜索和 API 响应契约。
+- [`src/hooks/AGENTS.md`](./src/hooks/AGENTS.md)：SSE、配置同步、实体编辑、主题和数据查询 hooks。
+- [`scripts/AGENTS.md`](./scripts/AGENTS.md)：runtime/browser smoke、截图基线与构建后门禁。

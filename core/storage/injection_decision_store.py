@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..base.list_sorting import SortQuery, order_by_clause
 from ..injection.models import InjectionDecisionRecord
 from .base_store import BaseStore
 
@@ -53,7 +52,6 @@ _COLUMNS = (
 _SELECT_COLUMNS = ", ".join(_COLUMNS)
 _LIST_COLUMNS = tuple(column for column in _COLUMNS if column != "reason_codes_json")
 _SELECT_LIST_COLUMNS = ", ".join(_LIST_COLUMNS)
-
 INJECTION_DECISION_SORT_COLUMNS = {
     "created_at_ms": "created_at_ms",
     "routing_mode": "routing_mode COLLATE NOCASE",
@@ -62,10 +60,6 @@ INJECTION_DECISION_SORT_COLUMNS = {
     "outcome": "outcome COLLATE NOCASE",
     "actual_payload_chars": "actual_payload_chars",
     "decision_ms": "decision_ms",
-}
-_INJECTION_DECISION_SQL_COLUMNS = {
-    **INJECTION_DECISION_SORT_COLUMNS,
-    "decision_id": "decision_id",
 }
 
 
@@ -94,7 +88,7 @@ class DecisionQuery:
         if self.from_ms is not None and self.to_ms is not None and self.from_ms > self.to_ms:
             raise ValueError("from_ms must not exceed to_ms")
         if self.sort_by not in INJECTION_DECISION_SORT_COLUMNS:
-            raise ValueError("sort_by is not supported")
+            raise ValueError("sort_by is invalid")
         if self.sort_order not in {"asc", "desc"}:
             raise ValueError("sort_order must be asc or desc")
 
@@ -250,20 +244,17 @@ class InjectionDecisionStore(BaseStore):
         return row
 
     async def list_decisions(self, query: DecisionQuery) -> DecisionPage:
-        """Return a filtered page in deterministic newest-first order."""
+        """Return a filtered page in deterministic, allowlisted order."""
         where, params = self._where(query)
         total = int(await self._fetch_scalar(
             "SELECT COUNT(*) FROM injection_decisions" + where,
             params,
         ) or 0)
-        order_by = order_by_clause(
-            SortQuery(query.sort_by, query.sort_order),
-            columns=_INJECTION_DECISION_SQL_COLUMNS,
-            tie_breaker="decision_id",
-        )
+        order_column = INJECTION_DECISION_SORT_COLUMNS[query.sort_by]
+        order_direction = query.sort_order.upper()
         rows = await self._fetch_all(
             f"SELECT {_SELECT_LIST_COLUMNS} FROM injection_decisions{where} "
-            f"ORDER BY {order_by} LIMIT ? OFFSET ?",
+            f"ORDER BY {order_column} {order_direction}, decision_id ASC LIMIT ? OFFSET ?",
             params + (query.limit, query.offset),
         )
         return DecisionPage(

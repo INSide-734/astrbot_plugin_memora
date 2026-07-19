@@ -1,0 +1,68 @@
+[根目录](../../AGENTS.md) > [core](../AGENTS.md) > **evaluation**
+
+# 离线检索质量评测模块
+
+**Last Updated:** 2026-07-17
+
+## 职责与边界
+
+`core/evaluation/` 加载 JSONL 检索用例，适配 `MemoryEngine` 搜索接口，计算查询级 Recall@K、MRR、二元 nDCG@K 和 P95 延迟，运行有限的消融变体并持久化报告。它是离线/运维评测设施，不参与在线召回排序、不训练模型，也不把指标结果自动转成生产配置。
+
+## 架构与数据流
+
+```mermaid
+flowchart LR
+    A[JSONL fixtures] --> B[load_jsonl_cases / load_fixture_dir]
+    B --> C[EvaluationCase]
+    C --> D[make_memory_engine_retriever]
+    D --> E[MemoryEngine.search_memories]
+    E --> F[evaluate_cases]
+    F --> G[EvaluationReport]
+    G --> H[baseline 与消融 deltas]
+    H --> I[EvaluationReportStore]
+    I --> J[评测 API 历史与对比]
+```
+
+## 模型、指标与入口
+
+- `EvaluationCase`：用例 ID、查询、相关文档 ID 集合和路由元数据。
+- `RetrievedDocument`：评测所需的最小文档 ID、分数与元数据。
+- `EvaluationResult`：排序 ID、相关集、三项质量指标、延迟和元数据。
+- `EvaluationReport`：总用例数、K、平均指标、P95、逐用例结果和数据集分解。
+- `AblationReport` / `VariantComparison`：变体指标快照、报告和相对 baseline 的差值。
+- `load_jsonl_cases` / `load_fixture_dir`：严格读取每行 JSON，用文件名作为缺省数据集名。
+- `make_memory_engine_retriever(engine)`：把 case 元数据中的 session、persona、user、memory type、emotion 和策略参数传给 `search_memories`。
+- `evaluate_cases(cases, retriever, k)`：支持同步或异步 retriever；`expected_no_hit=True` 的空结果按正确负例计分。
+- `evaluate_variants` / `compare_reports`：纯函数级变体评估和指标差值。
+
+## Service 与持久化
+
+`EvaluationService` 支持 `baseline`、`graph_expansion_off`、`topic_expansion_off`。`k` 裁剪到 `1..20`；未知数据集被忽略，baseline 不可运行时返回错误且不保存。消融通过临时设置真实配置键完成，并在 `finally` 恢复；每个变体前后尽力清理 engine、retrieval optimizer、search/session cache 等缓存以隔离结果。
+
+`EvaluationReportStore` 独立于 AstrBot 存储模块，应用 WAL/NORMAL、busy timeout、cache 和 mmap PRAGMA。`evaluation_reports` 保存汇总与完整 payload，`evaluation_cases` 保存逐用例结果并以外键级联；报告 ID 使用毫秒时间与随机后缀。集合和 dataclass 在持久化前转换为稳定 JSON 值。
+
+## 依赖方向
+
+- 上游：`core/api/evaluation_api.py` 构造 Service，使用 initializer 的 `memory_engine`、fixture 目录和独立报告数据库。
+- 本模块：`evaluation_service.py -> retrieval_quality.py + report_store.py`。
+- 下游：`MemoryEngine` 形状协议、`aiosqlite`、标准库；核心包导入不要求 AstrBot。
+- 相关上下文：[召回模块](../retrieval/AGENTS.md)、[存储模块](../storage/AGENTS.md)、[API 模块](../api/AGENTS.md)。
+
+## 隐私、安全与修改约束
+
+- fixture 的查询、用户/session/persona 元数据、相关文档 ID 和逐用例结果会进入评测报告；不要使用未经脱敏的生产对话或把报告数据库公开下载。
+- `EvaluationService` 会调用真实 engine 搜索并临时修改配置。必须保留 `finally` 恢复和缓存隔离，禁止在在线请求热路径运行大批评测。
+- 报告指标是实验观测，不是访问控制或自动发布信号；对小样本和 `expected_no_hit` 数据应保留数据集分解。
+- `p95_latency_ms` 可由 case 元数据覆盖测量值；解释性能结果时必须核对 fixture，而不是假定全部来自墙钟。
+- 新增变体必须加入支持集合、配置键映射、恢复路径、缓存隔离和测试；不得接受任意客户端配置键。
+
+## 测试定位与验证
+
+- `tests/evaluation/test_retrieval_quality.py`：fixture 加载、路由元数据、排名指标、正确负例、engine 适配和变体差值。
+- `tests/evaluation/test_evaluation_service.py`：无 AstrBot 导入、报告 round-trip、数据集选择、真实配置键、不可用变体、缓存隔离、baseline 失败与历史对比。
+
+精确验证命令：
+
+```bash
+python -m pytest -q tests/evaluation/test_retrieval_quality.py tests/evaluation/test_evaluation_service.py
+```

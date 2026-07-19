@@ -286,17 +286,6 @@ function renderDecisionsTab() {
   return rendered;
 }
 
-function openDecisionAction() {
-  const trigger = screen.getByRole("button", {
-    name: "injection.decisions.openDetail",
-  });
-  fireEvent.click(trigger);
-  fireEvent.click(screen.getByRole("menuitem", {
-    name: "injection.decisions.openDetail",
-  }));
-  return trigger;
-}
-
 async function chooseOption(comboboxName: string, optionName: string) {
   fireEvent.click(screen.getByRole("combobox", { name: comboboxName }));
   const option = await screen.findByRole("option", { name: optionName });
@@ -539,6 +528,67 @@ describe("InjectionStrategyPage", () => {
     expect(screen.getAllByText("injection.overview.fallbackRate").length).toBeGreaterThan(0);
   });
 
+  it("shows the cost data point nearest the hovered hour", async () => {
+    hooks.summary.data = summaryFixture({
+      decision_count: 3,
+      cost_trend: [
+        {
+          bucket_ms: new Date(2026, 6, 15, 8).getTime(),
+          decision_count: 1,
+          payload_chars_p95: 111,
+          provider_fallback_rate: 0,
+        },
+        {
+          bucket_ms: new Date(2026, 6, 15, 12).getTime(),
+          decision_count: 1,
+          payload_chars_p95: 222,
+          provider_fallback_rate: 0.5,
+        },
+        {
+          bucket_ms: new Date(2026, 6, 15, 16).getTime(),
+          decision_count: 1,
+          payload_chars_p95: 333,
+          provider_fallback_rate: 1,
+        },
+      ],
+    });
+
+    renderPage();
+
+    const costChart = screen.getByLabelText(
+      "injection.overview.costChartSummary",
+    );
+    const chartWrapper = costChart.querySelector<HTMLElement>(
+      ".recharts-wrapper",
+    );
+    expect(chartWrapper).toBeTruthy();
+    Object.defineProperty(chartWrapper, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        bottom: 240,
+        height: 240,
+        left: 0,
+        right: 640,
+        top: 0,
+        width: 640,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+    });
+
+    fireEvent.mouseMove(chartWrapper as HTMLElement, {
+      clientX: 570,
+      clientY: 100,
+    });
+
+    await waitFor(() => {
+      const tooltip = costChart.querySelector(".recharts-default-tooltip");
+      expect(tooltip?.textContent).toContain("333");
+      expect(tooltip?.textContent).not.toContain("111");
+    });
+  });
+
   it("partitions ordinary fallback and error events into labeled lists", () => {
     hooks.summary.data = summaryFixture({
       recent_events: [
@@ -736,24 +786,6 @@ describe("InjectionStrategyPage", () => {
     expect(hooks.decisions.setLimit).toHaveBeenCalledWith(50);
   });
 
-  it("keeps decision sorting server-side and exposes fixed action ownership", () => {
-    renderDecisionsTab();
-
-    expect(screen.getByRole("button", {
-      name: "table.clearSort injection.column.time",
-    })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", {
-      name: "table.sortAscending injection.column.payloadChars",
-    }));
-    expect(hooks.decisions.setSort).toHaveBeenCalledWith({
-      id: "actual_payload_chars",
-      desc: false,
-    });
-    expect(screen.getByRole("button", {
-      name: "injection.decisions.openDetail",
-    })).toBeTruthy();
-  });
-
   it("disables pagination at the server boundaries", () => {
     hooks.decisions.page = decisionPageFixture({ total: 1, offset: 0, limit: 25 });
     renderDecisionsTab();
@@ -792,7 +824,7 @@ describe("InjectionStrategyPage", () => {
     renderDecisionsTab();
     const scroll = screen.getByTestId("decision-table-scroll");
     expect(scroll.className).toContain("overflow-x-auto");
-    expect(within(scroll).getByRole("table")).toBeTruthy();
+    expect(within(scroll).getByRole("table").className).toContain("min-w-[64rem]");
     expect(within(scroll).getAllByRole("columnheader").map((cell) => cell.textContent))
       .toEqual([
         "injection.column.time",
@@ -804,7 +836,6 @@ describe("InjectionStrategyPage", () => {
         "injection.column.outcome",
         "injection.column.payloadChars",
         "injection.column.totalMs",
-        "injection.column.actions",
       ]);
   });
 
@@ -814,7 +845,9 @@ describe("InjectionStrategyPage", () => {
     });
     renderDecisionsTab();
 
-    openDecisionAction();
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
+    );
     expect(hooks.decisions.loadDetail).toHaveBeenCalledWith("decision-safe");
 
     hooks.decisions.detailStatus = "success";
@@ -878,7 +911,9 @@ describe("InjectionStrategyPage", () => {
       trace_id: "trace-layout",
     });
     renderDecisionsTab();
-    openDecisionAction();
+    fireEvent.click(screen.getByRole("button", {
+      name: "injection.decisions.openDetail",
+    }));
 
     const sheet = screen.getByRole("dialog", { name: "injection.detail.title" });
     const header = sheet.querySelector('[data-slot="sheet-header"]');
@@ -908,7 +943,9 @@ describe("InjectionStrategyPage", () => {
 
   it("keeps the detail sheet open across loading errors and retry", () => {
     renderDecisionsTab();
-    openDecisionAction();
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
+    );
     hooks.decisions.detailStatus = "loading";
     rerenderPage();
     expect(screen.getByRole("dialog", { name: "injection.detail.title" }))
@@ -928,7 +965,9 @@ describe("InjectionStrategyPage", () => {
 
   it("gates Trace navigation by both trace id and catalog capability", () => {
     renderDecisionsTab();
-    openDecisionAction();
+    fireEvent.click(
+      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
+    );
     hooks.decisions.detailStatus = "success";
     hooks.decisions.detail = decisionDetail({ trace_id: null });
     rerenderPage();
@@ -963,15 +1002,13 @@ describe("InjectionStrategyPage", () => {
     });
     detailButton.focus();
     fireEvent.click(detailButton);
-    fireEvent.click(screen.getByRole("menuitem", {
-      name: "injection.decisions.openDetail",
-    }));
     hooks.decisions.detailStatus = "success";
     hooks.decisions.detail = decisionDetail();
     rerenderPage();
 
     fireEvent.click(screen.getByRole("button", { name: "common.close" }));
-    await waitFor(() => expect(hooks.decisions.clearDetail).toHaveBeenCalledOnce());
+    await waitFor(() => expect(document.activeElement).toBe(detailButton));
+    expect(hooks.decisions.clearDetail).toHaveBeenCalledOnce();
   });
 
   it("opens a decision deep link exactly once per navigation request", () => {
@@ -1117,20 +1154,6 @@ describe("InjectionStrategyPage", () => {
     ).toBeTruthy();
     expect(screen.queryByText("system_prompt")).toBeNull();
     expect(showToast).toHaveBeenCalledWith("config.status.error", "error");
-  });
-
-  it("keeps preset comparison in semantic catalog order without sorting controls", () => {
-    renderConfigTab();
-    const comparison = screen.getByTestId("preset-comparison");
-    expect(
-      within(comparison).getAllByRole("row").slice(1).map((row) => row.textContent),
-    ).toEqual([
-      expect.stringContaining("injection.preset.tool_first"),
-      expect.stringContaining("injection.preset.low_cost"),
-      expect.stringContaining("injection.preset.balanced"),
-      expect.stringContaining("injection.preset.quality"),
-    ]);
-    expect(within(comparison).queryByRole("button", { name: /Sort/i })).toBeNull();
   });
 
   it("reveals advanced overrides only after the switch is enabled", () => {

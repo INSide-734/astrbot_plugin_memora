@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Tag, Trash2, UsersRound, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowRightLeft, RefreshCw, Tag, Trash2, UsersRound, X } from "lucide-react";
 
 import { useI18n } from "@/hooks/useI18n";
 import { useGroups } from "@/hooks/useGroups";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -17,21 +18,18 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/Progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DataTable } from "@/components/data-table/DataTable";
-import { actionsColumn, selectionColumn } from "@/components/data-table/data-table-columns";
-import type { DataTableColumn, DataTableSort } from "@/components/data-table/table-types";
 import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { EditConflictDialog } from "@/components/editing/EditConflictDialog";
 import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
 import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
-import { DetailField, DetailGrid, DetailSection, DetailTags } from "@/components/editing/EntityDetail";
 import { TagEditor } from "@/components/editing/TagEditor";
 import { SocialRelationForm } from "@/components/editing/forms/SocialRelationForm";
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
 import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { RELATION_CATEGORIES } from "@/lib/constants";
-import { dashboardLocale, formatDashboardDateTime, formatDashboardPercent } from "@/lib/i18n";
+import { dashboardLocale, formatDashboardPercent } from "@/lib/i18n";
 import { ApiRequestError, editingErrorDetails, type BatchResult, type EntityEnvelope, type FieldErrors } from "@/types/editing";
 import type { SocialRelationDraft, SocialRelationEntry } from "@/types";
 
@@ -69,7 +67,6 @@ const EMPTY_RELATION_DRAFT: SocialRelationDraft = {
   tags: [],
 };
 const EMPTY_BATCH_TAG: BatchTagDraft = { operation: "add_tags", tags: [] };
-const DEFAULT_SORT: DataTableSort = { id: "last_interaction", desc: true };
 
 function cloneDraft(draft: SocialRelationDraft): SocialRelationDraft {
   return { ...draft, tags: [...draft.tags] };
@@ -174,7 +171,6 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
   const [relations, setRelations] = useState<SocialRelation[]>([]);
   const [loading, setLoading] = useState(false);
   const [category, setCategory] = useState("all");
-  const [sort, setSort] = useState<DataTableSort>(DEFAULT_SORT);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<SocialRelation | null>(null);
   const [editDraft, setEditDraft] = useState<SocialRelationDraft>(cloneDraft(EMPTY_RELATION_DRAFT));
@@ -189,7 +185,6 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
   const [createFieldErrors, setCreateFieldErrors] = useState<FieldErrors>({});
   const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<SocialRelation | null>(null);
   const [batchDeleteSubmitting, setBatchDeleteSubmitting] = useState(false);
   const [batchTagOpen, setBatchTagOpen] = useState(false);
   const [batchTagDraft, setBatchTagDraft] = useState<BatchTagDraft>({ ...EMPTY_BATCH_TAG });
@@ -224,8 +219,6 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
     try {
       const query = new URLSearchParams({ group_id: groupId });
       if (category !== "all") query.set("category", category);
-      query.set("sort_by", sort.id);
-      query.set("sort_order", sort.desc ? "desc" : "asc");
       const response = socialListResponse(unwrapApiData(
         await apiRequest(`social/relations?${query.toString()}`)
       ), label("social.invalidList", "Invalid social relation list response"));
@@ -238,14 +231,9 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
     } finally {
       if (generation === relationsLoadGeneration.current) setLoading(false);
     }
-  }, [category, groupId, showToast, sort]);
+  }, [category, groupId, showToast]);
 
   useEffect(() => { void loadRelations(); }, [loadRelations]);
-
-  const changeSort = useCallback((next: DataTableSort | null) => {
-    setSelected(new Set());
-    setSort(next ?? DEFAULT_SORT);
-  }, []);
 
   const openCreate = () => {
     setCreateDraft(cloneDraft(EMPTY_RELATION_DRAFT));
@@ -407,18 +395,16 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
   };
 
   const executeSingleDelete = async () => {
-    if (!deleteTarget || !hasRevision(deleteTarget)) return;
-    const target = deleteTarget;
+    if (!detail || !hasRevision(detail)) return;
     try {
       unwrapApiData<SocialDeleteResponse>(await apiRequest("social/delete", {
         method: "POST",
-        body: { identity: relationIdentity(target), expected_revision: target.revision },
+        body: { identity: relationIdentity(detail), expected_revision: detail.revision },
       }));
-      setRelations((previous) => previous.filter((relation) => relationKey(relation) !== relationKey(target)));
-      setSelected((previous) => { const next = new Set(previous); next.delete(relationKey(target)); return next; });
+      setRelations((previous) => previous.filter((relation) => relationKey(relation) !== relationKey(detail)));
+      setSelected((previous) => { const next = new Set(previous); next.delete(relationKey(detail)); return next; });
       setDeleteOpen(false);
-      setDeleteTarget(null);
-      setDetail((current) => current && relationKey(current) === relationKey(target) ? null : current);
+      setDetail(null);
       showToast(label("social.relationDeleted", "Relation deleted"));
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), true);
@@ -521,138 +507,46 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
     const translated = t(key);
     return translated !== key ? translated : type;
   };
-  const columns = useMemo<DataTableColumn<SocialRelation>[]>(() => [
-    selectionColumn({
-      label: label("social.selectAll", "Select all relations"),
-      rowLabel: (relation) => label(
-        "social.selectRelation",
-        `Select relation ${relation.from_user} ${relation.to_user}`,
-        relation.from_user,
-        relation.to_user,
-      ),
-    }),
-    {
-      id: "from_user",
-      accessorKey: "from_user",
-      header: label("social.fromUser", "From user"),
-      meta: {
-        label: label("social.fromUser", "From user"),
-        serverSortKey: "from_user",
-        required: true,
-        defaultPin: "left",
-      },
-    },
-    {
-      id: "to_user",
-      accessorKey: "to_user",
-      header: label("social.toUser", "To user"),
-      meta: {
-        label: label("social.toUser", "To user"),
-        serverSortKey: "to_user",
-        required: true,
-      },
-    },
-    {
-      id: "group_id",
-      accessorKey: "group_id",
-      header: label("social.groupId", "Group ID"),
-      meta: { label: label("social.groupId", "Group ID"), serverSortKey: "group_id" },
-      cell: ({ row }) => row.original.group_id || "--",
-    },
-    {
-      id: "relation_type",
-      accessorKey: "relation_type",
-      header: label("social.relationType", "Relation type"),
-      meta: {
-        label: label("social.relationType", "Relation type"),
-        serverSortKey: "relation_type",
-      },
-      cell: ({ row }) => <Badge variant="secondary">{relationLabel(row.original.relation_type)}</Badge>,
-    },
-    {
-      id: "strength",
-      accessorKey: "strength",
-      header: t("social.strength"),
-      meta: { label: t("social.strength"), serverSortKey: "strength" },
-      cell: ({ row }) => <div className="flex items-center gap-2"><Progress aria-label={`${row.original.from_user} → ${row.original.to_user} ${relationLabel(row.original.relation_type)} ${t("social.strength")}`} value={row.original.strength} className="h-1.5 w-20" /><span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(row.original.strength, locale, { maximumFractionDigits: 0 })}</span></div>,
-    },
-    {
-      id: "frequency",
-      accessorKey: "frequency",
-      header: t("social.frequency"),
-      meta: {
-        label: t("social.frequency"),
-        serverSortKey: "frequency",
-        cellClassName: "text-xs tabular-nums text-muted-foreground",
-      },
-    },
-    {
-      id: "last_interaction",
-      accessorKey: "last_interaction",
-      header: label("social.lastInteraction", "Last interaction"),
-      meta: {
-        label: label("social.lastInteraction", "Last interaction"),
-        serverSortKey: "last_interaction",
-      },
-      cell: ({ row }) => row.original.last_interaction
-        ? formatDashboardDateTime(row.original.last_interaction, locale)
-        : "--",
-    },
-    {
-      id: "tags",
-      accessorKey: "tags",
-      header: t("table.tags"),
-      enableSorting: false,
-      meta: { label: t("table.tags") },
-      cell: ({ row }) => <div className="flex flex-wrap items-center gap-1">{row.original.tags.map((tag) => <Badge key={tag} variant="outline"><Tag data-icon="inline-start" />{tag}</Badge>)}</div>,
-    },
-    actionsColumn({
-      label: label("table.rowActions", "Row actions"),
-      rowLabel: (relation) => `${label("table.rowActions", "Row actions")} ${relation.from_user} ${relation.to_user}`,
-      actions: (relation) => [
-        { id: "view", label: label("detail.view", "View"), onSelect: () => openDetail(relation) },
-        {
-          id: "edit",
-          label: t("detail.edit"),
-          onSelect: () => {
-            openDetail(relation);
-            setEditMode(true);
-          },
-        },
-        {
-          id: "delete",
-          label: t("common.delete"),
-          destructive: true,
-          onSelect: () => {
-            setDeleteTarget(relation);
-            setDeleteOpen(true);
-          },
-        },
-      ],
-    }),
-  ], [locale, t]);
   const categories = [
     { value: "all", label: label("social.allCategories", "All Categories") },
     ...Object.keys(RELATION_CATEGORIES).map((value) => ({ value, label: label(`social.category.${value}`, value) })),
   ];
   const groupItems = groups.map((group) => ({ value: group.group_id, label: `${group.group_id}${group.message_count ? ` (${group.message_count})` : ""}` }));
-  const relationTable = loading && relations.length === 0 ? (
+  const allSelected = relations.length > 0 && selected.size === relations.length;
+
+  const relationTable = loading ? (
     <p className="py-12 text-center text-sm text-muted-foreground">{label("table.loading", "Loading")}</p>
+  ) : relations.length === 0 ? (
+    <p className="py-12 text-center text-sm text-muted-foreground">{label("social.noData", "No relations found")}</p>
   ) : (
-    <DataTable
-      tableId="social-relations"
-      data={relations}
-      columns={columns}
-      getRowId={(relation) => relationKey(relation)}
-      sort={sort}
-      onSortChange={changeSort}
-      selectedRowIds={selected}
-      onSelectedRowIdsChange={setSelected}
-      currentRowId={detail ? relationKey(detail) : null}
-      onRowActivate={(relation) => openDetail(relation)}
-      loading={loading}
-      emptyLabel={label("social.noData", "No relations found")}
-    />
+    <Table>
+      <TableHeader className="sticky top-0 bg-background"><TableRow>
+        <TableHead className="w-10"><Checkbox aria-label={allSelected ? label("social.deselectAll", "Deselect all relations") : label("social.selectAll", "Select all relations")} checked={allSelected} onCheckedChange={() => setSelected(allSelected ? new Set() : new Set(relations.map(relationKey)))} /></TableHead>
+        <TableHead>{t("social.relations")}</TableHead>
+        <TableHead>{t("social.category")}</TableHead>
+        <TableHead>{t("social.strength")}</TableHead>
+        <TableHead>{t("social.frequency")}</TableHead>
+        <TableHead>{t("table.tags")}</TableHead>
+        <TableHead>{label("table.actions", "Actions")}</TableHead>
+      </TableRow></TableHeader>
+      <TableBody>
+        {relations.map((relation) => {
+          const key = relationKey(relation);
+          return <TableRow key={key} data-state={selected.has(key) ? "selected" : undefined}>
+            <TableCell><Checkbox aria-label={label("social.selectRelation", `Select relation ${relation.from_user} ${relation.to_user}`, relation.from_user, relation.to_user)} checked={selected.has(key)} onCheckedChange={() => setSelected((previous) => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} /></TableCell>
+            <TableCell>
+              <div className="flex items-center gap-2"><span className="text-xs font-medium">{relation.from_user}</span><ArrowRightLeft /><span className="text-xs font-medium">{relation.to_user}</span></div>
+              <div className="mt-0.5 text-xs text-muted-foreground">{relationLabel(relation.relation_type)}</div>
+            </TableCell>
+            <TableCell><Badge variant="secondary">{RELATION_CATEGORIES[relation.category] ? label(`social.category.${relation.category}`, relation.category) : relation.category}</Badge></TableCell>
+            <TableCell><div className="flex items-center gap-2"><Progress aria-label={`${relation.from_user} → ${relation.to_user} ${relationLabel(relation.relation_type)} ${t("social.strength")}`} value={relation.strength} className="h-1.5 w-20" /><span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(relation.strength, locale, { maximumFractionDigits: 0 })}</span></div></TableCell>
+            <TableCell className="text-xs tabular-nums text-muted-foreground">{relation.frequency}</TableCell>
+            <TableCell><div className="flex flex-wrap items-center gap-1">{relation.tags.map((tag) => <Badge key={tag} variant="outline"><Tag data-icon="inline-start" />{tag}</Badge>)}</div></TableCell>
+            <TableCell><Button variant="ghost" size="sm" aria-label={label("social.openRelation", `Open relation ${relation.from_user} ${relation.to_user}`, relation.from_user, relation.to_user)} onClick={() => openDetail(relation)}>{label("detail.view", "View")}</Button></TableCell>
+          </TableRow>;
+        })}
+      </TableBody>
+    </Table>
   );
 
   return (
@@ -671,12 +565,12 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
       />
       <Tabs value={category} onValueChange={(value) => { setSelected(new Set()); setCategory(value); }} className="min-h-0 flex-1 gap-0">
         <PageToolbar className="flex-nowrap overflow-x-auto bg-background"><TabsList variant="line" aria-label={t("social.category")} className="h-9 min-w-max">{categories.map((item) => <TabsTrigger key={item.value} value={item.value} className="px-3 text-xs">{item.label}</TabsTrigger>)}</TabsList></PageToolbar>
-        {categories.map((item) => <TabsContent key={item.value} value={item.value} className="min-h-0 flex-1 overflow-hidden"><PageContent width="full">{relationTable}</PageContent></TabsContent>)}
+        {categories.map((item) => <TabsContent key={item.value} value={item.value} className="min-h-0 overflow-auto"><PageContent width="full">{relationTable}</PageContent></TabsContent>)}
       </Tabs>
 
       {selected.size > 0 ? <PageToolbar className="border-b-0 border-t bg-muted/40"><span className="text-sm font-medium">{label("select.selected", `${selected.size} selected`, String(selected.size))}</span><Button variant="outline" size="sm" onClick={openBatchTag}>{label("social.editTags", "Edit Tags")}</Button><Button variant="destructive" size="sm" disabled={batchDeleteSubmitting} onClick={() => void executeBatchDelete()}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button><Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X data-icon="inline-start" />{t("common.clear")}</Button></PageToolbar> : null}
 
-      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) requestCloseDetail(); }} title={detail ? label("social.relationDetail", `Relation: ${detail.from_user} → ${detail.to_user}`, detail.from_user, detail.to_user) : ""} description={label("social.relationDetails", "Relation details")} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave={hasRevision(detail)} onBeginEdit={beginEdit} onCancel={cancelEdit} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: label("common.saving", "Saving...") }} status={editDirty ? t("detail.unsaved") : null} view={detail ? <div className="space-y-6"><DetailGrid><DetailField label={label("social.fromUser", "From user")}>{detail.from_user}</DetailField><DetailField label={label("social.toUser", "To user")}>{detail.to_user}</DetailField><DetailField label={label("social.groupId", "Group ID")}>{detail.group_id || "--"}</DetailField><DetailField label={label("social.relationType", "Relation type")}>{relationLabel(detail.relation_type)}</DetailField><DetailField label={t("social.strength")}>{formatDashboardPercent(detail.strength, locale, { maximumFractionDigits: 0 })}</DetailField><DetailField label={t("social.frequency")}>{detail.frequency}</DetailField><DetailField label={label("social.lastInteraction", "Last interaction")}>{detail.last_interaction ? formatDashboardDateTime(detail.last_interaction, locale) : "--"}</DetailField></DetailGrid><DetailSection title={t("field.tags")}><DetailTags tags={detail.tags ?? []} /></DetailSection></div> : null} viewActions={detail ? <Button variant="destructive" size="sm" disabled={!hasRevision(detail)} onClick={() => { setDeleteTarget(detail); setDeleteOpen(true); }}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button> : null} form={<SocialRelationForm value={editDraft} onChange={(next) => { setEditDraft(next); setEditFieldErrors({}); setEditFormError(null); }} fieldErrors={editFieldErrors} formErrors={editFormError ? [editFormError] : []} disabled={editSubmitting} mode="edit" />} />
+      <EntityEditorSheet open={detail !== null} onOpenChange={(open) => { if (!open) requestCloseDetail(); }} title={detail ? label("social.relationDetail", `Relation: ${detail.from_user} → ${detail.to_user}`, detail.from_user, detail.to_user) : ""} description={label("social.relationDetails", "Relation details")} mode={editMode ? "edit" : "view"} isDirty={editDirty} isSubmitting={editSubmitting} canSave={hasRevision(detail)} onBeginEdit={beginEdit} onCancel={cancelEdit} onSave={saveEdit} labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: label("common.saving", "Saving...") }} view={detail ? <div className="flex flex-col gap-4 text-sm"><div className="grid grid-cols-2 gap-3"><div><span className="text-xs font-medium text-muted-foreground">{label("social.fromUser", "From user")}</span><p>{detail.from_user}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.toUser", "To user")}</span><p>{detail.to_user}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.groupId", "Group ID")}</span><p>{detail.group_id || "--"}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.relationType", "Relation type")}</span><p>{relationLabel(detail.relation_type)}</p></div><div><span className="text-xs font-medium text-muted-foreground">{t("social.frequency")}</span><p>{detail.frequency}</p></div><div><span className="text-xs font-medium text-muted-foreground">{label("social.lastInteraction", "Last interaction")}</span><p>{detail.last_interaction || "--"}</p></div></div><Button variant="destructive" size="sm" disabled={!hasRevision(detail)} onClick={() => setDeleteOpen(true)}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button></div> : null} form={<SocialRelationForm value={editDraft} onChange={(next) => { setEditDraft(next); setEditFieldErrors({}); setEditFormError(null); }} fieldErrors={editFieldErrors} formErrors={editFormError ? [editFormError] : []} disabled={editSubmitting} mode="edit" />} />
 
       <EntityCreateDialog open={createOpen} onOpenChange={(open) => { if (!open) requestCloseCreate(); }} title={label("social.newRelation", "New Relation")} description={label("social.newRelationDescription", "Create a social relation")} isDirty={createDirty} isSubmitting={createSubmitting} canSubmit={Boolean(createDraft.from_user.trim() && createDraft.to_user.trim() && createDraft.relation_type.trim())} onCancel={requestCloseCreate} onSubmit={createRelation} labels={{ close: t("common.close"), cancel: t("common.cancel"), submit: label("detail.create", "Create"), submitting: label("common.saving", "Saving...") }} form={<SocialRelationForm value={createDraft} onChange={(next) => { setCreateDraft(next); setCreateFieldErrors({}); setCreateFormError(null); }} fieldErrors={createFieldErrors} formErrors={createFormError ? [createFormError] : []} disabled={createSubmitting} mode="create" />} />
 
@@ -684,7 +578,7 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
         <DialogContent showCloseButton={false} className="sm:max-w-md"><DialogHeader><DialogTitle>{label("social.editTagsTitle", "Edit relation tags")}</DialogTitle><DialogDescription>{label("social.batchTagDescription", "Apply tags to selected relations")}</DialogDescription><Button type="button" variant="ghost" size="icon-sm" className="absolute right-3 top-3" aria-label={t("common.close")} disabled={batchTagSubmitting} onClick={requestCloseBatchTag}><X aria-hidden="true" /></Button></DialogHeader>{batchTagError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{batchTagError}</div> : null}<div className="flex flex-col gap-4"><Field data-disabled={batchTagSubmitting}><FieldLabel htmlFor="social-batch-operation">{label("social.operation", "Operation")}</FieldLabel><select id="social-batch-operation" aria-label={label("social.operation", "Operation")} className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm text-foreground disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50" value={batchTagDraft.operation} onChange={(event) => setBatchTagDraft((draft) => ({ ...draft, operation: event.currentTarget.value as BatchTagDraft["operation"] }))} disabled={batchTagSubmitting}><option value="add_tags">add_tags</option><option value="remove_tags">remove_tags</option></select></Field><Field data-disabled={batchTagSubmitting}><FieldLabel>{t("field.tags")}</FieldLabel><div onChange={(event) => setBatchTagTypingDirty(Boolean((event.target as HTMLInputElement).value?.trim()))}><TagEditor label={t("field.tags")} getRemoveLabel={(tag) => label("tags.remove", `Remove ${tag}`, tag)} values={batchTagDraft.tags} onChange={(tags) => { setBatchTagTypingDirty(false); setBatchTagDraft((draft) => ({ ...draft, tags })); }} disabled={batchTagSubmitting} /></div></Field></div><DialogFooter><Button type="button" variant="outline" disabled={batchTagSubmitting} onClick={requestCloseBatchTag}>{t("common.cancel")}</Button><Button type="button" disabled={batchTagSubmitting || !batchTagDraft.tags.length || !revisionedSelection} onClick={() => void submitBatchTag()}>{batchTagSubmitting ? label("common.saving", "Saving...") : label("common.apply", "Apply")}</Button></DialogFooter></DialogContent>
       </Dialog>
 
-      <DeleteConfirmDialog open={deleteOpen} title={label("social.deleteRelation", "Delete Relation")} description={deleteTarget ? `${deleteTarget.from_user} → ${deleteTarget.to_user}` : ""} cancelLabel={t("common.cancel")} confirmLabel={label("social.deleteRelation", "Delete Relation")} onCancel={() => { setDeleteOpen(false); setDeleteTarget(null); }} onConfirm={() => void executeSingleDelete()} />
+      <DeleteConfirmDialog open={deleteOpen} title={label("social.deleteRelation", "Delete Relation")} description={detail ? `${detail.from_user} → ${detail.to_user}` : ""} cancelLabel={t("common.cancel")} confirmLabel={label("social.deleteRelation", "Delete Relation")} onCancel={() => setDeleteOpen(false)} onConfirm={() => void executeSingleDelete()} />
       <UnsavedChangesDialog open={pendingDiscard !== null} title={label("config.unsaved.title", "Unsaved changes")} description={label("config.unsaved.description", "Discard your unsaved changes?")} keepEditingLabel={label("config.unsaved.keepEditing", "Keep editing")} discardLabel={label("config.unsaved.discard", "Discard changes and leave")} onKeepEditing={() => setPendingDiscard(null)} onDiscard={() => { if (pendingDiscard === "create") { resetCreate(); setCreateOpen(false); } else if (pendingDiscard === "edit") { cancelEdit(); setDetail(null); } else { setBatchTagDraft({ ...EMPTY_BATCH_TAG }); setBatchTagTypingDirty(false); setBatchTagError(null); setBatchTagOpen(false); } setPendingDiscard(null); }} />
       <EditConflictDialog open={conflict !== null} title={label("social.conflictTitle", "Relation changed")} description={label("social.conflictDescription", "This relation changed while you were editing it.")} loadRemoteLabel={label("config.conflict.loadRemote", "Load remote values")} reapplyLocalLabel={label("social.reapplyLocal", "Reapply local values")} onLoadRemote={loadRemoteValues} onReapplyLocal={reapplyLocalValues} />
     </PageFrame>
