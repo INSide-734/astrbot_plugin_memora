@@ -4,9 +4,7 @@
 
 # Memora
 
-### 面向 AstrBot 的可配置长期记忆插件
-
-Memora 将对话中的重要信息抽取为可检索、可衰减、可维护的记忆，并在当前请求中按策略提供给 AstrBot。它适合希望让 Bot 保留用户偏好、事实、关系和知识，同时仍能控制成本与隐私边界的部署。
+### 为 AstrBot 打造的智能长期记忆插件
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12+-green.svg)](https://www.python.org/)
@@ -17,46 +15,60 @@ Memora 将对话中的重要信息抽取为可检索、可衰减、可维护的�
 
 ---
 
-## 目录
+## 简介
 
-- [核心能力](#核心能力)
-- [快速开始](#快速开始)
-- [自适应记忆注入](#自适应记忆注入)
-- [常用命令](#常用命令)
-- [LLM Tools](#llm-tools)
-- [Dashboard](#dashboard)
-- [REST API](#rest-api)
-- [架构总览](#架构总览)
-- [开发与测试](#开发与测试)
-- [项目结构](#项目结构)
-- [许可证](#许可证)
+**Memora** 是一个为 [AstrBot](https://github.com/Soulter/AstrBot) 打造的完整长期记忆插件，提供从消息捕获、内容抽取、向量化存储，到 BM25+向量双路混合检索、记忆衰减与遗忘调度、图记忆、知识库、笔记系统、用户画像等全生命周期管理能力。
+
+以 **MemoryAtom（记忆原子）** 为核心数据单元，Memora 实现细粒度的记忆存取与演化，让 Bot 真正「记住」每一次对话。
 
 ## 核心特性
 
-### 记忆生命周期
-- 从对话中自动抽取事实、偏好、经验和关系，并按记忆原子（`MemoryAtom`）保存。
-- 支持分类、重要性与情感评分；记忆可按 TTL 衰减并由维护任务清理低价值或过期内容。
-- 支持会话总结、知识点和笔记等结构化信息，便于长期回顾与编辑。
+### 记忆生命周期管理
+- **自动抽取** — LLM 驱动，从对话中自动识别并提取有价值的信息
+- **智能分类** — 多维度分类（事实/偏好/经验/关系等），支持自定义分类体系
+- **TTL 衰减** — 记忆随时间自然衰减，支持线性/指数/对数等多种衰减策略
+- **遗忘调度** — 自动遗忘低价值/过期记忆，保持记忆库清爽
+- **情感评分** — 对记忆附加情感强度，影响记忆权重和召回优先级
 
-### 混合检索
-- BM25 全文检索与 FAISS 向量检索并行工作，使用 RRF 等策略融合结果。
-- 图记忆提供实体关系和关联发现；文档路与图路可合并召回。
-- 可选重排序、查询改写和个性化排序，在准确率与成本之间调整。
+### 多路混合检索
+- **BM25 全文检索** — 基于 jieba 分词的中文全文搜索
+- **FAISS 向量检索** — 基于 Embedding 的语义相似度搜索
+- **RRF 融合** — Reciprocal Rank Fusion 融合 BM25 + 向量两路排序
+- **图检索** — 基于 networkx 的知识图谱检索（关键词 + 向量双路 → 融合）
+- **双路路由** — 文档路 + 图路 → DualRouteRetriever，双路并行召回
+- **重排序** — CrossEncoder / LLM 重排序，提升结果精度
+- **个性化排序** — 基于用户画像和交互历史的个性化结果排序
 
-### 记忆注入
-- 通过 Manual、Auto 或 Hybrid 路由选择 Tool First、Low Cost、Balanced、Quality 等预设。
-- 动态记忆只在当前请求中临时注入，受全局预算、隐私和角色约束；不会写入 System Prompt。
-- 决策观测仅保存允许的标量字段，不记录查询文本、记忆正文、记忆 ID 或 Provider 凭证。
+### 图记忆 (Graph Memory)
+- 自动构建实体关系图谱
+- 支持知识推理和关联发现
+- 可视化图谱浏览（Dashboard 支持）
 
-### 组织与管理
-- Dashboard 用于浏览和编辑记忆、图谱、时间线、用户画像、知识库、笔记及系统状态。
-- AstrBot Agent 可调用记忆搜索、主动记忆、笔记、知识库和用户画像工具。
-- 提供 `/memora` 查询、总结、索引重建、图重建和清理命令。
+### 知识库 & 笔记
+- **知识库** — 自动从对话中提取知识点，结构化存储
+- **笔记系统** — LLM 驱动的对话总结和笔记生成
+- **标签管理** — 灵活的标签体系，支持多维度归类
 
-### 可靠性与安全
-- SQLite 是 canonical memory 的权威持久化；BM25、FAISS 和图索引均可重建。
-- Provider 暂不可用时，初始化在后台等待并重试，不阻断插件加载流程。
-- 写回保留 revision 并进行字段校验；注入内容经过隐私过滤和历史注入清理。
+### 用户画像
+- 对话中自动构建用户画像
+- 追踪用户偏好、习惯、兴趣
+- 支持个性化对话策略
+
+### 智能特性
+- **主动提醒** — 基于记忆的主动提醒和建议
+- **反思机制** — Reflection 机制，周期性回顾和整合记忆
+- **自动学习** — 从交互中持续学习和优化
+- **异常检测** — 检测记忆质量异常，自动触发维护
+- **季节性召回** — 时间敏感的周期性记忆召回
+- **隐私过滤** — 敏感信息自动过滤
+
+### 工程特性
+- **多语言支持** — 中文 / English / Русский 三语界面
+- **Web Dashboard** — React + shadcn/ui 管理面板，10 个功能页面
+- **REST API** — 完整的 RESTful API，14+ 端点
+- **自动备份** — 版本升级自动备份数据
+- **索引校验** — 索引一致性验证与自动重建
+- **回退容错** — Provider 不可用时后台重试（最多 60 次）
 
 ## 架构总览
 
@@ -130,20 +142,32 @@ User Message → EventHandler → MessageContentExtractor → ConversationManage
 
 ### 模块结构
 
-| 模块 | 职责 |
-|------|------|
-| `core/` | 后端核心：初始化、事件处理、记忆处理、检索、存储、安全与 Page API |
-| `pages/dashboard/` | React Web 管理面板 |
-| `tests/` | pytest、契约和回归测试 |
-| `scripts/` | smoke、门禁与维护脚本 |
-| `docs/` | 开发、设计与发布文档 |
+| 模块 | 文件数 | 职责 |
+|------|--------|------|
+| `core/base/` | 5 | 配置管理、常量、异常定义 |
+| `core/initializer/` | 6 | 插件初始化编排、Provider 加载、DB 建立 |
+| `core/managers/` | 40+ | 核心业务逻辑：记忆引擎、会话、衰减、备份等 |
+| `core/processors/` | 20 | LLM 驱动的记忆抽取、分类、格式化 |
+| `core/retrieval/` | 22 | 多路检索：BM25、向量、混合、图检索、重排序 |
+| `core/storage/` | 16 | SQLite 持久化层：原子、会话、图、笔记、知识库 |
+| `core/api/` | 15 | REST API 端点：读写、批量、统计、备份等 |
+| `core/validators/` | 5 | 索引一致性验证与重建 |
+| `core/schedulers/` | 2 | 记忆衰减与备份调度 |
+| `core/models/` | 8 | 数据模型定义 |
+| `core/tools/` | 5 | AstrBot LLM Agent 工具集成 |
+| `core/commands/` | 3 | 用户命令：查询与维护 |
+| `core/handlers/` | 3 | 回忆与反思事件处理器 |
+| `core/cleaners/` | 2 | 注入清理 |
+| `core/dedup/` | 2 | 消息去重 |
+| `core/extractors/` | 2 | 消息内容提取 |
+| `pages/dashboard/` | — | React Web 管理面板（10 页面） |
+| `tests/` | 19 | pytest 测试套件 |
 
 ## 快速开始
 
 ### 环境要求
 
 - **Python** 3.12+
-- **Node.js** 20（仅在开发或构建 Dashboard 时需要）
 - **AstrBot** ≥ 4.24.2
 - **Embedding Provider** 已在 AstrBot 中配置（用于向量化）
 - **LLM Provider** 已在 AstrBot 中配置（用于记忆抽取）
@@ -166,17 +190,19 @@ pip install -r requirements.txt
 
 3. 重启 AstrBot，插件会自动注册并开始后台初始化。
 
-4. 初始化需要 Embedding Provider 和 LLM Provider 在 AstrBot 中正确配置。若 Provider 暂不可用，插件会在后台等待并重试，不视为安装失败。
+4. 初始化需要 Embedding Provider 和 LLM Provider 在 AstrBot 中正确配置。若 Provider 暂不可用，插件会进入后台重试模式（最多 60 次）。
 
-### 首次验证
+### fast-context
 
-1. 在 AstrBot 日志中确认 Memora 初始化完成，或确认它正在等待 Provider。
-2. 以管理员身份发送 `/memora status`，检查核心组件状态。
-3. 发送一段包含稳定偏好或事实的对话，再用 `/memora search <query>` 验证召回。
+根级 `AGENTS.md` 要求在探索性代码搜索时优先使用 `mcp__fast_context__fast_context_search`。
+
+- 若已配置 `WINDSURF_API_KEY`，可直接使用 fast-context 进行语义搜索。
+- 不要尝试自动读取本机 Windsurf 凭证。
+- 若当前环境未配置 fast-context 或不可用，允许退回 `rg`、PowerShell `Select-String`、直接读文件，并在工作记录中说明 fallback 原因。
 
 ### 开发校验
 
-开发环境准备和统一质量门见 [`docs/DEV_SETUP.md`](docs/DEV_SETUP.md)。
+开发环境准备和统一质量门见 `docs/DEV_SETUP.md`；最近一次门禁结果记录在 `docs/QUALITY_GATE_STATUS.md`。
 
 ```bash
 python scripts/check_all.py
@@ -191,26 +217,19 @@ python scripts/check_all.py
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `bot_language` | 界面语言 | `zh` |
-| `provider_settings` | Embedding 与 LLM Provider ID | 留空使用 AstrBot 默认 |
-| 详见 `_conf_schema.json` | 完整配置列表与默认值 | — |
+| 详见 `_conf_schema.json` | 完整配置列表 | — |
 
 ## 自适应记忆注入
 
-默认策略由以下字段控制：
-
-| 配置项 | 默认值 | 作用 |
-|--------|--------|------|
-| `injection_routing_mode` | `manual` | 选择手动、自动或混合路由 |
-| `injection_manual_preset` | `balanced` | 手动模式使用的策略预设 |
-| `injection_delivery_override` | `auto` | 根据预设和 Provider 能力选择临时传输方式 |
-
-普通记忆受字符预算和条数上限约束；动态记忆不会进入 System Prompt。决策观测只保存允许的标量字段，不记录查询文本、记忆正文、记忆 ID 或原始身份标识。
-
-`recall_engine.injection_method` 已移除且不提供兼容迁移。升级后请在新的注入字段中重新配置，不要继续写入旧字段。
+- 注入路由可选择 Manual、Auto 或 Hybrid；新安装默认使用 `manual + balanced + auto delivery`。
+- 四种预设分别为 Tool First、Low Cost、Balanced 和 Quality；普通记忆的字符预算依次为 `0/800/1200/2400`，最大条数依次为 `0/2/4/6`。
+- 动态记忆绝不写入 System Prompt。注入载荷只在当前请求中临时存在，并始终受全局硬预算约束。
+- Dashboard 提供完整的 Injection Strategy 工作台，包含 Overview、Strategy Configuration 和 Decision History。
+- 决策元数据全量持久化到 SQLite 的 `injection_decisions` 表，但不会保存查询文本、记忆正文/ID 或原始身份标识。默认保留期为 30 天、上限为 100,000 行，两者均可配置。
+- 正常关闭时最多等待 5 秒刷新待写批次；进程崩溃时可能丢失最后一个尚未刷新的批次。
+- 这是破坏性配置变更：`recall_engine.injection_method` 已移除且不提供兼容迁移，管理员必须使用新的策略字段重新配置。
 
 ## 命令
-
-以下命令均要求管理员权限：
 
 | 命令 | 说明 |
 |------|------|
@@ -224,13 +243,6 @@ python scripts/check_all.py
 | `/memora reset` | 重置当前会话长期记忆上下文 |
 | `/memora cleanup [preview|exec]` | 清理历史消息中的记忆注入片段 |
 | `/memora help` | 查看帮助信息 |
-
-示例：
-
-```text
-/memora status
-/memora search 喜欢的音乐 5
-```
 
 ## LLM Tools
 
