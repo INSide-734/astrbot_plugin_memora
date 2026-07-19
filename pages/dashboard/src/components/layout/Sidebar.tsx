@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from "react";
 import {
-  Brain,
   ChevronDown,
   Languages,
   Moon,
@@ -10,6 +9,7 @@ import {
   X,
 } from "lucide-react";
 
+import { MemoraLogo } from "@/components/brand/MemoraLogo";
 import { Button } from "@/components/ui/Button";
 import { selectionStateVariants } from "@/components/ui/selection-state";
 import { useI18n } from "@/hooks/useI18n";
@@ -138,7 +138,7 @@ export function Sidebar({
       >
         <div className={cn("flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4", collapsed && "justify-center px-2")}>
           <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-            <Brain className="size-4" />
+            <MemoraLogo size={18} />
           </div>
           {!collapsed ? <span className="min-w-0 flex-1 truncate text-sm font-semibold">Memora</span> : null}
           {onCloseMobile ? (
