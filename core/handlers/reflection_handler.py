@@ -13,6 +13,7 @@ from astrbot.api.platform import MessageType
 from ..base.config_manager import ConfigManager
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
+from ..monitoring import report_debug_event, report_debug_exception
 from ..processors.memory_processor import MemoryProcessor
 from ..utils import OperationContext, get_persona_id
 from .topic_batch_preparer import TopicBatchPreparer
@@ -78,6 +79,13 @@ class ReflectionHandler:
         resp: LLMResponse,
     ) -> None:
         """在 LLM 响应后检查是否需要反思与记忆存储。"""
+        report_debug_event(
+            "reflection_state",
+            component="reflection",
+            stage="reflection",
+            status="started",
+            reason_code="response_received",
+        )
         logger.debug(
             f"[反思处理] 进入 handle_memory_reflection，resp.role={resp.role}"
         )
@@ -319,10 +327,32 @@ class ReflectionHandler:
                     task.add_done_callback(
                         lambda t, sid=session_id: self._on_storage_task_done(t, sid)
                     )
+                    report_debug_event(
+                        "reflection_state",
+                        component="reflection",
+                        stage="reflection",
+                        status="completed",
+                        reason_code="storage_task_scheduled",
+                    )
 
         except asyncio.CancelledError:
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="reflection",
+                status="cancelled",
+                reason_code="reflection_cancelled",
+            )
             raise
         except Exception as e:
+            report_debug_exception(
+                "reflection_state",
+                e,
+                component="reflection",
+                stage="reflection",
+                status="failed",
+                reason_code="reflection_error",
+            )
             logger.error(f"处理 on_llm_response 钩子时发生错误：{e}", exc_info=True)
 
     def _sanitize_response_text(
@@ -547,15 +577,49 @@ class ReflectionHandler:
         self.finish_summary_window(session_id)
 
         if task.cancelled():
+            report_debug_event(
+                "storage_task",
+                component="reflection",
+                stage="storage",
+                status="cancelled",
+                reason_code="storage_cancelled",
+                task_type="storage",
+            )
             return
 
         try:
             exc = task.exception()
         except asyncio.CancelledError:
+            report_debug_event(
+                "storage_task",
+                component="reflection",
+                stage="storage",
+                status="cancelled",
+                reason_code="storage_cancelled",
+                task_type="storage",
+            )
             return
 
         if exc:
+            report_debug_exception(
+                "storage_task",
+                exc,
+                component="reflection",
+                stage="storage",
+                status="failed",
+                reason_code="storage_error",
+                task_type="storage",
+            )
             logger.error(f"[{session_id}] 记忆存储任务异常退出: {exc}")
+        else:
+            report_debug_event(
+                "storage_task",
+                component="reflection",
+                stage="storage",
+                status="completed",
+                reason_code="storage_completed",
+                task_type="storage",
+            )
 
     async def try_begin_summary_window(self, session_id: str) -> bool:
         """为后台或手动提交预留会话总结窗口。"""
@@ -589,6 +653,14 @@ class ReflectionHandler:
         retry_count: int = 0,
     ) -> None:
         """后台存储任务"""
+        report_debug_event(
+            "storage_task",
+            component="reflection",
+            stage="storage",
+            status="started",
+            reason_code="storage_started",
+            task_type="storage",
+        )
         async with OperationContext("记忆存储", session_id):
             try:
                 current_summarized = (
@@ -851,7 +923,26 @@ class ReflectionHandler:
                                 exc_info=True,
                             )
 
+                report_debug_event(
+                    "storage_task",
+                    component="reflection",
+                    stage="storage",
+                    status="completed",
+                    reason_code="memories_stored",
+                    task_type="storage",
+                    count=max(0, int(stored_count)),
+                )
+
             except Exception as e:
+                report_debug_exception(
+                    "storage_task",
+                    e,
+                    component="reflection",
+                    stage="storage",
+                    status="failed",
+                    reason_code="storage_error",
+                    task_type="storage",
+                )
                 logger.error(f"[{session_id}] 存储记忆失败：{e}", exc_info=True)
                 await self._record_pending_summary(
                     session_id,
@@ -910,8 +1001,25 @@ class ReflectionHandler:
             if sources:
                 await manager.schedule_consider(sources[0])
         except asyncio.CancelledError:
+            report_debug_event(
+                "storage_task",
+                component="reflection",
+                stage="storage",
+                status="cancelled",
+                reason_code="evolution_cancelled",
+                task_type="evolution",
+            )
             raise
-        except Exception:
+        except Exception as exception:
+            report_debug_exception(
+                "storage_task",
+                exception,
+                component="reflection",
+                stage="storage",
+                status="failed",
+                reason_code="evolution_schedule_error",
+                task_type="evolution",
+            )
             logger.warning("canonical 写入成功，但记忆演化任务调度失败")
 
     @staticmethod
