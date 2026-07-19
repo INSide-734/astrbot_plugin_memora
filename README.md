@@ -98,8 +98,10 @@ pip install -r requirements.txt
 注入配置位于 `recall_engine`：
 
 - `injection_routing_mode` 默认 `manual`；`injection_manual_preset` 默认 `balanced`。
+- 新安装默认使用 `manual + balanced`，普通记忆的注入预算和条数仍受预设硬上限约束。
 - `injection_delivery_override` 默认 `auto`，由预设和 Provider 能力选择临时传输方式。
 - 普通记忆受全局硬预算限制，且不会被写入 System Prompt。
+- 注入决策默认保留 `30 天`、最多 `100,000` 行；只持久化脱敏的 allowlist 标量，不保存查询、提示词、记忆正文或 ID 列表。
 - 已移除 `recall_engine.injection_method`，没有兼容迁移；升级后请使用新的策略字段重新配置。
 
 ## 常用命令
@@ -226,6 +228,10 @@ python scripts/check_all.py
 ```
 
 Dashboard 的 `npm run smoke:runtime` 与 `npm run smoke:browser` 属于完整门禁；浏览器 smoke 完成后还需要人工检查生成的截图。
+
+### 代码探索
+
+仓库优先使用 `mcp__fast_context__fast_context_search` 做语义代码搜索。若当前环境未配置 fast-context，可使用 fallback 方式退回 `Select-String`、定向文件读取等本地方法；不要自动读取 Windsurf 凭证。若使用 fast-context，请仅在已自行配置 `WINDSURF_API_KEY` 时使用，不要把本机凭证写入代码或文档。
 
 ## 技术栈
 
