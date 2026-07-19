@@ -17,11 +17,20 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from .backup_models import BackupIntegrity, BackupOperationError, BackupType, FileRole
+from .backup_models import (
+    BackupIntegrity,
+    BackupOperationError,
+    BackupType,
+    FileRole,
+    RestoreFileProgress,
+    RestorePlan,
+    RestoreStatus,
+)
 from .backup_snapshot import (
     atomic_write_json,
     copy_regular_file,
     ensure_free_space,
+    sha256_file,
     snapshot_sqlite,
 )
 from ..utils.version import PLUGIN_VERSION  # single source of truth: metadata.yaml
@@ -101,36 +110,178 @@ class BackupManager:
         self.write_current_version()
         return result
 
-    def apply_pending_restores(self) -> int:
-        """启动时检查并应用 .restore 暂存文件。
+    def _restore_root(self) -> Path:
+        root = self.data_dir / ".restore"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
 
-        当 restore_backup 因文件锁定而无法直接覆盖时，
-        备份文件会被写入 <name>.restore 后缀。
-        此方法在插件启动、数据库尚未打开时应用这些暂存文件。
-        返回已应用的文件数。
-        """
-        applied = 0
-        for restore_file in self.data_dir.glob("*.restore"):
-            target = restore_file.with_suffix("")  # 去掉 .restore 后缀
+    @staticmethod
+    def _plan_to_dict(plan: RestorePlan) -> dict[str, object]:
+        return {
+            "operation_id": plan.operation_id,
+            "source_backup_name": plan.source_backup_name,
+            "apply_mode": plan.apply_mode,
+            "status": plan.status.value,
+            "files": [
+                {
+                    "name": item.name,
+                    "role": item.role.value,
+                    "moved_to_previous": item.moved_to_previous,
+                    "installed": item.installed,
+                    "validated": item.validated,
+                }
+                for item in plan.files
+            ],
+            "pre_restore_backup_name": plan.pre_restore_backup_name,
+            "reason_code": plan.reason_code,
+            "reload_scheduled": plan.reload_scheduled,
+            "requires_manual_restart": plan.requires_manual_restart,
+        }
+
+    @staticmethod
+    def _dict_to_plan(value: dict[str, object]) -> RestorePlan:
+        files: list[RestoreFileProgress] = []
+        for item in value.get("files", []) or []:
+            if not isinstance(item, dict):
+                raise BackupOperationError("restore_plan_invalid")
             try:
-                if target.exists():
-                    target.unlink()
-                shutil.move(str(restore_file), str(target))
-                applied += 1
-                logger.info(f"[BackupManager] 已应用恢复暂存: {target.name}")
-            except OSError as exc:
-                logger.error(
-                    f"[BackupManager] 应用恢复暂存失败 {restore_file.name}: {exc}"
+                files.append(
+                    RestoreFileProgress(
+                        name=str(item["name"]),
+                        role=FileRole(str(item["role"])),
+                        moved_to_previous=bool(item.get("moved_to_previous", False)),
+                        installed=bool(item.get("installed", False)),
+                        validated=bool(item.get("validated", False)),
+                    )
                 )
-        return applied
+            except (KeyError, ValueError, TypeError) as exc:
+                raise BackupOperationError("restore_plan_invalid") from exc
+        try:
+            return RestorePlan(
+                operation_id=str(value["operation_id"]),
+                source_backup_name=str(value["source_backup_name"]),
+                apply_mode=str(value["apply_mode"]),
+                status=RestoreStatus(str(value["status"])),
+                files=files,
+                pre_restore_backup_name=(
+                    str(value["pre_restore_backup_name"])
+                    if value.get("pre_restore_backup_name")
+                    else None
+                ),
+                reason_code=(str(value["reason_code"]) if value.get("reason_code") else None),
+                reload_scheduled=bool(value.get("reload_scheduled", False)),
+                requires_manual_restart=bool(value.get("requires_manual_restart", False)),
+            )
+        except (KeyError, ValueError, TypeError) as exc:
+            raise BackupOperationError("restore_plan_invalid") from exc
+
+    def _plan_path(self, operation_id: str) -> Path:
+        self.validate_operation_id(operation_id)
+        return self._restore_root() / operation_id / "restore_plan.json"
+
+    def _write_plan(self, plan: RestorePlan) -> None:
+        atomic_write_json(self._plan_path(plan.operation_id), self._plan_to_dict(plan))
+
+    def _read_plan(self, operation_id: str | None = None) -> RestorePlan | None:
+        root = self._restore_root()
+        paths = [self._plan_path(operation_id)] if operation_id else sorted(root.glob("*/restore_plan.json"))
+        plans: list[RestorePlan] = []
+        for path in paths:
+            if not path.exists() or not path.is_file() or path.is_symlink():
+                continue
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(value, dict):
+                    raise BackupOperationError("restore_plan_invalid")
+                plans.append(self._dict_to_plan(value))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise BackupOperationError("restore_plan_invalid") from exc
+        if not plans:
+            return None
+        active = [plan for plan in plans if self._restore_is_blocking(plan.status)]
+        return active[0] if active else plans[-1]
+
+    @staticmethod
+    def validate_operation_id(operation_id: str) -> str:
+        normalized = str(operation_id or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9-]{8,64}", normalized):
+            raise ValueError("invalid operation id")
+        return normalized
+
+    @staticmethod
+    def _restore_is_blocking(status: RestoreStatus) -> bool:
+        return status in {
+            RestoreStatus.STAGED,
+            RestoreStatus.RELOAD_SCHEDULED,
+            RestoreStatus.APPLYING,
+            RestoreStatus.VALIDATING,
+            RestoreStatus.ROLLBACK_PENDING,
+            RestoreStatus.ROLLING_BACK,
+        }
+
+    def get_maintenance_state(self) -> dict[str, object]:
+        plan = self._read_plan()
+        return {
+            "blocked": bool(plan and self._restore_is_blocking(plan.status)),
+            "operation_id": plan.operation_id if plan and self._restore_is_blocking(plan.status) else None,
+            "status": plan.status.value if plan else None,
+        }
 
     def has_pending_restores(self) -> bool:
-        """若存在待应用的恢复暂存文件，则返回 ``True``。"""
-        return any(self.data_dir.glob("*.restore"))
+        return bool(self.get_maintenance_state()["blocked"])
 
     def list_pending_restores(self) -> list[str]:
-        """返回等待下次启动时应用的恢复暂存文件名列表。"""
-        return sorted(p.name for p in self.data_dir.glob("*.restore") if p.is_file())
+        plan = self._read_plan()
+        if plan and self._restore_is_blocking(plan.status):
+            return [plan.operation_id]
+        return []
+
+    def _public_restore_status(self, plan: RestorePlan) -> dict[str, object]:
+        return {
+            "operation_id": plan.operation_id,
+            "source_backup_name": plan.source_backup_name,
+            "restore_status": plan.status.value,
+            "apply_mode": plan.apply_mode,
+            "reload_scheduled": plan.reload_scheduled,
+            "requires_manual_restart": plan.requires_manual_restart,
+            "pre_restore_backup_name": plan.pre_restore_backup_name,
+            "reason_code": plan.reason_code,
+        }
+
+    def get_restore_status(self, operation_id: str | None = None) -> dict[str, object] | None:
+        plan = self._read_plan(operation_id)
+        return self._public_restore_status(plan) if plan else None
+
+    def _migrate_legacy_restore_files(self) -> RestorePlan | None:
+        legacy = [path for path in self.data_dir.glob("*.restore") if path.is_file()]
+        if not legacy:
+            return None
+        operation_id = uuid.uuid4().hex
+        operation_dir = self._restore_root() / operation_id
+        payload_dir = operation_dir / "payload"
+        payload_dir.mkdir(parents=True, exist_ok=False)
+        files: list[RestoreFileProgress] = []
+        for source in legacy:
+            name = source.name.removesuffix(".restore")
+            if not self._is_restorable_file_name(name):
+                continue
+            os.replace(source, payload_dir / name)
+            role = _BACKUP_FILE_SPECS.get(name, (FileRole.OPERATIONAL, "regular", False))[0]
+            files.append(RestoreFileProgress(name=name, role=role))
+        if not files:
+            shutil.rmtree(operation_dir, ignore_errors=True)
+            return None
+        plan = RestorePlan(
+            operation_id=operation_id,
+            source_backup_name="legacy",
+            apply_mode="restart",
+            status=RestoreStatus.STAGED,
+            files=files,
+            requires_manual_restart=True,
+            reason_code="legacy_restore_migrated",
+        )
+        self._write_plan(plan)
+        return plan
 
     async def backup_if_needed_async(self) -> dict[str, object] | None:
         """异步版本：通过 asyncio.to_thread 将同步文件 I/O 卸载到线程池。"""
@@ -146,10 +297,8 @@ class BackupManager:
             return await asyncio.to_thread(self._create_backup_sync, backup_type, None)
 
     def _has_backup_data(self) -> bool:
-        return any(
-            (self.data_dir / name).is_file() and not (self.data_dir / name).is_symlink()
-            for name in _BACKUP_FILE_SPECS
-        )
+        canonical = self.data_dir / "memora.db"
+        return canonical.is_file() and not canonical.is_symlink()
 
     def _backup_name(self, backup_type: BackupType, previous_version: str | None) -> str:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -277,20 +426,32 @@ class BackupManager:
         return {"removed": removed, "skipped": skipped, "failed": failed}
 
     def _referenced_backup_names(self) -> set[str]:
-        plan = self.data_dir / ".restore" / "restore_plan.json"
-        if not plan.exists():
-            return set()
-        try:
-            value = json.loads(plan.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return set()
-        if not isinstance(value, dict):
-            return set()
-        names = {
-            str(value.get("source_backup_name", "")),
-            str(value.get("pre_restore_backup_name", "")),
-        }
-        return {name for name in names if name}
+        referenced: set[str] = set()
+        root = self.data_dir / ".restore"
+        for plan_path in root.glob("*/restore_plan.json"):
+            try:
+                value = json.loads(plan_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(value, dict):
+                continue
+            status = str(value.get("status", ""))
+            if status in {
+                RestoreStatus.SUCCEEDED.value,
+                RestoreStatus.FAILED_BEFORE_APPLY.value,
+                RestoreStatus.ROLLED_BACK.value,
+                RestoreStatus.CANCELLED.value,
+            }:
+                continue
+            referenced.update(
+                name
+                for name in (
+                    str(value.get("source_backup_name", "")),
+                    str(value.get("pre_restore_backup_name", "")),
+                )
+                if name
+            )
+        return referenced
 
     @staticmethod
     def validate_backup_name(name: str) -> str:
@@ -356,42 +517,300 @@ class BackupManager:
             logger.error(f"[BackupManager] 删除备份失败 {backup_name}: {exc}")
             raise
 
-    def stage_restore(self, name: str) -> dict[str, object]:
-        """将合法备份目录中的文件暂存为 ``*.restore`` 恢复文件。"""
-        backup_name = self.validate_backup_name(name)
+    def _quick_check(self, path: Path) -> str:
+        connection = sqlite3.connect(str(path))
+        try:
+            result = str(connection.execute("PRAGMA quick_check").fetchone()[0])
+        finally:
+            connection.close()
+        if result.lower() != "ok":
+            raise BackupOperationError("backup_invalid")
+        return result
+
+    def _preflight_restore(self, backup_name: str) -> dict[str, object]:
+        backup_name = self.validate_backup_name(backup_name)
         backup_dir = self.get_backup_dir(backup_name)
         if backup_dir is None:
-            raise FileNotFoundError(f"backup not found: {backup_name}")
-
-        staged: list[str] = []
-        skipped: list[str] = []
-        for src in backup_dir.iterdir():
-            if not src.is_file() or src.name == _BACKUP_INFO_FILE:
-                continue
-            if not self._is_restorable_file_name(src.name):
-                skipped.append(src.name)
-                continue
-            dst = self.data_dir / src.name
-            restore_tmp = dst.with_name(dst.name + ".restore")
-            try:
-                shutil.copy2(src, restore_tmp)
-                staged.append(restore_tmp.name)
-            except OSError as exc:
-                logger.error(f"[BackupManager] 暂存恢复文件失败 {src.name}: {exc}")
-                skipped.append(src.name)
-
-        logger.info(
-            f"[BackupManager] 已暂存备份恢复 {backup_name}: "
-            f"staged={len(staged)}, skipped={len(skipped)}"
-        )
+            raise FileNotFoundError("backup_not_found")
+        info_path = backup_dir / _BACKUP_INFO_FILE
+        try:
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BackupOperationError("backup_invalid") from exc
+        if not isinstance(info, dict):
+            raise BackupOperationError("backup_invalid")
+        manifest_files = info.get("files")
+        verified = info.get("manifest_version") == 2 and isinstance(manifest_files, dict)
+        file_specs: list[dict[str, object]] = []
+        if verified:
+            for name, metadata in manifest_files.items():
+                if name not in _BACKUP_FILE_SPECS or not isinstance(metadata, dict):
+                    raise BackupOperationError("backup_invalid")
+                source = backup_dir / name
+                if (
+                    not source.is_file()
+                    or source.is_symlink()
+                    or Path(name).name != name
+                    or name in {"*.db-wal", "*.db-shm"}
+                ):
+                    raise BackupOperationError("backup_invalid")
+                if source.stat().st_size != int(metadata.get("size_bytes", -1)):
+                    raise BackupOperationError("backup_invalid")
+                if sha256_file(source) != str(metadata.get("sha256", "")):
+                    raise BackupOperationError("backup_invalid")
+                role = FileRole(str(metadata.get("role", "")))
+                if str(metadata.get("kind", "regular")) == "sqlite":
+                    self._quick_check(source)
+                if role is not FileRole.DERIVED:
+                    file_specs.append({"name": name, "role": role.value})
+            if not any(item["name"] == "memora.db" for item in file_specs):
+                raise BackupOperationError("canonical_file_missing")
+            integrity = BackupIntegrity.VERIFIED.value
+        else:
+            integrity = BackupIntegrity.LEGACY_UNVERIFIED.value
+            for source in backup_dir.iterdir():
+                if (
+                    not source.is_file()
+                    or source.is_symlink()
+                    or source.name == _BACKUP_INFO_FILE
+                    or not self._is_restorable_file_name(source.name)
+                ):
+                    continue
+                role = _BACKUP_FILE_SPECS.get(
+                    source.name, (FileRole.OPERATIONAL, "regular", False)
+                )[0]
+                if role is not FileRole.DERIVED:
+                    file_specs.append({"name": source.name, "role": role.value})
+            if not any(item["name"] == "memora.db" for item in file_specs):
+                raise BackupOperationError("canonical_file_missing")
         return {
-            "name": backup_name,
-            "staged": len(staged),
-            "skipped": len(skipped),
-            "staged_files": staged,
-            "skipped_files": skipped,
-            "pending": bool(staged),
+            "backup_name": backup_name,
+            "backup_dir": backup_dir,
+            "file_specs": file_specs,
+            "integrity": integrity,
+            "warning_codes": ["legacy_unverified"] if not verified else [],
         }
+
+    def stage_restore(self, name: str, apply_mode: str = "restart") -> dict[str, object]:
+        """校验备份并把恢复文件暂存为一个有状态事务。"""
+        if apply_mode not in {"reload", "restart"}:
+            raise ValueError("invalid apply mode")
+        current = self._read_plan()
+        if current and self._restore_is_blocking(current.status):
+            raise BackupOperationError("restore_conflict")
+        preflight = self._preflight_restore(name)
+        file_specs = preflight["file_specs"]
+        assert isinstance(file_specs, list)
+        operation_id = uuid.uuid4().hex
+        operation_dir = self._restore_root() / operation_id
+        payload_dir = operation_dir / "payload"
+        payload_dir.mkdir(parents=True, exist_ok=False)
+        try:
+            required = sum(
+                (preflight["backup_dir"] / str(item["name"])).stat().st_size
+                for item in file_specs
+            )
+            ensure_free_space(self.data_dir, required)
+            progress: list[RestoreFileProgress] = []
+            for item in file_specs:
+                filename = str(item["name"])
+                shutil.copy2(preflight["backup_dir"] / filename, payload_dir / filename)
+                progress.append(
+                    RestoreFileProgress(name=filename, role=FileRole(str(item["role"])))
+                )
+            plan = RestorePlan(
+                operation_id=operation_id,
+                source_backup_name=str(preflight["backup_name"]),
+                apply_mode=apply_mode,
+                status=RestoreStatus.STAGED,
+                files=progress,
+                requires_manual_restart=apply_mode == "restart",
+                reason_code=(
+                    "legacy_unverified" if preflight["integrity"] == "legacy_unverified" else None
+                ),
+            )
+            self._write_plan(plan)
+            return {
+                **self._public_restore_status(plan),
+                "name": plan.source_backup_name,
+                "staged": len(progress),
+                "pending": True,
+                "warning_codes": preflight["warning_codes"],
+            }
+        except Exception:
+            shutil.rmtree(operation_dir, ignore_errors=True)
+            raise
+
+    def create_pre_restore_backup(self, operation_id: str) -> dict[str, object] | None:
+        plan = self._read_plan(operation_id)
+        if plan is None:
+            raise BackupOperationError("restore_not_found")
+        if not (self.data_dir / "memora.db").is_file():
+            return None
+        result = self._create_backup_sync(BackupType.PRE_RESTORE, None)
+        plan.pre_restore_backup_name = str(result["name"])
+        self._write_plan(plan)
+        return result
+
+    def _install_restore_file(
+        self, plan_dir: Path, progress: RestoreFileProgress
+    ) -> RestoreFileProgress:
+        payload = plan_dir / "payload" / progress.name
+        target = self.data_dir / progress.name
+        previous = plan_dir / "previous" / progress.name
+        previous.parent.mkdir(parents=True, exist_ok=True)
+        if not payload.is_file() or payload.is_symlink():
+            raise BackupOperationError("restore_apply_failed")
+        if target.exists():
+            os.replace(target, previous)
+            progress = RestoreFileProgress(
+                name=progress.name,
+                role=progress.role,
+                moved_to_previous=True,
+                installed=progress.installed,
+                validated=progress.validated,
+            )
+        os.replace(payload, target)
+        return RestoreFileProgress(
+            name=progress.name,
+            role=progress.role,
+            moved_to_previous=progress.moved_to_previous,
+            installed=True,
+            validated=progress.validated,
+        )
+
+    def _rollback_restore_files(self, plan: RestorePlan) -> None:
+        plan_dir = self._restore_root() / plan.operation_id
+        plan.status = RestoreStatus.ROLLING_BACK
+        self._write_plan(plan)
+        try:
+            for progress in reversed(plan.files):
+                target = self.data_dir / progress.name
+                previous = plan_dir / "previous" / progress.name
+                if progress.installed and target.exists():
+                    target.unlink()
+                if progress.moved_to_previous and previous.exists():
+                    os.replace(previous, target)
+            plan.status = RestoreStatus.ROLLED_BACK
+            self._write_plan(plan)
+        except OSError as exc:
+            plan.status = RestoreStatus.ROLLBACK_PENDING
+            plan.reason_code = "restore_rollback_pending"
+            self._write_plan(plan)
+            raise BackupOperationError("restore_rollback_pending") from exc
+
+    def _validate_restored_files(self, plan: RestorePlan) -> None:
+        for progress in plan.files:
+            path = self.data_dir / progress.name
+            if not path.is_file() or path.is_symlink():
+                raise BackupOperationError("restore_apply_failed")
+            if progress.name.endswith(".db"):
+                self._quick_check(path)
+
+    def apply_pending_restores(self) -> dict[str, object]:
+        """在数据库打开前应用恢复计划，并在失败时回滚。"""
+        plan = self._read_plan()
+        if plan is None:
+            plan = self._migrate_legacy_restore_files()
+        if plan is None:
+            return {"status": "none", "applied": 0}
+        if plan.status is RestoreStatus.ROLLBACK_PENDING:
+            self._rollback_restore_files(plan)
+            return self._public_restore_status(plan)
+        if plan.status not in {
+            RestoreStatus.STAGED,
+            RestoreStatus.RELOAD_SCHEDULED,
+            RestoreStatus.APPLYING,
+            RestoreStatus.VALIDATING,
+        }:
+            return self._public_restore_status(plan)
+        started_apply = plan.status in {
+            RestoreStatus.APPLYING,
+            RestoreStatus.VALIDATING,
+        }
+        try:
+            if plan.status in {RestoreStatus.STAGED, RestoreStatus.RELOAD_SCHEDULED}:
+                self.create_pre_restore_backup(plan.operation_id)
+                plan = self._read_plan(plan.operation_id) or plan
+                plan.status = RestoreStatus.APPLYING
+                self._write_plan(plan)
+                started_apply = True
+            plan_dir = self._restore_root() / plan.operation_id
+            for index, progress in enumerate(plan.files):
+                if progress.installed:
+                    continue
+                plan.files[index] = self._install_restore_file(plan_dir, progress)
+                self._write_plan(plan)
+            self._validate_restored_files(plan)
+            plan.status = RestoreStatus.VALIDATING
+            for index, progress in enumerate(plan.files):
+                plan.files[index] = RestoreFileProgress(
+                    name=progress.name,
+                    role=progress.role,
+                    moved_to_previous=progress.moved_to_previous,
+                    installed=progress.installed,
+                    validated=True,
+                )
+            self._write_plan(plan)
+            return self._public_restore_status(plan)
+        except (OSError, sqlite3.DatabaseError, BackupOperationError) as exc:
+            plan.reason_code = str(exc) if isinstance(exc, BackupOperationError) else "restore_apply_failed"
+            if not started_apply:
+                plan.status = RestoreStatus.FAILED_BEFORE_APPLY
+                self._write_plan(plan)
+                return self._public_restore_status(plan)
+            try:
+                self._rollback_restore_files(plan)
+            except BackupOperationError:
+                return self._public_restore_status(plan)
+            return self._public_restore_status(plan)
+
+    def mark_restore_succeeded(self, operation_id: str | None = None) -> None:
+        plan = self._read_plan(operation_id)
+        if plan is None:
+            return
+        plan.status = RestoreStatus.SUCCEEDED
+        plan.reason_code = None
+        self._write_plan(plan)
+        shutil.rmtree(self._restore_root() / plan.operation_id / "payload", ignore_errors=True)
+        shutil.rmtree(self._restore_root() / plan.operation_id / "previous", ignore_errors=True)
+
+    def mark_restore_startup_failure_if_needed(self, failed: bool) -> None:
+        if not failed:
+            return
+        plan = self._read_plan()
+        if plan and plan.status is RestoreStatus.VALIDATING:
+            plan.status = RestoreStatus.ROLLBACK_PENDING
+            plan.reason_code = "restore_startup_failed"
+            self._write_plan(plan)
+
+    def mark_reload_scheduled(self, operation_id: str, scheduled: bool) -> None:
+        plan = self._read_plan(operation_id)
+        if plan is None:
+            raise BackupOperationError("restore_not_found")
+        plan.reload_scheduled = scheduled
+        if scheduled:
+            plan.status = RestoreStatus.RELOAD_SCHEDULED
+            plan.requires_manual_restart = False
+        else:
+            plan.status = RestoreStatus.STAGED
+            plan.requires_manual_restart = True
+            plan.reason_code = "hot_reload_schedule_failed"
+        self._write_plan(plan)
+
+    def cancel_restore(self, operation_id: str) -> dict[str, object]:
+        plan = self._read_plan(operation_id)
+        if plan is None:
+            raise BackupOperationError("restore_not_found")
+        if plan.status is not RestoreStatus.STAGED:
+            raise BackupOperationError("restore_cancel_not_allowed")
+        operation_dir = self._restore_root() / plan.operation_id
+        plan.status = RestoreStatus.CANCELLED
+        plan.reason_code = None
+        self._write_plan(plan)
+        shutil.rmtree(operation_dir / "payload", ignore_errors=True)
+        shutil.rmtree(operation_dir / "previous", ignore_errors=True)
+        return self._public_restore_status(plan)
 
     @staticmethod
     def _is_restorable_file_name(name: str) -> bool:
