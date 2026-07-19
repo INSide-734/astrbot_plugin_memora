@@ -2208,7 +2208,7 @@ async function waitForConfigReady(page, label) {
     ({ sections, fields }) =>
       document.querySelectorAll("[data-config-section]").length === sections
       && document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length === fields,
-    { sections: 42, fields: 233 },
+    { sections: 43, fields: 234 },
     { timeout: 10_000 },
   );
   const counts = await page.evaluate(() => ({
@@ -2222,7 +2222,7 @@ async function waitForConfigReady(page, label) {
     "Loading configuration",
     "Загрузка конфигурации",
   ].filter((text) => counts.text.includes(text));
-  if (counts.sections !== 42 || counts.fields !== 233 || lingeringLoading.length > 0) {
+  if (counts.sections !== 43 || counts.fields !== 234 || lingeringLoading.length > 0) {
     throw new Error(
       `${label} did not render the complete settled schema: ${JSON.stringify({
         sections: counts.sections,

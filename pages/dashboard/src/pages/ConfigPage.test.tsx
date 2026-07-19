@@ -1119,6 +1119,48 @@ describe("ConfigPage", () => {
     expect(name).toHaveProperty("disabled", true);
   });
 
+  it("renders the schema-driven privacy-safe debug switch and saves only its leaf change", async () => {
+    schemaHandler = async () =>
+      ok({
+        ...schemaData,
+        schema: {
+          debug: {
+            type: "bool",
+            description: "调试模式（问题报告）",
+            hint: "仅在用户报告问题时开启；不记录对话、记忆、身份或 Provider 敏感信息。",
+            default: false,
+          },
+          ...schemaData.schema,
+        },
+      }) as ApiResponse;
+    stateHandler = async () =>
+      state({ ...baseConfig, debug: false }) as ApiResponse;
+    render(<ConfigPage />);
+
+    const debugSwitch = await screen.findByRole("switch", {
+      name: "调试模式（问题报告）",
+    });
+    expect(debugSwitch.getAttribute("aria-checked")).toBe("false");
+    expect(
+      screen.getByText(
+        "仅在用户报告问题时开启；不记录对话、记忆、身份或 Provider 敏感信息。",
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(debugSwitch);
+    expect(debugSwitch.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Apply configuration" }),
+    );
+
+    await waitFor(() =>
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/config/apply", {
+        base_revision: "rev-1",
+        changes: { debug: true },
+      }),
+    );
+  });
+
   it("shows path-indexed validation errors without discarding or disabling the draft", async () => {
     applyHandler = async () => ({
       status: "error",

@@ -6,6 +6,7 @@
 import asyncio
 import os
 import secrets
+import sys
 import uuid
 from typing import Any
 
@@ -31,7 +32,13 @@ from .core.version_check import (  # noqa: F401
     _version_lt,
 )
 from .core.feature_delegation import FeatureDelegation
-from .core.monitoring import PerfTracker, set_debug_mode
+from .core.monitoring import (
+    PerfTracker,
+    close_debug_reporting,
+    report_debug_event,
+    report_debug_exception,
+    set_debug_mode,
+)
 
 
 @register(
@@ -90,6 +97,16 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         set_debug_mode(
             self.config_manager.get("debug", False),
             data_dir=data_dir,
+        )
+        report_debug_event(
+            "plugin_started",
+            component="plugin",
+            stage="startup",
+            status="started",
+            plugin_version=PLUGIN_VERSION,
+            python_major=sys.version_info.major,
+            python_minor=sys.version_info.minor,
+            capability="debug_reporting",
         )
 
         self.page_api = None
@@ -192,21 +209,65 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 self._backup_manager.mark_restore_startup_failure_if_needed(
                     self.initializer.is_failed
                 )
+                report_debug_event(
+                    "plugin_initialized",
+                    component="plugin",
+                    stage="startup",
+                    status="degraded",
+                    reason_code="provider_waiting",
+                )
                 return
             runtime_ready = await self._ensure_runtime_components()
             if not runtime_ready:
                 self._backup_manager.mark_restore_startup_failure_if_needed(True)
+                report_debug_event(
+                    "plugin_initialized",
+                    component="plugin",
+                    stage="startup",
+                    status="degraded",
+                    reason_code="runtime_not_ready",
+                )
                 return
             self._backup_manager.mark_restore_succeeded()
             self._inject_delegation_services()
             self.feature_delegation.log_status()
+            report_debug_event(
+                "plugin_initialized",
+                component="plugin",
+                stage="startup",
+                status="completed",
+                reason_code="ready",
+            )
         except asyncio.CancelledError:
+            report_debug_event(
+                "plugin_failed",
+                component="plugin",
+                stage="startup",
+                status="cancelled",
+                reason_code="initialization_cancelled",
+            )
             raise
-        except BackupOperationError:
+        except BackupOperationError as exc:
+            report_debug_exception(
+                "plugin_failed",
+                exc,
+                component="plugin",
+                stage="startup",
+                status="failed",
+                reason_code="backup_restore_error",
+            )
             logger.error("备份保护或恢复应用失败", exc_info=True)
             raise
-        except Exception:
+        except Exception as exc:
             self._backup_manager.mark_restore_startup_failure_if_needed(True)
+            report_debug_exception(
+                "plugin_failed",
+                exc,
+                component="plugin",
+                stage="startup",
+                status="failed",
+                reason_code="initialization_error",
+            )
             logger.error("插件初始化失败", exc_info=True)
             raise
 
@@ -542,6 +603,25 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     # ==================== 生命周期管理 ====================
 
     async def terminate(self):
+        shutdown_status = "completed"
+        try:
+            await self._terminate_impl()
+        except asyncio.CancelledError:
+            shutdown_status = "cancelled"
+            raise
+        except Exception:
+            shutdown_status = "failed"
+            raise
+        finally:
+            report_debug_event(
+                "plugin_stopped",
+                component="plugin",
+                stage="shutdown",
+                status=shutdown_status,
+            )
+            close_debug_reporting()
+
+    async def _terminate_impl(self):
         """插件停止时执行的清理逻辑。"""
         logger.info("记忆插件正在停止……")
         self._terminating = True

@@ -21,7 +21,7 @@ from ..cleaners.injection_cleaner import InjectionCleaner
 from ..extractors.message_content_extractor import MessageContentExtractor
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
-from ..monitoring import monitored
+from ..monitoring import monitored, report_debug_event, report_debug_exception
 from ..retrieval.query_rewriter import QueryRewriter
 from ..injection.executor import InjectionExecutionContext, InjectionExecutor
 from ..injection.models import (
@@ -122,6 +122,7 @@ class RecallHandler:
         recall_started = time.perf_counter()
         injected_count = 0
         filtered_count = 0
+        candidate_count = 0
         try:
             session_id = event.unified_msg_origin
             logger.debug(f"[召回流程] 获取到 unified_msg_origin: {session_id}")
@@ -339,6 +340,7 @@ class RecallHandler:
                 )
                 memories = self._safe_candidates(ordinary_candidates)
                 final_signals = self._final_signals(preflight_signals, memories)
+                candidate_count = final_signals.candidate_count
                 decision_started = time.perf_counter()
                 decision = self._router.route_final(routing_config, final_signals)
                 decision_ms = (
@@ -371,14 +373,30 @@ class RecallHandler:
                 injected_count = result.selected_count
 
         except asyncio.CancelledError:
+            report_debug_event(
+                "recall_stage",
+                component="recall",
+                stage="recall",
+                status="cancelled",
+                reason_code="recall_cancelled",
+            )
             raise
         except Exception as e:
+            report_debug_exception(
+                "recall_failed",
+                e,
+                component="recall",
+                stage="recall",
+                status="failed",
+                reason_code="recall_error",
+            )
             logger.error(f"处理 on_llm_request 钩子时发生错误: {e}", exc_info=True)
         finally:
             self._record_recall_observability(
                 total_ms=(time.perf_counter() - recall_started) * 1000.0,
                 injected_count=injected_count,
                 filtered_count=filtered_count,
+                candidate_count=candidate_count,
             )
 
     def _routing_config(self) -> InjectionRoutingConfig:
@@ -689,6 +707,7 @@ class RecallHandler:
                         error_code="PROTECTION_SCOPE_FAILED",
                     )
                     self._record_injection_decision(decision, signals, result)
+                    self._report_injection_result(decision, signals, result)
                     return result
             context = InjectionExecutionContext(
                 query=execution.query,
@@ -718,7 +737,35 @@ class RecallHandler:
                 format_ms=result.format_ms + execution.cognitive_format_ms,
             )
         self._record_injection_decision(decision, signals, result)
+        self._report_injection_result(decision, signals, result)
         return result
+
+    @staticmethod
+    def _report_injection_result(
+        decision: InjectionDecision,
+        signals: RequestSignals,
+        result: InjectionExecutionResult,
+    ) -> None:
+        """记录不含 Provider 或记忆内容的注入结果摘要。"""
+        actual_delivery = (
+            result.actual_resolved_delivery or decision.resolved_delivery
+        )
+        outcome = result.outcome.value
+        report_debug_event(
+            "injection_completed",
+            component="injection",
+            stage="injection",
+            status="completed" if outcome in {"injected", "fallback"} else "skipped",
+            reason_code=result.error_code or outcome,
+            route=decision.resolved_preset.value,
+            delivery=actual_delivery.value,
+            outcome=outcome,
+            candidate_count=max(0, int(signals.candidate_count)),
+            selected_count=max(0, int(result.selected_count)),
+            configured_budget_chars=max(0, int(result.configured_budget_chars)),
+            effective_budget_chars=max(0, int(result.effective_budget_chars)),
+            payload_chars=max(0, int(result.actual_payload_chars)),
+        )
 
     def _record_injection_decision(
         self,
@@ -782,7 +829,18 @@ class RecallHandler:
         total_ms: float,
         injected_count: int,
         filtered_count: int,
+        candidate_count: int,
     ) -> None:
+        report_debug_event(
+            "recall_completed",
+            component="recall",
+            stage="recall",
+            status="completed",
+            duration_ms=max(0.0, float(total_ms)),
+            candidate_count=max(0, int(candidate_count)),
+            injected_count=max(0, int(injected_count)),
+            filtered_count=max(0, int(filtered_count)),
+        )
         try:
             from ..monitoring.metrics import RECALL_DURATION, RECALL_REQUESTS
 
