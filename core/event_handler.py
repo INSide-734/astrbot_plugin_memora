@@ -19,7 +19,12 @@ from .handlers.recall_handler import RecallHandler
 from .handlers.reflection_handler import ReflectionHandler
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
-from .monitoring import monitored
+from .monitoring import (
+    debug_operation,
+    monitored,
+    report_debug_event,
+    report_debug_exception,
+)
 from .processors.memory_processor import MemoryProcessor
 from .utils.injection_adapter import InjectionAdapter
 
@@ -114,15 +119,41 @@ class EventHandler:
     @monitored
     async def handle_all_group_messages(self, event: AstrMessageEvent) -> None:
         """捕获全部群聊消息并写入记忆存储链路。"""
+        with debug_operation():
+            await self._handle_all_group_messages(event)
+
+    async def _handle_all_group_messages(self, event: AstrMessageEvent) -> None:
+        """捕获全部群聊消息并写入记忆存储链路。"""
         if not self.config_manager.get(
             "session_manager.enable_full_group_capture", True
         ):
+            report_debug_event(
+                "message_capture",
+                component="event_handler",
+                stage="capture",
+                status="skipped",
+                reason_code="capture_disabled",
+            )
             return
 
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
+            report_debug_event(
+                "message_capture",
+                component="event_handler",
+                stage="capture",
+                status="skipped",
+                reason_code="not_group_message",
+            )
             return
 
         if event.get_sender_id() == event.get_self_id():
+            report_debug_event(
+                "message_capture",
+                component="event_handler",
+                stage="capture",
+                status="skipped",
+                reason_code="self_message",
+            )
             return
 
         try:
@@ -140,10 +171,24 @@ class EventHandler:
             dedup_key = await self._dedup.build_dedup_key(event, session_id, content)
 
             if dedup_key and await self._dedup.is_duplicate(dedup_key):
+                report_debug_event(
+                    "message_capture",
+                    component="event_handler",
+                    stage="capture",
+                    status="skipped",
+                    reason_code="duplicate",
+                )
                 logger.debug(f"[{session_id}] 消息已存在,跳过: dedup_key={dedup_key}")
                 return
 
             if self._writes_blocked():
+                report_debug_event(
+                    "message_capture",
+                    component="event_handler",
+                    stage="capture",
+                    status="skipped",
+                    reason_code="write_blocked",
+                )
                 logger.warning(f"[{session_id}] 备份恢复待应用，跳过群聊消息写入")
                 return
 
@@ -166,10 +211,32 @@ class EventHandler:
                 f"sender={event.get_sender_name()}({event.get_sender_id()}), "
                 f"content={content[:50]}..."
             )
+            report_debug_event(
+                "message_capture",
+                component="event_handler",
+                stage="capture",
+                status="completed",
+                count=1,
+            )
 
         except asyncio.CancelledError:
+            report_debug_event(
+                "message_capture",
+                component="event_handler",
+                stage="capture",
+                status="cancelled",
+                reason_code="capture_cancelled",
+            )
             raise
         except Exception as e:
+            report_debug_exception(
+                "message_capture",
+                e,
+                component="event_handler",
+                stage="capture",
+                status="failed",
+                reason_code="capture_error",
+            )
             logger.error(f"处理群聊全量消息时发生错误: {e}", exc_info=True)
 
     async def _feed_cognitive_components(
@@ -228,7 +295,8 @@ class EventHandler:
         req: ProviderRequest,
     ) -> None:
         """在 LLM 请求前检索并注入长期记忆。"""
-        await self._recall_handler.handle_memory_recall(event, req)
+        with debug_operation():
+            await self._recall_handler.handle_memory_recall(event, req)
 
     @monitored
     async def handle_memory_reflection(
@@ -237,7 +305,8 @@ class EventHandler:
         resp: LLMResponse,
     ) -> None:
         """在 LLM 响应后判断是否需要反思与存储记忆。"""
-        await self._reflection_handler.handle_memory_reflection(event, resp)
+        with debug_operation():
+            await self._reflection_handler.handle_memory_reflection(event, resp)
 
     async def handle_session_reset(self, event: AstrMessageEvent) -> None:
         """处理 /reset 或 /new 触发的会话清空"""
@@ -268,6 +337,13 @@ class EventHandler:
         if self._injection_recorder is not None:
             await self._injection_recorder.close(timeout=5.0)
         logger.info("EventHandler 已关闭")
+        report_debug_event(
+            "shutdown_step",
+            component="event_handler",
+            stage="shutdown",
+            status="completed",
+            reason_code="event_handler_closed",
+        )
 
     # ---- 内部方法 ----
 
@@ -281,13 +357,46 @@ class EventHandler:
     def _on_maintenance_task_done(self, task: asyncio.Task) -> None:
         self._maintenance_tasks.discard(task)
         if task.cancelled():
+            report_debug_event(
+                "maintenance_task",
+                component="maintenance",
+                stage="maintenance",
+                status="cancelled",
+                task_type="other",
+                reason_code="task_cancelled",
+            )
             return
         try:
             exc = task.exception()
         except asyncio.CancelledError:
+            report_debug_event(
+                "maintenance_task",
+                component="maintenance",
+                stage="maintenance",
+                status="cancelled",
+                task_type="other",
+                reason_code="task_cancelled",
+            )
             return
         if exc is not None:
+            report_debug_exception(
+                "maintenance_task",
+                exc,
+                component="maintenance",
+                stage="maintenance",
+                status="failed",
+                task_type="other",
+                reason_code="task_error",
+            )
             logger.error("[事件处理器] 维护任务执行失败", exc_info=exc)
+        else:
+            report_debug_event(
+                "maintenance_task",
+                component="maintenance",
+                stage="maintenance",
+                status="completed",
+                task_type="other",
+            )
 
     async def _enforce_message_limit(self, session_id: str) -> None:
         """执行消息数量上限控制，只删除已被总结的消息"""

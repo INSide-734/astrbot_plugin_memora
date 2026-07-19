@@ -27,6 +27,7 @@ from .schedulers.decay_scheduler import DecayScheduler
 from .storage.injection_decision_store import InjectionDecisionStore
 from .security import PromptProtectionService
 from .validators.index_validator import IndexValidator
+from .monitoring import report_debug_event, report_debug_exception
 
 
 class PluginInitializer:
@@ -101,6 +102,16 @@ class PluginInitializer:
             )
             self.embedding_provider, self.llm_provider = emb, llm
 
+            report_debug_event(
+                "provider_state",
+                component="initializer",
+                stage="provider",
+                status="completed" if ready else "degraded",
+                reason_code="ready" if ready else "retry_scheduled",
+                count=self._provider_waiter.attempts,
+                capability="embedding_and_llm_ready" if ready else "provider_waiting",
+            )
+
             if not ready:
                 missing = []
                 if not self.embedding_provider:
@@ -122,7 +133,24 @@ class PluginInitializer:
             await self._run_full_init()
             return True
 
+        except asyncio.CancelledError:
+            report_debug_event(
+                "provider_state",
+                component="initializer",
+                stage="provider",
+                status="cancelled",
+                reason_code="initialization_cancelled",
+            )
+            raise
         except Exception as e:
+            report_debug_exception(
+                "plugin_failed",
+                e,
+                component="initializer",
+                stage="startup",
+                status="failed",
+                reason_code="initialization_error",
+            )
             logger.error(f"记忆插件初始化失败: {e}", exc_info=True)
             self._initialization_failed = True
             self._initialization_error = str(e)
