@@ -1,0 +1,117 @@
+[根级 AGENTS.md](../../AGENTS.md) > [core](../AGENTS.md) > **base**
+
+# `core/base` 模块上下文
+
+**最后更新：** 2026-07-17  
+**模块入口：** `core/base/__init__.py`、`config_manager.py`、`config_validator.py`
+
+## 职责与边界
+
+`core/base/` 是插件的低层基础契约，负责：
+
+- 以 Pydantic v2 描述配置树、默认值、数值范围和跨字段不变量；
+- 将 AstrBot 注入的可变配置映射规范化为隔离快照，并提供带修订号的原子更新；
+- 提供稳定的异常码、记忆注入边界常量、领域无关实体编辑冲突类型；
+- 对额外 LLM 调用实施成本模式门控。
+
+本模块**不负责**业务组件初始化、Dashboard HTTP 映射、存储事务、具体记忆检索或 Prompt 清洗。`ConfigManager` 只管理配置状态；API 层负责把 `ConfigConflictError`、`ConfigValidationError` 等映射为响应。Prompt/输出安全规则见 [`../security/AGENTS.md`](../security/AGENTS.md)，注入格式与预算见 [`../utils/AGENTS.md`](../utils/AGENTS.md)。
+
+## 架构与数据流
+
+```mermaid
+flowchart LR
+    A[AstrBotConfig 可变映射] --> B[ConfigManager._read_source_state]
+    B --> C[运行时注入叶子安全降级]
+    C --> D[merge_config_with_defaults]
+    D --> E[MemoraConfig / Pydantic 校验]
+    E -->|局部分支无效| F[分支回退默认值]
+    F --> G[隔离配置快照 + SHA-256 revision]
+    E --> G
+    H[Dashboard / 调用方点号路径更新] --> I[apply_config_changes]
+    I --> J{expected_revision 匹配?}
+    J -->|否| K[ConfigConflictError]
+    J -->|是| L[Schema 叶子与 options 校验]
+    L --> M[Pydantic 整体校验]
+    M --> N[save_config 在线程中持久化]
+    N --> O[发布新快照或回滚/冲突]
+```
+
+### 配置读取
+
+1. `ConfigManager(user_config)` 保留传入 `MutableMapping` 作为唯一外部来源，不再维护第二份 Dashboard JSON 覆盖层。
+2. `_normalize_runtime_injection_config()` 只在内存副本上容忍无效的新注入策略叶子；不会迁移或改写源映射。保留天数与行上限分别回退为 `30`、`100_000`；策略组整体无效时回退到安全的手动/`balanced` 配置及 `extra_user_content`。
+3. `merge_config_with_defaults()` 以 Pydantic 默认树为底，递归覆盖用户字典。
+4. `_validate_with_branch_fallback()` 首先回退报错的顶层分支；仍失败才使用完整默认配置。降级记录通过 `validation_errors` 返回。
+5. `get()`、`get_section()`、`get_all()` 和快照 API 对可变值执行深拷贝，禁止调用方绕过 revision 修改内部状态。
+
+### 原子更新
+
+- `get_config_snapshot()` 返回 `(deepcopy(config), revision)`；异步调用方应优先使用会先协调外部变更的 `get_config_snapshot_async()`。
+- `apply_config_changes(changes, expected_revision=..., persist=True)` 接收点号叶子路径，在 `_apply_lock` 内协调外部源、执行乐观并发检查、Schema 契约检查和完整 Pydantic 校验。
+- 有 `save_config()` 的 AstrBot 配置源必须具备可解析 Schema；否则持久化更新被拒绝。未知叶子及不属于 Schema `options` 的精确 JSON 标量也被拒绝。
+- 持久化发生在线程中并由 `asyncio.shield()` 保护。失败时尽力恢复源映射；保存期间外部改写会重新读取并报告冲突，而不是覆盖外部状态。
+- `update_runtime_config()` 只是兼容布尔接口，会吞掉三类配置事务异常并记录错误；需要字段错误或 revision 的新调用方必须使用 `apply_config_changes()`。
+
+## 关键文件与接口
+
+| 文件 | 核心接口 | 约束 |
+|---|---|---|
+| `config_validator.py` | `MemoraConfig`、各分支模型、`validate_config()`、`get_default_config()`、`merge_config_with_defaults()`、`validate_runtime_config_changes()` | 默认值唯一运行时来源；顶层允许额外字段以兼容旧配置，已声明字段仍受类型/范围约束 |
+| `config_manager.py` | `ConfigManager`、`ConfigApplyResult`、配置事务异常 | revision 是规范化 JSON 的 SHA-256；结果中的 `changed_paths` 排序且不可变 |
+| `config_defaults.py` | 默认值维护说明 | 新键必须同步 Pydantic 模型、根级 `_conf_schema.json` 与访问处默认值 |
+| `constants.py` | `MEMORY_INJECTION_HEADER/FOOTER`、`FAKE_TOOL_CALL_NAME/ID_PREFIX` | 边界和伪调用标识同时被格式化器、清理器与测试依赖，不可单边改名 |
+| `exceptions.py` | `MemoraException` 及 16 个语义子类 | `message` 与稳定 `error_code` 是上层错误映射契约 |
+| `entity_editing.py` | `compute_entity_revision()`、编辑异常族 | revision 使用排序、紧凑、禁 NaN 的 JSON；该异常族独立于 `MemoraException` |
+| `cost_control.py` | `CostControl`、`build_cost_control_from_config()` | `allow()` 与 `check_call_limit()` 是两个门，调用方应同时检查并在成功调用后 `record_call()` |
+| `__init__.py` | 配置事务类型、8 个常用异常 | 常量通过星号导入到包命名空间，但不在 `__all__`；其余异常和成本/实体接口需从子模块直接导入 |
+
+## 配置不变量
+
+- 注入预设等级固定为 `tool_first < low_cost < balanced < quality`；Hybrid 必须满足 `min <= base <= max`。
+- `GraphMemoryConfig` 将文档路/图路权重归一化为总和 `1.0`；非正总和回退为 `0.65/0.35`。
+- `RecallEngineConfig.top_k=0` 是明确的“跳过自动召回和注入”语义；不要把它强制改成正数。
+- `SecurityConfig.strict_mode` 仅表达策略；严格失败关闭由使用该配置的处理链实现，不是 `ConfigManager` 自动行为。
+- `CostControl(mode="quality")` 的 `allow()` 会允许功能，但仍应由调用方检查每轮调用上限；`reset_turn()` 必须在轮次边界调用。
+- Schema option 比较要求值和类型都相同，避免 Python 中 `True == 1` 导致错误接受。
+
+## 依赖方向
+
+- **向下依赖：** 标准库、`pydantic`、`astrbot.api.logger`。
+- **被依赖：** `main.py` 创建 `ConfigManager`；初始化器、处理器、检索器、调度器与 API 读取配置；格式化/清理链依赖注入常量；画像、黑话、社交等管理/API 使用实体编辑冲突契约。
+- **禁止方向：** 不得从 `core/base` 反向导入 handlers、storage、retrieval、API 或 Dashboard。
+
+## 安全与维护约束
+
+- 配置输入、Schema 内容和外部源映射都按不可信数据处理；不得绕过 Pydantic 或 Schema 叶子检查直接持久化。
+- 不要把非有限浮点数加入 revision 输入；`allow_nan=False` 会拒绝它们。
+- 新异常若需要从 `core.base` 导入，必须显式加入 `__init__.__all__`；不要依赖星号导出的偶然行为。
+- 修改注入边界常量时必须同步格式化器、清理器和兼容测试；这些是协议，不是展示文本。
+- 成本控制是策略门而非计费器，不记录 token 或货币成本。
+
+## 测试定位与精确验证
+
+| 变更 | 首选测试 |
+|---|---|
+| 常量、异常、默认配置 | `tests/test_base.py` |
+| Schema 与 Pydantic 默认/范围、Hybrid 顺序、revision、冲突和持久化 | `tests/test_config_contract.py` |
+| Dashboard 配置 API 到事务异常的映射 | `tests/test_api_config.py` |
+| 实体 revision 与编辑异常 | `tests/test_entity_editing.py` |
+| 实体调用链集成 | `tests/test_affection_manager.py tests/test_jargon_admin_service.py tests/test_managers_profile.py tests/test_profile_store.py` |
+
+```bash
+python -m pytest -q tests/test_base.py tests/test_config_contract.py tests/test_api_config.py tests/test_entity_editing.py
+```
+
+涉及注入常量时追加：
+
+```bash
+python -m pytest -q tests/test_cleaners.py tests/test_injection_budget.py tests/integration/test_pipeline_event.py
+```
+
+## 变更检查清单
+
+1. 配置键是否同时出现在正确 Pydantic 分支和 `_conf_schema.json`，默认值与范围是否一致？
+2. 是否保持点号路径、深拷贝、revision 和乐观并发语义？
+3. 持久化失败、取消及外部并发改写是否仍不会遗留候选配置？
+4. 新公开符号是否从预期入口导出，调用方是否没有依赖未声明的包级导出？
+5. 变更是否越界到 API 映射、业务初始化或安全清洗职责？

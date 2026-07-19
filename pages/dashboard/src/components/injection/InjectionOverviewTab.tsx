@@ -249,10 +249,6 @@ export function InjectionOverviewTab({
     label: t(`injection.preset.${item.name}`),
     count: data.preset_distribution[item.name] ?? 0,
   }));
-  const costRows = data.cost_trend.map((point) => ({
-    ...point,
-    label: formatDashboardShortDate(point.bucket_ms, locale),
-  }));
   const windowItems = WINDOW_OPTIONS.map((value) => ({
     label: t(`injection.window.${value}`),
     value,
@@ -393,9 +389,14 @@ export function InjectionOverviewTab({
                   className="h-56 w-full"
                   aria-label={t("injection.overview.costChartSummary")}
                 >
-                  <LineChart data={costRows} accessibilityLayer>
+                  <LineChart data={data.cost_trend} accessibilityLayer>
                     <CartesianGrid vertical={false} />
-                    <XAxis dataKey="label" tickLine={false} axisLine={false} />
+                    <XAxis
+                      dataKey="bucket_ms"
+                      tickFormatter={(value) => formatDashboardShortDate(value, locale)}
+                      tickLine={false}
+                      axisLine={false}
+                    />
                     <YAxis
                       yAxisId="payload"
                       allowDecimals={false}
@@ -414,7 +415,9 @@ export function InjectionOverviewTab({
                       tickLine={false}
                       axisLine={false}
                     />
-                    <ChartTooltip />
+                    <ChartTooltip
+                      labelFormatter={(value) => formatDashboardDateTime(value, locale)}
+                    />
                     <Legend />
                     <Line
                       yAxisId="payload"

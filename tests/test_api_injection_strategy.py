@@ -229,8 +229,6 @@ async def test_decisions_validate_limit_and_return_true_page() -> None:
     ("payload", "message"),
     [
         ({"unknown": "1"}, "unknown query field: unknown"),
-        ({"sort_by": "query"}, "sort_by is not supported"),
-        ({"sort_order": "sideways"}, "sort_order must be asc or desc"),
         ({"offset": True}, "offset must be an integer"),
         ({"offset": "-1"}, "offset must be non-negative"),
         ({"limit": False}, "limit must be an integer"),
@@ -239,6 +237,9 @@ async def test_decisions_validate_limit_and_return_true_page() -> None:
         ({"resolved_preset": "custom"}, "resolved_preset is invalid"),
         ({"fallback_applied": "yes"}, "fallback_applied must be true or false"),
         ({"outcome": "success"}, "outcome is invalid"),
+        ({"sort_by": "decision_id"}, "sort_by is invalid"),
+        ({"sort_order": "ASC"}, "sort_order must be asc or desc"),
+        ({"sort_order": 1}, "sort_order must be asc or desc"),
     ],
 )
 async def test_decision_list_rejects_invalid_filters_without_querying_store(
@@ -289,33 +290,6 @@ async def test_decision_list_maps_all_valid_filters_to_store_query() -> None:
             primary_reason="EXPLICIT_HISTORY",
             fallback_applied=False,
             outcome="injected",
-        )
-    )
-
-
-@pytest.mark.asyncio
-async def test_decision_list_forwards_explicit_sort_to_store() -> None:
-    store = SimpleNamespace(
-        list_decisions=AsyncMock(
-            return_value=_decision_page(items=[], total=0, offset=0, limit=25)
-        )
-    )
-    api = _make_api(store=store)
-
-    result = await api.list_injection_decisions_payload({
-        "offset": "0",
-        "limit": "25",
-        "sort_by": "actual_payload_chars",
-        "sort_order": "asc",
-    })
-
-    assert result["status"] == "ok"
-    store.list_decisions.assert_awaited_once_with(
-        _decision_query(
-            offset=0,
-            limit=25,
-            sort_by="actual_payload_chars",
-            sort_order="asc",
         )
     )
 

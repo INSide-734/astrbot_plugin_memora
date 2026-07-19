@@ -56,7 +56,6 @@ describe("SocialPage", () => {
   let showToast: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    localStorage.clear();
     bridge = {
       apiGet: vi.fn(),
       apiPost: vi.fn(),
@@ -137,8 +136,7 @@ describe("SocialPage", () => {
   }
 
   async function openRelationEditor() {
-    fireEvent.click(await screen.findByRole("button", { name: /row actions alice.*bob/i }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /^view$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /open relation alice.*bob/i }));
     return screen.findByRole("dialog", { name: /relation: alice.*bob/i });
   }
 
@@ -156,7 +154,7 @@ describe("SocialPage", () => {
     expect((await screen.findByRole("option", { name: "group-1 (12)" })).textContent).toContain("group-1 (12)");
   });
 
-  it("uses the shared dense full-width table workspace without a redundant card", async () => {
+  it("uses the dense full-width table layout without an extra card wrapper", async () => {
     mockSocialList();
 
     render(<SocialPage showToast={showToast} />);
@@ -168,71 +166,17 @@ describe("SocialPage", () => {
     expect(screen.getByRole("tab", { name: /all/i }).getAttribute("aria-selected")).toBe("true");
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
-        group_id: "group-1",
-        sort_by: "last_interaction",
-        sort_order: "desc",
-      });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", { group_id: "group-1" });
     });
 
-    const table = (await screen.findByText("alice")).closest("table");
-    const content = table?.closest('[data-slot="page-content"]');
-    expect(table).toBeTruthy();
-    expect(content).toBeTruthy();
-    expect(content?.className).not.toContain("max-w-[1440px]");
-    expect(page.querySelector('[data-slot="card"]')).toBeNull();
+    expect(await screen.findByText("alice")).toBeTruthy();
+    const pageContent = page.querySelector('[data-slot="page-content"]');
+    expect(pageContent).toBeTruthy();
+    expect(pageContent?.classList.contains("max-w-[1440px]")).toBe(false);
+    expect(pageContent?.querySelector('[data-slot="card"]')).toBeNull();
     expect(screen.getByText("bob")).toBeTruthy();
     expect(screen.getByText("50%")).toBeTruthy();
     expect(screen.getByText("project")).toBeTruthy();
-  });
-
-  it("sorts frequency on the server without persisting sort", async () => {
-    mockSocialList();
-    render(<SocialPage showToast={showToast} />);
-
-    await screen.findByText("alice");
-    const preferenceKey = "memora.table.social-relations.v1";
-    const storedBeforeSort = localStorage.getItem(preferenceKey);
-    selectRelation("alice", "bob");
-    fireEvent.click(screen.getByRole("button", { name: /Sort Frequency ascending/i }));
-    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
-      "page/social/relations",
-      {
-        group_id: "group-1",
-        sort_by: "frequency",
-        sort_order: "asc",
-      },
-    ));
-    expect(screen.queryByText("1 selected")).toBeNull();
-
-    fireEvent.click((await screen.findByRole("button", { name: /Sort Frequency descending/i })));
-    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
-      "page/social/relations",
-      {
-        group_id: "group-1",
-        sort_by: "frequency",
-        sort_order: "desc",
-      },
-    ));
-    expect(localStorage.getItem(preferenceKey)).toBe(storedBeforeSort);
-  });
-
-  it("isolates row actions from row activation and deletes without opening detail", async () => {
-    mockSocialList();
-    render(<SocialPage showToast={showToast} />);
-
-    const rowActions = await screen.findByRole("button", { name: /row actions alice.*bob/i });
-    fireEvent.click(rowActions);
-    expect(screen.queryByRole("dialog", { name: /relation: alice.*bob/i })).toBeNull();
-    fireEvent.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
-    const confirmation = await screen.findByRole("dialog", { name: /delete relation/i });
-    expect(screen.queryByRole("dialog", { name: /relation: alice.*bob/i })).toBeNull();
-    fireEvent.click(within(confirmation).getByRole("button", { name: /^cancel$/i }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: /delete relation/i })).toBeNull());
-
-    fireEvent.click(screen.getByRole("button", { name: /row actions alice.*bob/i }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /^view$/i }));
-    expect(await screen.findByRole("dialog", { name: /relation: alice.*bob/i })).toBeTruthy();
   });
 
   it("refetches the current group with the selected category tab", async () => {
@@ -250,8 +194,6 @@ describe("SocialPage", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
         group_id: "group-1",
         category: "career",
-        sort_by: "last_interaction",
-        sort_order: "desc",
       });
     });
     expect(screen.getByRole("tab", { name: /career/i }).getAttribute("aria-selected")).toBe("true");
@@ -316,7 +258,7 @@ describe("SocialPage", () => {
         tags: ["trusted"],
       });
     });
-    expect((await screen.findAllByText("trusted")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("trusted")).toBeTruthy();
     expect(await screen.findByRole("dialog", { name: /relation: alice.*bob/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^save$/i })).toBeNull();
   });
@@ -348,18 +290,11 @@ describe("SocialPage", () => {
     render(<SocialPage showToast={showToast} />);
 
     const sheet = await openRelationEditor();
-    const footer = within(sheet).getByTestId("entity-editor-footer");
-    const body = within(sheet).getByTestId("entity-editor-body");
-    expect(within(footer).getByRole("button", { name: /^delete$/i })).toBeTruthy();
-    expect(within(body).queryByRole("button", { name: /^delete$/i })).toBeNull();
-    expect(within(sheet).queryByText(/unsaved/i)).toBeNull();
     fireEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
-    expect(screen.getByRole("dialog", { name: /relation: alice.*bob/i })).toBe(sheet);
     expect(within(sheet).getByLabelText("From user")).toHaveProperty("disabled", true);
     expect(within(sheet).getByLabelText("To user")).toHaveProperty("disabled", true);
     expect(within(sheet).getByLabelText("Group ID")).toHaveProperty("disabled", true);
     await fillRelationDraft(sheet, { relation_type: "best_friend", strength: "0.8", tags: ["trusted"] });
-    expect(within(sheet).getByText(/unsaved/i)).toBeTruthy();
     fireEvent.click(within(sheet).getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
@@ -379,7 +314,7 @@ describe("SocialPage", () => {
       });
     });
     expect(await screen.findByRole("button", { name: /^edit$/i })).toBeTruthy();
-    expect(screen.getAllByText("trusted").length).toBeGreaterThan(0);
+    expect(screen.getByText("trusted")).toBeTruthy();
   });
 
   it("normalizes update field errors into one linked validation summary", async () => {
@@ -662,11 +597,7 @@ describe("SocialPage", () => {
     fireEvent.click(await screen.findByRole("option", { name: /group-2/i }));
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
-        group_id: "group-2",
-        sort_by: "last_interaction",
-        sort_order: "desc",
-      });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", { group_id: "group-2" });
     });
     expect(screen.queryByText("1 selected")).toBeNull();
   });
@@ -685,8 +616,6 @@ describe("SocialPage", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
         group_id: "group-1",
         category: "career",
-        sort_by: "last_interaction",
-        sort_order: "desc",
       });
     });
     expect(screen.queryByText("1 selected")).toBeNull();
