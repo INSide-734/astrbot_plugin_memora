@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from astrbot.api import logger
@@ -1179,7 +1180,16 @@ class PluginPageApi(
         if backup_manager is None:
             return None
         try:
-            has_pending = bool(backup_manager.has_pending_restores())
+            get_state = getattr(backup_manager, "get_maintenance_state", None)
+            if callable(get_state):
+                state = get_state()
+                has_pending = (
+                    bool(state.get("blocked", False))
+                    if isinstance(state, Mapping)
+                    else bool(backup_manager.has_pending_restores())
+                )
+            else:
+                has_pending = bool(backup_manager.has_pending_restores())
         except AttributeError:
             has_pending = False
         except Exception as exc:
@@ -1194,16 +1204,14 @@ class PluginPageApi(
             )
         if not has_pending:
             return None
-        pending_files = []
         try:
-            pending_files = backup_manager.list_pending_restores()
+            backup_manager.list_pending_restores()
         except Exception as exc:
             logger.debug(
                 "[页面接口] operation=%s error_class=%s",
                 "maintenance_write_guard_list_pending",
                 type(exc).__name__,
             )
-            pending_files = []
         return error_response(
             "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。",
             code="maintenance_blocked",
