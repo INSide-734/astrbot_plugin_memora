@@ -29,7 +29,9 @@ def _debug_records(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
     return records
 
 
-def test_disabled_reporting_does_not_create_diagnostics_directory(tmp_path: Path) -> None:
+def test_disabled_reporting_does_not_create_diagnostics_directory(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """关闭时既不落盘，也不创建诊断目录。"""
     debug_reporter.configure_debug_reporting(False, tmp_path)
 
@@ -41,6 +43,7 @@ def test_disabled_reporting_does_not_create_diagnostics_directory(tmp_path: Path
     )
 
     assert not (tmp_path / "diagnostics").exists()
+    assert "[MemoraDebug]" not in caplog.text
     assert debug_reporter.is_debug_reporting_enabled() is False
 
 
