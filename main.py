@@ -87,7 +87,10 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         self._perf_tracker = PerfTracker(maxlen=200)
 
         # 若开启调试模式，则启用监控装饰器
-        set_debug_mode(self.config_manager.get("debug", False))
+        set_debug_mode(
+            self.config_manager.get("debug", False),
+            data_dir=data_dir,
+        )
 
         self.page_api = None
 

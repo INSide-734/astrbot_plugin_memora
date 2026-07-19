@@ -10,6 +10,12 @@
         ],
         "default": "zh"
     },
+    "debug": {
+        "description": "调试模式（问题报告）",
+        "hint": "仅在用户报告问题时开启。会输出不含对话、记忆、身份或 Provider 敏感信息的详细诊断日志，并写入轮转文件。问题复现后请关闭。",
+        "type": "bool",
+        "default": false
+    },
     "provider_settings": {
         "description": "模型提供商",
         "hint": "配置记忆系统使用的 AI 模型",

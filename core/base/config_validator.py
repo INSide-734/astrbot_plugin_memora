@@ -660,6 +660,11 @@ class MemoryEvolutionConfig(BaseModel):
 class MemoraConfig(BaseModel):
     """完整插件配置"""
 
+    debug: bool = Field(
+        default=False,
+        description="用户问题报告调试模式；只输出隐私安全的结构化诊断事件",
+    )
+
     session_manager: SessionManagerConfig = Field(default_factory=SessionManagerConfig)
     recall_engine: RecallEngineConfig = Field(default_factory=RecallEngineConfig)
     reflection_engine: ReflectionEngineConfig = Field(
