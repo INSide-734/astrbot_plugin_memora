@@ -139,6 +139,13 @@ Injection 页面固定为 `dense`：PageHeader 下有 Overview、Strategy Config
 - 实体编辑发送 `expected_revision`；服务端比较 revision 后原子写入。`conflict` / `edit_conflict` 必须展示远端快照及用户可控的解决路径，不能静默 last-write-wins。
 - 成功写回后用服务端返回实体/revision 更新缓存并清理 dirty；失败保留用户输入和字段级错误。高影响批量操作必须显式确认。
 
+### 备份与热恢复
+
+- System 页只消费 `/backup/list` 返回的脱敏摘要，不读取 `directory` 或服务器绝对路径。列表显示类型、时间、完整性、大小和文件数；`invalid`、`incompatible` 或 `can_restore=false` 必须禁用恢复。
+- 恢复确认根据 `capabilities.hot_reload` 与单项 `can_hot_restore` 发送 `apply_mode=reload|restart`。`legacy_unverified` 必须在确认 Dialog 中提示未校验风险。
+- 热重载响应包含 operation ID 后，页面通过 `/backup/status` 做最长 60 秒的有界轮询；热重载窗口内的短暂请求失败不立即判定恢复失败，组件卸载时必须清理 timer。终态为 `succeeded`、`failed_before_apply`、`rolled_back` 或 `cancelled`。
+- 热重载不可用时保留 `staged` 写保护状态与手动重启提示，并只允许通过 `/backup/restore/cancel` 取消尚未应用的事务。批量删除按 `deleted_names` 清理选择，只保留 `failed_items` 对应项供重试。
+
 ## 服务端筛选、分页与选择清理
 
 - Knowledge 普通列表与 Profiles 使用服务端 `limit` / `offset` 真分页，服务端返回 total/边界决定翻页；不要先拉全量再在客户端伪分页。
@@ -177,6 +184,7 @@ python scripts/check_all.py
 ```bash
 cd pages/dashboard
 npx vitest run --environment jsdom src/pages/MemoryPage.test.tsx
+npx vitest run --environment jsdom src/pages/SystemPage.test.tsx src/mock/server.test.ts
 ```
 
 行为变更先写能失败的 Vitest + React Testing Library 测试。构建不能替代 runtime smoke，runtime smoke 不能替代真实 Playwright browser smoke；仓库级 `python scripts/check_all.py` 是最终门禁，不是开发时缩小反馈环的替代品。

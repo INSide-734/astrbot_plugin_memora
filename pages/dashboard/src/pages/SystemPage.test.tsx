@@ -241,16 +241,113 @@ describe("SystemPage", () => {
 
     const confirmMessage = screen.getByText("Restore data from backup-alpha? This will overwrite current data.");
     expect(confirmMessage).toBeTruthy();
-    expect(bridge.apiPost).not.toHaveBeenCalledWith("page/backup/restore", { name: "backup-alpha" });
+    expect(bridge.apiPost).not.toHaveBeenCalledWith("page/backup/restore", { name: "backup-alpha", apply_mode: "restart" });
 
     const confirmDialog = screen.getByRole("dialog", { name: "Restore Backup" });
     expect(within(confirmDialog).getByRole("button", { name: /restore backup/i }).className).toContain("bg-destructive/10");
     fireEvent.click(within(confirmDialog).getByRole("button", { name: /restore backup/i }));
 
     await waitFor(() => {
-      expect(bridge.apiPost).toHaveBeenCalledWith("page/backup/restore", { name: "backup-alpha" });
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/backup/restore", { name: "backup-alpha", apply_mode: "restart" });
     });
     expect(showToast).toHaveBeenCalledWith("restore complete");
+  });
+
+  it("posts reload mode and polls until restore succeeds", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ total_memories: 1 }));
+      if (path === "page/backup/list") {
+        return Promise.resolve(ok({
+          backups: [{
+            name: "backup-hot",
+            file_count: 2,
+            integrity: "verified",
+            can_restore: true,
+            can_hot_restore: true,
+          }],
+          capabilities: { hot_reload: true },
+          pending_restore: null,
+        }));
+      }
+      if (path === "page/backup/status") {
+        return Promise.resolve(ok({
+          operation_id: "op-hot",
+          restore_status: "succeeded",
+          requires_manual_restart: false,
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockResolvedValue(ok({
+      operation_id: "op-hot",
+      restore_status: "reload_scheduled",
+      apply_mode: "reload",
+      reload_scheduled: true,
+    }));
+
+    render(<SystemPage showToast={showToast} />);
+    expect(await screen.findByText("backup-hot")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /restore backup/i }));
+    const dialog = screen.getByRole("dialog", { name: /restore backup/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /restore/i }));
+
+    await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith(
+      "page/backup/restore",
+      { name: "backup-hot", apply_mode: "reload" },
+    ));
+    await waitFor(() => expect(bridge.apiGet).toHaveBeenCalledWith(
+      "page/backup/status",
+      { operation_id: "op-hot" },
+    ));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith("Restore succeeded", false));
+  });
+
+  it("keeps a manual restart restore visible and allows cancelling it", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ total_memories: 1 }));
+      if (path === "page/backup/list") {
+        return Promise.resolve(ok({
+          backups: [{
+            name: "backup-manual",
+            file_count: 1,
+            integrity: "legacy_unverified",
+            can_restore: true,
+          }],
+          capabilities: { hot_reload: false },
+          pending_restore: null,
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost
+      .mockResolvedValueOnce(ok({
+        operation_id: "op-manual",
+        restore_status: "staged",
+        apply_mode: "restart",
+        requires_manual_restart: true,
+      }))
+      .mockResolvedValueOnce(ok({
+        operation_id: "op-manual",
+        restore_status: "cancelled",
+      }));
+
+    render(<SystemPage showToast={showToast} />);
+    expect(await screen.findByText("backup-manual")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /restore backup/i }));
+    const dialog = screen.getByRole("dialog", { name: /restore backup/i });
+    expect(dialog.textContent).toContain("legacy backup");
+    fireEvent.click(within(dialog).getByRole("button", { name: /restore backup/i }));
+
+    await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith(
+      "page/backup/restore",
+      { name: "backup-manual", apply_mode: "restart" },
+    ));
+    expect(await screen.findByText(/restart AstrBot manually/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /cancel staged restore/i }));
+    await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith(
+      "page/backup/restore/cancel",
+      { operation_id: "op-manual" },
+    ));
   });
 
   it("supports selecting multiple backups and batch deletion through inline confirmation", async () => {
@@ -299,6 +396,37 @@ describe("SystemPage", () => {
       });
     });
     expect(showToast).toHaveBeenCalledWith("deleted 2 backups");
+  });
+
+  it("keeps failed batch delete selections", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/stats") return Promise.resolve(ok({ total_memories: 2 }));
+      if (path === "page/backup/list") {
+        return Promise.resolve(ok({
+          backups: [{ name: "backup-partial-a" }, { name: "backup-partial-b" }],
+          capabilities: { hot_reload: true },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockResolvedValue(ok({
+      deleted: 1,
+      failed: 1,
+      deleted_names: ["backup-partial-a"],
+      failed_items: [{ name: "backup-partial-b", reason_code: "backup_in_use" }],
+    }));
+
+    render(<SystemPage showToast={showToast} />);
+    expect(await screen.findByText("backup-partial-a")).toBeTruthy();
+    fireEvent.click(screen.getByText("Select all"));
+    fireEvent.click(screen.getByRole("button", { name: /delete selected/i }));
+    const dialog = screen.getByRole("dialog", { name: /delete selected/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /delete selected/i }));
+
+    await waitFor(() => expect(
+      screen.getByText("backup-partial-b").closest('[data-state="selected"]'),
+    ).toBeTruthy());
+    expect(screen.getByText("backup-partial-a").closest('[data-state="selected"]')).toBeNull();
   });
 
   it("preserves other selected backups after an individual delete succeeds", async () => {
@@ -539,7 +667,7 @@ describe("SystemPage", () => {
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(bridge.apiPost).toHaveBeenCalledTimes(1);
-    expect(bridge.apiPost).toHaveBeenCalledWith("page/backup/restore", { name: "backup-frozen" });
+    expect(bridge.apiPost).toHaveBeenCalledWith("page/backup/restore", { name: "backup-frozen", apply_mode: "restart" });
     expect(trigger).toHaveProperty("disabled", true);
     expect(confirm).toHaveProperty("disabled", true);
     expect(cancel).toHaveProperty("disabled", true);
