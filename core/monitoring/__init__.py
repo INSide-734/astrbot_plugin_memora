@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, TypeVar
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -39,7 +40,7 @@ _STUB_MONITORED = monitored
 _STUB_RESET_TRACE_CONTEXT = reset_trace_context
 
 
-def set_debug_mode(enabled: bool) -> None:
+def set_debug_mode(enabled: bool, *, data_dir: str | Path | None = None) -> None:
     """全局启用调试级监控。
 
     首次启用时，会触发真实 ``instrumentation`` 模块的懒加载
@@ -47,6 +48,11 @@ def set_debug_mode(enabled: bool) -> None:
     禁用时，``@monitored`` 为零开销。
     """
     global monitored, reset_trace_context
+
+    from .debug_reporter import configure_debug_reporting
+
+    # 问题报告记录器与 Prometheus 插桩共用同一开关，但保持实现独立。
+    configure_debug_reporting(bool(enabled), data_dir)
 
     if enabled:
         from .instrumentation import monitored as _monitored
@@ -82,6 +88,12 @@ __all__ = [
     "QualityAlert",
     "QualityScore",
     "reset_trace_context",
+    "close_debug_reporting",
+    "configure_debug_reporting",
+    "debug_operation",
+    "is_debug_reporting_enabled",
+    "report_debug_event",
+    "report_debug_exception",
     "set_debug_mode",
 ]
 
@@ -93,6 +105,28 @@ def __getattr__(name: str) -> Any:
     global _lazy
 
     if name in _lazy:
+        return _lazy[name]
+
+    if name in {
+        "close_debug_reporting",
+        "configure_debug_reporting",
+        "debug_operation",
+        "is_debug_reporting_enabled",
+        "report_debug_event",
+        "report_debug_exception",
+    }:
+        from . import debug_reporter as _reporter
+
+        _lazy.update(
+            {
+                "close_debug_reporting": _reporter.close_debug_reporting,
+                "configure_debug_reporting": _reporter.configure_debug_reporting,
+                "debug_operation": _reporter.debug_operation,
+                "is_debug_reporting_enabled": _reporter.is_debug_reporting_enabled,
+                "report_debug_event": _reporter.report_debug_event,
+                "report_debug_exception": _reporter.report_debug_exception,
+            }
+        )
         return _lazy[name]
 
     if name == "PerfTracker":
