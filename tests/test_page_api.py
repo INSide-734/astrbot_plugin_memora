@@ -1183,7 +1183,7 @@ class TestEnsurePluginReady:
 
     @pytest.mark.asyncio
     async def test_ensure_plugin_ready_exception(self) -> None:
-        """当 _ensure_plugin_ready raises, returns error dict."""
+        """插件就绪检查异常时返回不含原始消息的错误响应。"""
         plugin = MagicMock()
         plugin._ensure_plugin_ready = AsyncMock(side_effect=RuntimeError("Boom"))
         plugin.initializer = MagicMock()
@@ -1193,7 +1193,9 @@ class TestEnsurePluginReady:
         assert ready_dict is None
         assert error_dict is not None
         assert error_dict["status"] == "error"
-        assert "Boom" in error_dict["message"]
+        assert error_dict["message"] == "插件就绪检查失败"
+        assert error_dict["code"] == "plugin_readiness_error"
+        assert "Boom" not in repr(error_dict)
 
     @pytest.mark.asyncio
     async def test_memory_engine_none_returns_error(self) -> None:
@@ -1742,8 +1744,8 @@ class TestGetGroups:
         assert result["data"]["sources"]["jargon"]["error"] == "RuntimeError"
 
     @pytest.mark.asyncio
-    async def test_debug_mode_exposes_detailed_source_errors(self) -> None:
-        """Debug mode should return the concrete error string for failing sources."""
+    async def test_debug_mode_keeps_source_errors_private(self) -> None:
+        """调试模式也只能向页面返回异常类型，不能返回原始消息。"""
 
         class BrokenConversationStore:
             async def list_session_origins(self):
@@ -1765,7 +1767,8 @@ class TestGetGroups:
 
         assert result["status"] == "ok"
         assert result["data"]["sources"]["conversation"]["ok"] is False
-        assert result["data"]["sources"]["conversation"]["error"] == "session schema drift"
+        assert result["data"]["sources"]["conversation"]["error"] == "ValueError"
+        assert "session schema drift" not in repr(result)
 
     @pytest.mark.asyncio
     async def test_conversation_source_skips_malformed_origin_items(self) -> None:

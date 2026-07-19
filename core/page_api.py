@@ -35,6 +35,7 @@ from .api.quality_api import QualityApiMixin
 from .api.recall_trace_api import RecallTraceApiMixin
 from .api.review_api import ReviewApiMixin
 from .api.response_utils import error_response, ok_response
+from .monitoring.debug_reporter import report_debug_exception
 from .api.social_api import SocialApiMixin
 from .api.topic_segmentation_api import TopicSegmentationApiMixin
 from .storage.base import apply_perf_pragmas
@@ -965,26 +966,24 @@ class PluginPageApi(
                 int(message_count),
             )
 
-        def is_debug_enabled() -> bool:
-            try:
-                config_manager = getattr(self.plugin, "config_manager", None)
-                if config_manager is None:
-                    return False
-                return bool(config_manager.get("debug", False))
-            except Exception:
-                return False
-
-        debug_enabled = is_debug_enabled()
-
         def set_source_success(source: str, count: int) -> None:
             sources[source] = {"ok": True, "count": int(count)}
 
         def set_source_error(source: str, exc: Exception) -> None:
-            logger.warning("[页面接口] 收集 %s 群组列表失败：%s", source, exc, exc_info=True)
+            logger.warning("[页面接口] 收集 %s 群组列表失败", source)
+            report_debug_exception(
+                "maintenance_task",
+                exc,
+                component="page_api",
+                stage="maintenance",
+                status="failed",
+                reason_code="group_source_error",
+                task_type="group_listing",
+            )
             sources[source] = {
                 "ok": False,
                 "count": 0,
-                "error": str(exc) if debug_enabled else exc.__class__.__name__,
+                "error": exc.__class__.__name__,
             }
 
         # 1. 来自黑话存储
@@ -1114,8 +1113,19 @@ class PluginPageApi(
         try:
             ready, message = await self.plugin._ensure_plugin_ready()
         except Exception as exc:
-            logger.error(f"[页面接口] 插件就绪检查异常：{exc}", exc_info=True)
-            return None, self._error(f"插件就绪检查失败: {exc}")
+            logger.error("[页面接口] 插件就绪检查异常")
+            report_debug_exception(
+                "maintenance_task",
+                exc,
+                component="page_api",
+                stage="maintenance",
+                status="failed",
+                reason_code="plugin_readiness_error",
+                task_type="maintenance",
+            )
+            return None, error_response(
+                "插件就绪检查失败", code="plugin_readiness_error"
+            )
         if not ready:
             return None, self._error(message or "插件尚未就绪")
         try:
@@ -1128,8 +1138,19 @@ class PluginPageApi(
                 "index_validator": self.plugin.initializer.index_validator,
             }, None
         except Exception as exc:
-            logger.error(f"[页面接口] 获取引擎组件失败：{exc}", exc_info=True)
-            return None, self._error(f"获取引擎组件失败：{exc}")
+            logger.error("[页面接口] 获取引擎组件失败")
+            report_debug_exception(
+                "maintenance_task",
+                exc,
+                component="page_api",
+                stage="maintenance",
+                status="failed",
+                reason_code="component_lookup_error",
+                task_type="maintenance",
+            )
+            return None, error_response(
+                "获取引擎组件失败", code="component_lookup_error"
+            )
 
     async def _get_memory_record(self, memory_id: int) -> dict[str, Any] | None:
         memory_engine = self.plugin.initializer.memory_engine

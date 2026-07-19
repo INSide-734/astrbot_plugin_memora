@@ -2,11 +2,11 @@
 
 # 指标、插桩、性能与质量监控模块
 
-**Last Updated:** 2026-07-17
+**最后更新：** 2026-07-19
 
 ## 职责与边界
 
-`core/monitoring/` 包含四类相互独立但同属可观测性的能力：Prometheus 指标定义、可选函数插桩、召回耗时环形统计、记忆原子五维质量评分与告警。它不保存诊断事件、不计算系统总健康分，也不执行记忆审查动作；前者属于 [诊断模块](../diagnostics/AGENTS.md)，人工分诊属于 [审查模块](../review/AGENTS.md)。
+`core/monitoring/` 包含五类相互独立但同属可观测性的能力：Prometheus 指标定义、可选函数插桩、召回耗时环形统计、记忆原子五维质量评分与告警，以及面向用户问题报告的隐私安全诊断记录器。Prometheus 指标和性能追踪不保存诊断事件；系统健康评分属于 [诊断模块](../diagnostics/AGENTS.md)，人工分诊属于 [审查模块](../review/AGENTS.md)。
 
 ## 架构与数据流
 
@@ -44,6 +44,12 @@ flowchart LR
 
 `score_atom(atom, context)` 计算 consistency `0.25`、coherence `0.25`、relevance `0.20`、freshness `0.15`、accuracy `0.15`。它是纯统计启发式：双字 token/Jaccard 或余弦、文本结构、来源先验与近期上下文、TTL、来源可靠性/URL/verified。低于 `0.60/0.45/0.30` 产生 medium/high/critical 告警；连续 5 个 overall 低于 `0.30`，或一小时内至少 2 个 critical 告警时 `should_pause()` 建议暂停。历史仅在内存 deque 中。
 
+### `debug_reporter.py`
+
+问题报告调试模式由现有顶层 `debug` 配置控制。记录器只接受固定事件、字段和低基数枚举，先校验并规范化 JSON，再同时写入 AstrBot 日志（`[MemoraDebug]` 前缀）和插件数据目录下的 `diagnostics/memora-debug.jsonl`。文件使用单文件 `5 MB`、当前文件加两个备份文件的大小轮转；目录和文件会延迟到第一条合法事件写入时创建。
+
+事件只允许阶段、状态、原因码、随机操作关联码、耗时、计数、预算、路由/交付枚举及安全异常位置。禁止记录对话、查询、Prompt、记忆正文、用户/群组/会话/消息/记忆标识、Provider 请求或凭据、异常消息、绝对路径和完整 traceback。异常摘要最多包含异常类型、插件内模块、函数和行号；找不到插件栈帧时只记录类型。未知事件、字段或值整条拒绝，文件 sink 失败只停用文件输出，不得影响聊天主链路。
+
 ## 依赖方向
 
 - 上游：`main.py`、`core/event_handler.py`、召回/写入/注入组件和 API 指标汇总。
@@ -56,6 +62,7 @@ flowchart LR
 - Prometheus label 必须是低基数枚举或函数名；不得加入 `user_id`、`group_id`、query、Prompt、异常文本或任意 payload，避免隐私泄漏和时间序列爆炸。
 - trace 调用树可能暴露函数结构；消息结束必须 reset，不得把参数/返回值加入 trace 节点。
 - `PerfTracker.recent` 是进程内运维数据；新增样本字段要保持有限键集合和有界缓冲，不能保存查询正文。
+- `debug_reporter.py` 的字段 allowlist 是隐私边界；新增事件或字段必须同步安全测试，不能把业务对象、ID、正文或 Provider 信息传入。
 - 质量 scorer 读取原子内容和上下文，但当前只保留分数与 `atom_id`；不要把完整内容加入历史、告警或 `get_stats()`。
 - `should_pause()` 是建议状态，不是事务控制器；调用方决定是否暂停。统计分数不能替代人工审查或安全扫描。
 - 保持缺少 Prometheus 时可导入、no-op API 兼容、独立 Registry、懒加载缓存和同步/异步装饰器行为。

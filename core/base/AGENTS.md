@@ -75,6 +75,7 @@ flowchart LR
 - 注入预设等级固定为 `tool_first < low_cost < balanced < quality`；Hybrid 必须满足 `min <= base <= max`。
 - `GraphMemoryConfig` 将文档路/图路权重归一化为总和 `1.0`；非正总和回退为 `0.65/0.35`。
 - `RecallEngineConfig.top_k=0` 是明确的“跳过自动召回和注入”语义；不要把它强制改成正数。
+- 顶层 `debug` 默认关闭，仅用于用户问题报告的隐私安全结构化诊断；它不授权向 Dashboard 或普通日志返回原始异常消息。
 - `SecurityConfig.strict_mode` 仅表达策略；严格失败关闭由使用该配置的处理链实现，不是 `ConfigManager` 自动行为。
 - `CostControl(mode="quality")` 的 `allow()` 会允许功能，但仍应由调用方检查每轮调用上限；`reset_turn()` 必须在轮次边界调用。
 - Schema option 比较要求值和类型都相同，避免 Python 中 `True == 1` 导致错误接受。
