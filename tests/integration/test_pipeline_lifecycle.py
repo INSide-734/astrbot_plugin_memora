@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import shutil
 import tempfile
 import time
@@ -472,6 +473,34 @@ async def test_backup_and_restore_roundtrip(
     finally:
         # 清理备份目录
         shutil.rmtree(backup_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_restore_reload_lifecycle_applies_then_validates(tmp_path: Path) -> None:
+    """恢复事务在热重载模式下先应用并校验，再由新实例确认成功。"""
+    from core.managers.backup_manager import BackupManager
+
+    db_path = tmp_path / "memora.db"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("CREATE TABLE marker(value TEXT)")
+        connection.execute("INSERT INTO marker(value) VALUES (?)", ("restored",))
+        connection.commit()
+    finally:
+        connection.close()
+
+    manager = BackupManager(str(tmp_path))
+    backup = await manager.create_backup(kind="manual")
+    staged = manager.stage_restore(str(backup["name"]), apply_mode="reload")
+
+    applied = manager.apply_pending_restores()
+
+    assert applied["restore_status"] == "validating"
+    manager.mark_restore_succeeded(str(staged["operation_id"]))
+    status = manager.get_restore_status(str(staged["operation_id"]))
+    assert status is not None
+    assert status["restore_status"] == "succeeded"
 
 
 # ============================================================================
