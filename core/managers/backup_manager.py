@@ -40,6 +40,7 @@ class BackupManager:
     def __init__(self, data_dir: str) -> None:
         self.data_dir = Path(data_dir)
         self.version_file = self.data_dir / _VERSION_FILE
+        self._operation_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Public API
