@@ -51,6 +51,8 @@ class BackupManager:
     def __init__(self, data_dir: str) -> None:
         self.data_dir = Path(data_dir)
         self.version_file = self.data_dir / _VERSION_FILE
+        # 备份、恢复和清理操作共用同一把异步锁；同步启动应用不依赖此锁。
+        self._operation_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Public API
