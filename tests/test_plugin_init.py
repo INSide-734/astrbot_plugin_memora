@@ -437,6 +437,32 @@ class TestMemoraPluginReloadScheduling:
         assert plugin._background_tasks == set()
 
     @pytest.mark.asyncio
+    async def test_backup_restore_reload_marks_schedule_failure(self) -> None:
+        context = MagicMock()
+        reload_called = asyncio.Event()
+
+        async def reload_plugin(_name: str) -> bool:
+            reload_called.set()
+            return False
+
+        context._star_manager = types.SimpleNamespace(reload=reload_plugin)
+        plugin = self._make_plugin(context)
+        plugin._backup_manager.mark_reload_scheduled = MagicMock()
+        module = sys.modules[plugin.__class__.__module__]
+
+        async def no_delay(_delay: float) -> None:
+            return None
+
+        with patch.object(module.asyncio, "sleep", side_effect=no_delay):
+            assert plugin.schedule_backup_restore_reload("operation-1234") is True
+            await asyncio.wait_for(reload_called.wait(), timeout=1.0)
+            await asyncio.sleep(0)
+
+        plugin._backup_manager.mark_reload_scheduled.assert_called_once_with(
+            "operation-1234", False
+        )
+
+    @pytest.mark.asyncio
     async def test_delays_reload_and_uses_memora_plugin_name(self) -> None:
         context = MagicMock()
         reload_called = asyncio.Event()
@@ -798,7 +824,15 @@ class TestMemoraPluginReady:
 
 class TestInjectionDecisionLifecycle:
     @staticmethod
-    def _build_factory_rollback_scenario(monkeypatch, tmp_path, injection_builder):
+    def _build_factory_rollback_scenario(
+        monkeypatch,
+        tmp_path,
+        injection_builder,
+        *,
+        decay_rate=0.1,
+        auto_cleanup=False,
+        backup_enabled=None,
+    ):
         from astrbot.core.provider.provider import Provider
         from core.initializer.component_factory import ComponentFactory
 
@@ -839,11 +873,14 @@ class TestInjectionDecisionLifecycle:
             MagicMock(return_value=scheduler),
         )
         config = MagicMock()
-        config.get.side_effect = lambda key, default=None: {
+        config_values = {
             "graph_memory.enabled": True,
-            "importance_decay.decay_rate": 0.1,
-            "forgetting_agent.auto_cleanup_enabled": False,
-        }.get(key, default)
+            "importance_decay.decay_rate": decay_rate,
+            "forgetting_agent.auto_cleanup_enabled": auto_cleanup,
+        }
+        if backup_enabled is not None:
+            config_values["backup_settings.enabled"] = backup_enabled
+        config.get.side_effect = lambda key, default=None: config_values.get(key, default)
         config.session_manager = {}
         factory = ComponentFactory(MagicMock(), config, str(tmp_path))
         factory._build_injection_components = injection_builder
@@ -860,6 +897,28 @@ class TestInjectionDecisionLifecycle:
             db_setup,
         )
         return factory, args, order
+
+    @pytest.mark.asyncio
+    async def test_backup_enabled_starts_scheduler_without_decay_or_cleanup(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        async def fail_injection(_db_path):
+            raise RuntimeError("injection failed")
+
+        factory, args, order = self._build_factory_rollback_scenario(
+            monkeypatch,
+            tmp_path,
+            fail_injection,
+            decay_rate=0,
+            auto_cleanup=False,
+            backup_enabled=True,
+        )
+
+        with pytest.raises(RuntimeError, match="injection failed"):
+            await factory.build_all(*args)
+
+        # 只有自动备份开启时，衰减率和自动清理都为零仍应启动并在失败回滚时停止调度器。
+        assert order[0] == "scheduler"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("cancel_build", [False, True])

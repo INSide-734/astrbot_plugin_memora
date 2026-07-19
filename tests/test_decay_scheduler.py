@@ -261,7 +261,8 @@ class TestDecayScheduler:
     @pytest.mark.asyncio
     async def test_execute_decay_with_backup(self, mock_engine, tmp_path):
         backup_mgr = AsyncMock()
-        backup_mgr.create_backup = AsyncMock(return_value="/backup/path")
+        backup_mgr.create_backup = AsyncMock(return_value={"name": "scheduled_ok"})
+        backup_mgr.prune_backups = MagicMock(return_value={"removed": []})
         s = self._make_scheduler(
             mock_engine, tmp_path,
             backup_manager=backup_mgr,
@@ -271,7 +272,8 @@ class TestDecayScheduler:
              patch.object(s, "_run_optional_maintenance", AsyncMock()):
             result = await s._execute_decay(1)
             assert result is True
-            backup_mgr.create_backup.assert_called_once()
+            backup_mgr.create_backup.assert_called_once_with(kind="scheduled")
+            backup_mgr.prune_backups.assert_called_once_with(keep_days=7)
 
     @pytest.mark.asyncio
     async def test_execute_decay_backup_disabled(self, mock_engine, tmp_path):
@@ -392,10 +394,13 @@ class TestDecayScheduler:
     @pytest.mark.asyncio
     async def test_run_backup_success(self, mock_engine, tmp_path):
         backup_mgr = AsyncMock()
-        backup_mgr.create_backup = AsyncMock(return_value="/backup/path")
+        backup_mgr.create_backup = AsyncMock(return_value={"name": "scheduled_ok"})
+        backup_mgr.prune_backups = MagicMock(return_value={"removed": []})
         s = self._make_scheduler(mock_engine, tmp_path, backup_manager=backup_mgr)
         await s._run_backup()
-        backup_mgr.create_backup.assert_called_once()
+        backup_mgr.create_backup.assert_called_once_with(kind="scheduled")
+        backup_mgr.prune_backups.assert_called_once_with(keep_days=7)
+        assert s.last_backup_result == {"status": "succeeded", "name": "scheduled_ok"}
 
     @pytest.mark.asyncio
     async def test_run_backup_no_manager(self, mock_engine, tmp_path):
@@ -406,47 +411,72 @@ class TestDecayScheduler:
     async def test_run_backup_failure(self, mock_engine, tmp_path):
         backup_mgr = AsyncMock()
         backup_mgr.create_backup = AsyncMock(return_value=None)
+        backup_mgr.prune_backups = MagicMock()
         s = self._make_scheduler(mock_engine, tmp_path, backup_manager=backup_mgr)
         await s._run_backup()
-        backup_mgr.create_backup.assert_called_once()
+        backup_mgr.create_backup.assert_called_once_with(kind="scheduled")
+        backup_mgr.prune_backups.assert_not_called()
+        assert s.last_backup_result["reason_code"] == "backup_create_failed"
 
     @pytest.mark.asyncio
     async def test_run_backup_exception(self, mock_engine, tmp_path):
         backup_mgr = AsyncMock()
         backup_mgr.create_backup = AsyncMock(side_effect=RuntimeError("backup fail"))
+        backup_mgr.prune_backups = MagicMock()
         s = self._make_scheduler(mock_engine, tmp_path, backup_manager=backup_mgr)
         await s._run_backup()  # Should not raise
+        assert s.last_backup_result["reason_code"] == "backup_create_failed"
+
+    @pytest.mark.asyncio
+    async def test_run_backup_propagates_cancelled_error(self, mock_engine, tmp_path):
+        backup_mgr = AsyncMock()
+        backup_mgr.create_backup = AsyncMock(side_effect=asyncio.CancelledError())
+        s = self._make_scheduler(mock_engine, tmp_path, backup_manager=backup_mgr)
+        with pytest.raises(asyncio.CancelledError):
+            await s._run_backup()
 
     @pytest.mark.asyncio
     async def test_cleanup_old_backups(self, mock_engine, tmp_path):
-        backup_mgr = AsyncMock()
+        backup_mgr = MagicMock()
+        backup_mgr.prune_backups.return_value = {"removed": ["old_backup_001"]}
         s = self._make_scheduler(
             mock_engine, tmp_path,
             backup_manager=backup_mgr,
             backup_keep_days=7,
         )
-        backup_dir = tmp_path / "backups"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        # Create an old backup dir
-        old_dir = backup_dir / "old_backup_001"
-        old_dir.mkdir()
-        # Set its mtime to be old (30 days ago)
-        old_time = time.time() - 86400 * 30
-        import os
-        os.utime(str(old_dir), (old_time, old_time))
         await s._cleanup_old_backups()
-        # Should not raise — old dir should be cleaned up
+        backup_mgr.prune_backups.assert_called_once_with(keep_days=7)
 
     @pytest.mark.asyncio
     async def test_cleanup_old_backups_no_dir(self, mock_engine, tmp_path):
-        backup_mgr = AsyncMock()
+        backup_mgr = MagicMock()
         s = self._make_scheduler(mock_engine, tmp_path, backup_manager=backup_mgr)
         await s._cleanup_old_backups()  # Should not raise
+        backup_mgr.prune_backups.assert_called_once_with(keep_days=7)
 
     @pytest.mark.asyncio
     async def test_cleanup_old_backups_no_manager(self, mock_engine, tmp_path):
         s = self._make_scheduler(mock_engine, tmp_path)
         await s._cleanup_old_backups()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_backup_only_run_delegates_scheduled_backup_and_prune(
+        self, mock_engine, tmp_path
+    ):
+        manager = MagicMock()
+        manager.create_backup = AsyncMock(return_value={"name": "scheduled_ok"})
+        manager.prune_backups.return_value = {"removed": []}
+        scheduler = self._make_scheduler(
+            mock_engine,
+            tmp_path,
+            decay_rate=0,
+            backup_manager=manager,
+            backup_enabled=True,
+            backup_keep_days=7,
+        )
+        await scheduler._run_backup()
+        manager.create_backup.assert_awaited_once_with(kind="scheduled")
+        manager.prune_backups.assert_called_once_with(keep_days=7)
 
     # ---- Scheduler lifecycle ----
 

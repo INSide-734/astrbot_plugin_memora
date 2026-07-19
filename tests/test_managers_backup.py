@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +20,19 @@ from core.managers.backup_manager import (
     _BACKUP_PATTERNS,
     BackupManager,
 )
+
+
+def _db_bytes(label: str) -> bytes:
+    handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    handle.close()
+    connection = sqlite3.connect(handle.name)
+    connection.execute("CREATE TABLE marker(value TEXT)")
+    connection.execute("INSERT INTO marker(value) VALUES (?)", (label,))
+    connection.commit()
+    connection.close()
+    content = Path(handle.name).read_bytes()
+    os.unlink(handle.name)
+    return content
 
 
 # ---------------------------------------------------------------------------
@@ -77,43 +93,42 @@ class TestBackupCreation:
 
     def test_backup_if_needed_fresh_install(self, tmp_path: Path) -> None:
         """Fresh install should create a backup and write the version file."""
-        # Create a dummy db file to back up
-        (tmp_path / "memora.db").write_text("dummy", encoding="utf-8")
+        (tmp_path / "memora.db").write_bytes(_db_bytes("fresh"))
         mgr = BackupManager(data_dir=str(tmp_path))
         result = mgr.backup_if_needed()
         assert result is not None
-        backup_path = Path(result)
+        backup_path = Path(result["directory"])
         assert backup_path.exists()
-        assert backup_path.name == "vunknown"
+        assert backup_path.name.startswith("vunknown_")
         # Verify backup_info.json was written
         info_path = backup_path / _BACKUP_INFO_FILE
         assert info_path.exists()
         info = json.loads(info_path.read_text(encoding="utf-8"))
         assert info["plugin_version"] == PLUGIN_VERSION
         assert info["previous_version"] == "unknown"
-        assert info["files_copied"] >= 1
+        assert info["file_count"] >= 1
         # Version file should be updated
         assert (tmp_path / _VERSION_FILE).read_text(encoding="utf-8") == PLUGIN_VERSION
 
     def test_backup_if_needed_version_change(self, tmp_path: Path) -> None:
         (tmp_path / _VERSION_FILE).write_text("2.3.0", encoding="utf-8")
-        (tmp_path / "memora.db").write_text("data", encoding="utf-8")
+        (tmp_path / "memora.db").write_bytes(_db_bytes("version"))
         mgr = BackupManager(data_dir=str(tmp_path))
         result = mgr.backup_if_needed()
         assert result is not None
-        backup_path = Path(result)
-        assert backup_path.name == "v2.3.0"
+        backup_path = Path(result["directory"])
+        assert backup_path.name.startswith("v2.3.0_")
         info = json.loads((backup_path / _BACKUP_INFO_FILE).read_text(encoding="utf-8"))
         assert info["previous_version"] == "2.3.0"
 
     def test_backup_copies_matching_files(self, tmp_path: Path) -> None:
-        (tmp_path / "memora.db").write_text("memora", encoding="utf-8")
-        (tmp_path / "conversations.db").write_text("conv", encoding="utf-8")
+        (tmp_path / "memora.db").write_bytes(_db_bytes("memora"))
+        (tmp_path / "conversations.db").write_bytes(_db_bytes("conv"))
         # Create a file NOT matching backup patterns
         (tmp_path / "some_log.txt").write_text("log", encoding="utf-8")
         mgr = BackupManager(data_dir=str(tmp_path))
         result = mgr.backup_if_needed()
-        backup_path = Path(result)
+        backup_path = Path(result["directory"])
         # Only matching files should be copied
         copied_files = [p.name for p in backup_path.iterdir() if p.is_file() and p.name != _BACKUP_INFO_FILE]
         assert "memora.db" in copied_files
@@ -131,14 +146,66 @@ class TestCreateBackup:
     @pytest.mark.asyncio
     async def test_create_backup_always_creates(self, tmp_path: Path) -> None:
         (tmp_path / _VERSION_FILE).write_text(PLUGIN_VERSION, encoding="utf-8")
-        (tmp_path / "memora.db").write_text("data", encoding="utf-8")
+        (tmp_path / "memora.db").write_bytes(_db_bytes("manual"))
         mgr = BackupManager(data_dir=str(tmp_path))
         result = await mgr.create_backup()
         assert result is not None
-        backup_path = Path(result)
+        backup_path = Path(result["directory"])
         assert "manual_" in backup_path.name
         info = json.loads((backup_path / _BACKUP_INFO_FILE).read_text(encoding="utf-8"))
         assert info["backup_type"] == "manual"
+        assert info["manifest_version"] == 2
+        assert "data_dir" not in info
+
+    @pytest.mark.asyncio
+    async def test_create_backup_failure_does_not_publish_partial_directory(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "memora.db").write_bytes(_db_bytes("failure"))
+        mgr = BackupManager(data_dir=str(tmp_path))
+        with patch(
+            "core.managers.backup_manager.snapshot_sqlite",
+            side_effect=OSError("disk"),
+        ):
+            with pytest.raises(RuntimeError, match="backup_create_failed"):
+                await mgr.create_backup()
+        assert mgr.list_backups(str(tmp_path)) == []
+
+
+class TestBackupRetention:
+    """验证自动保留策略不删除手动和版本保护备份。"""
+
+    @staticmethod
+    def _write_backup(
+        tmp_path: Path, name: str, backup_type: str, age_days: int
+    ) -> None:
+        directory = tmp_path / "backups" / name
+        directory.mkdir(parents=True)
+        (directory / _BACKUP_INFO_FILE).write_text(
+            json.dumps(
+                {
+                    "manifest_version": 2,
+                    "status": "ready",
+                    "backup_type": backup_type,
+                    "files": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        timestamp = time.time() - age_days * 86400
+        os.utime(directory, (timestamp, timestamp))
+
+    def test_prune_keeps_manual_and_version_change(self, tmp_path: Path) -> None:
+        self._write_backup(tmp_path, "manual_keep", "manual", 30)
+        self._write_backup(tmp_path, "version_keep", "version_change", 30)
+        self._write_backup(tmp_path, "scheduled_remove", "scheduled", 30)
+        manager = BackupManager(str(tmp_path))
+
+        result = manager.prune_backups(keep_days=7, now=time.time())
+
+        assert result["removed"] == ["scheduled_remove"]
+        assert (tmp_path / "backups" / "manual_keep").exists()
+        assert (tmp_path / "backups" / "version_keep").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +297,8 @@ class TestListBackups:
         # Sorted reverse (v2.3.0 before v2.2.0)
         assert result[0]["name"] == "v2.3.0"
         assert result[0]["file_count"] >= 1
+        assert "directory" not in result[0]
+        assert result[0]["integrity"] == "legacy_unverified"
         assert result[1]["name"] == "v2.2.0"
 
     def test_list_skips_files_not_dirs(self, tmp_path: Path) -> None:
@@ -248,27 +317,27 @@ class TestApplyPendingRestores:
 
     def test_no_restore_files(self, tmp_path: Path) -> None:
         mgr = BackupManager(data_dir=str(tmp_path))
-        assert mgr.apply_pending_restores() == 0
+        assert mgr.apply_pending_restores()["status"] == "none"
 
     def test_applies_restore_file(self, tmp_path: Path) -> None:
         # Create a .restore file
-        restore_file = tmp_path / "memora.db.restore"
+        restore_file = tmp_path / "decay_state.json.restore"
         restore_file.write_text("restored content", encoding="utf-8")
         mgr = BackupManager(data_dir=str(tmp_path))
         applied = mgr.apply_pending_restores()
-        assert applied == 1
+        assert applied["restore_status"] == "validating"
         # The .restore file should have been moved
         assert not restore_file.exists()
-        target = tmp_path / "memora.db"
+        target = tmp_path / "decay_state.json"
         assert target.exists()
         assert target.read_text(encoding="utf-8") == "restored content"
 
     def test_applies_restore_overwrites_existing(self, tmp_path: Path) -> None:
-        (tmp_path / "memora.db").write_text("old content", encoding="utf-8")
-        (tmp_path / "memora.db.restore").write_text("restored content", encoding="utf-8")
+        (tmp_path / "decay_state.json").write_text("old content", encoding="utf-8")
+        (tmp_path / "decay_state.json.restore").write_text("restored content", encoding="utf-8")
         mgr = BackupManager(data_dir=str(tmp_path))
         mgr.apply_pending_restores()
-        assert (tmp_path / "memora.db").read_text(encoding="utf-8") == "restored content"
+        assert (tmp_path / "decay_state.json").read_text(encoding="utf-8") == "restored content"
 
 
 class TestStageRestore:
@@ -278,18 +347,22 @@ class TestStageRestore:
         backup_dir = tmp_path / "backups" / "v2.3.0"
         backup_dir.mkdir(parents=True)
         (backup_dir / _BACKUP_INFO_FILE).write_text("{}", encoding="utf-8")
-        (backup_dir / "memora.db").write_text("restored", encoding="utf-8")
-        (tmp_path / "memora.db").write_text("live", encoding="utf-8")
+        (backup_dir / "memora.db").write_bytes(_db_bytes("restored"))
+        (tmp_path / "memora.db").write_bytes(_db_bytes("live"))
         mgr = BackupManager(data_dir=str(tmp_path))
 
         result = mgr.stage_restore("v2.3.0")
 
         assert result["pending"] is True
         assert result["staged"] == 1
-        assert (tmp_path / "memora.db").read_text(encoding="utf-8") == "live"
-        assert (tmp_path / "memora.db.restore").read_text(encoding="utf-8") == "restored"
+        restored = sqlite3.connect(tmp_path / "memora.db")
+        assert restored.execute("SELECT value FROM marker").fetchone() == ("live",)
+        restored.close()
+        operation_id = str(result["operation_id"])
+        assert (tmp_path / ".restore" / operation_id / "payload" / "memora.db").exists()
+        assert not [path for path in tmp_path.glob("*.restore") if path.is_file()]
         assert mgr.has_pending_restores() is True
-        assert mgr.list_pending_restores() == ["memora.db.restore"]
+        assert mgr.list_pending_restores() == [operation_id]
 
     def test_stage_restore_rejects_path_traversal(self, tmp_path: Path) -> None:
         outside = tmp_path / "outside"
@@ -304,6 +377,92 @@ class TestStageRestore:
     def test_validate_backup_name_accepts_expected_names(self, tmp_path: Path, name: str) -> None:
         mgr = BackupManager(data_dir=str(tmp_path))
         assert mgr.validate_backup_name(name) == name
+
+    @pytest.mark.asyncio
+    async def test_stage_restore_writes_single_plan_and_payload(self, tmp_path: Path) -> None:
+        (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
+        manager = BackupManager(str(tmp_path))
+        backup = await manager.create_backup()
+        (tmp_path / "memora.db").write_bytes(_db_bytes("live"))
+
+        result = manager.stage_restore(str(backup["name"]), apply_mode="restart")
+
+        operation_id = str(result["operation_id"])
+        plan_path = tmp_path / ".restore" / operation_id / "restore_plan.json"
+        assert result["restore_status"] == "staged"
+        assert json.loads(plan_path.read_text(encoding="utf-8"))["apply_mode"] == "restart"
+        assert (plan_path.parent / "payload" / "memora.db").exists()
+        assert manager.has_pending_restores() is True
+
+    @pytest.mark.asyncio
+    async def test_stage_restore_rejects_tampered_manifest(self, tmp_path: Path) -> None:
+        (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
+        manager = BackupManager(str(tmp_path))
+        backup = await manager.create_backup()
+        backup_dir = Path(backup["directory"])
+        (backup_dir / "memora.db").write_bytes(_db_bytes("tampered"))
+
+        with pytest.raises(RuntimeError, match="backup_invalid"):
+            manager.stage_restore(str(backup["name"]))
+
+    @pytest.mark.asyncio
+    async def test_apply_restore_creates_pre_restore_and_validates(self, tmp_path: Path) -> None:
+        (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
+        manager = BackupManager(str(tmp_path))
+        backup = await manager.create_backup()
+        (tmp_path / "memora.db").write_bytes(_db_bytes("live"))
+        staged = manager.stage_restore(str(backup["name"]))
+
+        applied = manager.apply_pending_restores()
+
+        assert applied["restore_status"] == "validating"
+        assert applied["pre_restore_backup_name"]
+        restored = sqlite3.connect(tmp_path / "memora.db")
+        assert restored.execute("SELECT value FROM marker").fetchone() == ("source",)
+        restored.close()
+        manager.mark_restore_succeeded(str(staged["operation_id"]))
+        assert manager.get_restore_status(str(staged["operation_id"]))["restore_status"] == "succeeded"
+
+    @pytest.mark.asyncio
+    async def test_cancel_staged_restore_removes_payload_and_unblocks(self, tmp_path: Path) -> None:
+        (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
+        manager = BackupManager(str(tmp_path))
+        backup = await manager.create_backup()
+        staged = manager.stage_restore(str(backup["name"]))
+
+        cancelled = manager.cancel_restore(str(staged["operation_id"]))
+
+        assert cancelled["restore_status"] == "cancelled"
+        assert manager.has_pending_restores() is False
+        assert not (tmp_path / ".restore" / str(staged["operation_id"]) / "payload").exists()
+
+    @pytest.mark.asyncio
+    async def test_apply_restore_rolls_back_when_later_file_fails(self, tmp_path: Path) -> None:
+        (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
+        (tmp_path / "decay_state.json").write_text("source-state", encoding="utf-8")
+        manager = BackupManager(str(tmp_path))
+        backup = await manager.create_backup()
+        (tmp_path / "memora.db").write_bytes(_db_bytes("live"))
+        (tmp_path / "decay_state.json").write_text("live-state", encoding="utf-8")
+        manager.stage_restore(str(backup["name"]))
+        original = manager._install_restore_file
+        calls = 0
+
+        def fail_second(plan_dir: Path, progress):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("install")
+            return original(plan_dir, progress)
+
+        with patch.object(manager, "_install_restore_file", side_effect=fail_second):
+            result = manager.apply_pending_restores()
+
+        assert result["restore_status"] == "rolled_back"
+        restored = sqlite3.connect(tmp_path / "memora.db")
+        assert restored.execute("SELECT value FROM marker").fetchone() == ("live",)
+        restored.close()
+        assert (tmp_path / "decay_state.json").read_text(encoding="utf-8") == "live-state"
 
 
 # ---------------------------------------------------------------------------

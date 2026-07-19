@@ -186,10 +186,15 @@ class ComponentFactory:
         auto_cleanup = self.config_manager.get(
             "forgetting_agent.auto_cleanup_enabled", True
         )
+        backup_enabled = bool(self.config_manager.get("backup_settings.enabled", True))
         decay_scheduler = None
-        if memory_engine and (decay_rate > 0 or auto_cleanup):
-            backup_enabled = self.config_manager.get("backup_settings.enabled", True)
-            backup_keep_days = self.config_manager.get("backup_settings.keep_days", 7)
+        should_start_decay_scheduler = bool(
+            memory_engine and (decay_rate > 0 or auto_cleanup or backup_enabled)
+        )
+        if should_start_decay_scheduler:
+            backup_keep_days = int(
+                self.config_manager.get("backup_settings.keep_days", 7)
+            )
             scheduler = DecayScheduler(
                 memory_engine=memory_engine,
                 decay_rate=decay_rate,

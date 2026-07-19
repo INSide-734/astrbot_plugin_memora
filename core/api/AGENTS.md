@@ -44,7 +44,7 @@ flowchart TD
 | 情感与社交 | `AffectionApiMixin`、`SocialApiMixin`、`ExpressionApiMixin`、`JargonApiMixin` | `/affection/*`、`/social/*`、`/expression/patterns`、`/jargon/*` |
 | 质量与审查 | `QualityApiMixin`、`ReviewApiMixin` | `/quality/*`、`/review/items*`、`/review/refresh`、`/review/action` |
 | 诊断/评测/指标 | `DiagnosticsApiMixin`、`EvaluationApiMixin`、`MetricsApiMixin` | `/diagnostics/*`、`/evaluation/*`、`/metrics/summary` |
-| 运维/备份 | `MaintenanceApiMixin`、`BackupApiMixin` | `/maintenance/*`、`/health/persistence*`、`/backup/*`、`/system/*` 兼容路径、`/dashboard/install|build` |
+| 运维/备份 | `MaintenanceApiMixin`、`BackupApiMixin` | `/maintenance/*`、`/health/persistence*`、`/backup/list|create|restore|status|restore/cancel|delete|batch-delete`、`/system/*` 兼容路径、`/dashboard/install|build` |
 | 配置/回填 | `ConfigApiMixin`、`TopicSegmentationApiMixin` | `/config/schema`、`/config/state`、`/config/apply`、`/config/topic-segmentation`、`/backfill/*` |
 | 运行状态 | `DelegationApiMixin`、SSE、群组聚合 | `/delegation/*`、`/realtime/stream`、`/groups`、`/export/memories` |
 
@@ -67,6 +67,9 @@ flowchart TD
 ## 安全与运维边界
 
 - 写 handler 必须先调用 `_maintenance_write_guard()`；存在待恢复备份时返回 `maintenance_blocked`。守卫查询异常采用 fail-closed，返回 `maintenance_guard_failed`。
+- 备份接口只通过 `BackupApiMixin` 暴露事务操作：创建、列表、暂存恢复、状态查询、取消暂存、删除和批量删除均返回统一 envelope。列表和创建摘要只允许名称、类型、时间、manifest 状态、完整性、文件计数、大小、warning code 与恢复能力字段；不得返回 `data_dir`、`directory`、绝对路径、异常正文或恢复 payload。
+- `/backup/status` 是只读状态端点；`/backup/restore/cancel` 是恢复事务的唯一取消入口，取消不会绕过 manager 状态机或执行任意文件删除。恢复请求的 `apply_mode` 只能是 `reload` 或 `restart`；热重载安排失败时保留 `staged` 状态并明确 `requires_manual_restart`。
+- 恢复错误使用稳定 code（例如 `backup_invalid`、`canonical_file_missing`、`restore_conflict`、`restore_not_found`、`restore_cancel_not_allowed`、`restore_rollback_pending`），日志只记录操作名和异常类型，不记录路径、备份正文或身份。
 - `_infer_route_risk()` 只分类：dashboard install/build 为 `runtime_exec`；delete/purge/restore/reset 为 `destructive`；maintenance/backup/backfill/config/system 等为 `maintenance`。新增写路由要核对分类 token，并在 handler 中真实调用守卫。
 - Dashboard install/build 会启动外部进程，必须继续受运行期开关、超时、输出上限和单锁限制；不要把客户端命令或路径拼入 shell。
 - SQL 读取使用参数绑定；外部 ID、分页、枚举、字段必须先规范化。返回异常时不要泄露 SQL、绝对路径、正文或凭据。
@@ -84,6 +87,7 @@ flowchart TD
 
 ```powershell
 python -m pytest tests/test_page_api.py tests/test_page_api_contract.py -q
+python -m pytest tests/test_api_backup.py tests/test_maintenance_api.py -q
 python -m pytest tests/test_api_config.py tests/test_api_response_utils.py -q
 python -m pytest tests/test_api_injection_strategy.py tests/test_api_recall_trace.py -q
 python -m pytest tests/test_api_memory.py tests/test_api_profile.py tests/test_api_knowledge.py tests/test_api_note.py -q

@@ -32,12 +32,14 @@
 
 ## 初始化与关闭链
 
-1. `main.py` 建立配置与 `PluginInitializer(context, config_manager, data_dir)`，然后调用 `initialize()`。
+1. `main.py` 建立配置、插件级 `BackupManager` 与 `PluginInitializer(context, config_manager, data_dir)`；`_initialize_plugin()` 先执行按需自动备份和 `apply_pending_restores()`，再调用 `initialize()`，避免在恢复事务未应用时发布运行时。
 2. `PluginInitializer` 使用 `ProviderLoader` 与 `ProviderWaiter` 非阻塞等待 embedding/LLM provider；尚未就绪时登记后台重试，不发布半初始化运行时。
 3. provider 就绪后，`_run_full_init()` 调用 `ComponentFactory.build_all(...)`，完成数据库、图存储、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、索引验证器、衰减调度器、注入决策组件以及 Memory Evolution Store/Gate/Consolidator/Manager 的装配；仅 `enabled=true` 且 mode 为 `readonly`/`active` 时向引擎注入派生 relation/projection 读取器。
 4. 初始化器再建立共享提示词保护服务，以及可选的 affection、expression、jargon、social 认知组件；可选组件失败按现有路径记录并隔离，不得伪装为已就绪。
 5. `main.py` 仅使用初始化器发布的实例创建 `EventHandler`、`CommandHandler` 和 `PluginPageApi`，保证消息、命令和页面请求共享同一存储与引擎。
 6. 关闭阶段先阻止新工作并等待/取消事件维护任务，再停止 Memory Evolution worker 并关闭其 Store，然后按依赖顺序关闭注入记录器、调度器、其他 manager/store 和数据库；`CancelledError` 必须继续传播，清理失败不能覆盖原始初始化失败。
+
+恢复事务在初始化器和 `_ensure_runtime_components()` 均成功后才标记为 `succeeded`；任一阶段失败都由 `BackupManager` 保留失败/回滚状态。支持 AstrBot 插件重载时，`schedule_backup_restore_reload(operation_id)` 通过延迟重载安排热恢复；重载能力不可用或调度失败时，事务保持 `staged`/可手动重启状态，不能伪造已应用成功。
 
 ## 架构与数据流
 
@@ -97,13 +99,13 @@ Memory Evolution 只在 canonical 写入之后生成可失效、可重建的 rel
 
 ### Page API
 
-`PluginPageApi` 聚合 `api/` mixin，并通过插件/初始化器取得共享运行时组件。端点负责 readiness/write guard、参数校验、稳定响应形状和安全错误映射；不得返回凭据、原始数据库对象、未清洗提示词或内部异常。修改路由、方法或响应字段时，同时核对 `pages/dashboard/` 调用方、`tests/test_page_api.py` 与 `tests/test_page_api_contract.py`。
+`PluginPageApi` 聚合 `api/` mixin，并通过插件/初始化器取得共享运行时组件。端点负责 readiness/write guard、参数校验、稳定响应形状和安全错误映射；不得返回凭据、原始数据库对象、未清洗提示词或内部异常。备份恢复端点只返回脱敏摘要、稳定错误码和恢复状态；恢复进度与取消通过 `/backup/status`、`/backup/restore/cancel` 观察和控制。修改路由、方法或响应字段时，同时核对 `pages/dashboard/` 调用方、`tests/test_page_api.py` 与 `tests/test_page_api_contract.py`。
 
 ## 依赖与安全约束
 
 - **共享实例：** 消息、命令和页面路径必须复用初始化器发布的 provider、store、manager 和 engine；禁止在请求内重新创建数据库、索引或模型。
 - **就绪边界：** provider 后台等待完成前，调用方必须走现有 readiness 检查；`_initialization_complete` 与失败状态由初始化器单点维护。
-- **写保护：** 备份恢复、维护和关闭期间遵循现有 write guard；页面 API、事件旁路和命令不得绕过。
+- **写保护：** 备份恢复、维护和关闭期间遵循现有 write guard；pending restore 的维护状态必须同时阻止页面 API、事件旁路、命令和 Agent 写入，只有状态/列表等只读路径可继续工作，任何入口都不得绕过。
 - **不可信输入：** 平台消息、页面 JSON/query、模型输出、导入数据及伴侣插件状态均需按其边界校验；模型上下文使用共享 prompt protection。
 - **异步纪律：** 捕获普通异常时记录足够上下文；不要吞掉取消信号。所有后台任务必须登记、可观察并在关闭时收束。
 - **演化模式：** `enabled=false` 强制禁用；`disabled` 不启动 worker。当前 `shadow`、`readonly`、`active` 都会启动 worker 并可写派生解释平面，只有 `readonly`/`active` 向检索器注入读取器；mode 不授予修改 canonical memory 的权限。读取侧仍须逐条验证 active state、primary/source role、revision、scope、privacy 与有效期。

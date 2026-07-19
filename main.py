@@ -21,6 +21,7 @@ from .core.event_handler import EventHandler
 from .core.i18n_backend import init as i18n_init
 from .core.i18n_backend import t
 from .core.managers.backup_manager import BackupManager
+from .core.managers.backup_models import BackupOperationError
 from .core.plugin_initializer import PluginInitializer
 from .core.tools import MemoryMemorizeTool, MemorySearchTool
 from .core.utils.version import PLUGIN_VERSION
@@ -131,7 +132,17 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         return callable(getattr(star_manager, "reload", None))
 
     def schedule_plugin_reload(self) -> bool:
-        """安排延迟且不纳入关停追踪的重载，让 HTTP 响应先完成。"""
+        """安排配置变更后的延迟插件重载。"""
+        return self._schedule_plugin_reload("config_change")
+
+    def schedule_backup_restore_reload(self, operation_id: str) -> bool:
+        """安排备份恢复后的延迟插件重载。"""
+        return self._schedule_plugin_reload("backup_restore", operation_id)
+
+    def _schedule_plugin_reload(
+        self, reason: str, operation_id: str | None = None
+    ) -> bool:
+        """安排延迟且不纳入关停追踪的插件重载。"""
         star_manager = getattr(self.context, "_star_manager", None)
         reload_plugin = getattr(star_manager, "reload", None)
         if not callable(reload_plugin):
@@ -147,7 +158,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             if isinstance(result, tuple):
                 failed = not result or not bool(result[0])
             if failed:
-                logger.warning("配置已保存，但插件重载返回失败: %s", result)
+                logger.warning("插件重载返回失败 reason=%s", reason)
+                if operation_id:
+                    self._backup_manager.mark_reload_scheduled(operation_id, False)
 
         task = asyncio.create_task(_delayed_reload())
         task.add_done_callback(self._consume_reload_task_result)
@@ -169,22 +182,30 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     async def _initialize_plugin(self):
         """初始化插件"""
         try:
-            # 版本变更时自动备份数据（在任何数据库操作之前，通过线程池避免阻塞事件循环）
             await self._backup_manager.backup_if_needed_async()
-
-            # 应用恢复暂存（恢复备份时因文件锁定而暂存的 .restore 文件）
             self._backup_manager.apply_pending_restores()
-
-            # 执行初始化
             success = await self.initializer.initialize()
-
-            if success:
-                await self._ensure_runtime_components()
-                self._inject_delegation_services()
-                self.feature_delegation.log_status()  # 完整初始化后再次检查委托状态
-
-        except Exception as e:
-            logger.error(f"插件初始化失败: {e}", exc_info=True)
+            if not success:
+                self._backup_manager.mark_restore_startup_failure_if_needed(
+                    self.initializer.is_failed
+                )
+                return
+            runtime_ready = await self._ensure_runtime_components()
+            if not runtime_ready:
+                self._backup_manager.mark_restore_startup_failure_if_needed(True)
+                return
+            self._backup_manager.mark_restore_succeeded()
+            self._inject_delegation_services()
+            self.feature_delegation.log_status()
+        except asyncio.CancelledError:
+            raise
+        except BackupOperationError:
+            logger.error("备份保护或恢复应用失败", exc_info=True)
+            raise
+        except Exception:
+            self._backup_manager.mark_restore_startup_failure_if_needed(True)
+            logger.error("插件初始化失败", exc_info=True)
+            raise
 
     async def _ensure_runtime_components(self) -> bool:
         """确保运行期组件（事件/命令处理器、控制台页面）已就绪。"""
@@ -424,6 +445,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
 
     def _writes_blocked_by_pending_restore(self) -> bool:
         try:
+            get_state = getattr(self._backup_manager, "get_maintenance_state", None)
+            if callable(get_state):
+                return bool(get_state().get("blocked", False))
             return bool(self._backup_manager.has_pending_restores())
         except Exception:
             logger.error("检查备份恢复维护状态失败", exc_info=True)

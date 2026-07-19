@@ -196,6 +196,46 @@ describe("mutable mock reset and revision allocator", () => {
   });
 });
 
+describe("backup restore transaction mock", () => {
+  it("exposes reload progress, manual cancellation, and no server paths", async () => {
+    const list = okData(await get("backup/list"));
+    expect(list.capabilities).toEqual({ hot_reload: true });
+    expect((list.backups as JsonObject[]).every((item) => !("directory" in item))).toBe(true);
+
+    const backupName = String((list.backups as JsonObject[])[0].name);
+    const staged = okData(await post("backup/restore", {
+      name: backupName,
+      apply_mode: "reload",
+    }));
+    expect(staged).toMatchObject({
+      operation_id: expect.any(String),
+      restore_status: "reload_scheduled",
+      reload_scheduled: true,
+    });
+    const validating = okData(await get("backup/status", {
+      operation_id: String(staged.operation_id),
+    }));
+    expect(validating.restore_status).toBe("validating");
+    const succeeded = okData(await get("backup/status", {
+      operation_id: String(staged.operation_id),
+    }));
+    expect(succeeded.restore_status).toBe("succeeded");
+
+    requireReset()();
+    const manual = okData(await post("backup/restore", {
+      name: backupName,
+      apply_mode: "restart",
+    }));
+    expect(manual).toMatchObject({
+      restore_status: "staged",
+      requires_manual_restart: true,
+    });
+    expect(okData(await post("backup/restore/cancel", {
+      operation_id: manual.operation_id,
+    }))).toMatchObject({ restore_status: "cancelled" });
+  });
+});
+
 describe("server-side mock sorting", () => {
   it("sorts before applying pagination for every DataTable-backed list", async () => {
     const allKnowledge = okData(await get("knowledge", {

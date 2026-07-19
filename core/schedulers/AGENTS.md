@@ -53,13 +53,16 @@ sequenceDiagram
     S->>E: consolidate_memories（失败仅告警）
     S->>S: 原子替换 last_decay_date
     opt backup_enabled
-        S->>B: create_backup + 清理过期备份
+        S->>B: create_backup(kind=scheduled)
+        S->>B: prune_backups(keep_days)
     end
     S->>E: maintain_storage
     S->>E: 可选画像/知识/学习/笔记/前瞻维护
 ```
 
 可选维护各自独立捕获异常：画像标签衰减、知识过期清理、自动学习优化、笔记版本裁剪、未来 24 小时 PLANNED 原子扫描。单项失败不能阻止其他项。
+
+当 `backup_settings.enabled` 为真时，即使衰减率和自动清理都关闭，`DecayScheduler` 仍会启动，以保证定时备份独立运行。调度器不遍历或删除备份目录；创建和保留策略必须委托 `BackupManager.create_backup(kind="scheduled")` 与 `BackupManager.prune_backups(keep_days=...)`。公开状态只保留 succeeded/failed、备份名称和稳定 reason code，不输出路径或异常正文。
 
 ## `BackfillScheduler`
 

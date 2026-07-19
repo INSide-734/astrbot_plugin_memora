@@ -21,13 +21,40 @@ interface SystemPageProps {
 
 interface BackupItem {
   name: string;
-  directory?: string;
+  backup_type?: "manual" | "scheduled" | "version_change" | "pre_restore" | string;
+  created_at?: string;
   file_count?: number;
   files?: string[];
   plugin_version?: string;
+  manifest_version?: number;
+  status?: string;
+  integrity?: "verified" | "legacy_unverified" | "invalid" | "incompatible" | string;
+  total_size_bytes?: number;
+  warning_codes?: string[];
+  can_restore?: boolean;
+  can_hot_restore?: boolean;
   backup_timestamp?: string;
-  [key: string]: unknown;
 }
+
+interface RestoreStatus {
+  operation_id?: string;
+  source_backup_name?: string;
+  restore_status?: string;
+  apply_mode?: "reload" | "restart" | string;
+  reload_scheduled?: boolean;
+  requires_manual_restart?: boolean;
+  reason_code?: string | null;
+  pre_restore_backup_name?: string | null;
+}
+
+const ACTIVE_RESTORE_STATUSES = new Set([
+  "staged",
+  "reload_scheduled",
+  "applying",
+  "validating",
+  "rollback_pending",
+  "rolling_back",
+]);
 
 interface SystemStats {
   total_memories?: number;
@@ -166,6 +193,15 @@ function formatRatio(value: number | undefined, total: number | undefined): stri
   return "--";
 }
 
+function formatBytes(value: number | undefined, locale: string): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "--";
+  if (value < 1024) return `${formatDashboardNumber(value, locale)} B`;
+  if (value < 1024 * 1024) {
+    return `${formatDashboardNumber(value / 1024, locale, { maximumFractionDigits: 1 })} KB`;
+  }
+  return `${formatDashboardNumber(value / 1024 / 1024, locale, { maximumFractionDigits: 1 })} MB`;
+}
+
 export function SystemPage({ showToast }: SystemPageProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
@@ -176,6 +212,8 @@ export function SystemPage({ showToast }: SystemPageProps) {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
   const [backups, setBackups] = useState<BackupItem[]>([]);
+  const [backupCapabilities, setBackupCapabilities] = useState({ hot_reload: false });
+  const [pendingRestore, setPendingRestore] = useState<RestoreStatus | null>(null);
   const [exportFormat, setExportFormat] = useState<"jsonl" | "markdown">("jsonl");
   const [exportProgress, setExportProgress] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [loading, setLoading] = useState(false);
@@ -184,6 +222,9 @@ export function SystemPage({ showToast }: SystemPageProps) {
   const [operationPending, setOperationPending] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
   const operationPendingRef = useRef(false);
+  const restorePollTimerRef = useRef<number | null>(null);
+  const restorePollGenerationRef = useRef(0);
+  const restorePollingOperationRef = useRef<string | null>(null);
   const [qualityRefreshToken, setQualityRefreshToken] = useState(0);
   // v1.0.0+ tabs
   const [activeTab, setActiveTab] = useState<"overview" | "quality" | "delegation">("overview");
@@ -208,8 +249,25 @@ export function SystemPage({ showToast }: SystemPageProps) {
   const fetchBackups = useCallback(async () => {
     try {
       const data = unwrapApiData(await apiRequest("backup/list"));
-      const list = (data as Record<string, unknown>)?.backups;
+      const payload = data as Record<string, unknown>;
+      const list = payload?.backups;
       setBackups(Array.isArray(list) ? (list as BackupItem[]) : []);
+      const capabilities = payload?.capabilities;
+      setBackupCapabilities({
+        hot_reload: Boolean(
+          capabilities && typeof capabilities === "object" &&
+          (capabilities as Record<string, unknown>).hot_reload === true,
+        ),
+      });
+      const pending = payload?.pending_restore;
+      const restore = pending && typeof pending === "object"
+        ? pending as RestoreStatus
+        : null;
+      setPendingRestore(
+        restore && ACTIVE_RESTORE_STATUSES.has(String(restore.restore_status ?? ""))
+          ? restore
+          : null,
+      );
     } catch { /* silent */ }
   }, []);
 
@@ -228,6 +286,14 @@ export function SystemPage({ showToast }: SystemPageProps) {
     fetchBackups();
     fetchMetrics();
   }, [fetchStats, fetchBackups, fetchMetrics]);
+
+  useEffect(() => () => {
+    restorePollGenerationRef.current += 1;
+    if (restorePollTimerRef.current !== null) {
+      window.clearTimeout(restorePollTimerRef.current);
+      restorePollTimerRef.current = null;
+    }
+  }, []);
 
   const runDirectAction = async (endpoint: string, labelKey: string) => {
     try {
@@ -254,6 +320,93 @@ export function SystemPage({ showToast }: SystemPageProps) {
     setPendingOperation(snapshotOperation(operation));
   };
 
+  const stopRestorePolling = useCallback(() => {
+    restorePollGenerationRef.current += 1;
+    restorePollingOperationRef.current = null;
+    if (restorePollTimerRef.current !== null) {
+      window.clearTimeout(restorePollTimerRef.current);
+      restorePollTimerRef.current = null;
+    }
+  }, []);
+
+  const pollRestoreStatus = useCallback((operationId: string) => {
+    stopRestorePolling();
+    restorePollingOperationRef.current = operationId;
+    const generation = restorePollGenerationRef.current;
+    const deadline = Date.now() + 60_000;
+    const terminalStatuses = new Set([
+      "succeeded",
+      "failed_before_apply",
+      "rolled_back",
+      "cancelled",
+    ]);
+
+    const poll = async () => {
+      if (restorePollGenerationRef.current !== generation) return;
+      try {
+        const data = unwrapApiData(await apiRequest(
+          `backup/status?operation_id=${encodeURIComponent(operationId)}`,
+          { retries: 0 },
+        ));
+        const status = data as RestoreStatus;
+        setPendingRestore(status);
+        const state = String(status.restore_status ?? "");
+        if (terminalStatuses.has(state)) {
+          stopRestorePolling();
+          await fetchBackups();
+          showToast(t(`system.restoreStatus.${state}`), state !== "succeeded");
+          return;
+        }
+      } catch {
+        // 插件热重载窗口中的短暂断连属于预期状态，继续有界轮询。
+      }
+
+      if (Date.now() >= deadline) {
+        stopRestorePolling();
+        showToast(t("system.restoreStillRunning"), true);
+        return;
+      }
+      restorePollTimerRef.current = window.setTimeout(() => void poll(), 1000);
+    };
+
+    void poll();
+  }, [fetchBackups, showToast, stopRestorePolling, t]);
+
+  useEffect(() => {
+    const operationId = pendingRestore?.operation_id;
+    const state = String(pendingRestore?.restore_status ?? "");
+    if (
+      operationId &&
+      ["reload_scheduled", "applying", "validating", "rollback_pending", "rolling_back"].includes(state) &&
+      restorePollingOperationRef.current !== operationId
+    ) {
+      pollRestoreStatus(operationId);
+    }
+  }, [pendingRestore, pollRestoreStatus]);
+
+  const cancelPendingRestore = async () => {
+    const operationId = pendingRestore?.operation_id;
+    if (!operationId || operationPendingRef.current) return;
+    operationPendingRef.current = true;
+    setOperationPending(true);
+    try {
+      const data = unwrapApiData(await apiRequest("backup/restore/cancel", {
+        method: "POST",
+        body: { operation_id: operationId },
+        retries: 0,
+      }));
+      stopRestorePolling();
+      setPendingRestore(null);
+      showToast(String((data as Record<string, unknown>)?.message ?? t("system.restoreStatus.cancelled")));
+      await Promise.all([fetchBackups(), fetchStats()]);
+    } catch (error) {
+      showToast(readableError(error), true);
+    } finally {
+      operationPendingRef.current = false;
+      setOperationPending(false);
+    }
+  };
+
   const executeOperation = async () => {
     const operation = pendingOperation;
     if (!operation || operationPendingRef.current) return;
@@ -269,6 +422,8 @@ export function SystemPage({ showToast }: SystemPageProps) {
     }
     try {
       const data = unwrapApiData(await apiRequest(operation.endpoint, { method: "POST", body: operation.body }));
+      const resultData = data as Record<string, unknown>;
+      let refreshAfterOperation = true;
       if (npmKind) {
         const result = data as { stdout: string; stderr: string; exit_code: number; success: boolean };
         setNpmResult(result);
@@ -280,11 +435,28 @@ export function SystemPage({ showToast }: SystemPageProps) {
           return;
         }
         showToast(operation.successLabel);
+      } else if (operation.kind === "restore" && typeof resultData.operation_id === "string") {
+        const status = resultData as RestoreStatus;
+        const operationId = resultData.operation_id;
+        setPendingRestore(status);
+        refreshAfterOperation = false;
+        if (
+          status.apply_mode === "reload" ||
+          status.reload_scheduled === true ||
+          status.restore_status === "reload_scheduled"
+        ) {
+          pollRestoreStatus(operationId);
+        } else {
+          showToast(t("system.restoreManualRestart"), false);
+        }
       } else {
-        showToast(String((data as Record<string, unknown>)?.message ?? operation.successLabel));
+        showToast(String(resultData?.message ?? operation.successLabel));
       }
       if (operation.kind === "delete" || operation.kind === "batch-delete") {
-        const completed = new Set(operation.selection ?? []);
+        const deletedNames = Array.isArray(resultData.deleted_names)
+          ? resultData.deleted_names.filter((name): name is string => typeof name === "string")
+          : operation.selection ?? [];
+        const completed = new Set(deletedNames);
         setSelectedBackups((previous) => new Set(
           Array.from(previous).filter((name) => !completed.has(name)),
         ));
@@ -293,8 +465,10 @@ export function SystemPage({ showToast }: SystemPageProps) {
         setQualityRefreshToken((token) => token + 1);
       }
       setPendingOperation(null);
-      void fetchStats();
-      void fetchBackups();
+      if (refreshAfterOperation) {
+        void fetchStats();
+        void fetchBackups();
+      }
     } catch (error) {
       const message = readableError(error);
       setOperationError(message);
@@ -319,8 +493,23 @@ export function SystemPage({ showToast }: SystemPageProps) {
     }
   };
 
-  const doRestoreBackup = async (backupName: string) => {
-    openOperation({ kind: "restore", title: t("system.restoreBackup"), description: t("system.restoreConfirm", backupName), endpoint: "backup/restore", body: { name: backupName }, successLabel: t("system.restoreSuccess"), destructive: true, actionLabel: t("system.restoreBackup"), pendingLabel: `${t("system.restoreBackup")}…` });
+  const doRestoreBackup = (backup: BackupItem) => {
+    const useHotReload = backupCapabilities.hot_reload && backup.can_hot_restore !== false;
+    const applyMode = useHotReload ? "reload" : "restart";
+    const legacyWarning = backup.integrity === "legacy_unverified"
+      ? ` ${t("system.restoreLegacyWarning")}`
+      : "";
+    openOperation({
+      kind: "restore",
+      title: t("system.restoreBackup"),
+      description: `${t("system.restoreConfirm", backup.name)}${legacyWarning}`,
+      endpoint: "backup/restore",
+      body: { name: backup.name, apply_mode: applyMode },
+      successLabel: t("system.restoreSuccess"),
+      destructive: true,
+      actionLabel: useHotReload ? t("system.restoreAndReload") : t("system.restoreBackup"),
+      pendingLabel: `${t("system.restoreBackup")}…`,
+    });
   };
 
 
@@ -615,6 +804,45 @@ export function SystemPage({ showToast }: SystemPageProps) {
         <TopicSegmentationConfig showToast={showToast} />
 
         {/* Backups */}
+        {pendingRestore && (
+          <div
+            role="status"
+            className="flex flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">{t("system.restoreWriteProtection")}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("system.restoreCurrentStatus")}: {translateEnum(
+                  t,
+                  "system.restoreStatus",
+                  pendingRestore.restore_status,
+                  String(pendingRestore.restore_status ?? "--"),
+                )}
+                {pendingRestore.source_backup_name ? ` · ${pendingRestore.source_backup_name}` : ""}
+              </p>
+              {pendingRestore.requires_manual_restart && (
+                <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                  {t("system.restoreManualRestart")}
+                </p>
+              )}
+              {pendingRestore.reason_code && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {translateEnum(t, "system.restoreReason", pendingRestore.reason_code, pendingRestore.reason_code)}
+                </p>
+              )}
+            </div>
+            {pendingRestore.restore_status === "staged" && pendingRestore.operation_id && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void cancelPendingRestore()}
+                disabled={operationPending}
+              >
+                {t("system.cancelRestore")}
+              </Button>
+            )}
+          </div>
+        )}
           <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <h3 className="text-sm font-semibold mb-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -652,6 +880,9 @@ export function SystemPage({ showToast }: SystemPageProps) {
             <div className="space-y-1">
               {backups.map((b, i) => {
                 const isSelected = selectedBackups.has(b.name);
+                const integrity = String(b.integrity ?? "legacy_unverified");
+                const restoreDisabled = operationPending || b.can_restore === false || ["invalid", "incompatible"].includes(integrity);
+                const timestamp = b.created_at ?? b.backup_timestamp;
                 return (
                 <div
                   key={i}
@@ -671,11 +902,12 @@ export function SystemPage({ showToast }: SystemPageProps) {
                     <Database size={14} className="text-[var(--text-tertiary)] shrink-0" />
                     <div className="min-w-0">
                       <span className="font-medium text-[var(--text-primary)]">{b.name}</span>
-                      {b.backup_timestamp && (
-                        <span className="ml-2 text-xs text-[var(--text-tertiary)]">
-                          {new Date(b.backup_timestamp).toLocaleString(locale)}
-                        </span>
-                      )}
+                      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-[var(--text-tertiary)]">
+                        {timestamp && <span>{new Date(timestamp).toLocaleString(locale)}</span>}
+                        {b.backup_type && <span>{translateEnum(t, "system.backupType", b.backup_type, b.backup_type)}</span>}
+                        <span>{translateEnum(t, "system.backupIntegrity", integrity, integrity)}</span>
+                        {typeof b.total_size_bytes === "number" && <span>{formatBytes(b.total_size_bytes, locale)}</span>}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -683,8 +915,8 @@ export function SystemPage({ showToast }: SystemPageProps) {
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => doRestoreBackup(b.name)}
-                      disabled={operationPending}
+                      onClick={() => doRestoreBackup(b)}
+                      disabled={restoreDisabled}
                     >
                       <Undo2 size={12} className="mr-1" />{t("system.restoreBackup")}
                     </Button>
@@ -693,6 +925,7 @@ export function SystemPage({ showToast }: SystemPageProps) {
                       size="sm"
                       onClick={() => doDeleteBackup(b.name)}
                       disabled={operationPending}
+                      aria-label={t("system.deleteBackup", b.name)}
                     >
                       <Trash2 size={12} className="text-[var(--color-danger)]" />
                     </Button>

@@ -546,7 +546,7 @@ class TestRestoreBackup:
     """Restore backup with real temp directories."""
 
     @pytest.mark.asyncio
-    async def test_restore_with_real_files(self) -> None:
+    async def test_restore_rejects_legacy_backup_without_canonical_database(self) -> None:
         import tempfile
         req = _mock_request()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -568,10 +568,8 @@ class TestRestoreBackup:
             mixin.plugin._backup_manager = BackupManager(data_dir)
             with patch("quart.request", req):
                 r = await mixin.restore_backup()
-            assert r["status"] == "ok"
-            assert r["data"]["staged"] == 1
-            assert os.path.exists(os.path.join(data_dir, "memora.index.restore"))
-            assert not os.path.exists(os.path.join(data_dir, "memora.index"))
+            assert r["status"] == "error"
+            assert r["code"] == "backup_invalid"
 
 
 class TestExportMemories:
