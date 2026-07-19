@@ -293,6 +293,17 @@ async function chooseOption(comboboxName: string, optionName: string) {
   fireEvent.click(option);
 }
 
+async function openDecisionDetail(): Promise<HTMLButtonElement> {
+  const trigger = screen.getByRole("button", {
+    name: "injection.decisions.openDetail",
+  }) as HTMLButtonElement;
+  fireEvent.click(trigger);
+  fireEvent.click(await screen.findByRole("menuitem", {
+    name: "injection.decisions.openDetail",
+  }));
+  return trigger;
+}
+
 describe("InjectionStrategyPage", () => {
   beforeEach(() => {
     resetHookHarness();
@@ -836,18 +847,17 @@ describe("InjectionStrategyPage", () => {
         "injection.column.outcome",
         "injection.column.payloadChars",
         "injection.column.totalMs",
+        "injection.column.actions",
       ]);
   });
 
-  it("loads an allowlisted decision detail in an accessible sheet", () => {
+  it("loads an allowlisted decision detail in an accessible sheet", async () => {
     hooks.decisions.page = decisionPageFixture({
       items: [decisionRow({ decision_id: "decision-safe" })],
     });
     renderDecisionsTab();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
-    );
+    await openDecisionDetail();
     expect(hooks.decisions.loadDetail).toHaveBeenCalledWith("decision-safe");
 
     hooks.decisions.detailStatus = "success";
@@ -904,16 +914,14 @@ describe("InjectionStrategyPage", () => {
     }
   });
 
-  it("keeps the decision Sheet header and footer outside its scrolling body", () => {
+  it("keeps the decision Sheet header and footer outside its scrolling body", async () => {
     hooks.decisions.detailStatus = "success";
     hooks.decisions.detail = decisionDetail({
       decision_id: "decision-layout",
       trace_id: "trace-layout",
     });
     renderDecisionsTab();
-    fireEvent.click(screen.getByRole("button", {
-      name: "injection.decisions.openDetail",
-    }));
+    await openDecisionDetail();
 
     const sheet = screen.getByRole("dialog", { name: "injection.detail.title" });
     const header = sheet.querySelector('[data-slot="sheet-header"]');
@@ -941,11 +949,9 @@ describe("InjectionStrategyPage", () => {
       .toBeLessThan(children.indexOf(footer as Element));
   });
 
-  it("keeps the detail sheet open across loading errors and retry", () => {
+  it("keeps the detail sheet open across loading errors and retry", async () => {
     renderDecisionsTab();
-    fireEvent.click(
-      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
-    );
+    await openDecisionDetail();
     hooks.decisions.detailStatus = "loading";
     rerenderPage();
     expect(screen.getByRole("dialog", { name: "injection.detail.title" }))
@@ -963,11 +969,9 @@ describe("InjectionStrategyPage", () => {
       .toBeTruthy();
   });
 
-  it("gates Trace navigation by both trace id and catalog capability", () => {
+  it("gates Trace navigation by both trace id and catalog capability", async () => {
     renderDecisionsTab();
-    fireEvent.click(
-      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
-    );
+    await openDecisionDetail();
     hooks.decisions.detailStatus = "success";
     hooks.decisions.detail = decisionDetail({ trace_id: null });
     rerenderPage();
@@ -997,17 +1001,15 @@ describe("InjectionStrategyPage", () => {
 
   it("restores row-action focus and clears detail after closing the sheet", async () => {
     renderDecisionsTab();
-    const detailButton = screen.getByRole("button", {
-      name: "injection.decisions.openDetail",
-    });
-    detailButton.focus();
-    fireEvent.click(detailButton);
+    await openDecisionDetail();
     hooks.decisions.detailStatus = "success";
     hooks.decisions.detail = decisionDetail();
     rerenderPage();
 
     fireEvent.click(screen.getByRole("button", { name: "common.close" }));
-    await waitFor(() => expect(document.activeElement).toBe(detailButton));
+    await waitFor(() => expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "injection.decisions.openDetail" }),
+    ));
     expect(hooks.decisions.clearDetail).toHaveBeenCalledOnce();
   });
 
