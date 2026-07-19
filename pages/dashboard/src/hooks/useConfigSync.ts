@@ -87,14 +87,23 @@ function successData<T>(response: ApiResponse): T {
   if (configResponse.status === "error") {
     throw new ConfigProtocolError(configResponse);
   }
-  if (configResponse.status !== "ok" || !("data" in configResponse)) {
-    throw new ConfigProtocolError({
-      status: "error",
-      code: "invalid_request",
-      message: "Unexpected configuration response",
-    });
+  if (configResponse.status === "ok" && "data" in configResponse) {
+    return configResponse.data;
   }
-  return configResponse.data;
+  // AstrBot 的宿主 Page bridge 会剥离成功 envelope，仅把 data 传给 iframe。
+  if (
+    response !== null &&
+    typeof response === "object" &&
+    !Array.isArray(response) &&
+    !Object.prototype.hasOwnProperty.call(response, "status")
+  ) {
+    return response as unknown as T;
+  }
+  throw new ConfigProtocolError({
+    status: "error",
+    code: "invalid_request",
+    message: "Unexpected configuration response",
+  });
 }
 
 function syncError(error: unknown): ConfigSyncError {
@@ -518,7 +527,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
               };
             }
           } catch {
-            // Keep the conflict revision hint; a later refresh can fill the snapshot.
+            // 保留冲突修订提示，后续刷新可补齐远端快照。
           }
           if (!mountedRef.current) return;
           setState((previous) => ({
@@ -597,7 +606,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
           return;
         }
       } catch {
-        // The original transport failure remains the actionable state.
+        // 原始传输失败仍是需要用户处理的状态。
       }
 
       setState((previous) => ({
@@ -764,7 +773,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
           }));
           return;
         }
-        // A plugin process can briefly disappear while AstrBot reloads it.
+        // AstrBot 重载插件时，插件进程可能短暂消失。
       } finally {
         checking = false;
       }
