@@ -404,6 +404,7 @@ function DecisionTable({
         tableId="injection-decisions"
         data={decisions.page.items}
         columns={columns}
+        tableClassName="min-w-[64rem]"
         getRowId={(item) => item.decision_id}
         sort={decisions.sort}
         onSortChange={decisions.setSort}

@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRightLeft, RefreshCw, Tag, Trash2, UsersRound, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw, Tag, Trash2, UsersRound, X } from "lucide-react";
 
 import { useI18n } from "@/hooks/useI18n";
 import { useGroups } from "@/hooks/useGroups";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -18,8 +17,10 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/Progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DataTable } from "@/components/data-table/DataTable";
+import { actionsColumn, selectionColumn } from "@/components/data-table/data-table-columns";
+import type { DataTableColumn, DataTableSort } from "@/components/data-table/table-types";
 import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { EditConflictDialog } from "@/components/editing/EditConflictDialog";
 import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
@@ -29,7 +30,7 @@ import { SocialRelationForm } from "@/components/editing/forms/SocialRelationFor
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
 import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { RELATION_CATEGORIES } from "@/lib/constants";
-import { dashboardLocale, formatDashboardPercent } from "@/lib/i18n";
+import { dashboardLocale, formatDashboardDateTime, formatDashboardPercent } from "@/lib/i18n";
 import { ApiRequestError, editingErrorDetails, type BatchResult, type EntityEnvelope, type FieldErrors } from "@/types/editing";
 import type { SocialRelationDraft, SocialRelationEntry } from "@/types";
 
@@ -67,7 +68,7 @@ const EMPTY_RELATION_DRAFT: SocialRelationDraft = {
   tags: [],
 };
 const EMPTY_BATCH_TAG: BatchTagDraft = { operation: "add_tags", tags: [] };
-
+const DEFAULT_SORT: DataTableSort = { id: "last_interaction", desc: true };
 function cloneDraft(draft: SocialRelationDraft): SocialRelationDraft {
   return { ...draft, tags: [...draft.tags] };
 }
@@ -171,6 +172,7 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
   const [relations, setRelations] = useState<SocialRelation[]>([]);
   const [loading, setLoading] = useState(false);
   const [category, setCategory] = useState("all");
+  const [sort, setSort] = useState<DataTableSort>(DEFAULT_SORT);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<SocialRelation | null>(null);
   const [editDraft, setEditDraft] = useState<SocialRelationDraft>(cloneDraft(EMPTY_RELATION_DRAFT));
@@ -219,6 +221,8 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
     try {
       const query = new URLSearchParams({ group_id: groupId });
       if (category !== "all") query.set("category", category);
+      query.set("sort_by", sort.id);
+      query.set("sort_order", sort.desc ? "desc" : "asc");
       const response = socialListResponse(unwrapApiData(
         await apiRequest(`social/relations?${query.toString()}`)
       ), label("social.invalidList", "Invalid social relation list response"));
@@ -231,9 +235,14 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
     } finally {
       if (generation === relationsLoadGeneration.current) setLoading(false);
     }
-  }, [category, groupId, showToast]);
+  }, [category, groupId, showToast, sort]);
 
   useEffect(() => { void loadRelations(); }, [loadRelations]);
+
+  const changeSort = useCallback((next: DataTableSort | null) => {
+    setSelected(new Set());
+    setSort(next ?? DEFAULT_SORT);
+  }, []);
 
   const openCreate = () => {
     setCreateDraft(cloneDraft(EMPTY_RELATION_DRAFT));
@@ -512,41 +521,157 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
     ...Object.keys(RELATION_CATEGORIES).map((value) => ({ value, label: label(`social.category.${value}`, value) })),
   ];
   const groupItems = groups.map((group) => ({ value: group.group_id, label: `${group.group_id}${group.message_count ? ` (${group.message_count})` : ""}` }));
-  const allSelected = relations.length > 0 && selected.size === relations.length;
+  const columns = useMemo<DataTableColumn<SocialRelation>[]>(() => [
+    selectionColumn({
+      label: label("social.selectAll", "Select all relations"),
+      rowLabel: (relation) => label(
+        "social.selectRelation",
+        `Select relation ${relation.from_user} ${relation.to_user}`,
+        relation.from_user,
+        relation.to_user,
+      ),
+    }),
+    {
+      id: "from_user",
+      accessorKey: "from_user",
+      header: label("social.fromUser", "From user"),
+      meta: {
+        label: label("social.fromUser", "From user"),
+        serverSortKey: "from_user",
+        required: true,
+        defaultPin: "left",
+      },
+    },
+    {
+      id: "to_user",
+      accessorKey: "to_user",
+      header: label("social.toUser", "To user"),
+      meta: {
+        label: label("social.toUser", "To user"),
+        serverSortKey: "to_user",
+        required: true,
+      },
+    },
+    {
+      id: "group_id",
+      accessorKey: "group_id",
+      header: label("social.groupId", "Group ID"),
+      meta: { label: label("social.groupId", "Group ID"), serverSortKey: "group_id" },
+      cell: ({ row }) => row.original.group_id || "--",
+    },
+    {
+      id: "relation_type",
+      accessorKey: "relation_type",
+      header: label("social.relationType", "Relation type"),
+      meta: {
+        label: label("social.relationType", "Relation type"),
+        serverSortKey: "relation_type",
+      },
+      cell: ({ row }) => <Badge variant="secondary">{relationLabel(row.original.relation_type)}</Badge>,
+    },
+    {
+      id: "strength",
+      accessorKey: "strength",
+      header: t("social.strength"),
+      meta: { label: t("social.strength"), serverSortKey: "strength" },
+      cell: ({ row }) => (
+        <div className="flex items-center gap-2">
+          <Progress
+            aria-label={`${row.original.from_user} → ${row.original.to_user} ${relationLabel(row.original.relation_type)} ${t("social.strength")}`}
+            value={row.original.strength}
+            className="h-1.5 w-20"
+          />
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {formatDashboardPercent(row.original.strength, locale, { maximumFractionDigits: 0 })}
+          </span>
+        </div>
+      ),
+    },
+    {
+      id: "frequency",
+      accessorKey: "frequency",
+      header: t("social.frequency"),
+      meta: {
+        label: t("social.frequency"),
+        serverSortKey: "frequency",
+        cellClassName: "text-xs tabular-nums text-muted-foreground",
+      },
+    },
+    {
+      id: "last_interaction",
+      accessorKey: "last_interaction",
+      header: label("social.lastInteraction", "Last interaction"),
+      meta: {
+        label: label("social.lastInteraction", "Last interaction"),
+        serverSortKey: "last_interaction",
+      },
+      cell: ({ row }) => row.original.last_interaction
+        ? formatDashboardDateTime(row.original.last_interaction, locale)
+        : "--",
+    },
+    {
+      id: "tags",
+      accessorKey: "tags",
+      header: t("table.tags"),
+      enableSorting: false,
+      meta: { label: t("table.tags") },
+      cell: ({ row }) => (
+        <div className="flex flex-wrap items-center gap-1">
+          {(row.original.tags ?? []).map((tag) => (
+            <Badge key={tag} variant="outline"><Tag data-icon="inline-start" />{tag}</Badge>
+          ))}
+        </div>
+      ),
+    },
+    actionsColumn({
+      label: label("table.rowActions", "Row actions"),
+      rowLabel: (relation) => `${label("table.rowActions", "Row actions")} ${relation.from_user} ${relation.to_user}`,
+      actions: (relation) => [
+        {
+          id: "view",
+          label: label("detail.view", "View"),
+          onSelect: () => openDetail(relation),
+        },
+        {
+          id: "edit",
+          label: t("detail.edit"),
+          onSelect: () => {
+            openDetail(relation);
+            setEditMode(true);
+          },
+        },
+        {
+          id: "delete",
+          label: t("common.delete"),
+          destructive: true,
+          onSelect: () => {
+            openDetail(relation);
+            setDeleteOpen(true);
+          },
+        },
+      ],
+    }),
+  ], [locale, t]);
 
-  const relationTable = loading ? (
+  const relationTable = loading && relations.length === 0 ? (
     <p className="py-12 text-center text-sm text-muted-foreground">{label("table.loading", "Loading")}</p>
   ) : relations.length === 0 ? (
     <p className="py-12 text-center text-sm text-muted-foreground">{label("social.noData", "No relations found")}</p>
   ) : (
-    <Table>
-      <TableHeader className="sticky top-0 bg-background"><TableRow>
-        <TableHead className="w-10"><Checkbox aria-label={allSelected ? label("social.deselectAll", "Deselect all relations") : label("social.selectAll", "Select all relations")} checked={allSelected} onCheckedChange={() => setSelected(allSelected ? new Set() : new Set(relations.map(relationKey)))} /></TableHead>
-        <TableHead>{t("social.relations")}</TableHead>
-        <TableHead>{t("social.category")}</TableHead>
-        <TableHead>{t("social.strength")}</TableHead>
-        <TableHead>{t("social.frequency")}</TableHead>
-        <TableHead>{t("table.tags")}</TableHead>
-        <TableHead>{label("table.actions", "Actions")}</TableHead>
-      </TableRow></TableHeader>
-      <TableBody>
-        {relations.map((relation) => {
-          const key = relationKey(relation);
-          return <TableRow key={key} data-state={selected.has(key) ? "selected" : undefined}>
-            <TableCell><Checkbox aria-label={label("social.selectRelation", `Select relation ${relation.from_user} ${relation.to_user}`, relation.from_user, relation.to_user)} checked={selected.has(key)} onCheckedChange={() => setSelected((previous) => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} /></TableCell>
-            <TableCell>
-              <div className="flex items-center gap-2"><span className="text-xs font-medium">{relation.from_user}</span><ArrowRightLeft /><span className="text-xs font-medium">{relation.to_user}</span></div>
-              <div className="mt-0.5 text-xs text-muted-foreground">{relationLabel(relation.relation_type)}</div>
-            </TableCell>
-            <TableCell><Badge variant="secondary">{RELATION_CATEGORIES[relation.category] ? label(`social.category.${relation.category}`, relation.category) : relation.category}</Badge></TableCell>
-            <TableCell><div className="flex items-center gap-2"><Progress aria-label={`${relation.from_user} → ${relation.to_user} ${relationLabel(relation.relation_type)} ${t("social.strength")}`} value={relation.strength} className="h-1.5 w-20" /><span className="text-xs tabular-nums text-muted-foreground">{formatDashboardPercent(relation.strength, locale, { maximumFractionDigits: 0 })}</span></div></TableCell>
-            <TableCell className="text-xs tabular-nums text-muted-foreground">{relation.frequency}</TableCell>
-            <TableCell><div className="flex flex-wrap items-center gap-1">{relation.tags.map((tag) => <Badge key={tag} variant="outline"><Tag data-icon="inline-start" />{tag}</Badge>)}</div></TableCell>
-            <TableCell><Button variant="ghost" size="sm" aria-label={label("social.openRelation", `Open relation ${relation.from_user} ${relation.to_user}`, relation.from_user, relation.to_user)} onClick={() => openDetail(relation)}>{label("detail.view", "View")}</Button></TableCell>
-          </TableRow>;
-        })}
-      </TableBody>
-    </Table>
+    <DataTable
+      tableId="social-relations"
+      data={relations}
+      columns={columns}
+      getRowId={(relation) => relationKey(relation)}
+      sort={sort}
+      onSortChange={changeSort}
+      selectedRowIds={selected}
+      onSelectedRowIdsChange={setSelected}
+      currentRowId={detail ? relationKey(detail) : null}
+      onRowActivate={(relation) => openDetail(relation)}
+      loading={loading}
+      emptyLabel={label("social.noData", "No relations found")}
+    />
   );
 
   return (
@@ -565,7 +690,7 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
       />
       <Tabs value={category} onValueChange={(value) => { setSelected(new Set()); setCategory(value); }} className="min-h-0 flex-1 gap-0">
         <PageToolbar className="flex-nowrap overflow-x-auto bg-background"><TabsList variant="line" aria-label={t("social.category")} className="h-9 min-w-max">{categories.map((item) => <TabsTrigger key={item.value} value={item.value} className="px-3 text-xs">{item.label}</TabsTrigger>)}</TabsList></PageToolbar>
-        {categories.map((item) => <TabsContent key={item.value} value={item.value} className="min-h-0 overflow-auto"><PageContent width="full">{relationTable}</PageContent></TabsContent>)}
+        {categories.map((item) => <TabsContent key={item.value} value={item.value} className="min-h-0 flex-1 overflow-hidden"><PageContent width="full">{relationTable}</PageContent></TabsContent>)}
       </Tabs>
 
       {selected.size > 0 ? <PageToolbar className="border-b-0 border-t bg-muted/40"><span className="text-sm font-medium">{label("select.selected", `${selected.size} selected`, String(selected.size))}</span><Button variant="outline" size="sm" onClick={openBatchTag}>{label("social.editTags", "Edit Tags")}</Button><Button variant="destructive" size="sm" disabled={batchDeleteSubmitting} onClick={() => void executeBatchDelete()}><Trash2 data-icon="inline-start" />{t("common.delete")}</Button><Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}><X data-icon="inline-start" />{t("common.clear")}</Button></PageToolbar> : null}

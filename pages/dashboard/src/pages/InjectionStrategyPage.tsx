@@ -43,6 +43,7 @@ export function InjectionStrategyPage({
   const [pendingTab, setPendingTab] = useState<InjectionWorkbenchTab | null>(null);
   const [selectedDecisionId, setSelectedDecisionId] = useState<string | null>(null);
   const detailReturnFocusRef = useRef<HTMLElement | null>(null);
+  const detailReturnFocusIdRef = useRef<string | null>(null);
   const processedTargetRef = useRef<number | null>(null);
 
   const requestTab = useCallback((next: string) => {
@@ -66,17 +67,30 @@ export function InjectionStrategyPage({
     detailReturnFocusRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
+    detailReturnFocusIdRef.current = decisionId;
     setSelectedDecisionId(decisionId);
     void decisions.loadDetail(decisionId);
   }, [decisions.loadDetail]);
 
   const closeDecision = useCallback(() => {
     setSelectedDecisionId(null);
-    queueMicrotask(() => {
-      detailReturnFocusRef.current?.focus();
-      detailReturnFocusRef.current = null;
-      decisions.clearDetail();
-    });
+    decisions.clearDetail();
+    const returnFocus = detailReturnFocusRef.current;
+    const returnFocusId = detailReturnFocusIdRef.current;
+    if (returnFocus || returnFocusId) {
+      setTimeout(() => {
+        setTimeout(() => {
+          const currentReturnFocus = returnFocusId
+            ? Array.from(document.querySelectorAll<HTMLElement>("[data-row-id]"))
+              .find((row) => row.dataset.rowId === returnFocusId)
+              ?.querySelector<HTMLElement>('[data-slot="dropdown-menu-trigger"]')
+            : null;
+          (currentReturnFocus ?? returnFocus)?.focus();
+          detailReturnFocusRef.current = null;
+          detailReturnFocusIdRef.current = null;
+        }, 0);
+      }, 0);
+    }
   }, [decisions.clearDetail]);
 
   useEffect(() => {

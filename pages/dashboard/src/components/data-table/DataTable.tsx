@@ -59,6 +59,7 @@ export interface DataTableProps<TData extends RowData> {
   emptyLabel: string;
   toolbar?: ReactNode;
   pagination?: ReactNode;
+  tableClassName?: string;
 }
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
@@ -87,6 +88,7 @@ export function DataTable<TData extends RowData>({
   emptyLabel,
   toolbar,
   pagination,
+  tableClassName,
 }: DataTableProps<TData>) {
   const descriptors = useMemo(
     () =>
@@ -226,7 +228,10 @@ export function DataTable<TData extends RowData>({
         <Table
           aria-busy={loading}
           data-density={preferences.density}
-          className="[&[data-density=compact]_th]:h-8 [&[data-density=compact]_td]:py-1 [&[data-density=comfortable]_th]:h-12 [&[data-density=comfortable]_td]:py-3"
+          className={cn(
+            "[&[data-density=compact]_th]:h-8 [&[data-density=compact]_td]:py-1 [&[data-density=comfortable]_th]:h-12 [&[data-density=comfortable]_td]:py-3",
+            tableClassName,
+          )}
           containerClassName="min-w-0"
           style={{ minWidth: table.getTotalSize() }}
         >
@@ -285,6 +290,7 @@ export function DataTable<TData extends RowData>({
                   <TableRow
                     key={row.id}
                     aria-current={current ? "true" : undefined}
+                    data-row-id={row.id}
                     data-state={row.getIsSelected() ? "selected" : undefined}
                     tabIndex={onRowActivate ? 0 : undefined}
                     className={cn(

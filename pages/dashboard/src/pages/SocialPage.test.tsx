@@ -136,7 +136,8 @@ describe("SocialPage", () => {
   }
 
   async function openRelationEditor() {
-    fireEvent.click(await screen.findByRole("button", { name: /open relation alice.*bob/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /row actions alice.*bob/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^view$/i }));
     return screen.findByRole("dialog", { name: /relation: alice.*bob/i });
   }
 
@@ -166,7 +167,11 @@ describe("SocialPage", () => {
     expect(screen.getByRole("tab", { name: /all/i }).getAttribute("aria-selected")).toBe("true");
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", { group_id: "group-1" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
+        group_id: "group-1",
+        sort_by: "last_interaction",
+        sort_order: "desc",
+      });
     });
 
     expect(await screen.findByText("alice")).toBeTruthy();
@@ -194,6 +199,8 @@ describe("SocialPage", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
         group_id: "group-1",
         category: "career",
+        sort_by: "last_interaction",
+        sort_order: "desc",
       });
     });
     expect(screen.getByRole("tab", { name: /career/i }).getAttribute("aria-selected")).toBe("true");
@@ -597,7 +604,11 @@ describe("SocialPage", () => {
     fireEvent.click(await screen.findByRole("option", { name: /group-2/i }));
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", { group_id: "group-2" });
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
+        group_id: "group-2",
+        sort_by: "last_interaction",
+        sort_order: "desc",
+      });
     });
     expect(screen.queryByText("1 selected")).toBeNull();
   });
@@ -616,6 +627,8 @@ describe("SocialPage", () => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/social/relations", {
         group_id: "group-1",
         category: "career",
+        sort_by: "last_interaction",
+        sort_order: "desc",
       });
     });
     expect(screen.queryByText("1 selected")).toBeNull();
