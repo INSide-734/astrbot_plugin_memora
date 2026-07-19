@@ -543,6 +543,8 @@ class BackupManager:
         verified = info.get("manifest_version") == 2 and isinstance(manifest_files, dict)
         file_specs: list[dict[str, object]] = []
         if verified:
+            if info.get("status") != "ready":
+                raise BackupOperationError("backup_invalid")
             for name, metadata in manifest_files.items():
                 if name not in _BACKUP_FILE_SPECS or not isinstance(metadata, dict):
                     raise BackupOperationError("backup_invalid")
@@ -559,6 +561,9 @@ class BackupManager:
                 if sha256_file(source) != str(metadata.get("sha256", "")):
                     raise BackupOperationError("backup_invalid")
                 role = FileRole(str(metadata.get("role", "")))
+                expected_role = _BACKUP_FILE_SPECS[name][0]
+                if role is not expected_role:
+                    raise BackupOperationError("backup_invalid")
                 if str(metadata.get("kind", "regular")) == "sqlite":
                     self._quick_check(source)
                 if role is not FileRole.DERIVED:
@@ -660,6 +665,8 @@ class BackupManager:
         previous = plan_dir / "previous" / progress.name
         previous.parent.mkdir(parents=True, exist_ok=True)
         if not payload.is_file() or payload.is_symlink():
+            raise BackupOperationError("restore_apply_failed")
+        if target.is_symlink():
             raise BackupOperationError("restore_apply_failed")
         if target.exists():
             os.replace(target, previous)
