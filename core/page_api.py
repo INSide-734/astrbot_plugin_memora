@@ -560,6 +560,18 @@ class PluginPageApi(
             "页面接口：恢复备份",
         )
         register(
+            f"{PAGE_API_PREFIX}/backup/status",
+            self.get_backup_status,
+            ["GET"],
+            "页面接口：备份恢复状态",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/backup/restore/cancel",
+            self.cancel_restore,
+            ["POST"],
+            "页面接口：取消备份恢复",
+        )
+        register(
             f"{PAGE_API_PREFIX}/backup/delete",
             self.delete_backup,
             ["POST"],
