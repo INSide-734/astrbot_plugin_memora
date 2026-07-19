@@ -3,10 +3,19 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -17,16 +26,33 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.x"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
       - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: uv sync --locked --dev
+
+      - name: Validate config schema
+        if: ${{ hashFiles('scripts/validate_conf_schema.py') != '' }}
+        run: uv run --locked python scripts/validate_conf_schema.py
 
       - name: Run backend regression tests
-        run: python -m pytest tests -q
+        run: uv run --locked pytest tests -q
 
       - name: Run smoke tests
-        run: python scripts/run_smoke.py -q
+        run: uv run --locked python scripts/run_smoke.py -q
+
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -39,10 +65,35 @@ jobs:
         working-directory: pages/dashboard
         run: npm ci
 
-      - name: Build dashboard
+      - name: Install Playwright Chromium
         working-directory: pages/dashboard
-        run: npm run build
+        run: npx playwright install --with-deps chromium
 
       - name: Test dashboard
         working-directory: pages/dashboard
         run: npm run test
+
+      - name: Build dashboard
+        working-directory: pages/dashboard
+        run: npm run build
+
+      - name: Check dashboard artifacts
+        working-directory: pages/dashboard
+        run: npm run check:artifacts
+
+      - name: Run dashboard runtime smoke
+        working-directory: pages/dashboard
+        run: npm run smoke:runtime
+
+      - name: Run dashboard browser smoke
+        working-directory: pages/dashboard
+        run: npm run smoke:browser
+
+      - name: Upload browser smoke artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-browser-smoke-${{ github.run_id }}
+          path: /tmp/memora-dashboard-browser-smoke-screenshots
+          if-no-files-found: ignore
+          retention-days: 7
