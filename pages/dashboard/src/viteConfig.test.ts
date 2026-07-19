@@ -87,8 +87,8 @@ describe("vite config", () => {
       loaded!.slice("export default ".length, -1)
     ) as string;
     const schema = JSON.parse(schemaText) as Record<string, unknown>;
-    expect(Object.keys(schema)).toHaveLength(42);
-    expect(countSchemaLeaves(schema)).toBe(233);
+    expect(Object.keys(schema)).toHaveLength(43);
+    expect(countSchemaLeaves(schema)).toBe(234);
 
     const server = await createServer({
       root: dashboardRoot,
