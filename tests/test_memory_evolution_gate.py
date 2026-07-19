@@ -33,7 +33,9 @@ def test_disabled_gate_never_enqueues() -> None:
 
 
 def test_importance_below_threshold_is_skipped() -> None:
-    gate = MemoryEvolutionGate({"mode": "shadow", "trigger_threshold": 0.8})
+    gate = MemoryEvolutionGate(
+        {"enabled": True, "mode": "shadow", "trigger_threshold": 0.8}
+    )
 
     decision = gate.consider(signal(importance=0.79))
 
@@ -42,7 +44,9 @@ def test_importance_below_threshold_is_skipped() -> None:
 
 
 def test_pending_cap_is_deterministic() -> None:
-    gate = MemoryEvolutionGate({"mode": "shadow", "max_pending_jobs": 2})
+    gate = MemoryEvolutionGate(
+        {"enabled": True, "mode": "shadow", "max_pending_jobs": 2}
+    )
 
     decision = gate.consider(signal(importance=0.9, pending_jobs=2))
 
@@ -51,7 +55,9 @@ def test_pending_cap_is_deterministic() -> None:
 
 
 def test_same_signal_produces_same_bucket_and_idempotency_key() -> None:
-    gate = MemoryEvolutionGate({"mode": "shadow", "trigger_threshold": 0.5})
+    gate = MemoryEvolutionGate(
+        {"enabled": True, "mode": "shadow", "trigger_threshold": 0.5}
+    )
 
     first = gate.consider(signal(memory_id=17, revision_token="r4", importance=0.8))
     second = gate.consider(signal(memory_id=17, revision_token="r4", importance=0.8))
@@ -62,7 +68,9 @@ def test_same_signal_produces_same_bucket_and_idempotency_key() -> None:
 
 
 def test_eligible_signal_returns_enqueue_decision() -> None:
-    gate = MemoryEvolutionGate({"mode": "readonly", "trigger_threshold": 0.5})
+    gate = MemoryEvolutionGate(
+        {"enabled": True, "mode": "readonly", "trigger_threshold": 0.5}
+    )
 
     decision = gate.consider(signal(importance=0.8))
 
@@ -73,7 +81,9 @@ def test_eligible_signal_returns_enqueue_decision() -> None:
 
 
 def test_unknown_mode_fails_closed() -> None:
-    gate = MemoryEvolutionGate({"mode": "future-mode", "trigger_threshold": 0.1})
+    gate = MemoryEvolutionGate(
+        {"enabled": True, "mode": "future-mode", "trigger_threshold": 0.1}
+    )
 
     decision = gate.consider(signal(importance=1.0))
 
