@@ -25,6 +25,7 @@
 | 路径 | 责任 |
 |---|---|
 | `src/pages/` | 16 个功能页面；页面必须使用共享 `PageFrame` |
+| `src/components/brand/` | `MemoraLogo` 品牌图形；Sidebar 等品牌入口统一复用 |
 | `src/components/layout/` | `Sidebar`、`PageFrame`、`PageHeader`、`PageToolbar`、`PageContent`、指标和状态布局原语 |
 | `src/components/ui/` | Base UI-backed shadcn 本地组件；优先复用，不手写等价控件 |
 | `src/components/intelligence/` | 评测、召回追踪、诊断、复核队列 |
@@ -109,7 +110,7 @@ sequenceDiagram
 
 标准组合顺序是 `PageFrame` → `PageHeader` → 可选 `PageToolbar` → `PageContent`。指标用 `MetricGrid`；加载、空数据和错误用 `Skeleton` 或 `StatePanel`。桌面与 390px 移动端都必须可滚动、无遮挡、无页面级横向溢出；宽表和固定格式工作区应在局部使用 `minmax`、最小尺寸或受控横向滚动。
 
-Injection 页面固定为 `dense`：PageHeader 下有 Overview、Strategy Configuration、Decision History 三个顶层 Tab。每个活跃 Tab 的 `PageContent` 是唯一纵向滚动者；Overview/Config 为 constrained 宽度，Decision History 为 full 宽度且只有表格容器承担横向滚动。决策列表/概览/详情读取 SQLite 全量持久化 Page API，详情使用受控 Sheet 并固定底栏。
+Injection 页面固定为 `dense`：PageHeader 下有 Overview、Strategy Configuration、Decision History 三个顶层 Tab。每个活跃 Tab 的 `PageContent` 是唯一纵向滚动者；Overview/Config 为 constrained 宽度，Decision History 为 full 宽度且只有表格容器承担横向滚动。决策列表/概览/详情读取 SQLite 全量持久化 Page API，Decision History 通过 DataTable 的 allowlist 列做服务端排序，固定操作列打开受控详情 Sheet，Sheet 使用独立滚动正文和固定底栏。成本趋势图必须保留数值型 `bucket_ms` 作为 Recharts 横轴数据，只在 tick 与 tooltip 层格式化日期，避免 hover 命中错误时间点。
 
 ## 主题、组件与可访问性
 
@@ -120,6 +121,7 @@ Injection 页面固定为 `dense`：PageHeader 下有 Overview、Strategy Config
 - 卡片只表示独立对象、指标或明确分组；不把普通段落卡片化，不嵌套卡片。
 - 标题、面板标题、正文保持稳定排版层级，不按视口宽度缩放字号。
 - 优先复用 `src/components/ui/` 的 Button、Checkbox、Input、Textarea、Table、Tabs、ToggleGroup、Dialog、Sheet 等；不得恢复自定义 Modal。
+- 品牌入口复用 `src/components/brand/MemoraLogo.tsx`；组件以 `currentColor` 继承语义颜色，通过 `size` 缩放并保留可访问名称，不在 Sidebar 中重新拼 SVG 或退回通用 Lucide 图标。
 - 详情使用受控 Sheet；创建、确认和破坏性操作使用 Dialog。Dialog/Sheet 必须有可访问名称；纯图标按钮有 `aria-label`/`title`；选择框、进度条和分页导航有明确名称。
 - 2–7 个互斥选项用 Tabs、ToggleGroup 或等价分段控件；数值范围可用 Slider。
 
@@ -143,6 +145,7 @@ Injection 页面固定为 `dense`：PageHeader 下有 Overview、Strategy Config
 - Knowledge search 没有 `offset`；Jargon candidates/meanings 也没有 `offset`。不得向这些端点虚构 offset 或展示无法兑现的页码。
 - 查询、范围、筛选、排序、数据集、page size 或页码变化时，清除已经不可见的选择；刷新/删除/写回后也要按返回数据收敛 selection。
 - 批量动作只能作用于当前可验证的选中 ID，绝不能保留隐藏页选择并对用户不可见的数据执行。
+- Social 关系使用 `from_user + to_user + group_id + relation_type` 作为复合身份。编辑、单项删除和批处理都必须携带服务端 revision；组、类别或返回数据变化时收敛选择，批处理部分失败时只保留失败项供用户重试。
 
 ## 构建与产物契约
 

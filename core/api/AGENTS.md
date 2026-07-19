@@ -2,7 +2,7 @@
 
 # Page API 混入层
 
-**最后核对：** 2026-07-17  
+**最后核对：** 2026-07-19
 **组合入口：** `core/page_api.py::PluginPageApi`  
 **主前缀：** `/astrbot_plugin_memora/page`  
 **兼容前缀：** `/Memora/page`
@@ -70,7 +70,8 @@ flowchart TD
 - `_infer_route_risk()` 只分类：dashboard install/build 为 `runtime_exec`；delete/purge/restore/reset 为 `destructive`；maintenance/backup/backfill/config/system 等为 `maintenance`。新增写路由要核对分类 token，并在 handler 中真实调用守卫。
 - Dashboard install/build 会启动外部进程，必须继续受运行期开关、超时、输出上限和单锁限制；不要把客户端命令或路径拼入 shell。
 - SQL 读取使用参数绑定；外部 ID、分页、枚举、字段必须先规范化。返回异常时不要泄露 SQL、绝对路径、正文或凭据。
-- 注入策略目录与决策 API 是只读的：目录来自不可变 registry，不查询 SQLite；列表/详情只返回 allowlist 脱敏字段，绝不返回 query、记忆内容或会话身份。
+- 注入策略目录与决策 API 是只读的：目录来自不可变 registry，不查询 SQLite；列表/详情只返回 allowlist 脱敏字段，绝不返回 query、记忆内容或会话身份。`InjectionStrategyApiMixin` 的决策列表只接受 `offset>=0`、`1<=limit<=100`、固定筛选枚举与 allowlist `sort_by`，`sort_order` 只能是小写 `asc/desc`。
+- `InjectionDecisionStore.list_decisions()` 返回稳定的 `{items,total,offset,limit}` 页面；`total` 是筛选后的未分页总数，排序列来自固定 SQL allowlist，并以 `decision_id ASC` 作为确定性并列键。列表/详情均不得把 `reason_codes_json` 原文、内部 query/prompt、正文、ID 列表、身份或堆栈带出响应。
 - 召回 trace 只预览路由/检索，不执行 `InjectionExecutor`、不写决策记录。
 - 动态记忆传输不提供 `system_prompt`，API catalog 的 deliveries 也不得出现该值；详见 [注入模块 AGENTS.md](../injection/AGENTS.md)。
 - SSE 每客户端队列上限 256；满队列客户端被移除，30 秒心跳，断开时注销。

@@ -2,7 +2,7 @@
 
 # 消息主链处理器
 
-**最后更新：** 2026-07-17  
+**最后更新：** 2026-07-19
 **入口：** `RecallHandler.handle_memory_recall()`、`ReflectionHandler.handle_memory_reflection()`  
 **公开导出：** `RecallHandler`、`ReflectionHandler`
 
@@ -36,7 +36,8 @@ flowchart TD
     L -->|"是"| N["TopicBatchPreparer"]
     N --> O["MemoryProcessor 结构化抽取"]
     O --> P["MemoryEngine.add_memory"]
-    P --> Q["提交 last_summarized_index / 清除 pending_summary"]
+    P --> Q["canonical 写入成功后调度 Memory Evolution"]
+    Q --> R["提交 last_summarized_index / 清除 pending_summary"]
 ```
 
 聊天主链路必须保持：`main.py` 的 `@filter.on_llm_request()` / `@filter.on_llm_response()` 只在插件就绪且 `EventHandler` 存在时委托；处理器不能自行注册钩子，也不能把动态记忆写进长期 System Prompt。群聊用户消息由全量捕获钩子写入；私聊用户消息在召回链写入；assistant 消息在反思链写入。
@@ -51,6 +52,7 @@ flowchart TD
 - 过滤：`filtering_settings` 决定 session/persona 范围；`get_persona_id()` 解析当前人格。
 - 路由：根据 `manual` / `auto` / `hybrid` 配置和 Provider、工具集、上下文余量执行 preflight；只有未短路时才调用 `MemoryEngine.search_memories()`，最终路由只执行一次。
 - 候选：主召回可加自发回忆；按稳定 `doc_id` 或来源+内容哈希去重，来源优先级为 prospective > main > spontaneous，再按分数排序并截断 `top_k`。前瞻记忆使用独立辅助预算，不混入普通候选列表。
+- Projection：`_safe_candidates()` 仅允许模型看到 `derived_projections[].type/summary/confidence`。类型必须属于四种已声明 Projection，summary 非空，confidence 为有限数并钳制到 `[0,1]`；内部 projection/source ID、revision、scope、privacy、role 和 job 信息全部丢弃。非法 Projection 只被移除，不应连带丢弃 canonical 候选。
 - 注入：`InjectionExecutor` 负责硬字符预算、保护、Provider 传输适配与请求回滚；结果和脱敏计数交给 recorder/metrics。`system_prompt` 必须保持不变。
 
 ### `ReflectionHandler`
@@ -61,6 +63,7 @@ flowchart TD
 - assistant 消息成功写入会话后计算 `unsummarized_rounds = (total_messages - last_summarized_index) // 2`；阈值来自 `reflection_engine.summary_trigger_rounds`。
 - `try_begin_summary_window()` / `finish_summary_window()` 是反思与手动提交共享的会话级并发门；同一 session 同时只允许一个总结任务。
 - `_storage_task()` 先由 `TopicBatchPreparer` 生成批次，再调用 `MemoryProcessor.process_conversation()`；多批次并行抽取，写入由 3 槽 semaphore 限流。
+- 每条 `MemoryEngine.add_memory()` 成功返回 canonical 整数 ID 后，`_schedule_evolution_after_write()` 才从 Store 重新加载 source 并调用 `MemoryEvolutionManager.schedule_consider()`；缺少 manager/source 或调度普通失败只记录并隔离，不能把已经成功的 canonical 写入回滚或标记失败。
 - `shutdown()` 停止新窗口并等待已登记存储任务，不主动取消正在落库的反思任务。
 
 ### `TopicBatchPreparer`
@@ -85,6 +88,7 @@ flowchart TD
 - 下游：`cleaners`、`extractors`、`processors`、`retrieval`、`injection`、`security`、manager/store。
 - 检索结果视为不可信内容；保护 scope 必须与单个请求关联，不得写入决策记录、日志或跨请求复用。
 - recorder 只记录路由、预算、耗时和计数；不得记录查询文本、记忆正文、ID 集合或保护 token。
+- Projection 元数据是模型可见边界；只扩展三字段 allowlist，禁止把 Store 的 source mapping 或 revision 证据直接透传到 formatter、fake tool call 或 Provider 请求。
 - 写入维护状态检查失败时必须按“写入被阻止”处理，不能冒险写入。
 - 不要在处理器中复制 Provider 适配、清洗标记识别、持久化事务或抽取 schema；调用对应边界。
 
@@ -99,12 +103,12 @@ flowchart TD
 
 ## 测试定位与验证
 
-核心行为在 `tests/test_handlers.py`；跨模块委托、群聊捕获和关闭语义在 `tests/test_event_handler.py`；注入路由/保护协定在 `tests/test_injection_router.py`、`tests/test_prompt_sanitizer.py`；真实召回热路径成本契约在 `tests/test_recall_cost_benchmark.py`。
+核心行为在 `tests/test_handlers.py`；跨模块委托、群聊捕获、演化调度和关闭语义在 `tests/test_event_handler.py`；Projection 可见字段在 `tests/test_recall_projection_metadata.py`；注入路由/保护协定在 `tests/test_injection_router.py`、`tests/test_prompt_sanitizer.py`；真实召回热路径成本契约在 `tests/test_recall_cost_benchmark.py`。
 
 只改本模块时的精确验证命令：
 
 ```bash
-python -m pytest tests/test_handlers.py tests/test_event_handler.py tests/test_injection_router.py tests/test_prompt_sanitizer.py tests/test_recall_cost_benchmark.py -q
+python -m pytest tests/test_handlers.py tests/test_event_handler.py tests/test_recall_projection_metadata.py tests/test_injection_router.py tests/test_prompt_sanitizer.py tests/test_recall_cost_benchmark.py -q
 ```
 
 重点回归：请求无候选不得变更请求；System Prompt 保持相等；取消向上传播；响应保护失败关闭输出；同 session 总结窗口互斥；部分写入保留幂等重试状态；关闭等待存储任务。

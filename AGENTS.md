@@ -1,6 +1,6 @@
 # Memora — AI 协作入口
 
-**最后更新：** 2026-07-18 19:13:27 +08:00
+**最后更新：** 2026-07-19
 
 ## 项目定位
 
@@ -17,11 +17,14 @@ flowchart LR
     Init --> Engine["MemoryEngine"]
     Events --> Recall["RecallHandler"]
     Events --> Reflect["ReflectionHandler"]
-    Recall --> Retrieval["BM25 + FAISS + Graph"]
+    Recall --> Retrieval["BM25 + FAISS + Graph + Derived"]
     Recall --> Injection["Router + Executor"]
     Reflect --> Processor["MemoryProcessor"]
     Processor --> Engine
     Engine --> SQLite["SQLite 权威持久化"]
+    Reflect -->|canonical 写入成功后调度| Evolution["Memory Evolution Gate / Worker"]
+    Evolution --> Derived["Relation / Projection 派生解释平面"]
+    Derived --> Retrieval
     API --> Dashboard["AstrBot bridge / Dashboard"]
 ```
 
@@ -71,8 +74,11 @@ flowchart LR
 ## 跨模块契约
 
 - 写入链：AstrBot 消息 → `EventHandler` → `ConversationManager`/`MemoryProcessor` → `MemoryEngine` → SQLite。FTS、FAISS 与图索引是可重建派生数据。
-- 召回链：请求 → 改写/隔离过滤 → 双路检索与重排 → `InjectionStrategyRouter` → `InjectionExecutor`。动态记忆不得进入 System Prompt；请求变更须先完整构建再原子应用。
+- 演化链：canonical memory 成功写入后 → `MemoryEvolutionGate` → job queue/worker → relation/projection 派生解释平面。canonical SQLite 记录及其整数 ID 始终是唯一权威身份；Projection 只能作为有 source/revision 证据的读时注解，不能形成第二套 canonical memory 或 `doc_id`。
+- 召回链：请求 → 改写/隔离过滤 → direct/graph 合并 → relation expansion → projection attachment → reranker → privacy filter → `InjectionStrategyRouter` → `InjectionExecutor`。动态记忆不得进入 System Prompt；请求变更须先完整构建再原子应用。
+- `memory_evolution.enabled=false` 强制等价于 `disabled`；`disabled` 不启动 worker。当前实现中 `shadow`、`readonly`、`active` 都会启动 worker 并可持久化派生对象，但只有 `readonly`/`active` 装配 relation/projection 读取器；不要从 mode 名称推断 canonical 写权限。任何模式都不得绕过 source revision、scope、privacy、validity 与 role 校验。
 - 注入观测只持久化 allowlist 标量；不得记录 query、prompt、记忆正文或 ID 列表、原始身份、Provider 密钥/请求头/API 地址或堆栈。
+- 模型可见的 Projection metadata 只允许 `type`、`summary`、`confidence`；source mapping、revision、scope、privacy、role、内部 ID 与 job 信息不得进入 prompt、fake tool call 或 DeepSeek V4 转录。
 - `PluginPageApi` 与 `src/lib/bridge.ts` 是后端/前端边界。写回保留 revision、字段校验、冲突处理和显式错误 envelope；不得伪造客户端分页。
 - 配置叶变更同步 `_conf_schema.json`、Pydantic 模型、运行时读取、Dashboard 类型/默认值与契约测试。
 
