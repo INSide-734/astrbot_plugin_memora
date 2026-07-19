@@ -4,7 +4,7 @@
 
 # Memora
 
-### 为 AstrBot 打造的智能长期记忆插件
+### 为 AstrBot 提供可检索、可管理的长期记忆
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12+-green.svg)](https://www.python.org/)
@@ -13,405 +13,239 @@
 
 </div>
 
----
+Memora 是 [AstrBot](https://github.com/Soulter/AstrBot) 的长期记忆插件：它从对话中提取有价值的信息，持久化保存，并在合适的后续请求中安全地召回。插件面向希望让 Bot 记住偏好、事实、关系与对话上下文的使用者，也为维护和扩展记忆系统的开发者提供 Dashboard、命令、工具与 Page API。
 
-## 简介
+## 目录
 
-**Memora** 是一个为 [AstrBot](https://github.com/Soulter/AstrBot) 打造的完整长期记忆插件，提供从消息捕获、内容抽取、向量化存储，到 BM25+向量双路混合检索、记忆衰减与遗忘调度、图记忆、知识库、笔记系统、用户画像等全生命周期管理能力。
+- [核心能力](#核心能力)
+- [快速开始](#快速开始)
+- [常用命令](#常用命令)
+- [Dashboard、工具与 API](#dashboard工具与-api)
+- [开发者说明](#开发者说明)
+- [许可证](#许可证)
 
-以 **MemoryAtom（记忆原子）** 为核心数据单元，Memora 实现细粒度的记忆存取与演化，让 Bot 真正「记住」每一次对话。
+## 核心能力
 
-## 核心特性
+### 记忆生命周期
 
-### 记忆生命周期管理
-- **自动抽取** — LLM 驱动，从对话中自动识别并提取有价值的信息
-- **智能分类** — 多维度分类（事实/偏好/经验/关系等），支持自定义分类体系
-- **TTL 衰减** — 记忆随时间自然衰减，支持线性/指数/对数等多种衰减策略
-- **遗忘调度** — 自动遗忘低价值/过期记忆，保持记忆库清爽
-- **情感评分** — 对记忆附加情感强度，影响记忆权重和召回优先级
+- 从对话中抽取、分类并保存记忆原子（MemoryAtom）。
+- 支持记忆衰减、遗忘调度、会话总结与反思，帮助记忆库保持可用。
+- 使用 SQLite 作为权威持久化；全文、向量和图索引均可校验或重建。
 
-### 多路混合检索
-- **BM25 全文检索** — 基于 jieba 分词的中文全文搜索
-- **FAISS 向量检索** — 基于 Embedding 的语义相似度搜索
-- **RRF 融合** — Reciprocal Rank Fusion 融合 BM25 + 向量两路排序
-- **图检索** — 基于 networkx 的知识图谱检索（关键词 + 向量双路 → 融合）
-- **双路路由** — 文档路 + 图路 → DualRouteRetriever，双路并行召回
-- **重排序** — CrossEncoder / LLM 重排序，提升结果精度
-- **个性化排序** — 基于用户画像和交互历史的个性化结果排序
+### 混合检索
 
-### 图记忆 (Graph Memory)
-- 自动构建实体关系图谱
-- 支持知识推理和关联发现
-- 可视化图谱浏览（Dashboard 支持）
+- 结合 BM25 全文检索、FAISS 语义检索、图关系检索与 RRF 融合。
+- 支持重排序、隐私过滤和按会话/用户范围隔离的召回。
+- 通过关系与 Projection 派生解释平面补充召回；它们不替代原始记忆的权威身份。
 
-### 知识库 & 笔记
-- **知识库** — 自动从对话中提取知识点，结构化存储
-- **笔记系统** — LLM 驱动的对话总结和笔记生成
-- **标签管理** — 灵活的标签体系，支持多维度归类
+### 记忆注入
 
-### 用户画像
-- 对话中自动构建用户画像
-- 追踪用户偏好、习惯、兴趣
-- 支持个性化对话策略
+- 在每个 LLM 请求内按策略选择并临时注入召回结果。
+- 支持 manual、auto 和 hybrid 路由，以及 Tool First、Low Cost、Balanced、Quality 预设。
+- 动态记忆不会写入 System Prompt，并始终受到硬预算、隐私和角色约束。
 
-### 智能特性
-- **主动提醒** — 基于记忆的主动提醒和建议
-- **反思机制** — Reflection 机制，周期性回顾和整合记忆
-- **自动学习** — 从交互中持续学习和优化
-- **异常检测** — 检测记忆质量异常，自动触发维护
-- **季节性召回** — 时间敏感的周期性记忆召回
-- **隐私过滤** — 敏感信息自动过滤
+### 组织与管理
 
-### 工程特性
-- **多语言支持** — 中文 / English / Русский 三语界面
-- **Web Dashboard** — React + shadcn/ui 管理面板，10 个功能页面
-- **REST API** — 完整的 RESTful API，14+ 端点
-- **自动备份** — 版本升级自动备份数据
-- **索引校验** — 索引一致性验证与自动重建
-- **回退容错** — Provider 不可用时后台重试（最多 60 次）
+- 提供知识库、笔记、用户画像、图谱、时间线与记忆召回调试入口。
+- Dashboard 支持三语言界面（中文、English、Русский）和系统维护操作。
+- AstrBot Agent 可使用记忆搜索、主动记忆、笔记、知识库与用户画像工具。
 
-## 架构总览
+### 可靠性与安全
 
-### 系统架构
-
-```mermaid
-graph TD
-    A["AstrBot 框架"] --> B["Memora Plugin (main.py)"]
-    B --> C["PluginInitializer"]
-    B --> D["EventHandler"]
-    B --> E["CommandHandler"]
-    B --> F["LLM Tools"]
-
-    C --> G["FaissVecDB + GraphDB"]
-    C --> H["MemoryEngine"]
-    C --> I["MemoryProcessor"]
-    C --> J["ConversationManager"]
-    C --> K["IndexValidator"]
-    C --> L["DecayScheduler"]
-
-    D --> M["RecallHandler"]
-    D --> N["ReflectionHandler"]
-    D --> O["InjectionCleaner → DedupManager"]
-    D --> P["MessageContentExtractor"]
-
-    E --> Q["QueryCommands"]
-    E --> R["MaintenanceCommands"]
-
-    F --> S["MemorySearch"]
-    F --> T["MemoryMemorize"]
-    F --> U["Note/Knowledge/Profile Tools"]
-
-    B --> V["PluginPageApi → REST API (14+ endpoints)"]
-    B --> W["Dashboard (React + Vite + Tailwind + shadcn/ui)"]
-```
-
-### 数据流
-
-```
-User Message → EventHandler → MessageContentExtractor → ConversationManager.store
-                                                            │
-                         ┌──────────────────────────────────┘
-                         ▼
-              MemoryProcessor (LLM 抽取) → MemoryEngine
-                         │                    │
-                         │    ┌───────────────┼───────────────┐
-                         │    ▼               ▼               ▼
-                         │  AtomStore    GraphStore     NoteStore
-                         │  (SQLite)     (SQLite+FAISS) (SQLite)
-                         │    │               │
-                         │    ▼               ▼
-                         │  BM25Retriever   GraphRetriever
-                         │  VectorRetriever  (keyword+vector)
-                         │    │               │
-                         │    └───────┬───────┘
-                         │            ▼
-                         │       HybridRetriever (RRF)
-                         │            │
-                         │            ▼
-                         └─── DualRouteRetriever (文档+图双路)
-                                      │
-                                      ▼
-                              Reranker (CrossEncoder/LLM)
-                                      │
-                                      ▼
-                              PersonalizedRanker
-                                      │
-                                      ▼
-                              Recall Results → injection into LLM context
-```
-
-### 模块结构
-
-| 模块 | 文件数 | 职责 |
-|------|--------|------|
-| `core/base/` | 5 | 配置管理、常量、异常定义 |
-| `core/initializer/` | 6 | 插件初始化编排、Provider 加载、DB 建立 |
-| `core/managers/` | 40+ | 核心业务逻辑：记忆引擎、会话、衰减、备份等 |
-| `core/processors/` | 20 | LLM 驱动的记忆抽取、分类、格式化 |
-| `core/retrieval/` | 22 | 多路检索：BM25、向量、混合、图检索、重排序 |
-| `core/storage/` | 16 | SQLite 持久化层：原子、会话、图、笔记、知识库 |
-| `core/api/` | 15 | REST API 端点：读写、批量、统计、备份等 |
-| `core/validators/` | 5 | 索引一致性验证与重建 |
-| `core/schedulers/` | 2 | 记忆衰减与备份调度 |
-| `core/models/` | 8 | 数据模型定义 |
-| `core/tools/` | 5 | AstrBot LLM Agent 工具集成 |
-| `core/commands/` | 3 | 用户命令：查询与维护 |
-| `core/handlers/` | 3 | 回忆与反思事件处理器 |
-| `core/cleaners/` | 2 | 注入清理 |
-| `core/dedup/` | 2 | 消息去重 |
-| `core/extractors/` | 2 | 消息内容提取 |
-| `pages/dashboard/` | — | React Web 管理面板（10 页面） |
-| `tests/` | 19 | pytest 测试套件 |
+- Provider 未就绪时后台等待和重试，不阻塞 AstrBot 主聊天链路。
+- 注入决策只记录 allowlist 观测字段，不保存查询、提示词、记忆正文、记忆 ID 列表或原始身份。
+- 写入、检索与派生数据都遵守 scope、privacy、validity 和 revision 等边界。
 
 ## 快速开始
 
 ### 环境要求
 
-- **Python** 3.12+
-- **AstrBot** ≥ 4.24.2
-- **Embedding Provider** 已在 AstrBot 中配置（用于向量化）
-- **LLM Provider** 已在 AstrBot 中配置（用于记忆抽取）
+- Python `3.12+`
+- AstrBot `>= 4.24.2`
+- 已在 AstrBot 中配置可用的 Embedding Provider（向量化）和 LLM Provider（记忆抽取）
+- Node.js `20`（仅 Dashboard 开发需要）
 
 ### 安装
 
-1. 将插件目录放入 AstrBot 的 `data/plugins/` 路径下：
+1. 将插件克隆到 AstrBot 的插件目录：
 
 ```bash
 cd <astrbot-root>/data/plugins/
 git clone https://github.com/INSide-734/astrbot_plugin_memora.git
 ```
 
-2. 安装依赖：
+2. 安装 Python 依赖：
 
 ```bash
 cd astrbot_plugin_memora
 pip install -r requirements.txt
 ```
 
-3. 重启 AstrBot，插件会自动注册并开始后台初始化。
+3. 重启 AstrBot。插件会注册并在 Provider 就绪后完成初始化。
 
-4. 初始化需要 Embedding Provider 和 LLM Provider 在 AstrBot 中正确配置。若 Provider 暂不可用，插件会进入后台重试模式（最多 60 次）。
+### 首次验证
 
-### fast-context
+在 AstrBot 日志中确认 Memora 已完成初始化，然后以管理员身份发送：
 
-根级 `AGENTS.md` 要求在探索性代码搜索时优先使用 `mcp__fast_context__fast_context_search`。
-
-- 若已配置 `WINDSURF_API_KEY`，可直接使用 fast-context 进行语义搜索。
-- 不要尝试自动读取本机 Windsurf 凭证。
-- 若当前环境未配置 fast-context 或不可用，允许退回 `rg`、PowerShell `Select-String`、直接读文件，并在工作记录中说明 fallback 原因。
-
-### 开发校验
-
-开发环境准备和统一质量门见 `docs/DEV_SETUP.md`；最近一次门禁结果记录在 `docs/QUALITY_GATE_STATUS.md`。
-
-```bash
-python scripts/check_all.py
+```text
+/memora status
 ```
 
-### 配置
+如果 Provider 尚未就绪，Memora 会等待并在后台重试；这表示插件尚未可用，而不是安装失败。完整配置字段和默认值以 [_conf_schema.json](_conf_schema.json) 为准。
 
-插件使用 AstrBot 的标准配置系统。所有可配置项及其默认值定义在 `core/base/config_defaults.py` 中，通过 `_conf_schema.json` 暴露给 AstrBot 的配置界面。
+### 注入配置要点
 
-主要配置项：
+注入配置位于 `recall_engine`：
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `bot_language` | 界面语言 | `zh` |
-| 详见 `_conf_schema.json` | 完整配置列表 | — |
+- `injection_routing_mode` 默认 `manual`；`injection_manual_preset` 默认 `balanced`。
+- 新安装默认使用 `manual + balanced`，普通记忆的注入预算和条数仍受预设硬上限约束。
+- `injection_delivery_override` 默认 `auto`，由预设和 Provider 能力选择临时传输方式。
+- 普通记忆受全局硬预算限制，且不会被写入 System Prompt。
+- 注入决策默认保留 `30 天`、最多 `100,000` 行；只持久化脱敏的 allowlist 标量，不保存查询、提示词、记忆正文或 ID 列表。
+- 已移除 `recall_engine.injection_method`，没有兼容迁移；升级后请使用新的策略字段重新配置。
 
-## 自适应记忆注入
+## 常用命令
 
-- 注入路由可选择 Manual、Auto 或 Hybrid；新安装默认使用 `manual + balanced + auto delivery`。
-- 四种预设分别为 Tool First、Low Cost、Balanced 和 Quality；普通记忆的字符预算依次为 `0/800/1200/2400`，最大条数依次为 `0/2/4/6`。
-- 动态记忆绝不写入 System Prompt。注入载荷只在当前请求中临时存在，并始终受全局硬预算约束。
-- Dashboard 提供完整的 Injection Strategy 工作台，包含 Overview、Strategy Configuration 和 Decision History。
-- 决策元数据全量持久化到 SQLite 的 `injection_decisions` 表，但不会保存查询文本、记忆正文/ID 或原始身份标识。默认保留期为 30 天、上限为 100,000 行，两者均可配置。
-- 正常关闭时最多等待 5 秒刷新待写批次；进程崩溃时可能丢失最后一个尚未刷新的批次。
-- 这是破坏性配置变更：`recall_engine.injection_method` 已移除且不提供兼容迁移，管理员必须使用新的策略字段重新配置。
-
-## 命令
+以下 `/memora` 命令均要求 AstrBot 管理员权限：
 
 | 命令 | 说明 |
-|------|------|
-| `/memora status` | 查看插件初始化状态与核心组件状态 |
-| `/memora search <query> [k]` | 搜索记忆，`k` 默认为 5 |
-| `/memora forget <doc_id>` | 删除指定记忆 |
-| `/memora rebuild-index` | 重建向量/BM25 索引 |
-| `/memora rebuild-graph` | 重建图记忆索引 |
-| `/memora webui` | 输出 WebUI 访问信息 |
-| `/memora summarize` | 立即触发当前会话总结 |
-| `/memora reset` | 重置当前会话长期记忆上下文 |
-| `/memora cleanup [preview|exec]` | 清理历史消息中的记忆注入片段 |
-| `/memora help` | 查看帮助信息 |
+| --- | --- |
+| `/memora status` | 查看插件初始化与核心组件状态。 |
+| `/memora search <query> [k]` | 搜索记忆；`k` 默认是 `5`。 |
+| `/memora forget <doc_id>` | 删除指定记忆。 |
+| `/memora rebuild-index` | 重建向量和 BM25 索引。 |
+| `/memora rebuild-graph` | 重建图记忆索引。 |
+| `/memora webui` | 输出 WebUI 访问信息。 |
+| `/memora summarize` | 立即触发当前会话的记忆总结。 |
+| `/memora reset` | 重置当前会话的长期记忆上下文。 |
+| `/memora cleanup [preview|exec]` | 清理历史消息中的记忆注入片段；默认 `preview` 为预演。 |
+| `/memora help` | 查看帮助。 |
 
-## LLM Tools
+例如：
 
-Memora 为 AstrBot Agent 系统提供以下工具：
+```text
+/memora status
+/memora search 喜欢的音乐 5
+```
 
-| 工具 | 说明 |
-|------|------|
-| `MemorySearchTool` | 搜索记忆库，支持语义和关键词查询 |
-| `MemoryMemorizeTool` | 主动记忆，将信息存入记忆库 |
-| `NoteTools` | 笔记管理：创建、查询、更新、删除 |
-| `KnowledgeTools` | 知识库管理：检索、录入、更新 |
-| `ProfileTools` | 用户画像管理：查询、更新 |
+## Dashboard、工具与 API
 
-## Dashboard
+### Dashboard
 
-Memora 提供完整的 Web 管理面板，基于 React + Vite + Tailwind CSS + shadcn/ui 构建。数据密集页面统一使用基于 TanStack React Table 的 DataTable，支持服务端排序、真实分页、列显隐/顺序/固定和密度偏好；实体详情与编辑统一使用可滚动、可访问的 EntityEditorSheet。
+Dashboard 使用 React、Vite、Tailwind CSS 和 Base UI-backed shadcn 组件构建，提供以下任务入口：
 
-### 启动开发服务器
+- **Memory / Graph / Timeline / Recall**：浏览、检索、编辑记忆，查看关系与调试召回。
+- **Profiles / Knowledge / Notes**：维护用户画像、知识库和笔记。
+- **Learning / Intelligence / Jargon**：观察学习、评测、诊断、复核与黑话候选。
+- **Affection / Social**：查看好感度、Bot 情绪与社交关系。
+- **Injection / System / Config / Preview**：配置注入策略、查看运行状态、编辑配置和预览数据。
+
+开发 Dashboard：
 
 ```bash
 cd pages/dashboard
-npm install
-npm run dev       # 开发模式 (http://localhost:5173)
-npm run build     # 生产构建 → 输出到 assets/
-npm run check:artifacts  # 检查 AstrBot 兼容产物
-npm run test      # Vitest: bridge + hooks
+npm ci
+npm run dev
+npm run build
+npm run check:artifacts
+npm run test
 ```
 
-### 功能页面
+### LLM Tools
 
-| 页面 | 说明 |
-|------|------|
-| **Memory** | 记忆原子浏览、搜索、管理 |
-| **Graph** | 知识图谱可视化 |
-| **Recall** | 记忆召回测试与调试 |
-| **Timeline** | 记忆时间线浏览 |
-| **Profiles** | 用户画像管理 |
-| **Knowledge** | 知识库管理 |
-| **Notes** | 笔记管理 |
-| **Learning** | 自动学习状态监控 |
-| **System** | 系统状态与维护工具 |
-| **Preview** | 数据预览 |
+Memora 为 AstrBot Agent 提供五类工具能力：
 
-## REST API
+- 搜索已有记忆；
+- 主动记住新的信息；
+- 创建和查询笔记；
+- 检索和维护知识库；
+- 查询和更新用户画像。
 
-插件自动注册 14+ 个 REST API 端点，完整列表如下：
+### Page API
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/plugin/memora/memory/read` | GET | 读取记忆原子 |
-| `/api/plugin/memora/memory/write` | POST | 写入记忆原子 |
-| `/api/plugin/memora/memory/batch` | POST | 批量操作 |
-| `/api/plugin/memora/memory/stats` | GET | 记忆统计 |
-| `/api/plugin/memora/memory/recall` | POST | 记忆召回 |
-| `/api/plugin/memora/graph/*` | GET/POST | 图记忆操作 |
-| `/api/plugin/memora/knowledge/*` | GET/POST | 知识库操作 |
-| `/api/plugin/memora/notes/*` | GET/POST | 笔记操作 |
-| `/api/plugin/memora/profiles/*` | GET/POST | 用户画像操作 |
-| `/api/plugin/memora/backup/*` | GET/POST | 备份管理 |
-| `/api/plugin/memora/learning/*` | GET | 学习状态 |
-| `/api/plugin/memora/maintenance/*` | POST | 维护操作 |
-| `/api/plugin/memora/realtime/*` | SSE | 实时事件流 |
+Dashboard 通过 AstrBot Page API 访问 Memora。API 覆盖以下功能域：
+
+- memory、graph、knowledge、notes 与 profiles 的读取、编辑和查询；
+- backup、learning 与 maintenance 的运行维护；
+- realtime 的事件流；
+- injection、诊断、评测和配置等管理能力。
+
+前端与后端的边界分别是 [`src/lib/bridge.ts`](pages/dashboard/src/lib/bridge.ts) 和 [`core/page_api.py`](core/page_api.py)。调用方应保留其响应 envelope、revision 和冲突处理，不应伪造客户端分页。
+
+## 开发者说明
+
+### 架构概览
+
+```mermaid
+flowchart LR
+    AstrBot["AstrBot 事件与 Provider"] --> Plugin["main.py / MemoraPlugin"]
+    Plugin --> Init["PluginInitializer"]
+    Plugin --> Events["EventHandler"]
+    Plugin --> Page["PluginPageApi"]
+    Init --> Engine["MemoryEngine"]
+    Events --> Processor["MemoryProcessor"]
+    Events --> Retrieval["BM25 + FAISS + Graph"]
+    Retrieval --> Injection["请求内临时注入"]
+    Engine --> Storage[("SQLite / FTS5")]
+    Page --> Dashboard["Dashboard"]
+```
+
+数据流可概括为：AstrBot 消息先被捕获和去重，再由处理器抽取并写入权威 SQLite 记忆；请求前，检索器合并全文、语义与图结果，经过重排序和隐私过滤后，由注入策略在当前请求中临时使用。FTS、FAISS、图及派生关系数据都是可重建或可失效的派生层。
+
+### 项目结构
+
+```text
+astrbot_plugin_memora/
+├── main.py              # AstrBot 插件入口
+├── metadata.yaml        # 插件元数据
+├── _conf_schema.json    # 配置 Schema
+├── core/                # Python 运行时、存储、检索、处理和 API
+├── pages/dashboard/     # React 管理面板
+├── tests/               # pytest 测试
+├── scripts/             # 校验、smoke 与 benchmark 脚本
+└── docs/                # 开发与设计文档
+```
+
+详细协作和模块导航见 [AGENTS.md](AGENTS.md)、[core/AGENTS.md](core/AGENTS.md) 与 [pages/dashboard/AGENTS.md](pages/dashboard/AGENTS.md)。项目级设计约定另见 [DESIGN.md](DESIGN.md)。
+
+### 开发与验证
+
+环境准备、完整质量门禁和 Dashboard smoke 流程见 [docs/DEV_SETUP.md](docs/DEV_SETUP.md)。根据改动范围选择最窄的验证命令：
+
+```bash
+# 后端
+python -m pytest tests -q
+python scripts/run_smoke.py -q
+
+# Dashboard
+cd pages/dashboard
+npm run build
+npm run check:artifacts
+npm run test
+
+# 仓库级质量门禁（在仓库根目录执行）
+python scripts/check_all.py
+```
+
+Dashboard 的 `npm run smoke:runtime` 与 `npm run smoke:browser` 属于完整门禁；浏览器 smoke 完成后还需要人工检查生成的截图。
+
+### 代码探索
+
+仓库优先使用 `mcp__fast_context__fast_context_search` 做语义代码搜索。若当前环境未配置 fast-context，可使用 fallback 方式退回 `Select-String`、定向文件读取等本地方法；不要自动读取 Windsurf 凭证。若使用 fast-context，请仅在已自行配置 `WINDSURF_API_KEY` 时使用，不要把本机凭证写入代码或文档。
 
 ## 技术栈
 
-### 后端
-- **向量存储**: faiss-cpu
-- **结构化存储**: aiosqlite + FTS5 全文检索
-- **图计算**: networkx
-- **分词**: jieba
-- **跨平台**: pytz
-- **异步 I/O**: aiofiles
-
-### 前端 (Dashboard)
-- **框架**: React 18 + TypeScript
-- **构建**: Vite
-- **样式**: Tailwind CSS
-- **组件**: shadcn/ui
-- **数据表格**: TanStack React Table（DataTable 共享封装）
-- **状态管理**: React Context + Hooks
-- **图表**: Recharts
-
-## 测试
-
-Memora 使用 pytest + Vitest 作为最小质量门禁：
-
-- 后端：`tests/` 下的 pytest 回归测试
-- 前端：Dashboard 的 `bridge` / `useRealtimeStream` 单测
-- 契约：Python 侧 Page API contract test，校验前端端点与后端注册一致
-
-```bash
-# 运行全部测试
-pytest tests/ -v
-
-# 运行特定测试
-pytest tests/test_memory_atom.py -v
-
-# 带覆盖率报告
-pytest tests/ -v --cov=core --cov-report=term-missing
-```
-
-Mock 策略：`tests/conftest.py` 提供完整的 AstrBot 框架 Mock，无需真实 AstrBot 环境即可运行测试。
-
-测试覆盖：
-- 记忆原子模型
-- BM25 检索
-- 衰减调度
-- 情绪评分
-- 混合检索
-- RRF 融合
-- 知识抽取
-- 笔记生成
-- 隐私过滤
-- 查询重写
-- 季节性召回
-- 主动提醒
-- 用户画像
-- SSE 端点
-
-## 项目结构
-
-```
-astrbot_plugin_memora/
-├── main.py                    # 插件入口，MemoraPlugin 主类
-├── metadata.yaml              # 插件元数据
-├── requirements.txt           # Python 依赖
-├── _conf_schema.json          # AstrBot 配置 Schema
-├── LICENSE                    # AGPL-3.0 许可证
-├── logo.png                   # 插件 Logo
-├── AGENTS.md                  # 根级协作入口与项目总览
-├── DESIGN.md                  # 项目级设计约定与版本策略
-├── CLAUDE.md                  # 根级架构补充说明
-│
-├── core/                      # 核心代码
-│   ├── base/                  # 配置管理、常量、异常
-│   ├── initializer/           # 插件初始化编排
-│   ├── managers/              # 核心业务逻辑（40+ 文件）
-│   ├── processors/            # LLM 记忆抽取（20 文件）
-│   ├── retrieval/             # 多路检索系统（22 文件）
-│   ├── storage/               # SQLite 持久化（16 文件）
-│   ├── api/                   # REST API（15 文件）
-│   ├── validators/            # 索引验证与重建（5 文件）
-│   ├── schedulers/            # 衰减与备份调度
-│   ├── models/                # 数据模型定义（8 文件）
-│   ├── tools/                 # LLM Agent 工具（5 文件）
-│   ├── commands/              # 用户命令
-│   ├── handlers/              # 事件处理器
-│   ├── cleaners/              # 注入清理
-│   ├── dedup/                 # 消息去重
-│   ├── extractors/            # 内容提取
-│   └── i18n/                  # 国际化（zh / en / ru）
-│
-├── pages/dashboard/           # Web 管理面板
-│   └── src/pages/             # 10 个功能页面
-│
-├── tests/                     # pytest 测试套件（19 文件）
-├── scripts/                   # 工具脚本
-├── docs/                      # 文档
-└── .ccg/                      # CCG 任务追踪
-```
+- 后端：Python、SQLite、FTS5、FAISS、NetworkX、jieba、Quart、Pydantic。
+- 前端：React 18、TypeScript、Vite、Tailwind CSS、Base UI-backed shadcn、TanStack React Table、Recharts。
 
 ## 许可证
 
 本项目基于 [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE) 开源。
 
-> 简而言之：您可以自由使用、修改和分发本项目，但如果您通过网络提供服务，必须公开修改后的源代码。
+> 您可以自由使用、修改和分发本项目；如果通过网络提供服务，必须公开修改后的源代码。
 
 ## 致谢
 
-- [AstrBot](https://github.com/Soulter/AstrBot) — 优秀的 QQ 机器人框架
-- [faiss](https://github.com/facebookresearch/faiss) — 高效的向量相似度搜索
-- [shadcn/ui](https://ui.shadcn.com/) — 精美的 React 组件库
+- [AstrBot](https://github.com/Soulter/AstrBot)
+- [faiss](https://github.com/facebookresearch/faiss)
+- [shadcn/ui](https://ui.shadcn.com/)
