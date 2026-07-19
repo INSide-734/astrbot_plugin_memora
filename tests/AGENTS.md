@@ -93,6 +93,7 @@ flowchart LR
 | 变更类型 | 首选测试位置 | 常见相邻门禁 |
 |---|---|---|
 | Page API 请求/响应 | `test_api_<domain>.py` | `test_page_api.py`、`test_page_api_contract.py` |
+| 备份、恢复与热重载 | `test_managers_backup.py`、`test_managers_backup_snapshot.py`、`test_api_backup.py`、`test_maintenance_api.py` | `test_plugin_init.py`、`test_decay_scheduler.py`、`test_page_api_contract.py`、`integration/test_pipeline_lifecycle.py` |
 | Store/SQL/事务 | `test_<store>.py` | 相关 Manager/API 测试、并发冲突测试 |
 | Manager 业务规则 | `test_managers_<domain>.py` 或领域文件 | 对应 Store 与 API 测试 |
 | 召回、注入、格式化 | `test_handlers.py`、`test_injection_*.py`、`test_memory_formatter.py` | `integration/test_pipeline_event.py`、`test_recall_cost_benchmark.py` |
@@ -138,6 +139,22 @@ Memory Evolution 变更的最窄回归还应覆盖：
 
 ```powershell
 python -m pytest tests/test_memory_evolution_models.py tests/test_memory_evolution_gate.py tests/test_memory_evolution_manager.py tests/test_memory_evolution_store.py tests/test_derived_relation_expander.py tests/test_projection_reader.py tests/test_recall_projection_metadata.py tests/test_memory_consolidator.py tests/test_plugin_init.py -q --basetemp .tmp-agents-evolution
+```
+
+备份/恢复与热重载变更的最窄回归还应覆盖快照校验、事务回滚、API 写保护、独立自动备份调度、插件生命周期和页面契约：
+
+```powershell
+python -m pytest tests/test_managers_backup.py tests/test_managers_backup_snapshot.py tests/test_api_backup.py tests/test_maintenance_api.py tests/test_page_api.py tests/test_page_api_contract.py tests/test_plugin_init.py tests/test_decay_scheduler.py tests/integration/test_pipeline_lifecycle.py -q --basetemp .tmp-backup-focused
+```
+
+Dashboard 侧同步验证恢复确认、状态轮询、取消和批量删除部分失败：
+
+```powershell
+Set-Location pages/dashboard
+npm test -- --run src/pages/SystemPage.test.tsx src/mock/server.test.ts
+npm run build
+npm run check:artifacts
+npm run smoke:runtime
 ```
 
 若改动 `fixtures/retrieval/*.jsonl`，至少运行两条 evaluation 测试；若改动根 fixture 或 AstrBot Mock，至少运行直接消费者和 `tests/test_plugin_package_imports.py`。不要仅凭 collection 成功判断行为通过。
