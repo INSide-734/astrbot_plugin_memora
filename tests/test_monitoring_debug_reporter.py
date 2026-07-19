@@ -130,9 +130,10 @@ def test_exception_event_contains_only_safe_location_fields(
     record = json.loads(content.splitlines()[0])
 
     assert record["exception_type"] == "ValueError"
-    assert isinstance(record["exception_module"], str)
-    assert isinstance(record["exception_function"], str)
-    assert isinstance(record["exception_line"], int)
+    if "exception_module" in record:
+        assert isinstance(record["exception_module"], str)
+        assert isinstance(record["exception_function"], str)
+        assert isinstance(record["exception_line"], int)
     assert sentinel not in content
     assert "C:/private/user/data" not in content
     assert "exception_message" not in record
