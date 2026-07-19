@@ -39,20 +39,37 @@ def snapshot_sqlite(
     source = Path(source)
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        target.unlink()
+    if source.resolve() == target.resolve():
+        raise ValueError("snapshot source and target must differ")
+
+    temporary_path: Path | None = None
+    with tempfile.NamedTemporaryFile(
+        mode="wb", dir=target.parent, prefix=f"{target.name}.", suffix=".tmp", delete=False
+    ) as handle:
+        temporary_path = Path(handle.name)
 
     source_connection: sqlite3.Connection | None = None
     target_connection: sqlite3.Connection | None = None
     try:
         source_connection = sqlite3.connect(str(source))
-        target_connection = sqlite3.connect(str(target))
+        target_connection = sqlite3.connect(str(temporary_path))
         source_connection.backup(target_connection)
         quick_check = target_connection.execute("PRAGMA quick_check").fetchone()
         check_result = str(quick_check[0]) if quick_check else ""
         if check_result.lower() != "ok":
             raise sqlite3.DatabaseError("sqlite quick check failed")
         target_connection.commit()
+        target_connection.close()
+        target_connection = None
+        os.replace(temporary_path, target)
+        temporary_path = None
+    except BaseException:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+        raise
     finally:
         if source_connection is not None:
             source_connection.close()
@@ -81,7 +98,27 @@ def copy_regular_file(
     source = Path(source)
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
+    if source.resolve() == target.resolve():
+        raise ValueError("copy source and target must differ")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=target.parent,
+            prefix=f"{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+        shutil.copy2(source, temporary_path)
+        os.replace(temporary_path, target)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
     return SnapshotResult(
         name=target.name,
         role=role,
