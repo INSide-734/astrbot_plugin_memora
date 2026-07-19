@@ -56,6 +56,10 @@ Memora 是 [AstrBot](https://github.com/Soulter/AstrBot) 的长期记忆插件�
 - 注入决策只记录 allowlist 观测字段，不保存查询、提示词、记忆正文、记忆 ID 列表或原始身份。
 - 写入、检索与派生数据都遵守 scope、privacy、validity 和 revision 等边界。
 
+### 用户问题报告调试模式
+
+需要提交问题报告时，可在 Dashboard 配置页开启“调试模式（问题报告）”。复现问题后，可以从 AstrBot 日志筛选 `[MemoraDebug]` 行，或提交插件数据目录下的相对路径 `diagnostics/memora-debug.jsonl`；文件按大小轮转，包含当前文件和两个备份文件，每个文件最大 `5 MB`。诊断记录只包含阶段、状态、耗时、计数、路由和安全异常摘要，不记录对话、查询、Prompt、模型回复、记忆正文、用户/群组/会话身份或 Provider 凭据。问题复现并收集日志后，请关闭该开关。
+
 ## 快速开始
 
 ### 环境要求
