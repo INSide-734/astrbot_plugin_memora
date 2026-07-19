@@ -109,6 +109,7 @@ _MAX_NUMBER = 10**12
 _lock = threading.RLock()
 _enabled = False
 _file_handler: RotatingFileHandler | None = None
+_file_path: Path | None = None
 _operation_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "memora_debug_operation_token", default=None
 )
@@ -119,9 +120,10 @@ def _new_token() -> str:
 
 
 def _close_file_handler() -> None:
-    global _file_handler
+    global _file_handler, _file_path
     handler = _file_handler
     _file_handler = None
+    _file_path = None
     if handler is not None:
         try:
             handler.close()
@@ -173,13 +175,43 @@ def _valid_text(field: str, value: Any) -> bool:
 
 def _emit_serialized(serialized: str) -> None:
     """向两个 sink 写入已规范化的同一条 JSON。"""
-    global _file_handler
+    global _file_handler, _file_path
     try:
         _astrbot_logger.info("[MemoraDebug] %s", serialized)
     except Exception:
         pass
     with _lock:
         handler = _file_handler
+        if handler is None and _file_path is not None:
+            try:
+                _file_path.parent.mkdir(parents=True, exist_ok=True)
+                handler = RotatingFileHandler(
+                    _file_path,
+                    maxBytes=MAX_BYTES,
+                    backupCount=BACKUP_COUNT,
+                    encoding="utf-8",
+                    delay=True,
+                )
+                handler.setFormatter(logging.Formatter("%(message)s"))
+                handler.setLevel(logging.INFO)
+                _file_handler = handler
+            except Exception as exception:
+                _file_path = None
+                disabled_event = {
+                    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "schema_version": SCHEMA_VERSION,
+                    "event": "debug_file_sink_disabled",
+                    "operation_token": _operation_token.get() or _new_token(),
+                    "exception_type": _safe_exception_type(exception),
+                }
+                try:
+                    _astrbot_logger.info(
+                        "[MemoraDebug] %s",
+                        json.dumps(disabled_event, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+                    )
+                except Exception:
+                    pass
+                return
         if handler is None:
             return
         try:
@@ -227,28 +259,16 @@ def _emit_rejection(reason_code: str) -> None:
 
 def configure_debug_reporting(enabled: bool, data_dir: str | Path | None = None) -> None:
     """配置问题报告调试模式；禁用时不创建目录或文件。"""
-    global _enabled, _file_handler
+    global _enabled, _file_handler, _file_path
     with _lock:
         _close_file_handler()
         _enabled = bool(enabled)
         if not _enabled or data_dir is None:
             return
         try:
-            diagnostics_dir = Path(data_dir) / "diagnostics"
-            diagnostics_dir.mkdir(parents=True, exist_ok=True)
-            path = diagnostics_dir / FILE_NAME
-            handler = RotatingFileHandler(
-                path,
-                maxBytes=MAX_BYTES,
-                backupCount=BACKUP_COUNT,
-                encoding="utf-8",
-                delay=True,
-            )
-            handler.setFormatter(logging.Formatter("%(message)s"))
-            handler.setLevel(logging.INFO)
-            _file_handler = handler
+            _file_path = Path(data_dir) / "diagnostics" / FILE_NAME
         except Exception as exception:
-            _file_handler = None
+            _file_path = None
             # 失败事件只发送到控制台，绝不泄露路径或错误文本。
             event = {
                 "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -257,7 +277,13 @@ def configure_debug_reporting(enabled: bool, data_dir: str | Path | None = None)
                 "operation_token": _operation_token.get() or _new_token(),
                 "exception_type": _safe_exception_type(exception),
             }
-            _emit_serialized(json.dumps(event, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
+            try:
+                _astrbot_logger.info(
+                    "[MemoraDebug] %s",
+                    json.dumps(event, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+                )
+            except Exception:
+                pass
 
 
 def close_debug_reporting() -> None:
