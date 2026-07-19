@@ -2,7 +2,7 @@
 
 # Tests 模块上下文
 
-**最后更新：** 2026-07-17
+**最后更新：** 2026-07-19
 **入口：** `pytest.ini`、`tests/conftest.py`、`tests/integration/conftest.py`
 
 ## 职责与边界
@@ -14,6 +14,7 @@
 - `evaluation/`：验证 JSONL 数据集加载、Recall@K/MRR/nDCG/延迟指标、variant 对比和报告持久化。
 - `stress/`：覆盖并发写入等竞争条件；不要把机器抖动敏感的绝对耗时阈值放进这里。
 - `fixtures/retrieval/`：五组离线检索样本，每组 10 条，共 50 条；`noise_negative.jsonl` 用 `expected_no_hit` 与 `__no_relevant__` 表达负样本。
+- Memory Evolution 相关用例覆盖 `memory_evolution.jsonl`、gate/manager/store、derived relation、ProjectionReader、Recall metadata、formatter allowlist/budget 与插件生命周期；Projection 只能作为 source-backed canonical candidate 注解。
 
 不在本目录承担：生产实现、真实 AstrBot 服务启动、真实模型/网络调用、Dashboard 组件测试、发布说明或普通设计文档维护。
 
@@ -125,6 +126,18 @@ python scripts/run_smoke.py -q
 
 # 完整 Python 回归，仅在影响跨域契约或准备合并时运行
 python -m pytest tests -q
+```
+
+Windows 沙箱下优先为 pytest 指定仓库内可写的 `--basetemp`，避免工作树 `.pytest_cache` 权限告警掩盖真实结果，例如：
+
+```powershell
+python -m pytest tests/test_memory_evolution_store.py tests/test_projection_reader.py tests/test_dual_route_retriever.py tests/test_memory_formatter.py -q --basetemp .tmp-agents-focused
+```
+
+Memory Evolution 变更的最窄回归还应覆盖：
+
+```powershell
+python -m pytest tests/test_memory_evolution_models.py tests/test_memory_evolution_gate.py tests/test_memory_evolution_manager.py tests/test_memory_evolution_store.py tests/test_derived_relation_expander.py tests/test_projection_reader.py tests/test_recall_projection_metadata.py tests/test_memory_consolidator.py tests/test_plugin_init.py -q --basetemp .tmp-agents-evolution
 ```
 
 若改动 `fixtures/retrieval/*.jsonl`，至少运行两条 evaluation 测试；若改动根 fixture 或 AstrBot Mock，至少运行直接消费者和 `tests/test_plugin_package_imports.py`。不要仅凭 collection 成功判断行为通过。

@@ -2,11 +2,17 @@
 
 # 离线检索质量评测模块
 
-**Last Updated:** 2026-07-17
+**最后更新：** 2026-07-19
 
 ## 职责与边界
 
 `core/evaluation/` 加载 JSONL 检索用例，适配 `MemoryEngine` 搜索接口，计算查询级 Recall@K、MRR、二元 nDCG@K 和 P95 延迟，运行有限的消融变体并持久化报告。它是离线/运维评测设施，不参与在线召回排序、不训练模型，也不把指标结果自动转成生产配置。
+
+## Memory Evolution A/B/C 评测
+
+`tests/fixtures/retrieval/memory_evolution.jsonl` 使用匿名合成样本覆盖 direct/single-hop、multi-hop、noise-negative、cross-scope、prompt injection、temporal consistency、conflict set 和 source-supported projection。fixture 的 `expected_relation_types`/`expected_projection_types` 必须与领域枚举保持一致，不能混入真实对话、身份或凭据。
+
+评测服务的 A/B/C 变体只在离线作用域内临时切换 `memory_evolution.mode`，运行结束必须在 `finally` 中恢复原配置。除 Recall@K、Precision@K、MRR、nDCG 外，报告还可记录 single/multi-hop recall、noise false hit、conflict accuracy、source-supported projection rate、answer faithfulness/relevancy、P50/P95 latency、Provider 调用/token 成本和固定 reason-code 聚合。指标用于比较与回归，不可自动写回生产配置。
 
 ## 架构与数据流
 
@@ -65,4 +71,5 @@ flowchart LR
 
 ```bash
 python -m pytest -q tests/evaluation/test_retrieval_quality.py tests/evaluation/test_evaluation_service.py
+python -m pytest -q tests/test_memory_evolution_manager.py tests/test_recall_cost_benchmark.py
 ```

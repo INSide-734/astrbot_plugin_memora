@@ -2,12 +2,12 @@
 
 # `core/models` 模块上下文
 
-**最后更新：** 2026-07-17  
+**最后更新：** 2026-07-19
 **模块入口：** `core/models/__init__.py`；各领域模型通常从其子模块直接导入
 
 ## 职责与边界
 
-`core/models/` 定义 Memora 在处理器、管理器、检索器和存储层之间传递的领域对象：对话、记忆原子及生命周期、知识图谱、知识条目、笔记、用户画像、召回请求和默认停用词。
+`core/models/` 定义 Memora 在处理器、管理器、检索器和存储层之间传递的领域对象：对话、记忆原子及生命周期、知识图谱、知识条目、笔记、用户画像、召回请求、默认停用词，以及证据锚定的 Memory Evolution job、relation 和 projection 契约。
 
 这些对象主要是轻量 `dataclass`/`Enum` 契约，而不是 ORM 或输入验证层。除显式计算方法和 `from_dict()` 转换外，大多数构造函数不会自动钳制范围、检查外键或持久化。LLM 原始输出必须先经过 [`../security/AGENTS.md`](../security/AGENTS.md) 的 Pydantic 护栏；数据库一致性属于 [`../storage/AGENTS.md`](../storage/AGENTS.md)。
 
@@ -21,6 +21,9 @@ erDiagram
     MemoryAtom ||--o{ GraphEntry : source_memory_id
     MemoryAtom ||--o{ KnowledgeEntry : source_ids
     MemoryAtom ||--o{ Note : source_memory_ids
+    MemoryAtom ||--o{ RelationView : source_or_target_memory_id
+    MemoryAtom ||--o{ ProjectionSourceView : memory_id
+    ProjectionView ||--|{ ProjectionSourceView : projection_id
     GraphNode ||--o{ GraphEdge : source_key_or_target_key
     GraphNode ||--o{ GraphEntry : node_keys
     ExtractedGraph ||--o{ GraphNode : nodes
@@ -78,6 +81,16 @@ erDiagram
 - `RecallStrategy` 固定四类调用意图，检索器据此调整文档/图路权重。
 - `DEFAULT_STOPWORDS` 是不可变 `frozenset[str]`，仅作为无外部词表时的共享后备；运行时加载与持久化属于 [`../utils/AGENTS.md`](../utils/AGENTS.md) 的 `StopwordsManager`。
 
+### `memory_evolution.py`
+
+- `MemorySourceRef` / `EvolutionSignal` 是 canonical memory 的带 revision 证据视图；`memory_id` 必须是非负整数，`scope_key` 与 `revision_token` 必须非空，privacy 只能是 `public/shared/confidential`，证据正文受本地长度上限约束。它们不会创建新的 canonical ID。
+- `MemoryRelationProposal`、`MemoryProjectionProposal` 与 `EvolutionProposal` 表达 LLM 的结构化提案；alias 在 manager 边界解析，提案本身不能直接写入 canonical memory 或派生表。
+- `RelationType`、`ProjectionType`、`JobState` 和 `DerivedState` 是稳定持久化枚举。关系类型包括 supports/updates/contradicts/same_episode/preference_change/causes/supersedes/related；projection 类型固定为 episode_summary/preference_state/relationship_state/conflict_set。
+- `JobSpec`、`MemoryEvolutionJob`、`JobClaim`、`RetrySpec` 描述去重键、租约、尝试次数和重试时间；模型只做结构约束，lease 所有权和状态迁移由 Store 保证。
+- `RelationView` 与 `ProjectionView` 是派生解释平面的读写契约。它们必须保留 scope/privacy、有效期、confidence 与状态；`ProjectionView.source_memory_ids` 只是来源回指，不能作为第二套记忆身份。
+- `ProjectionSourceView` 固定允许 `primary/supporting/conflict_left/conflict_right` 四种 role，并携带每个 canonical source 的 revision token 与 ordinal。`ProjectionBundle` 将一个 projection 和非空、同 projection ID 的 source mapping 组合起来，供读取侧批量校验。
+- `DerivedApplyPlan` 聚合 relation、projection、source mapping 与 `source_revisions`，用于一次原子应用；任一来源 revision 变化时应由管理/存储层拒绝或失效派生结果。
+
 ## 导出契约
 
 `core/models/__init__.py` 仅公开：
@@ -86,6 +99,8 @@ erDiagram
 - `GraphNode`、`GraphEdge`、`GraphEntry`、`ExtractedGraph`。
 
 `MemoryAtom`、画像、知识、笔记、召回策略和停用词必须从对应子模块导入。不要假设文件内 `__all__` 会自动汇总到包入口；若扩展包级 API，需显式编辑 `__init__.py` 并增加导出契约测试。
+
+Memory Evolution 类型同样从 `core.models.memory_evolution` 直接导入；该模块自己的 `__all__` 不是 `core.models` 包级再导出。新增 evolution 类型时要同步直接调用方和模型测试，不要无意扩大包入口。
 
 ## 典型数据流
 
@@ -100,6 +115,10 @@ flowchart TD
     F --> H[GraphExtractor]
     H --> I[GraphNode / GraphEdge / GraphEntry]
     F --> J[KnowledgeEntry / Note / UserProfile 派生链]
+    F --> N[MemorySourceRef + revision]
+    N --> O[EvolutionProposal]
+    O --> P[DerivedApplyPlan]
+    P --> Q[RelationView / ProjectionBundle 派生读模型]
     K[RecallStrategy] --> L[RecallRequest]
     L --> M[双路检索器]
 ```
@@ -117,6 +136,7 @@ flowchart TD
 - 列表/字典字段必须继续使用 `default_factory`，禁止共享可变默认值。
 - 新字段要同步存储 schema、行映射、API 序列化和相关集成测试；仅修改 dataclass 不代表持久化完成。
 - 时间戳统一是 Unix 秒数 float；不要混入毫秒或无说明的时区字符串。
+- Projection 必须始终能回指 canonical source 及其 revision；不得把 projection ID、摘要或 source mapping 提升为 canonical `doc_id`，也不得在模型层放宽 scope/privacy/role 约束。
 
 ## 测试定位与精确验证
 
@@ -128,11 +148,12 @@ flowchart TD
 | 知识/笔记 | `tests/test_models_extra.py` | `tests/test_knowledge_manager.py tests/test_note_store.py` |
 | 用户画像 | `tests/test_profile_store.py` | `tests/test_managers_profile.py` |
 | 召回策略 | `tests/test_dual_route_retriever.py` | `tests/test_api_recall_trace.py` |
+| Memory Evolution 模型、枚举与 source role | `tests/test_memory_evolution_models.py` | `tests/test_memory_evolution_store.py tests/test_memory_evolution_manager.py tests/test_projection_reader.py` |
 
 最小模块验证：
 
 ```bash
-python -m pytest -q tests/test_models_extra.py tests/test_memory_atom.py tests/test_profile_store.py
+python -m pytest -q tests/test_models_extra.py tests/test_memory_atom.py tests/test_profile_store.py tests/test_memory_evolution_models.py
 ```
 
 涉及持久化字段或 key 语义时：
@@ -148,3 +169,4 @@ python -m pytest -q tests/test_conversation_store.py tests/test_atom_store.py te
 3. 新不变量应由模型纯函数、Pydantic 护栏还是管理/存储层负责？不要重复验证体系。
 4. 是否保持模型层单向依赖和无 I/O 边界？
 5. 包级导出与子模块导入路径是否和实际调用方一致？
+6. Projection/relation 是否仍只作为带 source revision、scope、privacy 和 role 证据的派生解释，不会形成第二套 canonical memory？

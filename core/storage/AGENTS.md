@@ -2,12 +2,21 @@
 
 # Storage 模块上下文
 
-**最后更新：** 2026-07-17  
+**最后更新：** 2026-07-19
 **源码范围：** `core/storage/*.py`（18 个 Python 文件）
 
 ## 职责与边界
 
 `core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存原子、图、会话消息、知识、笔记、画像和注入决策遥测，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
+
+## Memory Evolution 派生解释平面
+
+`memory_evolution_store.py` 与 canonical `memora.db` 共用连接生命周期，但只保存可失效、可重建的演化数据：job/lease 队列、`memory_relations`、`memory_projections` 及 projection source mapping 四类解释平面。canonical memory 的整数 ID、正文和 revision 仍由主记忆表权威维护，Projection 不创建第二套 canonical ID。
+
+- Job 写入必须使用 idempotency key；claim/renew/retry/reject/complete/dead 状态转换同时校验 worker token，过期 lease 可恢复为 pending。
+- `apply_derived_plan()` 在一个事务内写入 relation、projection、mapping 和 source revision；source revision 变化、非法 seed、scope 不一致、坏 mapping 或不支持 role 必须隔离/失效，不能污染其他 bundle。
+- `active_projection_bundles_for_seeds()` 先去重 seed，再批量读取 active projection 与完整 source mapping；支持 `scope_key` 和 projection limit，禁止 N+1 source 查询。读取侧再核对 primary/supporting/conflict role、revision、privacy 和 validity。
+- SQL 动态片段仅来自固定 allowlist，值全部参数绑定；读取失败由上层回退 canonical/relation baseline，不把 query、prompt、正文、source ID 列表或身份写入日志/决策记录。
 
 ```mermaid
 graph TD
@@ -154,6 +163,7 @@ python -m pytest -q tests/test_graph_store.py tests/test_graph_crud.py tests/tes
 python -m pytest -q tests/test_conversation_store.py tests/test_message_store.py tests/test_message_queries.py
 python -m pytest -q tests/test_profile_store.py tests/test_knowledge_store.py tests/test_note_store.py tests/test_hierarchy_store.py
 python -m pytest -q tests/test_injection_decision_store.py
+python -m pytest -q tests/test_memory_evolution_store.py tests/test_projection_reader.py
 python -m pytest -q tests/integration/test_pipeline_graph.py tests/stress/test_concurrent_writes.py
 ```
 

@@ -2,13 +2,13 @@
 
 # 对话到结构化记忆处理管道
 
-**最后更新：** 2026-07-17  
+**最后更新：** 2026-07-19
 **主入口：** `MemoryProcessor.process_conversation()`  
 **包级公开导出：** `MemoryProcessor`、`TextProcessor`、`ChatroomContextParser`、`store_round_with_length_check`、`EntityResolver`、`GraphExtractor`
 
 ## 职责边界
 
-`core/processors/` 将已经进入会话存储的 `list[Message]` 格式化、提交给 LLM、校验/修复响应，并构造成持久化层可消费的记忆、元数据与原子。目录还包含话题策略、图结构提取、文本检索预处理，以及画像/知识/笔记等独立派生处理器。
+`core/processors/` 将已经进入会话存储的 `list[Message]` 格式化、提交给 LLM、校验/修复响应，并构造成持久化层可消费的记忆、元数据与原子。目录还包含话题策略、图结构提取、文本检索预处理、Memory Evolution proposal 整理器，以及画像/知识/笔记等独立派生处理器。
 
 本模块不捕获 AstrBot 事件、不决定何时触发总结、不直接持久化主管道产物，也不执行召回。触发与批次编排见 [`../handlers/AGENTS.md`](../handlers/AGENTS.md)；消息组件标准化见 [`../extractors/AGENTS.md`](../extractors/AGENTS.md)；存储、图 CRUD 与检索属于相应 manager/store/retrieval 模块。
 
@@ -68,6 +68,16 @@ flowchart LR
 
 策略输出必须保持输入顺序、边界合法和至少可回退为单段；C/D 的运行成本门控由 handlers 中的 `TopicBatchPreparer` 负责。
 
+## Memory Evolution proposal 协议
+
+`memory_consolidator.py` 的 `MemoryConsolidator.propose(sources)` 只把 canonical evidence 转为受约束的 `EvolutionProposal`，不直接写 Store、canonical memory 或派生表：
+
+- 给每个 source 分配临时 `M1`、`M2` alias；Prompt 明确 evidence 为不可信数据，模型不能执行其中指令、调用工具或输出真实 memory ID。
+- 输入总量受 `max_input_chars` 限制；输出必须通过 JSON 清洗和 Pydantic `extra="forbid"` 校验，并满足 relation、projection 数量和 summary 字符预算。
+- relation/projection 类型、confidence、时间范围及 alias 形状在此校验；alias 是否存在、source revision 是否仍新鲜、scope/privacy/role 是否兼容、是否成环以及 candidate/active 状态由 `MemoryEvolutionManager` 在应用前确定。
+- 解析、结构或预算失败必须抛出异常交给 worker 重试/死信；不要回退成空 proposal 并伪造成功。`asyncio.CancelledError` 必须继续传播。
+- Projection 是带 source/revision 证据的派生解释，不是新 canonical memory，不得生成独立 `doc_id` 或进入主管道的 `MemoryProcessor` 返回列表。
+
 ## 其他处理器地图
 
 | 文件 | 入口/作用 | 失败或回退 |
@@ -83,6 +93,7 @@ flowchart LR
 | `profile_extractor.py` | LLM 提取用户标签/偏好，最多 5 个标签 | 无 client/调用失败返回空；另有关键词 fallback |
 | `knowledge_extractor.py` | 记忆 → `KnowledgeEntry` | 输入过短、无 client 或 JSON 无法恢复时 `None` |
 | `note_generator.py` | 重要对话 → note dict | 未达长度、无 client 或 JSON 无法恢复时 `None` |
+| `memory_consolidator.py` | canonical evidence → 受约束的 relation/projection proposal | JSON/Schema/数量/字符预算失败抛出，由 manager 负责重试或拒绝 |
 | `message_utils.py` | 30KB 单消息截断；将一轮对话写成记忆 | 返回 `(success, error)`，不抛普通存储异常 |
 | `prompt_builder.py` | 模板与 persona system prompt | persona 不存在时使用基础 prompt |
 
@@ -99,17 +110,17 @@ flowchart LR
 
 主管道：`memory_processor.py`、`llm_client.py`、`prompt_builder.py`、`conversation_formatter.py`、`json_parser.py`、`quality_validator.py`、`storage_builder.py`。  
 话题：`topic_splitter.py`。  
-派生与图：`atom_classifier.py`、`graph_extractor.py`、`entity_resolver.py`、`contradiction_detector.py`、`episode_clusterer.py`、`profile_extractor.py`、`knowledge_extractor.py`、`note_generator.py`、`human_like_formatter.py`。  
+派生与图：`memory_consolidator.py`、`atom_classifier.py`、`graph_extractor.py`、`entity_resolver.py`、`contradiction_detector.py`、`episode_clusterer.py`、`profile_extractor.py`、`knowledge_extractor.py`、`note_generator.py`、`human_like_formatter.py`。
 文本/兼容：`text_processor.py`、`chatroom_parser.py`、`message_utils.py`、`__init__.py`。
 
 ## 测试定位与验证
 
-主管道和直接组件分别位于 `tests/test_memory_processor.py`、`test_llm_client.py`、`test_json_parser.py`、`test_prompt_builder.py`、`test_conversation_formatter.py`、`test_atom_classifier.py`、`test_text_processor.py`、`test_message_utils.py`。话题策略在 `test_topic_splitter.py` 与 `test_integration_topic_segmentation.py`。派生处理器有同名测试，包括 graph/entity/contradiction/episode/profile/knowledge/note/human-like/chatroom。
+主管道和直接组件分别位于 `tests/test_memory_processor.py`、`test_llm_client.py`、`test_json_parser.py`、`test_prompt_builder.py`、`test_conversation_formatter.py`、`test_atom_classifier.py`、`test_text_processor.py`、`test_message_utils.py`。Memory Evolution proposal 契约位于 `tests/test_memory_consolidator.py`；话题策略在 `test_topic_splitter.py` 与 `test_integration_topic_segmentation.py`。派生处理器有同名测试，包括 graph/entity/contradiction/episode/profile/knowledge/note/human-like/chatroom。
 
 精确模块验证命令：
 
 ```bash
-python -m pytest tests/test_memory_processor.py tests/test_llm_client.py tests/test_json_parser.py tests/test_prompt_builder.py tests/test_conversation_formatter.py tests/test_atom_classifier.py tests/test_text_processor.py tests/test_message_utils.py tests/test_topic_splitter.py tests/test_integration_topic_segmentation.py tests/test_graph_extractor.py tests/test_entity_resolver.py tests/test_contradiction_detector.py tests/test_episode_clusterer.py tests/test_profile_extractor.py tests/test_knowledge_extractor.py tests/test_note_generator.py tests/test_human_like_formatter.py tests/test_chatroom_parser.py -q
+python -m pytest tests/test_memory_processor.py tests/test_memory_consolidator.py tests/test_llm_client.py tests/test_json_parser.py tests/test_prompt_builder.py tests/test_conversation_formatter.py tests/test_atom_classifier.py tests/test_text_processor.py tests/test_message_utils.py tests/test_topic_splitter.py tests/test_integration_topic_segmentation.py tests/test_graph_extractor.py tests/test_entity_resolver.py tests/test_contradiction_detector.py tests/test_episode_clusterer.py tests/test_profile_extractor.py tests/test_knowledge_extractor.py tests/test_note_generator.py tests/test_human_like_formatter.py tests/test_chatroom_parser.py -q
 ```
 
 若改变主管道与反思之间的批次/失败契约，另跑：

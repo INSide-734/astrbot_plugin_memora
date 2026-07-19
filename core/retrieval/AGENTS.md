@@ -2,12 +2,21 @@
 
 # Retrieval 模块上下文
 
-**最后更新：** 2026-07-17  
+**最后更新：** 2026-07-19
 **源码范围：** `core/retrieval/*.py`（25 个 Python 文件）
 
 ## 职责与边界
 
 `core/retrieval/` 负责从文档、FAISS、图、原子和知识库生成候选，执行 RRF、时间/重要性加权、MMR/可插拔重排、个性化与隐私过滤，并可生成有界、脱敏的召回追踪。持久化 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，统一生命周期和缓存增强属于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)。
+
+## Memory Evolution 召回顺序
+
+`DualRouteRetriever` 的在线顺序固定为：direct/graph candidate merge → `DerivedRelationExpander` → `ProjectionReader` attachment → reranker → privacy filter。只有 `enabled=true` 且 mode 为 `readonly`/`active` 时才调用 relation/projection reader；`disabled` 与 `shadow` 必须保持 baseline，不能因派生表存在而读取。
+
+- relation expansion 只增加有 scope/隐私证据的 canonical candidate，并受 per-seed/global expansion budget 限制。
+- ProjectionReader 只把通过 active、validity、scope、privacy、source revision 和 role 校验的 projection metadata 附着到已有 primary canonical candidate；supporting/conflict source 只用于证据校验，不能单独生成 candidate。
+- 附着不得改变 canonical `doc_id`、content、score、排序或 reranker candidate 数量；普通异常回退 baseline，单条坏 projection 隔离，`asyncio.CancelledError` 必须传播。
+- 下游 formatter 只能看到 `type/summary/confidence`，不得把 projection ID、source ID、revision、scope、privacy、role 或 job 信息交给模型。
 
 ```mermaid
 graph TD
@@ -149,6 +158,7 @@ sequenceDiagram
 ```bash
 python -m pytest -q tests/test_bm25_retriever.py tests/test_vector_retriever.py tests/test_hybrid_retriever.py tests/test_rrf_fusion.py tests/test_score_weighting.py tests/test_mmr_reranker.py
 python -m pytest -q tests/test_graph_keyword_retriever.py tests/test_graph_vector_retriever.py tests/test_graph_retriever.py tests/test_dual_route_retriever.py
+python -m pytest -q tests/test_derived_relation_expander.py tests/test_projection_reader.py
 python -m pytest -q tests/test_query_rewriter.py tests/test_intent_keywords.py tests/test_personalized_ranker.py tests/test_reranker_factory.py tests/test_cross_encoder_reranker.py tests/test_llm_reranker.py
 python -m pytest -q tests/test_atom_retriever.py tests/test_knowledge_retriever.py tests/test_memory_lifecycle.py
 python -m pytest -q tests/test_api_recall_trace.py tests/test_recall_cost_benchmark.py

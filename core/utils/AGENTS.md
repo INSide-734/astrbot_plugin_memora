@@ -2,12 +2,14 @@
 
 # `core/utils` 模块上下文
 
-**最后更新：** 2026-07-17  
+**最后更新：** 2026-07-19
 **模块入口：** `core/utils/__init__.py`；性能/注入等专用工具从各子模块直接导入
 
 ## 职责与边界
 
 `core/utils/` 提供跨领域、可复用且不拥有业务状态的适配能力：元数据/JSON/数值解析、注入文本与预算、Provider 投递兼容、缓存、停用词、文本分词、风格/多样性分析、任务调度、时区/人格解析和版本读取。
+
+`memory_formatter.py` 还负责把 Projection 作为普通注入、fake tool call 和 DeepSeek V4 转录中的受控 metadata。三条路径必须复用同一 allowlist：仅 `type`、`summary`、`confidence`；未知类型、空摘要、非有限置信度和内部 source/revision/ID 字段一律丢弃。Projection 字符数计入 metadata budget 和 total injection budget，`ContentLevel.NONE` 不输出，Prompt Protection 的边界与既有动态记忆清理保持一致。
 
 “工具”不等于可以隐藏领域决策：路由决策属于 `core/injection`，配置契约属于 [`../base/AGENTS.md`](../base/AGENTS.md)，领域模型属于 [`../models/AGENTS.md`](../models/AGENTS.md)，Prompt 泄露防护属于 [`../security/AGENTS.md`](../security/AGENTS.md)。这里负责格式化/适配/降级，不负责选择要召回哪些记忆、写数据库或决定严格安全模式。
 

@@ -2,7 +2,7 @@
 
 # `core/base` 模块上下文
 
-**最后更新：** 2026-07-17  
+**最后更新：** 2026-07-19
 **模块入口：** `core/base/__init__.py`、`config_manager.py`、`config_validator.py`
 
 ## 职责与边界
@@ -12,7 +12,8 @@
 - 以 Pydantic v2 描述配置树、默认值、数值范围和跨字段不变量；
 - 将 AstrBot 注入的可变配置映射规范化为隔离快照，并提供带修订号的原子更新；
 - 提供稳定的异常码、记忆注入边界常量、领域无关实体编辑冲突类型；
-- 对额外 LLM 调用实施成本模式门控。
+- 对额外 LLM 调用实施成本模式门控；
+- 描述 `memory_evolution` 的安全默认、运行模式、队列/租约和读时扩展预算。
 
 本模块**不负责**业务组件初始化、Dashboard HTTP 映射、存储事务、具体记忆检索或 Prompt 清洗。`ConfigManager` 只管理配置状态；API 层负责把 `ConfigConflictError`、`ConfigValidationError` 等映射为响应。Prompt/输出安全规则见 [`../security/AGENTS.md`](../security/AGENTS.md)，注入格式与预算见 [`../utils/AGENTS.md`](../utils/AGENTS.md)。
 
@@ -67,6 +68,10 @@ flowchart LR
 
 ## 配置不变量
 
+- `MemoryEvolutionConfig` 的安全默认是 `enabled=false`、`mode=disabled`；仅设置非 disabled 的 `mode` 不代表启用，运行时 gate 会在 `enabled=false` 时强制归一为 `disabled`。
+- `memory_evolution.mode` 固定为 `disabled / shadow / readonly / active`。`disabled` 不启动 worker；`shadow` 不装配在线 relation/projection 读取器；只有同时显式启用且处于 `readonly` 或 `active` 时才允许装配派生读取器。
+- 演化配置同时约束触发阈值、候选/队列上限、lease 与重试、输入字符数、relation/projection 输出数量和查询扩展预算。修改任一叶子必须同步 `_conf_schema.json`，不能只改运行时字典读取的后备值。
+- `auto_active_relation_types` 默认只包含 `same_episode`、`supports`、`related`；`require_review_for_high_impact=true` 是关系激活安全边界，不得用配置迁移静默关闭。
 - 注入预设等级固定为 `tool_first < low_cost < balanced < quality`；Hybrid 必须满足 `min <= base <= max`。
 - `GraphMemoryConfig` 将文档路/图路权重归一化为总和 `1.0`；非正总和回退为 `0.65/0.35`。
 - `RecallEngineConfig.top_k=0` 是明确的“跳过自动召回和注入”语义；不要把它强制改成正数。
@@ -94,6 +99,7 @@ flowchart LR
 |---|---|
 | 常量、异常、默认配置 | `tests/test_base.py` |
 | Schema 与 Pydantic 默认/范围、Hybrid 顺序、revision、冲突和持久化 | `tests/test_config_contract.py` |
+| Memory Evolution 默认、模式和范围契约 | `tests/test_config_contract.py tests/test_memory_evolution_gate.py` |
 | Dashboard 配置 API 到事务异常的映射 | `tests/test_api_config.py` |
 | 实体 revision 与编辑异常 | `tests/test_entity_editing.py` |
 | 实体调用链集成 | `tests/test_affection_manager.py tests/test_jargon_admin_service.py tests/test_managers_profile.py tests/test_profile_store.py` |
@@ -111,7 +117,8 @@ python -m pytest -q tests/test_cleaners.py tests/test_injection_budget.py tests/
 ## 变更检查清单
 
 1. 配置键是否同时出现在正确 Pydantic 分支和 `_conf_schema.json`，默认值与范围是否一致？
-2. 是否保持点号路径、深拷贝、revision 和乐观并发语义？
-3. 持久化失败、取消及外部并发改写是否仍不会遗留候选配置？
-4. 新公开符号是否从预期入口导出，调用方是否没有依赖未声明的包级导出？
-5. 变更是否越界到 API 映射、业务初始化或安全清洗职责？
+2. `memory_evolution.enabled=false` 是否仍强制安全关闭，四种 mode 的装配边界是否与初始化器一致？
+3. 是否保持点号路径、深拷贝、revision 和乐观并发语义？
+4. 持久化失败、取消及外部并发改写是否仍不会遗留候选配置？
+5. 新公开符号是否从预期入口导出，调用方是否没有依赖未声明的包级导出？
+6. 变更是否越界到 API 映射、业务初始化或安全清洗职责？
