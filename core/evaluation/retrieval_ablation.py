@@ -1,4 +1,4 @@
-"""P2-A 检索组件能力描述和只读消融快照。"""
+"""检索组件能力描述和只读消融快照。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-P2_VARIANT_NAMES = (
+RETRIEVAL_VARIANT_NAMES = (
     "baseline",
     "A",
     "B",
@@ -71,7 +71,7 @@ class RetrievalAblationController:
     def descriptors(self) -> list[dict[str, Any]]:
         """返回 Dashboard 可安全展示的变体能力描述。"""
 
-        return [self._descriptor(name) for name in P2_VARIANT_NAMES]
+        return [self._descriptor(name) for name in RETRIEVAL_VARIANT_NAMES]
 
     def prepare(self, name: str) -> PreparedVariant:
         """创建隔离变体；不可用或构造失败时返回稳定 reason code。"""
@@ -110,7 +110,7 @@ class RetrievalAblationController:
     def _reason_code(self, name: str) -> str:
         """根据实际组件能力判断变体是否可执行。"""
 
-        if name not in P2_VARIANT_NAMES:
+        if name not in RETRIEVAL_VARIANT_NAMES:
             return "unknown_variant"
         if self.engine is None:
             return "missing_engine"
@@ -448,7 +448,7 @@ def _discard_background_work(awaitable: Any) -> None:
 
 
 __all__ = [
-    "P2_VARIANT_NAMES",
+    "RETRIEVAL_VARIANT_NAMES",
     "PreparedVariant",
     "RetrievalAblationController",
 ]

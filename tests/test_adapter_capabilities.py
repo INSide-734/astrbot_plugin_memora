@@ -1,4 +1,4 @@
-"""P1-B Provider、Store 与 Retriever 能力契约回归。"""
+"""Provider、Store 与 Retriever 能力契约回归。"""
 
 from __future__ import annotations
 

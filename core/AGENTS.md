@@ -165,7 +165,7 @@ python -m pytest tests/test_plugin_package_imports.py
 python -m pytest tests/test_plugin_init.py
 python -m pytest tests/test_memory_evolution_gate.py tests/test_memory_evolution_manager.py tests/test_memory_evolution_store.py
 python -m pytest tests/test_derived_relation_expander.py tests/test_projection_reader.py tests/test_dual_route_retriever.py
-python -m pytest tests/test_p1_adapter_capabilities.py tests/test_llm_client.py tests/test_validators.py
+python -m pytest tests/test_adapter_capabilities.py tests/test_llm_client.py tests/test_validators.py
 python -m pytest tests/test_page_api.py tests/test_page_api_contract.py
 ```
 

@@ -72,7 +72,7 @@ class TestNoteStore:
 
     @pytest.mark.asyncio
     async def test_prune_30_updates_capped_at_20(self, tmp_db_path):
-        """P2.4: 30 consecutive updates → max 20 versions retained."""
+        """验证连续更新 30 次时最多保留 20 个版本。"""
         s = NoteStore(tmp_db_path)
         await s.init_table()
         note = await self._create_note(s, "stress", "v1")

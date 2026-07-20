@@ -121,7 +121,7 @@ flowchart LR
 
 ```bash
 python -m pytest tests/test_memory_processor.py tests/test_memory_consolidator.py tests/test_llm_client.py tests/test_json_parser.py tests/test_prompt_builder.py tests/test_conversation_formatter.py tests/test_atom_classifier.py tests/test_text_processor.py tests/test_message_utils.py tests/test_topic_splitter.py tests/test_integration_topic_segmentation.py tests/test_graph_extractor.py tests/test_entity_resolver.py tests/test_contradiction_detector.py tests/test_episode_clusterer.py tests/test_profile_extractor.py tests/test_knowledge_extractor.py tests/test_note_generator.py tests/test_human_like_formatter.py tests/test_chatroom_parser.py -q
-python -m pytest tests/test_p1_adapter_capabilities.py tests/test_llm_client.py -q
+python -m pytest tests/test_adapter_capabilities.py tests/test_llm_client.py -q
 ```
 
 若改变主管道与反思之间的批次/失败契约，另跑：

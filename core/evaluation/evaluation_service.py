@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .report_store import EvaluationReportStore
-from .retrieval_ablation import P2_VARIANT_NAMES, PreparedVariant, RetrievalAblationController
+from .retrieval_ablation import RETRIEVAL_VARIANT_NAMES, PreparedVariant, RetrievalAblationController
 from .retrieval_quality import (
     EvaluationCase,
     EvaluationReport,
@@ -21,7 +21,7 @@ from .retrieval_quality import (
 )
 
 
-_SUPPORTED_VARIANTS = frozenset(P2_VARIANT_NAMES)
+_SUPPORTED_VARIANTS = frozenset(RETRIEVAL_VARIANT_NAMES)
 _METRICS = ("recall_at_k", "mrr", "ndcg_at_k", "p95_latency_ms")
 _CACHE_ATTRS = (
     "_retrieval",

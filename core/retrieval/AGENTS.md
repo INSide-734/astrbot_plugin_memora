@@ -161,7 +161,7 @@ sequenceDiagram
 python -m pytest -q tests/test_bm25_retriever.py tests/test_vector_retriever.py tests/test_hybrid_retriever.py tests/test_rrf_fusion.py tests/test_score_weighting.py tests/test_mmr_reranker.py
 python -m pytest -q tests/test_graph_keyword_retriever.py tests/test_graph_vector_retriever.py tests/test_graph_retriever.py tests/test_dual_route_retriever.py
 python -m pytest -q tests/test_derived_relation_expander.py tests/test_projection_reader.py
-python -m pytest -q tests/test_p1_adapter_capabilities.py tests/test_reranker_factory.py
+python -m pytest -q tests/test_adapter_capabilities.py tests/test_reranker_factory.py
 python -m pytest -q tests/test_query_rewriter.py tests/test_intent_keywords.py tests/test_personalized_ranker.py tests/test_reranker_factory.py tests/test_cross_encoder_reranker.py tests/test_llm_reranker.py
 python -m pytest -q tests/test_atom_retriever.py tests/test_knowledge_retriever.py tests/test_memory_lifecycle.py
 python -m pytest -q tests/test_api_recall_trace.py tests/test_p0_observability_privacy.py tests/test_recall_cost_benchmark.py

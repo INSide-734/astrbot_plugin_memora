@@ -45,7 +45,7 @@ flowchart LR
 
 `EvaluationService` 通过 `RetrievalAblationController` 注册 baseline、A/B/C、chain graph/topic、最终 reranker 和 0/1/2-hop 图邻居变体。`k` 裁剪到 `1..20`；未知数据集被忽略，baseline 不可运行时返回错误且不保存。每个变体复制会被修改的 config、retriever、optimizer 和 cache，Store/索引只读共享；live engine 的配置、缓存和 canonical metadata 不得改变。普通单变体失败只返回稳定 skipped reason 并继续，`asyncio.CancelledError` 传播。
 
-`evaluation/datasets` 返回 `name/available/reason_code/default_selected` descriptor。结果返回 `capability_status/reason_code/effective_settings`；与 baseline 等价、缺少实际组件、运行时 embedding 无有效文档向量或未真实执行目标策略时不得标记 `completed`。现有 `cross_encoder` 实现是 embedding 余弦代理，P2 变体名称固定为 `embedding_similarity`。
+`evaluation/datasets` 返回 `name/available/reason_code/default_selected` descriptor。结果返回 `capability_status/reason_code/effective_settings`；与 baseline 等价、缺少实际组件、运行时 embedding 无有效文档向量或未真实执行目标策略时不得标记 `completed`。现有 `cross_encoder` 实现是 embedding 余弦代理，检索消融变体名称固定为 `embedding_similarity`。
 
 `EvaluationReportStore` 独立于 AstrBot 存储模块，应用 WAL/NORMAL、busy timeout、cache 和 mmap PRAGMA。`evaluation_reports` 保存汇总与完整 payload，`evaluation_cases` 保存逐用例结果并以外键级联；报告 ID 使用毫秒时间与随机后缀。集合和 dataclass 在持久化前转换为稳定 JSON 值。
 
@@ -70,7 +70,7 @@ flowchart LR
 - `tests/evaluation/test_retrieval_quality.py`：fixture 加载、路由元数据、排名指标、正确负例、engine 适配和变体差值。
 - `tests/evaluation/test_evaluation_service.py`：无 AstrBot 导入、报告 round-trip、数据集选择、真实配置键、不可用变体、缓存隔离、baseline 失败与历史对比。
 - `tests/evaluation/test_retrieval_ablation.py`：snapshot 复制、live 回调隔离、能力 descriptor、等价检测、稳定失败与取消传播。
-- `tests/test_p2_graph_hop_ablation.py`、`tests/test_p2_retrieval_ranking.py`：0/1/2 hop、最小图距离和最终 reranker 真实调用路径。
+- `tests/test_graph_hop_ablation.py`、`tests/test_retrieval_ranking.py`：0/1/2 hop、最小图距离和最终 reranker 真实调用路径。
 
 精确验证命令：
 

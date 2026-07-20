@@ -14,7 +14,7 @@ from core.processors.atom_classifier import (
 
 
 class TestQualityFilter:
-    """P0-A + P1-C: 质量过滤 — 置信度/长度/重要性阈值 + 信息量预检."""
+    """验证置信度、长度、重要性阈值和信息量预检。"""
 
     def test_min_confidence_filters_unknown(self):
         """UNKNOWN 类型置信度 0.60，默认 min_confidence=0.65 应被过滤."""

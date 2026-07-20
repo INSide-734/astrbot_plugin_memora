@@ -205,7 +205,7 @@ Browser smoke 通过后仍须人工打开 50 张图片，不能只看 exit code/
 
 - Recall Trace 的 query、会话 ID、用户 ID属于用户主动填写的检索控件；它们不得出现在 trace response、历史 trace、Diagnostics、日志或模型可见 metadata 中。
 - Review Queue 是受控人工复核页面，可以按复核权限显示候选正文和来源；这些字段不得复制到 Recall Trace、Diagnostics、注入观测或模型输入。
-- 当前 smoke 人工复核记录两个 P2 观察项：搜索弹层底部次级文本轻微裁剪，移动端黑话表格需要横向滚动查看得分列。
+- 当前 smoke 人工复核记录两个观察项：搜索弹层底部次级文本轻微裁剪，移动端黑话表格需要横向滚动查看得分列。
 
 1. Graph 画布实际可见且尺寸稳定，不是空白、遮罩或截断。
 2. 移动侧栏、Dialog/Sheet、固定底栏、关闭按钮和背景滚动锁无重叠。

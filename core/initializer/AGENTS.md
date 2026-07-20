@@ -96,7 +96,7 @@ flowchart TD
 
 ```powershell
 python -m pytest tests/test_plugin_init.py tests/test_memory_evolution_gate.py -q
-python -m pytest tests/test_p1_adapter_capabilities.py tests/test_llm_client.py tests/test_validators.py -q
+python -m pytest tests/test_adapter_capabilities.py tests/test_llm_client.py tests/test_validators.py -q
 python -m pytest tests/test_config_contract.py tests/test_api_config.py -q
 ```
 

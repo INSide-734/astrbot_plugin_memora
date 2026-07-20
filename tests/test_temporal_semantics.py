@@ -1,4 +1,4 @@
-"""P1-A 统一时间和历史 as-of 读取回归。"""
+"""统一时间和历史 as-of 读取回归。"""
 
 from __future__ import annotations
 
