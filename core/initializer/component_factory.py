@@ -21,6 +21,7 @@ from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
 from ..storage.memory_evolution_store import MemoryEvolutionStore
+from .derived_rebuild_coordinator import DerivedRebuildCoordinator
 from ..validators.index_validator import IndexValidator
 
 
@@ -170,11 +171,38 @@ class ComponentFactory:
             memory_evolution_consolidator,
             evolution_config,
         )
-        if memory_evolution_manager.mode != "disabled":
-            await memory_evolution_manager.start()
-
+        # CRUD 提交后只注入同一 SQLite 上的派生 Store；canonical 仍由
+        # MemoryEngine/DocumentStorage 唯一写入，避免形成第二套正文权威。
+        memory_engine.memory_evolution_store = memory_evolution_store
+        memory_engine.memory_evolution_manager = memory_evolution_manager
         index_validator = IndexValidator(str(db_path), db)
-        await db_setup.auto_rebuild_index_if_needed(index_validator, memory_engine)
+        derived_rebuild_coordinator = DerivedRebuildCoordinator(
+            index_validator,
+            memory_engine,
+            memory_evolution_manager,
+        )
+        try:
+            await db_setup.auto_rebuild_index_if_needed(
+                index_validator,
+                memory_engine,
+                derived_rebuild_coordinator,
+            )
+
+            # 统一重建完成或安全降级后再启动 worker，避免 worker 与全量派生失效
+            # 同时修改同一批 relation/projection。
+            if memory_evolution_manager.mode != "disabled":
+                await memory_evolution_manager.start()
+        except BaseException:
+            await self._rollback_build_components(
+                None,
+                conversation_store,
+                memory_engine,
+                graph_db,
+                db,
+                memory_evolution_manager,
+                memory_evolution_store,
+            )
+            raise
 
         if memory_engine and hasattr(memory_engine, "text_processor"):
             tp = memory_engine.text_processor

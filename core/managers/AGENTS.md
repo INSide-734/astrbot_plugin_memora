@@ -2,7 +2,7 @@
 
 # Managers 模块上下文
 
-**最后更新：** 2026-07-19
+**最后更新：** 2026-07-20
 **源码范围：** `core/managers/*.py`（40 个 Python 文件）
 
 ## 职责与边界
@@ -38,7 +38,7 @@ graph TD
 
 ### `MemoryEngine`
 
-`memory_engine.py` 通过 `MemoryEngineLifecycleMixin`、`MemoryEngineCRUDMixin`、`MemoryEngineBatchMixin` 组装主入口；包级 `__init__.py` 还导出 `ConversationManager`、`GraphMemoryManager` 和 `create_conversation_manager`。
+`memory_engine.py` 通过 `MemoryEngineLifecycleMixin`、`MemoryEngineEvolutionHooksMixin`、`MemoryEngineCRUDMixin`、`MemoryEngineBatchMixin` 组装主入口；包级 `__init__.py` 还导出 `ConversationManager`、`GraphMemoryManager` 和 `create_conversation_manager`。
 
 | 入口 | 语义 |
 |---|---|
@@ -102,7 +102,8 @@ sequenceDiagram
 `memory_evolution_gate.py`、`memory_evolution_manager.py` 负责 canonical 写入后的派生演化，不替代 `MemoryEngine` 的主写路径：
 
 - `MemoryEvolutionGate` 仅基于 source revision、scope、topic/entity 信号、阈值、去抖桶和待处理上限生成稳定 idempotency key；`enabled=false` 或非法 mode 必须返回 `mode_disabled`。
-- `MemoryEvolutionManager.schedule_consider()` 只在 canonical 写入成功后入队。worker 以单任务循环领取 job，持有可续租 lease；取消会恢复 pending，普通异常按指数退避重试，超过 `max_attempts` 进入 dead，proposal 规则拒绝进入 rejected。
+- `MemoryEvolutionManager.schedule_consider()` 只在 canonical 写入成功后入队，并把创建时 source revision 写入 job provenance。worker 以单任务循环领取 job，持有可续租 lease；领取后先核对 job revision，stale job 进入 invalidated；取消会恢复 pending，普通异常按指数退避重试，超过 `max_attempts` 进入 dead，proposal 规则拒绝进入 rejected。
+- `MemoryEngine` 在 canonical add/语义 metadata update 提交后统一重载 source 并调度；`ReflectionHandler` 仍覆盖反思链兼容调度，重复触发由稳定 idempotency key 去重。派生计划写入 `origin_job_id`，启动时先做 orphan/stale cleanup；回滚 job 只能失效自身派生对象，不能删除 canonical。
 - 处理 proposal 时必须先读取 source，再在应用前重新读取并比较每个 source 的 revision；source 缺失、scope 不一致、alias 未知、自关系、重复/成环边、冲突 Projection 少于三类角色均拒绝，不能污染派生表。
 - 关系按低/高影响分类：低影响且达到阈值的允许按配置自动 `active`，高影响默认 `candidate` 并要求复核；Projection 共享 scope，privacy 取所有 source 中最严格值，状态由置信度和冲突类型决定。
 - Relation/Projection 是 SQLite 中的派生解释平面；稳定 ID 由 source memory ID、revision 和类型计算，但不创建第二套 canonical memory 或向量索引。更新/删除 canonical 后由 Store 的 revision invalidation 隔离旧派生结果。
@@ -128,6 +129,7 @@ sequenceDiagram
 | 知识/笔记 | `knowledge_manager.py`、`note_manager.py` | 知识去重与过期；笔记 CRUD、软删和版本裁剪 |
 | 可靠性 | `write_coordinator.py`、`write_op_*` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复 |
 | 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验及原子应用 |
+| canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |
 | 文件状态 | `auto_learning.py`、`anomaly_detector.py`、`continuity_tracker.py`、`relationship_tracker.py`、`trait_evolution.py`、`weight_learner.py` | JSON 状态属于运行数据，不是配置；加载失败通常降级为空状态 |
 | 备份 | `backup_manager.py`、`backup_models.py`、`backup_snapshot.py` | SQLite 使用 Online Backup API；manifest 保存角色、大小、SHA-256 和 quick check；新恢复使用 `.restore/<operation_id>/restore_plan.json`、`payload/`、`previous/` 事务目录 |
 | 导入导出 | `memory_exporter.py` | JSONL/Markdown 包含正文与 metadata；导入按内容 SHA-256 短哈希去重后重新走 `add_memory` |
@@ -140,7 +142,7 @@ sequenceDiagram
 4. `BackupManager.validate_backup_name()`、备案目录集合和 `relative_to(backups_root)` 共同阻止路径穿越；备份源、manifest 和恢复 payload 还必须拒绝符号链接、绝对路径、分隔符及白名单外文件。不可绕过这些 API 直接拼接路径。
 5. 写日志中的修复载荷和备份目录具有与原始记忆相同的保密级别。不得通过 SSE、诊断 API 或导出默认暴露。
 6. LLM 再巩固和高成本重排会把记忆内容送给配置的 provider；只有在用户授权且 provider 数据策略允许时启用。
-7. Memory Evolution 的 proposal 输入是受长度限制的不可信 evidence；模型输出先由 processor 结构校验，manager 再做 source revision、scope/privacy、role 和影响级别校验。任何 source 证据不得进入模型可见的 Projection metadata。
+7. Memory Evolution 的 proposal 输入是受长度限制的不可信 evidence；模型输出先由 processor 结构校验，manager 再拒绝非 `EvolutionProposal`、超出 `candidate_limit` 或重复 source，并做 source revision、scope/privacy、role 和影响级别校验。任何 source 证据不得进入模型可见的 Projection metadata。
 
 ## 异常规则
 

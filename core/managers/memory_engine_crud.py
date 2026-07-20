@@ -15,6 +15,7 @@ from astrbot.api import logger
 from ..models.recall_strategy import RecallStrategy
 from ..retrieval.rrf_fusion import HybridResult
 from ..utils.number_utils import clamp_float
+from .memory_engine_evolution_hooks import memory_revision
 from .write_op_serialization import serialize_atom_for_repair
 
 
@@ -178,6 +179,7 @@ class MemoryEngineCRUDMixin:
             atoms=atoms,
             duration_s=time.perf_counter() - write_started,
         )
+        await self._schedule_evolution_after_write(doc_id)
         return doc_id
 
     @staticmethod
@@ -467,7 +469,17 @@ class MemoryEngineCRUDMixin:
             if not docs or len(docs) == 0:
                 return None
             doc = docs[0]
-            return {"id": doc["id"], "text": doc["text"], "metadata": doc["metadata"]}
+            result = {
+                "id": doc["id"],
+                "text": doc["text"],
+                "metadata": doc["metadata"],
+            }
+            # Faiss DocumentStorage 会同时返回这两个 canonical 时间字段；
+            # 测试替身或旧后端缺失时保持既有返回形状。
+            for field in ("created_at", "updated_at"):
+                if field in doc:
+                    result[field] = doc[field]
+            return result
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -479,11 +491,38 @@ class MemoryEngineCRUDMixin:
         memory_id: int,
         updates: dict[str, Any],
         skip_graph_reindex: bool = False,
+        expected_revision: str | None = None,
     ) -> bool:
+        """更新 canonical memory，并在需要时执行 source revision 乐观校验。
+
+        ``expected_revision`` 只用于内部受控调用方；缺省时保持既有 API
+        行为。revision 不匹配会以稳定 reason code 记录并返回 ``False``，
+        不会触碰 canonical 正文或任何派生索引。
+        """
+
+        self._last_write_reason_code = None
+        if expected_revision is None and isinstance(updates, dict):
+            embedded_revision = updates.get("expected_revision")
+            if embedded_revision is not None:
+                expected_revision = str(embedded_revision)
+                updates = {
+                    key: value
+                    for key, value in updates.items()
+                    if key != "expected_revision"
+                }
         memory = await self.get_memory(memory_id)
         if not memory:
             logger.error(f"[更新] 记忆不存在 (memory_id={memory_id})")
+            self._last_write_reason_code = "source_not_found"
             return False
+        if expected_revision is not None:
+            current_revision = memory_revision(memory)
+            if not current_revision or current_revision != str(expected_revision):
+                self._last_write_reason_code = "source_revision_mismatch"
+                logger.warning(
+                    f"[更新] source revision 冲突，拒绝覆盖 (memory_id={memory_id})"
+                )
+                return False
         current_metadata = memory.get("metadata", {})
         if isinstance(current_metadata, str):
             try:
@@ -495,6 +534,7 @@ class MemoryEngineCRUDMixin:
         if "content" in updates:
             new_content = updates["content"]
             if not new_content or not new_content.strip():
+                self._last_write_reason_code = "invalid_content"
                 return False
             try:
                 session_id = current_metadata.get("session_id")
@@ -557,6 +597,8 @@ class MemoryEngineCRUDMixin:
                 memory_id, metadata_updates
             )
             if success:
+                await self._invalidate_evolution_after_revision(memory_id)
+                await self._schedule_evolution_after_write(memory_id)
                 self._retrieval.invalidate_cache()
                 if self.graph_memory_manager is not None and not skip_graph_reindex:
                     op_id = await self._write_journal.start_op(
@@ -619,6 +661,7 @@ class MemoryEngineCRUDMixin:
             op_id, "document_deleted", memory_id=memory_id
         )
         needs_repair = await self._delete_sub_resources(memory_id, op_id)
+        await self._invalidate_evolution_after_delete(memory_id)
         if not needs_repair:
             await self._write_journal.advance_op(
                 op_id, "completed", status="completed", memory_id=memory_id

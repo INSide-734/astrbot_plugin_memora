@@ -65,6 +65,17 @@ def test_local_constraints_cover_gate_job_source_and_projection_roles() -> None:
         JobSpec("scope", "bucket", (), "key", datetime(2026, 7, 18, tzinfo=timezone.utc))
     with pytest.raises(ValueError, match="unique"):
         JobSpec("scope", "bucket", (17, 17), "key", datetime(2026, 7, 18, tzinfo=timezone.utc))
+    with pytest.raises(ValueError, match="non-negative integers"):
+        JobSpec("scope", "bucket", (True,), "bool-id", datetime(2026, 7, 18, tzinfo=timezone.utc))
+    with pytest.raises(ValueError, match="reference source_ids"):
+        JobSpec(
+            "scope",
+            "bucket",
+            (17,),
+            "key-with-foreign-revision",
+            datetime(2026, 7, 18, tzinfo=timezone.utc),
+            source_revisions={18: "r18"},
+        )
     with pytest.raises(ValueError, match="evidence length"):
         MemorySourceRef(17, "r1", "scope", "shared", datetime(2026, 7, 18, tzinfo=timezone.utc), "x" * 4001)
     with pytest.raises(ValueError, match="source role"):

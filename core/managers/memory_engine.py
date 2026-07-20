@@ -15,6 +15,7 @@ from typing import Any
 from .maintenance_operations import MaintenanceOperations
 from .memory_engine_batch import MemoryEngineBatchMixin
 from .memory_engine_crud import MemoryEngineCRUDMixin
+from .memory_engine_evolution_hooks import MemoryEngineEvolutionHooksMixin
 from .memory_engine_lifecycle import MemoryEngineLifecycleMixin
 from .retrieval_optimizer import RetrievalOptimizer
 from .schema_manager import SchemaManager
@@ -22,7 +23,10 @@ from .write_op_journal import WriteOpJournal
 
 
 class MemoryEngine(
-    MemoryEngineLifecycleMixin, MemoryEngineCRUDMixin, MemoryEngineBatchMixin
+    MemoryEngineLifecycleMixin,
+    MemoryEngineEvolutionHooksMixin,
+    MemoryEngineCRUDMixin,
+    MemoryEngineBatchMixin,
 ):
     """统一记忆引擎 — 整合多存储后端，提供完整的记忆生命周期管理"""
 
@@ -84,6 +88,10 @@ class MemoryEngine(
         self.reranker = None
         # 性格演化（可选）
         self.trait_tracker = None
+        # 由 ComponentFactory 在 canonical 组件创建完成后注入；为空时不影响主写链。
+        self.memory_evolution_store = None
+        self.memory_evolution_manager = None
+        self._last_write_reason_code = None
         self._last_debug_trace: list[dict[str, Any]] = []
         # 子模块（db_connection 在 initialize 中注入）
         self._retrieval = RetrievalOptimizer(

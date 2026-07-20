@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import random
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -32,6 +33,10 @@ class EvolutionProposalRejected(ValueError):
     """表示 proposal 没有通过确定性安全校验。"""
 
 
+class EvolutionLeaseLost(RuntimeError):
+    """表示当前 worker 已失去 job lease，不能继续写入派生结果。"""
+
+
 class MemoryEvolutionManager:
     """编排本地 evolution job，并把通过校验的 proposal 原子应用到 Store。"""
 
@@ -47,6 +52,15 @@ class MemoryEvolutionManager:
     _LOW_IMPACT = frozenset(
         {RelationType.SAME_EPISODE, RelationType.SUPPORTS, RelationType.RELATED}
     )
+    _SOURCE_INVALIDATION_REASONS = frozenset(
+        {
+            "source_memory_not_found",
+            "source_privacy_mismatch",
+            "source_revision_mismatch",
+            "source_scope_mismatch",
+        }
+    )
+
     def __init__(self, store, gate, consolidator, config: Mapping[str, Any] | None = None):
         self.store = store
         self.gate = gate
@@ -92,7 +106,19 @@ class MemoryEvolutionManager:
         if self.mode == "disabled" or self._worker_task is not None:
             return
         self._stopping = False
-        await self.store.recover_expired_leases(datetime.now(timezone.utc))
+        try:
+            await self.store.cleanup_orphaned_derived()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # 清理属于派生维护；失败时保留 canonical 可读并继续恢复 worker。
+            self._record_reason("orphan_cleanup_failed")
+        try:
+            await self.store.recover_expired_leases(datetime.now(timezone.utc))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._record_reason("lease_recovery_failed")
         self._worker_task = asyncio.create_task(
             self._worker_loop(),
             name="memory-evolution-worker",
@@ -110,7 +136,9 @@ class MemoryEvolutionManager:
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
 
     async def schedule_consider(self, source: MemorySourceRef):
         """在 canonical 写入成功后执行本地 gate 和 job enqueue。"""
@@ -138,6 +166,7 @@ class MemoryEvolutionManager:
                 source_ids=(source.memory_id,),
                 idempotency_key=decision.idempotency_key or "",
                 not_before=datetime.now(timezone.utc),
+                source_revisions={source.memory_id: source.revision_token},
             )
         )
         return decision
@@ -154,11 +183,42 @@ class MemoryEvolutionManager:
             await self.process_claim(claim)
         except asyncio.CancelledError:
             raise
+        except EvolutionLeaseLost:
+            self._record_reason("job_lease_lost")
         except EvolutionProposalRejected as exc:
             reason_code = _reason(exc)
-            await self.store.reject_job(claim.job_id, claim.worker_token, reason_code)
+            if reason_code in {"source_revision_changed", "source_not_found"}:
+                transitioned = await self.store.invalidate_job(
+                    claim.job_id,
+                    claim.worker_token,
+                    reason_code,
+                )
+            else:
+                transitioned = await self.store.reject_job(
+                    claim.job_id,
+                    claim.worker_token,
+                    reason_code,
+                )
+            if not transitioned:
+                self._record_reason("job_lease_lost")
+                return True
             self._rejected += 1
             self._record_reason(reason_code)
+        except ValueError as exc:
+            reason_code = _reason(exc)
+            if reason_code in self._SOURCE_INVALIDATION_REASONS:
+                transitioned = await self.store.invalidate_job(
+                    claim.job_id,
+                    claim.worker_token,
+                    reason_code,
+                )
+                if not transitioned:
+                    self._record_reason("job_lease_lost")
+                    return True
+                self._rejected += 1
+                self._record_reason(reason_code)
+            else:
+                await self._handle_retry(claim, exc)
         except Exception as exc:
             await self._handle_retry(claim, exc)
         return True
@@ -179,7 +239,15 @@ class MemoryEvolutionManager:
                 raise EvolutionProposalRejected("source_not_found")
             if any(source.scope_key != claim.scope_key for source in sources):
                 raise EvolutionProposalRejected("scope_mismatch")
+            if claim.source_revisions:
+                loaded_revisions = {
+                    source.memory_id: source.revision_token for source in sources
+                }
+                if loaded_revisions != claim.source_revisions:
+                    raise EvolutionProposalRejected("source_revision_changed")
             proposal = await self.consolidator.propose(sources)
+            if not isinstance(proposal, EvolutionProposal):
+                raise EvolutionProposalRejected("proposal_schema_invalid")
             fresh_sources = await self.store.load_sources(
                 claim.source_ids,
                 max_content_chars=self.max_input_chars,
@@ -187,11 +255,27 @@ class MemoryEvolutionManager:
             if not _same_source_revisions(sources, fresh_sources):
                 raise EvolutionProposalRejected("source_revision_changed")
             plan = self._proposal_to_plan(proposal, fresh_sources)
+            plan = replace(plan, origin_job_id=claim.job_id)
+            renewed = await self.store.renew_lease(
+                claim.job_id,
+                claim.worker_token,
+                datetime.now(timezone.utc) + timedelta(seconds=self.lease_seconds),
+            )
+            if not renewed:
+                raise EvolutionLeaseLost("job_lease_lost")
             await self.store.apply_derived_plan(plan)
-            await self.store.complete_job(claim.job_id, claim.worker_token)
+            completed = await self.store.complete_job(
+                claim.job_id,
+                claim.worker_token,
+            )
+            if not completed:
+                raise EvolutionLeaseLost("job_lease_lost")
             self._accepted += 1
         except asyncio.CancelledError:
-            await self.store.restore_pending(claim.job_id, claim.worker_token)
+            try:
+                await self.store.restore_pending(claim.job_id, claim.worker_token)
+            except Exception:
+                self._record_reason("cancel_restore_failed")
             raise
         finally:
             renewal_task.cancel()
@@ -209,6 +293,45 @@ class MemoryEvolutionManager:
             if decision.should_enqueue:
                 scheduled += 1
         return scheduled
+
+    async def rebuild_from_canonical(self) -> dict[str, Any]:
+        """失效旧派生并从当前 canonical source revision 重新排队演化任务。
+
+        该协调器只负责清理和排队，不凭空生成 relation/projection。canonical
+        读取失败或派生维护失败时返回稳定降级结果；取消信号仍继续向上传播。
+        """
+
+        try:
+            invalidated = await self.store.invalidate_all_derived()
+            sources = await self.store.load_all_sources(
+                max_content_chars=self.max_input_chars
+            )
+            scheduled = await self.reconcile_recent_sources(sources)
+            return {
+                "success": True,
+                "canonical_sources": len(sources),
+                "scheduled_jobs": scheduled,
+                "relations_invalidated": int(
+                    invalidated.get("relations_invalidated", 0)
+                ),
+                "projections_invalidated": int(
+                    invalidated.get("projections_invalidated", 0)
+                ),
+                "projection_sources_removed": int(
+                    invalidated.get("projection_sources_removed", 0)
+                ),
+                "reason_code": "derived_rebuild_scheduled",
+            }
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._record_reason("derived_rebuild_failed")
+            return {
+                "success": False,
+                "canonical_sources": 0,
+                "scheduled_jobs": 0,
+                "reason_code": "derived_rebuild_failed",
+            }
 
     def get_status_snapshot(self) -> dict[str, Any]:
         """返回不含 query、prompt、正文和身份列表的本地状态快照。"""
@@ -234,7 +357,14 @@ class MemoryEvolutionManager:
 
     async def _worker_loop(self) -> None:
         while not self._stopping:
-            did_work = await self.run_once()
+            try:
+                did_work = await self.run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._record_reason("worker_poll_failed")
+                await asyncio.sleep(self.poll_interval_seconds)
+                continue
             if not did_work:
                 await asyncio.sleep(self.poll_interval_seconds)
 
@@ -254,16 +384,35 @@ class MemoryEvolutionManager:
                 return
 
     async def _handle_retry(self, claim: JobClaim, error: Exception) -> None:
+        reason_code = _reason(error)
+        if not _is_retryable_error(error):
+            transitioned = await self.store.dead_job(
+                claim.job_id,
+                claim.worker_token,
+                reason_code,
+            )
+            if not transitioned:
+                self._record_reason("job_lease_lost")
+                return
+            self._dead += 1
+            self._record_reason(reason_code)
+            return
         if claim.attempt_count >= self.max_attempts:
             reason_code = "max_attempts"
-            await self.store.dead_job(claim.job_id, claim.worker_token, reason_code)
+            transitioned = await self.store.dead_job(
+                claim.job_id,
+                claim.worker_token,
+                reason_code,
+            )
+            if not transitioned:
+                self._record_reason("job_lease_lost")
+                return
             self._dead += 1
             self._record_reason(reason_code)
             return
         delay = self.retry_base_delay_seconds * (2 ** max(0, claim.attempt_count - 1))
         delay += random.uniform(0.0, 1.0)
-        reason_code = _reason(error)
-        await self.store.retry_job(
+        transitioned = await self.store.retry_job(
             claim.job_id,
             claim.worker_token,
             RetrySpec(
@@ -272,6 +421,9 @@ class MemoryEvolutionManager:
                 reason_code,
             ),
         )
+        if not transitioned:
+            self._record_reason("job_lease_lost")
+            return
         self._retry += 1
         self._record_reason(reason_code)
 
@@ -283,6 +435,22 @@ class MemoryEvolutionManager:
         proposal: EvolutionProposal,
         sources: list[MemorySourceRef],
     ) -> DerivedApplyPlan:
+        """将结构化 proposal 转成只包含派生写入的计划。
+
+        该边界拒绝过大的 proposal 和重复 source，避免调用方绕过
+        `MemoryConsolidator` 时静默截断或生成不确定的 source mapping。计划
+        不包含 canonical 正文 mutation；正文修改必须走 `MemoryEngine` 的
+        revision 校验路径。
+        """
+
+        if not isinstance(proposal, EvolutionProposal):
+            raise EvolutionProposalRejected("proposal_schema_invalid")
+        if len(proposal.relations) > self.candidate_limit or len(
+            proposal.projections
+        ) > self.candidate_limit:
+            raise EvolutionProposalRejected("proposal_limit_exceeded")
+        if len({source.memory_id for source in sources}) != len(sources):
+            raise EvolutionProposalRejected("duplicate_source")
         aliases = {f"M{index}": source for index, source in enumerate(sources, start=1)}
         relations: list[RelationView] = []
         projections: list[ProjectionView] = []
@@ -499,6 +667,9 @@ def _reason(error: Exception) -> str:
             "duplicate_or_cycle",
             "duplicate_projection_source",
             "conflict_source_roles",
+            "proposal_schema_invalid",
+            "proposal_limit_exceeded",
+            "duplicate_source",
         }:
             return code
         return "proposal_rejected"
@@ -506,7 +677,26 @@ def _reason(error: Exception) -> str:
         return "provider_timeout"
     if isinstance(error, ConnectionError):
         return "provider_unavailable"
+    if isinstance(error, ValueError):
+        reason_code = str(error)
+        if reason_code in {
+            "source_memory_not_found",
+            "source_privacy_mismatch",
+            "source_revision_mismatch",
+            "source_scope_mismatch",
+        }:
+            return reason_code
+        return "proposal_invalid"
     return "worker_error"
+
+
+def _is_retryable_error(error: Exception) -> bool:
+    """仅允许明确的临时连接或超时错误进入 retry/backoff。"""
+
+    return isinstance(
+        error,
+        (ConnectionError, TimeoutError, asyncio.TimeoutError),
+    )
 
 
 def _as_int(value: Any, default: int) -> int:
@@ -523,4 +713,8 @@ def _as_float(value: Any, default: float) -> float:
         return default
 
 
-__all__ = ["EvolutionProposalRejected", "MemoryEvolutionManager"]
+__all__ = [
+    "EvolutionLeaseLost",
+    "EvolutionProposalRejected",
+    "MemoryEvolutionManager",
+]

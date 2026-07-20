@@ -4,6 +4,7 @@
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from astrbot.core.db.vec_db.faiss_impl.vec_db import FaissVecDB
@@ -227,8 +228,11 @@ class VectorRetriever:
 
             return uuid_doc_id
 
-        except Exception as e:
-            logger.error(f"[UUID查询] 失败 (doc_id={doc_id}): {e}")
+        except Exception as exc:
+            logger.error(
+                "[向量映射查询] 失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
             return None
 
     async def update_metadata(self, doc_id: int, metadata: dict[str, Any]) -> bool:
@@ -255,7 +259,7 @@ class VectorRetriever:
             )
 
             if not docs or len(docs) == 0:
-                logger.warning(f"[元数据更新] 文档不存在 (doc_id={doc_id})")
+                logger.warning("[元数据更新] 文档不存在")
                 return False
 
             doc = docs[0]
@@ -279,25 +283,35 @@ class VectorRetriever:
                 try:
                     from sqlalchemy import text
 
-                    stmt = text("UPDATE documents SET metadata = :metadata WHERE id = :id")
+                    stmt = text(
+                        "UPDATE documents SET metadata = :metadata, "
+                        "updated_at = :updated_at WHERE id = :id"
+                    )
                 except ModuleNotFoundError:
-                    stmt = "UPDATE documents SET metadata = :metadata WHERE id = :id"
+                    stmt = (
+                        "UPDATE documents SET metadata = :metadata, "
+                        "updated_at = :updated_at WHERE id = :id"
+                    )
 
                 await session.execute(
                     stmt,
                     {
                         "metadata": json.dumps(current_metadata, ensure_ascii=False),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
                         "id": doc_id,
                     },
                 )
 
-            logger.debug(f"[元数据更新] 成功 (doc_id={doc_id})")
+            logger.debug("[元数据更新] 成功")
             return True
 
-        except Exception as e:
+        except Exception as exc:
             from astrbot.api import logger
 
-            logger.error(f"[元数据更新] 失败 (doc_id={doc_id}): {e}", exc_info=True)
+            logger.error(
+                "[元数据更新] 失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
             return False
 
     async def delete_document(self, doc_id: int) -> bool:
@@ -317,7 +331,7 @@ class VectorRetriever:
             uuid_doc_id = await self._get_uuid_from_id(doc_id)
 
             if not uuid_doc_id:
-                logger.warning(f"[向量删除] 文档不存在或缺少UUID (doc_id={doc_id})")
+                logger.warning("[向量删除] 文档不存在或缺少 UUID")
                 return False
 
             # 使用 UUID 调用 FaissVecDB.delete()
@@ -327,11 +341,14 @@ class VectorRetriever:
             # 从缓存中移除
             self._id_cache.pop(doc_id, None)
 
-            logger.debug(f"[向量删除] 成功删除 (doc_id={doc_id}, uuid={uuid_doc_id})")
+            logger.debug("[向量删除] 成功")
             return True
 
-        except Exception as e:
+        except Exception as exc:
             from astrbot.api import logger
 
-            logger.error(f"[向量删除] 失败 (doc_id={doc_id}): {e}", exc_info=True)
+            logger.error(
+                "[向量删除] 失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
             return False
