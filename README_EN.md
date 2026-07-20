@@ -215,7 +215,10 @@ python scripts/check_all.py
 | Command | Description |
 |---------|-------------|
 | `/lmem status` | Show plugin readiness and core component status |
+| `/lmem health` | Show the runtime health score, affected domains, and fixed troubleshooting suggestions |
+| `/lmem diagnostics` | Show the live Provider, recall, task, index, and write diagnostics snapshot |
 | `/lmem search <query> [k]` | Search memories, with `k=5` by default |
+| `/lmem trace <query> [k]` | Trace recall stages and scores for the current session without echoing memory bodies in chat |
 | `/lmem forget <doc_id>` | Delete a specific memory |
 | `/lmem rebuild-index` | Rebuild vector/BM25 indexes |
 | `/lmem rebuild-graph` | Rebuild graph-memory indexes |

@@ -9,6 +9,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
 from .base.config_manager import ConfigManager
+from .commands.diagnostic_commands import DiagnosticCommandMixin, DiagnosticProvider
 from .commands.maintenance_commands import MaintenanceCommandMixin
 from .commands.query_commands import QueryCommandMixin
 from .i18n_backend import t, t_list
@@ -17,7 +18,11 @@ from .managers.memory_engine import MemoryEngine
 from .validators.index_validator import IndexValidator
 
 
-class CommandHandler(QueryCommandMixin, MaintenanceCommandMixin):
+class CommandHandler(
+    DiagnosticCommandMixin,
+    QueryCommandMixin,
+    MaintenanceCommandMixin,
+):
     """命令处理器"""
 
     def __init__(
@@ -31,11 +36,14 @@ class CommandHandler(QueryCommandMixin, MaintenanceCommandMixin):
         initialization_status_callback=None,
         summary_window_locker=None,
         write_guard_cb=None,
+        diagnostics_health_provider: DiagnosticProvider | None = None,
+        diagnostics_metrics_provider: DiagnosticProvider | None = None,
+        recall_trace_provider: DiagnosticProvider | None = None,
     ):
         """
         初始化命令处理器
 
-        Args:
+        参数：
             context: AstrBot Context
             config_manager: 配置管理器
             memory_engine: 记忆引擎
@@ -43,6 +51,9 @@ class CommandHandler(QueryCommandMixin, MaintenanceCommandMixin):
             index_validator: 索引验证器
             memory_processor: 记忆处理器（用于手动总结）
             initialization_status_callback: 初始化状态回调函数
+            diagnostics_health_provider: 健康评分异步提供器
+            diagnostics_metrics_provider: 实时指标异步提供器
+            recall_trace_provider: 召回追踪异步提供器
         """
         self.context = context
         self.config_manager = config_manager
@@ -53,6 +64,9 @@ class CommandHandler(QueryCommandMixin, MaintenanceCommandMixin):
         self.get_initialization_status = initialization_status_callback
         self._summary_window_locker = summary_window_locker
         self._write_guard_cb = write_guard_cb
+        self._diagnostics_health_provider = diagnostics_health_provider
+        self._diagnostics_metrics_provider = diagnostics_metrics_provider
+        self._recall_trace_provider = recall_trace_provider
 
     def _maintenance_write_guard_message(self) -> str | None:
         if self._write_guard_cb is None:

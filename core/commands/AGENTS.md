@@ -2,13 +2,13 @@
 
 # `/lmem` 管理命令实现
 
-**最后核对：** 2026-07-17  
+**最后核对：** 2026-07-20
 **组合入口：** `core/command_handler.py::CommandHandler`  
 **路由入口：** `core/command_endpoints.py::CommandEndpointsMixin`
 
 ## 职责边界
 
-本目录仅实现查询与维护命令的两个 mixin。AstrBot 装饰器、管理员权限和就绪门控在 `CommandEndpointsMixin`；依赖注入、手动总结与真实写保护覆盖在 `CommandHandler`；本目录方法负责业务调用、i18n 文本和 `AsyncGenerator[MessageEventResult, None]` 输出。
+本目录实现查询、维护与只读诊断三个命令 mixin。AstrBot 装饰器、管理员权限和就绪门控在 `CommandEndpointsMixin`；依赖注入、手动总结与真实写保护覆盖在 `CommandHandler`；本目录方法负责业务调用、i18n 文本和 `AsyncGenerator[MessageEventResult, None]` 输出。
 
 ```mermaid
 flowchart LR
@@ -17,19 +17,24 @@ flowchart LR
     READY --> CH[CommandHandler]
     CH --> Q[QueryCommandMixin]
     CH --> M[MaintenanceCommandMixin]
+    CH --> D[DiagnosticCommandMixin]
     Q --> ENGINE[MemoryEngine]
     M --> STORE[ConversationManager / IndexValidator]
+    D --> PROVIDERS[Diagnostics / Metrics / Trace 窄提供器]
     CH --> PROC[MemoryProcessor / SummaryWindowLocker]
 ```
 
 ## 权限与端点契约
 
-所有 `/lmem` 子命令都在 `core/command_endpoints.py` 上使用 `@permission_type(PermissionType.ADMIN)`；不要仅在 handler 文档或提示文本中声称管理员权限。`status`、`webui`、`help` 使用 `wait=False` 的非阻塞就绪快照，其余命令等待初始化。
+所有 `/lmem` 子命令都在 `core/command_endpoints.py` 上使用 `@permission_type(PermissionType.ADMIN)`；不要仅在 handler 文档或提示文本中声称管理员权限。`status`、`health`、`diagnostics`、`webui`、`help` 使用 `wait=False` 的非阻塞就绪快照，其余命令等待初始化。
 
 | 子命令 | 实现 | 行为 |
 |---|---|---|
 | `status` | `handle_status` | 记忆总数、session 数、最新更新时间、主 DB 大小 |
+| `health` | `handle_health` | 健康分、本地化等级、异常领域和固定排障建议；不显示原始错误文本 |
+| `diagnostics` | `handle_diagnostics` | Provider、召回、任务、索引、写入和 Prometheus 的实时 allowlist 标量 |
 | `search <query> [k]` | `handle_search` | 以当前 `unified_msg_origin` 检索；`k` 钳制 1–100；显示最终分数和四路评分明细 |
+| `trace <query> [k]` | `handle_trace` | 以当前 session/chat type 执行可解释召回；`k` 钳制 1–20；聊天只显示 ID、评分、阶段和路由 |
 | `forget <doc_id>` | `handle_forget` | 写保护后删除记忆；负 ID 拒绝 |
 | `webui` | `handle_webui` | 返回 i18n WebUI 指引 |
 | `rebuild-index` | `handle_rebuild_index` | 写保护、检查一致性、必要时重建并报告 partial/vector mode/switched |
@@ -46,6 +51,12 @@ flowchart LR
 ### 查询
 
 `status` 和 `search` 要先检查 `memory_engine`。搜索 query 去空白，使用当前 session；展示内容截断到 100 字符，但真实检索结果不在命令层改写。错误通过 `_format_error_message()` 与 i18n suggestions 转为用户消息。
+
+### 只读诊断
+
+`health` 与 `diagnostics` 通过 `main.py` 注入的窄异步提供器复用现有 Page API 计算结果；命令模块不导入 Page API，也不返回 envelope 中的自由文本。`diagnostics` 只格式化固定状态、布尔值、计数和有限浮点数，忽略 Provider 错误、失败任务消息、索引 reason、metric 名称等非 allowlist 字段。
+
+`trace` 传入去空白 query、钳制后的 `k`、当前 `unified_msg_origin` 和消息类型推导的 `chat_type`。群聊必须使用 `group` 以保留机密记忆过滤；命令只预览路由，不执行注入或写 canonical memory。聊天不显示 query、正文预览或任意 metadata，但现有 `RecallTraceStore` 仍按最多 200 条保存包含 query 和最多 160 字正文预览的完整 trace。
 
 ### 维护与清理
 
@@ -75,20 +86,21 @@ flowchart LR
 - 写保护检查异常采用 fail-closed，向管理员返回维护检查失败；不要回退为允许写入。
 - 权限必须保留在装饰器层；输入验证不能代替管理员鉴权。
 - 日志可含 session 与错误类别，但不要输出记忆全文、历史 JSON、凭据或 Provider 配置。
+- `health`、`diagnostics` 和 `trace` 的聊天输出必须从固定 allowlist 组装；不得透传 Page API 错误 message、任务错误、Provider 错误、trace metadata 或记忆正文。
 - 清理历史时只处理 `content` 为字符串的消息，非字符串结构原样保留；不要用宽泛正则跨消息删除。
 
 ## 依赖方向
 
-`command_endpoints` → `CommandHandler` → 本目录 mixin → engine/manager/validator/context。命令不应导入 Page API，也不应直接操作 SQLite。动态注入规则见 [注入模块 AGENTS.md](../injection/AGENTS.md)。
+`command_endpoints` → `CommandHandler` → 本目录 mixin → engine/manager/validator/context 或窄异步提供器。`main.py` 负责从现有 Page API 对象提取健康、指标和 trace callable；命令模块不应导入 Page API，也不应直接操作 SQLite。动态注入规则见 [注入模块 AGENTS.md](../injection/AGENTS.md)。
 
 ## 测试定位与精确验证
 
 ```powershell
 python -m pytest tests/test_command_endpoints.py -q
-python -m pytest tests/test_command_handler.py tests/test_commands.py -q
+python -m pytest tests/test_command_handler.py tests/test_commands.py tests/test_diagnostic_commands.py -q
 ```
 
-重点覆盖：管理员端点委托、阻塞/非阻塞就绪检查、cleanup mode 映射、写保护、索引结果、历史 preview/exec、部分总结写入与窗口锁释放。
+重点覆盖：管理员端点委托、阻塞/非阻塞就绪检查、诊断标量 allowlist、trace scope/隐私输出、取消传播、cleanup mode 映射、写保护、索引结果、历史 preview/exec、部分总结写入与窗口锁释放。
 
 ## 相关上下文
 

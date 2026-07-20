@@ -115,7 +115,10 @@ pip install -r requirements.txt
 | 命令 | 说明 |
 | --- | --- |
 | `/lmem status` | 查看插件初始化与核心组件状态。 |
+| `/lmem health` | 查看运行时健康评分、异常领域与固定排障建议。 |
+| `/lmem diagnostics` | 查看 Provider、召回、任务、索引和写入的实时诊断快照。 |
 | `/lmem search <query> [k]` | 搜索记忆；`k` 默认是 `5`。 |
+| `/lmem trace <query> [k]` | 追踪当前会话召回阶段与评分；`k` 默认是 `5`，聊天中不回显记忆正文。 |
 | `/lmem forget <doc_id>` | 删除指定记忆。 |
 | `/lmem rebuild-index` | 重建向量和 BM25 索引。 |
 | `/lmem rebuild-graph` | 重建图记忆索引。 |
@@ -129,7 +132,10 @@ pip install -r requirements.txt
 
 ```text
 /lmem status
+/lmem health
+/lmem diagnostics
 /lmem search 喜欢的音乐 5
+/lmem trace 喜欢的音乐 5
 ```
 
 ## Dashboard、工具与 API

@@ -119,8 +119,79 @@
     "notice_preview": "这是预演模式，未实际修改数据。使用 /lmem cleanup exec 执行实际清理。",
     "notice_exec": "AstrBot 对话历史已更新，记忆注入片段已清理。"
   },
+  "command_diagnostics": {
+    "component": "运行诊断提供器",
+    "health": {
+      "failed": "获取健康摘要失败。请查看插件日志后重试。",
+      "header": "Memora 健康检查",
+      "score": "健康分: {score}/100",
+      "level": "等级: {level}",
+      "domains_header": "异常领域:",
+      "domain_item": "• {domain}: {status}（{score}/100）",
+      "domains_none": "异常领域: 无",
+      "actions_header": "建议:",
+      "action_item": "• {action}",
+      "levels": {
+        "healthy": "健康",
+        "watch": "关注",
+        "degraded": "降级",
+        "critical": "严重",
+        "info": "信息"
+      },
+      "domains": {
+        "provider": "Provider",
+        "recall": "召回",
+        "write": "写入",
+        "scheduler": "后台任务",
+        "index": "索引",
+        "prometheus": "Prometheus"
+      },
+      "actions": {
+        "provider_critical": "恢复或重新配置 Provider，然后重试初始化。",
+        "provider_watch": "观察 Provider 启动状态并确认上游服务可用。",
+        "recall_degraded": "检查检索、重排和 Provider 响应耗时。",
+        "write_degraded": "检查写协调器错误和存储可用性。",
+        "scheduler_watch": "检查后台任务日志并重试失败的维护任务。",
+        "index_watch": "检查索引校验结果并重建失败条目。"
+      }
+    },
+    "snapshot": {
+      "failed": "获取实时诊断快照失败。请查看插件日志后重试。",
+      "header": "Memora 实时诊断",
+      "provider": "Provider: 状态={status}，尝试={attempts}/{max_attempts}，重试中={retry}",
+      "recall": "召回: 样本={samples}，平均={avg} ms，P50={p50} ms，P95={p95} ms",
+      "tasks": "后台任务: 跟踪={tracked}，运行={active}，完成={completed}，失败={failed}，取消={cancelled}",
+      "index": "索引: 校验器={available}，一致={consistent}，需重建={needs_rebuild}，最近总数={total}，错误={errors}",
+      "write": "写入: 操作={operations}，锁重试={retries}，失败={failures}，致命={fatal}，不可重试={non_retryable}",
+      "prometheus": "Prometheus: 可用={available}，采集器={collectors}",
+      "provider_status": {
+        "ready": "就绪",
+        "waiting": "等待中",
+        "failed": "失败",
+        "unknown": "未知"
+      }
+    },
+    "trace": {
+      "query_empty": "追踪查询不能为空。示例: /lmem trace 喜欢的音乐 5",
+      "failed": "召回追踪失败。请检查插件日志后重试。",
+      "header": "Memora 召回追踪",
+      "id": "Trace ID: {trace_id}",
+      "total": "总耗时: {duration} ms",
+      "stages_header": "阶段:",
+      "stage_item": "• {stage}: {duration} ms，候选={count}",
+      "route": "• 路由预览: 模式={mode}，预设={preset}，原因={reasons}",
+      "filtered": "过滤候选: {count}",
+      "results_header": "结果:",
+      "result_item": "• #{rank} 记忆 ID={doc_id}，初始分={initial}，最终分={final}",
+      "results_none": "结果: 无",
+      "stages": {
+        "search_memories": "记忆检索",
+        "injection_decision": "注入路由决策"
+      }
+    }
+  },
   "help": {
-    "text": "Memora 使用指南\n\n核心指令:\n/lmem status              查看系统状态\n/lmem search <关键词> [数量]  搜索记忆(默认5条)\n/lmem forget <ID>          删除指定记忆\n/lmem rebuild-index       重建索引（修复索引不一致）\n/lmem rebuild-graph       重建图记忆索引（回填旧记忆）\n/lmem webui               查看 WebUI 管理界面入口\n/lmem summarize           立即触发当前会话的记忆总结\n/lmem reset               重置当前会话记忆上下文\n/lmem cleanup [preview|exec] 清理历史消息中的记忆片段(默认preview预演)\n/lmem help                显示此帮助\n\n使用建议:\n• 日常查询使用 search 指令\n• 复杂管理请在 AstrBot 仪表盘中进入 插件 -> Memora -> Pages -> dashboard\n• 记忆会自动保存对话内容\n• 使用 forget 删除敏感信息\n• 索引不一致时执行 rebuild-index\n• 启用图记忆后建议执行 rebuild-graph 回填旧数据\n• 更新插件后建议执行 cleanup 清理旧数据\n\ncleanup 命令示例:\n  /lmem cleanup          # 预演模式,仅显示统计\n  /lmem cleanup preview  # 同上\n  /lmem cleanup exec     # 执行实际清理\n\n更多信息: https://github.com/INSide-734/astrbot_plugin_memora"
+    "text": "Memora 使用指南\n\n核心指令:\n/lmem status              查看系统状态\n/lmem health              查看运行时健康评分\n/lmem diagnostics         查看实时诊断快照\n/lmem search <关键词> [数量]  搜索记忆(默认5条)\n/lmem trace <查询> [数量] 执行当前会话召回追踪(默认5条)\n/lmem forget <ID>          删除指定记忆\n/lmem rebuild-index       重建索引（修复索引不一致）\n/lmem rebuild-graph       重建图记忆索引（回填旧记忆）\n/lmem webui               查看 WebUI 管理界面入口\n/lmem summarize           立即触发当前会话的记忆总结\n/lmem reset               重置当前会话记忆上下文\n/lmem cleanup [preview|exec] 清理历史消息中的记忆片段(默认preview预演)\n/lmem help                显示此帮助\n\n使用建议:\n• 日常查询使用 search 指令\n• 运行异常时先使用 health 和 diagnostics\n• 使用 trace 检查当前会话的召回阶段与评分\n• 复杂管理请在 AstrBot 仪表盘中进入 插件 -> Memora -> Pages -> dashboard\n• 记忆会自动保存对话内容\n• 使用 forget 删除敏感信息\n• 索引不一致时执行 rebuild-index\n• 启用图记忆后建议执行 rebuild-graph 回填旧数据\n• 更新插件后建议执行 cleanup 清理旧数据\n\ncleanup 命令示例:\n  /lmem cleanup          # 预演模式,仅显示统计\n  /lmem cleanup preview  # 同上\n  /lmem cleanup exec     # 执行实际清理\n\n更多信息: https://github.com/INSide-734/astrbot_plugin_memora"
   },
   "init": {
     "ready": "插件已就绪。可使用 /lmem help 查看可用命令。",

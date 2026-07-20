@@ -100,7 +100,7 @@ flowchart LR
 
 以下命令由 `core/command_endpoints.py` 注册；修改命令名或行为时，必须同步 README、CHANGELOG、测试与本页：
 
-`/lmem status`、`/lmem search <query>`、`/lmem forget <id>`、`/lmem rebuild-index`、`/lmem rebuild-graph`、`/lmem webui`、`/lmem summarize`、`/lmem reset`、`/lmem cleanup`、`/lmem help`。
+`/lmem status`、`/lmem health`、`/lmem diagnostics`、`/lmem search <query>`、`/lmem trace <query> [k]`、`/lmem forget <id>`、`/lmem rebuild-index`、`/lmem rebuild-graph`、`/lmem webui`、`/lmem summarize`、`/lmem reset`、`/lmem cleanup`、`/lmem help`。
 
 ## 验证入口
 

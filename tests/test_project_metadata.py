@@ -59,6 +59,9 @@ def test_readme_documents_current_command_set() -> None:
         "summarize",
         "reset",
         "cleanup",
+        "health",
+        "diagnostics",
+        "trace",
         "help",
     ]
 
@@ -92,6 +95,9 @@ def test_localized_readmes_follow_current_command_set_and_version_floor() -> Non
         "/lmem summarize",
         "/lmem reset",
         "/lmem cleanup",
+        "/lmem health",
+        "/lmem diagnostics",
+        "/lmem trace",
         "/lmem help",
     ]
     stale_commands = [
@@ -156,6 +162,9 @@ def test_root_agents_documents_real_commands_and_quality_gate() -> None:
         "summarize",
         "reset",
         "cleanup",
+        "health",
+        "diagnostics",
+        "trace",
         "help",
     ]:
         assert f"/lmem {command}" in agents
@@ -494,6 +503,9 @@ def test_changelog_documents_current_command_set() -> None:
         "/lmem summarize",
         "/lmem reset",
         "/lmem cleanup",
+        "/lmem health",
+        "/lmem diagnostics",
+        "/lmem trace",
         "/lmem help",
     ]
     stale_commands = [

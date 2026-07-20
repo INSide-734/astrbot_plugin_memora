@@ -11,7 +11,7 @@ class CommandEndpointsMixin:
 
     @filter.command_group("lmem")
     def lmem(self):
-        """Long-term memory management command group /lmem"""
+        """长期记忆管理命令组 `/lmem`。"""
         pass
 
     @permission_type(PermissionType.ADMIN)
@@ -32,6 +32,42 @@ class CommandEndpointsMixin:
             yield message
 
     @permission_type(PermissionType.ADMIN)
+    @lmem.command("health", priority=10)
+    async def health(
+        self, event: AstrMessageEvent
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        """[管理员] 显示运行时健康评分。"""
+        ready, message = await self._ensure_plugin_ready(wait=False)
+        if not ready:
+            yield event.plain_result(message)
+            return
+
+        if not self.command_handler:
+            yield event.plain_result(self._command_handler_not_ready_message())
+            return
+
+        async for message in self.command_handler.handle_health(event):
+            yield message
+
+    @permission_type(PermissionType.ADMIN)
+    @lmem.command("diagnostics", priority=10)
+    async def diagnostics(
+        self, event: AstrMessageEvent
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        """[管理员] 显示实时诊断快照。"""
+        ready, message = await self._ensure_plugin_ready(wait=False)
+        if not ready:
+            yield event.plain_result(message)
+            return
+
+        if not self.command_handler:
+            yield event.plain_result(self._command_handler_not_ready_message())
+            return
+
+        async for message in self.command_handler.handle_diagnostics(event):
+            yield message
+
+    @permission_type(PermissionType.ADMIN)
     @lmem.command("search", priority=10)
     async def search(
         self, event: AstrMessageEvent, query: str, k: int = 5
@@ -47,6 +83,24 @@ class CommandEndpointsMixin:
             return
 
         async for message in self.command_handler.handle_search(event, query, k):
+            yield message
+
+    @permission_type(PermissionType.ADMIN)
+    @lmem.command("trace", priority=10)
+    async def trace(
+        self, event: AstrMessageEvent, query: str, k: int = 5
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        """[管理员] 对当前会话执行可解释召回追踪。"""
+        ready, message = await self._ensure_plugin_ready()
+        if not ready:
+            yield event.plain_result(message)
+            return
+
+        if not self.command_handler:
+            yield event.plain_result(self._command_handler_not_ready_message())
+            return
+
+        async for message in self.command_handler.handle_trace(event, query, k):
             yield message
 
     @permission_type(PermissionType.ADMIN)
