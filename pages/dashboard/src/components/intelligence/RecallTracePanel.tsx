@@ -29,25 +29,30 @@ interface RecallTracePanelProps {
 
 const chatTypeOptions = ["private", "group"];
 
+/** 将用户输入钳制到后端允许的整数范围。 */
 function clampNumber(value: number, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
+/** 按当前语言格式化毫秒值。 */
 function formatMs(value: number, locale: string): string {
   return `${formatDashboardNumber(value, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}ms`;
 }
 
+/** 格式化可选分数，缺失时显示安全占位符。 */
 function formatScore(value: number | undefined, locale: string): string {
   return value === undefined
     ? "--"
     : formatDashboardNumber(value, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 }
 
+/** 读取后端安全 DTO 中有界数量的标量 metadata。 */
 function metadataEntries(metadata: Record<string, unknown>, limit = 5) {
   return Object.entries(metadata).slice(0, limit);
 }
 
+/** 展示已经过后端固定 allowlist 过滤的标量。 */
 function MetadataChips({ metadata, limit = 5 }: { metadata: Record<string, unknown>; limit?: number }) {
   const entries = metadataEntries(metadata, limit);
   if (entries.length === 0) return null;
@@ -66,6 +71,7 @@ function MetadataChips({ metadata, limit = 5 }: { metadata: Record<string, unkno
   );
 }
 
+/** 展示不含 canonical memory ID 的单项排名和分数贡献。 */
 function ResultCard({ result }: { result: RecallTraceResult }) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
@@ -75,7 +81,7 @@ function ResultCard({ result }: { result: RecallTraceResult }) {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border-light)] px-4 py-3">
         <div>
           <p className="text-sm font-semibold text-[var(--text-primary)]">
-            #{result.rank} {result.doc_id}
+            #{result.rank}
           </p>
           <p className="mt-1 text-2xs text-[var(--text-tertiary)]">
             {t("intelligence.trace.initialFinal", formatScore(result.initial_score, locale), formatScore(result.final_score, locale))}
@@ -83,45 +89,22 @@ function ResultCard({ result }: { result: RecallTraceResult }) {
         </div>
         <MetadataChips metadata={result.metadata} limit={4} />
       </div>
-      <div className="grid gap-4 p-4 lg:grid-cols-[1.1fr_0.9fr]">
+      <div className="p-4">
         <div>
           <p className="mb-2 text-2xs uppercase text-[var(--text-tertiary)]">{t("intelligence.trace.contributions")}</p>
           <TraceContributionList contributions={result.score_contributions} />
-        </div>
-        <div>
-          <p className="mb-2 text-2xs uppercase text-[var(--text-tertiary)]">{t("intelligence.trace.graphPaths")}</p>
-          {result.graph_paths.length === 0 ? (
-            <p className="text-xs text-[var(--text-tertiary)]">{t("intelligence.trace.noGraphProvenance")}</p>
-          ) : (
-            <div className="space-y-2">
-              {result.graph_paths.map((path, index) => (
-                <div
-                  key={`${result.doc_id}-path-${index}`}
-                  className="rounded-lg border border-[var(--color-border-light)] bg-[var(--color-surface)] p-2.5"
-                >
-                  <p className="text-xs text-[var(--text-primary)]">{path.nodes.join(" -> ")}</p>
-                  <p className="mt-1 text-2xs text-[var(--text-tertiary)]">
-                    {path.edges.join(" / ")} · {t("intelligence.trace.scoreValue", formatScore(path.score, locale))}
-                  </p>
-                  <div className="mt-2">
-                    <MetadataChips metadata={path.metadata} limit={3} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     </article>
   );
 }
 
+/** 展示不含候选 ID 的过滤原因、阶段和分数。 */
 function FilteredCandidateRow({ item }: { item: RecallTraceFilteredCandidate }) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
   return (
     <tr className="border-t border-[var(--color-border-light)]">
-      <td className="px-4 py-2 font-medium text-[var(--text-primary)]">{item.doc_id}</td>
       <td className="px-4 py-2 text-[var(--text-secondary)]">
         {translateEnum(t, "intelligence.trace.filterReason", item.reason, item.reason)}
       </td>
@@ -133,6 +116,7 @@ function FilteredCandidateRow({ item }: { item: RecallTraceFilteredCandidate }) 
   );
 }
 
+/** 提供只读召回追踪输入与隐私安全结果视图。 */
 export function RecallTracePanel({
   navigationTarget,
   showToast,
@@ -345,7 +329,7 @@ export function RecallTracePanel({
             </div>
 
             <div className="space-y-3">
-              {trace.results.map((result) => <ResultCard key={result.doc_id} result={result} />)}
+              {trace.results.map((result) => <ResultCard key={result.rank} result={result} />)}
             </div>
 
             <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]">
@@ -360,14 +344,18 @@ export function RecallTracePanel({
                   <table className="min-w-[520px] w-full text-left text-xs">
                     <thead className="text-[var(--text-tertiary)]">
                       <tr>
-                        <th className="px-4 py-2 font-medium">{t("intelligence.trace.table.doc")}</th>
                         <th className="px-4 py-2 font-medium">{t("intelligence.trace.table.reason")}</th>
                         <th className="px-4 py-2 font-medium">{t("intelligence.trace.table.stage")}</th>
                         <th className="px-4 py-2 text-right font-medium">{t("intelligence.trace.table.score")}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {trace.filtered.map((item) => <FilteredCandidateRow key={`${item.doc_id}-${item.reason}`} item={item} />)}
+                      {trace.filtered.map((item, index) => (
+                        <FilteredCandidateRow
+                          key={`${item.reason}-${item.stage ?? "none"}-${index}`}
+                          item={item}
+                        />
+                      ))}
                     </tbody>
                   </table>
                 </div>

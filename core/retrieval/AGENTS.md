@@ -2,8 +2,8 @@
 
 # Retrieval 模块上下文
 
-**最后更新：** 2026-07-19
-**源码范围：** `core/retrieval/*.py`（25 个 Python 文件）
+**最后更新：** 2026-07-20
+**源码范围：** `core/retrieval/*.py`（28 个 Python 文件）
 
 ## 职责与边界
 
@@ -126,19 +126,19 @@ sequenceDiagram
 
 ## 可解释召回与追踪
 
-`capture_explainable_recall()` 调用 `engine.search_memories(trace_debug=True)`，记录搜索与注入决策阶段，并可交给 `RecallTraceStore` 保存。
+`capture_explainable_recall()` 调用 `engine.search_memories(trace_debug=True)`，内部可使用候选 ID、正文预览和请求上下文计算路由信号，但 `RecallTrace.to_dict()` 在保存与返回前统一调用 `sanitize_trace_payload()`。内部调试模型不是持久化或 API 契约。
 
-- 结果 metadata 使用允许列表：memory type、importance、status、create time、canonical summary、source type；正文仅保留 160 字符 preview，字符串/列表/dict/递归深度均有上限。
-- `password/passwd/secret/token/credential/auth` 等键片段以及 content、text、user/session/raw/private 等敏感键会被 `_bounded_value()` 过滤。
-- request metadata 排除 query 本身，但仍可能包含经过有界化的 persona/user/session 等请求字段；trace API 仍必须鉴权。
-- `RecallTraceStore` 使用内存 `OrderedDict` 和可选 SQLite，按 `retention_count` 裁剪；持久化 payload 不是匿名统计。
+- 安全 DTO 只保留 trace 关联码、总耗时、已知阶段及其耗时/计数/路由枚举、无 canonical ID 的 rank/score、受限贡献标量、有限 memory type/status/source type，以及无候选 ID 的过滤原因/阶段/分数。
+- query、prompt、正文/preview/summary、canonical `doc_id`、图路径、贡献 explanation、request metadata、session/persona/user ID、source mapping、revision、scope/privacy/role/job 信息和任意 metadata 都不得持久化或返回。
+- `RecallTraceStore` 使用内存 `OrderedDict` 和可选 SQLite，按 `retention_count` 裁剪；新写入、缓存载入、列表与详情读取都重新执行 sanitizer，因此旧数据库 payload 也不能绕过当前 allowlist。
+- API 普通失败只返回稳定错误码并记录异常类型；`asyncio.CancelledError` 仍按协程取消语义传播。
 
 ## 生命周期与异常语义
 
 `MemoryLifecycleManager` 负责文档路三存储同步：
 
 - 添加：先向量/DocumentStorage 取得 `doc_id`，再写 BM25；BM25 失败时尝试删除向量回滚。
-- metadata 更新：向量层负责同步 DocumentStorage，随后 BM25 更新；失败返回 `False`。
+- metadata 更新：向量层负责同步 DocumentStorage，并推进 `documents.updated_at` 作为 source revision，随后 BM25 更新；失败返回 `False`。
 - 删除：按 BM25 → 向量/DocumentStorage 删除；后续失败时尝试恢复 BM25。
 
 这仍不是跨文件 ACID 事务；上层 `WriteOpJournal` 才负责更完整的跨存储恢复。
@@ -161,17 +161,17 @@ python -m pytest -q tests/test_graph_keyword_retriever.py tests/test_graph_vecto
 python -m pytest -q tests/test_derived_relation_expander.py tests/test_projection_reader.py
 python -m pytest -q tests/test_query_rewriter.py tests/test_intent_keywords.py tests/test_personalized_ranker.py tests/test_reranker_factory.py tests/test_cross_encoder_reranker.py tests/test_llm_reranker.py
 python -m pytest -q tests/test_atom_retriever.py tests/test_knowledge_retriever.py tests/test_memory_lifecycle.py
-python -m pytest -q tests/test_api_recall_trace.py tests/test_recall_cost_benchmark.py
+python -m pytest -q tests/test_api_recall_trace.py tests/test_p0_observability_privacy.py tests/test_recall_cost_benchmark.py
 python -m pytest -q tests/test_emotion_scorer.py tests/test_seasonal_recall.py
 ```
 
-本次文档迁移不运行测试。隐私、路由或重排改动至少运行 `test_dual_route_retriever.py`、相应重排测试和 `test_api_recall_trace.py`。
+隐私、路由或重排改动至少运行 `test_dual_route_retriever.py`、相应重排测试、`test_api_recall_trace.py` 和 `test_p0_observability_privacy.py`。
 
 ## 依赖方向与改动守则
 
 - 允许：`retrieval → models/processors/storage/utils/base`；`managers → retrieval`。
 - 禁止 `retrieval` 直接调用 handler/page API 或启动 scheduler。
 - 新检索路必须定义：ID 空间、scope 过滤、失败降级、分数归一化、删除/更新同步和敏感数据边界。
-- 新增 trace 字段必须先进入显式允许列表并设置长度/深度界限；绝不直接持久化原始 metadata。
+- 新增 trace 字段必须先进入显式低基数允许列表；绝不直接持久化原始 metadata、任意文本、业务 ID 或列表。
 - 更改评分公式时同步更新 `score_breakdown`、路由测试和 benchmark；不要只改最终排序。
 - 新增外部 provider 调用必须接入成本控制，并明确哪些用户数据离开本地边界。

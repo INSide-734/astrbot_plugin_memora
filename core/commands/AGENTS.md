@@ -34,7 +34,7 @@ flowchart LR
 | `health` | `handle_health` | 健康分、本地化等级、异常领域和固定排障建议；不显示原始错误文本 |
 | `diagnostics` | `handle_diagnostics` | Provider、召回、任务、索引、写入和 Prometheus 的实时 allowlist 标量 |
 | `search <query> [k]` | `handle_search` | 以当前 `unified_msg_origin` 检索；`k` 钳制 1–100；显示最终分数和四路评分明细 |
-| `trace <query> [k]` | `handle_trace` | 以当前 session/chat type 执行可解释召回；`k` 钳制 1–20；聊天只显示 ID、评分、阶段和路由 |
+| `trace <query> [k]` | `handle_trace` | 以当前 session/chat type 执行可解释召回；`k` 钳制 1–20；聊天只显示 trace 关联码、排名、评分、阶段和路由 |
 | `forget <doc_id>` | `handle_forget` | 写保护后删除记忆；负 ID 拒绝 |
 | `webui` | `handle_webui` | 返回 i18n WebUI 指引 |
 | `rebuild-index` | `handle_rebuild_index` | 写保护、检查一致性、必要时重建并报告 partial/vector mode/switched |
@@ -56,7 +56,7 @@ flowchart LR
 
 `health` 与 `diagnostics` 通过 `main.py` 注入的窄异步提供器复用现有 Page API 计算结果；命令模块不导入 Page API，也不返回 envelope 中的自由文本。`diagnostics` 只格式化固定状态、布尔值、计数和有限浮点数，忽略 Provider 错误、失败任务消息、索引 reason、metric 名称等非 allowlist 字段。
 
-`trace` 传入去空白 query、钳制后的 `k`、当前 `unified_msg_origin` 和消息类型推导的 `chat_type`。群聊必须使用 `group` 以保留机密记忆过滤；命令只预览路由，不执行注入或写 canonical memory。聊天不显示 query、正文预览或任意 metadata，但现有 `RecallTraceStore` 仍按最多 200 条保存包含 query 和最多 160 字正文预览的完整 trace。
+`trace` 传入去空白 query、钳制后的 `k`、当前 `unified_msg_origin` 和消息类型推导的 `chat_type`。群聊必须使用 `group` 以保留机密记忆过滤；命令只预览路由，不执行注入或写 canonical memory。聊天和 `RecallTraceStore` 都不保留 query、正文预览、canonical memory ID、候选 ID、身份或任意 metadata；命令结果只从安全 DTO 提取 trace 关联码、耗时、阶段计数、排名、分数与固定路由字段。
 
 ### 维护与清理
 
@@ -85,7 +85,7 @@ flowchart LR
 - 待恢复备份存在时，`forget`、重建、`reset`、`cleanup exec`、`summarize` 均拒绝写入。`cleanup preview` 是只读扫描，允许执行。
 - 写保护检查异常采用 fail-closed，向管理员返回维护检查失败；不要回退为允许写入。
 - 权限必须保留在装饰器层；输入验证不能代替管理员鉴权。
-- 日志可含 session 与错误类别，但不要输出记忆全文、历史 JSON、凭据或 Provider 配置。
+- 日志只记录固定阶段和错误类别，不得记录 session、用户/群组/消息/记忆 ID、正文、历史 JSON、凭据、Provider 配置、异常消息或堆栈。
 - `health`、`diagnostics` 和 `trace` 的聊天输出必须从固定 allowlist 组装；不得透传 Page API 错误 message、任务错误、Provider 错误、trace metadata 或记忆正文。
 - 清理历史时只处理 `content` 为字符串的消息，非字符串结构原样保留；不要用宽泛正则跨消息删除。
 

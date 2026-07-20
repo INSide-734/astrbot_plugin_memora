@@ -32,7 +32,7 @@
 | `src/components/system/` | 系统观测、委托与质量管理 |
 | `src/hooks/` | 主题、i18n、SSE、编辑、配置同步及各资源数据流 |
 | `src/lib/` | bridge、导航、i18n、常量和纯工具 |
-| `src/mock/` | browser/runtime smoke 的确定性 bridge 与三语言模拟数据 |
+| `src/mock/` | browser/runtime smoke 的确定性 bridge 与三语言模拟数据；Recall Trace 响应由 `recallTrace.ts` 构造安全 DTO，超长 `server.ts` 只保留路由委托，禁止重新内联 query、正文、身份、canonical ID 或 provenance |
 | `src/types/` | 页面、API、编辑和领域类型 |
 | `src/index.css` | shadcn 语义 token、亮暗主题、Geist 和旧 token 兼容别名 |
 | `scripts/` | runtime/browser smoke、helper 与截图基线断言 |
@@ -189,16 +189,20 @@ npx vitest run --environment jsdom src/pages/SystemPage.test.tsx src/mock/server
 
 行为变更先写能失败的 Vitest + React Testing Library 测试。构建不能替代 runtime smoke，runtime smoke 不能替代真实 Playwright browser smoke；仓库级 `python scripts/check_all.py` 是最终门禁，不是开发时缩小反馈环的替代品。
 
-## Browser smoke 与 40 张截图
+## Browser smoke 与 49 张截图
 
-`scripts/browser_smoke.mjs` 在桌面 1366×900、移动 390×844、宽屏 2048×1152 下验证页面，并覆盖暗色、zh/en/ru、Graph、全局搜索、编辑/配置 revision 冲突、确认流程、横向溢出、加载稳定性和控制台/page error。脚本定义的 40 张基线全部必须生成、尺寸匹配且超过最低字节阈值：
+`scripts/browser_smoke.mjs` 在桌面 1366×900、移动 390×844、宽屏 2048×1152 下验证页面，并覆盖暗色、zh/en/ru、Graph、全局搜索、编辑/配置 revision 冲突、确认流程、横向溢出、加载稳定性和控制台/page error。脚本定义的 49 张基线全部必须生成、尺寸匹配且超过最低字节阈值：
 
 - 配置/注入/搜索（10）：`config.png`、`config-conflict.png`、`mobile-config.png`、`injection-overview.png`、`injection-config-conflict.png`、`injection-decisions.png`、`mobile-injection-detail.png`、`wide-injection-overview.png`、`global-search-scroll.png`、`global-search-memory-target.png`。
 - 主要页面/智能控制台（11）：`graph.png`、`memory.png`、`system.png`、`jargon.png`、`intelligence-evaluation.png`、`intelligence-trace.png`、`intelligence-diagnostics.png`、`intelligence-review.png`、`mobile-system.png`、`mobile-jargon.png`、`system-confirmation.png`。
 - 主题/预览/宽屏（9）：`dark-learning.png`、`dark-system.png`、`preview.png`、`mobile-preview.png`、`dark-preview.png`、`wide-preview.png`、`wide-learning.png`、`wide-affection.png`、`wide-social.png`。
 - i18n/编辑（10）：`i18n-en-preview.png`、`i18n-en-memory.png`、`i18n-ru-preview.png`、`i18n-ru-memory.png`、`editing-social-sheet.png`、`editing-social-conflict.png`、`editing-error-summary.png`、`editing-batch-toolbar.png`、`editing-mobile-affection.png`、`editing-mobile-mood.png`。
 
-Browser smoke 通过后仍须人工打开 40 张图片，不能只看 exit code/字节数。重点检查：
+Browser smoke 通过后仍须人工打开 49 张图片，不能只看 exit code/字节数。重点检查：
+
+- Recall Trace 的 query、会话 ID、用户 ID属于用户主动填写的检索控件；它们不得出现在 trace response、历史 trace、Diagnostics、日志或模型可见 metadata 中。
+- Review Queue 是受控人工复核页面，可以按复核权限显示候选正文和来源；这些字段不得复制到 Recall Trace、Diagnostics、注入观测或模型输入。
+- 当前 smoke 人工复核记录两个 P2 观察项：搜索弹层底部次级文本轻微裁剪，移动端黑话表格需要横向滚动查看得分列。
 
 1. Graph 画布实际可见且尺寸稳定，不是空白、遮罩或截断。
 2. 移动侧栏、Dialog/Sheet、固定底栏、关闭按钮和背景滚动锁无重叠。

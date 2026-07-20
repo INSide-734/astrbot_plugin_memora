@@ -26,7 +26,19 @@ _PROVIDER_STATUSES = frozenset({"ready", "waiting", "failed", "unknown"})
 _TRACE_STAGES = frozenset({"search_memories", "injection_decision"})
 _ROUTING_MODES = frozenset({"auto", "manual", "hybrid"})
 _PRESETS = frozenset({"tool_first", "low_cost", "balanced", "quality"})
-_TRACE_REASON_CODES = frozenset({"AUTO_FALLBACK", "INVALID_CONFIG_FALLBACK"})
+_TRACE_REASON_CODES = frozenset(
+    {
+        "AUTO_FALLBACK",
+        "AUTO_HISTORY_INTENT",
+        "AUTO_LOW_CONTEXT_HEADROOM",
+        "AUTO_MEMORY_UNCERTAIN",
+        "HYBRID_CLAMPED_MAX",
+        "HYBRID_CLAMPED_MIN",
+        "INVALID_CONFIG_FALLBACK",
+        "MANUAL_SELECTED",
+        "PROVIDER_TOOL_UNAVAILABLE",
+    }
+)
 
 _ACTION_KEYS = {
     ("provider", "critical"): "command_diagnostics.health.actions.provider_critical",
@@ -69,7 +81,6 @@ class DiagnosticCommandMixin:
             logger.error(
                 "[诊断命令] 获取健康摘要失败，异常类型=%s",
                 exc.__class__.__name__,
-                exc_info=True,
             )
             yield event.plain_result(t("command_diagnostics.health.failed"))
 
@@ -97,7 +108,6 @@ class DiagnosticCommandMixin:
             logger.error(
                 "[诊断命令] 获取实时诊断快照失败，异常类型=%s",
                 exc.__class__.__name__,
-                exc_info=True,
             )
             yield event.plain_result(t("command_diagnostics.snapshot.failed"))
 
@@ -141,7 +151,6 @@ class DiagnosticCommandMixin:
             logger.error(
                 "[诊断命令] 执行召回追踪失败，异常类型=%s",
                 exc.__class__.__name__,
-                exc_info=True,
             )
             yield event.plain_result(t("command_diagnostics.trace.failed"))
 
@@ -341,32 +350,30 @@ class DiagnosticCommandMixin:
 
     @classmethod
     def _format_trace_route(cls, value: Any) -> str:
+        """格式化固定枚举的路由预览，不透传任意 metadata。"""
         metadata = cls._safe_mapping(value)
         routing_mode = cls._safe_choice(metadata.get("routing_mode"), _ROUTING_MODES, "")
         preset = cls._safe_choice(metadata.get("resolved_preset"), _PRESETS, "")
-        reason_codes = cls._safe_reason_codes(metadata.get("reason_codes"))
+        reason_code = cls._safe_reason_code(metadata.get("reason_code"))
         return t(
             "command_diagnostics.trace.route",
             mode=routing_mode or t("common.none"),
             preset=preset or t("common.none"),
-            reasons=", ".join(reason_codes) or t("common.none"),
+            reasons=reason_code or t("common.none"),
         )
 
     @classmethod
     def _format_trace_results(cls, value: Any, limit: int) -> list[str]:
+        """格式化无 canonical memory ID 的排名和分数。"""
         results = value if isinstance(value, list) else []
         formatted_results: list[str] = []
         for index, item in enumerate(results[:limit], start=1):
             if not isinstance(item, Mapping):
                 continue
-            doc_id = cls._safe_nonnegative_int(item.get("doc_id"))
-            if doc_id is None:
-                continue
             formatted_results.append(
                 t(
                     "command_diagnostics.trace.result_item",
                     rank=cls._clamp_int(item.get("rank"), 1, limit, index),
-                    doc_id=doc_id,
                     initial=cls._number_text(item.get("initial_score")),
                     final=cls._number_text(item.get("final_score")),
                 )
@@ -417,16 +424,6 @@ class DiagnosticCommandMixin:
         return max(minimum, min(maximum, parsed))
 
     @staticmethod
-    def _safe_nonnegative_int(value: Any) -> int | None:
-        if isinstance(value, bool):
-            return None
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return None
-        return parsed if parsed >= 0 else None
-
-    @staticmethod
     def _number_text(value: Any) -> str:
         if isinstance(value, bool):
             return t("common.none")
@@ -452,14 +449,9 @@ class DiagnosticCommandMixin:
         return trace_id if _TRACE_ID_PATTERN.fullmatch(trace_id) else t("common.none")
 
     @staticmethod
-    def _safe_reason_codes(value: Any) -> list[str]:
-        if not isinstance(value, list):
-            return []
-        return [
-            item
-            for item in value[:5]
-            if isinstance(item, str) and item in _TRACE_REASON_CODES
-        ]
+    def _safe_reason_code(value: Any) -> str:
+        """只返回允许列表中的单个路由原因码。"""
+        return value if isinstance(value, str) and value in _TRACE_REASON_CODES else ""
 
 
 __all__ = ["DiagnosticCommandMixin", "DiagnosticProvider"]

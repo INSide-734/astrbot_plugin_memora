@@ -5,7 +5,9 @@
 ## 入口
 
 - `runtime_smoke.mjs`：验证生产 bundle 在宿主 bridge/mock 下能启动并完成关键加载。
-- `browser_smoke.mjs`：Playwright 桌面、移动和宽屏导航、交互、溢出、控制台错误与 40 张截图基线。
+- `browser_smoke.mjs`：Playwright 桌面、移动和宽屏导航、交互、溢出、控制台错误与 49 张截图基线。
+- `config_smoke_fixture.mjs`：读取根 `_conf_schema.json`，为非宿主 browser smoke bridge 提供 schema、revision conflict 和 reload 生命周期；不得复制第二份手写 schema。
+- `recall_trace_smoke_fixture.mjs`：为 browser smoke 提供与生产 API 一致的安全 Recall Trace DTO；对应测试禁止 query、正文、身份、canonical ID、source/job metadata 和 explanation。
 - `*_helpers.mjs`：无副作用的等待、导航、截图和断言辅助；对应 `.test.mjs` 做单元验证。
 
 ## 约束

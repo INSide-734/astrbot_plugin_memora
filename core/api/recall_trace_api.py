@@ -1,4 +1,4 @@
-"""Explainable recall trace API."""
+"""隐私安全的可解释召回追踪 API。"""
 
 from __future__ import annotations
 
@@ -17,22 +17,24 @@ from ..retrieval.trace_store import RecallTraceStore
 
 
 class RecallTraceApiMixin:
-    """Mixin for recall trace capture and lookup endpoints."""
+    """提供安全 Recall Trace 捕获和详情查询端点。"""
 
     async def test_recall_with_trace(self):
+        """解析当前 JSON 请求并执行一次只读召回追踪。"""
         payload = await request.get_json(silent=True) or {}
         if not isinstance(payload, dict):
-            return self._error("请求体必须为 JSON 对象")
+            return self._error("invalid_request")
         return await self.test_recall_with_trace_payload(payload)
 
     async def test_recall_with_trace_payload(self, payload: dict[str, Any]):
+        """使用已解析参数捕获并返回安全 trace DTO。"""
         engine = self._get_trace_memory_engine()
         if engine is None:
-            return self._error("MemoryEngine unavailable")
+            return self._error("memory_engine_unavailable")
 
         query = str(payload.get("query", "") or "").strip()
         if not query:
-            return self._error("查询内容不能为空")
+            return self._error("query_required")
 
         params = self._build_trace_request_params(payload, query)
         try:
@@ -44,28 +46,37 @@ class RecallTraceApiMixin:
                 routing_config=self._trace_routing_config(),
             )
         except Exception as exc:
-            logger.error("[RecallTraceApi] traced recall failed: %s", exc, exc_info=True)
-            return self._error(str(exc))
+            logger.error(
+                "[召回追踪接口] 执行召回追踪失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return self._error("recall_trace_failed")
         return self._ok(trace)
 
     async def get_recall_trace_detail(self):
+        """从当前请求参数读取一条安全 trace 详情。"""
         return await self.get_recall_trace_detail_payload(dict(request.args or {}))
 
     async def get_recall_trace_detail_payload(self, payload: dict[str, Any]):
+        """按观测关联码读取安全 trace 详情。"""
         trace_id = str(payload.get("trace_id", "") or "").strip()
         if not trace_id:
-            return self._error("trace_id is required")
+            return self._error("trace_id_required")
         try:
             store = await self._get_recall_trace_store()
             trace = await store.get_trace(trace_id)
         except Exception as exc:
-            logger.error("[RecallTraceApi] get trace detail failed: %s", exc, exc_info=True)
-            return self._error(str(exc))
+            logger.error(
+                "[召回追踪接口] 获取详情失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return self._error("recall_trace_detail_failed")
         if trace is None:
-            return self._error("Recall trace not found")
+            return self._error("recall_trace_not_found")
         return self._ok(trace)
 
     def _get_trace_memory_engine(self):
+        """从插件初始化器读取当前 MemoryEngine。"""
         try:
             initializer = getattr(self.plugin, "initializer", None)
             return getattr(initializer, "memory_engine", None)
@@ -77,6 +88,7 @@ class RecallTraceApiMixin:
         payload: dict[str, Any],
         query: str,
     ) -> dict[str, Any]:
+        """规范化只供搜索使用且不会写入 trace 的请求参数。"""
         params: dict[str, Any] = {
             "query": query,
             "k": self._coerce_trace_k(payload.get("k", 5)),
@@ -101,6 +113,7 @@ class RecallTraceApiMixin:
 
     @staticmethod
     def _coerce_trace_k(value: Any) -> int:
+        """把召回数量钳制到 1～20。"""
         if isinstance(value, bool):
             return 5
         try:
@@ -111,6 +124,7 @@ class RecallTraceApiMixin:
 
     @staticmethod
     def _coerce_nonnegative_int(value: Any, default: int) -> int:
+        """规范化非负整数参数。"""
         if isinstance(value, bool):
             return default
         try:
@@ -121,6 +135,7 @@ class RecallTraceApiMixin:
 
     @staticmethod
     def _coerce_optional_list(value: Any) -> list[Any] | None:
+        """把可选集合或逗号文本规范化为列表。"""
         if value is None:
             return None
         if isinstance(value, list):
@@ -133,6 +148,7 @@ class RecallTraceApiMixin:
 
     @staticmethod
     def _coerce_recall_strategy(value: Any) -> RecallStrategy | None:
+        """把允许值转换为 RecallStrategy 枚举。"""
         if value is None or isinstance(value, bool):
             return None
         if isinstance(value, RecallStrategy):
@@ -143,6 +159,7 @@ class RecallTraceApiMixin:
             return None
 
     def _trace_routing_config(self) -> InjectionRoutingConfig:
+        """从现有配置构建只读路由预览参数。"""
         config_manager = getattr(self.plugin, "config_manager", None)
         get = getattr(config_manager, "get", None)
         if not callable(get):
@@ -200,6 +217,7 @@ class RecallTraceApiMixin:
             return InjectionRoutingConfig(invalid_config_fallback=True)
 
     async def _get_recall_trace_store(self) -> RecallTraceStore:
+        """懒加载安全 Recall Trace Store。"""
         store = getattr(self, "_recall_trace_store", None)
         if store is not None:
             return store
@@ -215,6 +233,7 @@ class RecallTraceApiMixin:
         return store
 
     def _recall_trace_db_path(self) -> Path | None:
+        """返回插件隔离数据库路径；缺少数据目录时只使用内存。"""
         initializer = getattr(self.plugin, "initializer", None)
         data_dir = getattr(initializer, "data_dir", None)
         if data_dir:

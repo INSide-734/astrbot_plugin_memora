@@ -243,7 +243,8 @@ class TestTraceCommand:
         )
 
     @pytest.mark.asyncio
-    async def test_outputs_ids_scores_and_stage_summary_without_content(self) -> None:
+    async def test_outputs_scores_and_stage_summary_without_ids_or_content(self) -> None:
+        """命令输出应保留排名和分数，但隐藏 memory ID 与敏感正文。"""
         provider = AsyncMock(
             return_value={
                 "status": "ok",
@@ -265,7 +266,7 @@ class TestTraceCommand:
                             "metadata": {
                                 "routing_mode": "hybrid",
                                 "resolved_preset": "balanced",
-                                "reason_codes": ["AUTO_FALLBACK"],
+                                "reason_code": "AUTO_FALLBACK",
                                 "raw": _SENTINEL,
                             },
                         },
@@ -292,8 +293,9 @@ class TestTraceCommand:
         results = await _collect(handler.handle_trace(_event(), "coffee", 5))
 
         assert len(results) == 1
-        for expected in ("trace-123", "12.35", "10.50", "101", "0.40", "0.82"):
+        for expected in ("trace-123", "12.35", "10.50", "0.40", "0.82"):
             assert expected in results[0]
+        assert "101" not in results[0]
         assert _SENTINEL not in results[0]
 
     @pytest.mark.asyncio

@@ -6,7 +6,6 @@ import time
 import math
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
 from typing import Any
 from ..injection.models import RequestSignals
 from ..injection.router import InjectionRoutingConfig, InjectionStrategyRouter
@@ -14,47 +13,19 @@ from ..injection.router import InjectionRoutingConfig, InjectionStrategyRouter
 from .trace_models import (
     FilteredCandidate,
     RecallTrace,
+    ScoreContribution,
     TraceResult,
     TraceStage,
     json_safe,
 )
 from .trace_store import RecallTraceStore
 
-_CONTENT_PREVIEW_CHARS = 160
-_MAX_STRING_CHARS = 300
-_MAX_LIST_ITEMS = 20
-_MAX_DICT_ITEMS = 30
-_MAX_DEPTH = 4
-
 _ALLOWED_RESULT_METADATA_KEYS = {
     "memory_type",
     "importance",
     "status",
     "memory_status",
-    "create_time",
-    "canonical_summary",
     "source_type",
-}
-
-_SENSITIVE_METADATA_KEYS = {
-    "content",
-    "full_content",
-    "raw_content",
-    "text",
-    "user_id",
-    "session_id",
-    "raw",
-    "source",
-    "private",
-}
-
-_SENSITIVE_KEY_FRAGMENTS = {
-    "password",
-    "passwd",
-    "secret",
-    "token",
-    "credential",
-    "auth",
 }
 
 _SEARCH_KEYS = {
@@ -73,24 +44,6 @@ _SEARCH_KEYS = {
 }
 
 
-@dataclass(slots=True)
-class _DebugContribution:
-    source: str
-    score: float
-    weight: float = 1.0
-    explanation: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "source": self.source,
-            "score": self.score,
-            "weight": self.weight,
-            "explanation": self.explanation,
-            "metadata": json_safe(self.metadata),
-        }
-
-
 async def capture_explainable_recall(
     engine: Any,
     request_params: Mapping[str, Any],
@@ -98,7 +51,7 @@ async def capture_explainable_recall(
     store: RecallTraceStore | None = None,
     routing_config: InjectionRoutingConfig | None = None,
 ) -> dict[str, Any]:
-    """Run a recall search, persist its trace, and return a JSON-safe DTO."""
+    """执行召回并只持久化固定安全标量组成的 trace DTO。"""
     query = str(request_params.get("query", "") or "")
     search_params = {
         key: value
@@ -119,19 +72,19 @@ async def capture_explainable_recall(
     decision_started = time.perf_counter()
     decision = InjectionStrategyRouter().route_final(
         routing_config or InjectionRoutingConfig(),
-        _candidate_signals(normalized_results, request_params),
+        _candidate_signals(result_list, normalized_results, request_params),
     )
     decision_ms = (time.perf_counter() - decision_started) * 1000
     trace = RecallTrace(
         trace_id=str(uuid.uuid4()),
-        query=query,
+        query="",
         total_ms=round(total_ms, 3),
         stages=[
             TraceStage(
                 name="search_memories",
                 duration_ms=round(total_ms, 3),
                 candidate_count=len(result_list),
-                metadata={"engine": engine.__class__.__name__},
+                metadata={},
             ),
             TraceStage(
                 name="injection_decision",
@@ -149,18 +102,7 @@ async def capture_explainable_recall(
         ],
         results=normalized_results,
         filtered=filtered,
-        metadata={
-            "request": json_safe(
-                _bounded_value(
-                    {
-                        key: value
-                        for key, value in request_params.items()
-                        if key in _SEARCH_KEYS and key != "query"
-                    }
-                )
-            ),
-            "debug_trace_available": bool(debug_trace),
-        },
+        metadata={"debug_trace_available": bool(debug_trace)},
     )
     payload = trace.to_dict()
 
@@ -171,9 +113,11 @@ async def capture_explainable_recall(
 
 
 def _candidate_signals(
+    raw_results: list[Any],
     results: list[TraceResult],
     request_params: Mapping[str, Any],
 ) -> RequestSignals:
+    """从现有搜索结果计算路由信号，不复制正文到 trace。"""
     normalized_scores = []
     for item in results:
         try:
@@ -186,10 +130,7 @@ def _candidate_signals(
     scores = sorted(normalized_scores, reverse=True)
     top_confidence = scores[0] if scores else 0.0
     score_gap = top_confidence - scores[1] if len(scores) > 1 else top_confidence
-    token_sets = [
-        set(str(item.metadata.get("content_preview", "")).casefold().split())
-        for item in results
-    ]
+    token_sets = [set(str(_result_value(item, "content") or "").casefold().split()) for item in raw_results]
     similarities: list[float] = []
     for index, first in enumerate(token_sets):
         for second in token_sets[index + 1:]:
@@ -197,9 +138,9 @@ def _candidate_signals(
             similarities.append(len(first & second) / len(union) if union else 0.0)
     redundancy = sum(similarities) / len(similarities) if similarities else 0.0
     estimated_chars = sum(
-        len(str(item.metadata.get("content_preview", "")))
-        + len(str(item.metadata.get("canonical_summary", "")))
-        for item in results
+        len(str(_result_value(item, "content") or ""))
+        + len(str(_result_metadata(item).get("canonical_summary", "")))
+        for item in raw_results
     )
     intent = str(request_params.get("query_intent") or "default")
     return RequestSignals(
@@ -225,6 +166,7 @@ def _candidate_signals(
 
 
 def _as_list(value: Any) -> list[Any]:
+    """把可迭代搜索结果规范化为列表。"""
     try:
         return list(value or [])
     except TypeError:
@@ -232,6 +174,7 @@ def _as_list(value: Any) -> list[Any]:
 
 
 def _extract_debug_trace(engine: Any, results: Any) -> list[dict[str, Any]]:
+    """读取已有的内部 debug 计分轨迹，不创建新的内容副本。"""
     for source in (
         getattr(engine, "debug_trace", None),
         getattr(engine, "last_debug_trace", None),
@@ -256,6 +199,7 @@ def _extract_debug_trace(engine: Any, results: Any) -> list[dict[str, Any]]:
 
 
 def _extract_filtered_candidates(engine: Any, results: Any) -> list[FilteredCandidate]:
+    """只提取过滤原因、阶段和分数，不复制候选 ID 或 metadata。"""
     candidates: list[FilteredCandidate] = []
     for source in (
         getattr(engine, "filtered_candidates", None),
@@ -264,23 +208,16 @@ def _extract_filtered_candidates(engine: Any, results: Any) -> list[FilteredCand
         getattr(results, "filtered_candidates", None),
     ):
         for item in _mapping_list(source):
-            doc_id = item.get("doc_id")
             reason = item.get("reason")
-            if doc_id is None or not reason:
+            if not reason:
                 continue
             candidates.append(
                 FilteredCandidate(
-                    doc_id=str(doc_id),
+                    doc_id="",
                     reason=str(reason),
                     stage=_optional_str(item.get("stage")),
                     score=_optional_float(item.get("score")),
-                    metadata=_bounded_value(
-                        {
-                            key: value
-                            for key, value in item.items()
-                            if key not in {"doc_id", "reason", "stage", "score"}
-                        }
-                    ),
+                    metadata={},
                 )
             )
         if candidates:
@@ -292,6 +229,7 @@ def _normalize_results(
     results: list[Any],
     debug_trace: list[dict[str, Any]],
 ) -> list[TraceResult]:
+    """把搜索结果转换成不含正文副本的内部计分模型。"""
     trace_by_doc_id = {
         str(item.get("doc_id")): item
         for item in debug_trace
@@ -336,96 +274,47 @@ def _normalize_results(
     return normalized
 
 
-def _score_contributions(trace_entry: Mapping[str, Any]) -> list[_DebugContribution]:
+def _score_contributions(trace_entry: Mapping[str, Any]) -> list[ScoreContribution]:
+    """只保留 debug 贡献的来源和分数标量。"""
     if not trace_entry:
         return []
     source = str(trace_entry.get("source") or "optimizer")
     final_score = _coerce_float(trace_entry.get("final_score"), 0.0)
     return [
-        _DebugContribution(
+        ScoreContribution(
             source=source,
             score=final_score,
             weight=1.0,
-            explanation=_optional_str(trace_entry.get("explanation")),
-            metadata=_bounded_value(
-                {
-                    key: value
-                    for key, value in trace_entry.items()
-                    if key not in {"source", "score", "weight", "explanation"}
-                }
-            ),
         )
     ]
 
 
 def _sanitize_result_metadata(result: Any) -> dict[str, Any]:
+    """在内部模型阶段只复制明确允许的标量 metadata。"""
     source_metadata = _result_metadata(result)
     sanitized: dict[str, Any] = {}
     for key in _ALLOWED_RESULT_METADATA_KEYS:
-        if key in source_metadata:
-            sanitized[key] = _bounded_value(source_metadata[key])
-    content = _result_value(result, "content")
-    if content is not None:
-        sanitized["content_preview"] = str(content)[:_CONTENT_PREVIEW_CHARS]
-    score_breakdown = _result_value(result, "score_breakdown")
-    if score_breakdown:
-        sanitized["score_breakdown"] = _bounded_value(score_breakdown)
+        value = source_metadata.get(key)
+        if isinstance(value, (str, int, float, bool)):
+            sanitized[key] = value
     return sanitized
 
 
 def _result_metadata(result: Any) -> dict[str, Any]:
+    """读取搜索结果 metadata 的浅副本。"""
     metadata = _result_value(result, "metadata")
     return dict(metadata) if isinstance(metadata, Mapping) else {}
 
 
-def _bounded_value(value: Any, depth: int = 0) -> Any:
-    if depth >= _MAX_DEPTH:
-        if isinstance(value, Mapping):
-            return {}
-        if _is_sequence(value):
-            return []
-        if isinstance(value, str):
-            return value[:_MAX_STRING_CHARS]
-        return json_safe(value)
-
-    if isinstance(value, str):
-        return value[:_MAX_STRING_CHARS]
-    if isinstance(value, int | float | bool) or value is None:
-        return value
-    if isinstance(value, Mapping):
-        sanitized: dict[str, Any] = {}
-        for raw_key, raw_value in list(value.items())[:_MAX_DICT_ITEMS]:
-            key = str(raw_key)
-            if _is_sensitive_metadata_key(key):
-                continue
-            sanitized[key] = _bounded_value(raw_value, depth + 1)
-        return sanitized
-    if _is_sequence(value):
-        return [
-            _bounded_value(item, depth + 1)
-            for item in list(value)[:_MAX_LIST_ITEMS]
-        ]
-    return json_safe(value)
-
-
-def _is_sequence(value: Any) -> bool:
-    return isinstance(value, list | tuple | set | frozenset)
-
-
-def _is_sensitive_metadata_key(key: str) -> bool:
-    normalized = key.casefold().strip()
-    if normalized in _SENSITIVE_METADATA_KEYS:
-        return True
-    return any(fragment in normalized for fragment in _SENSITIVE_KEY_FRAGMENTS)
-
-
 def _result_value(result: Any, key: str) -> Any:
+    """兼容映射与对象形式读取搜索结果字段。"""
     if isinstance(result, Mapping):
         return result.get(key)
     return getattr(result, key, None)
 
 
 def _mapping_list(value: Any) -> list[dict[str, Any]]:
+    """只保留列表中的映射项。"""
     if value is None:
         return []
     try:
@@ -436,6 +325,7 @@ def _mapping_list(value: Any) -> list[dict[str, Any]]:
 
 
 def _first_present(*values: Any) -> Any:
+    """返回第一个非 None 值。"""
     for value in values:
         if value is not None:
             return value
@@ -443,6 +333,7 @@ def _first_present(*values: Any) -> Any:
 
 
 def _coerce_float(value: Any, default: float) -> float:
+    """把计分值转换为浮点数。"""
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -450,6 +341,7 @@ def _coerce_float(value: Any, default: float) -> float:
 
 
 def _optional_float(value: Any) -> float | None:
+    """把可选计分值转换为浮点数。"""
     if value is None:
         return None
     try:
@@ -459,6 +351,7 @@ def _optional_float(value: Any) -> float | None:
 
 
 def _optional_str(value: Any) -> str | None:
+    """把可选阶段值转换为字符串。"""
     return None if value is None else str(value)
 
 

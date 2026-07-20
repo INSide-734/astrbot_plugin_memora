@@ -1,4 +1,4 @@
-"""Diagnostics health, event history, and recovery action API."""
+"""诊断健康、事件历史和有限恢复动作 API。"""
 
 from __future__ import annotations
 
@@ -14,26 +14,36 @@ from .response_utils import error_response, ok_response
 
 
 class DiagnosticsApiMixin:
-    """Expose runtime diagnostics built from existing observability summaries."""
+    """基于现有安全观测摘要提供运行时诊断能力。"""
 
     async def get_diagnostics_health(self):
+        """返回诊断健康评分；失败时只暴露稳定错误码。"""
         try:
             return ok_response(self._build_diagnostics_health())
         except Exception as exc:
-            logger.error("[诊断接口] 获取健康摘要失败: %s", exc, exc_info=True)
-            return error_response(f"获取诊断健康摘要失败: {exc}")
+            logger.error(
+                "[诊断接口] 获取健康摘要失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return error_response("diagnostics_health_failed")
 
     async def get_diagnostics_events(self):
+        """从当前请求参数读取诊断事件列表。"""
         return await self.get_diagnostics_events_payload(dict(request.args))
 
     async def get_diagnostics_event_detail(self):
+        """从当前请求参数读取单条诊断事件。"""
         return await self.get_diagnostics_event_detail_payload(dict(request.args))
 
     async def run_diagnostics_action(self):
+        """解析 JSON 请求体并执行允许列表中的诊断动作。"""
         try:
             payload = await request.get_json(silent=True)
         except Exception as exc:
-            logger.debug("[诊断接口] JSON 请求体无效: %s", exc, exc_info=True)
+            logger.debug(
+                "[诊断接口] JSON 请求体无效，异常类型=%s",
+                exc.__class__.__name__,
+            )
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
@@ -43,6 +53,7 @@ class DiagnosticsApiMixin:
         self,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        """按安全筛选条件返回脱敏后的诊断事件列表。"""
         try:
             store = await self._get_diagnostic_event_store()
             limit = self._diagnostics_positive_int(
@@ -64,13 +75,17 @@ class DiagnosticsApiMixin:
             )
             return ok_response({"events": events, "total": len(events)})
         except Exception as exc:
-            logger.error("[诊断接口] 获取事件列表失败: %s", exc, exc_info=True)
-            return error_response(f"获取诊断事件列表失败: {exc}")
+            logger.error(
+                "[诊断接口] 获取事件列表失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return error_response("diagnostics_events_failed")
 
     async def get_diagnostics_event_detail_payload(
         self,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        """按诊断关联码返回脱敏后的事件详情。"""
         event_id = str(payload.get("event_id") or "").strip()
         if not event_id:
             return error_response("缺少必填参数 event_id")
@@ -81,13 +96,17 @@ class DiagnosticsApiMixin:
                 return error_response("诊断事件不存在")
             return ok_response({"event": event})
         except Exception as exc:
-            logger.error("[诊断接口] 获取事件详情失败: %s", exc, exc_info=True)
-            return error_response(f"获取诊断事件详情失败: {exc}")
+            logger.error(
+                "[诊断接口] 获取事件详情失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return error_response("diagnostics_event_failed")
 
     async def run_diagnostics_action_payload(
         self,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        """执行固定 allowlist 中的只读或显式确认诊断动作。"""
         try:
             action = str(payload.get("action") or "").strip()
             if not action:
@@ -109,24 +128,28 @@ class DiagnosticsApiMixin:
                     return error_response("confirmation_required")
                 rebuild_index = getattr(self, "rebuild_index", None)
                 if not callable(rebuild_index):
-                    return error_response("rebuild_index unavailable")
+                    return error_response("rebuild_index_unavailable")
                 return await self._maybe_await(rebuild_index())
 
             if action == "restart_backfill":
                 start_backfill = getattr(self, "start_backfill", None)
                 if not callable(start_backfill):
-                    return error_response("start_backfill unavailable")
+                    return error_response("start_backfill_unavailable")
                 return await self._maybe_await(start_backfill())
 
             if action == "clear_completed_events":
                 return await self._clear_completed_diagnostic_events()
 
-            return error_response(f"unknown diagnostics action: {action}")
+            return error_response("unknown_diagnostics_action")
         except Exception as exc:
-            logger.error("[诊断接口] 执行诊断动作失败: %s", exc, exc_info=True)
-            return error_response(f"执行诊断动作失败: {exc}")
+            logger.error(
+                "[诊断接口] 执行诊断动作失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return error_response("diagnostics_action_failed")
 
     def _build_diagnostics_snapshot(self) -> dict[str, Any]:
+        """从现有组件构造固定领域的诊断标量快照。"""
         snapshot = {
             "recall": self._build_recall_summary(),
             "background_tasks": self._build_background_task_summary(),
@@ -140,10 +163,12 @@ class DiagnosticsApiMixin:
         return snapshot
 
     def _build_diagnostics_health(self) -> dict[str, Any]:
+        """对当前诊断快照执行健康评分。"""
         snapshot = self._build_diagnostics_snapshot()
         return self._score_diagnostics_snapshot(snapshot)
 
     def _score_diagnostics_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        """评分并推进写失败累计值基线。"""
         scorer = self._get_diagnostics_health_scorer()
         previous_failures = getattr(self, "_diagnostics_previous_write_failures_total", None)
         health = scorer.score(
@@ -156,6 +181,7 @@ class DiagnosticsApiMixin:
         return health
 
     def _get_diagnostics_health_scorer(self) -> HealthScorer:
+        """懒加载并复用健康评分器。"""
         scorer = getattr(self, "_diagnostics_health_scorer", None)
         if scorer is None:
             scorer = HealthScorer()
@@ -163,6 +189,7 @@ class DiagnosticsApiMixin:
         return scorer
 
     async def _get_diagnostic_event_store(self) -> DiagnosticEventStore:
+        """懒加载绑定插件数据目录的诊断事件 Store。"""
         store = getattr(self, "_diagnostic_event_store", None)
         if store is None:
             store = DiagnosticEventStore(self._diagnostics_event_db_path())
@@ -171,6 +198,7 @@ class DiagnosticsApiMixin:
         return store
 
     def _diagnostics_event_db_path(self) -> Path:
+        """解析插件隔离的诊断事件数据库路径。"""
         plugin = getattr(self, "plugin", None)
         initializer = getattr(plugin, "initializer", None)
         for owner in (initializer, plugin):
@@ -182,6 +210,7 @@ class DiagnosticsApiMixin:
         raise RuntimeError("diagnostics event store requires plugin initializer data_dir")
 
     async def _clear_completed_diagnostic_events(self) -> dict[str, Any]:
+        """报告已解决事件数量；当前保持无删除的 noop 语义。"""
         store = await self._get_diagnostic_event_store()
         events = await store.list_events(limit=500, include_resolved=True)
         resolved_count = sum(1 for item in events if item.get("resolved_at"))
@@ -196,12 +225,14 @@ class DiagnosticsApiMixin:
 
     @staticmethod
     async def _maybe_await(value: Any) -> Any:
+        """兼容同步返回值和 awaitable 委托结果。"""
         if inspect.isawaitable(value):
             return await value
         return value
 
     @staticmethod
     def _write_failures_total(snapshot: dict[str, Any]) -> int | None:
+        """从快照读取合法写失败累计值。"""
         write = snapshot.get("write_coordinator")
         if not isinstance(write, dict):
             return None
@@ -220,6 +251,7 @@ class DiagnosticsApiMixin:
         default: int,
         maximum: int,
     ) -> int:
+        """把正整数参数钳制到指定上限。"""
         try:
             parsed = int(value)
         except (TypeError, ValueError):
@@ -230,6 +262,7 @@ class DiagnosticsApiMixin:
 
     @staticmethod
     def _diagnostics_bool(value: Any, *, default: bool) -> bool:
+        """兼容布尔值和常见字符串表示。"""
         if value is None:
             return default
         if isinstance(value, bool):
@@ -245,6 +278,7 @@ class DiagnosticsApiMixin:
 
     @staticmethod
     def _optional_text(value: Any) -> str | None:
+        """把可选筛选值规范化为非空文本。"""
         text = str(value or "").strip()
         return text or None
 

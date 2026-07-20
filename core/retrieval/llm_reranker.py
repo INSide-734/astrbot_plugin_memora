@@ -23,12 +23,14 @@ class LLMReranker:
     """让 LLM 直接对记忆候选项评分并重新排序。"""
 
     def __init__(self, llm_client=None, batch_size: int = 10) -> None:
+        """初始化 LLM 客户端和有界批量大小。"""
         self._llm_client = llm_client
         self._batch_size = max(5, min(20, batch_size))
 
     async def rerank(
         self, results: list[HybridResult], k: int, query: str = "", **kwargs: Any
     ) -> list[HybridResult]:
+        """使用 LLM 分数融合原始排序，并返回前 k 项。"""
         if not self._llm_client or not query or len(results) <= k:
             return results[:k]
         candidates = sorted(results, key=lambda r: r.final_score, reverse=True)
@@ -42,6 +44,7 @@ class LLMReranker:
     async def _score_candidates(
         self, query: str, candidates: list[HybridResult]
     ) -> list[float]:
+        """批量评分候选；普通失败回退为稳定的按序分数。"""
         memories_text = "\n".join(
             f"[{i}] {c.content[:200]}" for i, c in enumerate(candidates)
         )
@@ -55,7 +58,10 @@ class LLMReranker:
             if match:
                 return [float(s) for s in json.loads(match.group())]
         except Exception as exc:
-            logger.debug(f"[LLMReranker] scoring failed: {exc}")
+            logger.debug(
+                "[LLM 重排] 评分失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
         return [max(0.0, 10.0 - i * 0.5) for i in range(len(candidates))]
 
 

@@ -159,6 +159,7 @@ def test_health_scorer_handles_missing_and_malformed_inputs_defensively():
 
 @pytest.mark.asyncio
 async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload():
+    """事件 Store 应保存安全标量、支持筛选并返回独立副本。"""
     db_path = Path(f"diagnostics_event_store_test_{uuid.uuid4().hex}.sqlite3")
     store = DiagnosticEventStore(db_path)
     try:
@@ -168,10 +169,14 @@ async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload()
             {
                 "domain": "provider",
                 "severity": "critical",
-                "title": "Provider failed",
-                "message": "Provider exhausted retries",
+                "title": "不应保存的自由文本",
+                "message": "不应保存的自由文本",
                 "source": "health_scorer",
-                "payload": {"attempts": 60, "nested": {"ok": True}},
+                "payload": {
+                    "reason_code": "provider_unavailable",
+                    "attempt_count": 60,
+                    "nested": {"ok": True},
+                },
             }
         )
         second = await store.add_event(
@@ -182,12 +187,17 @@ async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload()
                 "title": "Backfill failed",
                 "message": "One scheduler task failed",
                 "source": "scheduler",
-                "payload": {"failed": 1},
+                "payload": {"reason_code": "task_error", "failed_count": 1},
             }
         )
 
         assert first["event_id"]
-        assert first["payload"] == {"attempts": 60, "nested": {"ok": True}}
+        assert first["payload"] == {
+            "reason_code": "provider_unavailable",
+            "attempt_count": 60,
+        }
+        assert first["title"] == "provider_unavailable"
+        assert first["message"] == "provider_unavailable"
         assert second["event_id"] == "manual-event"
 
         events = await store.list_events()
@@ -206,9 +216,9 @@ async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload()
 
         fetched = await store.get_event(first["event_id"])
         assert fetched is not None
-        assert fetched["payload"]["nested"] == {"ok": True}
-        fetched["payload"]["nested"]["ok"] = False
-        assert (await store.get_event(first["event_id"]))["payload"]["nested"] == {"ok": True}
+        assert fetched["payload"]["attempt_count"] == 60
+        fetched["payload"]["attempt_count"] = 0
+        assert (await store.get_event(first["event_id"]))["payload"]["attempt_count"] == 60
 
         resolved = await store.resolve_event(first["event_id"])
         assert resolved is not None

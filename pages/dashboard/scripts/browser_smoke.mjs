@@ -18,10 +18,13 @@ import {
   assertDialogActions,
   assertEditorReadiness,
 } from "./runtime_smoke_helpers.mjs";
+import { createConfigSmokeFixture } from "./config_smoke_fixture.mjs";
+import { recallTracePayload } from "./recall_trace_smoke_fixture.mjs";
 
 const dashboardRoot = process.cwd();
 const htmlPath = path.join(dashboardRoot, "index.html");
 const html = await readFile(htmlPath, "utf8");
+const configSmokeFixture = createConfigSmokeFixture();
 
 if (html.includes("/src/main") || html.includes('type="module"')) {
   throw new Error("Dashboard index.html is not a production AstrBot-compatible build");
@@ -334,29 +337,6 @@ function injectionDecisionDetailPayload(decisionId) {
     : {};
 }
 
-function recallTraceDetailPayload(traceId = "trace-smoke-coffee") {
-  return {
-    trace_id: traceId,
-    query: "注入策略决策追踪",
-    total_ms: 84.2,
-    stages: [
-      { name: "bm25", duration_ms: 12.5, candidate_count: 7, metadata: { index: "atom_bm25" } },
-      { name: "vector", duration_ms: 24.8, candidate_count: 8, metadata: { provider: "mock_embedding" } },
-    ],
-    results: [{
-      doc_id: "mem-injection-smoke",
-      rank: 1,
-      initial_score: 0.71,
-      final_score: 0.93,
-      score_contributions: [{ source: "bm25", score: 0.62, weight: 0.35 }],
-      graph_paths: [],
-      metadata: { type: "preference", provenance: "browser_smoke" },
-    }],
-    filtered: [],
-    created_at: 1_782_000_000,
-    metadata: { provider: "mock", chat_type: "private" },
-  };
-}
 function cloneJson(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
@@ -613,29 +593,15 @@ async function launchBrowser() {
 
 function bridgePayload(endpoint, params = {}, method = "GET") {
   const pathOnly = String(endpoint || "").replace(/^page\/?/, "");
-  if (pathOnly === "config/schema") {
-    return {
-      plugin_name: "astrbot_plugin_memora",
-      schema: {},
-      provider_options: { llm: [], embedding: [] },
-      capabilities: { hot_reload: true },
-    };
-  }
-  if (pathOnly === "config/state") {
-    return {
-      changed: params.revision !== "browser-smoke-config",
-      config: {},
-      revision: "browser-smoke-config",
-      instance_id: "browser-smoke-instance",
-    };
-  }
+  const configResponse = configSmokeFixture.handle(method, pathOnly, params);
+  if (configResponse !== undefined) return configResponse;
   if (pathOnly === "injection-strategy/catalog") return injectionCatalogPayload();
   if (pathOnly === "injection-strategy/summary") return injectionSummaryPayload(params);
   if (pathOnly === "injection-strategy/decisions") return injectionDecisionPagePayload(params);
   if (pathOnly === "injection-strategy/decisions/detail") {
     return injectionDecisionDetailPayload(params.decision_id);
   }
-  if (pathOnly === "recall/trace/detail") return recallTraceDetailPayload(params.trace_id);
+  if (pathOnly === "recall/trace/detail") return recallTracePayload(params.trace_id);
   const editingPayload = editingBridgePayload(method, pathOnly, params);
   if (editingPayload !== undefined) return editingPayload;
   if (pathOnly === "stats") {
@@ -949,32 +915,7 @@ function bridgePayload(endpoint, params = {}, method = "GET") {
     };
   }
   if (pathOnly === "recall/trace" || pathOnly === "recall/traces") {
-    return {
-      trace_id: "trace-smoke-coffee",
-      query: "用户喜欢喝什么咖啡",
-      total_ms: 84.2,
-      stages: [
-        { name: "search_memories", duration_ms: 4.1, candidate_count: 0, metadata: { tokens: 6 } },
-        { name: "bm25", duration_ms: 12.5, candidate_count: 7, metadata: { index: "atom_bm25" } },
-        { name: "vector", duration_ms: 24.8, candidate_count: 8, metadata: { provider: "mock_embedding" } },
-      ],
-      results: [
-        {
-          doc_id: "mem-coffee",
-          rank: 1,
-          initial_score: 0.71,
-          final_score: 0.93,
-          score_contributions: [
-            { source: "bm25", score: 0.62, weight: 0.35, explanation: "Matched coffee preference." },
-          ],
-          graph_paths: [],
-          metadata: { type: "preference", provenance: "browser_smoke" },
-        },
-      ],
-      filtered: [],
-      created_at: 1_782_000_000,
-      metadata: { provider: "mock", chat_type: "private" },
-    };
+    return recallTracePayload();
   }
   if (pathOnly === "diagnostics/health") {
     return {
@@ -1927,7 +1868,7 @@ async function runRecallTraceSmoke(page, screenshotPath) {
   await page.getByRole("button", { name: "追踪", exact: true }).click();
   await waitForRootText(
     page,
-    ["trace-smoke-coffee", "mem-coffee", "记忆检索", "bm25", "mock_embedding"],
+    ["trace-smoke-coffee", "记忆检索", "BM25", "#1", "0.930"],
     "#/intelligence:recallTrace"
   );
   return await captureBaselineScreenshot(page, screenshotPath, "Intelligence 召回链路");

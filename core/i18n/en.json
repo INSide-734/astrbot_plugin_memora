@@ -150,7 +150,7 @@
       "route": "• Route preview: mode={mode}, preset={preset}, reasons={reasons}",
       "filtered": "Filtered candidates: {count}",
       "results_header": "Results:",
-      "result_item": "• #{rank} memory ID={doc_id}, initial={initial}, final={final}",
+      "result_item": "• #{rank} initial={initial}, final={final}",
       "results_none": "Results: None",
       "stages": {
         "search_memories": "Memory search",

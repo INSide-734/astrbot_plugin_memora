@@ -483,122 +483,58 @@ export const EVALUATION_REPORTS: EvaluationReport[] = [
 
 export const RECALL_TRACE_SAMPLE: RecallTraceResponse = {
   trace_id: "trace-mock-coffee",
-  query: "用户喜欢喝什么咖啡",
   total_ms: 84.2,
   stages: [
     {
-      name: "query_parse",
-      duration_ms: 4.1,
-      candidate_count: 0,
-      metadata: { tokenizer: "jieba", normalized: true },
-    },
-    {
-      name: "bm25",
-      duration_ms: 12.5,
-      candidate_count: 7,
-      metadata: { index: "atom_bm25", top_k: 20 },
-    },
-    {
-      name: "vector",
-      duration_ms: 24.8,
-      candidate_count: 8,
-      metadata: { provider: "mock_embedding", dimension: 768 },
-    },
-    {
-      name: "rerank",
-      duration_ms: 42.8,
+      name: "search_memories",
+      duration_ms: 82.7,
       candidate_count: 5,
-      metadata: { model: "mock_reranker", personalized: true },
+      metadata: {},
+    },
+    {
+      name: "injection_decision",
+      duration_ms: 1.5,
+      candidate_count: 5,
+      metadata: {
+        routing_mode: "hybrid",
+        configured_preset: "balanced",
+        recommended_preset: "balanced",
+        resolved_preset: "balanced",
+        effective_budget_chars: 2400,
+        reason_code: "AUTO_FALLBACK",
+        reason_count: 1,
+      },
     },
   ],
   results: [
     {
-      doc_id: "mem-coffee",
       rank: 1,
       initial_score: 0.71,
       final_score: 0.93,
       score_contributions: [
-        {
-          source: "bm25",
-          score: 0.62,
-          weight: 0.35,
-          explanation: "Query terms matched coffee preference memory.",
-          metadata: { field: "summary" },
-        },
-        {
-          source: "vector",
-          score: 0.81,
-          weight: 0.35,
-          explanation: "Semantic match for coffee preference.",
-          metadata: { route: "document" },
-        },
-        {
-          source: "emotion_boost",
-          score: 0.21,
-          weight: 0.2,
-          explanation: "情绪偏好提升：用户近期对咖啡话题互动积极。",
-          metadata: { mood: "curious", affinity: 0.72 },
-        },
+        { source: "bm25", score: 0.62, weight: 0.35 },
+        { source: "vector", score: 0.81, weight: 0.35 },
+        { source: "emotion_boost", score: 0.21, weight: 0.2 },
       ],
-      graph_paths: [
-        {
-          nodes: ["用户", "咖啡馆工作偏好", "咖啡"],
-          edges: ["preference", "topic"],
-          score: 0.72,
-          metadata: { hop_count: 2, route: "graph" },
-        },
-      ],
-      metadata: { type: "preference", session_id: "sess_1", provenance: "atom_store" },
+      metadata: { memory_type: "preference", status: "active" },
     },
     {
-      doc_id: "mem-weekend",
       rank: 2,
       initial_score: 0.54,
       final_score: 0.66,
       score_contributions: [
-        {
-          source: "bm25",
-          score: 0.4,
-          weight: 0.35,
-          explanation: "Matched weekend workplace context.",
-        },
-        {
-          source: "graph",
-          score: 0.68,
-          weight: 0.25,
-          explanation: "Connected through workplace preference node.",
-          metadata: { path_count: 1 },
-        },
+        { source: "bm25", score: 0.4, weight: 0.35 },
+        { source: "graph", score: 0.68, weight: 0.25 },
       ],
-      graph_paths: [
-        {
-          nodes: ["用户", "周末工作", "咖啡馆"],
-          edges: ["habit", "location"],
-          score: 0.61,
-          metadata: { hop_count: 2 },
-        },
-      ],
-      metadata: { type: "episodic", session_id: "sess_2", provenance: "graph_store" },
+      metadata: { memory_type: "episodic", status: "active" },
     },
   ],
   filtered: [
-    {
-      doc_id: "mem-stale",
-      reason: "low_score",
-      stage: "rerank",
-      score: 0.12,
-      metadata: { threshold: 0.2 },
-    },
-    {
-      doc_id: "mem-react",
-      reason: "topic_mismatch",
-      stage: "bm25",
-      score: 0.18,
-      metadata: { matched_terms: 1 },
-    },
+    { reason: "low_score", stage: "rerank", score: 0.12 },
+    { reason: "missing_fields", stage: "bm25", score: 0.18 },
   ],
   created_at: Date.now() / 1000,
-  metadata: { provider: "mock", chat_type: "private", provenance: "mock_server" },
+  metadata: { debug_trace_available: true },
 };
 
 export const DIAGNOSTIC_HEALTH: DiagnosticHealthResponse = {

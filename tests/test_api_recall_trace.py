@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,41 +15,41 @@ from core.retrieval.trace_models import RecallTrace, TraceResult, TraceStage
 from core.retrieval.trace_store import RecallTraceStore
 
 
-class _TraceKind(Enum):
-    RECALL = "recall"
-
-
-@dataclass
-class _NestedMeta:
-    label: str
-    flags: set[str]
-
-
 def _trace(
     trace_id: str,
-    query: str = "coffee",
     created_at: float | None = None,
+    total_ms: float = 10.5,
 ) -> RecallTrace:
+    """构造一条包含安全标量的测试 trace。"""
     return RecallTrace(
         trace_id=trace_id,
-        query=query,
-        total_ms=10.5,
-        stages=[TraceStage(name="bm25", duration_ms=2.0, candidate_count=3)],
+        query="不应出现在 DTO 中的查询",
+        total_ms=total_ms,
+        stages=[
+            TraceStage(
+                name="bm25",
+                duration_ms=2.0,
+                candidate_count=3,
+                metadata={"candidate_count": 3},
+            )
+        ],
         results=[
             TraceResult(
                 doc_id=f"mem-{trace_id}",
                 rank=1,
                 initial_score=0.5,
                 final_score=0.8,
+                metadata={"memory_type": "preference"},
             )
         ],
         filtered=[],
         created_at=created_at if created_at is not None else 1000.0,
-        metadata={"nested": {"tags": ["initial"]}},
+        metadata={"debug_trace_available": True},
     )
 
 
 def test_recall_trace_is_json_safe():
+    """模型序列化应直接返回不含查询和 canonical ID 的安全 DTO。"""
     trace = RecallTrace(
         trace_id="trace-1",
         query="coffee",
@@ -70,7 +68,9 @@ def test_recall_trace_is_json_safe():
     payload = trace.to_dict()
     assert payload["trace_id"] == "trace-1"
     assert payload["stages"][0]["name"] == "bm25"
-    assert payload["results"][0]["doc_id"] == "mem-coffee"
+    assert payload["results"][0]["rank"] == 1
+    assert "query" not in payload
+    assert "doc_id" not in payload["results"][0]
 
 
 @pytest.mark.asyncio
@@ -90,34 +90,36 @@ async def test_trace_store_saves_gets_and_lists_memory_only():
 
 @pytest.mark.asyncio
 async def test_trace_store_get_trace_returns_deep_copy_memory_only():
+    """内存读取应返回与缓存隔离的安全深副本。"""
     store = RecallTraceStore(retention_count=3)
     await store.initialize()
     await store.save_trace(_trace("trace-1"))
 
     loaded = await store.get_trace("trace-1")
     assert loaded is not None
-    loaded["metadata"]["nested"]["tags"].append("mutated")
-    loaded["stages"][0]["metadata"]["leaked"] = True
+    loaded["metadata"]["debug_trace_available"] = False
+    loaded["stages"][0]["metadata"]["candidate_count"] = 99
 
     reloaded = await store.get_trace("trace-1")
     assert reloaded is not None
-    assert reloaded["metadata"]["nested"]["tags"] == ["initial"]
-    assert "leaked" not in reloaded["stages"][0]["metadata"]
+    assert reloaded["metadata"]["debug_trace_available"] is True
+    assert reloaded["stages"][0]["metadata"]["candidate_count"] == 3
 
 
 @pytest.mark.asyncio
 async def test_trace_store_list_traces_returns_deep_copy_memory_only():
+    """内存列表也应返回与缓存隔离的安全深副本。"""
     store = RecallTraceStore(retention_count=3)
     await store.initialize()
     await store.save_trace(_trace("trace-1"))
 
     listed = await store.list_traces()
-    listed[0]["metadata"]["nested"]["tags"].append("mutated")
-    listed[0]["results"][0]["metadata"]["leaked"] = True
+    listed[0]["metadata"]["debug_trace_available"] = False
+    listed[0]["results"][0]["metadata"]["memory_type"] = "fact"
 
     relisted = await store.list_traces()
-    assert relisted[0]["metadata"]["nested"]["tags"] == ["initial"]
-    assert "leaked" not in relisted[0]["results"][0]["metadata"]
+    assert relisted[0]["metadata"]["debug_trace_available"] is True
+    assert relisted[0]["results"][0]["metadata"]["memory_type"] == "preference"
 
 
 @pytest.mark.asyncio
@@ -138,6 +140,7 @@ async def test_trace_store_retention_evicts_oldest_memory_trace():
 
 @pytest.mark.asyncio
 async def test_trace_store_persists_and_reloads_sqlite_payload(tmp_path):
+    """SQLite 重载应保持安全 DTO 的排名和关联码。"""
     db_path = tmp_path / "trace.db"
     first_store = RecallTraceStore(db_path=db_path, retention_count=3)
     await first_store.initialize()
@@ -151,7 +154,8 @@ async def test_trace_store_persists_and_reloads_sqlite_payload(tmp_path):
 
     assert loaded is not None
     assert loaded["trace_id"] == "trace-1"
-    assert loaded["results"][0]["doc_id"] == "mem-trace-1"
+    assert loaded["results"][0]["rank"] == 1
+    assert "doc_id" not in loaded["results"][0]
     assert [item["trace_id"] for item in listed] == ["trace-1"]
 
 
@@ -222,16 +226,17 @@ async def test_trace_store_initialize_commits_sqlite_retention_trim(tmp_path):
 
 @pytest.mark.asyncio
 async def test_trace_store_sqlite_duplicate_replacement_and_tie_retention(tmp_path):
+    """相同关联码应替换安全 DTO，并保持并列时间裁剪语义。"""
     db_path = tmp_path / "trace.db"
     store = RecallTraceStore(db_path=db_path, retention_count=2)
     await store.initialize()
 
-    await store.save_trace(_trace("trace-a", query="old", created_at=100.0))
+    await store.save_trace(_trace("trace-a", created_at=100.0, total_ms=1.0))
     await store.save_trace(_trace("trace-b", created_at=100.0))
-    await store.save_trace(_trace("trace-a", query="new", created_at=100.0))
+    await store.save_trace(_trace("trace-a", created_at=100.0, total_ms=2.0))
     replaced = await store.get_trace("trace-a")
     assert replaced is not None
-    assert replaced["query"] == "new"
+    assert replaced["total_ms"] == 2.0
 
     await store.save_trace(_trace("trace-c", created_at=100.0))
 
@@ -243,7 +248,8 @@ async def test_trace_store_sqlite_duplicate_replacement_and_tie_retention(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_trace_store_mapping_normalization_is_recursive_json_safe(tmp_path):
+async def test_trace_store_mapping_normalization_drops_arbitrary_metadata(tmp_path):
+    """映射输入中的任意嵌套 metadata 应被固定 allowlist 丢弃。"""
     store = RecallTraceStore(db_path=tmp_path / "trace.db", retention_count=3)
     await store.initialize()
 
@@ -254,22 +260,16 @@ async def test_trace_store_mapping_normalization_is_recursive_json_safe(tmp_path
             "total_ms": 1.0,
             "created_at": 123.0,
             "metadata": {
+                "debug_trace_available": True,
                 "tags": {"z", "a"},
-                "kind": _TraceKind.RECALL,
-                "path": Path("notes") / "today.md",
-                "nested": _NestedMeta(label="sample", flags={"fresh", "hot"}),
+                "nested": {"label": "sample"},
             },
         }
     )
 
     loaded = await store.get_trace("trace-structured")
     assert loaded is not None
-    assert loaded["metadata"] == {
-        "tags": ["a", "z"],
-        "kind": "recall",
-        "path": str(Path("notes") / "today.md"),
-        "nested": {"label": "sample", "flags": ["fresh", "hot"]},
-    }
+    assert loaded["metadata"] == {"debug_trace_available": True}
 
 
 @dataclass
@@ -417,6 +417,7 @@ def page_api_with_fake_engine():
 
 @pytest.mark.asyncio
 async def test_recall_trace_endpoint_returns_trace(page_api_with_fake_engine):
+    """追踪端点应返回阶段和结果，但不得回显原始查询。"""
     response = await page_api_with_fake_engine.test_recall_with_trace_payload(
         {
             "query": "用户喜欢喝什么咖啡",
@@ -429,7 +430,7 @@ async def test_recall_trace_endpoint_returns_trace(page_api_with_fake_engine):
     assert response["status"] == "ok"
     data = response["data"]
     assert data["trace_id"]
-    assert data["query"] == "用户喜欢喝什么咖啡"
+    assert "query" not in data
     assert isinstance(data["stages"], list)
     assert isinstance(data["results"], list)
 
@@ -439,6 +440,7 @@ async def test_trace_contains_non_executing_injection_decision(
     page_api_with_fake_engine,
     monkeypatch,
 ):
+    """路由预览应只返回安全标量且不得执行或记录注入。"""
     from core.injection.executor import InjectionExecutor
     from core.injection.recorder import InjectionDecisionRecorder
 
@@ -470,11 +472,12 @@ async def test_trace_contains_non_executing_injection_decision(
         "recommended_preset": "balanced",
         "resolved_preset": "balanced",
         "effective_budget_chars": 777,
-        "reason_codes": ["AUTO_FALLBACK", "INVALID_CONFIG_FALLBACK"],
+        "reason_code": "AUTO_FALLBACK",
+        "reason_count": 2,
     }
     assert not ({"memory_content", "query", "doc_id", "trace_id"} & metadata.keys())
     assert len(engine.calls) == 1
-    assert response["data"]["results"][0]["doc_id"] == "101"
+    assert "doc_id" not in response["data"]["results"][0]
     assert response["data"]["results"][0]["final_score"] == 0.82
 
 
@@ -511,6 +514,7 @@ async def test_trace_preview_normalizes_nonfinite_candidate_score(
 
 @pytest.mark.asyncio
 async def test_recall_trace_missing_engine_returns_error():
+    """缺少 MemoryEngine 时应返回稳定错误码。"""
     plugin = MagicMock()
     plugin._ensure_plugin_ready = AsyncMock(return_value=(True, None))
     plugin.initializer = SimpleNamespace(
@@ -524,13 +528,14 @@ async def test_recall_trace_missing_engine_returns_error():
     response = await api.test_recall_with_trace_payload({"query": "coffee"})
 
     assert response["status"] == "error"
-    assert "MemoryEngine unavailable" in response["message"]
+    assert response["message"] == "memory_engine_unavailable"
 
 
 @pytest.mark.asyncio
 async def test_recall_trace_detail_returns_saved_trace_after_trace_run(
     page_api_with_fake_engine,
 ):
+    """详情端点应按观测关联码返回同一份安全 DTO。"""
     trace_response = await page_api_with_fake_engine.test_recall_with_trace_payload(
         {"query": "用户喜欢喝什么咖啡", "k": 5}
     )
@@ -542,7 +547,8 @@ async def test_recall_trace_detail_returns_saved_trace_after_trace_run(
 
     assert detail_response["status"] == "ok"
     assert detail_response["data"]["trace_id"] == trace_id
-    assert detail_response["data"]["query"] == "用户喜欢喝什么咖啡"
+    assert "query" not in detail_response["data"]
+    assert "doc_id" not in detail_response["data"]["results"][0]
 
 
 @pytest.mark.asyncio
@@ -557,19 +563,21 @@ async def test_recall_trace_detail_missing_trace_id_returns_error(
 
 @pytest.mark.asyncio
 async def test_recall_trace_invalid_k_uses_default(page_api_with_fake_engine):
+    """非法 k 应只影响搜索参数，不能被写入 trace metadata。"""
     response = await page_api_with_fake_engine.test_recall_with_trace_payload(
         {"query": "coffee", "k": "bad"}
     )
 
     assert response["status"] == "ok"
     assert page_api_with_fake_engine.plugin.initializer.memory_engine.calls[-1]["k"] == 5
-    assert response["data"]["metadata"]["request"]["k"] == 5
+    assert response["data"]["metadata"] == {"debug_trace_available": True}
 
 
 @pytest.mark.asyncio
 async def test_recall_trace_includes_debug_contribution_fields(
     page_api_with_fake_engine,
 ):
+    """Debug 贡献只应暴露来源、分数和权重标量。"""
     response = await page_api_with_fake_engine.test_recall_with_trace_payload(
         {"query": "coffee", "k": 5}
     )
@@ -577,15 +585,12 @@ async def test_recall_trace_includes_debug_contribution_fields(
     assert response["status"] == "ok"
     result = response["data"]["results"][0]
     contribution = result["score_contributions"][0]
-    assert contribution["source"] == "optimizer"
-    assert contribution["metadata"]["doc_id"] == 101
-    assert contribution["metadata"]["initial_score"] == 0.4
-    assert contribution["metadata"]["final_score"] == 0.82
-    assert contribution["metadata"]["stages"][0]["name"] == "emotion_boost"
+    assert contribution == {"source": "optimizer", "score": 0.82, "weight": 1.0}
 
 
 @pytest.mark.asyncio
 async def test_capture_explainable_recall_requests_optimizer_debug_trace():
+    """生产优化路径应接收 debug 容器，但内部 ID 不得进入 DTO。"""
     engine = _FakeEngineWithOptimizerPath()
 
     trace = await capture_explainable_recall(
@@ -596,11 +601,16 @@ async def test_capture_explainable_recall_requests_optimizer_debug_trace():
     assert engine.calls[-1]["trace_debug"] is True
     assert engine.optimizer.received_debug_trace is not None
     assert trace["metadata"]["debug_trace_available"] is True
-    assert trace["results"][0]["score_contributions"][0]["metadata"]["doc_id"] == 202
+    assert trace["results"][0]["score_contributions"][0] == {
+        "source": "optimizer",
+        "score": 0.75,
+        "weight": 1.0,
+    }
 
 
 @pytest.mark.asyncio
 async def test_recall_trace_sanitizes_content_and_sensitive_metadata():
+    """追踪输出应删除正文、请求身份、来源详情和自由文本摘要。"""
     long_content = "敏感内容" * 80
     secret_value = "secret-token-123"
 
@@ -636,24 +646,22 @@ async def test_recall_trace_sanitizes_content_and_sensitive_metadata():
         },
     )
     result_metadata = trace["results"][0]["metadata"]
-    request_metadata = trace["metadata"]["request"]
     payload_json = json.dumps(trace, ensure_ascii=False)
 
     assert "content" not in result_metadata
-    assert result_metadata["content_preview"] == long_content[:160]
-    assert len(result_metadata["content_preview"]) <= 160
+    assert "content_preview" not in result_metadata
     assert result_metadata["memory_type"] == "preference"
     assert result_metadata["importance"] == 0.8
     assert result_metadata["status"] == "active"
-    assert result_metadata["create_time"] == 123.0
     assert result_metadata["source_type"] == "chat"
+    assert "create_time" not in result_metadata
+    assert "canonical_summary" not in result_metadata
     assert "session_id" not in result_metadata
     assert "user_id" not in result_metadata
     assert "raw" not in result_metadata
     assert "source" not in result_metadata
     assert "private" not in result_metadata
-    assert "session_id" not in request_metadata
-    assert "user_id" not in request_metadata
+    assert "request" not in trace["metadata"]
     assert secret_value not in payload_json
 
 

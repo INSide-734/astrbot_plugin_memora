@@ -143,10 +143,10 @@ class QueryRewriter:
                 intent = self._parse_llm_response(raw, query)
                 if intent is not None:
                     return intent
-            except Exception:
+            except Exception as exc:
                 logger.debug(
-                    "[QueryRewriter] LLM 查询改写失败，回退到关键词匹配",
-                    exc_info=True,
+                    "[查询改写] LLM 改写失败，回退到关键词匹配，异常类型=%s",
+                    exc.__class__.__name__,
                 )
 
         # 回退

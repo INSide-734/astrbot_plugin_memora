@@ -11,14 +11,15 @@ interface BridgeMock {
   t: ReturnType<typeof vi.fn>;
 }
 
+/** 构造 Dashboard bridge 成功 envelope。 */
 function ok<T>(data: T) {
   return { status: "ok", data };
 }
 
-function persistedTrace(traceId: string, query = "persisted query") {
+/** 构造一条不含查询和 canonical ID 的持久化 trace。 */
+function persistedTrace(traceId: string) {
   return {
     trace_id: traceId,
-    query,
     total_ms: 12.3,
     stages: [],
     results: [],
@@ -28,6 +29,7 @@ function persistedTrace(traceId: string, query = "persisted query") {
   };
 }
 
+/** 构造可由测试显式完成的 Promise。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((next) => {
@@ -52,34 +54,29 @@ describe("RecallTracePanel", () => {
 
     bridge.apiPost.mockResolvedValue(ok({
       trace_id: "trace-coffee",
-      query: "用户喜欢喝什么咖啡",
       total_ms: 84.2,
       stages: [
-        { name: "search_memories", duration_ms: 4.1, candidate_count: 0, metadata: { tokens: 6 } },
-        { name: "bm25", duration_ms: 12.5, candidate_count: 7, metadata: { index: "atom_bm25" } },
+        { name: "search_memories", duration_ms: 4.1, candidate_count: 0, metadata: {} },
+        { name: "bm25", duration_ms: 12.5, candidate_count: 7, metadata: { candidate_count: 7 } },
       ],
       results: [
         {
-          doc_id: "mem-coffee",
           rank: 1,
           initial_score: 0.71,
           final_score: 0.93,
           score_contributions: [
-            { source: "bm25", score: 0.62, weight: 0.35, explanation: "keyword match" },
-            { source: "emotion_boost", score: 0.21, weight: 0.2, explanation: "情绪偏好提升" },
+            { source: "bm25", score: 0.62, weight: 0.35 },
+            { source: "emotion_boost", score: 0.21, weight: 0.2 },
           ],
-          graph_paths: [
-            { nodes: ["用户", "咖啡偏好"], edges: ["preference"], score: 0.72, metadata: { hop_count: 1 } },
-          ],
-          metadata: { type: "preference", session_id: "sess-coffee" },
+          metadata: { memory_type: "preference" },
         },
       ],
       filtered: [
-        { doc_id: "mem-stale", reason: "low_score", stage: "rerank", score: 0.12, metadata: { threshold: 0.2 } },
-        { doc_id: "mem-empty", reason: "missing_fields", metadata: {} },
+        { reason: "low_score", stage: "rerank", score: 0.12 },
+        { reason: "missing_fields" },
       ],
       created_at: 1783150200,
-      metadata: { provider: "mock" },
+      metadata: { debug_trace_available: true },
     }));
 
     Object.defineProperty(window, "AstrBotPluginPage", {
@@ -97,7 +94,7 @@ describe("RecallTracePanel", () => {
     });
   });
 
-  it("submits clamped trace payload and renders stages contributions and filtered reasons", async () => {
+  it("submits clamped trace payload and renders safe stages, scores, and filtered reasons", async () => {
     const { container } = render(<RecallTracePanel showToast={showToast} />);
 
     fireEvent.change(screen.getByLabelText(/Query|查询/), {
@@ -127,7 +124,7 @@ describe("RecallTracePanel", () => {
     });
     expect(screen.getByText("Emotion boost")).toBeTruthy();
     expect(screen.getByText("Memory search")).toBeTruthy();
-    expect(screen.getByText(/mem-coffee/)).toBeTruthy();
+    expect(screen.getByText("#1")).toBeTruthy();
     expect(screen.getByText("Low score")).toBeTruthy();
     expect(screen.getByText("Rerank")).toBeTruthy();
     expect(screen.getByText("Missing fields")).toBeTruthy();
