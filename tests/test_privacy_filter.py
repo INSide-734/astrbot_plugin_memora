@@ -1,4 +1,4 @@
-"""测试 P2 privacy filtering — PrivacyLevel enum and filter logic."""
+"""测试 PrivacyLevel 枚举和隐私过滤逻辑。"""
 
 from __future__ import annotations
 

@@ -168,8 +168,8 @@ python -m pytest -q tests/test_conversation_store.py tests/test_message_store.py
 python -m pytest -q tests/test_profile_store.py tests/test_knowledge_store.py tests/test_note_store.py tests/test_hierarchy_store.py
 python -m pytest -q tests/test_injection_decision_store.py
 python -m pytest -q tests/test_memory_evolution_store.py tests/test_projection_reader.py
-python -m pytest -q tests/test_p1_adapter_capabilities.py
-python -m pytest -q tests/test_p1_temporal_semantics.py
+python -m pytest -q tests/test_adapter_capabilities.py
+python -m pytest -q tests/test_temporal_semantics.py
 python -m pytest -q tests/integration/test_pipeline_graph.py tests/stress/test_concurrent_writes.py
 ```
 

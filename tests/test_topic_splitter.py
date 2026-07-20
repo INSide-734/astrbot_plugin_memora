@@ -205,7 +205,7 @@ def test_pbt_single_fact_never_splits(facts):
 @settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow])
 @given(lists(text(min_size=1, max_size=30), min_size=1, max_size=6))
 def test_pbt_fact_conservation(facts):
-    """P1: Total key_facts count is preserved across segmentation."""
+    """验证分段前后保留 key_facts 总数。"""
     valid = [f for f in facts if f.strip()]
     if not valid:
         return
@@ -225,7 +225,7 @@ def test_pbt_fact_conservation(facts):
 @settings(max_examples=10, suppress_health_check=[HealthCheck.too_slow])
 @given(lists(text(min_size=1, max_size=30), min_size=1, max_size=4))
 def test_pbt_idempotent(facts):
-    """P2: Same input produces same segmentation result."""
+    """验证相同输入产生相同的分段结果。"""
     valid = [f for f in facts if f.strip()]
     if not valid:
         return

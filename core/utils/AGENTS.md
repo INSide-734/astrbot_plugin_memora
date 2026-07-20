@@ -131,7 +131,7 @@ python -m pytest -q tests/test_utils.py tests/test_json_utils.py tests/test_cach
 
 ```bash
 python -m pytest -q tests/test_memory_formatter.py tests/test_injection_budget.py tests/test_injection_executor.py tests/test_cleaners.py
-python -m pytest -q tests/test_p1_adapter_capabilities.py tests/test_utils.py
+python -m pytest -q tests/test_adapter_capabilities.py tests/test_utils.py
 ```
 
 ## 变更检查清单

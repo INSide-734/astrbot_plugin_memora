@@ -1,4 +1,4 @@
-"""P2-A 图邻居 hop 和最小距离契约。"""
+"""图邻居 hop 和最小距离契约。"""
 
 from __future__ import annotations
 

@@ -138,7 +138,7 @@ sequenceDiagram
 
 ```bash
 python -m pytest -q tests/test_validators.py
-python -m pytest -q tests/test_p1_adapter_capabilities.py tests/test_llm_client.py
+python -m pytest -q tests/test_adapter_capabilities.py tests/test_llm_client.py
 python -m pytest -q tests/test_vector_rebuilder.py
 python -m pytest -q tests/test_managers_stats.py
 ```

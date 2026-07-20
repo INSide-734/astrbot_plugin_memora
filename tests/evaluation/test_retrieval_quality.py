@@ -130,7 +130,7 @@ def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels()
     assert {
         invariant
         for case in temporal_cases
-        for invariant in case.metadata.get("p1_invariants", [])
+        for invariant in case.metadata.get("temporal_invariants", [])
     } >= {
         "reference_time",
         "future_source_hidden",

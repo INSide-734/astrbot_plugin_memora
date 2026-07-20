@@ -1,4 +1,4 @@
-"""P2-A 隔离检索消融能力契约。"""
+"""隔离检索消融能力契约。"""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ def test_descriptors_require_engine_and_tolerate_malformed_live_state() -> None:
     """缺失引擎应 fail closed，畸形组件属性不得破坏能力列表。"""
 
     from core.evaluation.retrieval_ablation import (
-        P2_VARIANT_NAMES,
+        RETRIEVAL_VARIANT_NAMES,
         RetrievalAblationController,
     )
 
@@ -92,7 +92,7 @@ def test_descriptors_require_engine_and_tolerate_malformed_live_state() -> None:
     malformed_mmr._lambda = object()
     engine.dual_route_retriever.reranker = malformed_mmr
     descriptors = RetrievalAblationController(engine).descriptors()
-    assert len(descriptors) == len(P2_VARIANT_NAMES)
+    assert len(descriptors) == len(RETRIEVAL_VARIANT_NAMES)
 
 
 def test_descriptors_reject_config_and_reranker_no_ops() -> None:
