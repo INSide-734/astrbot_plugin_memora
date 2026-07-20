@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -79,6 +80,30 @@ class TestEndpointReadinessGate:
         assert results == ["plugin warming up"]
         plugin._ensure_plugin_ready.assert_awaited_once_with()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method_name", ("health", "diagnostics"))
+    async def test_diagnostic_snapshot_commands_use_nonblocking_ready_check(
+        self,
+        method_name: str,
+    ) -> None:
+        plugin = _Plugin()
+        plugin._ensure_plugin_ready = AsyncMock(return_value=(False, "plugin warming up"))
+
+        results = await _collect(getattr(plugin, method_name)(_event()))
+
+        assert results == ["plugin warming up"]
+        plugin._ensure_plugin_ready.assert_awaited_once_with(wait=False)
+
+    @pytest.mark.asyncio
+    async def test_trace_keeps_blocking_ready_check(self) -> None:
+        plugin = _Plugin()
+        plugin._ensure_plugin_ready = AsyncMock(return_value=(False, "plugin warming up"))
+
+        results = await _collect(plugin.trace(_event(), "query"))
+
+        assert results == ["plugin warming up"]
+        plugin._ensure_plugin_ready.assert_awaited_once_with()
+
 
 class TestEndpointDelegation:
     @pytest.mark.asyncio
@@ -136,6 +161,72 @@ class TestEndpointDelegation:
 
         assert results == ["help text"]
         handler.handle_help.assert_called_once_with(event)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "handler_name", "messages"),
+        (
+            ("health", "handle_health", ("health-start", "health-done")),
+            (
+                "diagnostics",
+                "handle_diagnostics",
+                ("diagnostics-start", "diagnostics-done"),
+            ),
+        ),
+    )
+    async def test_diagnostic_snapshot_commands_delegate_all_messages(
+        self,
+        method_name: str,
+        handler_name: str,
+        messages: tuple[str, str],
+    ) -> None:
+        plugin = _Plugin()
+        handler = MagicMock()
+        setattr(
+            handler,
+            handler_name,
+            MagicMock(return_value=_yielding_handler(*messages)),
+        )
+        plugin.command_handler = handler
+        event = _event()
+
+        results = await _collect(getattr(plugin, method_name)(event))
+
+        assert results == list(messages)
+        getattr(handler, handler_name).assert_called_once_with(event)
+
+    @pytest.mark.asyncio
+    async def test_trace_delegates_query_and_k_to_command_handler(self) -> None:
+        plugin = _Plugin()
+        handler = MagicMock()
+        handler.handle_trace = MagicMock(
+            return_value=_yielding_handler("trace-start", "trace-done")
+        )
+        plugin.command_handler = handler
+        event = _event()
+
+        results = await _collect(plugin.trace(event, "python", k=7))
+
+        assert results == ["trace-start", "trace-done"]
+        handler.handle_trace.assert_called_once_with(event, "python", 7)
+
+
+def test_diagnostic_endpoints_keep_admin_permission_decorators() -> None:
+    source = (
+        Path(__file__).resolve().parents[1] / "core" / "command_endpoints.py"
+    ).read_text(encoding="utf-8")
+
+    for command in ("health", "diagnostics", "trace"):
+        marker = f'@memora.command("{command}"'
+        command_index = source.index(marker)
+        permission_index = source.rfind(
+            "@permission_type(PermissionType.ADMIN)",
+            0,
+            command_index,
+        )
+        previous_command_index = source.rfind("@memora.command(", 0, command_index)
+
+        assert permission_index > previous_command_index
 
 
 class TestCleanupModeMapping:

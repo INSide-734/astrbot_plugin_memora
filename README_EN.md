@@ -215,7 +215,10 @@ python scripts/check_all.py
 | Command | Description |
 |---------|-------------|
 | `/memora status` | Show plugin readiness and core component status |
+| `/memora health` | Show the runtime health score, affected domains, and fixed troubleshooting suggestions |
+| `/memora diagnostics` | Show the live Provider, recall, task, index, and write diagnostics snapshot |
 | `/memora search <query> [k]` | Search memories, with `k=5` by default |
+| `/memora trace <query> [k]` | Trace recall stages and scores for the current session without echoing memory bodies in chat |
 | `/memora forget <doc_id>` | Delete a specific memory |
 | `/memora rebuild-index` | Rebuild vector/BM25 indexes |
 | `/memora rebuild-graph` | Rebuild graph-memory indexes |

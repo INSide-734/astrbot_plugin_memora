@@ -346,6 +346,21 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     if self.event_handler
                     else None,
                     write_guard_cb=self._writes_blocked_by_pending_restore,
+                    diagnostics_health_provider=getattr(
+                        self.page_api,
+                        "get_diagnostics_health",
+                        None,
+                    ),
+                    diagnostics_metrics_provider=getattr(
+                        self.page_api,
+                        "get_metrics_summary",
+                        None,
+                    ),
+                    recall_trace_provider=getattr(
+                        self.page_api,
+                        "test_recall_with_trace_payload",
+                        None,
+                    ),
                 )
 
 

@@ -7,6 +7,12 @@ Memora 项目的所有重要变更都将记录在此文件中。
 
 ## [Unreleased] — 2026-07-03
 
+### feat: 只读诊断命令
+
+- **健康评分** — 新增管理员命令 `/memora health`，以本地化文本展示运行时健康分、异常领域和固定排障建议，不回显 Provider 原始错误。
+- **实时快照** — 新增管理员命令 `/memora diagnostics`，仅输出 Provider、召回、后台任务、索引、写协调器和 Prometheus 的 allowlist 标量。
+- **召回追踪** — 新增管理员命令 `/memora trace <query> [k]`，按当前会话和群聊隐私边界执行可解释召回；聊天只显示阶段、路由、记忆 ID 与评分，完整 trace 沿用现有 200 条有界存储。
+
 ### Breaking: 自适应记忆注入策略
 
 - **可切换路由** — 支持 Manual、Auto 与 Hybrid；新安装默认采用 `manual + balanced + auto delivery`，需要回滚到确定性行为时使用 `manual + balanced`。

@@ -115,7 +115,10 @@ pip install -r requirements.txt
 | 命令 | 说明 |
 | --- | --- |
 | `/memora status` | 查看插件初始化与核心组件状态。 |
+| `/memora health` | 查看运行时健康评分、异常领域与固定排障建议。 |
+| `/memora diagnostics` | 查看 Provider、召回、任务、索引和写入的实时诊断快照。 |
 | `/memora search <query> [k]` | 搜索记忆；`k` 默认是 `5`。 |
+| `/memora trace <query> [k]` | 追踪当前会话召回阶段与评分；`k` 默认是 `5`，聊天中不回显记忆正文。 |
 | `/memora forget <doc_id>` | 删除指定记忆。 |
 | `/memora rebuild-index` | 重建向量和 BM25 索引。 |
 | `/memora rebuild-graph` | 重建图记忆索引。 |
@@ -129,7 +132,10 @@ pip install -r requirements.txt
 
 ```text
 /memora status
+/memora health
+/memora diagnostics
 /memora search 喜欢的音乐 5
+/memora trace 喜欢的音乐 5
 ```
 
 ## Dashboard、工具与 API
