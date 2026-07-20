@@ -35,12 +35,10 @@ export function EvaluationCaseTable({ cases }: EvaluationCaseTableProps) {
         </span>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-[780px] w-full text-left text-xs">
+        <table className="min-w-[520px] w-full text-left text-xs">
           <thead className="text-[var(--text-tertiary)]">
             <tr>
               <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.table.case")}</th>
-              <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.table.query")}</th>
-              <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.table.rankedDocs")}</th>
               <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.table.recall")}</th>
               <th className="px-4 py-2 font-medium">RR</th>
               <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.table.gain")}</th>
@@ -61,10 +59,6 @@ export function EvaluationCaseTable({ cases }: EvaluationCaseTableProps) {
                         </span>
                       )}
                     </div>
-                  </td>
-                  <td className="max-w-[220px] px-4 py-3 align-top text-[var(--text-secondary)]">{row.query}</td>
-                  <td className="max-w-[260px] px-4 py-3 align-top font-mono text-2xs text-[var(--text-tertiary)]">
-                    {row.ranked_doc_ids.length > 0 ? row.ranked_doc_ids.join(", ") : "-"}
                   </td>
                   <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{formatPercent(row.recall_at_k, locale)}</td>
                   <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{formatDashboardNumber(row.reciprocal_rank, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>

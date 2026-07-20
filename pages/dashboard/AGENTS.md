@@ -138,6 +138,8 @@ Injection 页面固定为 `dense`：PageHeader 下有 Overview、Strategy Config
 - 配置保存发送 `base_revision` + 最小 `changes`，而不是覆盖整个远端配置。遇到 `config_conflict` 时保留草稿，支持接受远端/丢弃本地、查看差异和基于最新 revision 重放本地修改。
 - 实体编辑发送 `expected_revision`；服务端比较 revision 后原子写入。`conflict` / `edit_conflict` 必须展示远端快照及用户可控的解决路径，不能静默 last-write-wins。
 - 成功写回后用服务端返回实体/revision 更新缓存并清理 dirty；失败保留用户输入和字段级错误。高影响批量操作必须显式确认。
+- Evaluation Workbench 从 `evaluation/datasets` 的 `variants` descriptor 动态生成消融选项；只默认选择 `available=true` 且 `default_selected=true` 的项，不可用项必须禁用并展示稳定 `reason_code` 文案。旧后端未返回 descriptor 时仅回退 `baseline`、`graph_expansion_off`、`topic_expansion_off`，不得默认运行全部实验。
+- Evaluation 报告展示每个变体的 completed/skipped、稳定 reason 和安全 `effective_settings`。逐用例表只消费 case ID 与 Recall/Precision/RR/nDCG/latency 数值；不得重新要求或展示 query、ranked/relevant canonical ID、身份或任意 metadata。
 
 ### 备份与热恢复
 
@@ -189,16 +191,17 @@ npx vitest run --environment jsdom src/pages/SystemPage.test.tsx src/mock/server
 
 行为变更先写能失败的 Vitest + React Testing Library 测试。构建不能替代 runtime smoke，runtime smoke 不能替代真实 Playwright browser smoke；仓库级 `python scripts/check_all.py` 是最终门禁，不是开发时缩小反馈环的替代品。
 
-## Browser smoke 与 49 张截图
+## Browser smoke 与 50 张截图
 
-`scripts/browser_smoke.mjs` 在桌面 1366×900、移动 390×844、宽屏 2048×1152 下验证页面，并覆盖暗色、zh/en/ru、Graph、全局搜索、编辑/配置 revision 冲突、确认流程、横向溢出、加载稳定性和控制台/page error。脚本定义的 49 张基线全部必须生成、尺寸匹配且超过最低字节阈值：
+`scripts/browser_smoke.mjs` 在桌面 1366×900、移动 390×844、宽屏 2048×1152 下验证页面，并覆盖暗色、zh/en/ru、Graph、全局搜索、Evaluation 桌面双列/移动单列变体卡片、编辑/配置 revision 冲突、确认流程、横向溢出、加载稳定性和控制台/page error。脚本定义的 50 张基线全部必须生成、尺寸匹配且超过最低字节阈值：
 
 - 配置/注入/搜索（10）：`config.png`、`config-conflict.png`、`mobile-config.png`、`injection-overview.png`、`injection-config-conflict.png`、`injection-decisions.png`、`mobile-injection-detail.png`、`wide-injection-overview.png`、`global-search-scroll.png`、`global-search-memory-target.png`。
-- 主要页面/智能控制台（11）：`graph.png`、`memory.png`、`system.png`、`jargon.png`、`intelligence-evaluation.png`、`intelligence-trace.png`、`intelligence-diagnostics.png`、`intelligence-review.png`、`mobile-system.png`、`mobile-jargon.png`、`system-confirmation.png`。
+- 主要页面/智能控制台（12）：`graph.png`、`memory.png`、`system.png`、`jargon.png`、`intelligence-evaluation.png`、`mobile-intelligence-evaluation.png`、`intelligence-trace.png`、`intelligence-diagnostics.png`、`intelligence-review.png`、`mobile-system.png`、`mobile-jargon.png`、`system-confirmation.png`。
 - 主题/预览/宽屏（9）：`dark-learning.png`、`dark-system.png`、`preview.png`、`mobile-preview.png`、`dark-preview.png`、`wide-preview.png`、`wide-learning.png`、`wide-affection.png`、`wide-social.png`。
 - i18n/编辑（10）：`i18n-en-preview.png`、`i18n-en-memory.png`、`i18n-ru-preview.png`、`i18n-ru-memory.png`、`editing-social-sheet.png`、`editing-social-conflict.png`、`editing-error-summary.png`、`editing-batch-toolbar.png`、`editing-mobile-affection.png`、`editing-mobile-mood.png`。
+- 数据表/编辑器/密度（9）：`knowledge-table-default.png`、`knowledge-table-columns.png`、`knowledge-editor-view.png`、`knowledge-editor-edit.png`、`mobile-knowledge-table.png`、`mobile-knowledge-editor.png`、`wide-profiles-table.png`、`dark-social-table.png`、`injection-decisions-compact.png`。
 
-Browser smoke 通过后仍须人工打开 49 张图片，不能只看 exit code/字节数。重点检查：
+Browser smoke 通过后仍须人工打开 50 张图片，不能只看 exit code/字节数。重点检查：
 
 - Recall Trace 的 query、会话 ID、用户 ID属于用户主动填写的检索控件；它们不得出现在 trace response、历史 trace、Diagnostics、日志或模型可见 metadata 中。
 - Review Queue 是受控人工复核页面，可以按复核权限显示候选正文和来源；这些字段不得复制到 Recall Trace、Diagnostics、注入观测或模型输入。

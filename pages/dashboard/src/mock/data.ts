@@ -5,6 +5,7 @@ import type {
   DiagnosticEvent,
   DiagnosticHealthResponse,
   EvaluationReport,
+  EvaluationVariantDescriptor,
   ReviewAction,
   ReviewItem,
   RecallTraceResponse,
@@ -392,6 +393,36 @@ export const EVALUATION_DATASETS = [
   },
 ];
 
+export const EVALUATION_VARIANTS: EvaluationVariantDescriptor[] = [
+  { name: "baseline", available: true, reason_code: "available", default_selected: true },
+  { name: "A", available: false, reason_code: "equivalent_to_baseline", default_selected: false },
+  { name: "B", available: true, reason_code: "available", default_selected: false },
+  { name: "C", available: false, reason_code: "readonly_snapshot_cannot_activate_worker", default_selected: false },
+  { name: "graph_expansion_off", available: true, reason_code: "available", default_selected: true },
+  { name: "topic_expansion_off", available: true, reason_code: "available", default_selected: true },
+  { name: "final_reranker_off", available: true, reason_code: "available", default_selected: false },
+  {
+    name: "final_reranker_mmr",
+    available: false,
+    reason_code: "equivalent_to_baseline",
+    default_selected: false,
+  },
+  {
+    name: "final_reranker_embedding_similarity",
+    available: false,
+    reason_code: "missing_document_vector_access",
+    default_selected: false,
+  },
+  { name: "graph_neighbors_off", available: true, reason_code: "available", default_selected: false },
+  {
+    name: "graph_neighbors_1_hop",
+    available: false,
+    reason_code: "equivalent_to_baseline",
+    default_selected: false,
+  },
+  { name: "graph_neighbors_2_hops", available: true, reason_code: "available", default_selected: false },
+];
+
 export const EVALUATION_REPORTS: EvaluationReport[] = [
   {
     report_id: "eval-private-basic",
@@ -410,6 +441,9 @@ export const EVALUATION_REPORTS: EvaluationReport[] = [
       baseline: {
         name: "baseline",
         status: "completed",
+        capability_status: "available",
+        reason_code: "available",
+        effective_settings: { variant: "baseline" },
         summary: {
           total_cases: 20,
           k: 5,
@@ -422,6 +456,9 @@ export const EVALUATION_REPORTS: EvaluationReport[] = [
       graph_expansion_off: {
         name: "graph_expansion_off",
         status: "completed",
+        capability_status: "available",
+        reason_code: "available",
+        effective_settings: { chain_graph_expansion_enabled: false },
         summary: {
           total_cases: 20,
           k: 5,
@@ -434,6 +471,9 @@ export const EVALUATION_REPORTS: EvaluationReport[] = [
       topic_expansion_off: {
         name: "topic_expansion_off",
         status: "completed",
+        capability_status: "available",
+        reason_code: "available",
+        effective_settings: { chain_topic_expansion_enabled: false },
         summary: {
           total_cases: 20,
           k: 5,
@@ -461,8 +501,6 @@ export const EVALUATION_REPORTS: EvaluationReport[] = [
     cases: [
       {
         case_id: "coffee",
-        query: "用户喜欢喝什么咖啡",
-        ranked_doc_ids: ["mem-coffee", "mem-weekend"],
         recall_at_k: 1,
         reciprocal_rank: 1,
         ndcg_at_k: 1,
@@ -470,8 +508,6 @@ export const EVALUATION_REPORTS: EvaluationReport[] = [
       },
       {
         case_id: "weekend-workplace",
-        query: "用户周末在哪里工作",
-        ranked_doc_ids: ["mem-other", "mem-react"],
         recall_at_k: 0,
         reciprocal_rank: 0,
         ndcg_at_k: 0,

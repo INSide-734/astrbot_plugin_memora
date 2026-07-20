@@ -155,6 +155,13 @@ export interface EvaluationDataset {
   chat_types: string[];
 }
 
+export interface EvaluationVariantDescriptor {
+  name: string;
+  available: boolean;
+  reason_code: string;
+  default_selected: boolean;
+}
+
 export interface EvaluationSummaryMetrics {
   total_cases: number;
   k: number;
@@ -169,6 +176,9 @@ export interface EvaluationVariantPayload {
   status: "completed" | "skipped" | "error" | string;
   summary?: EvaluationSummaryMetrics;
   reason?: string;
+  capability_status?: "available" | "unavailable" | string;
+  reason_code?: string;
+  effective_settings?: Record<string, string | number | boolean>;
 }
 
 export interface EvaluationVariantDelta {
@@ -180,9 +190,8 @@ export interface EvaluationVariantDelta {
 
 export interface EvaluationCaseResult {
   case_id: string;
-  query: string;
-  ranked_doc_ids: string[];
   recall_at_k: number;
+  precision_at_k?: number;
   reciprocal_rank: number;
   ndcg_at_k: number;
   latency_ms: number;

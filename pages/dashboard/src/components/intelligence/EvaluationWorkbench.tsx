@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import type {
   EvaluationDataset,
   EvaluationReport,
+  EvaluationVariantDescriptor,
   EvaluationVariantDelta,
 } from "@/types/intelligence";
 
@@ -20,13 +21,22 @@ interface EvaluationWorkbenchProps {
   showToast: (msg: string, isError?: boolean) => void;
 }
 
-type VariantName = "baseline" | "graph_expansion_off" | "topic_expansion_off";
-
-const variantOptions: Array<{ value: VariantName; label: string }> = [
-  { value: "baseline", label: "baseline" },
-  { value: "graph_expansion_off", label: "graph off" },
-  { value: "topic_expansion_off", label: "topic off" },
+const LEGACY_VARIANT_DESCRIPTORS: EvaluationVariantDescriptor[] = [
+  { name: "baseline", available: true, reason_code: "available", default_selected: true },
+  { name: "graph_expansion_off", available: true, reason_code: "available", default_selected: true },
+  { name: "topic_expansion_off", available: true, reason_code: "available", default_selected: true },
 ];
+
+/** 返回 descriptor 中可执行的默认选择，并保证至少保留一个可执行变体。 */
+function defaultVariantSelection(descriptors: EvaluationVariantDescriptor[]): string[] {
+  const available = descriptors.filter((descriptor) => descriptor.available);
+  const selected = available
+    .filter((descriptor) => descriptor.default_selected)
+    .map((descriptor) => descriptor.name);
+  if (selected.length > 0) return selected;
+  const baseline = available.find((descriptor) => descriptor.name === "baseline");
+  return (baseline ? [baseline] : available.slice(0, 1)).map((descriptor) => descriptor.name);
+}
 
 function formatPercent(value: number, locale: string): string {
   return formatDashboardPercent(value, locale, { maximumFractionDigits: 0 });
@@ -68,6 +78,72 @@ function VariantDeltaRow({ name, delta }: { name: string; delta: EvaluationVaria
   );
 }
 
+interface VariantSelectionCardProps {
+  descriptor: EvaluationVariantDescriptor;
+  selected: boolean;
+  onToggle: (name: string) => void;
+}
+
+/** 渲染整面可点、状态层级清晰的紧凑变体选择卡。 */
+function VariantSelectionCard({ descriptor, selected, onToggle }: VariantSelectionCardProps) {
+  const { t } = useI18n();
+  const label = translateEnum(
+    t,
+    "intelligence.evaluation.variant",
+    descriptor.name,
+    descriptor.name,
+  );
+  const unavailableReason = descriptor.available
+    ? ""
+    : translateEnum(
+      t,
+      "intelligence.evaluation.reason",
+      descriptor.reason_code,
+      descriptor.reason_code,
+    );
+
+  return (
+    <label
+      data-variant-card={descriptor.name}
+      data-selected={selected ? "true" : undefined}
+      aria-disabled={!descriptor.available || undefined}
+      title={unavailableReason || undefined}
+      className={cn(
+        "group relative flex min-h-[4.25rem] w-full items-start gap-2.5 overflow-hidden rounded-lg border border-border bg-card p-3 text-left text-card-foreground",
+        "focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50 focus-within:ring-offset-1 focus-within:ring-offset-background",
+        descriptor.available
+          ? "cursor-pointer hover:border-foreground/20 hover:bg-muted/40"
+          : "cursor-not-allowed border-dashed bg-muted/40",
+        selectionStateVariants({ kind: "surface", selected }),
+      )}
+    >
+      <Checkbox
+        checked={selected}
+        disabled={!descriptor.available}
+        className="mt-0.5 shrink-0"
+        onCheckedChange={() => onToggle(descriptor.name)}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-start justify-between gap-2">
+          <span className="text-xs font-semibold leading-5 text-foreground">
+            {label}
+          </span>
+          {!descriptor.available ? (
+            <span className="shrink-0 rounded-full border border-border bg-muted/60 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
+              {t("runtime.status.unavailable")}
+            </span>
+          ) : null}
+        </span>
+        {unavailableReason ? (
+          <span className="mt-1 line-clamp-2 block text-2xs leading-4 text-muted-foreground">
+            {unavailableReason}
+          </span>
+        ) : null}
+      </span>
+    </label>
+  );
+}
+
 export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
   const { t, currentLang } = useI18n();
   const tRef = useRef(t);
@@ -75,11 +151,10 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
   const locale = dashboardLocale(currentLang());
   const [datasets, setDatasets] = useState<EvaluationDataset[]>([]);
   const [selectedDatasets, setSelectedDatasets] = useState<string[]>([]);
-  const [selectedVariants, setSelectedVariants] = useState<VariantName[]>([
-    "baseline",
-    "graph_expansion_off",
-    "topic_expansion_off",
-  ]);
+  const [variantDescriptors, setVariantDescriptors] = useState<EvaluationVariantDescriptor[]>(
+    LEGACY_VARIANT_DESCRIPTORS,
+  );
+  const [selectedVariants, setSelectedVariants] = useState<string[]>([]);
   const [k, setK] = useState(5);
   const [report, setReport] = useState<EvaluationReport | null>(null);
   const [history, setHistory] = useState<EvaluationReport[]>([]);
@@ -96,6 +171,10 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
     () => Object.entries(report?.deltas ?? {}),
     [report]
   );
+  const variantOutcomes = useMemo(
+    () => Object.entries(report?.variants ?? {}),
+    [report]
+  );
 
   const loadWorkbench = useCallback(async () => {
     setLoading(true);
@@ -104,7 +183,10 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
         apiRequest("evaluation/datasets"),
         apiRequest("evaluation/reports?limit=10"),
       ]);
-      const datasetData = unwrapApiData<{ datasets?: EvaluationDataset[] }>(datasetResponse);
+      const datasetData = unwrapApiData<{
+        datasets?: EvaluationDataset[];
+        variants?: EvaluationVariantDescriptor[];
+      }>(datasetResponse);
       const reportData = unwrapApiData<{ reports?: EvaluationReport[] }>(reportResponse);
       const nextDatasets = datasetData.datasets ?? [];
       setDatasets(nextDatasets);
@@ -112,6 +194,19 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
         const available = new Set(nextDatasets.map((dataset) => dataset.name));
         const retained = current.filter((name) => available.has(name));
         return retained.length > 0 ? retained : nextDatasets.slice(0, 1).map((dataset) => dataset.name);
+      });
+      const nextDescriptors = datasetData.variants?.length
+        ? datasetData.variants
+        : LEGACY_VARIANT_DESCRIPTORS;
+      setVariantDescriptors(nextDescriptors);
+      setSelectedVariants((current) => {
+        const available = new Set(
+          nextDescriptors
+            .filter((descriptor) => descriptor.available)
+            .map((descriptor) => descriptor.name),
+        );
+        const retained = current.filter((name) => available.has(name));
+        return retained.length > 0 ? retained : defaultVariantSelection(nextDescriptors);
       });
       setHistory(reportData.reports ?? []);
     } catch (error) {
@@ -133,7 +228,8 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
     ));
   };
 
-  const toggleVariant = (name: VariantName) => {
+  const toggleVariant = (name: string) => {
+    if (!variantDescriptors.some((descriptor) => descriptor.name === name && descriptor.available)) return;
     setSelectedVariants((current) => {
       if (current.includes(name)) {
         return current.length === 1 ? current : current.filter((item) => item !== name);
@@ -250,9 +346,9 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
               </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-[100px_1fr]">
-              <label className="text-xs font-medium text-[var(--text-secondary)]">
-                k
+            <div className="space-y-3">
+              <label className="flex items-center justify-between gap-3 text-xs font-medium text-[var(--text-secondary)]">
+                <span>k</span>
                 <input
                   type="number"
                   min={1}
@@ -260,36 +356,42 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
                   value={k}
                   onBlur={() => setK((value) => clampK(value))}
                   onChange={(event) => setK(clampK(Number(event.target.value)))}
-                  className="mt-1 h-8 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-xs text-[var(--text-primary)]"
+                  className="h-8 w-24 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-xs text-[var(--text-primary)]"
                 />
               </label>
               <div>
-                <p className="mb-1 text-xs font-medium text-[var(--text-secondary)]">{t("intelligence.evaluation.variants")}</p>
-                <div className="flex flex-wrap gap-2">
-                  {variantOptions.map((variant) => (
-                    <label
-                      key={variant.value}
-                      data-selected={selectedVariants.includes(variant.value) ? "true" : undefined}
-                      className={cn(
-                        "inline-flex h-8 cursor-pointer items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-xs text-[var(--text-secondary)]",
-                        selectionStateVariants({
-                          kind: "surface",
-                          selected: selectedVariants.includes(variant.value),
-                        }),
-                      )}
-                    >
-                      <Checkbox
-                        checked={selectedVariants.includes(variant.value)}
-                        onCheckedChange={() => toggleVariant(variant.value)}
-                      />
-                      {translateEnum(t, "intelligence.evaluation.variant", variant.value, variant.label)}
-                    </label>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-[var(--text-secondary)]">
+                    {t("intelligence.evaluation.variants")}
+                  </p>
+                  <span
+                    aria-label={t("select.selected", String(selectedVariants.length))}
+                    className="rounded-full border border-border bg-muted/60 px-2 py-0.5 text-2xs font-medium tabular-nums text-muted-foreground"
+                  >
+                    {selectedVariants.length} / {variantDescriptors.filter((variant) => variant.available).length}
+                  </span>
+                </div>
+                <div
+                  data-variant-grid
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+                >
+                  {variantDescriptors.map((variant) => (
+                    <VariantSelectionCard
+                      key={variant.name}
+                      descriptor={variant}
+                      selected={selectedVariants.includes(variant.name)}
+                      onToggle={toggleVariant}
+                    />
                   ))}
                 </div>
               </div>
             </div>
 
-            <Button onClick={runEvaluation} disabled={running || loading || selectedDatasets.length === 0} className="w-full">
+            <Button
+              onClick={runEvaluation}
+              disabled={running || loading || selectedDatasets.length === 0 || selectedVariants.length === 0}
+              className="w-full"
+            >
               {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
               {running ? t("intelligence.evaluation.running") : t("intelligence.evaluation.run")}
             </Button>
@@ -339,6 +441,56 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
                 </div>
               ))}
             </div>
+
+            {variantOutcomes.length > 0 && (
+              <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]">
+                <div className="border-b border-[var(--color-border)] px-4 py-3">
+                  <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+                    {t("intelligence.evaluation.variantOutcomes")}
+                  </h4>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-[560px] w-full text-left text-xs">
+                    <thead className="text-[var(--text-tertiary)]">
+                      <tr>
+                        <th className="px-4 py-2 font-medium">{t("intelligence.table.variant")}</th>
+                        <th className="px-4 py-2 font-medium">{t("intelligence.metric.status")}</th>
+                        <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.effectiveSettings")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {variantOutcomes.map(([name, outcome]) => {
+                        const settings = Object.entries(outcome.effective_settings ?? {})
+                          .map(([key, value]) => `${key}=${String(value)}`)
+                          .join(", ");
+                        const reason = outcome.reason_code && outcome.reason_code !== "available"
+                          ? translateEnum(
+                            t,
+                            "intelligence.evaluation.reason",
+                            outcome.reason_code,
+                            outcome.reason_code,
+                          )
+                          : "";
+                        return (
+                          <tr key={name} className="border-t border-[var(--color-border-light)]">
+                            <td className="px-4 py-2 font-medium text-[var(--text-primary)]">
+                              {translateEnum(t, "intelligence.evaluation.variant", name, name)}
+                            </td>
+                            <td className="px-4 py-2 text-[var(--text-secondary)]">
+                              {translateEnum(t, "runtime.status", outcome.status, outcome.status)}
+                              {reason ? <span className="ml-2 text-[var(--text-tertiary)]">{reason}</span> : null}
+                            </td>
+                            <td className="px-4 py-2 font-mono text-2xs text-[var(--text-tertiary)]">
+                              {settings || "-"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {variantDeltas.length > 0 && (
               <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]">

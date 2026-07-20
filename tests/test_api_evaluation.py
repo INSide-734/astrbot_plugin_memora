@@ -40,6 +40,27 @@ def test_evaluation_routes_registered() -> None:
 
 
 @pytest.mark.asyncio
+async def test_evaluation_datasets_describe_live_engine_capabilities(tmp_path) -> None:
+    engine = FakeEngine()
+    engine.config = {"recall_engine.chain_graph_expansion_enabled": True}
+    plugin = _plugin_with_engine(engine, data_dir=tmp_path)
+    api = PluginPageApi(plugin)
+
+    result = await api.get_evaluation_datasets_payload({})
+
+    assert result["status"] == "ok"
+    descriptors = {
+        item["name"]: item for item in result["data"]["variants"]
+    }
+    assert descriptors["graph_expansion_off"] == {
+        "name": "graph_expansion_off",
+        "available": True,
+        "reason_code": "available",
+        "default_selected": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_evaluation_api_refuses_to_run_without_memory_engine(tmp_path) -> None:
     plugin = _plugin_with_engine(None, data_dir=tmp_path)
     api = PluginPageApi(plugin)
@@ -102,6 +123,53 @@ async def test_evaluation_api_rejects_only_unknown_dataset_selection(tmp_path) -
         "status": "error",
         "message": "No known evaluation datasets selected",
     }
+
+
+@pytest.mark.asyncio
+async def test_evaluation_api_ordinary_failure_uses_stable_safe_error(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """普通评测异常不得把 Provider 正文或堆栈写入响应和日志。"""
+
+    plugin = _plugin_with_engine(FakeEngine(), data_dir=tmp_path)
+    api = PluginPageApi(plugin)
+
+    class FailingService:
+        async def initialize(self) -> None:
+            """模拟已完成的 Store 初始化。"""
+
+        def list_datasets(self) -> dict[str, list[dict[str, object]]]:
+            """返回一项已知数据集，使请求进入评测执行。"""
+
+            return {"datasets": [{"name": "private_basic"}], "variants": []}
+
+        async def run_evaluation(self, **_kwargs):
+            """模拟含敏感正文的底层普通异常。"""
+
+            raise RuntimeError("PROVIDER-SECRET-CANARY")
+
+    log_spy = MagicMock()
+    monkeypatch.setattr("core.api.evaluation_api.logger", log_spy)
+    monkeypatch.setattr(
+        api,
+        "_build_evaluation_service",
+        MagicMock(return_value=FailingService()),
+    )
+
+    result = await api.run_evaluation_payload(
+        {
+            "datasets": ["private_basic"],
+            "variants": ["baseline"],
+        }
+    )
+
+    assert result == {
+        "status": "error",
+        "message": "执行评测失败",
+        "code": "evaluation_run_failed",
+    }
+    assert "PROVIDER-SECRET-CANARY" not in str(log_spy.method_calls)
 
 
 @pytest.mark.asyncio

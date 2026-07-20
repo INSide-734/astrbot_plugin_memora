@@ -26,6 +26,7 @@ class GraphKeywordResult:
     score: float
     content: str
     metadata: dict[str, Any]
+    graph_distance: int | None = None
 
 
 class GraphKeywordRetriever:
@@ -60,7 +61,7 @@ class GraphKeywordRetriever:
         self.config = config or {}
         self.expansion_limit = int(self.config.get("graph_expansion_limit", 24))
         self.expansion_hops = max(
-            1,
+            0,
             min(2, int(self.config.get("graph_expansion_hops", 1))),
         )
         self.second_hop_weight = float(self.config.get("graph_second_hop_weight", 0.4))
@@ -127,7 +128,7 @@ class GraphKeywordRetriever:
         )
         edge_neighbor_hits: list[dict[str, Any]] = []
         second_hop_hits: list[dict[str, Any]] = []
-        if matched_node_ids:
+        if matched_node_ids and self.expansion_hops >= 1:
             first_hop_node_ids = await self.graph_store.get_neighbor_node_ids(
                 node_ids=matched_node_ids,
                 limit=max(self.expansion_limit, limit * 3),
@@ -165,7 +166,14 @@ class GraphKeywordRetriever:
 
         aggregated: dict[int, GraphKeywordResult] = {}
 
-        def merge_hit(hit: dict[str, Any], weight: float, match_source: str) -> None:
+        def merge_hit(
+            hit: dict[str, Any],
+            weight: float,
+            match_source: str,
+            graph_distance: int | None,
+        ) -> None:
+            """按 canonical ID 合并命中，并保留最小已知图距离。"""
+
             doc_id = int(hit["source_memory_id"])
             weighted_score = max(0.0, min(1.0, float(hit["score"]) * weight))
             hit_metadata = dict(hit.get("metadata") or {})
@@ -173,14 +181,23 @@ class GraphKeywordRetriever:
             hit_metadata["graph_entry_type"] = hit.get("entry_type")
             hit_metadata["graph_relation_type"] = hit.get("relation_type")
             current = aggregated.get(doc_id)
+            minimum_distance = graph_distance
+            if current is not None and current.graph_distance is not None:
+                minimum_distance = (
+                    current.graph_distance
+                    if graph_distance is None
+                    else min(current.graph_distance, graph_distance)
+                )
             if current is None or weighted_score > current.score:
                 aggregated[doc_id] = GraphKeywordResult(
                     doc_id=doc_id,
                     score=weighted_score,
                     content=str(hit.get("content") or ""),
                     metadata=hit_metadata,
+                    graph_distance=minimum_distance,
                 )
                 return
+            current.graph_distance = minimum_distance
             current.score = min(1.0, current.score + weighted_score * 0.35)
             if "graph_match_source" in current.metadata:
                 current.metadata["graph_match_source"] = (
@@ -188,22 +205,33 @@ class GraphKeywordRetriever:
                 )
 
         for hit in direct_hits:
-            merge_hit(hit, weight=1.0, match_source="graph_keyword")
+            merge_hit(hit, weight=1.0, match_source="graph_keyword", graph_distance=0)
 
         for hit in expansion_hits:
-            merge_hit(hit, weight=0.7, match_source="graph_neighbor")
+            merge_hit(hit, weight=0.7, match_source="graph_neighbor", graph_distance=0)
 
         for hit in hierarchy_hits:
-            merge_hit(hit, weight=0.5, match_source="graph_hierarchy")
+            merge_hit(
+                hit,
+                weight=0.5,
+                match_source="graph_hierarchy",
+                graph_distance=None,
+            )
 
         for hit in edge_neighbor_hits:
-            merge_hit(hit, weight=0.7, match_source="graph_edge_neighbor")
+            merge_hit(
+                hit,
+                weight=0.7,
+                match_source="graph_edge_neighbor",
+                graph_distance=1,
+            )
 
         for hit in second_hop_hits:
             merge_hit(
                 hit,
                 weight=max(0.0, min(1.0, self.second_hop_weight)),
                 match_source="graph_second_hop",
+                graph_distance=2,
             )
 
         results = sorted(aggregated.values(), key=lambda item: item.score, reverse=True)

@@ -19,6 +19,15 @@ import {
   assertEditorReadiness,
 } from "./runtime_smoke_helpers.mjs";
 import { createConfigSmokeFixture } from "./config_smoke_fixture.mjs";
+import {
+  evaluationDatasetsPayload,
+  evaluationReportDetailPayload,
+  evaluationReportsPayload,
+} from "./evaluation_smoke_fixture.mjs";
+import {
+  assertEvaluationVariantGrid,
+  openEvaluationReportForSmoke,
+} from "./evaluation_smoke_helpers.mjs";
 import { recallTracePayload } from "./recall_trace_smoke_fixture.mjs";
 
 const dashboardRoot = process.cwd();
@@ -46,6 +55,7 @@ const SCREENSHOT_BASELINES = {
   "system.png": { width: 1366, height: 900, minBytes: 10_000 },
   "jargon.png": { width: 1366, height: 900, minBytes: 10_000 },
   "intelligence-evaluation.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "mobile-intelligence-evaluation.png": { width: 390, height: 844, minBytes: 10_000 },
   "intelligence-trace.png": { width: 1366, height: 900, minBytes: 10_000 },
   "intelligence-diagnostics.png": { width: 1366, height: 900, minBytes: 10_000 },
   "intelligence-review.png": { width: 1366, height: 900, minBytes: 10_000 },
@@ -819,81 +829,13 @@ function bridgePayload(endpoint, params = {}, method = "GET") {
     };
   }
   if (pathOnly === "evaluation/datasets") {
-    return {
-      datasets: [
-        {
-          name: "private_basic",
-          case_count: 10,
-          path: "tests/fixtures/retrieval/private_basic.jsonl",
-          intents: ["preference"],
-          chat_types: ["private"],
-        },
-        {
-          name: "group_context",
-          case_count: 12,
-          path: "tests/fixtures/retrieval/group_context.jsonl",
-          intents: ["relation", "fact"],
-          chat_types: ["group"],
-        },
-      ],
-    };
+    return evaluationDatasetsPayload();
   }
   if (pathOnly === "evaluation/reports") {
-    return {
-      reports: [
-        {
-          report_id: "eval-smoke-latest",
-          created_at: 1_782_000_000,
-          baseline: "baseline",
-          datasets: ["private_basic"],
-          summary: {
-            total_cases: 20,
-            k: 5,
-            recall_at_k: 0.9,
-            mrr: 0.74,
-            ndcg_at_k: 0.78,
-            p95_latency_ms: 42.6,
-          },
-          variants: {
-            baseline: {
-              name: "baseline",
-              status: "completed",
-              summary: {
-                total_cases: 20,
-                k: 5,
-                recall_at_k: 0.9,
-                mrr: 0.74,
-                ndcg_at_k: 0.78,
-                p95_latency_ms: 42.6,
-              },
-            },
-          },
-          deltas: {},
-          cases: [],
-        },
-      ],
-    };
+    return evaluationReportsPayload();
   }
   if (pathOnly === "evaluation/reports/detail" || pathOnly === "evaluation/report") {
-    return {
-      report: {
-        report_id: "eval-smoke-latest",
-        created_at: 1_782_000_000,
-        baseline: "baseline",
-        datasets: ["private_basic"],
-        summary: {
-          total_cases: 20,
-          k: 5,
-          recall_at_k: 0.9,
-          mrr: 0.74,
-          ndcg_at_k: 0.78,
-          p95_latency_ms: 42.6,
-        },
-        variants: {},
-        deltas: {},
-        cases: [],
-      },
-    };
+    return evaluationReportDetailPayload();
   }
   if (pathOnly === "evaluation/run") {
     return {
@@ -1888,6 +1830,10 @@ async function clickMobileNav(page, label, expectedHash, expectedText, screensho
   await waitForRootText(page, expectedText, expectedHash);
   if (expectedHash === "#/preview") {
     await assertMobilePreviewLayout(page);
+  }
+  if (expectedHash === "#/intelligence") {
+    await assertEvaluationVariantGrid(page, 1);
+    await assertNoHorizontalOverflow(page, "#/intelligence:mobile-evaluation");
   }
   return await captureBaselineScreenshot(page, screenshotPath, `mobile-${label}`);
 }
@@ -3079,14 +3025,30 @@ try {
     );
   }
 
+  await navigateSidebar(
+    page,
+    "智能控制",
+    "#/intelligence",
+    [
+      "智能控制台",
+      "页面壳已就绪",
+      "评测工作台",
+      "private_basic",
+      "group_context",
+      "演化关闭",
+      "关闭最终重排",
+      "与当前基线等价",
+      "eval-smoke-latest",
+    ],
+  );
+  await assertEvaluationVariantGrid(page, 2);
+  await openEvaluationReportForSmoke(page);
   baselineResults.push(
-    await clickSidebarNav(
+    await captureBaselineScreenshot(
       page,
-      "智能控制",
-      "#/intelligence",
-      ["智能控制台", "页面壳已就绪", "评测工作台", "private_basic", "group_context", "eval-smoke-latest"],
-      path.join(screenshotsDir, "intelligence-evaluation.png")
-    )
+      path.join(screenshotsDir, "intelligence-evaluation.png"),
+      "智能控制 Evaluation 报告",
+    ),
   );
 
   baselineResults.push(
@@ -3132,6 +3094,12 @@ try {
 
   const mobileRoutes = [
     ["数据预览", "#/preview", ["数据预览", "记忆增长", "模块资产"], "mobile-preview.png"],
+    [
+      "智能控制",
+      "#/intelligence",
+      ["智能控制台", "评测工作台", "private_basic", "演化关闭", "关闭最终重排"],
+      "mobile-intelligence-evaluation.png",
+    ],
     ["系统概览", "#/system", ["系统概览", "运行观测", "Provider 状态"], "mobile-system.png"],
     ["黑话发现", "#/jargon", "黑话", "mobile-jargon.png"],
   ];

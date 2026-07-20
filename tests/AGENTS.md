@@ -13,6 +13,7 @@
 - `integration/`：以真实 SQLite、真实 FAISS 索引和 Mock Provider 组装跨模块管线；它是 `scripts/run_smoke.py` 的五条固定目标。
 - `evaluation/`：验证 JSONL 数据集加载、Recall@K/MRR/nDCG/延迟指标、variant 对比和报告持久化。
 - `test_p1_adapter_capabilities.py`：集中验证三态能力、Provider 冻结入口、向量 scope fail-closed、派生 reference-time 降级和重排器依赖能力；不要把这些用例继续追加到遗留超长 validator 测试文件。
+- P2 检索消融：`evaluation/test_retrieval_ablation.py` 验证只读 snapshot 与 capability，`test_p2_graph_hop_ablation.py` 和 `test_p2_retrieval_ranking.py` 验证 hop/距离/reranker 实际路径；不得只断言配置值变化。
 - `stress/`：覆盖并发写入等竞争条件；不要把机器抖动敏感的绝对耗时阈值放进这里。
 - `fixtures/retrieval/`：六组共 71 条离线检索样本；五组基础数据集各 10 条，`memory_evolution.jsonl` 有 21 条。Memory Evolution P1 场景使用 UTC `reference_time`、temporal expected/forbidden IDs 和 conflict mode 表达历史时点、未来 source、有效窗口与未决冲突；`noise_negative.jsonl` 与演化负向场景使用 `expected_no_hit` 和 `__no_relevant__` 表达无可见命中。
 - Memory Evolution 相关用例覆盖 `memory_evolution.jsonl`、gate/manager/store、job source revision、proposal-only、统一派生重建协调器、derived relation、ProjectionReader、Recall metadata、formatter allowlist/budget 与插件生命周期；评测夹具显式标注 revision、single/multi-source conflict、delete/rebuild、scope/privacy/role/validity、stale/recovery 和 source-backed projection。Projection 只能注解 canonical candidate，相关文档集合不得为派生摘要伪造独立 `doc_id`。
@@ -178,6 +179,7 @@ npm run smoke:runtime
 - 禁止共享可变模块状态而不在 fixture teardown 中恢复；并行与随机顺序必须安全。
 - 禁止硬编码开发机临时目录、绝对路径、凭据、API key 或用户标识。
 - 禁止把 `sleep` 和宽松超时当作并发正确性的证明；使用事件、锁、屏障或可控 mock。
+- Evaluation 报告/API 负测必须使用 canary 证明 query、canonical ID 列表、session/persona/user、任意 metadata 和秘密不会持久化或返回；fixture 内部仍可使用匿名符号 ID 计算指标。
 - 禁止在普通 pytest 中加入专用性能基准的绝对毫秒阈值；性能门由 `scripts/` 的确定性 benchmark 承担。
 - 禁止无理由 `skip`/`xfail`；环境能力缺失必须写出明确条件，核心契约失败不能跳过。
 - 禁止修改测试来迎合错误实现；先确认公开契约与调用方，再修根因。

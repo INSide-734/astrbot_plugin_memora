@@ -121,6 +121,9 @@ class GraphRetriever:
             return []
 
         keyword_score_map = {item.doc_id: item.score for item in keyword_results}
+        graph_distance_map = {
+            item.doc_id: item.graph_distance for item in keyword_results
+        }
         vector_score_map = {item.doc_id: item.score for item in vector_results}
 
         max_rrf = max(item.rrf_score for item in fused) or 1.0
@@ -180,6 +183,18 @@ class GraphRetriever:
                 if relation_type:
                     final_score *= 1.3
 
+            score_breakdown = {
+                "graph_rrf_normalized": round(rrf_normalized, 4),
+                "graph_importance": round(importance, 4),
+                "graph_recency_weight": round(recency_weight, 4),
+                "graph_confidence": round(graph_confidence, 4),
+                "graph_temporal_factor": round(temporal_factor, 4),
+                "graph_final_score": round(final_score, 4),
+            }
+            graph_distance = graph_distance_map.get(item.doc_id)
+            if graph_distance is not None:
+                score_breakdown["graph_min_distance"] = float(graph_distance)
+
             results.append(
                 GraphResult(
                     doc_id=item.doc_id,
@@ -189,14 +204,7 @@ class GraphRetriever:
                     vector_score=vector_score_map.get(item.doc_id),
                     content=item.content,
                     metadata=metadata,
-                    score_breakdown={
-                        "graph_rrf_normalized": round(rrf_normalized, 4),
-                        "graph_importance": round(importance, 4),
-                        "graph_recency_weight": round(recency_weight, 4),
-                        "graph_confidence": round(graph_confidence, 4),
-                        "graph_temporal_factor": round(temporal_factor, 4),
-                        "graph_final_score": round(final_score, 4),
-                    },
+                    score_breakdown=score_breakdown,
                 )
             )
 

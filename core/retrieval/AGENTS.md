@@ -90,9 +90,9 @@ sequenceDiagram
 
 ## 图路与双路融合
 
-- `GraphKeywordRetriever` 组合图 entry FTS、节点 token、邻居扩展和可选 `EntityHierarchyStore` 层级展开，最终聚合到 `source_memory_id`。
+- `GraphKeywordRetriever` 组合图 entry FTS、节点 token、0..2 hop 邻居扩展和可选 `EntityHierarchyStore` 层级展开，最终聚合到 `source_memory_id`。direct/matched-node 的内部距离为 0，一跳为 1，二跳为 2，层级路径为未知；多路径命中保留最小已知距离。
 - `GraphVectorRetriever` 查询独立图 FAISS；结果 metadata 必须映射回源记忆 ID。
-- `GraphRetriever` 并行两条图路并 RRF 融合，再组合 RRF、importance、recency 与 `compute_decay_score(atom)`。
+- `GraphRetriever` 并行两条图路并 RRF 融合，再组合 RRF、importance、recency 与 `compute_decay_score(atom)`；关键词路最小距离只进入内部 `score_breakdown.graph_min_distance`，不进入 metadata，也暂不改变默认评分。
 - `DualRouteRetriever` 默认文档/图权重为 `0.65/0.35`，双路同 ID 额外 `cross_route_bonus=0.08`；显式 `RecallStrategy` 优先，其次 `QueryIntent`，最后关键词规则。
 - 缺正文或 metadata 的候选通过 `memory_loader` 并发回填；加载异常或 `None` 的候选被跳过。
 - 图路为空时直接使用文档路；当前实现先 await 文档任务再 await 图任务，协程对象已创建但不是 `create_task()`，修改计时/并发语义时须以测试为准。
@@ -112,7 +112,7 @@ sequenceDiagram
 | 策略 | 实现 | 失败语义 |
 |---|---|---|
 | `mmr` | 词袋 Jaccard | 同步、无外部调用 |
-| `cross_encoder` | 实际为 query/doc 向量余弦重排 | FAISS/向量不可用回退 MMR |
+| `cross_encoder` | 实际为 query/doc embedding 余弦代理，不是真正 cross-encoder | 生产路径 FAISS/向量不可用回退 MMR；可信消融使用严格运行时探针 |
 | `llm` | 把 query 与最多 `2 * batch_size` 个正文预览交给 LLM 评分 | 解析/调用失败使用基于原排序的合成分数 |
 | `hybrid` | CrossEncoder 窄化后 LLM 精排 | 组合两者语义 |
 

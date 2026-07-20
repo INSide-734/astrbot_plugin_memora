@@ -12,8 +12,14 @@ import type {
   InjectionSummaryWindow,
 } from "@/types/injection";
 
-import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_DATASETS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS, INJECTION_DECISIONS, INJECTION_MOCK_NOW_MS } from "./data";
+import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS, INJECTION_DECISIONS, INJECTION_MOCK_NOW_MS } from "./data";
 import { createMockConfigServer } from "./configServer";
+import {
+  handleEvaluationDatasets,
+  handleEvaluationReportDetail,
+  handleEvaluationReports,
+  handleEvaluationRun,
+} from "./evaluationServer";
 import { createSafeRecallTraceResponse } from "./recallTrace";
 import type { MockProfile, MockProfilePreferences, MockProfileTag, MockProfileTagCategory } from "./data";
 
@@ -1031,45 +1037,6 @@ function handleRecallTest(body: Record<string, unknown>): ApiResponse {
     graph_vec_score: parseFloat((0.68 - i * 0.12).toFixed(3)),
   }));
   return ok({ results, memories: results });
-}
-
-function handleEvaluationDatasets(): ApiResponse {
-  return ok({ datasets: EVALUATION_DATASETS });
-}
-
-function handleEvaluationReports(params: Record<string, string>): ApiResponse {
-  const limit = Math.min(50, Math.max(1, parseInt(params.limit ?? "10", 10)));
-  return ok({ reports: EVALUATION_REPORTS.slice(0, limit) });
-}
-
-function handleEvaluationReportDetail(params: Record<string, string>): ApiResponse {
-  const reportId = params.report_id ?? params.id;
-  const report = EVALUATION_REPORTS.find((item) => item.report_id === reportId);
-  return report ? ok({ report }) : err("Evaluation report not found");
-}
-
-function handleEvaluationRun(body: Record<string, unknown>): ApiResponse {
-  const template = EVALUATION_REPORTS[0];
-  const datasets = Array.isArray(body.datasets) ? body.datasets.map(String) : ["private_basic"];
-  const variants = Array.isArray(body.variants) ? body.variants.map(String) : ["baseline"];
-  const k = Math.min(20, Math.max(1, Number(body.k ?? template.summary.k)));
-  const report = {
-    ...template,
-    report_id: `eval-${Date.now()}`,
-    created_at: Date.now() / 1000,
-    baseline: String(body.baseline ?? "baseline"),
-    datasets,
-    summary: { ...template.summary, k },
-    variants: Object.fromEntries(
-      Object.entries(template.variants).filter(([name]) => variants.includes(name))
-    ),
-    deltas: Object.fromEntries(
-      Object.entries(template.deltas ?? {}).filter(([name]) => variants.includes(name))
-    ),
-    cases: (template.cases ?? []).map((item) => ({ ...item })),
-  };
-  EVALUATION_REPORTS.unshift(report);
-  return ok(report);
 }
 
 function handleDiagnosticHealth(): ApiResponse {
