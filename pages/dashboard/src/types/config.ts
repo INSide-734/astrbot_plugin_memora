@@ -96,7 +96,8 @@ export type ConfigErrorCode =
   | "validation_failed"
   | "persist_failed"
   | "invalid_request"
-  | "schema_unavailable";
+  | "schema_unavailable"
+  | "state_unavailable";
 
 export interface ConfigErrorData {
   current_revision?: string;

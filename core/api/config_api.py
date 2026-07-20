@@ -1,9 +1,11 @@
-"""Initialization-independent configuration Page API handlers."""
+"""不依赖插件初始化状态的配置页面接口处理器。"""
 
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
@@ -25,7 +27,7 @@ def _config_error(
     *,
     data: Any = _NO_DATA,
 ) -> dict[str, Any]:
-    """Build the stable error envelope used only by configuration endpoints."""
+    """构造仅供配置接口使用的稳定错误 envelope。"""
     response: dict[str, Any] = {
         "status": "error",
         "code": code,
@@ -37,12 +39,38 @@ def _config_error(
 
 
 class ConfigApiMixin:
-    """Expose schema and transactional configuration operations to the dashboard."""
+    """向 Dashboard 暴露配置 Schema 与事务式配置操作。"""
+
+    def _get_web_request(self) -> Any:
+        """获取当前页面请求，兼容旧版 Context.request 适配。"""
+        context = getattr(self.plugin, "context", None)
+        context_request = getattr(context, "request", None)
+        if context_request is not None:
+            return context_request
+        try:
+            from astrbot.api.web import request as astrbot_web_request
+        except (ImportError, AttributeError):
+            return None
+        return astrbot_web_request
+
+    @staticmethod
+    def _load_local_schema() -> Mapping[str, Any] | None:
+        """当宿主未注入 Schema 时，从插件目录读取配置契约。"""
+        schema_path = Path(__file__).resolve().parents[2] / "_conf_schema.json"
+        try:
+            with schema_path.open(encoding="utf-8") as schema_file:
+                schema = json.load(schema_file)
+        except (OSError, json.JSONDecodeError, TypeError):
+            return None
+        return schema if isinstance(schema, Mapping) and schema else None
 
     async def get_config_schema(self) -> dict[str, Any]:
-        """Return the injected AstrBot schema and currently available providers."""
+        """返回 AstrBot 注入的 Schema、插件本地 Schema 兜底与可用 Provider。"""
         try:
-            schema = getattr(self.plugin.astrbot_config, "schema", None)
+            config_source = getattr(self.plugin, "astrbot_config", None)
+            schema = getattr(config_source, "schema", _NO_DATA)
+            if schema is _NO_DATA:
+                schema = self._load_local_schema()
             if not isinstance(schema, Mapping) or not schema:
                 raise ValueError("invalid schema")
             schema_snapshot = copy.deepcopy(dict(schema))
@@ -72,14 +100,27 @@ class ConfigApiMixin:
         )
 
     async def get_config_state(self) -> dict[str, Any]:
-        """Return a conditional full snapshot without requiring initialized engines."""
-        config, revision = (
-            await self.plugin.config_manager.get_config_snapshot_async()
-        )
-        request = getattr(self.plugin.context, "request", None)
-        args = getattr(request, "args", {}) or {}
+        """返回不依赖记忆引擎的条件配置快照。"""
         try:
-            requested_revision = args.get("revision")
+            config, revision = (
+                await self.plugin.config_manager.get_config_snapshot_async()
+            )
+        except Exception:
+            logger.error("[ConfigApi] 获取配置状态失败", exc_info=True)
+            return _config_error(
+                "state_unavailable",
+                "AstrBot 配置状态暂不可用，请稍后重试",
+            )
+        request = self._get_web_request()
+        requested_revision = None
+        try:
+            # AstrBot 新版 PluginRequest 使用 query；兼容旧适配层的 args。
+            query = getattr(request, "query", None)
+            if query is not None:
+                requested_revision = query.get("revision")
+            if requested_revision is None:
+                args = getattr(request, "args", {}) or {}
+                requested_revision = args.get("revision")
         except Exception:
             requested_revision = None
 
@@ -94,7 +135,7 @@ class ConfigApiMixin:
         return ok_response(data)
 
     async def apply_config(self) -> dict[str, Any]:
-        """Validate, persist, and schedule reload for a revision-guarded update."""
+        """校验并持久化受修订保护的更新，然后安排插件重载。"""
         guard = self._maintenance_write_guard()
         if guard is not None:
             return guard
@@ -168,7 +209,7 @@ class ConfigApiMixin:
         self,
     ) -> tuple[str | None, dict[str, Any] | None, dict[str, Any] | None]:
         try:
-            body = await self.plugin.context.request.json()
+            body = await self._get_web_request().json()
         except Exception:
             return None, None, _config_error(
                 "invalid_request",
