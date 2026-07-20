@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -204,8 +205,75 @@ class TestConfigSchemaApi:
         assert result["status"] == "ok"
         plugin._ensure_plugin_ready.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_uses_plugin_schema_when_host_config_has_no_schema_attribute(self) -> None:
+        api, plugin = _make_api()
+        plugin.astrbot_config = {"bot_language": "zh"}
+
+        result = await api.get_config_schema()
+
+        assert result["status"] == "ok"
+        assert "provider_settings" in result["data"]["schema"]
+        provider_items = result["data"]["schema"]["provider_settings"]["items"]
+        assert provider_items["embedding_provider_id"]["type"] == "string"
+
 
 class TestConfigStateApi:
+    @pytest.mark.asyncio
+    async def test_uses_astrbot_web_request_when_context_has_no_request(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manager = MagicMock()
+        manager.get_config_snapshot_async = AsyncMock(
+            return_value=({"debug": False}, "rev-1")
+        )
+        api, plugin = _make_api(config_manager=manager)
+        del plugin.context.request
+        web_module = type(sys)("astrbot.api.web")
+        web_module.request = SimpleNamespace(query={"revision": "rev-1"})
+        monkeypatch.setitem(sys.modules, "astrbot.api.web", web_module)
+
+        result = await api.get_config_state()
+
+        assert result["data"]["changed"] is False
+
+    @pytest.mark.asyncio
+    async def test_reads_revision_from_astrbot_plugin_request_query(self) -> None:
+        manager = MagicMock()
+        manager.get_config_snapshot_async = AsyncMock(
+            return_value=({"debug": False}, "rev-1")
+        )
+        request = _Request()
+        request.query = {"revision": "rev-1"}
+        api, _ = _make_api(request=request, config_manager=manager)
+
+        result = await api.get_config_state()
+
+        assert result == {
+            "status": "ok",
+            "data": {
+                "revision": "rev-1",
+                "instance_id": "instance-123",
+                "changed": False,
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_state_failure_returns_stable_error_envelope(self) -> None:
+        manager = MagicMock()
+        manager.get_config_snapshot_async = AsyncMock(
+            side_effect=RuntimeError("configuration source unavailable")
+        )
+        api, _ = _make_api(config_manager=manager)
+
+        result = await api.get_config_state()
+
+        assert result == {
+            "status": "error",
+            "code": "state_unavailable",
+            "message": "AstrBot 配置状态暂不可用，请稍后重试",
+        }
+
     @pytest.mark.asyncio
     async def test_reconciles_external_source_change_before_returning_state(self) -> None:
         from core.base.config_manager import ConfigManager

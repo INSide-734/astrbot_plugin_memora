@@ -296,7 +296,22 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
             error: null,
           };
         }
-        if (localPaths.length > 0) {
+        if (localPaths.length > 0 && previous.baseConfig) {
+          const remotePaths = diffConfigLeafPaths(
+            previous.baseConfig,
+            stateData.config
+          );
+          if (remotePaths.length === 0) {
+            return {
+              ...previous,
+              revision: stateData.revision,
+              instanceId: stateData.instance_id,
+              remote: null,
+              remoteRevisionHint: null,
+              status: "dirty",
+              error: null,
+            };
+          }
           return {
             ...previous,
             remote: {

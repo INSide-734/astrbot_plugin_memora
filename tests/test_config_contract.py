@@ -129,6 +129,35 @@ def _schema_default_tree(schema: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def test_schema_uses_astrbot_supported_config_types() -> None:
+    """插件配置 Schema 只能使用 AstrBot 支持的类型名称。"""
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    supported_types = {
+        "int",
+        "float",
+        "bool",
+        "string",
+        "text",
+        "list",
+        "file",
+        "object",
+        "template_list",
+    }
+    unsupported: list[str] = []
+
+    def visit(node: Mapping[str, Any], prefix: tuple[str, ...] = ()) -> None:
+        for key, field_schema in node.items():
+            path = (*prefix, key)
+            field_type = field_schema.get("type")
+            if field_type not in supported_types:
+                unsupported.append(f"{'.'.join(path)}={field_type!r}")
+            if field_type == "object":
+                visit(field_schema.get("items", {}), path)
+
+    visit(schema)
+    assert not unsupported, "Schema 含有 AstrBot 不支持的配置类型: " + ", ".join(unsupported)
+
+
 def _get_path(config: Mapping[str, Any], path: tuple[str, ...]) -> Any:
     current: Any = config
     for part in path:

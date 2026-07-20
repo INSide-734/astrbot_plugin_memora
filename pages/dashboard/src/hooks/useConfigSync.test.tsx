@@ -413,6 +413,23 @@ describe("useConfigSync", () => {
     expect(hook.result.current.overlapPaths).toEqual(["recall_engine.top_k"]);
   });
 
+  it("does not report a conflict when a changed revision has no remote value changes", async () => {
+    queueStates(
+      stateSuccess(BASE_CONFIG),
+      stateSuccess(BASE_CONFIG, "rev-2")
+    );
+    const hook = renderSync();
+    await waitForLoaded(hook);
+    act(() => hook.result.current.changeField("recall_engine.top_k", 12));
+
+    await act(async () => hook.result.current.refresh());
+
+    expect(hook.result.current.status).toBe("dirty");
+    expect(hook.result.current.revision).toBe("rev-2");
+    expect(hook.result.current.remoteConfig).toBeNull();
+    expect(hook.result.current.dirtyPaths).toEqual(["recall_engine.top_k"]);
+  });
+
   it("acceptRemote discards local edits and adopts the full remote snapshot", async () => {
     const remote = { ...BASE_CONFIG, bot_language: "en" };
     queueStates(stateSuccess(BASE_CONFIG), stateSuccess(remote, "rev-2"));

@@ -1147,7 +1147,8 @@
             "auto_active_relation_types": {
                 "description": "自动激活的关系类型",
                 "hint": "达到阈值后允许自动激活的低影响关系类型。",
-                "type": "array",
+                "type": "list",
+                "items": {"type": "string"},
                 "default": ["same_episode", "supports", "related"]
             }
         }
