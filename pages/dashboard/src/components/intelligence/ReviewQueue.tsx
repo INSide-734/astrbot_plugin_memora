@@ -325,7 +325,7 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
 
         <div className="grid gap-3 p-4 lg:grid-cols-[160px_160px_160px_1fr]">
           <FilterSelect
-            label={t("intelligence.review.status")}
+            label={t("intelligence.review.statusLabel")}
             value={filters.status}
             allLabel={t("intelligence.review.allStatus")}
             options={statusOptions}
@@ -334,7 +334,7 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
           />
 
           <FilterSelect
-            label={t("intelligence.review.reason")}
+            label={t("intelligence.review.reasonLabel")}
             value={filters.reason}
             allLabel={t("intelligence.review.allReasons")}
             options={reasonOptions}

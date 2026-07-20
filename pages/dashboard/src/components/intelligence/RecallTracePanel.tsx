@@ -278,14 +278,14 @@ export function RecallTracePanel({
           </label>
 
           <div className="block text-xs font-medium text-[var(--text-secondary)]">
-            <span>{t("intelligence.trace.chatType")}</span>
+            <span>{t("intelligence.trace.chatTypeLabel")}</span>
             <Select
               value={chatType}
               onValueChange={(value) => {
                 if (value) setChatType(value);
               }}
             >
-              <SelectTrigger aria-label={t("intelligence.trace.chatType")} className="mt-1 h-8 w-full text-xs">
+              <SelectTrigger aria-label={t("intelligence.trace.chatTypeLabel")} className="mt-1 h-8 w-full text-xs">
                 <span>{t(`intelligence.trace.chatType.${chatType}`)}</span>
               </SelectTrigger>
               <SelectContent>

@@ -262,6 +262,18 @@ describe("App", () => {
       subscribeSSE: vi.fn().mockReturnValue("sub-1"),
       unsubscribeSSE: vi.fn(),
       apiGet: vi.fn((path: string) => {
+        if (path === "page/metrics/summary") {
+          return Promise.resolve({
+            status: "ok",
+            data: {
+              provider: {
+                status: "ready",
+                is_initialized: true,
+                missing_provider: [],
+              },
+            },
+          });
+        }
         if (path === "page/config/schema") {
           return Promise.resolve({
             status: "ok",
@@ -421,6 +433,35 @@ describe("App", () => {
     expect(header).toBeTruthy();
     expect(screen.getByRole("button", { name: /search/i })).toBeTruthy();
     expect(within(header).getByText(/live|实时|offline|离线/i)).toBeTruthy();
+  });
+
+  it("shows an actionable runtime prompt when a provider is still missing", async () => {
+    const bridge = window.AstrBotPluginPage as unknown as BridgeMock;
+    bridge.apiGet!.mockImplementation((path: string) => {
+      if (path === "page/metrics/summary") {
+        return Promise.resolve({
+          status: "ok",
+          data: {
+            provider: {
+              status: "waiting",
+              is_initialized: false,
+              missing_provider: ["embedding"],
+            },
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected GET endpoint: ${path}`));
+    });
+
+    render(<App />);
+
+    const notice = await screen.findByRole("status");
+    expect(notice.getAttribute("data-runtime-status")).toBe("waiting");
+    expect(notice.textContent).toContain("embedding model");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open configuration" }));
+    await waitFor(() => expect(window.location.hash).toBe("#/config"));
+    expect(await screen.findByText("Config Page")).toBeTruthy();
   });
 
   it("updates the rendered page after a hashchange event", async () => {
