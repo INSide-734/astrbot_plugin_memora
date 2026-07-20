@@ -2,7 +2,7 @@
 
 # Tests 模块上下文
 
-**最后更新：** 2026-07-19
+**最后更新：** 2026-07-20
 **入口：** `pytest.ini`、`tests/conftest.py`、`tests/integration/conftest.py`
 
 ## 职责与边界
@@ -13,8 +13,9 @@
 - `integration/`：以真实 SQLite、真实 FAISS 索引和 Mock Provider 组装跨模块管线；它是 `scripts/run_smoke.py` 的五条固定目标。
 - `evaluation/`：验证 JSONL 数据集加载、Recall@K/MRR/nDCG/延迟指标、variant 对比和报告持久化。
 - `stress/`：覆盖并发写入等竞争条件；不要把机器抖动敏感的绝对耗时阈值放进这里。
-- `fixtures/retrieval/`：五组离线检索样本，每组 10 条，共 50 条；`noise_negative.jsonl` 用 `expected_no_hit` 与 `__no_relevant__` 表达负样本。
-- Memory Evolution 相关用例覆盖 `memory_evolution.jsonl`、gate/manager/store、derived relation、ProjectionReader、Recall metadata、formatter allowlist/budget 与插件生命周期；Projection 只能作为 source-backed canonical candidate 注解。
+- `fixtures/retrieval/`：六组共 67 条离线检索样本；五组基础数据集各 10 条，`memory_evolution.jsonl` 有 17 条。`noise_negative.jsonl` 与演化负向场景使用 `expected_no_hit` 和 `__no_relevant__` 表达无可见命中。
+- Memory Evolution 相关用例覆盖 `memory_evolution.jsonl`、gate/manager/store、job source revision、proposal-only、统一派生重建协调器、derived relation、ProjectionReader、Recall metadata、formatter allowlist/budget 与插件生命周期；评测夹具显式标注 revision、single/multi-source conflict、delete/rebuild、scope/privacy/role/validity、stale/recovery 和 source-backed projection。Projection 只能注解 canonical candidate，相关文档集合不得为派生摘要伪造独立 `doc_id`。
+- P0 隐私观测用例覆盖 Diagnostics/Recall Trace 的新写入与旧数据库读取、API/命令稳定错误码、正文/query/Prompt/身份/ID/异常 canary、Injection metadata allowlist 和动态记忆不进入 System Prompt。
 
 不在本目录承担：生产实现、真实 AstrBot 服务启动、真实模型/网络调用、Dashboard 组件测试、发布说明或普通设计文档维护。
 
@@ -138,7 +139,13 @@ python -m pytest tests/test_memory_evolution_store.py tests/test_projection_read
 Memory Evolution 变更的最窄回归还应覆盖：
 
 ```powershell
-python -m pytest tests/test_memory_evolution_models.py tests/test_memory_evolution_gate.py tests/test_memory_evolution_manager.py tests/test_memory_evolution_store.py tests/test_derived_relation_expander.py tests/test_projection_reader.py tests/test_recall_projection_metadata.py tests/test_memory_consolidator.py tests/test_plugin_init.py -q --basetemp .tmp-agents-evolution
+python -m pytest tests/test_memory_evolution_models.py tests/test_memory_evolution_gate.py tests/test_memory_evolution_manager.py tests/test_memory_evolution_store.py tests/test_p0_source_revision_integrity.py tests/test_derived_rebuild_coordinator.py tests/test_derived_relation_expander.py tests/test_projection_reader.py tests/test_recall_projection_metadata.py tests/test_memory_consolidator.py tests/test_plugin_init.py -q --basetemp .tmp-agents-evolution
+```
+
+Diagnostics、Recall Trace、注入或观测字段变更的最窄回归还应覆盖：
+
+```powershell
+python -m pytest tests/test_p0_observability_privacy.py tests/test_diagnostics_health_scorer.py tests/test_api_diagnostics.py tests/test_api_recall_trace.py tests/test_diagnostic_commands.py tests/test_privacy_safe_pipeline_events.py tests/test_injection_decision_recorder.py tests/test_injection_decision_store.py tests/test_recall_projection_metadata.py tests/test_memory_formatter.py tests/test_injection_executor.py -q --basetemp .tmp-agents-observability
 ```
 
 备份/恢复与热重载变更的最窄回归还应覆盖快照校验、事务回滚、API 写保护、独立自动备份调度、插件生命周期和页面契约：
