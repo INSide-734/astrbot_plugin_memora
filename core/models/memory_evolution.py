@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
+from .temporal import normalize_datetime, validate_time_labels
+
 
 class RelationType(str, Enum):
     SUPPORTS = "supports"
@@ -63,6 +65,8 @@ def _check_confidence(value: float) -> float:
 
 
 def _check_interval(start: datetime | None, end: datetime | None) -> None:
+    start = normalize_datetime(start)
+    end = normalize_datetime(end)
     if start is not None and end is not None and end < start:
         raise ValueError("valid_to must not precede valid_from")
 
@@ -77,6 +81,10 @@ class MemorySourceRef:
     privacy_level: str
     occurred_at: datetime
     content: str | None = None
+    reference_at: datetime | None = None
+    ingested_at: datetime | None = None
+    time_source: str = "unknown"
+    time_precision: str = "unknown"
 
     def __post_init__(self) -> None:
         if not isinstance(self.memory_id, int) or self.memory_id < 0:
@@ -90,6 +98,13 @@ class MemorySourceRef:
                 raise ValueError("content must be a string or None")
             if len(self.content) > _MAX_EVIDENCE_CHARS:
                 raise ValueError("content exceeds the evidence length limit")
+        object.__setattr__(self, "occurred_at", normalize_datetime(self.occurred_at))
+        if self.reference_at is None:
+            object.__setattr__(self, "reference_at", self.occurred_at)
+        else:
+            object.__setattr__(self, "reference_at", normalize_datetime(self.reference_at))
+        object.__setattr__(self, "ingested_at", normalize_datetime(self.ingested_at))
+        validate_time_labels(self.time_source, self.time_precision)
 
     @property
     def revision(self) -> str:
@@ -321,6 +336,11 @@ class RelationView:
     target_revision: str | None = None
     valid_from: datetime | None = None
     valid_to: datetime | None = None
+    reference_at: datetime | None = None
+    discovered_at: datetime | None = None
+    invalid_at: datetime | None = None
+    time_source: str = "unknown"
+    time_precision: str = "unknown"
 
     def __post_init__(self) -> None:
         _require_text(self.relation_id, "relation_id")
@@ -338,6 +358,12 @@ class RelationView:
         if self.privacy_level not in _PRIVACY_LEVELS:
             raise ValueError("privacy_level must be public, shared, or confidential")
         _check_interval(self.valid_from, self.valid_to)
+        object.__setattr__(self, "valid_from", normalize_datetime(self.valid_from))
+        object.__setattr__(self, "valid_to", normalize_datetime(self.valid_to))
+        object.__setattr__(self, "reference_at", normalize_datetime(self.reference_at))
+        object.__setattr__(self, "discovered_at", normalize_datetime(self.discovered_at))
+        object.__setattr__(self, "invalid_at", normalize_datetime(self.invalid_at))
+        validate_time_labels(self.time_source, self.time_precision)
 
 
 @dataclass(frozen=True)
@@ -352,6 +378,11 @@ class ProjectionView:
     state: DerivedState = DerivedState.ACTIVE
     valid_from: datetime | None = None
     valid_to: datetime | None = None
+    reference_at: datetime | None = None
+    discovered_at: datetime | None = None
+    invalid_at: datetime | None = None
+    time_source: str = "unknown"
+    time_precision: str = "unknown"
 
     def __post_init__(self) -> None:
         _require_text(self.projection_id, "projection_id")
@@ -373,6 +404,12 @@ class ProjectionView:
         if self.privacy_level not in _PRIVACY_LEVELS:
             raise ValueError("privacy_level must be public, shared, or confidential")
         _check_interval(self.valid_from, self.valid_to)
+        object.__setattr__(self, "valid_from", normalize_datetime(self.valid_from))
+        object.__setattr__(self, "valid_to", normalize_datetime(self.valid_to))
+        object.__setattr__(self, "reference_at", normalize_datetime(self.reference_at))
+        object.__setattr__(self, "discovered_at", normalize_datetime(self.discovered_at))
+        object.__setattr__(self, "invalid_at", normalize_datetime(self.invalid_at))
+        validate_time_labels(self.time_source, self.time_precision)
 
 
 @dataclass(frozen=True)
@@ -398,6 +435,9 @@ class ProjectionSourceView:
     revision_token: str
     role: str = "supporting"
     ordinal: int = 0
+    occurred_at: datetime | None = None
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
 
     def __post_init__(self) -> None:
         _require_text(self.projection_id, "projection_id")
@@ -406,6 +446,10 @@ class ProjectionSourceView:
             raise ValueError("unknown projection source role")
         if self.ordinal < 0:
             raise ValueError("ordinal must be non-negative")
+        _check_interval(self.valid_from, self.valid_to)
+        object.__setattr__(self, "occurred_at", normalize_datetime(self.occurred_at))
+        object.__setattr__(self, "valid_from", normalize_datetime(self.valid_from))
+        object.__setattr__(self, "valid_to", normalize_datetime(self.valid_to))
 
 
 @dataclass(frozen=True, slots=True)

@@ -88,7 +88,8 @@ erDiagram
 - `RelationType`、`ProjectionType`、`JobState` 和 `DerivedState` 是稳定持久化枚举。关系类型包括 supports/updates/contradicts/same_episode/preference_change/causes/supersedes/related；projection 类型固定为 episode_summary/preference_state/relationship_state/conflict_set。
 - `JobSpec`、`MemoryEvolutionJob`、`JobClaim`、`RetrySpec` 描述去重键、创建时 source revision、租约、尝试次数和重试时间；`source_revisions` 只能引用同一 job 的 `source_ids`。模型只做结构约束，lease 所有权和状态迁移由 Store 保证。
 - `RelationView` 与 `ProjectionView` 是派生解释平面的读写契约。它们必须保留 scope/privacy、有效期、confidence 与状态；`ProjectionView.source_memory_ids` 只是来源回指，不能作为第二套记忆身份。
-- `ProjectionSourceView` 固定允许 `primary/supporting/conflict_left/conflict_right` 四种 role，并携带每个 canonical source 的 revision token 与 ordinal。`ProjectionBundle` 将一个 projection 和非空、同 projection ID 的 source mapping 组合起来，供读取侧批量校验。
+- `RelationView`、`ProjectionView` 的 `reference_at`、`discovered_at`、`invalid_at`、`time_source` 和 `time_precision` 只描述派生证据时间；`created_at/updated_at` 仍是行生命周期时间，source revision 才是陈旧判断依据。
+- `ProjectionSourceView` 固定允许 `primary/supporting/conflict_left/conflict_right` 四种 role，并携带每个 canonical source 的 revision token、ordinal 和可选的 source-level 时间窗口。旧 mapping 缺少时间字段时保持未知，不从 projection 生命周期时间推断。`ProjectionBundle` 将一个 projection 和非空、同 projection ID 的 source mapping 组合起来，供读取侧批量校验。
 - `DerivedApplyPlan` 聚合 relation、projection、source mapping 与 `source_revisions`，用于一次原子应用；任一来源 revision 变化时应由管理/存储层拒绝或失效派生结果。
 
 ## 导出契约
@@ -135,7 +136,7 @@ flowchart TD
 - `to_dict()` 的键名、Enum `.value`、`node_key/edge_key` 拼接格式是存储与 API 兼容契约。
 - 列表/字典字段必须继续使用 `default_factory`，禁止共享可变默认值。
 - 新字段要同步存储 schema、行映射、API 序列化和相关集成测试；仅修改 dataclass 不代表持久化完成。
-- 时间戳统一是 Unix 秒数 float；不要混入毫秒或无说明的时区字符串。
+- canonical metadata 中既有 Unix 秒字段仍按原契约读取；Memory Evolution 新增时间统一使用 UTC ISO 8601，并由 `core.models.temporal` 兼容解析 naive/Unix/ISO 输入。不要把 `documents.updated_at` 当事实发生时间。
 - Projection 必须始终能回指 canonical source 及其 revision；不得把 projection ID、摘要或 source mapping 提升为 canonical `doc_id`，也不得在模型层放宽 scope/privacy/role 约束。
 
 ## 测试定位与精确验证

@@ -13,8 +13,9 @@
 - `integration/`：以真实 SQLite、真实 FAISS 索引和 Mock Provider 组装跨模块管线；它是 `scripts/run_smoke.py` 的五条固定目标。
 - `evaluation/`：验证 JSONL 数据集加载、Recall@K/MRR/nDCG/延迟指标、variant 对比和报告持久化。
 - `stress/`：覆盖并发写入等竞争条件；不要把机器抖动敏感的绝对耗时阈值放进这里。
-- `fixtures/retrieval/`：六组共 67 条离线检索样本；五组基础数据集各 10 条，`memory_evolution.jsonl` 有 17 条。`noise_negative.jsonl` 与演化负向场景使用 `expected_no_hit` 和 `__no_relevant__` 表达无可见命中。
+- `fixtures/retrieval/`：六组共 71 条离线检索样本；五组基础数据集各 10 条，`memory_evolution.jsonl` 有 21 条。Memory Evolution P1 场景使用 UTC `reference_time`、temporal expected/forbidden IDs 和 conflict mode 表达历史时点、未来 source、有效窗口与未决冲突；`noise_negative.jsonl` 与演化负向场景使用 `expected_no_hit` 和 `__no_relevant__` 表达无可见命中。
 - Memory Evolution 相关用例覆盖 `memory_evolution.jsonl`、gate/manager/store、job source revision、proposal-only、统一派生重建协调器、derived relation、ProjectionReader、Recall metadata、formatter allowlist/budget 与插件生命周期；评测夹具显式标注 revision、single/multi-source conflict、delete/rebuild、scope/privacy/role/validity、stale/recovery 和 source-backed projection。Projection 只能注解 canonical candidate，相关文档集合不得为派生摘要伪造独立 `doc_id`。
+- `tests/test_p1_temporal_semantics.py` 覆盖 UTC/Unix/ISO 解析、reference-time cache 隔离、future/valid/invalid 边界、source provenance 迁移、supporting source 修订/删除保留、conflict exact/unresolved 决策和安全标量统计；不把 conflict source ID、revision 或时间 provenance 放入模型 DTO。
 - P0 隐私观测用例覆盖 Diagnostics/Recall Trace 的新写入与旧数据库读取、API/命令稳定错误码、正文/query/Prompt/身份/ID/异常 canary、Injection metadata allowlist 和动态记忆不进入 System Prompt。
 
 不在本目录承担：生产实现、真实 AstrBot 服务启动、真实模型/网络调用、Dashboard 组件测试、发布说明或普通设计文档维护。

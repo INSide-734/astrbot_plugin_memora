@@ -14,7 +14,7 @@
 `DualRouteRetriever` 的在线顺序固定为：direct/graph candidate merge → `DerivedRelationExpander` → `ProjectionReader` attachment → reranker → privacy filter。只有 `enabled=true` 且 mode 为 `readonly`/`active` 时才调用 relation/projection reader；`disabled` 与 `shadow` 必须保持 baseline，不能因派生表存在而读取。
 
 - relation expansion 只增加有 scope/隐私证据的 canonical candidate，并受 per-seed/global expansion budget 限制。
-- ProjectionReader 只把通过 active、validity、scope、privacy、source revision 和 role 校验的 projection metadata 附着到已有 primary canonical candidate；supporting/conflict source 只用于证据校验，不能单独生成 candidate。
+- ProjectionReader 只把通过 active、validity、scope、privacy、source revision、role 和统一 `reference_time` 校验的 projection metadata 附着到已有 primary canonical candidate；supporting/conflict source 只用于证据校验，不能单独生成 candidate。非冲突 Projection 可在 supporting mapping 已由 Store 移除且 primary 仍有效时保留；检测到 stale/越权 source 或缺少 conflict side 时整体不附着。
 - 附着不得改变 canonical `doc_id`、content、score、排序或 reranker candidate 数量；普通异常回退 baseline，单条坏 projection 隔离，`asyncio.CancelledError` 必须传播。
 - 下游 formatter 只能看到 `type/summary/confidence`，不得把 projection ID、source ID、revision、scope、privacy、role 或 job 信息交给模型。
 
@@ -99,7 +99,7 @@ sequenceDiagram
 
 ### 查询改写
 
-`QueryRewriter.rewrite()` 可把 query 与 recent context 交给 LLM，解析 `QueryIntent`（intent、实体、时间引用、改写查询、memory types）；失败回退 `intent_keywords.py`。LLM 返回只作为路由提示，不能直接用作 SQL/路径/工具输入。
+`QueryRewriter.rewrite()` 可把 query 与 recent context 交给 LLM，解析 `QueryIntent`（intent、实体、时间引用、可选 UTC `reference_time`、改写查询、memory types）；失败回退 `intent_keywords.py`。LLM 返回只作为路由提示，不能直接用作 SQL/路径/工具输入。`reference_time` 必须从 MemoryEngine 贯穿 DualRoute、relation/projection reader 和链式扩展，并进入 retrieval/session cache key；下游不得各自读取墙钟。
 
 ### 个性化
 

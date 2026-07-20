@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from astrbot.api import logger
 
 from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
+from ..models.temporal import normalize_datetime, parse_datetime
 
 
 @dataclass
@@ -24,6 +26,7 @@ class QueryIntent:
     intent: str = "default"  # factual | relational | temporal | preference | contextual
     extracted_entities: list[str] = field(default_factory=list)
     time_reference: str | None = None
+    reference_time: datetime | None = None
     rewritten_queries: list[str] = field(default_factory=list)
     memory_types: list[str] = field(default_factory=list)
 
@@ -171,6 +174,7 @@ class QueryRewriter:
                 intent=str(data.get("intent", "default")),
                 extracted_entities=list(data.get("extracted_entities", [])),
                 time_reference=data.get("time_reference"),
+                reference_time=parse_datetime(data.get("reference_time")),
                 rewritten_queries=list(data.get("rewritten_queries", [fallback_query])),
                 memory_types=list(data.get("memory_types", [])),
             )
@@ -178,4 +182,29 @@ class QueryRewriter:
             return None
 
 
-__all__ = ["QueryIntent", "QueryRewriter"]
+def resolve_reference_time(
+    query_intent: QueryIntent | None,
+    *,
+    now: datetime | None = None,
+) -> datetime | None:
+    """将查询意图中的显式 as-of 时间解析为统一 UTC 时间。"""
+
+    if query_intent is None:
+        return None
+    current = normalize_datetime(now) or datetime.now(timezone.utc)
+    explicit = parse_datetime(getattr(query_intent, "reference_time", None))
+    if explicit is not None:
+        return explicit
+    parsed = parse_datetime(getattr(query_intent, "time_reference", None))
+    if parsed is not None:
+        return parsed
+    reference = str(getattr(query_intent, "time_reference", "") or "").casefold()
+    if reference == "yesterday":
+        start_today = current.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start_today - timedelta(microseconds=1)
+    if reference in {"today", "recent", "this_week"}:
+        return current
+    return None
+
+
+__all__ = ["QueryIntent", "QueryRewriter", "resolve_reference_time"]

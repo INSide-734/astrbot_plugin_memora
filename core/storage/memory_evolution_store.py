@@ -22,19 +22,18 @@ from ..models.memory_evolution import (
     RetrySpec,
     MemorySourceRef,
 )
+from ..models.temporal import infer_time_precision, parse_datetime, serialize_datetime
 from .base_store import BaseStore
 from .memory_evolution_derived import MemoryEvolutionDerivedMixin
 from .memory_evolution_derived_helpers import _metadata_dict
 
 
 def _dt(value: datetime | None) -> str | None:
-    return value.astimezone(timezone.utc).isoformat() if value else None
+    return serialize_datetime(value)
 
 
 def _parse(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.fromisoformat(value)
+    return parse_datetime(value)
 
 
 class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
@@ -59,7 +58,9 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
               source_revision TEXT NOT NULL, target_revision TEXT NOT NULL,
               relation_type TEXT NOT NULL, state TEXT NOT NULL, confidence REAL NOT NULL,
               scope_key TEXT NOT NULL, privacy_level TEXT NOT NULL,
-              valid_from TEXT, valid_to TEXT, origin_job_id TEXT,
+              valid_from TEXT, valid_to TEXT, reference_at TEXT,
+              discovered_at TEXT, invalid_at TEXT, time_source TEXT,
+              time_precision TEXT, origin_job_id TEXT,
               created_at TEXT NOT NULL, updated_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_memory_relations_seed
@@ -71,7 +72,9 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
               projection_type TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
               state TEXT NOT NULL, summary TEXT NOT NULL, primary_source_memory_id INTEGER NOT NULL,
               scope_key TEXT NOT NULL, privacy_level TEXT NOT NULL, confidence REAL NOT NULL,
-              valid_from TEXT, valid_to TEXT, origin_job_id TEXT,
+              valid_from TEXT, valid_to TEXT, reference_at TEXT,
+              discovered_at TEXT, invalid_at TEXT, time_source TEXT,
+              time_precision TEXT, origin_job_id TEXT,
               created_at TEXT NOT NULL, updated_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_memory_projections_seed
@@ -79,6 +82,7 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
             CREATE TABLE IF NOT EXISTS memory_projection_sources (
               projection_id TEXT NOT NULL, memory_id INTEGER NOT NULL,
               revision_token TEXT NOT NULL, source_role TEXT NOT NULL, ordinal INTEGER NOT NULL DEFAULT 0,
+              occurred_at TEXT, valid_from TEXT, valid_to TEXT,
               PRIMARY KEY (projection_id, memory_id),
               FOREIGN KEY (projection_id) REFERENCES memory_projections(projection_id) ON DELETE CASCADE
             );
@@ -86,12 +90,33 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
               ON memory_projection_sources(memory_id, projection_id);
             """
         )
+        derived_columns = {
+            "reference_at": "TEXT",
+            "discovered_at": "TEXT",
+            "invalid_at": "TEXT",
+            "time_source": "TEXT",
+            "time_precision": "TEXT",
+        }
         for table in ("memory_relations", "memory_projections"):
             columns = await self.connection.execute(f"PRAGMA table_info({table})")
             names = {str(row[1]) for row in await columns.fetchall()}
             if "origin_job_id" not in names:
                 await self.connection.execute(
                     f"ALTER TABLE {table} ADD COLUMN origin_job_id TEXT"
+                )
+            for column, column_type in derived_columns.items():
+                if column not in names:
+                    await self.connection.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"
+                    )
+        source_columns = await self.connection.execute(
+            "PRAGMA table_info(memory_projection_sources)"
+        )
+        source_names = {str(row[1]) for row in await source_columns.fetchall()}
+        for column in ("occurred_at", "valid_from", "valid_to"):
+            if column not in source_names:
+                await self.connection.execute(
+                    f"ALTER TABLE memory_projection_sources ADD COLUMN {column} TEXT"
                 )
         job_columns = await self.connection.execute(
             "PRAGMA table_info(memory_evolution_jobs)"
@@ -149,16 +174,17 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
         for row in rows:
             metadata = _metadata_dict(row.get("metadata"))
             revision_token = str(row.get("updated_at") or row.get("created_at") or "").strip()
-            occurred_raw = metadata.get("occurred_at") or row.get("created_at") or row.get("updated_at")
-            if not revision_token or not occurred_raw:
-                continue
-            try:
-                occurred_at = (
-                    occurred_raw
-                    if isinstance(occurred_raw, datetime)
-                    else datetime.fromisoformat(str(occurred_raw))
-                )
-            except (TypeError, ValueError):
+            explicit_occurred = (
+                metadata.get("occurred_at")
+                or metadata.get("event_time")
+                or metadata.get("timestamp")
+            )
+            parsed_occurred = parse_datetime(explicit_occurred)
+            ingested_at = parse_datetime(row.get("created_at")) or parse_datetime(
+                metadata.get("create_time")
+            )
+            occurred_at = parsed_occurred or ingested_at
+            if not revision_token or occurred_at is None:
                 continue
             privacy_level = str(metadata.get("privacy_level", "shared"))
             if privacy_level not in {"public", "shared", "confidential"}:
@@ -177,6 +203,14 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                 privacy_level=privacy_level,
                 occurred_at=occurred_at,
                 content=content,
+                reference_at=occurred_at,
+                ingested_at=ingested_at,
+                time_source="metadata" if parsed_occurred is not None else "ingested",
+                time_precision=(
+                    infer_time_precision(explicit_occurred)
+                    if parsed_occurred is not None
+                    else "unknown"
+                ),
             )
             sources_by_id[source.memory_id] = source
         return [sources_by_id[memory_id] for memory_id in ids if memory_id in sources_by_id]
@@ -306,8 +340,8 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                 )
                 await self.connection.execute(
                     """INSERT INTO memory_relations
-                    (relation_id,relation_key,source_memory_id,target_memory_id,source_revision,target_revision,relation_type,state,confidence,scope_key,privacy_level,valid_from,valid_to,origin_job_id,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    (relation_id,relation_key,source_memory_id,target_memory_id,source_revision,target_revision,relation_type,state,confidence,scope_key,privacy_level,valid_from,valid_to,reference_at,discovered_at,invalid_at,time_source,time_precision,origin_job_id,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?)
                     ON CONFLICT(relation_key) DO UPDATE SET
                       state=excluded.state,
                       confidence=excluded.confidence,
@@ -315,6 +349,11 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                       privacy_level=excluded.privacy_level,
                       valid_from=excluded.valid_from,
                       valid_to=excluded.valid_to,
+                      reference_at=excluded.reference_at,
+                      discovered_at=COALESCE(memory_relations.discovered_at, excluded.discovered_at),
+                      invalid_at=excluded.invalid_at,
+                      time_source=excluded.time_source,
+                      time_precision=excluded.time_precision,
                       origin_job_id=excluded.origin_job_id,
                       updated_at=excluded.updated_at""",
                     (
@@ -331,6 +370,11 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                         rel.privacy_level,
                         _dt(rel.valid_from),
                         _dt(rel.valid_to),
+                        _dt(rel.reference_at),
+                        _dt(rel.discovered_at) or now,
+                        _dt(rel.invalid_at),
+                        rel.time_source,
+                        rel.time_precision,
                         plan.origin_job_id,
                         now,
                         now,
@@ -367,8 +411,8 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                 pkey = f"{proj.projection_type.value}:{proj.scope_key}:{source_key}"
                 await self.connection.execute(
                     """INSERT INTO memory_projections
-                    (projection_id,projection_key,projection_type,revision,state,summary,primary_source_memory_id,scope_key,privacy_level,confidence,valid_from,valid_to,origin_job_id,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    (projection_id,projection_key,projection_type,revision,state,summary,primary_source_memory_id,scope_key,privacy_level,confidence,valid_from,valid_to,reference_at,discovered_at,invalid_at,time_source,time_precision,origin_job_id,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(projection_key) DO UPDATE SET
                       revision=memory_projections.revision+1,
                       state=excluded.state,
@@ -379,9 +423,14 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                       confidence=excluded.confidence,
                       valid_from=excluded.valid_from,
                       valid_to=excluded.valid_to,
+                      reference_at=excluded.reference_at,
+                      discovered_at=COALESCE(memory_projections.discovered_at, excluded.discovered_at),
+                      invalid_at=excluded.invalid_at,
+                      time_source=excluded.time_source,
+                      time_precision=excluded.time_precision,
                       origin_job_id=excluded.origin_job_id,
                       updated_at=excluded.updated_at""",
-                    (proj.projection_id, pkey, proj.projection_type.value, 1, proj.state.value, proj.summary, primary_source, proj.scope_key, proj.privacy_level, proj.confidence, _dt(proj.valid_from), _dt(proj.valid_to), plan.origin_job_id, now, now),
+                    (proj.projection_id, pkey, proj.projection_type.value, 1, proj.state.value, proj.summary, primary_source, proj.scope_key, proj.privacy_level, proj.confidence, _dt(proj.valid_from), _dt(proj.valid_to), _dt(proj.reference_at), _dt(proj.discovered_at) or now, _dt(proj.invalid_at), proj.time_source, proj.time_precision, plan.origin_job_id, now, now),
                 )
                 cursor = await self.connection.execute(
                     "SELECT projection_id FROM memory_projections WHERE projection_key=?",
@@ -401,14 +450,17 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                     raise ValueError("projection source references an unknown projection")
                 await self.connection.execute(
                     "INSERT INTO memory_projection_sources"
-                    "(projection_id,memory_id,revision_token,source_role,ordinal) "
-                    "VALUES (?,?,?,?,?)",
+                    "(projection_id,memory_id,revision_token,source_role,ordinal,occurred_at,valid_from,valid_to) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
                     (
                         stored_projection_id,
                         src.memory_id,
                         src.revision_token,
                         src.role,
                         src.ordinal,
+                        _dt(src.occurred_at),
+                        _dt(src.valid_from),
+                        _dt(src.valid_to),
                     ),
                 )
             await self.connection.commit()
