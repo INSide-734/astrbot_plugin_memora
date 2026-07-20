@@ -1031,9 +1031,11 @@ class TestInjectionDecisionLifecycle:
         db_setup = MagicMock()
         db_setup.repair_message_counts = AsyncMock()
         db_setup.auto_rebuild_index_if_needed = AsyncMock()
+        llm_provider = MagicMock(spec=Provider)
+        llm_provider.text_chat = AsyncMock()
         args = (
             MagicMock(),
-            MagicMock(spec=Provider),
+            llm_provider,
             MagicMock(side_effect=[db, graph_db]),
             faiss_checker,
             db_setup,
@@ -1270,8 +1272,10 @@ class TestInjectionDecisionLifecycle:
         db_setup.repair_message_counts = AsyncMock()
         db_setup.auto_rebuild_index_if_needed = AsyncMock()
 
+        llm_provider = MagicMock(spec=Provider)
+        llm_provider.text_chat = AsyncMock()
         components = await factory.build_all(
-            MagicMock(), MagicMock(spec=Provider), db_type, faiss_checker, db_setup
+            MagicMock(), llm_provider, db_type, faiss_checker, db_setup
         )
 
         factory._build_injection_components.assert_awaited_once_with(
