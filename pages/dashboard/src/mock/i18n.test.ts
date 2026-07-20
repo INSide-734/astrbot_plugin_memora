@@ -249,8 +249,36 @@ const DYNAMIC_KEYS = [
   ].map((status) => `runtime.status.${status}`),
   ...["overall", "consistency", "coherence", "relevance", "freshness", "accuracy"]
     .map((dimension) => `quality.dim.${dimension}`),
-  ...["baseline", "graph_expansion_off", "topic_expansion_off"]
+  ...[
+    "baseline",
+    "a",
+    "b",
+    "c",
+    "graph_expansion_off",
+    "topic_expansion_off",
+    "final_reranker_off",
+    "final_reranker_mmr",
+    "final_reranker_embedding_similarity",
+    "graph_neighbors_off",
+    "graph_neighbors_1_hop",
+    "graph_neighbors_2_hops",
+  ]
     .map((variant) => `intelligence.evaluation.variant.${variant}`),
+  ...[
+    "equivalent_to_baseline",
+    "missing_engine",
+    "missing_engine_config",
+    "missing_dual_route",
+    "missing_derived_reader",
+    "missing_graph_retriever",
+    "missing_document_vector_access",
+    "readonly_snapshot_cannot_activate_worker",
+    "variant_prepare_failed",
+    "variant_execution_failed",
+    "variant_not_exercised",
+    "embedding_query_failed",
+    "unknown_variant",
+  ].map((reason) => `intelligence.evaluation.reason.${reason}`),
   ...["private", "group"].map((chatType) => `intelligence.trace.chatType.${chatType}`),
   ...["approve", "mark_safe", "edit", "merge", "archive", "delete", "approved", "edited", "merged", "archived", "deleted", "safe"]
     .map((action) => `intelligence.review.action.${action}`),

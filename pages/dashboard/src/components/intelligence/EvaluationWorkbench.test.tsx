@@ -86,6 +86,9 @@ describe("EvaluationWorkbench", () => {
             graph_expansion_off: {
               name: "graph_expansion_off",
               status: "completed",
+              capability_status: "available",
+              reason_code: "available",
+              effective_settings: { chain_graph_expansion_enabled: false },
               summary: {
                 total_cases: 20,
                 k: 5,
@@ -107,8 +110,6 @@ describe("EvaluationWorkbench", () => {
           cases: [
             {
               case_id: "coffee",
-              query: "用户喜欢喝什么咖啡",
-              ranked_doc_ids: ["mem-coffee"],
               recall_at_k: 1.0,
               reciprocal_rank: 1.0,
               ndcg_at_k: 1.0,
@@ -116,8 +117,6 @@ describe("EvaluationWorkbench", () => {
             },
             {
               case_id: "missed",
-              query: "用户周末在哪里工作",
-              ranked_doc_ids: ["mem-other"],
               recall_at_k: 0,
               reciprocal_rank: 0,
               ndcg_at_k: 0,
@@ -228,6 +227,70 @@ describe("EvaluationWorkbench", () => {
     });
   });
 
+  it("uses backend variant descriptors and excludes unavailable capabilities", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/evaluation/datasets") {
+        return Promise.resolve(ok({
+          datasets: [
+            {
+              name: "private_basic",
+              case_count: 10,
+              path: "tests/fixtures/retrieval/private_basic.jsonl",
+              intents: ["preference"],
+              chat_types: ["private"],
+            },
+          ],
+          variants: [
+            { name: "baseline", available: true, reason_code: "available", default_selected: true },
+            { name: "final_reranker_off", available: true, reason_code: "available", default_selected: false },
+            {
+              name: "final_reranker_embedding_similarity",
+              available: false,
+              reason_code: "missing_document_vector_access",
+              default_selected: true,
+            },
+          ],
+        }));
+      }
+      if (path === "page/evaluation/reports") {
+        return Promise.resolve(ok({ reports: [] }));
+      }
+      return Promise.resolve(ok({}));
+    });
+    bridge.apiPost.mockResolvedValueOnce({ status: "error", message: "stop after payload capture" });
+
+    render(<EvaluationWorkbench showToast={() => undefined} />);
+
+    await screen.findByText("Final reranker off");
+    expect(screen.queryByText("Graph off")).toBe(null);
+    expect(screen.getByRole("checkbox", { name: "Baseline" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("checkbox", { name: "Final reranker off" }).getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByLabelText("1 selected").textContent).toBe("1 / 2");
+
+    const unavailable = screen.getByRole("checkbox", { name: /Embedding similarity/ });
+    expect(unavailable.hasAttribute("data-disabled")).toBe(true);
+    expect(unavailable.closest("label")?.getAttribute("aria-disabled")).toBe("true");
+    expect(unavailable.closest("label")?.getAttribute("data-variant-card")).toBe(
+      "final_reranker_embedding_similarity",
+    );
+    expect(unavailable.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText("Document vectors unavailable")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Final reranker off"));
+    expect(screen.getByLabelText("2 selected").textContent).toBe("2 / 2");
+    fireEvent.click(screen.getByRole("button", { name: /^run$/i }));
+
+    await waitFor(() => {
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/evaluation/run", {
+        datasets: ["private_basic"],
+        k: 5,
+        variants: ["baseline", "final_reranker_off"],
+        baseline: "baseline",
+        save_report: true,
+      });
+    });
+  });
+
   it("renders fixed evaluation workbench chrome from dashboard i18n", async () => {
     bridge.getLocale.mockReturnValue("zh-CN");
 
@@ -268,6 +331,8 @@ describe("EvaluationWorkbench", () => {
     fireEvent.click(screen.getByRole("button", { name: /运行/ }));
 
     expect(await screen.findByText("用例数")).toBeTruthy();
+    expect(screen.getByText("变体执行状态")).toBeTruthy();
+    expect(screen.getByText("chain_graph_expansion_enabled=false")).toBeTruthy();
     expect(screen.getAllByText("关闭图扩展").length).toBeGreaterThan(0);
     expect(screen.getByText("不适用")).toBeTruthy();
     expect(screen.queryByText("Cases")).toBe(null);
@@ -347,8 +412,6 @@ describe("EvaluationWorkbench", () => {
             cases: [
               {
                 case_id: "missed",
-                query: "用户周末在哪里工作",
-                ranked_doc_ids: ["mem-other"],
                 recall_at_k: 0,
                 reciprocal_rank: 0,
                 ndcg_at_k: 0,
@@ -366,6 +429,7 @@ describe("EvaluationWorkbench", () => {
     fireEvent.click(await screen.findByText("saved-report"));
 
     expect((await screen.findAllByText("Graph off")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Variant execution status")).toBeTruthy();
     expect(screen.getByText("missed")).toBeTruthy();
     expect(localeSpy).toHaveBeenCalledWith("en-US");
     await waitFor(() => {

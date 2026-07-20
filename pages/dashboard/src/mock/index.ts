@@ -2,6 +2,7 @@
 // 模拟桥接初始化器：当 AstrBot bridge 缺失时自动启用
 // ================================================================
 import { handleApiGet, handleApiPost } from "./server";
+import { EVALUATION_EN_MAP, EVALUATION_RU_MAP, EVALUATION_ZH_MAP } from "./evaluationI18n";
 
 const INJECTION_COPY = {
   "common.yes": ["是", "Yes", "Да"],
@@ -199,6 +200,7 @@ const INJECTION_RU_MAP = injectionLocaleCopy(2);
 // 完整 i18n 映射（zh-CN），供模拟模式与生产环境回退共用
 const I18N_MAP: Record<string, string> = {
   ...INJECTION_ZH_MAP,
+  ...EVALUATION_ZH_MAP,
   "nav.preview": "数据预览",
   "nav.graph": "知识图谱",
   "nav.memory": "记忆管理",
@@ -825,15 +827,14 @@ const I18N_MAP: Record<string, string> = {
   "intelligence.evaluation.loadingDatasets": "正在加载数据集",
   "intelligence.evaluation.caseCount": "{0} 个用例",
   "intelligence.evaluation.variants": "变体",
-  "intelligence.evaluation.variant.baseline": "基线",
-  "intelligence.evaluation.variant.graph_expansion_off": "关闭图扩展",
-  "intelligence.evaluation.variant.topic_expansion_off": "关闭话题扩展",
   "intelligence.evaluation.running": "运行中",
   "intelligence.evaluation.run": "运行",
   "intelligence.evaluation.selectDataset": "至少选择一个数据集",
   "intelligence.evaluation.reportReady": "评测报告 {0} 已就绪",
   "intelligence.evaluation.reportHistory": "报告历史",
   "intelligence.evaluation.noSavedReports": "暂无保存的报告",
+  "intelligence.evaluation.variantOutcomes": "变体执行状态",
+  "intelligence.evaluation.effectiveSettings": "生效设置",
   "intelligence.evaluation.variantDeltas": "变体差异",
   "intelligence.evaluation.recallDelta": "召回差异",
   "intelligence.evaluation.rrDelta": "RR 差异",
@@ -1137,6 +1138,7 @@ const I18N_MAP: Record<string, string> = {
 // 英文 i18n 映射
 const EN_MAP: Record<string, string> = {
   ...INJECTION_EN_MAP,
+  ...EVALUATION_EN_MAP,
   "nav.preview": "Preview", "nav.graph": "Knowledge Graph", "nav.memory": "Memories",
   "nav.timeline": "Timeline", "nav.recall": "Recall Test", "nav.system": "System",
   "nav.config": "Configuration",
@@ -1638,15 +1640,14 @@ const EN_MAP: Record<string, string> = {
   "intelligence.evaluation.loadingDatasets": "Loading datasets",
   "intelligence.evaluation.caseCount": "{0} cases",
   "intelligence.evaluation.variants": "Variants",
-  "intelligence.evaluation.variant.baseline": "Baseline",
-  "intelligence.evaluation.variant.graph_expansion_off": "Graph off",
-  "intelligence.evaluation.variant.topic_expansion_off": "Topic off",
   "intelligence.evaluation.running": "Running",
   "intelligence.evaluation.run": "Run",
   "intelligence.evaluation.selectDataset": "Select at least one dataset",
   "intelligence.evaluation.reportReady": "Evaluation report {0} ready",
   "intelligence.evaluation.reportHistory": "Report history",
   "intelligence.evaluation.noSavedReports": "No saved reports",
+  "intelligence.evaluation.variantOutcomes": "Variant execution status",
+  "intelligence.evaluation.effectiveSettings": "Effective settings",
   "intelligence.evaluation.variantDeltas": "Variant deltas",
   "intelligence.evaluation.recallDelta": "Recall delta",
   "intelligence.evaluation.rrDelta": "RR delta",
@@ -1949,6 +1950,7 @@ const EN_MAP: Record<string, string> = {
 
 const RU_MAP: Record<string, string> = {
   ...INJECTION_RU_MAP,
+  ...EVALUATION_RU_MAP,
   "nav.preview": "Обзор", "nav.graph": "Граф знаний", "nav.memory": "Память",
   "nav.timeline": "Хронология", "nav.recall": "Тест поиска", "nav.system": "Система",
   "nav.config": "Конфигурация",
@@ -2449,15 +2451,14 @@ const RU_MAP: Record<string, string> = {
   "intelligence.evaluation.loadingDatasets": "Загрузка датасетов",
   "intelligence.evaluation.caseCount": "{0} кейсов",
   "intelligence.evaluation.variants": "Варианты",
-  "intelligence.evaluation.variant.baseline": "Базовый",
-  "intelligence.evaluation.variant.graph_expansion_off": "Без графа",
-  "intelligence.evaluation.variant.topic_expansion_off": "Без тем",
   "intelligence.evaluation.running": "Запуск",
   "intelligence.evaluation.run": "Запустить",
   "intelligence.evaluation.selectDataset": "Выберите хотя бы один датасет",
   "intelligence.evaluation.reportReady": "Отчёт оценки {0} готов",
   "intelligence.evaluation.reportHistory": "История отчётов",
   "intelligence.evaluation.noSavedReports": "Нет сохранённых отчётов",
+  "intelligence.evaluation.variantOutcomes": "Статус выполнения вариантов",
+  "intelligence.evaluation.effectiveSettings": "Действующие настройки",
   "intelligence.evaluation.variantDeltas": "Разницы вариантов",
   "intelligence.evaluation.recallDelta": "Разница recall",
   "intelligence.evaluation.rrDelta": "Разница RR",

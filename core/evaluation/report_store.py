@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import secrets
 import time
@@ -23,6 +24,28 @@ _PERF_PRAGMAS: tuple[str, ...] = (
     "PRAGMA cache_size = -65536",
     "PRAGMA temp_store = MEMORY",
     "PRAGMA mmap_size = 268435456",
+)
+
+_SAFE_CASE_NUMERIC_FIELDS: tuple[str, ...] = (
+    "recall_at_k",
+    "precision_at_k",
+    "reciprocal_rank",
+    "ndcg_at_k",
+    "latency_ms",
+)
+_SAFE_ADVANCED_METRICS: frozenset[str] = frozenset(
+    {
+        "multi_hop_recall",
+        "single_hop_recall",
+        "noise_negative_false_hit",
+        "temporal_consistency",
+        "conflict_accuracy",
+        "source_supported_projection_rate",
+        "answer_faithfulness",
+        "answer_relevancy",
+        "provider_calls",
+        "token_cost",
+    }
 )
 
 
@@ -98,7 +121,10 @@ class EvaluationReportStore:
 
         created_at = float(normalized_report.get("created_at") or time.time())
         report_id = self._generate_report_id(created_at)
-        cases = list(normalized_report.get("cases") or [])
+        cases = [
+            self.safe_case_payload(case)
+            for case in list(normalized_report.get("cases") or [])
+        ]
 
         payload = dict(normalized_report)
         payload.pop("cases", None)
@@ -187,7 +213,10 @@ class EvaluationReportStore:
         report["summary"] = self._from_json(row["summary_json"])
         report["datasets"] = self._from_json(row["datasets_json"])
         report["variants"] = self._from_json(row["variants_json"])
-        report["cases"] = [self._from_json(case["payload_json"]) for case in case_rows]
+        report["cases"] = [
+            self.safe_case_payload(self._from_json(case["payload_json"]))
+            for case in case_rows
+        ]
         return report
 
     async def list_reports(self, limit: int = 10) -> list[dict[str, Any]]:
@@ -300,6 +329,42 @@ class EvaluationReportStore:
             return [cls._normalize_json_value(item) for item in value]
 
         return str(value)
+
+    @classmethod
+    def safe_case_payload(cls, case: Any) -> dict[str, Any]:
+        """把样本结果收敛到无 query、业务 ID 和身份字段的数值 allowlist。"""
+
+        normalized = cls._normalize_json_value(case)
+        if not isinstance(normalized, Mapping):
+            return {}
+        payload: dict[str, Any] = {}
+        case_id = normalized.get("case_id")
+        if case_id is not None:
+            payload["case_id"] = str(case_id)[:128]
+        for key in _SAFE_CASE_NUMERIC_FIELDS:
+            value = cls._finite_number(normalized.get(key))
+            if value is not None:
+                payload[key] = value
+
+        advanced = normalized.get("advanced_metrics")
+        if isinstance(advanced, Mapping):
+            safe_advanced: dict[str, int | float] = {}
+            for key, value in advanced.items():
+                key_text = str(key)
+                number = cls._finite_number(value)
+                if key_text in _SAFE_ADVANCED_METRICS and number is not None:
+                    safe_advanced[key_text] = number
+            if safe_advanced:
+                payload["advanced_metrics"] = safe_advanced
+        return payload
+
+    @staticmethod
+    def _finite_number(value: Any) -> int | float | None:
+        """只接受有限数值，避免把自由文本或非标准 JSON 数写入报告。"""
+
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return value if math.isfinite(float(value)) else None
 
     @staticmethod
     def _json_sort_key(value: Any) -> str:

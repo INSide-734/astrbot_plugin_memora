@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from .report_store import EvaluationReportStore
+from .retrieval_ablation import P2_VARIANT_NAMES, PreparedVariant, RetrievalAblationController
 from .retrieval_quality import (
     EvaluationCase,
     EvaluationReport,
@@ -20,15 +21,8 @@ from .retrieval_quality import (
 )
 
 
-_SUPPORTED_VARIANTS = frozenset(
-    {"baseline", "A", "B", "C", "graph_expansion_off", "topic_expansion_off"}
-)
+_SUPPORTED_VARIANTS = frozenset(P2_VARIANT_NAMES)
 _METRICS = ("recall_at_k", "mrr", "ndcg_at_k", "p95_latency_ms")
-_VARIANT_CONFIG_KEYS = {
-    "graph_expansion_off": "recall_engine.chain_graph_expansion_enabled",
-    "topic_expansion_off": "recall_engine.chain_topic_expansion_enabled",
-}
-_EVOLUTION_VARIANT_MODES = {"B": "readonly", "C": "active"}
 _CACHE_ATTRS = (
     "_retrieval",
     "retrieval_optimizer",
@@ -37,7 +31,6 @@ _CACHE_ATTRS = (
     "cache",
 )
 _CACHE_CLEAR_METHODS = ("invalidate_cache", "clear", "invalidate")
-_MISSING = object()
 
 
 class EvaluationService:
@@ -50,6 +43,8 @@ class EvaluationService:
         fixture_dir: str | Path = "tests/fixtures/retrieval",
         db_path: str | Path | None = None,
     ) -> None:
+        """装配评测引擎、夹具目录和可选报告存储。"""
+
         self.engine = engine
         self.fixture_dir = Path(fixture_dir)
         self.store = EvaluationReportStore(db_path) if db_path else None
@@ -85,7 +80,8 @@ class EvaluationService:
                     ),
                 }
             )
-        return {"datasets": datasets}
+        variants = RetrievalAblationController(self.engine).descriptors()
+        return {"datasets": datasets, "variants": variants}
 
     async def run_evaluation(
         self,
@@ -111,48 +107,45 @@ class EvaluationService:
 
         completed_reports: dict[str, EvaluationReport] = {}
         variants_payload: dict[str, dict[str, Any]] = {}
+        controller = RetrievalAblationController(self.engine)
 
         for variant_name in requested_variants:
-            await self._clear_evaluation_caches()
-            if variant_name in {"baseline", "A"}:
-                report = await evaluate_cases(
-                    cases,
-                    make_memory_engine_retriever(self.engine),
-                    k=safe_k,
-                )
-                completed_reports[variant_name] = report
-                variants_payload[variant_name] = self._variant_completed_payload(
-                    variant_name,
-                    report,
-                )
-                variants_payload[variant_name]["summary"]["configuration_hash"] = (
-                    self._configuration_hash()
-                )
-                variants_payload[variant_name]["summary"]["variant"] = variant_name
+            prepared = controller.prepare(variant_name)
+            if not prepared.available or prepared.engine is None:
+                variants_payload[variant_name] = self._variant_skipped_payload(prepared)
                 continue
-
-            async with self._configured_variant(variant_name) as can_run:
-                if not can_run:
-                    variants_payload[variant_name] = {
-                        "name": variant_name,
-                        "status": "skipped",
-                        "reason": "engine_config_unavailable",
-                    }
-                    continue
+            try:
+                await self._clear_evaluation_caches(prepared.engine)
                 report = await evaluate_cases(
                     cases,
-                    make_memory_engine_retriever(self.engine),
+                    make_memory_engine_retriever(prepared.engine),
                     k=safe_k,
                 )
+                execution_reason = prepared.execution_reason_code()
+                if execution_reason != "available":
+                    variants_payload[variant_name] = self._variant_skipped_payload(
+                        prepared,
+                        reason_code=execution_reason,
+                    )
+                    continue
                 completed_reports[variant_name] = report
                 variants_payload[variant_name] = self._variant_completed_payload(
-                    variant_name,
+                    prepared,
                     report,
                 )
                 variants_payload[variant_name]["summary"]["configuration_hash"] = (
-                    self._configuration_hash()
+                    self._configuration_hash(prepared.engine)
                 )
                 variants_payload[variant_name]["summary"]["variant"] = variant_name
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                variants_payload[variant_name] = self._variant_skipped_payload(
+                    prepared,
+                    reason_code="variant_execution_failed",
+                )
+            finally:
+                await self._clear_evaluation_caches(prepared.engine)
 
         if baseline_name not in completed_reports:
             return {
@@ -168,7 +161,10 @@ class EvaluationService:
 
         baseline_report = completed_reports[baseline_name]
         summary = self._report_summary(baseline_report)
-        summary["configuration_hash"] = self._configuration_hash()
+        baseline_payload = variants_payload[baseline_name]
+        summary["configuration_hash"] = baseline_payload["summary"][
+            "configuration_hash"
+        ]
         summary["variant"] = baseline_name
         report_payload = {
             "baseline": baseline_name,
@@ -235,12 +231,16 @@ class EvaluationService:
         }
 
     def _load_datasets(self) -> dict[str, list[EvaluationCase]]:
+        """从夹具目录加载全部 JSONL 数据集。"""
+
         return load_fixture_dir(self.fixture_dir)
 
     def _select_datasets(
         self,
         requested: Sequence[str] | None,
     ) -> dict[str, list[EvaluationCase]]:
+        """按请求名称筛选已知数据集；空请求表示全部。"""
+
         available = self._load_datasets()
         if not requested:
             return available
@@ -253,6 +253,8 @@ class EvaluationService:
 
     @staticmethod
     def _select_variants(variants: Sequence[str] | None) -> list[str]:
+        """过滤未知变体、去重并确保 baseline 存在。"""
+
         selected = [
             str(name)
             for name in (variants or ["baseline"])
@@ -264,98 +266,18 @@ class EvaluationService:
 
     @staticmethod
     def _clamp_k(k: Any) -> int:
+        """将检索 K 规范化到 1..20。"""
+
         try:
             parsed = int(k)
         except (TypeError, ValueError):
             parsed = 5
         return max(1, min(20, parsed))
 
-    @asynccontextmanager
-    async def _configured_variant(self, name: str):
-        if name in _EVOLUTION_VARIANT_MODES:
-            async with self._configured_evolution_mode(_EVOLUTION_VARIANT_MODES[name]) as can_run:
-                yield can_run
-            return
-        setting = _VARIANT_CONFIG_KEYS.get(name)
-        if not setting:
-            yield False
-            return
-
-        config = getattr(self.engine, "config", None)
-        if isinstance(config, dict):
-            had_key = setting in config
-            original = config.get(setting, _MISSING)
-            try:
-                config[setting] = False
-                yield True
-            finally:
-                if had_key:
-                    config[setting] = original
-                else:
-                    config.pop(setting, None)
-                await self._clear_evaluation_caches()
-            return
-
-        get_config = getattr(self.engine, "get_config", None)
-        set_config = getattr(self.engine, "set_config", None)
-        if not callable(get_config) or not callable(set_config):
-            yield False
-            return
-
-        original = get_config(setting, _MISSING)
-        try:
-            maybe_result = set_config(setting, False)
-            if inspect.isawaitable(maybe_result):
-                await maybe_result
-            yield True
-        finally:
-            maybe_result = set_config(setting, original)
-            if inspect.isawaitable(maybe_result):
-                await maybe_result
-            await self._clear_evaluation_caches()
-
-    @asynccontextmanager
-    async def _configured_evolution_mode(self, mode: str):
-        """临时设置 B/C 变体的记忆演化模式，并在退出时恢复。"""
-        config = getattr(self.engine, "config", None)
-        if isinstance(config, dict) and isinstance(config.get("memory_evolution"), dict):
-            evolution_config = config["memory_evolution"]
-            had_mode = "mode" in evolution_config
-            original = evolution_config.get("mode")
-            try:
-                evolution_config["mode"] = mode
-                yield True
-            finally:
-                if had_mode:
-                    evolution_config["mode"] = original
-                else:
-                    evolution_config.pop("mode", None)
-                await self._clear_evaluation_caches()
-            return
-
-        get_config = getattr(self.engine, "get_config", None)
-        set_config = getattr(self.engine, "set_config", None)
-        if not callable(get_config) or not callable(set_config):
-            yield False
-            return
-
-        setting = "memory_evolution.mode"
-        original = get_config(setting, _MISSING)
-        try:
-            maybe_result = set_config(setting, mode)
-            if inspect.isawaitable(maybe_result):
-                await maybe_result
-            yield True
-        finally:
-            maybe_result = set_config(setting, original)
-            if inspect.isawaitable(maybe_result):
-                await maybe_result
-            await self._clear_evaluation_caches()
-
-    async def _clear_evaluation_caches(self) -> None:
+    async def _clear_evaluation_caches(self, engine: Any | None = None) -> None:
         """尽力隔离消融变体之间的缓存。"""
         seen: set[int] = set()
-        targets: list[Any] = [self.engine]
+        targets: list[Any] = [engine if engine is not None else self.engine]
         index = 0
         while index < len(targets):
             root = targets[index]
@@ -387,17 +309,43 @@ class EvaluationService:
     @classmethod
     def _variant_completed_payload(
         cls,
-        name: str,
+        prepared: PreparedVariant,
         report: EvaluationReport,
     ) -> dict[str, Any]:
+        """将成功变体报告转换为稳定响应。"""
+
         return {
-            "name": name,
+            "name": prepared.name,
             "status": "completed",
+            "capability_status": prepared.capability_status,
+            "reason_code": prepared.reason_code,
+            "effective_settings": dict(prepared.effective_settings),
             "summary": cls._report_summary(report),
         }
 
     @staticmethod
+    def _variant_skipped_payload(
+        prepared: PreparedVariant,
+        *,
+        reason_code: str | None = None,
+    ) -> dict[str, Any]:
+        """返回不泄露组件细节的稳定 skipped 结果。"""
+
+        effective_reason = reason_code or prepared.reason_code
+        return {
+            "name": prepared.name,
+            "status": "skipped",
+            "capability_status": "unavailable",
+            "reason_code": effective_reason,
+            "effective_settings": (
+                dict(prepared.effective_settings) if reason_code else {}
+            ),
+        }
+
+    @staticmethod
     def _report_summary(report: EvaluationReport) -> dict[str, Any]:
+        """从完整报告提取安全汇总指标。"""
+
         summary = {
             "total_cases": report.total_cases,
             "k": report.k,
@@ -424,9 +372,9 @@ class EvaluationService:
         }
         return summary
 
-    def _configuration_hash(self) -> str:
+    def _configuration_hash(self, engine: Any | None = None) -> str:
         """计算匿名配置摘要，不将配置原文写入评测报告。"""
-        config = getattr(self.engine, "config", {})
+        config = getattr(engine if engine is not None else self.engine, "config", {})
         if not isinstance(config, Mapping):
             config = {"config_type": type(config).__name__}
         encoded = json.dumps(
@@ -439,6 +387,8 @@ class EvaluationService:
 
     @classmethod
     def _redact_config(cls, config: Mapping[str, Any]) -> dict[str, Any]:
+        """递归隐藏配置中的密钥类字段。"""
+
         redacted: dict[str, Any] = {}
         for key, value in config.items():
             key_text = str(key)
@@ -452,10 +402,9 @@ class EvaluationService:
 
     @staticmethod
     def _report_cases(report: EvaluationReport) -> list[dict[str, Any]]:
-        return [
-            EvaluationReportStore._normalize_json_value(case)
-            for case in report.cases
-        ]
+        """把逐用例 dataclass 规范化为可持久化 JSON 值。"""
+
+        return [EvaluationReportStore.safe_case_payload(case) for case in report.cases]
 
     @classmethod
     def _variant_deltas(
@@ -463,6 +412,8 @@ class EvaluationService:
         reports: Mapping[str, EvaluationReport],
         baseline_name: str,
     ) -> dict[str, dict[str, float | None]]:
+        """计算各已完成变体相对 baseline 的指标差值。"""
+
         baseline = reports.get(baseline_name)
         if baseline is None:
             return {}
@@ -483,6 +434,8 @@ class EvaluationService:
 
     @staticmethod
     def _metric_value(report_or_summary: Mapping[str, Any], metric: str) -> float | None:
+        """将可选指标安全转换为浮点数。"""
+
         value = report_or_summary.get(metric)
         try:
             return None if value is None else float(value)
@@ -491,12 +444,16 @@ class EvaluationService:
 
     @staticmethod
     def _metric_delta(a: float | None, b: float | None) -> float | None:
+        """返回 B-A 差值；任一值缺失时保持未知。"""
+
         if a is None or b is None:
             return None
         return round(b - a, 4)
 
     @staticmethod
     def _report_compare_summary(report: Mapping[str, Any]) -> dict[str, Any]:
+        """提取报告对比端点需要的最小摘要。"""
+
         return {
             "report_id": report.get("report_id"),
             "created_at": report.get("created_at"),
