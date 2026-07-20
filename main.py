@@ -7,6 +7,7 @@ import asyncio
 import os
 import secrets
 import sys
+import time
 import uuid
 from typing import Any
 
@@ -201,9 +202,66 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
 
     async def _initialize_plugin(self):
         """初始化插件"""
+        startup_started = time.perf_counter()
+        report_debug_event(
+            "plugin_initialized",
+            component="plugin",
+            stage="startup",
+            status="started",
+            reason_code="startup_started",
+        )
+        startup_stage = "startup_backup"
+        stage_started = startup_started
         try:
+            backup_started = time.perf_counter()
+            stage_started = backup_started
+            report_debug_event(
+                "maintenance_task",
+                component="plugin",
+                stage="startup_backup",
+                status="started",
+                reason_code="startup_backup_started",
+                task_type="maintenance",
+            )
             await self._backup_manager.backup_if_needed_async()
+            report_debug_event(
+                "maintenance_task",
+                component="plugin",
+                stage="startup_backup",
+                status="completed",
+                reason_code="startup_backup_completed",
+                task_type="maintenance",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - backup_started) * 1000.0
+                ),
+            )
+
+            startup_stage = "startup_restore"
+            restore_started = time.perf_counter()
+            stage_started = restore_started
+            report_debug_event(
+                "maintenance_task",
+                component="plugin",
+                stage="startup_restore",
+                status="started",
+                reason_code="startup_restore_started",
+                task_type="maintenance",
+            )
             self._backup_manager.apply_pending_restores()
+            report_debug_event(
+                "maintenance_task",
+                component="plugin",
+                stage="startup_restore",
+                status="completed",
+                reason_code="startup_restore_completed",
+                task_type="maintenance",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - restore_started) * 1000.0
+                ),
+            )
+
+            startup_stage = "provider_wait"
+            stage_started = time.perf_counter()
             success = await self.initializer.initialize()
             if not success:
                 self._backup_manager.mark_restore_startup_failure_if_needed(
@@ -215,8 +273,13 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     stage="startup",
                     status="degraded",
                     reason_code="provider_waiting",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - startup_started) * 1000.0
+                    ),
                 )
                 return
+            startup_stage = "runtime_publish"
+            stage_started = time.perf_counter()
             runtime_ready = await self._ensure_runtime_components()
             if not runtime_ready:
                 self._backup_manager.mark_restore_startup_failure_if_needed(True)
@@ -226,6 +289,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     stage="startup",
                     status="degraded",
                     reason_code="runtime_not_ready",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - startup_started) * 1000.0
+                    ),
                 )
                 return
             self._backup_manager.mark_restore_succeeded()
@@ -237,36 +303,73 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 stage="startup",
                 status="completed",
                 reason_code="ready",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - startup_started) * 1000.0
+                ),
             )
         except asyncio.CancelledError:
             report_debug_event(
                 "plugin_failed",
                 component="plugin",
-                stage="startup",
+                stage=startup_stage,
                 status="cancelled",
                 reason_code="initialization_cancelled",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - startup_started) * 1000.0
+                ),
             )
             raise
         except BackupOperationError as exc:
             report_debug_exception(
+                "maintenance_task",
+                exc,
+                component="plugin",
+                stage=startup_stage,
+                status="failed",
+                reason_code="startup_maintenance_error",
+                task_type="maintenance",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - stage_started) * 1000.0
+                ),
+            )
+            report_debug_exception(
                 "plugin_failed",
                 exc,
                 component="plugin",
-                stage="startup",
+                stage=startup_stage,
                 status="failed",
                 reason_code="backup_restore_error",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - startup_started) * 1000.0
+                ),
             )
             logger.error("备份保护或恢复应用失败", exc_info=True)
             raise
         except Exception as exc:
             self._backup_manager.mark_restore_startup_failure_if_needed(True)
+            if startup_stage in {"startup_backup", "startup_restore"}:
+                report_debug_exception(
+                    "maintenance_task",
+                    exc,
+                    component="plugin",
+                    stage=startup_stage,
+                    status="failed",
+                    reason_code="startup_maintenance_error",
+                    task_type="maintenance",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - stage_started) * 1000.0
+                    ),
+                )
             report_debug_exception(
                 "plugin_failed",
                 exc,
                 component="plugin",
-                stage="startup",
+                stage=startup_stage,
                 status="failed",
                 reason_code="initialization_error",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - startup_started) * 1000.0
+                ),
             )
             logger.error("插件初始化失败", exc_info=True)
             raise
@@ -279,10 +382,44 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             return False
         if self._backfill_scheduler is None and self.initializer.backfill_scheduler:
             self._backfill_scheduler = self.initializer.backfill_scheduler
+        if self.event_handler is not None and self.command_handler is not None:
+            return True
+
+        publish_started = time.perf_counter()
+        report_debug_event(
+            "plugin_initialized",
+            component="plugin",
+            stage="runtime_publish",
+            status="started",
+            reason_code="runtime_publish_started",
+        )
 
         async with self._component_init_lock:
             if self._terminating:
+                report_debug_event(
+                    "plugin_initialized",
+                    component="plugin",
+                    stage="runtime_publish",
+                    status="cancelled",
+                    reason_code="shutdown_in_progress",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - publish_started) * 1000.0
+                    ),
+                )
                 return False
+            if self.event_handler is not None and self.command_handler is not None:
+                report_debug_event(
+                    "plugin_initialized",
+                    component="plugin",
+                    stage="runtime_publish",
+                    status="completed",
+                    reason_code="runtime_already_published",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - publish_started) * 1000.0
+                    ),
+                    success_count=2,
+                )
+                return True
             # 检查必要组件是否初始化成功
             if not all(
                 [
@@ -291,6 +428,16 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     self.initializer.conversation_manager,
                 ]
             ):
+                report_debug_event(
+                    "plugin_initialized",
+                    component="plugin",
+                    stage="runtime_publish",
+                    status="failed",
+                    reason_code="core_components_incomplete",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - publish_started) * 1000.0
+                    ),
+                )
                 logger.error("插件初始化不完整：部分核心组件未能初始化")
                 return False
 
@@ -300,6 +447,14 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     self._register_agent_tools_if_needed()
                 except Exception:
                     self._llm_tools_registered = False
+                    report_debug_event(
+                        "plugin_initialized",
+                        component="plugin",
+                        stage="runtime_publish",
+                        status="degraded",
+                        reason_code="agent_tools_unavailable",
+                        capability="agent_tools",
+                    )
                     logger.error(
                         "智能体工具注册失败，将使用直接记忆召回",
                         exc_info=True,
@@ -363,7 +518,20 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     ),
                 )
 
-
+        report_debug_event(
+            "plugin_initialized",
+            component="plugin",
+            stage="runtime_publish",
+            status="completed",
+            reason_code="runtime_components_published",
+            duration_ms=max(
+                0.0, (time.perf_counter() - publish_started) * 1000.0
+            ),
+            success_count=sum(
+                component is not None
+                for component in (self.event_handler, self.command_handler)
+            ),
+        )
         return True
 
     def _inject_delegation_services(self) -> None:
@@ -618,9 +786,11 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     # ==================== 生命周期管理 ====================
 
     async def terminate(self):
+        shutdown_started = time.perf_counter()
         shutdown_status = "completed"
         try:
-            await self._terminate_impl()
+            if not await self._terminate_impl():
+                shutdown_status = "degraded"
         except asyncio.CancelledError:
             shutdown_status = "cancelled"
             raise
@@ -633,23 +803,93 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 component="plugin",
                 stage="shutdown",
                 status=shutdown_status,
+                reason_code=f"shutdown_{shutdown_status}",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - shutdown_started) * 1000.0
+                ),
             )
             close_debug_reporting()
 
-    async def _terminate_impl(self):
+    async def _terminate_impl(self) -> bool:
         """插件停止时执行的清理逻辑。"""
         logger.info("记忆插件正在停止……")
         self._terminating = True
+        shutdown_degraded = False
 
         # 用于包装带超时保护的清理步骤
-        async def _safe_step(label: str, coro, timeout: float = 8.0):
+        async def _safe_step(
+            stage: str, label: str, coro, timeout: float = 8.0
+        ) -> None:
+            nonlocal shutdown_degraded
+            step_started = time.perf_counter()
+            report_debug_event(
+                "shutdown_step",
+                component="plugin",
+                stage=stage,
+                status="started",
+                reason_code="shutdown_step_started",
+            )
             try:
                 await asyncio.wait_for(coro, timeout=timeout)
+                report_debug_event(
+                    "shutdown_step",
+                    component="plugin",
+                    stage=stage,
+                    status="completed",
+                    reason_code="shutdown_step_completed",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - step_started) * 1000.0
+                    ),
+                )
                 logger.info(f"  {label} 完成")
+            except asyncio.CancelledError:
+                report_debug_event(
+                    "shutdown_step",
+                    component="plugin",
+                    stage=stage,
+                    status="cancelled",
+                    reason_code="shutdown_step_cancelled",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - step_started) * 1000.0
+                    ),
+                )
+                raise
             except asyncio.TimeoutError:
+                shutdown_degraded = True
+                report_debug_event(
+                    "shutdown_step",
+                    component="plugin",
+                    stage=stage,
+                    status="degraded",
+                    reason_code="shutdown_step_timeout",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - step_started) * 1000.0
+                    ),
+                )
                 logger.warning(f"  {label} 超时 ({timeout}s)")
             except Exception as e:
+                shutdown_degraded = True
+                report_debug_exception(
+                    "shutdown_step",
+                    e,
+                    component="plugin",
+                    stage=stage,
+                    status="failed",
+                    reason_code="shutdown_step_error",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - step_started) * 1000.0
+                    ),
+                )
                 logger.error(f"  {label} 失败：{e}")
+
+        def _report_skipped(stage: str, reason_code: str) -> None:
+            report_debug_event(
+                "shutdown_step",
+                component="plugin",
+                stage=stage,
+                status="skipped",
+                reason_code=reason_code,
+            )
 
         STEP_TIMEOUT = (
             self.initializer.SHUTDOWN_STEP_TIMEOUT
@@ -664,14 +904,18 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 if not task.done():
                     task.cancel()
             await _safe_step(
+                "background_tasks",
                 "取消后台任务",
                 asyncio.gather(*self._background_tasks, return_exceptions=True),
                 timeout=3.0,
             )
             self._background_tasks.clear()
+        else:
+            _report_skipped("background_tasks", "no_background_tasks")
 
         # 2. 停止初始化后台任务（如提供器重试）
         await _safe_step(
+            "provider_waiter",
             "停止提供器重试",
             self.initializer.stop_background_tasks(),
             timeout=STEP_TIMEOUT,
@@ -680,18 +924,23 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         # 3. 通知事件处理器停止（如果仍有存储任务在运行）
         if self.event_handler:
             await _safe_step(
+                "event_handler",
                 "停止事件处理器",
                 self.event_handler.shutdown(),
                 timeout=STEP_TIMEOUT,
             )
+        else:
+            _report_skipped("event_handler", "component_inactive")
 
         await _safe_step(
+            "memory_evolution",
             "关闭记忆演化组件",
             self.initializer.close_memory_evolution_components(),
             timeout=STEP_TIMEOUT,
         )
 
         await _safe_step(
+            "injection_components",
             "关闭注入决策组件",
             self.initializer.close_injection_components(),
             timeout=STEP_TIMEOUT,
@@ -699,6 +948,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
 
         # 4. 停止衰减调度器
         await _safe_step(
+            "schedulers",
             "停止衰减调度器",
             self.initializer.stop_scheduler(),
             timeout=STEP_TIMEOUT,
@@ -707,13 +957,17 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         # 5. 停止存量回填任务
         if self._backfill_scheduler:
             await _safe_step(
+                "backfill_scheduler",
                 "停止存量回填调度器",
                 self._backfill_scheduler.stop(),
                 timeout=STEP_TIMEOUT,
             )
+        else:
+            _report_skipped("backfill_scheduler", "component_inactive")
 
         # 6. 关闭扩展认知组件
         await _safe_step(
+            "cognitive_components",
             "关闭扩展认知组件",
             self.initializer.close_extension_components(),
             timeout=STEP_TIMEOUT,
@@ -725,26 +979,35 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             and self.initializer.conversation_manager.store
         ):
             await _safe_step(
+                "conversation_store",
                 "关闭会话管理器",
                 self.initializer.conversation_manager.store.close(),
                 timeout=STEP_TIMEOUT,
             )
+        else:
+            _report_skipped("conversation_store", "component_inactive")
 
         # 8. 关闭记忆引擎
         if self.initializer.memory_engine:
             await _safe_step(
+                "memory_engine",
                 "关闭记忆引擎",
                 self.initializer.memory_engine.close(),
                 timeout=STEP_TIMEOUT,
             )
+        else:
+            _report_skipped("memory_engine", "component_inactive")
 
         # 9. 关闭向量数据库
         if self.initializer.db:
             await _safe_step(
+                "vector_database",
                 "关闭向量数据库",
                 self.initializer.db.close(),
                 timeout=STEP_TIMEOUT,
             )
+        else:
+            _report_skipped("vector_database", "component_inactive")
 
         # 关闭前输出性能摘要
         try:
@@ -757,7 +1020,11 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         except Exception:
             pass
 
-        logger.info("记忆插件已成功停止。")
+        if shutdown_degraded:
+            logger.warning("记忆插件已停止，但部分清理步骤未完整完成。")
+        else:
+            logger.info("记忆插件已成功停止。")
+        return not shutdown_degraded
 
 
 def _ensure_secret_key(data_dir: str) -> str:

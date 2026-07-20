@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -95,15 +96,36 @@ class ReflectionHandler:
         )
         if resp.role != "assistant":
             self._clear_prompt_protection_context(event, scope_id)
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="response",
+                status="skipped",
+                reason_code="non_assistant_response",
+            )
             return
         if scope_lookup_failed:
             resp.completion_text = ""
             self._clear_prompt_protection_context(event, scope_id)
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="protection",
+                status="skipped",
+                reason_code="protection_scope_lookup_failed",
+            )
             return
 
         if protection_required and not scope_id:
             resp.completion_text = ""
             self._clear_prompt_protection_context(event, scope_id)
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="protection",
+                status="skipped",
+                reason_code="missing_protection_scope",
+            )
             return
         session_id = getattr(event, "unified_msg_origin", "") or ""
         response_text = str(getattr(resp, "completion_text", "") or "")
@@ -120,11 +142,25 @@ class ReflectionHandler:
             logger.debug(
                 f"[反思处理] 检测到工具调用响应（tools={resp.tools_call_name}），跳过记录"
             )
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="response",
+                status="skipped",
+                reason_code="tool_call_response",
+            )
             return
 
         if resp.tools_call_extra_content:
             logger.debug(
                 "[反思处理] 检测到工具循环总结响应（tools_call_extra_content 非空），跳过记录"
+            )
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="response",
+                status="skipped",
+                reason_code="tool_loop_summary",
             )
             return
 
@@ -132,10 +168,24 @@ class ReflectionHandler:
             logger.debug(f"[反思处理] 获取到 unified_msg_origin: {session_id}")
 
             if not session_id:
+                report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="session",
+                    status="skipped",
+                    reason_code="empty_session",
+                )
                 logger.warning("[反思处理] 会话 ID 为空，跳过反思")
                 return
 
             if self._writes_blocked():
+                report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="write_guard",
+                    status="skipped",
+                    reason_code="write_blocked",
+                )
                 logger.warning(f"[{session_id}] 备份恢复待应用，跳过 LLM 回复写入")
                 return
 
@@ -145,6 +195,13 @@ class ReflectionHandler:
                 )
 
             if not response_text or not response_text.strip():
+                report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="response",
+                    status="skipped",
+                    reason_code="empty_response_after_sanitization",
+                )
                 logger.warning(
                     f"[{session_id}] 模型回复经安全清洗后为空，跳过记录"
                 )
@@ -161,6 +218,13 @@ class ReflectionHandler:
             ]
             response_lower = response_text.lower()
             if any(indicator in response_lower for indicator in error_indicators):
+                report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="response",
+                    status="skipped",
+                    reason_code="provider_error_response",
+                )
                 logger.debug(
                     f"[{session_id}] 检测到错误响应，跳过记录: {response_text[:50]}..."
                 )
@@ -172,6 +236,14 @@ class ReflectionHandler:
                 content=response_text,
             )
             await self._feed_cognitive_components(event, response_text)
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="response",
+                status="completed",
+                reason_code="assistant_response_persisted",
+                count=1,
+            )
             logger.debug(f"[反思处理] [{session_id}] 已添加助手响应消息")
 
             is_group = event.get_message_type() == MessageType.GROUP_MESSAGE
@@ -180,6 +252,13 @@ class ReflectionHandler:
 
             session_info = await self._conversation_manager.get_session_info(session_id)
             if not session_info:
+                report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="session",
+                    status="skipped",
+                    reason_code="session_info_unavailable",
+                )
                 logger.warning(
                     f"[反思处理] [{session_id}] session_info 为空，跳过反思"
                 )
@@ -240,6 +319,19 @@ class ReflectionHandler:
                 f"存在待处理失败总结：{pending_summary is not None}"
             )
 
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="summary_gate",
+                status="completed" if unsummarized_rounds >= trigger_rounds else "skipped",
+                reason_code=(
+                    "summary_trigger_reached"
+                    if unsummarized_rounds >= trigger_rounds
+                    else "summary_threshold_not_reached"
+                ),
+                count=max(0, int(unsummarized_rounds)),
+            )
+
             if unsummarized_rounds >= trigger_rounds:
                 logger.info(
                     f"[{session_id}] 未总结轮数达到 {unsummarized_rounds} 轮，启动记忆反思任务"
@@ -254,6 +346,14 @@ class ReflectionHandler:
                     retry_count = pending_summary.get("retry_count", 0)
 
                     if retry_count >= 3:
+                        report_debug_event(
+                            "reflection_state",
+                            component="reflection",
+                            stage="summary_gate",
+                            status="skipped",
+                            reason_code="pending_retry_exhausted",
+                            count=max(0, int(retry_count)),
+                        )
                         logger.warning(
                             f"[{session_id}] 待处理总结已连续失败 {retry_count} 次，放弃该范围 "
                             f"[{pending_start}:{pending_summary.get('end_index', end_index)}]"
@@ -277,6 +377,14 @@ class ReflectionHandler:
                     )
 
                 if end_index - start_index < 2:
+                    report_debug_event(
+                        "reflection_state",
+                        component="reflection",
+                        stage="summary_window",
+                        status="skipped",
+                        reason_code="insufficient_summary_window",
+                        count=max(0, int(end_index - start_index)),
+                    )
                     logger.debug(f"[{session_id}] 消息数不足一轮对话，跳过总结")
                     return
 
@@ -303,6 +411,13 @@ class ReflectionHandler:
 
                 if not self._shutting_down:
                     if not await self.try_begin_summary_window(session_id):
+                        report_debug_event(
+                            "reflection_state",
+                            component="reflection",
+                            stage="summary_window",
+                            status="skipped",
+                            reason_code="storage_task_already_running",
+                        )
                         logger.info(
                             f"[{session_id}] 已有记忆总结任务在执行，跳过本次触发"
                         )
@@ -333,6 +448,15 @@ class ReflectionHandler:
                         stage="reflection",
                         status="completed",
                         reason_code="storage_task_scheduled",
+                        count=len(history_messages),
+                    )
+                else:
+                    report_debug_event(
+                        "reflection_state",
+                        component="reflection",
+                        stage="summary_window",
+                        status="skipped",
+                        reason_code="shutdown_in_progress",
                     )
 
         except asyncio.CancelledError:
@@ -653,6 +777,7 @@ class ReflectionHandler:
         retry_count: int = 0,
     ) -> None:
         """后台存储任务"""
+        storage_started = time.perf_counter()
         report_debug_event(
             "storage_task",
             component="reflection",
@@ -660,6 +785,8 @@ class ReflectionHandler:
             status="started",
             reason_code="storage_started",
             task_type="storage",
+            message_count=len(history_messages),
+            retry_count=max(0, int(retry_count)),
         )
         async with OperationContext("记忆存储", session_id):
             try:
@@ -693,6 +820,14 @@ class ReflectionHandler:
                     }
 
                 if summarized_index >= end_index:
+                    report_debug_event(
+                        "storage_task",
+                        component="reflection",
+                        stage="window_check",
+                        status="skipped",
+                        reason_code="stale_summary_task",
+                        task_type="storage",
+                    )
                     logger.info(
                         f"[{session_id}] 检测到过期总结任务，跳过："
                         f"current={summarized_index}, target_end={end_index}"
@@ -712,6 +847,15 @@ class ReflectionHandler:
                 )
 
                 if not self._memory_processor:
+                    report_debug_event(
+                        "storage_task",
+                        component="reflection",
+                        stage="memory_extract",
+                        status="failed",
+                        reason_code="memory_processor_unavailable",
+                        task_type="storage",
+                        retry_count=max(0, int(retry_count)),
+                    )
                     logger.error(f"[{session_id}] 记忆处理器未初始化，记录待重试")
                     await self._record_pending_summary(
                         session_id,
@@ -723,8 +867,20 @@ class ReflectionHandler:
 
                 try:
                     # 准备消息批次（A/B 策略单批次，C/D 策略多批次）
+                    batch_started = time.perf_counter()
                     batches = await self._prepare_message_batches(
                         history_messages, is_group_chat
+                    )
+                    report_debug_event(
+                        "storage_task",
+                        component="reflection",
+                        stage="batch_prepare",
+                        status="completed",
+                        reason_code="batches_prepared",
+                        task_type="storage",
+                        duration_ms=max(0.0, (time.perf_counter() - batch_started) * 1000.0),
+                        message_count=len(history_messages),
+                        batch_count=len(batches),
                     )
                     logger.info(
                         f"[{session_id}] 调用记忆处理器，"
@@ -733,6 +889,8 @@ class ReflectionHandler:
 
                     all_memories: list[dict[str, Any]] = []
                     batch_processing_failed = False
+                    failed_batch_count = 0
+                    extraction_started = time.perf_counter()
                     if len(batches) == 1:
                         batch_memories = (
                             await self._memory_processor.process_conversation(
@@ -758,6 +916,7 @@ class ReflectionHandler:
                         for i, result in enumerate(batch_results):
                             if isinstance(result, BaseException):
                                 batch_processing_failed = True
+                                failed_batch_count += 1
                                 logger.error(
                                     f"[{session_id}] 批次 {i + 1}/{len(batches)} "
                                     f"LLM 处理失败：{result}"
@@ -766,6 +925,18 @@ class ReflectionHandler:
                                 all_memories.extend(result)
 
                     if batch_processing_failed:
+                        report_debug_event(
+                            "storage_task",
+                            component="reflection",
+                            stage="memory_extract",
+                            status="failed",
+                            reason_code="batch_extraction_failed",
+                            task_type="storage",
+                            duration_ms=max(0.0, (time.perf_counter() - extraction_started) * 1000.0),
+                            batch_count=len(batches),
+                            failed_count=failed_batch_count,
+                            success_count=max(0, len(batches) - failed_batch_count),
+                        )
                         await self._record_pending_summary(
                             session_id,
                             start_index,
@@ -776,6 +947,17 @@ class ReflectionHandler:
                         return
 
                     memories = all_memories
+                    report_debug_event(
+                        "storage_task",
+                        component="reflection",
+                        stage="memory_extract",
+                        status="completed",
+                        reason_code="memories_extracted",
+                        task_type="storage",
+                        duration_ms=max(0.0, (time.perf_counter() - extraction_started) * 1000.0),
+                        batch_count=len(batches),
+                        count=len(memories),
+                    )
                     for memory_index, mem in enumerate(memories):
                         metadata = mem.setdefault("metadata", {})
                         key = self._memory_idempotency_key(
@@ -792,6 +974,16 @@ class ReflectionHandler:
                         f"（来自 {len(batches)} 个批次）"
                     )
                 except Exception as e:
+                    report_debug_exception(
+                        "storage_task",
+                        e,
+                        component="reflection",
+                        stage="memory_extract",
+                        status="failed",
+                        reason_code="memory_extraction_error",
+                        task_type="storage",
+                        retry_count=max(0, int(retry_count)),
+                    )
                     logger.error(
                         f"[{session_id}] LLM 处理失败（重试 {retry_count + 1}/3）：{e}",
                         exc_info=True,
@@ -808,7 +1000,25 @@ class ReflectionHandler:
                     # 并行写入记忆（受写锁串行化约束，但消除了 await 调度开销）
                     stored_count = 0
                     successful_keys = set(completed_idempotency_keys)
+                    skipped_memory_count = sum(
+                        str(
+                            memory.get("metadata", {}).get("idempotency_key") or ""
+                        )
+                        in completed_idempotency_keys
+                        for memory in memories
+                    )
                     _MAX_CONCURRENT_WRITES = 3
+                    write_started = time.perf_counter()
+                    report_debug_event(
+                        "storage_task",
+                        component="reflection",
+                        stage="memory_write",
+                        status="started",
+                        reason_code="memory_write_started",
+                        task_type="storage",
+                        count=len(memories),
+                        skipped_count=skipped_memory_count,
+                    )
 
                     async def _store_one(mem: dict[str, Any]) -> bool:
                         metadata = mem.setdefault("metadata", {})
@@ -864,8 +1074,32 @@ class ReflectionHandler:
                         f"[{session_id}] 成功存储 {stored_count}/{len(memories)} 条记忆"
                         f"（{len(history_messages)}条消息）"
                     )
+                    report_debug_event(
+                        "storage_task",
+                        component="reflection",
+                        stage="memory_write",
+                        status="completed" if stored_count == len(memories) else "degraded",
+                        reason_code="memory_write_completed" if stored_count == len(memories) else "memory_write_partial",
+                        task_type="storage",
+                        duration_ms=max(0.0, (time.perf_counter() - write_started) * 1000.0),
+                        success_count=max(
+                            0, int(stored_count - skipped_memory_count)
+                        ),
+                        failed_count=max(0, int(len(memories) - stored_count)),
+                        skipped_count=skipped_memory_count,
+                    )
                 else:
                     stored_count = len(memories)
+                    successful_keys = set(completed_idempotency_keys)
+                    report_debug_event(
+                        "storage_task",
+                        component="reflection",
+                        stage="memory_write",
+                        status="skipped",
+                        reason_code="memory_engine_unavailable",
+                        task_type="storage",
+                        count=len(memories),
+                    )
 
                 if stored_count < len(memories):
                     logger.warning(
@@ -884,6 +1118,7 @@ class ReflectionHandler:
                     return
 
                 if self._conversation_manager:
+                    metadata_started = time.perf_counter()
                     try:
                         await self._conversation_manager.update_session_metadata(
                             session_id,
@@ -899,7 +1134,25 @@ class ReflectionHandler:
                             f"[{session_id}] 更新滑动窗口位置："
                             f"last_summarized_index = {end_index}"
                         )
+                        report_debug_event(
+                            "storage_task",
+                            component="reflection",
+                            stage="metadata_commit",
+                            status="completed",
+                            reason_code="summary_metadata_committed",
+                            task_type="storage",
+                            duration_ms=max(0.0, (time.perf_counter() - metadata_started) * 1000.0),
+                        )
                     except Exception as meta_err:
+                        report_debug_exception(
+                            "storage_task",
+                            meta_err,
+                            component="reflection",
+                            stage="metadata_commit",
+                            status="degraded",
+                            reason_code="summary_metadata_retrying",
+                            task_type="storage",
+                        )
                         logger.error(
                             f"[{session_id}] 记忆已存储但元数据更新失败：{meta_err}。"
                             "下次触发时将跳过本段消息，避免重复总结。",
@@ -917,6 +1170,15 @@ class ReflectionHandler:
                                 None,
                             )
                         except Exception:
+                            report_debug_event(
+                                "storage_task",
+                                component="reflection",
+                                stage="metadata_commit",
+                                status="failed",
+                                reason_code="summary_metadata_failed",
+                                task_type="storage",
+                                duration_ms=max(0.0, (time.perf_counter() - metadata_started) * 1000.0),
+                            )
                             logger.error(
                                 f"[{session_id}] 重试元数据更新仍然失败，"
                                 "可能出现重复总结。",
@@ -931,8 +1193,20 @@ class ReflectionHandler:
                     reason_code="memories_stored",
                     task_type="storage",
                     count=max(0, int(stored_count)),
+                    duration_ms=max(0.0, (time.perf_counter() - storage_started) * 1000.0),
                 )
 
+            except asyncio.CancelledError:
+                report_debug_event(
+                    "storage_task",
+                    component="reflection",
+                    stage="storage",
+                    status="cancelled",
+                    reason_code="storage_cancelled",
+                    task_type="storage",
+                    duration_ms=max(0.0, (time.perf_counter() - storage_started) * 1000.0),
+                )
+                raise
             except Exception as e:
                 report_debug_exception(
                     "storage_task",
@@ -942,6 +1216,7 @@ class ReflectionHandler:
                     status="failed",
                     reason_code="storage_error",
                     task_type="storage",
+                    duration_ms=max(0.0, (time.perf_counter() - storage_started) * 1000.0),
                 )
                 logger.error(f"[{session_id}] 存储记忆失败：{e}", exc_info=True)
                 await self._record_pending_summary(
@@ -985,6 +1260,17 @@ class ReflectionHandler:
             pending_summary,
         )
 
+        report_debug_event(
+            "storage_task",
+            component="reflection",
+            stage="retry",
+            status="waiting",
+            reason_code="summary_retry_recorded",
+            task_type="storage",
+            retry_count=max(0, int(new_retry_count)),
+            failed_count=max(0, int(failed_count or 0)),
+        )
+
         logger.warning(
             f"[{session_id}] 记录待重试总结：范围=[{start_index}:{end_index}]，"
             f"重试次数={new_retry_count}/3"
@@ -995,11 +1281,37 @@ class ReflectionHandler:
 
         manager = self._memory_evolution_manager
         if manager is None:
+            report_debug_event(
+                "storage_task",
+                component="reflection",
+                stage="evolution_schedule",
+                status="skipped",
+                reason_code="evolution_disabled",
+                task_type="evolution",
+            )
             return
         try:
             sources = await manager.store.load_sources((int(memory_id),))
             if sources:
                 await manager.schedule_consider(sources[0])
+                report_debug_event(
+                    "storage_task",
+                    component="reflection",
+                    stage="evolution_schedule",
+                    status="completed",
+                    reason_code="evolution_scheduled",
+                    task_type="evolution",
+                    count=1,
+                )
+            else:
+                report_debug_event(
+                    "storage_task",
+                    component="reflection",
+                    stage="evolution_schedule",
+                    status="skipped",
+                    reason_code="evolution_source_missing",
+                    task_type="evolution",
+                )
         except asyncio.CancelledError:
             report_debug_event(
                 "storage_task",

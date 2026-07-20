@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
@@ -321,28 +322,72 @@ class EventHandler:
 
     async def shutdown(self) -> None:
         """关闭事件处理器，等待所有存储任务完成"""
-        await self._reflection_handler.shutdown()
-        if self._maintenance_tasks:
-            try:
-                done, pending = await asyncio.wait(
-                    list(self._maintenance_tasks),
-                    timeout=3.0,
-                )
-                for task in pending:
-                    task.cancel()
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
-            finally:
-                self._maintenance_tasks.clear()
-        if self._injection_recorder is not None:
-            await self._injection_recorder.close(timeout=5.0)
+        shutdown_started = time.perf_counter()
+        queue_depth = len(self._maintenance_tasks)
+        report_debug_event(
+            "shutdown_step",
+            component="event_handler",
+            stage="event_handler",
+            status="started",
+            reason_code="event_handler_shutdown_started",
+            queue_depth=queue_depth,
+        )
+        try:
+            await self._reflection_handler.shutdown()
+            if self._maintenance_tasks:
+                try:
+                    _, pending = await asyncio.wait(
+                        list(self._maintenance_tasks),
+                        timeout=3.0,
+                    )
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
+                finally:
+                    self._maintenance_tasks.clear()
+            if self._injection_recorder is not None:
+                await self._injection_recorder.close(timeout=5.0)
+        except asyncio.CancelledError:
+            report_debug_event(
+                "shutdown_step",
+                component="event_handler",
+                stage="event_handler",
+                status="cancelled",
+                reason_code="event_handler_shutdown_cancelled",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - shutdown_started) * 1000.0
+                ),
+                queue_depth=len(self._maintenance_tasks),
+            )
+            raise
+        except Exception as exception:
+            report_debug_exception(
+                "shutdown_step",
+                exception,
+                component="event_handler",
+                stage="event_handler",
+                status="failed",
+                reason_code="event_handler_shutdown_error",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - shutdown_started) * 1000.0
+                ),
+                queue_depth=len(self._maintenance_tasks),
+            )
+            raise
+
         logger.info("EventHandler 已关闭")
         report_debug_event(
             "shutdown_step",
             component="event_handler",
-            stage="shutdown",
+            stage="event_handler",
             status="completed",
             reason_code="event_handler_closed",
+            duration_ms=max(
+                0.0, (time.perf_counter() - shutdown_started) * 1000.0
+            ),
+            queue_depth=0,
+            count=queue_depth,
         )
 
     # ---- 内部方法 ----

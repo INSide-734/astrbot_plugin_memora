@@ -123,6 +123,15 @@ class RecallHandler:
         injected_count = 0
         filtered_count = 0
         candidate_count = 0
+        recall_status = "completed"
+        recall_reason = "recall_completed"
+        report_debug_event(
+            "recall_stage",
+            component="recall",
+            stage="request",
+            status="started",
+            reason_code="request_received",
+        )
         try:
             session_id = event.unified_msg_origin
             logger.debug(f"[召回流程] 获取到 unified_msg_origin: {session_id}")
@@ -143,6 +152,15 @@ class RecallHandler:
                 has_extra_parts = bool(extra_parts)
 
                 if not has_prompt_text and not has_extra_parts:
+                    recall_status = "skipped"
+                    recall_reason = "empty_request"
+                    report_debug_event(
+                        "recall_stage",
+                        component="recall",
+                        stage="request",
+                        status="skipped",
+                        reason_code="empty_request",
+                    )
                     logger.debug(f"[{session_id}] 请求中无可用用户内容，跳过记忆召回")
                     return
 
@@ -156,11 +174,27 @@ class RecallHandler:
                         session_id,
                     )
                     if removed > 0:
+                        report_debug_event(
+                            "recall_stage",
+                            component="recall",
+                            stage="context_cleanup",
+                            status="completed",
+                            reason_code="history_injection_removed",
+                            count=removed,
+                        )
                         logger.info(
                             f"[{session_id}] 已清理 {removed} 处历史记忆注入片段"
                         )
 
                 actual_query = await self._extractor.get_event_message_str(event)
+                report_debug_event(
+                    "recall_stage",
+                    component="recall",
+                    stage="query",
+                    status="completed" if actual_query else "degraded",
+                    reason_code="message_query_ready" if actual_query else "message_query_empty",
+                    count=1 if actual_query else 0,
+                )
 
                 request_query = (
                     prompt_text.strip() if isinstance(prompt_text, str) else ""
@@ -184,6 +218,15 @@ class RecallHandler:
 
                 top_k = self._config_manager.get("recall_engine.top_k", 5)
                 if top_k <= 0:
+                    recall_status = "skipped"
+                    recall_reason = "top_k_disabled"
+                    report_debug_event(
+                        "recall_stage",
+                        component="recall",
+                        stage="retrieval",
+                        status="skipped",
+                        reason_code="top_k_disabled",
+                    )
                     logger.info(
                         f"[{session_id}] top_k={top_k} <= 0，跳过记忆检索和注入"
                     )
@@ -198,6 +241,15 @@ class RecallHandler:
                         )
                         actual_query = fallback_query
                     else:
+                        recall_status = "skipped"
+                        recall_reason = "empty_query"
+                        report_debug_event(
+                            "recall_stage",
+                            component="recall",
+                            stage="query",
+                            status="skipped",
+                            reason_code="empty_query",
+                        )
                         logger.warning(f"[{session_id}] 原始用户消息为空，跳过记忆召回")
                         return
 
@@ -251,6 +303,14 @@ class RecallHandler:
                     rewritten_queries[0] if rewritten_queries else query_for_search
                 )
                 memory_type_filter = query_intent.memory_types or None
+                report_debug_event(
+                    "recall_stage",
+                    component="recall",
+                    stage="query_rewrite",
+                    status="completed",
+                    reason_code="query_rewritten",
+                    count=len(rewritten_queries),
+                )
 
                 logger.info(
                     f"[{session_id}] 开始记忆召回: intent={query_intent.intent}, "
@@ -274,6 +334,15 @@ class RecallHandler:
                                 exc_info=True,
                             )
 
+                report_debug_event(
+                    "recall_stage",
+                    component="recall",
+                    stage="provider",
+                    status="completed" if provider is not None else "degraded",
+                    reason_code="provider_available" if provider is not None else "provider_unavailable",
+                    count=1 if provider is not None else 0,
+                )
+
                 routing_config = self._routing_config()
                 preflight_signals = self._preflight_signals(
                     query_intent, provider, req, chat_type
@@ -283,6 +352,16 @@ class RecallHandler:
                     routing_config, preflight_signals
                 )
                 preflight_ms = (time.perf_counter() - decision_started) * 1000.0
+                report_debug_event(
+                    "recall_stage",
+                    component="recall",
+                    stage="preflight",
+                    status="skipped" if preflight.skip_passive_recall else "completed",
+                    reason_code="passive_recall_skipped" if preflight.skip_passive_recall else "preflight_completed",
+                    duration_ms=max(0.0, preflight_ms),
+                    route=preflight.resolved_preset.value,
+                    delivery=preflight.resolved_delivery.value,
+                )
 
                 if preflight.skip_passive_recall:
                     prospective = await self._maybe_prospective_recall(
@@ -306,9 +385,11 @@ class RecallHandler:
                         event=event,
                     ))
                     injected_count = result.selected_count
+                    recall_reason = "passive_recall_only"
                     return
 
                 user_id = self._get_event_sender_id(event)
+                retrieval_started = time.perf_counter()
                 recalled_memories = await self._memory_engine.search_memories(
                     query=primary_query,
                     k=top_k,
@@ -319,11 +400,28 @@ class RecallHandler:
                     memory_types=memory_type_filter,
                     user_id=user_id,
                 )
+                report_debug_event(
+                    "recall_stage",
+                    component="recall",
+                    stage="retrieval",
+                    status="completed",
+                    reason_code="memory_search_completed",
+                    duration_ms=max(0.0, (time.perf_counter() - retrieval_started) * 1000.0),
+                    count=len(recalled_memories or []),
+                )
 
                 spontaneous = await self._maybe_spontaneous_recall(
                     session_id=recall_session_id,
                     persona_id=recall_persona_id,
                     chat_type=chat_type,
+                )
+                report_debug_event(
+                    "recall_stage",
+                    component="recall",
+                    stage="spontaneous",
+                    status="completed",
+                    reason_code="spontaneous_recall_completed",
+                    count=len(spontaneous or []),
                 )
                 ordinary_candidates = list(recalled_memories or [])
                 if spontaneous:
@@ -338,6 +436,14 @@ class RecallHandler:
                     persona_id=recall_persona_id,
                     chat_type=chat_type,
                 )
+                report_debug_event(
+                    "recall_stage",
+                    component="recall",
+                    stage="prospective",
+                    status="completed",
+                    reason_code="prospective_recall_completed",
+                    count=len(prospective or []),
+                )
                 memories = self._safe_candidates(ordinary_candidates)
                 final_signals = self._final_signals(preflight_signals, memories)
                 candidate_count = final_signals.candidate_count
@@ -347,6 +453,17 @@ class RecallHandler:
                     preflight_ms
                     + (time.perf_counter() - decision_started) * 1000.0
                 )
+                report_debug_event(
+                    "recall_stage",
+                    component="recall",
+                    stage="decision",
+                    status="completed",
+                    reason_code="routing_decision_completed",
+                    duration_ms=max(0.0, decision_ms),
+                    candidate_count=candidate_count,
+                    route=decision.resolved_preset.value,
+                    delivery=decision.resolved_delivery.value,
+                )
                 format_started = time.perf_counter()
                 cognitive_context = await self._build_cognitive_context(
                     text=actual_query,
@@ -354,6 +471,15 @@ class RecallHandler:
                     persona_id=persona_id or "default",
                 )
                 format_ms = (time.perf_counter() - format_started) * 1000.0
+                report_debug_event(
+                    "recall_stage",
+                    component="recall",
+                    stage="format",
+                    status="completed",
+                    reason_code="cognitive_context_formatted",
+                    duration_ms=max(0.0, format_ms),
+                    payload_chars=len(cognitive_context),
+                )
                 result = await self._execute_and_record(_RecallExecutionInput(
                     req=req,
                     decision=decision,
@@ -373,6 +499,8 @@ class RecallHandler:
                 injected_count = result.selected_count
 
         except asyncio.CancelledError:
+            recall_status = "cancelled"
+            recall_reason = "recall_cancelled"
             report_debug_event(
                 "recall_stage",
                 component="recall",
@@ -382,6 +510,8 @@ class RecallHandler:
             )
             raise
         except Exception as e:
+            recall_status = "failed"
+            recall_reason = "recall_error"
             report_debug_exception(
                 "recall_failed",
                 e,
@@ -397,6 +527,8 @@ class RecallHandler:
                 injected_count=injected_count,
                 filtered_count=filtered_count,
                 candidate_count=candidate_count,
+                status=recall_status,
+                reason_code=recall_reason,
             )
 
     def _routing_config(self) -> InjectionRoutingConfig:
@@ -830,12 +962,15 @@ class RecallHandler:
         injected_count: int,
         filtered_count: int,
         candidate_count: int,
+        status: str = "completed",
+        reason_code: str = "recall_completed",
     ) -> None:
         report_debug_event(
             "recall_completed",
             component="recall",
             stage="recall",
-            status="completed",
+            status=status,
+            reason_code=reason_code,
             duration_ms=max(0.0, float(total_ms)),
             candidate_count=max(0, int(candidate_count)),
             injected_count=max(0, int(injected_count)),

@@ -26,7 +26,7 @@ flowchart LR
 
 ### 轻量门面
 
-`core.monitoring.__init__` 默认导出 no-op `monitored` 和 `reset_trace_context`；`set_debug_mode(True)` 首次加载真实 instrumentation 并替换包属性，关闭时恢复 stub。`PerfTracker` 与质量模型通过 `__getattr__` 懒加载并缓存。注意：已经在装饰时绑定的 stub 不会因随后替换包属性而追溯包装旧函数。
+`core.monitoring.__init__` 导出运行时门控的 `monitored` 和 `reset_trace_context`；处理器可以在插件启动前绑定装饰器，`set_debug_mode(True)` 后仍会在首次调用时懒加载真实 instrumentation，关闭时直接调用原函数。`PerfTracker` 与质量模型通过 `__getattr__` 懒加载并缓存。
 
 ### `metrics.py`
 
@@ -48,7 +48,13 @@ flowchart LR
 
 问题报告调试模式由现有顶层 `debug` 配置控制。记录器只接受固定事件、字段和低基数枚举，先校验并规范化 JSON，再同时写入 AstrBot 日志（`[MemoraDebug]` 前缀）和插件数据目录下的 `diagnostics/memora-debug.jsonl`。文件使用单文件 `5 MB`、当前文件加两个备份文件的大小轮转；目录和文件会延迟到第一条合法事件写入时创建。
 
-事件只允许阶段、状态、原因码、随机操作关联码、耗时、计数、预算、路由/交付枚举及安全异常位置。禁止记录对话、查询、Prompt、记忆正文、用户/群组/会话/消息/记忆标识、Provider 请求或凭据、异常消息、绝对路径和完整 traceback。异常摘要最多包含异常类型、插件内模块、函数和行号；找不到插件栈帧时只记录类型。未知事件、字段或值整条拒绝，文件 sink 失败只停用文件输出，不得影响聊天主链路。
+事件只允许阶段、状态、原因码、随机操作关联码、耗时、计数、预算、路由/交付枚举、受限函数名及安全异常位置。命名计数字段包括 `message_count`、`batch_count`、`success_count`、`failed_count`、`retry_count`、`attempt_count`、`skipped_count` 与 `queue_depth`；它们只接受非负有限数值，布尔值和负数会导致整条事件被拒绝。
+
+召回阶段会分别记录请求、上下文清理、查询改写、Provider 可用性、预检路由、检索、自发/前瞻召回、决策和格式化；反思存储阶段进一步记录 `batch_prepare`、`memory_extract`、`memory_write`、`metadata_commit`、`retry` 与 `evolution_schedule` 的耗时和计数。初始化覆盖启动备份、待应用恢复、Provider 等待/重试、组件构建、固定组件就绪状态、认知组件逐项结果和运行时发布；关闭覆盖后台任务、Provider waiter、事件处理器、Memory Evolution、注入决策组件、调度器、认知组件、会话 Store、记忆引擎和向量数据库，并区分完成、降级、失败、取消及组件未启用。
+
+`instrumented_call` 只记录被 `@monitored` 包装函数的安全函数名、调用深度、状态和耗时，不记录参数或返回值。禁止记录对话、查询、Prompt、记忆正文、用户/群组/会话/消息/记忆标识、Provider 请求或凭据、异常消息、绝对路径和完整 traceback。异常摘要最多包含异常类型、插件内模块、函数和行号；找不到插件栈帧时只记录类型。未知事件、字段或值整条拒绝，文件 sink 失败只停用文件输出，不得影响聊天主链路。
+
+隐私诊断的威胁模型、信任边界、allowlist 决策和残余风险记录在本目录的 [`DESIGN.md`](DESIGN.md)。
 
 ## 依赖方向
 

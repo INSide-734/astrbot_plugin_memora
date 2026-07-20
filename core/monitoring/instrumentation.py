@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import functools
+import re
 import time
 from typing import Any, Callable, Coroutine, TypeVar
 
@@ -96,7 +97,41 @@ def _get_or_create_error_counter(name: str, description: str) -> Counter:
 
 def _sanitize_fqn(fqn: str) -> str:
     """将点号替换为下划线，使全限定名适合作为 Prometheus 标签值。"""
-    return fqn.replace(".", "_")
+    sanitized = re.sub(r"[^A-Za-z0-9_.:+-]", "_", fqn.replace(".", "_"))
+    return sanitized[:128]
+
+
+def _report_instrumented_call(
+    *,
+    function: str,
+    status: str,
+    duration_ms: float,
+    call_depth: int,
+    exception_type: str | None = None,
+) -> None:
+    """记录不含参数和返回值的函数级安全耗时摘要。"""
+    try:
+        from .debug_reporter import report_debug_event
+
+        fields: dict[str, Any] = {
+            "component": "instrumentation",
+            "stage": "call",
+            "status": status,
+            "reason_code": {
+                "completed": "call_completed",
+                "failed": "call_failed",
+                "cancelled": "call_cancelled",
+            }.get(status, "call_failed"),
+            "function": function,
+            "duration_ms": max(0.0, float(duration_ms)),
+            "call_depth": max(0, int(call_depth)),
+        }
+        if exception_type:
+            fields["exception_type"] = exception_type
+        report_debug_event("instrumented_call", **fields)
+    except Exception:
+        # 诊断记录器不得改变业务函数的成功、失败或取消语义。
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -148,8 +183,14 @@ def monitored(func: _F) -> _F:
                 if _trace_enabled:
                     _trace_depth.set(depth)
                     logger.debug(f"{indent}<<< {fqn} ({elapsed*1000:.2f} ms)")
+                _report_instrumented_call(
+                    function=safe_fqn,
+                    status="completed",
+                    duration_ms=elapsed * 1000.0,
+                    call_depth=depth,
+                )
                 return result
-            except Exception:
+            except Exception as exception:
                 elapsed = time.perf_counter() - start
                 error_counter.inc()
                 call_counter.inc()
@@ -157,6 +198,13 @@ def monitored(func: _F) -> _F:
                 if _trace_enabled:
                     _trace_depth.set(depth)
                     logger.debug(f"{indent}<<< {fqn} ERROR ({elapsed*1000:.2f} ms)")
+                _report_instrumented_call(
+                    function=safe_fqn,
+                    status="failed",
+                    duration_ms=elapsed * 1000.0,
+                    call_depth=depth,
+                    exception_type=exception.__class__.__name__,
+                )
                 raise
 
         return sync_wrapper  # type: ignore[return-value]
@@ -181,8 +229,25 @@ def monitored(func: _F) -> _F:
             if _trace_enabled:
                 _trace_depth.set(depth)
                 logger.debug(f"{indent}<<< {fqn} ({elapsed*1000:.2f} ms)")
+            _report_instrumented_call(
+                function=safe_fqn,
+                status="completed",
+                duration_ms=elapsed * 1000.0,
+                call_depth=depth,
+            )
             return result
-        except Exception:
+        except asyncio.CancelledError:
+            elapsed = time.perf_counter() - start
+            if _trace_enabled:
+                _trace_depth.set(depth)
+            _report_instrumented_call(
+                function=safe_fqn,
+                status="cancelled",
+                duration_ms=elapsed * 1000.0,
+                call_depth=depth,
+            )
+            raise
+        except Exception as exception:
             elapsed = time.perf_counter() - start
             error_counter.inc()
             call_counter.inc()
@@ -190,6 +255,13 @@ def monitored(func: _F) -> _F:
             if _trace_enabled:
                 _trace_depth.set(depth)
                 logger.debug(f"{indent}<<< {fqn} ERROR ({elapsed*1000:.2f} ms)")
+            _report_instrumented_call(
+                function=safe_fqn,
+                status="failed",
+                duration_ms=elapsed * 1000.0,
+                call_depth=depth,
+                exception_type=exception.__class__.__name__,
+            )
             raise
 
     return async_wrapper  # type: ignore[return-value]
