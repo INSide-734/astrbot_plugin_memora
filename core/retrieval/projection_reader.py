@@ -10,6 +10,11 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+)
 from ..models.memory_evolution import (
     DerivedState,
     MemorySourceRef,
@@ -69,6 +74,17 @@ class ProjectionReadStats:
 
 class ProjectionReader:
     """读取 active projection，并只附着到已命中的 primary canonical memory。"""
+
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.DERIVED_READER,
+        native=frozenset({AdapterCapability.REFERENCE_TIME}),
+        caller_enforced=frozenset(
+            {
+                AdapterCapability.FILTERING,
+                AdapterCapability.CANCELLATION,
+            }
+        ),
+    )
 
     def __init__(self, store: Any, *, projection_limit: int = 100) -> None:
         self.store = store

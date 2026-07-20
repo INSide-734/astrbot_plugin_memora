@@ -57,6 +57,7 @@ flowchart LR
   - `truncate_preserving_sentence()` 依次尝试段落/句末、逗号、空格、硬截断；它以字符计数而非 tokenizer 计费。
 - `injection_adapter.py`
   - `resolve(provider, configured_mode)` 只处理 Provider 兼容性，不重新路由内容策略；`AUTO` 固定适配为临时 `extra_user_content`。
+  - `describe_capabilities()` 返回不可变、安全的 Provider capability snapshot；旧 `capabilities()` tuple 保持兼容。未知 Provider 不因动态属性存在而获得文本生成、取消或工具投递能力。
   - Gemini 的伪工具模式降级到 `user_message_before`；未知或异常 Provider 保守降级到 `extra_user_content`。
   - `DeliveryMode` 不包含 System Prompt 投递；动态记忆不得在此重新写入 System Prompt。
 
@@ -130,6 +131,7 @@ python -m pytest -q tests/test_utils.py tests/test_json_utils.py tests/test_cach
 
 ```bash
 python -m pytest -q tests/test_memory_formatter.py tests/test_injection_budget.py tests/test_injection_executor.py tests/test_cleaners.py
+python -m pytest -q tests/test_p1_adapter_capabilities.py tests/test_utils.py
 ```
 
 ## 变更检查清单

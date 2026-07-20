@@ -9,6 +9,13 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+    ScoreDirection,
+    ScoreSemantics,
+)
 from .bm25_retriever import BM25Retriever
 from .memory_lifecycle import MemoryLifecycleManager
 from .mmr_reranker import apply_mmr
@@ -31,6 +38,21 @@ class HybridRetriever:
     4. 支持退化机制(某一路失败时使用另一路)
     5. 确保两个索引中doc_id的一致性
     """
+
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.HYBRID_RETRIEVER,
+        native=frozenset({AdapterCapability.SCORING}),
+        caller_enforced=frozenset(
+            {
+                AdapterCapability.FILTERING,
+                AdapterCapability.UPDATE,
+                AdapterCapability.DELETE,
+                AdapterCapability.CANCELLATION,
+                AdapterCapability.REFERENCE_TIME,
+            }
+        ),
+        score=ScoreSemantics(direction=ScoreDirection.HIGHER_IS_BETTER),
+    )
 
     def __init__(
         self,

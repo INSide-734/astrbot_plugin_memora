@@ -12,6 +12,7 @@
 - 根目录 `test_*.py`：按被测领域组织单元、API、Store/Manager、处理器、配置和包导出契约。
 - `integration/`：以真实 SQLite、真实 FAISS 索引和 Mock Provider 组装跨模块管线；它是 `scripts/run_smoke.py` 的五条固定目标。
 - `evaluation/`：验证 JSONL 数据集加载、Recall@K/MRR/nDCG/延迟指标、variant 对比和报告持久化。
+- `test_p1_adapter_capabilities.py`：集中验证三态能力、Provider 冻结入口、向量 scope fail-closed、派生 reference-time 降级和重排器依赖能力；不要把这些用例继续追加到遗留超长 validator 测试文件。
 - `stress/`：覆盖并发写入等竞争条件；不要把机器抖动敏感的绝对耗时阈值放进这里。
 - `fixtures/retrieval/`：六组共 71 条离线检索样本；五组基础数据集各 10 条，`memory_evolution.jsonl` 有 21 条。Memory Evolution P1 场景使用 UTC `reference_time`、temporal expected/forbidden IDs 和 conflict mode 表达历史时点、未来 source、有效窗口与未决冲突；`noise_negative.jsonl` 与演化负向场景使用 `expected_no_hit` 和 `__no_relevant__` 表达无可见命中。
 - Memory Evolution 相关用例覆盖 `memory_evolution.jsonl`、gate/manager/store、job source revision、proposal-only、统一派生重建协调器、derived relation、ProjectionReader、Recall metadata、formatter allowlist/budget 与插件生命周期；评测夹具显式标注 revision、single/multi-source conflict、delete/rebuild、scope/privacy/role/validity、stale/recovery 和 source-backed projection。Projection 只能注解 canonical candidate，相关文档集合不得为派生摘要伪造独立 `doc_id`。
@@ -111,6 +112,9 @@ flowchart LR
 ```bash
 # 单文件行为回归
 python -m pytest tests/test_<domain>.py -q
+
+# Provider / Store / Retriever 能力契约
+python -m pytest tests/test_p1_adapter_capabilities.py tests/test_llm_client.py tests/test_validators.py -q
 
 # 单个测试节点
 python -m pytest tests/test_<domain>.py::TestClass::test_behavior -q

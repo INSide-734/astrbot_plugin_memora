@@ -9,6 +9,14 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from ..adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+    NormalizationScope,
+    ScoreDirection,
+    ScoreSemantics,
+)
 from ..models.memory_atom import compute_decay_score
 from ..utils.number_utils import clamp_float, safe_float
 from .graph_keyword_retriever import GraphKeywordRetriever
@@ -33,6 +41,21 @@ class GraphResult:
 class GraphRetriever:
     """融合图关键词检索和图向量检索的结果。"""
 
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.GRAPH_RETRIEVER,
+        caller_enforced=frozenset(
+            {
+                AdapterCapability.FILTERING,
+                AdapterCapability.SCORING,
+                AdapterCapability.CANCELLATION,
+            }
+        ),
+        score=ScoreSemantics(
+            direction=ScoreDirection.HIGHER_IS_BETTER,
+            normalization=NormalizationScope.CALLER,
+        ),
+    )
+
     def __init__(
         self,
         keyword_retriever: GraphKeywordRetriever,
@@ -40,6 +63,8 @@ class GraphRetriever:
         rrf_fusion: RRFFusion,
         config: dict[str, Any] | None = None,
     ):
+        """装配图关键词/向量路、RRF 和评分配置。"""
+
         self.keyword_retriever = keyword_retriever
         self.vector_retriever = vector_retriever
         self.rrf_fusion = rrf_fusion

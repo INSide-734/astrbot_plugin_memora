@@ -49,7 +49,7 @@ flowchart TD
 | `DatabaseSetup` | `auto_rebuild_index_if_needed(...)` | 检查 `IndexValidator`，仅在 `needs_rebuild` 时调用统一协调器；失败记录并返回稳定降级结果 |
 | `DerivedRebuildCoordinator` | `rebuild_all()` | 只读确认 canonical 后，按 FTS5/FAISS、graph、relation/projection 顺序重建；阶段失败不删除 canonical |
 | `DatabaseSetup` | `repair_message_counts(store)` | 调用 `sync_message_counts()` 修复会话计数；失败记录但不阻断启动 |
-| `ComponentFactory` | `build_all(...) -> dict` | 返回数据库、引擎、处理器、备份/会话/索引/衰减、Memory Evolution 及注入决策组件字典 |
+| `ComponentFactory` | `build_all(...) -> dict` | 在任何索引/数据库 I/O 前验证 LLM/Embedding 必需入口，再返回数据库、引擎、处理器、备份/会话/索引/衰减、Memory Evolution 及注入决策组件字典 |
 
 ## 启动前备份与恢复
 
@@ -59,7 +59,7 @@ flowchart TD
 
 ## 装配顺序与持久化
 
-1. 验证 Embedding 与聊天 Provider；缺失或类型不符抛 `ProviderNotReadyError`。
+1. 验证 Embedding 与聊天 Provider；缺失、类型不符或没有可冻结的 `text_chat`/Embedding 入口时抛 `ProviderNotReadyError`，不得继续索引检查或创建数据库。
 2. 检查 `memora.index`，图记忆开启时也检查 `memora_graph.index`；主库 `memora.db` 与图文档库 `memora_graph_documents.db` 使用不同文件并可并行初始化。
 3. 在主 `memora.db` 上初始化 `MemoryEvolutionStore`。只有 `memory_evolution.enabled=true` 且 mode 为 `readonly` 或 `active` 时，才构造 `DerivedRelationExpander` 和 `ProjectionReader` 并注入引擎配置；`disabled` 与 `shadow` 均传入空读取器。
 4. 构造并初始化 `MemoryEngine`；其配置由 `ConfigManager.get()` 逐项投影，覆盖召回、图扩展、重排、成本控制、索引重建、缓存及 Memory Evolution 读取器等，而不是在工厂内再次合并配置。
@@ -96,6 +96,7 @@ flowchart TD
 
 ```powershell
 python -m pytest tests/test_plugin_init.py tests/test_memory_evolution_gate.py -q
+python -m pytest tests/test_p1_adapter_capabilities.py tests/test_llm_client.py tests/test_validators.py -q
 python -m pytest tests/test_config_contract.py tests/test_api_config.py -q
 ```
 

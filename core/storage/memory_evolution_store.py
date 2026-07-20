@@ -11,6 +11,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Iterable
 
+from ..adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+)
 from ..models.memory_evolution import (
     DerivedApplyPlan,
     DerivedState,
@@ -38,6 +43,19 @@ def _parse(value: str | None) -> datetime | None:
 
 class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
     """保存 job、relation、projection 和 source mapping 的本地 Store。"""
+
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.PERSISTENT_STORE,
+        native=frozenset(
+            {
+                AdapterCapability.FILTERING,
+                AdapterCapability.BATCH_WRITE,
+                AdapterCapability.UPDATE,
+                AdapterCapability.DELETE,
+            }
+        ),
+        caller_enforced=frozenset({AdapterCapability.CANCELLATION}),
+    )
 
     async def _create_tables(self) -> None:
         await self.connection.executescript(

@@ -12,6 +12,14 @@ import aiosqlite
 
 from astrbot.api import logger
 
+from ..adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+    NormalizationScope,
+    ScoreDirection,
+    ScoreSemantics,
+)
 from ..processors.text_processor import TextProcessor
 from ..storage.base import apply_perf_pragmas
 
@@ -36,6 +44,30 @@ class BM25Retriever:
     2. 支持通过metadata过滤session_id和persona_id
     3. BM25分数自动归一化到[0,1]区间
     """
+
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.LEXICAL_RETRIEVER,
+        native=frozenset(
+            {
+                AdapterCapability.SCORING,
+                AdapterCapability.UPDATE,
+                AdapterCapability.DELETE,
+            }
+        ),
+        caller_enforced=frozenset(
+            {
+                AdapterCapability.FILTERING,
+                AdapterCapability.CANCELLATION,
+                AdapterCapability.REFERENCE_TIME,
+            }
+        ),
+        score=ScoreSemantics(
+            direction=ScoreDirection.HIGHER_IS_BETTER,
+            minimum=0.0,
+            maximum=1.0,
+            normalization=NormalizationScope.PER_QUERY,
+        ),
+    )
 
     _ALLOWED_FTS_TABLES = frozenset({"memora_memories_fts"})
     _ALLOWED_DOC_TABLES = frozenset({"documents"})

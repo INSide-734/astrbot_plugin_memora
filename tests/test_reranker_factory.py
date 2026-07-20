@@ -25,15 +25,35 @@ class TestRerankerFactory:
 
     @pytest.fixture
     def faiss_db(self) -> MagicMock:
+        from core.adapter_capabilities import (
+            AdapterCapability,
+            AdapterCapabilityContract,
+            AdapterKind,
+        )
+
         db = MagicMock()
         db.encode_query = MagicMock(return_value=[0.1, 0.2, 0.3])
         db.get_vector = MagicMock(return_value=[0.1, 0.2, 0.3])
+        db.adapter_capabilities = AdapterCapabilityContract(
+            kind=AdapterKind.VECTOR_BACKEND,
+            native=frozenset({AdapterCapability.VECTOR_ACCESS}),
+        )
         return db
 
     @pytest.fixture
     def llm_client(self) -> MagicMock:
+        from core.adapter_capabilities import (
+            AdapterCapability,
+            AdapterCapabilityContract,
+            AdapterKind,
+        )
+
         client = MagicMock()
         client.complete_sync = MagicMock()
+        client.adapter_capabilities = AdapterCapabilityContract(
+            kind=AdapterKind.LLM_CLIENT,
+            native=frozenset({AdapterCapability.SYNC_TEXT_GENERATION}),
+        )
         return client
 
     @pytest.mark.asyncio

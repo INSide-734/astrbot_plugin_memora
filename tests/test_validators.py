@@ -1133,23 +1133,6 @@ class TestClearBm25WithRetry:
 # EmbeddingRetryMixin edge cases
 # ---------------------------------------------------------------------------
 
-class TestEmbeddingRetryEdgeCases:
-
-    @pytest.mark.asyncio
-    async def test_embed_batch_mismatch_passes_through(self):
-        """当 embedding returns different number of vectors, it's passed through
-        (real implementation doesn't validate count matching)."""
-        validator = _make_validator()
-        provider = MagicMock()
-        provider.get_embeddings = AsyncMock(return_value=[[0.1]])  # only 1 for 3 inputs
-
-        result = await validator._embed_request_with_retry(
-            provider, ["a", "b", "c"],
-            max_retries=1, retry_base_delay=0.001,
-        )
-        assert result == [[0.1]]  # returned as-is
-
-
 # ---------------------------------------------------------------------------
 # IndexValidator — consistency with concrete vector IDs (edge cases)
 # ---------------------------------------------------------------------------

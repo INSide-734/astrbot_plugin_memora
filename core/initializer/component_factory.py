@@ -15,6 +15,7 @@ from ..managers.memory_evolution_gate import MemoryEvolutionGate
 from ..managers.memory_evolution_manager import MemoryEvolutionManager
 from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_processor import MemoryProcessor
+from ..provider_adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..retrieval.derived_relation_expander import DerivedRelationExpander
 from ..retrieval.projection_reader import ProjectionReader
 from ..schedulers.decay_scheduler import DecayScheduler
@@ -29,6 +30,14 @@ class ComponentFactory:
     """创建并初始化所有核心组件"""
 
     def __init__(self, context, config_manager, data_dir: str):
+        """保存共享上下文、已解析配置和插件数据目录。
+
+        参数:
+            context: AstrBot 运行时上下文。
+            config_manager: 已完成默认合并和校验的配置管理器。
+            data_dir: Memora 持久化数据目录。
+        """
+
         self.context = context
         self.config_manager = config_manager
         self.data_dir = data_dir
@@ -41,7 +50,24 @@ class ComponentFactory:
         faiss_checker,
         db_setup,
     ) -> dict:
-        """返回初始化的组件字典"""
+        """验证 Provider 能力并按固定顺序构造全部共享组件。
+
+        参数:
+            embedding_provider: 当前 Embedding Provider。
+            llm_provider: 当前聊天 Provider。
+            faiss_vec_db_cls: AstrBot FAISS 数据库构造器。
+            faiss_checker: 索引维度检查与修复协作对象。
+            db_setup: 索引重建和会话计数修复协作对象。
+
+        返回:
+            供初始化器发布的共享组件字典。
+
+        异常:
+            ProviderNotReadyError: Provider 缺失、类型错误或能力不足。
+            asyncio.CancelledError: 初始化或失败回滚被取消。
+            Exception: 组件初始化失败；已创建组件会按既有顺序尽力回滚。
+        """
+
         data_dir_path = Path(self.data_dir)
 
         db_path = data_dir_path / "memora.db"
@@ -57,6 +83,11 @@ class ComponentFactory:
             raise ProviderNotReadyError("Embedding Provider 未初始化")
         if not llm_provider or not isinstance(llm_provider, Provider):
             raise ProviderNotReadyError("LLM Provider 未初始化或类型不正确")
+        try:
+            EmbeddingProviderAdapter.from_provider(embedding_provider)
+            LLMProviderAdapter.from_provider(llm_provider)
+        except RuntimeError as exc:
+            raise ProviderNotReadyError("Provider 缺少 Memora 必需能力") from exc
 
         await faiss_checker.check_and_fix_dimension_mismatch(
             str(index_path), embedding_provider

@@ -121,6 +121,10 @@ stateDiagram-v2
 - `cleanup()` 先按 retention 删除，再按 `(created_at_ms DESC, decision_id DESC)` 稳定保留 newest `max_rows`，同一事务提交。
 - provider 型号和错误码仍可能泄露部署信息，API 层必须授权；“无正文”不代表可公开。
 
+### Memory Evolution 能力快照
+
+`MemoryEvolutionStore` 显式声明原生 filtering、batch write、update 和 delete；取消传播由调用层保证。该快照只描述当前 Store 的稳定入口，不改变 canonical SQLite 权威、source revision 校验或派生对象可重建边界，也不得暴露 source mapping、revision、scope、内部 ID 或 job 信息。
+
 ## 数据与依赖方向
 
 ```mermaid
@@ -164,6 +168,7 @@ python -m pytest -q tests/test_conversation_store.py tests/test_message_store.py
 python -m pytest -q tests/test_profile_store.py tests/test_knowledge_store.py tests/test_note_store.py tests/test_hierarchy_store.py
 python -m pytest -q tests/test_injection_decision_store.py
 python -m pytest -q tests/test_memory_evolution_store.py tests/test_projection_reader.py
+python -m pytest -q tests/test_p1_adapter_capabilities.py
 python -m pytest -q tests/test_p1_temporal_semantics.py
 python -m pytest -q tests/integration/test_pipeline_graph.py tests/stress/test_concurrent_writes.py
 ```
