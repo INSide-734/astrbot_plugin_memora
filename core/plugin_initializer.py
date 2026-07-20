@@ -93,6 +93,14 @@ class PluginInitializer:
                 return self._initialization_complete
 
         logger.info("记忆插件开始后台初始化...")
+        provider_wait_started = time.perf_counter()
+        report_debug_event(
+            "provider_state",
+            component="initializer",
+            stage="provider_wait",
+            status="started",
+            reason_code="provider_wait_started",
+        )
 
         try:
             emb, llm, ready = await self._provider_waiter.wait_non_blocking(
@@ -105,10 +113,13 @@ class PluginInitializer:
             report_debug_event(
                 "provider_state",
                 component="initializer",
-                stage="provider",
+                stage="provider_wait",
                 status="completed" if ready else "degraded",
-                reason_code="ready" if ready else "retry_scheduled",
-                count=self._provider_waiter.attempts,
+                reason_code="provider_ready" if ready else "provider_retry_scheduled",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - provider_wait_started) * 1000.0
+                ),
+                attempt_count=max(0, int(self._provider_waiter.attempts)),
                 capability="embedding_and_llm_ready" if ready else "provider_waiting",
             )
 
@@ -137,9 +148,12 @@ class PluginInitializer:
             report_debug_event(
                 "provider_state",
                 component="initializer",
-                stage="provider",
+                stage="provider_wait",
                 status="cancelled",
                 reason_code="initialization_cancelled",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - provider_wait_started) * 1000.0
+                ),
             )
             raise
         except Exception as e:
@@ -150,6 +164,9 @@ class PluginInitializer:
                 stage="startup",
                 status="failed",
                 reason_code="initialization_error",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - provider_wait_started) * 1000.0
+                ),
             )
             logger.error(f"记忆插件初始化失败: {e}", exc_info=True)
             self._initialization_failed = True
@@ -159,6 +176,15 @@ class PluginInitializer:
     async def _on_providers_ready(self, emb, llm):
         """提供器后台重试成功后的回调。"""
         self.embedding_provider, self.llm_provider = emb, llm
+        report_debug_event(
+            "provider_state",
+            component="initializer",
+            stage="provider_retry",
+            status="completed",
+            reason_code="providers_available_after_retry",
+            attempt_count=max(0, int(self._provider_waiter.attempts)),
+            capability="embedding_and_llm_ready",
+        )
         try:
             async with self._initialization_lock:
                 if not self._initialization_complete:
@@ -171,9 +197,26 @@ class PluginInitializer:
     async def _run_full_init(self):
         """执行完整初始化流程"""
         logger.info("开始完整初始化流程...")
+        initialization_started = time.perf_counter()
+        current_stage = "component_build"
         owns_injection_components = False
         owns_evolution_components = False
+        report_debug_event(
+            "plugin_initialized",
+            component="initializer",
+            stage="full_initialization",
+            status="started",
+            reason_code="full_initialization_started",
+        )
         try:
+            component_started = time.perf_counter()
+            report_debug_event(
+                "plugin_initialized",
+                component="initializer",
+                stage="component_build",
+                status="started",
+                reason_code="component_build_started",
+            )
             faiss_cls = self._faiss_checker.load_vec_db_class()
             components = await self._component_factory.build_all(
                 self.embedding_provider,
@@ -182,6 +225,20 @@ class PluginInitializer:
                 self._faiss_checker,
                 self._db_setup,
             )
+            report_debug_event(
+                "plugin_initialized",
+                component="initializer",
+                stage="component_build",
+                status="completed",
+                reason_code="component_build_completed",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - component_started) * 1000.0
+                ),
+                count=len(components),
+            )
+
+            current_stage = "runtime_publish"
+            publish_started = time.perf_counter()
             self.db = components["db"]
             self.graph_db = components["graph_db"]
             self.memory_engine = components["memory_engine"]
@@ -201,8 +258,56 @@ class PluginInitializer:
             )
             self.prompt_protection = self._create_prompt_protection_service()
             self.memory_processor.prompt_protection_service = self.prompt_protection
+
+            for capability, instance in (
+                ("database", self.db),
+                ("graph_database", self.graph_db),
+                ("memory_engine", self.memory_engine),
+                ("memory_processor", self.memory_processor),
+                ("conversation_manager", self.conversation_manager),
+                ("index_validator", self.index_validator),
+                ("decay_scheduler", self.decay_scheduler),
+                ("injection_store", self.injection_decision_store),
+                ("injection_recorder", self.injection_decision_recorder),
+                ("memory_evolution_store", self.memory_evolution_store),
+                ("memory_evolution_manager", self.memory_evolution_manager),
+                ("prompt_protection", self.prompt_protection),
+            ):
+                is_ready = instance is not None
+                report_debug_event(
+                    "plugin_initialized",
+                    component="initializer",
+                    stage="component_readiness",
+                    status="ready" if is_ready else "disabled",
+                    reason_code="component_ready" if is_ready else "component_inactive",
+                    capability=capability,
+                )
+
+            report_debug_event(
+                "plugin_initialized",
+                component="initializer",
+                stage="runtime_publish",
+                status="completed",
+                reason_code="core_components_published",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - publish_started) * 1000.0
+                ),
+                success_count=sum(
+                    component is not None
+                    for component in (
+                        self.db,
+                        self.memory_engine,
+                        self.memory_processor,
+                        self.conversation_manager,
+                        self.index_validator,
+                    )
+                ),
+            )
+
+            current_stage = "cognitive_components"
             await self._initialize_cognitive_components()
 
+            current_stage = "scheduler_build"
             self.backfill_scheduler = BackfillScheduler(
                 memory_engine=self.memory_engine,
                 config={
@@ -218,10 +323,50 @@ class PluginInitializer:
                 },
                 embed_fn=getattr(self.embedding_provider, "get_embeddings", None),
             )
+            report_debug_event(
+                "plugin_initialized",
+                component="initializer",
+                stage="component_readiness",
+                status="ready",
+                reason_code="component_ready",
+                capability="backfill_scheduler",
+            )
 
             self._initialization_complete = True
+            report_debug_event(
+                "plugin_initialized",
+                component="initializer",
+                stage="full_initialization",
+                status="completed",
+                reason_code="full_initialization_completed",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - initialization_started) * 1000.0
+                ),
+            )
             logger.info("记忆插件初始化成功。")
         except BaseException as e:
+            duration_ms = max(
+                0.0, (time.perf_counter() - initialization_started) * 1000.0
+            )
+            if isinstance(e, asyncio.CancelledError):
+                report_debug_event(
+                    "plugin_failed",
+                    component="initializer",
+                    stage=current_stage,
+                    status="cancelled",
+                    reason_code="full_initialization_cancelled",
+                    duration_ms=duration_ms,
+                )
+            else:
+                report_debug_exception(
+                    "plugin_failed",
+                    e,
+                    component="initializer",
+                    stage=current_stage,
+                    status="failed",
+                    reason_code="full_initialization_error",
+                    duration_ms=duration_ms,
+                )
             if owns_evolution_components:
                 try:
                     await self.close_memory_evolution_components()
@@ -265,7 +410,11 @@ class PluginInitializer:
     async def _initialize_cognitive_components(self) -> None:
         """创建共享的 v1.0+ 认知组件实例。"""
         db_path = str(Path(self.data_dir) / "memora.db")
+        initialization_started = time.perf_counter()
+        success_count = 0
+        failed_count = 0
 
+        component_started = time.perf_counter()
         try:
             from .affection import AffectionManager, AffectionStore
 
@@ -275,24 +424,76 @@ class PluginInitializer:
                 self.affection_store,
                 llm_adapter=self.llm_provider,
             )
+            success_count += 1
+            report_debug_event(
+                "plugin_initialized",
+                component="initializer",
+                stage="cognitive_components",
+                status="completed",
+                reason_code="cognitive_component_ready",
+                capability="affection",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - component_started) * 1000.0
+                ),
+            )
             logger.info("好感度管理器已初始化")
         except Exception as exc:
+            failed_count += 1
+            report_debug_exception(
+                "plugin_initialized",
+                exc,
+                component="initializer",
+                stage="cognitive_components",
+                status="degraded",
+                reason_code="cognitive_component_unavailable",
+                capability="affection",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - component_started) * 1000.0
+                ),
+            )
             logger.warning("好感度管理器初始化失败，已跳过: %s", exc, exc_info=True)
             self.affection_store = None
             self.affection_manager = None
 
+        component_started = time.perf_counter()
         try:
             from .expression import ExpressionPatternLearner, ExpressionPatternStore
 
             self.expression_store = ExpressionPatternStore(db_path)
             await self.expression_store.initialize()
             self.expression_learner = ExpressionPatternLearner(self.expression_store)
+            success_count += 1
+            report_debug_event(
+                "plugin_initialized",
+                component="initializer",
+                stage="cognitive_components",
+                status="completed",
+                reason_code="cognitive_component_ready",
+                capability="expression",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - component_started) * 1000.0
+                ),
+            )
             logger.info("表达模式学习器已初始化")
         except Exception as exc:
+            failed_count += 1
+            report_debug_exception(
+                "plugin_initialized",
+                exc,
+                component="initializer",
+                stage="cognitive_components",
+                status="degraded",
+                reason_code="cognitive_component_unavailable",
+                capability="expression",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - component_started) * 1000.0
+                ),
+            )
             logger.warning("表达模式学习器初始化失败，已跳过: %s", exc, exc_info=True)
             self.expression_store = None
             self.expression_learner = None
 
+        component_started = time.perf_counter()
         try:
             from .jargon import JargonMiner, JargonQueryService, JargonStatisticalFilter, JargonStore
 
@@ -305,25 +506,93 @@ class PluginInitializer:
                 self.jargon_filter,
                 self.jargon_store,
             )
+            success_count += 1
+            report_debug_event(
+                "plugin_initialized",
+                component="initializer",
+                stage="cognitive_components",
+                status="completed",
+                reason_code="cognitive_component_ready",
+                capability="jargon",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - component_started) * 1000.0
+                ),
+            )
             logger.info("黑话组件已初始化")
         except Exception as exc:
+            failed_count += 1
+            report_debug_exception(
+                "plugin_initialized",
+                exc,
+                component="initializer",
+                stage="cognitive_components",
+                status="degraded",
+                reason_code="cognitive_component_unavailable",
+                capability="jargon",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - component_started) * 1000.0
+                ),
+            )
             logger.warning("黑话组件初始化失败，已跳过: %s", exc, exc_info=True)
             self.jargon_filter = None
             self.jargon_store = None
             self.jargon_query_service = None
             self.jargon_miner = None
 
+        component_started = time.perf_counter()
         try:
             from .social import RelationManager, RelationStore
 
             self.relation_store = RelationStore(db_path)
             await self.relation_store.initialize()
             self.relation_manager = RelationManager(self.relation_store)
+            success_count += 1
+            report_debug_event(
+                "plugin_initialized",
+                component="initializer",
+                stage="cognitive_components",
+                status="completed",
+                reason_code="cognitive_component_ready",
+                capability="social",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - component_started) * 1000.0
+                ),
+            )
             logger.info("关系管理器已初始化")
         except Exception as exc:
+            failed_count += 1
+            report_debug_exception(
+                "plugin_initialized",
+                exc,
+                component="initializer",
+                stage="cognitive_components",
+                status="degraded",
+                reason_code="cognitive_component_unavailable",
+                capability="social",
+                duration_ms=max(
+                    0.0, (time.perf_counter() - component_started) * 1000.0
+                ),
+            )
             logger.warning("关系管理器初始化失败，已跳过: %s", exc, exc_info=True)
             self.relation_store = None
             self.relation_manager = None
+
+        report_debug_event(
+            "plugin_initialized",
+            component="initializer",
+            stage="cognitive_components",
+            status="completed" if failed_count == 0 else "degraded",
+            reason_code=(
+                "cognitive_components_ready"
+                if failed_count == 0
+                else "cognitive_components_partial"
+            ),
+            duration_ms=max(
+                0.0, (time.perf_counter() - initialization_started) * 1000.0
+            ),
+            success_count=success_count,
+            failed_count=failed_count,
+        )
 
     # ---- 对外属性 ----
 

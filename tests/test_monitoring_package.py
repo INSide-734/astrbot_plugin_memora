@@ -34,21 +34,31 @@ def test_lazy_quality_scorer_exports_are_cached_together() -> None:
     assert monitoring._lazy["AlertLevel"] is monitoring.AlertLevel
 
 
-def test_set_debug_mode_can_enable_and_then_restore_zero_overhead_stub() -> None:
+def test_set_debug_mode_toggles_functions_decorated_before_enable(monkeypatch) -> None:
+    """启动前绑定的装饰器也必须在运行时开关后输出函数级诊断。"""
     monitoring = _reload_monitoring_package()
-    stub_monitored = monitoring.monitored
-    stub_reset_trace_context = monitoring.reset_trace_context
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "core.monitoring.debug_reporter.report_debug_event",
+        lambda event_name, **fields: events.append((event_name, fields)),
+    )
+
+    @monitoring.monitored
+    def measured() -> str:
+        return "ok"
+
+    assert measured() == "ok"
+    assert events == []
 
     monitoring.set_debug_mode(True)
-    enabled_monitored = monitoring.monitored
-    enabled_reset_trace_context = monitoring.reset_trace_context
+    assert measured() == "ok"
+    assert events[-1][0] == "instrumented_call"
+    assert events[-1][1]["function"].endswith("measured")
 
     monitoring.set_debug_mode(False)
-
-    assert enabled_monitored is not stub_monitored
-    assert enabled_reset_trace_context is not stub_reset_trace_context
-    assert monitoring.monitored is stub_monitored
-    assert monitoring.reset_trace_context is stub_reset_trace_context
+    event_count = len(events)
+    assert measured() == "ok"
+    assert len(events) == event_count
 
 
 def test_unknown_package_attribute_raises_attribute_error() -> None:

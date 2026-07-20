@@ -2,7 +2,7 @@
 
 提供：
 - metrics.py: 带优雅降级 stub 的 Prometheus CollectorRegistry
-- instrumentation.py: @monitored 装饰器（禁用时零开销）
+- instrumentation.py: @monitored 装饰器（禁用时仅保留轻量布尔门控）
 - perf_tracker.py: 环形缓冲区召回管线时序追踪器
 - quality_scorer.py: 5 维度记忆原子质量评分 + 4 级告警系统
 
@@ -12,32 +12,59 @@
 
 from __future__ import annotations
 
+import asyncio
+import functools
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
 # ---------------------------------------------------------------------------
-# 轻量级 stub：monitored（零开销，无需额外导入）
+# 轻量级运行时门控：禁用时直接调用原函数，启用后懒加载真实插桩
 # ---------------------------------------------------------------------------
 
 
-def monitored(func: _F) -> _F:
-    """默认 no-op 装饰器 — 原样返回 func。
+_runtime_debug_enabled = False
 
-    当调用 ``set_debug_mode(True)`` 时，此 stub 会被替换为
-    来自 ``.instrumentation`` 的真实插桩装饰器。
-    """
-    return func
+
+def monitored(func: _F) -> _F:
+    """返回一个可在运行时切换真实插桩的轻量包装器。"""
+    instrumented_func: _F | None = None
+
+    def resolve_instrumented() -> _F:
+        nonlocal instrumented_func
+        if instrumented_func is None:
+            from .instrumentation import monitored as instrument
+
+            instrumented_func = instrument(func)
+        return instrumented_func
+
+    if asyncio.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            if not _runtime_debug_enabled:
+                return await func(*args, **kwargs)
+            return await resolve_instrumented()(*args, **kwargs)
+
+        return async_wrapper  # type: ignore[return-value]
+
+    @functools.wraps(func)
+    def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+        if not _runtime_debug_enabled:
+            return func(*args, **kwargs)
+        return resolve_instrumented()(*args, **kwargs)
+
+    return sync_wrapper  # type: ignore[return-value]
 
 
 def reset_trace_context() -> None:
-    """监控禁用时为 no-op — 调用 ``set_debug_mode(True)`` 后替换。"""
-    pass
+    """启用监控时清理真实追踪上下文，禁用时保持 no-op。"""
+    if not _runtime_debug_enabled:
+        return
+    from .instrumentation import reset_trace_context as reset
 
-
-_STUB_MONITORED = monitored
-_STUB_RESET_TRACE_CONTEXT = reset_trace_context
+    reset()
 
 
 def set_debug_mode(enabled: bool, *, data_dir: str | Path | None = None) -> None:
@@ -45,22 +72,19 @@ def set_debug_mode(enabled: bool, *, data_dir: str | Path | None = None) -> None
 
     首次启用时，会触发真实 ``instrumentation`` 模块的懒加载
     （包括 prometheus_client 指标）。
-    禁用时，``@monitored`` 为零开销。
+    禁用时，``@monitored`` 只执行一次轻量布尔判断。
     """
-    global monitored, reset_trace_context
+    global _runtime_debug_enabled
 
     from .debug_reporter import configure_debug_reporting
 
     # 问题报告记录器与 Prometheus 插桩共用同一开关，但保持实现独立。
     configure_debug_reporting(bool(enabled), data_dir)
+    _runtime_debug_enabled = bool(enabled)
 
     if enabled:
-        from .instrumentation import monitored as _monitored
-        from .instrumentation import reset_trace_context as _reset_trace
         from .instrumentation import set_debug_mode as _set_debug
 
-        monitored = _monitored
-        reset_trace_context = _reset_trace
         _set_debug(True)  # 立即生效
         return
 
@@ -71,10 +95,6 @@ def set_debug_mode(enabled: bool, *, data_dir: str | Path | None = None) -> None
 
     if _set_debug is not None:
         _set_debug(False)
-
-    monitored = _STUB_MONITORED
-    reset_trace_context = _STUB_RESET_TRACE_CONTEXT
-
 
 # ---------------------------------------------------------------------------
 # 重依赖可选模块的懒加载属性访问

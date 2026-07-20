@@ -351,6 +351,33 @@ class TestPluginInitializerConstruction:
         asyncio.run(init.stop_background_tasks())
         init._provider_waiter.cancel.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_initialize_reports_provider_wait_start_and_duration(self) -> None:
+        """Provider 等待应输出开始、结果、尝试次数和耗时。"""
+        from core.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), ".")
+        initializer._provider_waiter.wait_non_blocking = AsyncMock(
+            return_value=(MagicMock(), MagicMock(), True)
+        )
+        initializer._run_full_init = AsyncMock()
+
+        with patch("core.plugin_initializer.report_debug_event") as report:
+            assert await initializer.initialize() is True
+
+        provider_events = [
+            call.kwargs
+            for call in report.call_args_list
+            if call.args == ("provider_state",)
+        ]
+        assert [event["status"] for event in provider_events] == [
+            "started",
+            "completed",
+        ]
+        assert all(event["stage"] == "provider_wait" for event in provider_events)
+        assert provider_events[-1]["attempt_count"] >= 0
+        assert provider_events[-1]["duration_ms"] >= 0
+
 
 class TestComponentFactoryConfig:
     """测试 ComponentFactory 引擎配置构建。"""
@@ -710,6 +737,101 @@ class TestMemoraPluginTerminate:
         plugin.initializer.conversation_manager.store.close.assert_awaited_once()
         plugin.initializer.memory_engine.close.assert_awaited_once()
         plugin.initializer.db.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_terminate_reports_each_shutdown_step_with_duration(self) -> None:
+        """关闭报告应区分各固定步骤，并为执行步骤记录耗时。"""
+        MemoraPlugin = _load_memora_plugin_class()
+        module = sys.modules[MemoraPlugin.__module__]
+
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ):
+            plugin = MemoraPlugin(MagicMock(), {})
+
+        plugin.initializer.stop_background_tasks = AsyncMock()
+        plugin.initializer.close_memory_evolution_components = AsyncMock()
+        plugin.initializer.close_injection_components = AsyncMock()
+        plugin.initializer.stop_scheduler = AsyncMock()
+        plugin.initializer.close_extension_components = AsyncMock()
+        plugin.initializer.conversation_manager = None
+        plugin.initializer.memory_engine = None
+        plugin.initializer.db = None
+        plugin._perf_tracker = MagicMock()
+        plugin._perf_tracker.get_perf_data.return_value = {}
+        plugin._backfill_scheduler = None
+
+        with patch.object(module, "report_debug_event") as report, patch.object(
+            module, "report_debug_exception"
+        ):
+            await plugin.terminate()
+
+        step_events = [
+            call.kwargs
+            for call in report.call_args_list
+            if call.args == ("shutdown_step",)
+        ]
+        completed = {
+            event["stage"]: event
+            for event in step_events
+            if event["status"] == "completed"
+        }
+        assert {
+            "provider_waiter",
+            "memory_evolution",
+            "injection_components",
+            "schedulers",
+            "cognitive_components",
+        }.issubset(completed)
+        assert all(event["duration_ms"] >= 0 for event in completed.values())
+
+    @pytest.mark.asyncio
+    async def test_terminate_marks_final_status_degraded_when_a_step_fails(
+        self,
+    ) -> None:
+        """任一清理步骤失败时，总关闭结果不能误报为完整成功。"""
+        MemoraPlugin = _load_memora_plugin_class()
+        module = sys.modules[MemoraPlugin.__module__]
+
+        with patch.object(
+            MemoraPlugin, "_register_official_page_api_if_available"
+        ), patch.object(
+            MemoraPlugin,
+            "_create_tracked_task",
+            side_effect=lambda coro: coro.close(),
+        ):
+            plugin = MemoraPlugin(MagicMock(), {})
+
+        plugin.initializer.stop_background_tasks = AsyncMock(
+            side_effect=RuntimeError("关闭失败")
+        )
+        plugin.initializer.close_memory_evolution_components = AsyncMock()
+        plugin.initializer.close_injection_components = AsyncMock()
+        plugin.initializer.stop_scheduler = AsyncMock()
+        plugin.initializer.close_extension_components = AsyncMock()
+        plugin.initializer.conversation_manager = None
+        plugin.initializer.memory_engine = None
+        plugin.initializer.db = None
+        plugin._perf_tracker = MagicMock()
+        plugin._perf_tracker.get_perf_data.return_value = {}
+        plugin._backfill_scheduler = None
+
+        with patch.object(module, "report_debug_event") as report, patch.object(
+            module, "report_debug_exception"
+        ):
+            await plugin.terminate()
+
+        stopped = [
+            call.kwargs
+            for call in report.call_args_list
+            if call.args == ("plugin_stopped",)
+        ]
+        assert stopped[-1]["status"] == "degraded"
+        assert stopped[-1]["reason_code"] == "shutdown_degraded"
 
 
 class TestMemoraPluginReady:
@@ -1301,10 +1423,26 @@ class TestInjectionDecisionLifecycle:
         initializer._create_prompt_protection_service = MagicMock(return_value=MagicMock())
         initializer._initialize_cognitive_components = AsyncMock()
 
-        await initializer._run_full_init()
+        with patch("core.plugin_initializer.report_debug_event") as report:
+            await initializer._run_full_init()
 
         assert initializer.injection_decision_store is store
         assert initializer.injection_decision_recorder is recorder
+        readiness_capabilities = {
+            call.kwargs["capability"]
+            for call in report.call_args_list
+            if call.args == ("plugin_initialized",)
+            and call.kwargs.get("stage") == "component_readiness"
+        }
+        assert {
+            "database",
+            "memory_engine",
+            "memory_processor",
+            "conversation_manager",
+            "index_validator",
+            "injection_store",
+            "injection_recorder",
+        }.issubset(readiness_capabilities)
 
     @pytest.mark.asyncio
     async def test_run_full_init_closes_owned_injection_components_on_error(

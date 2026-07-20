@@ -935,17 +935,28 @@ class TestReflectionStorageTaskCommit:
         )
         handler._prepare_message_batches = AsyncMock(return_value=[[MagicMock(group_id=None)]])
 
-        await handler._storage_task(
-            session_id="session-1",
-            history_messages=[MagicMock(group_id=None), MagicMock(group_id=None)],
-            persona_id="persona",
-            start_index=0,
-            end_index=4,
-            retry_count=1,
-        )
+        with patch("core.handlers.reflection_handler.report_debug_event") as report:
+            await handler._storage_task(
+                session_id="session-1",
+                history_messages=[MagicMock(group_id=None), MagicMock(group_id=None)],
+                persona_id="persona",
+                start_index=0,
+                end_index=4,
+                retry_count=1,
+            )
 
         engine.add_memory.assert_awaited_once()
         assert engine.add_memory.await_args.kwargs["content"] == "memory-2"
+        write_events = [
+            call.kwargs
+            for call in report.call_args_list
+            if call.args == ("storage_task",)
+            and call.kwargs.get("stage") == "memory_write"
+            and call.kwargs.get("status") == "completed"
+        ]
+        assert write_events[-1]["success_count"] == 1
+        assert write_events[-1]["skipped_count"] == 1
+        assert write_events[-1]["failed_count"] == 0
 
     @pytest.mark.asyncio
     async def test_successful_retry_advances_and_clears_pending(self) -> None:

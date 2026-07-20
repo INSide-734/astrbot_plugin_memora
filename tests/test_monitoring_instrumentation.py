@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -128,6 +129,31 @@ def test_sync_monitored_records_call_and_latency_when_debug_enabled(monkeypatch)
     assert histogram.children[0].observations[0] >= 0.0
 
 
+def test_monitored_reports_safe_function_timing_without_arguments(monkeypatch) -> None:
+    """函数级诊断只记录安全函数名、状态和耗时，不记录调用参数。"""
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "core.monitoring.debug_reporter.report_debug_event",
+        lambda event_name, **fields: events.append((event_name, fields)),
+    )
+
+    @inst.monitored
+    def inspect_value(value: str) -> str:
+        return value
+
+    sentinel = "PRIVATE_FUNCTION_ARGUMENT_SENTINEL"
+    assert inspect_value(sentinel) == sentinel
+
+    event_name, fields = events[-1]
+    assert event_name == "instrumented_call"
+    assert fields["component"] == "instrumentation"
+    assert fields["status"] == "completed"
+    assert fields["function"].endswith("inspect_value")
+    assert isinstance(fields["duration_ms"], float)
+    assert isinstance(fields["call_depth"], int)
+    assert sentinel not in repr(fields)
+
+
 def test_sync_monitored_records_errors_and_restores_trace_depth(monkeypatch) -> None:
     histogram = _FakeHistogram()
     counter = _FakeCounter()
@@ -247,6 +273,29 @@ async def test_async_monitored_records_nested_errors_and_restores_trace_depth(
     assert any(line.startswith("  >>>") for line in log_lines)
     assert any(line.startswith("  <<<") and "ERROR" in line for line in log_lines)
     assert any(line.startswith("<<<") and "ERROR" in line for line in log_lines)
+
+
+@pytest.mark.asyncio
+async def test_async_monitored_reports_cancellation_without_swallowing_it(
+    monkeypatch,
+) -> None:
+    """函数级诊断记录取消状态后必须继续传播取消信号。"""
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "core.monitoring.debug_reporter.report_debug_event",
+        lambda event_name, **fields: events.append((event_name, fields)),
+    )
+
+    @inst.monitored
+    async def cancelled() -> None:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled()
+
+    assert events[-1][0] == "instrumented_call"
+    assert events[-1][1]["status"] == "cancelled"
+    assert events[-1][1]["reason_code"] == "call_cancelled"
 
 
 def test_trace_mode_logs_nested_call_hierarchy_and_resets_depth(monkeypatch) -> None:

@@ -79,6 +79,100 @@ def test_accepted_event_is_emitted_to_console_and_jsonl(
     assert debug_reporter.is_debug_reporting_enabled() is True
 
 
+def test_instrumented_call_event_keeps_function_timing_scalar_only(
+    tmp_path: Path,
+) -> None:
+    """函数级诊断允许安全函数名和耗时，但不接受调用参数。"""
+    debug_reporter.configure_debug_reporting(True, tmp_path)
+
+    debug_reporter.report_debug_event(
+        "instrumented_call",
+        component="instrumentation",
+        stage="call",
+        status="completed",
+        reason_code="call_completed",
+        function="core_handlers_recall_RecallHandler_handle_memory_recall",
+        duration_ms=4.5,
+        call_depth=1,
+    )
+
+    path = tmp_path / "diagnostics" / "memora-debug.jsonl"
+    record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert record["event"] == "instrumented_call"
+    assert record["function"].startswith("core_handlers_")
+    assert record["duration_ms"] == 4.5
+    assert record["call_depth"] == 1
+    assert "args" not in record
+    assert "kwargs" not in record
+
+
+def test_storage_event_accepts_named_non_negative_counts(tmp_path: Path) -> None:
+    """存储诊断允许命名计数和 storage 任务类型。"""
+    debug_reporter.configure_debug_reporting(True, tmp_path)
+
+    debug_reporter.report_debug_event(
+        "storage_task",
+        component="reflection",
+        stage="memory_write",
+        status="degraded",
+        reason_code="memory_write_partial",
+        task_type="storage",
+        message_count=20,
+        batch_count=2,
+        success_count=3,
+        failed_count=1,
+        retry_count=1,
+        attempt_count=2,
+        skipped_count=2,
+        queue_depth=4,
+    )
+
+    path = tmp_path / "diagnostics" / "memora-debug.jsonl"
+    record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert record["event"] == "storage_task"
+    assert record["task_type"] == "storage"
+    assert record["message_count"] == 20
+    assert record["batch_count"] == 2
+    assert record["success_count"] == 3
+    assert record["failed_count"] == 1
+    assert record["retry_count"] == 1
+    assert record["attempt_count"] == 2
+    assert record["skipped_count"] == 2
+    assert record["queue_depth"] == 4
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("message_count", -1),
+        ("retry_count", True),
+        ("attempt_count", -2),
+        ("queue_depth", float("nan")),
+    ],
+)
+def test_named_counts_reject_negative_boolean_and_non_finite_values(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    """命名计数仍执行非负有限数值校验。"""
+    debug_reporter.configure_debug_reporting(True, tmp_path)
+
+    debug_reporter.report_debug_event(
+        "storage_task",
+        component="reflection",
+        stage="memory_write",
+        status="failed",
+        reason_code="memory_write_partial",
+        **{field: value},
+    )
+
+    path = tmp_path / "diagnostics" / "memora-debug.jsonl"
+    record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert record["event"] == "debug_event_rejected"
+    assert field not in record
+
+
 def test_unknown_field_rejects_entire_event_without_writing_sensitive_value(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -103,6 +197,31 @@ def test_unknown_field_rejects_entire_event_without_writing_sensitive_value(
     assert sentinel not in caplog.text
     assert any(record["event"] == "debug_event_rejected" for record in records)
     assert all(record["event"] != "recall_completed" for record in records)
+
+
+def test_unknown_reason_code_rejects_sensitive_looking_token(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """原因码必须属于固定集合，不能借安全字符集携带任意标识。"""
+    caplog.set_level(logging.INFO)
+    sentinel = "PRIVATE_QUERY_SENTINEL"
+    debug_reporter.configure_debug_reporting(True, tmp_path)
+
+    debug_reporter.report_debug_event(
+        "recall_completed",
+        component="recall",
+        stage="recall",
+        status="completed",
+        reason_code=sentinel,
+    )
+
+    path = tmp_path / "diagnostics" / "memora-debug.jsonl"
+    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    assert sentinel not in content
+    assert sentinel not in caplog.text
+    assert any(
+        record["event"] == "debug_event_rejected" for record in _debug_records(caplog)
+    )
 
 
 def test_exception_event_contains_only_safe_location_fields(
