@@ -20,6 +20,8 @@ from ..retrieval.emotion_scorer import compute_emotion_boost, emotion_similarity
 from ..retrieval.rrf_fusion import HybridResult
 from ..retrieval.seasonal_recall import seasonal_boost
 from ..utils.number_utils import safe_float
+from ..models.temporal import reference_time_key
+from ..models.temporal import canonical_visible_at
 
 if TYPE_CHECKING:
     pass
@@ -153,6 +155,7 @@ class RetrievalOptimizer:
         chain_depth: int = 0,
         emotion_context: list[str] | None = None,
         recall_strategy: Any | None = None,
+        reference_time: Any | None = None,
     ) -> tuple[Any, ...]:
         return (
             self._cache_generation,
@@ -167,6 +170,7 @@ class RetrievalOptimizer:
             int(chain_depth or 0),
             self._normalize_sequence(emotion_context),
             self._strategy_cache_key(recall_strategy),
+            reference_time_key(reference_time),
             bool(self._dual_route_retriever is not None),
             round(float(self._config.get("document_route_weight", 0.65)), 4),
             round(float(self._config.get("graph_route_weight", 0.35)), 4),
@@ -224,6 +228,7 @@ class RetrievalOptimizer:
         chain_depth: int = 0,
         emotion_context: list[str] | None = None,
         recall_strategy: Any | None = None,
+        reference_time: Any | None = None,
     ) -> tuple[Any, ...]:
         return (
             cls._normalize_query(query),
@@ -237,6 +242,7 @@ class RetrievalOptimizer:
             int(chain_depth or 0),
             cls._normalize_sequence(emotion_context),
             cls._strategy_cache_key(recall_strategy),
+            reference_time_key(reference_time),
         )
 
     def get_session_cached(
@@ -252,6 +258,7 @@ class RetrievalOptimizer:
         chain_depth: int = 0,
         emotion_context: list[str] | None = None,
         recall_strategy: Any | None = None,
+        reference_time: Any | None = None,
     ) -> list[HybridResult] | None:
         """按完整检索语义键控的请求级缓存。"""
         if not self._session_cache_enabled or self._session_cache_ttl <= 0:
@@ -268,6 +275,7 @@ class RetrievalOptimizer:
             chain_depth=chain_depth,
             emotion_context=emotion_context,
             recall_strategy=recall_strategy,
+            reference_time=reference_time,
         )
         cached = self._session_cache.get(key)
         if cached is None:
@@ -292,6 +300,7 @@ class RetrievalOptimizer:
         chain_depth: int = 0,
         emotion_context: list[str] | None = None,
         recall_strategy: Any | None = None,
+        reference_time: Any | None = None,
     ) -> None:
         """将检索结果写入请求级会话缓存。"""
         if not self._session_cache_enabled or self._session_cache_ttl <= 0:
@@ -308,6 +317,7 @@ class RetrievalOptimizer:
             chain_depth=chain_depth,
             emotion_context=emotion_context,
             recall_strategy=recall_strategy,
+            reference_time=reference_time,
         )
         self._session_cache[key] = (time.time(), copy.deepcopy(results))
 
@@ -665,6 +675,7 @@ class RetrievalOptimizer:
         persona_id: str | None,
         max_hops: int = 2,
         hop_decay: float | None = None,
+        reference_time: Any | None = None,
     ) -> list[HybridResult]:
         """R2: 多跳检索 — 沿图边 + 话题关联做多层扩展。
 
@@ -712,7 +723,9 @@ class RetrievalOptimizer:
                         persona_id,
                     )
                     for lr in linked_via_graph:
-                        if lr.doc_id not in seen_ids:
+                        if lr.doc_id not in seen_ids and canonical_visible_at(
+                            lr.metadata or {}, reference_time
+                        ):
                             lr.final_score *= hop_multiplier
                             seen_ids.add(lr.doc_id)
                             all_expanded.append((lr, hop))
@@ -739,9 +752,12 @@ class RetrievalOptimizer:
                     persona_id=persona_id,
                     recall_type="passive",
                     chain_depth=0,
+                    reference_time=reference_time,
                 )
                 for lr in linked:
-                    if lr.doc_id not in seen_ids:
+                    if lr.doc_id not in seen_ids and canonical_visible_at(
+                        lr.metadata or {}, reference_time
+                    ):
                         lr.final_score *= hop_multiplier
                         seen_ids.add(lr.doc_id)
                         all_expanded.append((lr, hop))

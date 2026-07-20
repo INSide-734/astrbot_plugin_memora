@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 
 from ..models.memory_evolution import (
     DerivedState,
@@ -12,6 +12,7 @@ from ..models.memory_evolution import (
     RelationType,
     RelationView,
 )
+from ..models.temporal import parse_datetime, serialize_datetime
 
 _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}
 
@@ -19,7 +20,7 @@ _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}
 def _dt(value: datetime | None) -> str | None:
     """将 UTC datetime 转换为 SQLite 文本。"""
 
-    return value.astimezone(timezone.utc).isoformat() if value else None
+    return serialize_datetime(value)
 
 
 def _metadata_dict(value) -> dict:
@@ -60,6 +61,11 @@ def _relation(row) -> RelationView:
         row["target_revision"],
         _parse(row["valid_from"]),
         _parse(row["valid_to"]),
+        _parse(row["reference_at"] if "reference_at" in row.keys() else None),
+        _parse(row["discovered_at"] if "discovered_at" in row.keys() else None),
+        _parse(row["invalid_at"] if "invalid_at" in row.keys() else None),
+        str(row["time_source"] or "unknown") if "time_source" in row.keys() else "unknown",
+        str(row["time_precision"] or "unknown") if "time_precision" in row.keys() else "unknown",
     )
 
 
@@ -77,15 +83,18 @@ def _projection(row, source_ids: tuple[int, ...]) -> ProjectionView:
         DerivedState(row["state"]),
         _parse(row["valid_from"]),
         _parse(row["valid_to"]),
+        _parse(row["reference_at"] if "reference_at" in row.keys() else None),
+        _parse(row["discovered_at"] if "discovered_at" in row.keys() else None),
+        _parse(row["invalid_at"] if "invalid_at" in row.keys() else None),
+        str(row["time_source"] or "unknown") if "time_source" in row.keys() else "unknown",
+        str(row["time_precision"] or "unknown") if "time_precision" in row.keys() else "unknown",
     )
 
 
 def _parse(value: str | None) -> datetime | None:
     """将 SQLite 时间文本解析为 datetime。"""
 
-    if not value:
-        return None
-    return datetime.fromisoformat(value)
+    return parse_datetime(value)
 
 
 __all__ = [

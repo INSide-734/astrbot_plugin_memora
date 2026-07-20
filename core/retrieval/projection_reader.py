@@ -18,6 +18,7 @@ from ..models.memory_evolution import (
     ProjectionType,
     ProjectionView,
 )
+from ..models.temporal import normalize_datetime, visible_at
 from .rrf_fusion import HybridResult
 
 
@@ -31,7 +32,8 @@ class ProjectionScope:
 
     scope_key: str
     privacy_level: str
-    now: datetime
+    now: datetime | None = None
+    reference_time: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +55,18 @@ class ProjectionBudget:
             raise ValueError("projection budget values must be non-negative")
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectionReadStats:
+    """Projection 读取的安全标量结果，不包含 source ID 或正文。"""
+
+    candidates: list[HybridResult]
+    resolved_conflicts: int = 0
+    unresolved_conflicts: int = 0
+    conflict_decisions: tuple[str, ...] = ()
+    projection_count: int = 0
+    source_supported_count: int = 0
+
+
 class ProjectionReader:
     """读取 active projection，并只附着到已命中的 primary canonical memory。"""
 
@@ -69,6 +83,19 @@ class ProjectionReader:
     ) -> list[HybridResult]:
         """在不改变 canonical 候选数量和分数的前提下附加 projection。"""
 
+        return (
+            await self.attach_with_stats(candidates, scope=scope, budget=budget)
+        ).candidates
+
+    async def attach_with_stats(
+        self,
+        candidates: list[HybridResult],
+        *,
+        scope: ProjectionScope,
+        budget: ProjectionBudget,
+    ) -> ProjectionReadStats:
+        """附着 projection，并返回不含敏感标识的读取统计。"""
+
         baseline = [_copy_candidate(item) for item in candidates]
         if (
             not baseline
@@ -78,7 +105,7 @@ class ProjectionReader:
             or budget.max_per_candidate <= 0
             or budget.max_summary_chars <= 0
         ):
-            return baseline
+            return ProjectionReadStats(baseline)
 
         seed_ids = tuple(dict.fromkeys(item.doc_id for item in baseline))
         try:
@@ -88,7 +115,7 @@ class ProjectionReader:
                 limit=self.projection_limit,
             )
             if not bundles:
-                return baseline
+                return ProjectionReadStats(baseline)
             source_ids = tuple(
                 dict.fromkeys(
                     source.memory_id
@@ -105,18 +132,28 @@ class ProjectionReader:
                 for source in sources
                 if isinstance(source, MemorySourceRef)
             }
-            return self._attach_validated(
+            decisions: list[str] = []
+            attached, projection_count = self._attach_validated(
                 baseline,
                 bundles,
                 sources_by_id,
                 scope,
                 budget,
+                decisions,
+            )
+            return ProjectionReadStats(
+                attached,
+                resolved_conflicts=sum(decision != "unresolved" for decision in decisions),
+                unresolved_conflicts=decisions.count("unresolved"),
+                conflict_decisions=tuple(decisions),
+                projection_count=projection_count,
+                source_supported_count=projection_count,
             )
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.warning("[Projection读取] 读取失败，回退 canonical baseline")
-            return baseline
+            return ProjectionReadStats(baseline)
 
     def _attach_validated(
         self,
@@ -125,12 +162,14 @@ class ProjectionReader:
         sources_by_id: dict[int, MemorySourceRef],
         scope: ProjectionScope,
         budget: ProjectionBudget,
-    ) -> list[HybridResult]:
+        decisions: list[str],
+    ) -> tuple[list[HybridResult], int]:
         candidates_by_id = {item.doc_id: item for item in candidates}
         accepted: dict[int, list[dict[str, Any]]] = {}
         seen_projection_ids: set[str] = set()
+        projection_count = 0
         total_chars = 0
-        now = _as_utc(scope.now)
+        now = _as_utc(scope.reference_time or scope.now or datetime.now(timezone.utc))
 
         valid_bundles: list[ProjectionBundle] = []
         for bundle in bundles:
@@ -161,26 +200,49 @@ class ProjectionReader:
                 continue
             if not _privacy_allowed(projection.privacy_level, scope.privacy_level):
                 continue
-            if not _valid_at(projection.valid_from, projection.valid_to, now):
+            if not visible_at(
+                now,
+                valid_from=projection.valid_from,
+                valid_to=projection.valid_to,
+                invalid_at=projection.invalid_at,
+            ):
                 continue
 
+            current_pairs = [
+                (source, mapping)
+                for mapping in bundle.sources
+                for source in (sources_by_id.get(mapping.memory_id),)
+                if _source_is_current(source, mapping, scope, now)
+            ]
+            if any(
+                source is not None
+                and not _source_is_current(source, mapping, scope, now)
+                for mapping in bundle.sources
+                for source in (sources_by_id.get(mapping.memory_id),)
+            ):
+                continue
+            current_mappings = tuple(mapping for _, mapping in current_pairs)
+            if not current_mappings:
+                continue
             primary_sources = [
-                source for source in bundle.sources if source.role == "primary"
+                source for source in current_mappings if source.role == "primary"
             ]
             if len(primary_sources) != 1:
                 continue
             primary_id = primary_sources[0].memory_id
             if primary_id not in candidates_by_id:
                 continue
-
-            current_sources = [
-                sources_by_id.get(source.memory_id) for source in bundle.sources
-            ]
-            if any(
-                not _source_is_current(source, mapping, scope, now)
-                for source, mapping in zip(current_sources, bundle.sources, strict=True)
-            ):
+            if projection.projection_type is ProjectionType.CONFLICT_SET and not {
+                "conflict_left",
+                "conflict_right",
+            } <= {source.role for source in current_mappings}:
                 continue
+            if projection.projection_type is ProjectionType.CONFLICT_SET:
+                conflict_state = _resolve_conflict_state(
+                    current_mappings,
+                    sources_by_id,
+                )
+                decisions.append(conflict_state)
 
             summary = str(projection.summary or "").strip()
             if not summary:
@@ -205,6 +267,7 @@ class ProjectionReader:
             if sum(len(item["summary"]) for item in current) + len(summary) > budget.max_chars:
                 continue
             current.append(visible)
+            projection_count += 1
             total_chars += visible_chars
             seen_projection_ids.add(projection_id)
             if sum(len(items) for items in accepted.values()) >= budget.max_items:
@@ -217,7 +280,7 @@ class ProjectionReader:
                 metadata.pop("derived_projections", None)
                 metadata["derived_projections"] = items
                 candidate.metadata = metadata
-        return candidates
+        return candidates, projection_count
 
 
 def _copy_candidate(candidate: HybridResult) -> HybridResult:
@@ -267,14 +330,19 @@ def _source_is_current(
     scope: ProjectionScope,
     now: datetime,
 ) -> bool:
+    occurred_at = mapping.occurred_at or (source.occurred_at if source else None)
     return bool(
         source is not None
         and source.revision_token == mapping.revision_token
         and source.scope_key == scope.scope_key
         and _privacy_allowed(source.privacy_level, scope.privacy_level)
-        and source.occurred_at is not None
-        and isinstance(source.occurred_at, datetime)
-        and _as_utc(source.occurred_at) <= _as_utc(now)
+        and visible_at(
+            now,
+            occurred_at=occurred_at,
+            valid_from=mapping.valid_from,
+            valid_to=mapping.valid_to,
+            require_occurred=True,
+        )
     )
 
 
@@ -286,6 +354,35 @@ def _valid_at(
     current = _as_utc(now)
     return (valid_from is None or current >= _as_utc(valid_from)) and (
         valid_to is None or current <= _as_utc(valid_to)
+    )
+
+
+def _resolve_conflict_state(
+    mappings: tuple[ProjectionSourceView, ...],
+    sources_by_id: dict[int, MemorySourceRef],
+) -> str:
+    """按 source 事实时间区分可排序冲突和时间未决冲突。"""
+
+    times: dict[str, datetime] = {}
+    for mapping in mappings:
+        if mapping.role not in {"conflict_left", "conflict_right"}:
+            continue
+        source = sources_by_id.get(mapping.memory_id)
+        if source is None or source.time_source not in {"explicit", "metadata"}:
+            continue
+        if source.time_precision != "instant":
+            continue
+        occurred_at = mapping.occurred_at or (source.occurred_at if source else None)
+        if occurred_at is not None:
+            times[mapping.role] = _as_utc(occurred_at)
+    if set(times) != {"conflict_left", "conflict_right"}:
+        return "unresolved"
+    if len(set(times.values())) != 2:
+        return "unresolved"
+    return (
+        "conflict_left_newer"
+        if times["conflict_left"] > times["conflict_right"]
+        else "conflict_right_newer"
     )
 
 
@@ -312,9 +409,15 @@ def _safe_confidence(value: Any) -> float:
 
 
 def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+    normalized = normalize_datetime(value)
+    if normalized is None:
+        return datetime.now(timezone.utc)
+    return normalized
 
 
-__all__ = ["ProjectionBudget", "ProjectionReader", "ProjectionScope"]
+__all__ = [
+    "ProjectionBudget",
+    "ProjectionReadStats",
+    "ProjectionReader",
+    "ProjectionScope",
+]

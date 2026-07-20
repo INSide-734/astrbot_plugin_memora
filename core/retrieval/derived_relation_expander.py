@@ -11,6 +11,7 @@ from ..models.memory_evolution import (
     RelationView,
     ScopeContext,
 )
+from ..models.temporal import normalize_datetime, visible_at
 from .rrf_fusion import HybridResult
 
 
@@ -39,6 +40,7 @@ class DerivedRelationExpander:
         *,
         scope: ScopeContext,
         budget: ExpansionBudget,
+        reference_time: datetime | None = None,
     ) -> list[HybridResult]:
         """保留直接结果，并在所有本地校验通过后追加最多一跳的目标记忆。"""
 
@@ -47,13 +49,16 @@ class DerivedRelationExpander:
             return direct
 
         try:
-            proposals = await self._collect_proposals(direct, scope)
+            as_of = normalize_datetime(reference_time) or datetime.now(timezone.utc)
+            proposals = await self._collect_proposals(direct, scope, as_of)
             if not proposals:
                 return direct
             target_ids = tuple(dict.fromkeys(item[2] for item in proposals))
             sources = await self.reader.load_sources(target_ids)
             sources_by_id = {source.memory_id: source for source in sources}
-            return self._merge_candidates(direct, proposals, sources_by_id, scope, budget)
+            return self._merge_candidates(
+                direct, proposals, sources_by_id, scope, budget, as_of
+            )
         except Exception:
             return direct
 
@@ -61,8 +66,8 @@ class DerivedRelationExpander:
         self,
         seeds: list[HybridResult],
         scope: ScopeContext,
+        reference_time: datetime,
     ) -> list[tuple[HybridResult, RelationView, int, str]]:
-        now = datetime.now(timezone.utc)
         proposals: list[tuple[HybridResult, RelationView, int, str]] = []
         for seed in seeds:
             relations = await self.reader.active_relations_for_seeds(
@@ -78,7 +83,7 @@ class DerivedRelationExpander:
                 if (
                     relation.scope_key != scope.scope_key
                     or not _privacy_allowed(relation.privacy_level, scope.privacy_level)
-                    or not _relation_is_current(relation, now)
+                    or not _relation_is_current(relation, reference_time)
                     or not expected_revision
                 ):
                     continue
@@ -92,14 +97,15 @@ class DerivedRelationExpander:
         sources_by_id: dict[int, MemorySourceRef],
         scope: ScopeContext,
         budget: ExpansionBudget,
+        reference_time: datetime,
     ) -> list[HybridResult]:
         direct_by_id = {item.doc_id: item for item in direct}
         derived_by_id: dict[int, HybridResult] = {}
-        now = datetime.now(timezone.utc)
+        now = reference_time
 
         for seed, relation, target_id, expected_revision in proposals:
             target = sources_by_id.get(target_id)
-            if not _source_is_current(target, expected_revision, scope):
+            if not _source_is_current(target, expected_revision, scope, now):
                 continue
             derived_score = min(
                 1.0,
@@ -201,23 +207,30 @@ def _privacy_allowed(item_level: str, allowed_level: str) -> bool:
 
 
 def _relation_is_current(relation: RelationView, now: datetime) -> bool:
-    if relation.valid_from is not None and now < _as_utc(relation.valid_from):
-        return False
-    if relation.valid_to is not None and now > _as_utc(relation.valid_to):
-        return False
-    return True
+    return visible_at(
+        now,
+        valid_from=relation.valid_from,
+        valid_to=relation.valid_to,
+        invalid_at=relation.invalid_at,
+    )
 
 
 def _source_is_current(
     source: MemorySourceRef | None,
     expected_revision: str,
     scope: ScopeContext,
+    reference_time: datetime,
 ) -> bool:
     return bool(
         source is not None
         and source.revision_token == expected_revision
         and source.scope_key == scope.scope_key
         and _privacy_allowed(source.privacy_level, scope.privacy_level)
+        and visible_at(
+            reference_time,
+            occurred_at=source.occurred_at,
+            require_occurred=True,
+        )
     )
 
 
@@ -231,9 +244,8 @@ def _time_decay(
 
 
 def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+    normalized = normalize_datetime(value)
+    return normalized or datetime.now(timezone.utc)
 
 
 __all__ = ["DerivedRelationExpander"]

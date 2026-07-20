@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..models.memory_evolution import ExpansionBudget, ScopeContext
+from ..models.temporal import normalize_datetime
 from ..models.recall_strategy import RecallStrategy
 from .graph_retriever import GraphRetriever
 from .hybrid_retriever import HybridRetriever
@@ -71,6 +72,7 @@ class DualRouteRetriever:
         chat_type: str = "private",
         query_intent: QueryIntent | None = None,
         user_id: str | None = None,
+        reference_time: datetime | None = None,
     ) -> list[HybridResult]:
         """同时运行两条检索路由，并合并候选记忆。
 
@@ -79,6 +81,7 @@ class DualRouteRetriever:
             query_intent: R1 查询改写结果，优先使用 LLM 意图做权重调整。
             user_id: v2.5 用户 ID，用于个性化排序。
         """
+        reference_time = normalize_datetime(reference_time) or datetime.now(timezone.utc)
         _t_route_start = time.perf_counter()
         doc_task = self.document_retriever.search(
             query,
@@ -164,6 +167,7 @@ class DualRouteRetriever:
                         ),
                         max_items=len(merged) + max_expansions,
                     ),
+                    reference_time=reference_time,
                 )
             except asyncio.CancelledError:
                 raise
@@ -193,7 +197,8 @@ class DualRouteRetriever:
                         privacy_level=(
                             "shared" if chat_type == "group" else "confidential"
                         ),
-                        now=datetime.now(timezone.utc),
+                        now=reference_time,
+                        reference_time=reference_time,
                     ),
                     budget=ProjectionBudget(
                         max_chars=projection_budget_chars,

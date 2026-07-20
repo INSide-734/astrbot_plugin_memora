@@ -8,6 +8,7 @@ from typing import Iterable
 from ..models.memory_evolution import (
     DerivedApplyPlan,
     DerivedState,
+    ProjectionType,
     ProjectionBundle,
     ProjectionSourceView,
     ProjectionView,
@@ -201,6 +202,7 @@ class MemoryEvolutionDerivedMixin:
         projection_placeholders = ",".join("?" for _ in projection_ids)
         source_rows = await self._fetch_all(
             "SELECT projection_id,memory_id,revision_token,source_role,ordinal "
+            ",occurred_at,valid_from,valid_to "
             "FROM memory_projection_sources "
             f"WHERE projection_id IN ({projection_placeholders}) "
             "ORDER BY projection_id ASC, ordinal ASC, memory_id ASC",
@@ -219,6 +221,9 @@ class MemoryEvolutionDerivedMixin:
                     str(source_row["revision_token"]),
                     str(source_row["source_role"]),
                     int(source_row["ordinal"]),
+                    _parse(source_row["occurred_at"]),
+                    _parse(source_row["valid_from"]),
+                    _parse(source_row["valid_to"]),
                 )
             except (TypeError, ValueError, OverflowError):
                 invalid_projection_ids.add(projection_id)
@@ -247,35 +252,73 @@ class MemoryEvolutionDerivedMixin:
         await self.connection.execute("BEGIN IMMEDIATE")
         try:
             relation_cursor = await self.connection.execute(
-                "UPDATE memory_relations SET state=?,updated_at=? "
+                "UPDATE memory_relations SET state=?,invalid_at=?,updated_at=? "
                 "WHERE state!=? AND ((source_memory_id=? AND source_revision!=?) "
                 "OR (target_memory_id=? AND target_revision!=?))",
                 (
                     DerivedState.INVALIDATED.value,
                     now,
-                    DerivedState.INVALIDATED.value,
-                    memory_id,
-                    revision_token,
-                    memory_id,
-                    revision_token,
-                ),
-            )
-            projection_cursor = await self.connection.execute(
-                "UPDATE memory_projections SET state=?,updated_at=? "
-                "WHERE state!=? AND projection_id IN ("
-                "SELECT projection_id FROM memory_projection_sources "
-                "WHERE memory_id=? AND revision_token!=?"
-                ")",
-                (
-                    DerivedState.INVALIDATED.value,
                     now,
                     DerivedState.INVALIDATED.value,
                     memory_id,
                     revision_token,
+                    memory_id,
+                    revision_token,
                 ),
             )
+            projection_rows = await self._fetch_all(
+                "SELECT projection_id,primary_source_memory_id,projection_type "
+                "FROM memory_projections WHERE state!=? AND projection_id IN ("
+                "SELECT projection_id FROM memory_projection_sources "
+                "WHERE memory_id=? AND revision_token!=? )",
+                (DerivedState.INVALIDATED.value, memory_id, revision_token),
+            )
+            await self.connection.execute(
+                "DELETE FROM memory_projection_sources "
+                "WHERE memory_id=? AND revision_token!=?",
+                (memory_id, revision_token),
+            )
+            invalidated_projection_ids: set[str] = set()
+            for row in projection_rows:
+                projection_id = str(row["projection_id"])
+                remaining = await self._fetch_scalar(
+                    "SELECT COUNT(*) FROM memory_projection_sources WHERE projection_id=?",
+                    (projection_id,),
+                )
+                primary_exists = await self._fetch_scalar(
+                    "SELECT 1 FROM memory_projection_sources WHERE projection_id=? AND memory_id=?",
+                    (projection_id, int(row["primary_source_memory_id"])),
+                )
+                role_rows = await self._fetch_all(
+                    "SELECT source_role FROM memory_projection_sources WHERE projection_id=?",
+                    (projection_id,),
+                )
+                roles = {str(item["source_role"]) for item in role_rows}
+                if (
+                    not remaining
+                    or not primary_exists
+                    or (
+                        str(row["projection_type"]) == ProjectionType.CONFLICT_SET.value
+                        and not {"conflict_left", "conflict_right"} <= roles
+                    )
+                ):
+                    invalidated_projection_ids.add(projection_id)
+            projection_count = 0
+            if invalidated_projection_ids:
+                placeholders = ",".join("?" for _ in invalidated_projection_ids)
+                projection_cursor = await self.connection.execute(
+                    "UPDATE memory_projections SET state=?,invalid_at=?,updated_at=? "
+                    f"WHERE projection_id IN ({placeholders})",
+                    (
+                        DerivedState.INVALIDATED.value,
+                        now,
+                        now,
+                        *invalidated_projection_ids,
+                    ),
+                )
+                projection_count = int(projection_cursor.rowcount or 0)
             await self.connection.commit()
-            return relation_cursor.rowcount + projection_cursor.rowcount
+            return int(relation_cursor.rowcount or 0) + projection_count
         except BaseException:
             await self.connection.rollback()
             raise
@@ -294,10 +337,11 @@ class MemoryEvolutionDerivedMixin:
         await self.connection.execute("BEGIN IMMEDIATE")
         try:
             relation_cursor = await self.connection.execute(
-                "UPDATE memory_relations SET state=?,updated_at=? "
+                "UPDATE memory_relations SET state=?,invalid_at=?,updated_at=? "
                 "WHERE state!=? AND (source_memory_id=? OR target_memory_id=?)",
                 (
                     DerivedState.INVALIDATED.value,
+                    now,
                     now,
                     DerivedState.INVALIDATED.value,
                     memory_id,
@@ -334,10 +378,11 @@ class MemoryEvolutionDerivedMixin:
             if invalidated_projection_ids:
                 placeholders = ",".join("?" for _ in invalidated_projection_ids)
                 cursor = await self.connection.execute(
-                    "UPDATE memory_projections SET state=?,updated_at=? "
+                    "UPDATE memory_projections SET state=?,invalid_at=?,updated_at=? "
                     f"WHERE projection_id IN ({placeholders})",
                     (
                         DerivedState.INVALIDATED.value,
+                        now,
                         now,
                         *invalidated_projection_ids,
                     ),
@@ -358,10 +403,11 @@ class MemoryEvolutionDerivedMixin:
         await self.connection.execute("BEGIN IMMEDIATE")
         try:
             relation_cursor = await self.connection.execute(
-                "UPDATE memory_relations SET state=?,updated_at=? "
+                "UPDATE memory_relations SET state=?,invalid_at=?,updated_at=? "
                 "WHERE origin_job_id=? AND state!=?",
                 (
                     DerivedState.INVALIDATED.value,
+                    now,
                     now,
                     job_id,
                     DerivedState.INVALIDATED.value,
@@ -382,9 +428,9 @@ class MemoryEvolutionDerivedMixin:
                     projection_ids,
                 )
                 cursor = await self.connection.execute(
-                    "UPDATE memory_projections SET state=?,updated_at=? "
+                    "UPDATE memory_projections SET state=?,invalid_at=?,updated_at=? "
                     f"WHERE projection_id IN ({placeholders})",
-                    (DerivedState.INVALIDATED.value, now, *projection_ids),
+                    (DerivedState.INVALIDATED.value, now, now, *projection_ids),
                 )
                 projection_count = int(cursor.rowcount or 0)
             await self.connection.commit()
@@ -402,17 +448,19 @@ class MemoryEvolutionDerivedMixin:
         await self.connection.execute("BEGIN IMMEDIATE")
         try:
             relation_cursor = await self.connection.execute(
-                "UPDATE memory_relations SET state=?,updated_at=? WHERE state!=?",
+                "UPDATE memory_relations SET state=?,invalid_at=?,updated_at=? WHERE state!=?",
                 (
                     DerivedState.INVALIDATED.value,
+                    now,
                     now,
                     DerivedState.INVALIDATED.value,
                 ),
             )
             projection_cursor = await self.connection.execute(
-                "UPDATE memory_projections SET state=?,updated_at=? WHERE state!=?",
+                "UPDATE memory_projections SET state=?,invalid_at=?,updated_at=? WHERE state!=?",
                 (
                     DerivedState.INVALIDATED.value,
+                    now,
                     now,
                     DerivedState.INVALIDATED.value,
                 ),
@@ -504,10 +552,11 @@ class MemoryEvolutionDerivedMixin:
             if invalid_relation_ids:
                 placeholders = ",".join("?" for _ in invalid_relation_ids)
                 cursor = await self.connection.execute(
-                    "UPDATE memory_relations SET state=?,updated_at=? "
+                    "UPDATE memory_relations SET state=?,invalid_at=?,updated_at=? "
                     f"WHERE relation_id IN ({placeholders})",
                     (
                         DerivedState.INVALIDATED.value,
+                        now,
                         now,
                         *invalid_relation_ids,
                     ),
@@ -558,9 +607,9 @@ class MemoryEvolutionDerivedMixin:
             if projection_invalid:
                 placeholders = ",".join("?" for _ in projection_invalid)
                 cursor = await self.connection.execute(
-                    "UPDATE memory_projections SET state=?,updated_at=? "
+                    "UPDATE memory_projections SET state=?,invalid_at=?,updated_at=? "
                     f"WHERE projection_id IN ({placeholders})",
-                    (DerivedState.INVALIDATED.value, now, *projection_invalid),
+                    (DerivedState.INVALIDATED.value, now, now, *projection_invalid),
                 )
                 projection_count = int(cursor.rowcount or 0)
             await self.connection.commit()

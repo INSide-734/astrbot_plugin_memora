@@ -8,11 +8,14 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from astrbot.api import logger
 
 from ..models.recall_strategy import RecallStrategy
+from ..models.temporal import canonical_visible_at, normalize_datetime
+from ..retrieval.query_rewriter import resolve_reference_time
 from ..retrieval.rrf_fusion import HybridResult
 from ..utils.number_utils import clamp_float
 from .memory_engine_evolution_hooks import memory_revision
@@ -251,7 +254,12 @@ class MemoryEngineCRUDMixin:
         user_id: str | None = None,
         trace_debug: bool = False,
         debug_trace: list[dict[str, Any]] | None = None,
+        reference_time: datetime | None = None,
     ) -> list[HybridResult]:
+        requested_reference_time = normalize_datetime(reference_time) or resolve_reference_time(
+            query_intent
+        )
+        effective_reference_time = requested_reference_time or datetime.now(timezone.utc)
         trace_requested = trace_debug or debug_trace is not None
         active_debug_trace = (
             debug_trace if debug_trace is not None else ([] if trace_debug else None)
@@ -277,6 +285,7 @@ class MemoryEngineCRUDMixin:
             chain_depth=chain_depth,
             emotion_context=emotion_context,
             recall_strategy=recall_strategy,
+            reference_time=requested_reference_time,
         )
         cached_results = (
             None if trace_requested else self._retrieval.get_cached(cache_key)
@@ -312,6 +321,7 @@ class MemoryEngineCRUDMixin:
                 chain_depth=chain_depth,
                 emotion_context=emotion_context,
                 recall_strategy=recall_strategy,
+                reference_time=requested_reference_time,
             )
         _t_cache_end = time.perf_counter()
         if session_cached is not None:
@@ -359,6 +369,7 @@ class MemoryEngineCRUDMixin:
                 chat_type=chat_type,
                 query_intent=query_intent,
                 user_id=user_id,
+                reference_time=effective_reference_time,
             )
             # 读取双路检索的阶段计时
             dr_timing = getattr(self.dual_route_retriever, "last_search_timing", None)
@@ -386,6 +397,11 @@ class MemoryEngineCRUDMixin:
                     != "confidential"
                 ]
         _t_search_end = time.perf_counter()
+        results = [
+            item
+            for item in results
+            if canonical_visible_at(item.metadata or {}, requested_reference_time)
+        ]
         _t_boost = 0.0
         if results:
             _t_boost_start = time.perf_counter()
@@ -421,6 +437,7 @@ class MemoryEngineCRUDMixin:
                     persona_id,
                     max_hops=max_hops,
                     hop_decay=hop_decay,
+                    reference_time=requested_reference_time,
                 )
                 _t_chain = (time.perf_counter() - _t_chain_start) * 1000.0
                 if chained:
@@ -445,6 +462,7 @@ class MemoryEngineCRUDMixin:
                 chain_depth=chain_depth,
                 emotion_context=emotion_context,
                 recall_strategy=recall_strategy,
+                reference_time=requested_reference_time,
             )
         # === 存储阶段计时供 RecallHandler 读取 ===
         self._last_search_timing = {

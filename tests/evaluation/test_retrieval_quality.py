@@ -81,7 +81,7 @@ def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels()
 
     cases = load_fixture_dir(FIXTURE_ROOT)["memory_evolution"]
 
-    assert len(cases) == 17
+    assert len(cases) == 21
     assert {case.metadata["scenario"] for case in cases} >= {
         "direct",
         "same_episode",
@@ -98,6 +98,10 @@ def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels()
         "validity_negative",
         "stale_job",
         "retry_recovery",
+        "temporal_as_of_old",
+        "temporal_future_negative",
+        "projection_window",
+        "conflict_unresolved",
     }
     covered_invariants = {
         invariant
@@ -121,6 +125,19 @@ def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels()
     assert all(case.metadata["scope"].startswith(("private:", "group:")) for case in cases)
     assert all(case.metadata["privacy_level"] in {"shared", "confidential"} for case in cases)
     assert not any("user-" in case.query or "session-" in case.query for case in cases)
+    temporal_cases = [case for case in cases if case.metadata.get("reference_time")]
+    assert len(temporal_cases) >= 4
+    assert {
+        invariant
+        for case in temporal_cases
+        for invariant in case.metadata.get("p1_invariants", [])
+    } >= {
+        "reference_time",
+        "future_source_hidden",
+        "valid_interval",
+        "conflict_unresolved",
+        "no_canonical_winner",
+    }
 
     projection = next(case for case in cases if case.metadata["scenario"] == "projection")
     assert projection.relevant_doc_ids == set(projection.metadata["projection_source_ids"])

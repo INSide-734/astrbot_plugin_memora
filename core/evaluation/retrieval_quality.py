@@ -9,6 +9,7 @@ import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -165,7 +166,7 @@ def make_memory_engine_retriever(engine: Any) -> RetrieverFn:
 
     async def _retriever(case: EvaluationCase, k: int) -> Sequence[Any]:
         metadata = case.metadata or {}
-        return await engine.search_memories(
+        kwargs = dict(
             query=case.query,
             k=k,
             session_id=_optional_string(metadata.get("session_id")),
@@ -179,6 +180,11 @@ def make_memory_engine_retriever(engine: Any) -> RetrieverFn:
             query_intent=metadata.get("query_intent"),
             recall_strategy=metadata.get("recall_strategy"),
         )
+        if "reference_time" in metadata:
+            kwargs["reference_time"] = _parse_reference_time(
+                metadata.get("reference_time")
+            )
+        return await engine.search_memories(**kwargs)
 
     return _retriever
 
@@ -464,6 +470,35 @@ def _optional_int(value: Any, *, default: int) -> int:
         return default
 
 
+def _parse_reference_time(value: Any) -> datetime | None:
+    """在不导入 AstrBot/运行时模型的评测包中解析 UTC as-of 时间。"""
+
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return (
+            value.replace(tzinfo=timezone.utc)
+            if value.tzinfo is None
+            else value.astimezone(timezone.utc)
+        )
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return (
+        parsed.replace(tzinfo=timezone.utc)
+        if parsed.tzinfo is None
+        else parsed.astimezone(timezone.utc)
+    )
+
+
 def _latency_from_case(case: EvaluationCase, measured_latency_ms: float) -> float:
     raw = case.metadata.get("latency_ms")
     try:
@@ -519,14 +554,31 @@ def _advanced_case_metrics(
     if metadata.get("expected_no_hit") is True:
         metrics["noise_negative_false_hit"] = 1.0 if top_k else 0.0
 
+    temporal_expected = _normalize_doc_id_set(
+        metadata.get("temporal_expected_doc_ids", [])
+    )
+    temporal_forbidden = _normalize_doc_id_set(
+        metadata.get("temporal_forbidden_doc_ids", [])
+    )
     temporal_ids = _normalize_doc_id_set(metadata.get("temporal_relevant_doc_ids", []))
-    if temporal_ids:
+    if temporal_expected or temporal_forbidden:
+        metrics["temporal_consistency"] = (
+            1.0
+            if temporal_expected <= ranked and not (temporal_forbidden & ranked)
+            else 0.0
+        )
+    elif temporal_ids:
         metrics["temporal_consistency"] = 1.0 if ranked & temporal_ids else 0.0
     elif "temporal_consistency" in metadata:
         metrics["temporal_consistency"] = _bounded_metric(metadata["temporal_consistency"])
 
+    conflict_expected = _normalize_doc_id_set(
+        metadata.get("conflict_expected_doc_ids", [])
+    )
     conflict_ids = _normalize_doc_id_set(metadata.get("conflict_doc_ids", []))
-    if conflict_ids:
+    if conflict_expected:
+        metrics["conflict_accuracy"] = 1.0 if conflict_expected <= ranked else 0.0
+    elif conflict_ids:
         metrics["conflict_accuracy"] = 1.0 if conflict_ids <= ranked else 0.0
     elif "conflict_accuracy" in metadata:
         metrics["conflict_accuracy"] = _bounded_metric(metadata["conflict_accuracy"])

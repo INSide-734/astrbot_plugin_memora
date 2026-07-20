@@ -22,7 +22,7 @@ from ..extractors.message_content_extractor import MessageContentExtractor
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..monitoring import monitored, report_debug_event, report_debug_exception
-from ..retrieval.query_rewriter import QueryRewriter
+from ..retrieval.query_rewriter import QueryRewriter, resolve_reference_time
 from ..injection.executor import InjectionExecutionContext, InjectionExecutor
 from ..injection.models import (
     DeliveryMode,
@@ -303,6 +303,7 @@ class RecallHandler:
                     rewritten_queries[0] if rewritten_queries else query_for_search
                 )
                 memory_type_filter = query_intent.memory_types or None
+                reference_time = resolve_reference_time(query_intent)
                 report_debug_event(
                     "recall_stage",
                     component="recall",
@@ -399,6 +400,7 @@ class RecallHandler:
                     query_intent=query_intent,
                     memory_types=memory_type_filter,
                     user_id=user_id,
+                    reference_time=reference_time,
                 )
                 report_debug_event(
                     "recall_stage",
