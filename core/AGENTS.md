@@ -1,6 +1,6 @@
 # `core` 运行时总览
 
-**最后更新：** 2026-07-19
+**最后更新：** 2026-07-20
 **导航：** [项目根级 `AGENTS.md`](../AGENTS.md) / `core`
 
 ## 职责边界
@@ -19,6 +19,7 @@
 | `../main.py` | AstrBot 插件入口；创建并持有初始化器、事件处理器、命令处理器、页面 API 与功能委托 | 本表其余入口 |
 | `plugin_initializer.py` · `PluginInitializer` | 提供商等待、数据库/FAISS 准备、组件装配、认知组件初始化与有序关闭 | `initializer/`、`managers/`、`processors/`、`storage/`、`schedulers/` |
 | `initializer/component_factory.py` · `ComponentFactory` | 在 `build_all(...)` 中构造共享数据库、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、验证器、调度器、注入记录与 Memory Evolution 组件 | `base/`、`storage/`、`retrieval/`、`managers/`、`processors/` |
+| `adapter_capabilities.py` / `provider_adapters.py` | 定义不可变能力快照，并在构建时冻结 LLM/Embedding Provider 调用入口 | `initializer/`、`processors/`、`validators/`、`retrieval/`、`utils/` |
 | `event_handler.py` · `EventHandler` | 处理全量群消息、LLM 请求前召回注入、LLM 响应后反思、会话重置与维护任务关闭 | `handlers/`、`injection/`、`cleaners/`、`dedup/`、`extractors/` |
 | `managers/memory_engine.py` · `MemoryEngine` | 长期记忆的统一运行时门面；组合 managers 中的生命周期、CRUD、召回、统计等能力 | `storage/`、`retrieval/`、`processors/`、`models/` |
 | `page_api.py` · `PluginPageApi` | 以 `PAGE_API_PREFIX` 为主前缀聚合 `api/` mixin，注册仪表盘读写、维护、诊断与评估端点 | `api/`、初始化器发布的共享组件 |
@@ -33,7 +34,7 @@
 ## 初始化与关闭链
 
 1. `main.py` 建立配置、插件级 `BackupManager` 与 `PluginInitializer(context, config_manager, data_dir)`；`_initialize_plugin()` 先执行按需自动备份和 `apply_pending_restores()`，再调用 `initialize()`，避免在恢复事务未应用时发布运行时。
-2. `PluginInitializer` 使用 `ProviderLoader` 与 `ProviderWaiter` 非阻塞等待 embedding/LLM provider；尚未就绪时登记后台重试，不发布半初始化运行时。
+2. `PluginInitializer` 使用 `ProviderLoader` 与 `ProviderWaiter` 非阻塞等待 embedding/LLM provider；`ComponentFactory` 在索引或数据库 I/O 前验证文本生成和 Embedding 入口并冻结调用方式，能力不足时不发布半初始化运行时。
 3. provider 就绪后，`_run_full_init()` 调用 `ComponentFactory.build_all(...)`，完成数据库、图存储、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、索引验证器、衰减调度器、注入决策组件以及 Memory Evolution Store/Gate/Consolidator/Manager 的装配；仅 `enabled=true` 且 mode 为 `readonly`/`active` 时向引擎注入派生 relation/projection 读取器。
 4. 初始化器再建立共享提示词保护服务，以及可选的 affection、expression、jargon、social 认知组件；可选组件失败按现有路径记录并隔离，不得伪装为已就绪。
 5. `main.py` 仅使用初始化器发布的实例创建 `EventHandler`、`CommandHandler` 和 `PluginPageApi`，保证消息、命令和页面请求共享同一存储与引擎。
@@ -105,6 +106,7 @@ Memory Evolution 只在 canonical 写入之后生成可失效、可重建的 rel
 
 - **共享实例：** 消息、命令和页面路径必须复用初始化器发布的 provider、store、manager 和 engine；禁止在请求内重新创建数据库、索引或模型。
 - **就绪边界：** provider 后台等待完成前，调用方必须走现有 readiness 检查；`_initialization_complete` 与失败状态由初始化器单点维护。
+- **Adapter 能力：** 只有显式 `AdapterCapabilityContract` 能声明 `native` 或 `caller_enforced`；未知对象默认 `unsupported`。unsupported filter/reference-time 必须跳过路由或稳定失败，禁止移除隔离条件后继续查询。
 - **写保护：** 备份恢复、维护和关闭期间遵循现有 write guard；pending restore 的维护状态必须同时阻止页面 API、事件旁路、命令和 Agent 写入，只有状态/列表等只读路径可继续工作，任何入口都不得绕过。
 - **不可信输入：** 平台消息、页面 JSON/query、模型输出、导入数据及伴侣插件状态均需按其边界校验；模型上下文使用共享 prompt protection。
 - **异步纪律：** 捕获普通异常时记录足够上下文；不要吞掉取消信号。所有后台任务必须登记、可观察并在关闭时收束。
@@ -163,6 +165,7 @@ python -m pytest tests/test_plugin_package_imports.py
 python -m pytest tests/test_plugin_init.py
 python -m pytest tests/test_memory_evolution_gate.py tests/test_memory_evolution_manager.py tests/test_memory_evolution_store.py
 python -m pytest tests/test_derived_relation_expander.py tests/test_projection_reader.py tests/test_dual_route_retriever.py
+python -m pytest tests/test_p1_adapter_capabilities.py tests/test_llm_client.py tests/test_validators.py
 python -m pytest tests/test_page_api.py tests/test_page_api_contract.py
 ```
 

@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from typing import Any
+
+from ..adapter_capabilities import (
+    ASTRBOT_FAISS_CAPABILITIES,
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+    NormalizationScope,
+    ScoreDirection,
+    ScoreSemantics,
+    bind_default_adapter_contract,
+)
 
 
 @dataclass(slots=True)
@@ -20,12 +32,37 @@ class GraphVectorResult:
 class GraphVectorRetriever:
     """封装专用于图记忆条目的向量存储。"""
 
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.VECTOR_RETRIEVER,
+        native=frozenset({AdapterCapability.SCORING}),
+        caller_enforced=frozenset(
+            {
+                AdapterCapability.FILTERING,
+                AdapterCapability.UPDATE,
+                AdapterCapability.DELETE,
+                AdapterCapability.CANCELLATION,
+            }
+        ),
+        score=ScoreSemantics(
+            direction=ScoreDirection.HIGHER_IS_BETTER,
+            normalization=NormalizationScope.UNKNOWN,
+        ),
+    )
+
     def __init__(self, faiss_db, config: dict[str, Any] | None = None):
+        """装配图条目向量数据库与检索配置。"""
+
         self.faiss_db = faiss_db
+        self.backend_capabilities = bind_default_adapter_contract(
+            faiss_db,
+            ASTRBOT_FAISS_CAPABILITIES,
+        )
         self.config = config or {}
 
     @staticmethod
     def _coerce_metadata(raw_metadata: Any) -> dict[str, Any]:
+        """把字典或 JSON 字符串规范化为元数据字典。"""
+
         if isinstance(raw_metadata, dict):
             return raw_metadata
         if isinstance(raw_metadata, str):
@@ -57,6 +94,11 @@ class GraphVectorRetriever:
         if persona_id is not None:
             metadata_filters["persona_id"] = persona_id
 
+        if metadata_filters and not self.backend_capabilities.supports(
+            AdapterCapability.FILTERING
+        ):
+            return []
+
         fetch_k = k * 2 if metadata_filters else k
         raw_results = await self.faiss_db.retrieve(
             query=query,
@@ -70,13 +112,21 @@ class GraphVectorRetriever:
         for result in raw_results:
             data = result.data
             metadata = self._coerce_metadata(data.get("metadata"))
+            if metadata_filters and any(
+                metadata.get(field) != expected
+                for field, expected in metadata_filters.items()
+            ):
+                continue
             source_memory_id = metadata.get("source_memory_id")
             if source_memory_id is None:
+                continue
+            similarity = float(result.similarity)
+            if not math.isfinite(similarity):
                 continue
             results.append(
                 GraphVectorResult(
                     doc_id=int(source_memory_id),
-                    score=float(result.similarity),
+                    score=similarity,
                     content=str(data.get("text") or ""),
                     metadata=metadata,
                 )
@@ -96,6 +146,8 @@ class GraphVectorRetriever:
 
     async def delete_entry(self, vector_doc_id: int) -> bool:
         """从向量存储中删除一条图条目。"""
+        if not self.backend_capabilities.supports(AdapterCapability.DELETE):
+            return False
         uuid_doc_id = await self._get_uuid_from_id(vector_doc_id)
         if not uuid_doc_id:
             return False
@@ -106,6 +158,8 @@ class GraphVectorRetriever:
         self, vector_doc_id: int, metadata: dict[str, Any]
     ) -> bool:
         """更新向量文档存储中的图条目元数据。"""
+        if not self.backend_capabilities.supports(AdapterCapability.UPDATE):
+            return False
         docs = await self.faiss_db.document_storage.get_documents(
             metadata_filters={},
             ids=[vector_doc_id],

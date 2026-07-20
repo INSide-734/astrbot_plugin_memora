@@ -99,7 +99,7 @@ sequenceDiagram
 
 ### Embedding 重试
 
-`EmbeddingRetryMixin` 按 `embedding_batch_size` 切块，兼容 `get_embeddings`、`get_embeddings_batch` 和逐条 `get_embedding`；普通错误指数退避，rate limit 至少等待 `RATE_LIMIT_RETRY_MIN_DELAY=30s`。取消必须向上传播。
+`EmbeddingRetryMixin` 按 `embedding_batch_size` 切块，并在批处理开始时按 `get_embeddings` → `get_embeddings_batch` → `get_embedding` 的顺序冻结一次 `EmbeddingProviderAdapter`。扩展 batch 签名只在构建时检查；Provider 内部 `TypeError` 不得触发第二次不同签名调用。返回数量、非空维度、一致维度和有限数值均在 adapter 边界校验；普通错误指数退避，rate limit 至少等待 `RATE_LIMIT_RETRY_MIN_DELAY=30s`，取消必须向上传播。
 
 ## 配置边界
 
@@ -138,6 +138,7 @@ sequenceDiagram
 
 ```bash
 python -m pytest -q tests/test_validators.py
+python -m pytest -q tests/test_p1_adapter_capabilities.py tests/test_llm_client.py
 python -m pytest -q tests/test_vector_rebuilder.py
 python -m pytest -q tests/test_managers_stats.py
 ```

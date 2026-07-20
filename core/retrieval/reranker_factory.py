@@ -4,72 +4,148 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from ..adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+    ScoreDirection,
+    ScoreSemantics,
+    adapter_contract,
+)
 from .rrf_fusion import HybridResult
 
 
 class RerankerStrategy(Protocol):
     def rerank(
         self, results: list[HybridResult], k: int, **kwargs: Any
-    ) -> list[HybridResult]: ...
+    ) -> list[HybridResult]:
+        """按策略重排候选并返回最多 ``k`` 项。"""
+
+        ...
 
 
 async def create_reranker(
     strategy: str, config: dict[str, Any] | None = None, **deps: Any
 ):
+    """按策略和显式依赖能力构造重排器，能力不足时降级为 MMR。
+
+    参数:
+        strategy: ``mmr``、``cross_encoder``、``llm`` 或 ``hybrid``。
+        config: 重排器权重和批大小配置。
+        deps: FAISS 与 LLM 协作对象；兼容旧调用方的嵌套 ``deps`` 字典。
+
+    返回:
+        已构造的重排器；外部依赖能力不足时返回带稳定原因码的 MMR。
+    """
+
+    nested_deps = deps.get("deps")
+    if isinstance(nested_deps, dict):
+        direct_deps = {key: value for key, value in deps.items() if key != "deps"}
+        deps = {**nested_deps, **direct_deps}
     cfg = config or {}
     if strategy == "cross_encoder":
         from .cross_encoder_reranker import CrossEncoderReranker
 
+        faiss_db = deps.get("faiss_db")
+        if not adapter_contract(faiss_db).supports(AdapterCapability.VECTOR_ACCESS):
+            return MMRReranker(
+                float(cfg.get("reranker.mmr_lambda", 0.7)),
+                degradation_reason_code="adapter_capability_unsupported",
+            )
         return CrossEncoderReranker(
-            faiss_db=deps.get("faiss_db"),
+            faiss_db=faiss_db,
             lambda_weight=float(cfg.get("reranker.cross_encoder_lambda", 0.7)),
         )
     if strategy == "llm":
         from .llm_reranker import LLMReranker
 
+        llm_client = deps.get("llm_client")
+        if not adapter_contract(llm_client).supports(
+            AdapterCapability.SYNC_TEXT_GENERATION
+        ):
+            return MMRReranker(
+                float(cfg.get("reranker.mmr_lambda", 0.7)),
+                degradation_reason_code="adapter_capability_unsupported",
+            )
         return LLMReranker(
-            llm_client=deps.get("llm_client"),
+            llm_client=llm_client,
             batch_size=int(cfg.get("reranker.llm_batch_size", 10)),
         )
     if strategy == "hybrid":
         from .cross_encoder_reranker import CrossEncoderReranker
         from .llm_reranker import LLMReranker
 
+        faiss_db = deps.get("faiss_db")
+        llm_client = deps.get("llm_client")
+        if not adapter_contract(faiss_db).supports(
+            AdapterCapability.VECTOR_ACCESS
+        ) or not adapter_contract(llm_client).supports(
+            AdapterCapability.SYNC_TEXT_GENERATION
+        ):
+            return MMRReranker(
+                float(cfg.get("reranker.mmr_lambda", 0.7)),
+                degradation_reason_code="adapter_capability_unsupported",
+            )
+
         return HybridReranker(
             CrossEncoderReranker(
-                faiss_db=deps.get("faiss_db"),
+                faiss_db=faiss_db,
                 lambda_weight=float(cfg.get("reranker.cross_encoder_lambda", 0.7)),
             ),
             LLMReranker(
-                llm_client=deps.get("llm_client"),
+                llm_client=llm_client,
                 batch_size=int(cfg.get("reranker.llm_batch_size", 10)),
             ),
         )
-    # default: MMR
+    # 未知或默认策略使用不依赖外部 Provider 的 MMR。
     mmr_lambda = float(cfg.get("reranker.mmr_lambda", 0.7))
     return MMRReranker(mmr_lambda)
 
 
 class MMRReranker:
-    def __init__(self, mmr_lambda: float = 0.7) -> None:
+    """不依赖外部 Provider 的 MMR 重排序器。"""
+
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.RERANKER,
+        native=frozenset({AdapterCapability.SCORING}),
+        score=ScoreSemantics(direction=ScoreDirection.HIGHER_IS_BETTER),
+    )
+
+    def __init__(
+        self,
+        mmr_lambda: float = 0.7,
+        *,
+        degradation_reason_code: str | None = None,
+    ) -> None:
+        """初始化 MMR 权重和可选的稳定降级原因码。"""
+
         self._lambda = mmr_lambda
+        self.degradation_reason_code = degradation_reason_code
 
     def rerank(
         self, results: list[HybridResult], k: int, **kwargs: Any
     ) -> list[HybridResult]:
+        """使用词袋相似度 MMR 重排，并返回最多 ``k`` 项。"""
+
         from .mmr_reranker import apply_mmr
 
         return apply_mmr(results, k, self._lambda)
 
 
 class HybridReranker:
+    """先以向量相似度缩小候选，再交给 LLM 精排。"""
+
     def __init__(self, ce_reranker, llm_reranker) -> None:
+        """保存向量重排器和 LLM 重排器。"""
+
         self._ce = ce_reranker
         self._llm = llm_reranker
 
     def rerank(
         self, results: list[HybridResult], k: int, **kwargs: Any
     ) -> list[HybridResult]:
+        """先保留最多 ``3 * k`` 项，再执行 LLM 精排。"""
+
         narrowed = self._ce.rerank(results, min(k * 3, len(results)), **kwargs)
         return self._llm.rerank(narrowed, k, **kwargs)
 

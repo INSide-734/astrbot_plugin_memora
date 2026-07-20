@@ -5,12 +5,22 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import math
 from typing import Any
 
 from astrbot.core.db.vec_db.faiss_impl.vec_db import FaissVecDB
 
-_TRUNCATED_CONTENT_MARKER = "\n...[中间内容已截断]...\n"
+from ..adapter_capabilities import (
+    ASTRBOT_FAISS_CAPABILITIES,
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+    ScoreDirection,
+    ScoreSemantics,
+    bind_default_adapter_contract,
+)
 
+_TRUNCATED_CONTENT_MARKER = "\n...[中间内容已截断]...\n"
 
 @dataclass
 class VectorResult:
@@ -30,10 +40,25 @@ class VectorRetriever:
     主要特性:
     1. 保持查询文本原样检索，避免额外预处理带来的行为分叉
     2. 元数据包含：importance、create_time、last_access_time、session_id、persona_id
-    3. 相似度分数已归一化到 [0,1] 区间
+    3. 相似度分数按 higher-is-better 解释，静态范围未知
     4. 支持通过 metadata 过滤 session_id 和 persona_id
     5. 通过 ID 映射缓存优化 UUID 查询性能
     """
+
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.VECTOR_RETRIEVER,
+        native=frozenset({AdapterCapability.SCORING}),
+        caller_enforced=frozenset(
+            {
+                AdapterCapability.FILTERING,
+                AdapterCapability.UPDATE,
+                AdapterCapability.DELETE,
+                AdapterCapability.CANCELLATION,
+                AdapterCapability.REFERENCE_TIME,
+            }
+        ),
+        score=ScoreSemantics(direction=ScoreDirection.HIGHER_IS_BETTER),
+    )
 
     def __init__(
         self,
@@ -48,6 +73,10 @@ class VectorRetriever:
             config: 配置字典（可选）
         """
         self.faiss_db = faiss_db
+        self.backend_capabilities = bind_default_adapter_contract(
+            faiss_db,
+            ASTRBOT_FAISS_CAPABILITIES,
+        )
         self.config = config or {}
 
         # 优化 3：ID 映射缓存（int_id -> uuid）
@@ -166,6 +195,11 @@ class VectorRetriever:
         if persona_id is not None:
             metadata_filters["persona_id"] = persona_id
 
+        if metadata_filters and not self.backend_capabilities.supports(
+            AdapterCapability.FILTERING
+        ):
+            return []
+
         # 执行向量检索
         # 将 fetch_k 设为 k*2，确保过滤后仍有足够结果
         fetch_k = k * 2 if metadata_filters else k
@@ -184,12 +218,24 @@ class VectorRetriever:
             # FaissVecDB 返回的 Result 对象包含 similarity 和 data
             # 其中 data 是包含 id、text、metadata 的字典
             doc_data = result.data
+            doc_metadata = doc_data.get("metadata")
+            if metadata_filters and (
+                not isinstance(doc_metadata, dict)
+                or any(
+                    doc_metadata.get(field) != expected
+                    for field, expected in metadata_filters.items()
+                )
+            ):
+                continue
+            similarity = float(result.similarity)
+            if not math.isfinite(similarity):
+                continue
             results.append(
                 VectorResult(
                     doc_id=doc_data["id"],
-                    score=result.similarity,  # FaissVecDB 已归一化到 [0,1]
+                    score=similarity,
                     content=doc_data["text"],
-                    metadata=doc_data["metadata"],
+                    metadata=doc_metadata,
                 )
             )
 
@@ -246,6 +292,9 @@ class VectorRetriever:
         返回:
             是否成功更新。
         """
+        if not self.backend_capabilities.supports(AdapterCapability.UPDATE):
+            return False
+
         import json
 
         from astrbot.api import logger
@@ -324,6 +373,9 @@ class VectorRetriever:
         返回:
             是否成功删除。
         """
+        if not self.backend_capabilities.supports(AdapterCapability.DELETE):
+            return False
+
         from astrbot.api import logger
 
         try:

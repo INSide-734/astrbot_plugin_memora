@@ -57,6 +57,8 @@ graph TD
 | `KnowledgeRetriever` | 知识条目的关键词 + 可选向量混合检索 |
 | `capture_explainable_recall()` | 执行带 debug trace 的召回，生成并可持久化安全 DTO |
 
+检索器和 Store 通过不可变 `AdapterCapabilityContract` 区分 `native`、`caller_enforced` 与 `unsupported`。未知 adapter 默认关闭全部能力；BM25 的 scope 过滤、固定 AstrBot FAISS 的返回侧精确过滤以及 reference-time 上层校验属于调用方保证。Vector scoped search 遇到显式 unsupported filter 时不得调用底层无过滤查询；派生 reader 不支持 `reference_time` 时跳过注解并保留 canonical baseline。
+
 ## 文档路数据流
 
 ```mermaid
@@ -114,7 +116,7 @@ sequenceDiagram
 | `llm` | 把 query 与最多 `2 * batch_size` 个正文预览交给 LLM 评分 | 解析/调用失败使用基于原排序的合成分数 |
 | `hybrid` | CrossEncoder 窄化后 LLM 精排 | 组合两者语义 |
 
-`create_reranker()` 是 async 工厂；`DualRouteRetriever._apply_reranker()` 兼容同步/异步返回并在异常或返回非 list 时恢复原始分数排序。注意 `HybridReranker.rerank()` 当前是同步方法但可能返回 LLM coroutine，调用方负责 await。
+`create_reranker()` 是 async 工厂；只有显式 `vector_access`/`sync_text_generation` 能力满足时才构造对应外部重排器，否则在工厂阶段返回带稳定原因码的 MMR。`DualRouteRetriever._apply_reranker()` 兼容同步/异步返回并在异常或返回非 list 时恢复原始分数排序。注意 `HybridReranker.rerank()` 当前是同步方法但可能返回 LLM coroutine，调用方负责 await。
 
 ## 隐私与不可泄露数据边界
 
@@ -159,6 +161,7 @@ sequenceDiagram
 python -m pytest -q tests/test_bm25_retriever.py tests/test_vector_retriever.py tests/test_hybrid_retriever.py tests/test_rrf_fusion.py tests/test_score_weighting.py tests/test_mmr_reranker.py
 python -m pytest -q tests/test_graph_keyword_retriever.py tests/test_graph_vector_retriever.py tests/test_graph_retriever.py tests/test_dual_route_retriever.py
 python -m pytest -q tests/test_derived_relation_expander.py tests/test_projection_reader.py
+python -m pytest -q tests/test_p1_adapter_capabilities.py tests/test_reranker_factory.py
 python -m pytest -q tests/test_query_rewriter.py tests/test_intent_keywords.py tests/test_personalized_ranker.py tests/test_reranker_factory.py tests/test_cross_encoder_reranker.py tests/test_llm_reranker.py
 python -m pytest -q tests/test_atom_retriever.py tests/test_knowledge_retriever.py tests/test_memory_lifecycle.py
 python -m pytest -q tests/test_api_recall_trace.py tests/test_p0_observability_privacy.py tests/test_recall_cost_benchmark.py

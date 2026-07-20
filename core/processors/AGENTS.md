@@ -18,7 +18,7 @@
 flowchart LR
     A["list[Message]"] --> B["ConversationFormatter"]
     B --> C["PromptBuilder: 模板 + persona + 连续性"]
-    C --> D["LLMClient.text_chat + 重试"]
+    C --> D["LLMClient + 冻结 Provider adapter + 重试"]
     D --> E{"guardrails 有效?"}
     E -->|"是"| F["MemoryExtractionResult 转换"]
     E -->|"否"| G["JsonParser: 直接/修复/正则/默认"]
@@ -48,8 +48,8 @@ flowchart LR
 
 ### LLM、解析与格式化
 
-- `LLMClient.get_current_llm_provider()`：固定对象优先；字符串 ID 动态查找；之后使用当前默认 Provider，避免持有过期引用。
-- `call_llm_with_retry(prompt, system_prompt, max_retries=3)`：调用 `provider.text_chat()`，普通异常按 $2^{attempt}+jitter$ 退避，最后一次原样抛出；无 Provider 是 `RuntimeError`。
+- `LLMClient.get_current_llm_provider()`：固定对象优先；字符串 ID 动态查找；之后使用当前默认 Provider，避免持有过期引用。Provider 实例变化时重新构建并缓存 `LLMProviderAdapter`，调用阶段不再反复探测入口。
+- `call_llm_with_retry(prompt, system_prompt, max_retries=3)`：通过冻结的 `text_chat` 入口调用，普通异常按 $2^{attempt}+jitter$ 退避，最后一次原样抛出；无 Provider 是 `RuntimeError`。取消继续传播，日志只记录异常类型。
 - `JsonParser` 顺序：直接 JSON → 补括号/引号与去尾逗号后解析 → 正则提取 → `QualityValidator` 默认结构。
 - `QualityValidator` 规范 `summary/topics/key_facts/sentiment/importance`；重要性范围为 `[0,1]`，非法值回退 `0.5`。
 - `ConversationFormatter` 的普通格式保留发送者、ID、秒级时间并给 bot 加前缀；compact 格式用于成本敏感路径。
@@ -121,6 +121,7 @@ flowchart LR
 
 ```bash
 python -m pytest tests/test_memory_processor.py tests/test_memory_consolidator.py tests/test_llm_client.py tests/test_json_parser.py tests/test_prompt_builder.py tests/test_conversation_formatter.py tests/test_atom_classifier.py tests/test_text_processor.py tests/test_message_utils.py tests/test_topic_splitter.py tests/test_integration_topic_segmentation.py tests/test_graph_extractor.py tests/test_entity_resolver.py tests/test_contradiction_detector.py tests/test_episode_clusterer.py tests/test_profile_extractor.py tests/test_knowledge_extractor.py tests/test_note_generator.py tests/test_human_like_formatter.py tests/test_chatroom_parser.py -q
+python -m pytest tests/test_p1_adapter_capabilities.py tests/test_llm_client.py -q
 ```
 
 若改变主管道与反思之间的批次/失败契约，另跑：

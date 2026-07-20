@@ -5,6 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from ..adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+    NormalizationScope,
+    ScoreDirection,
+    ScoreSemantics,
+)
 from ..models.memory_evolution import (
     ExpansionBudget,
     MemorySourceRef,
@@ -20,6 +28,24 @@ _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}
 
 class DerivedRelationExpander:
     """读取派生关系，但只返回仍满足当前访问边界的 canonical 记忆。"""
+
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.DERIVED_READER,
+        native=frozenset({AdapterCapability.REFERENCE_TIME}),
+        caller_enforced=frozenset(
+            {
+                AdapterCapability.FILTERING,
+                AdapterCapability.SCORING,
+                AdapterCapability.CANCELLATION,
+            }
+        ),
+        score=ScoreSemantics(
+            direction=ScoreDirection.HIGHER_IS_BETTER,
+            minimum=0.0,
+            maximum=1.0,
+            normalization=NormalizationScope.CALLER,
+        ),
+    )
 
     def __init__(
         self,

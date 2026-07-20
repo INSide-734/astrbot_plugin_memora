@@ -10,6 +10,14 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from ..adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+    ScoreDirection,
+    ScoreSemantics,
+    declared_adapter_contract,
+)
 from ..models.memory_evolution import ExpansionBudget, ScopeContext
 from ..models.temporal import normalize_datetime
 from ..models.recall_strategy import RecallStrategy
@@ -25,6 +33,19 @@ if TYPE_CHECKING:
 
 class DualRouteRetriever:
     """协调文档检索路由与图检索路由。"""
+
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.HYBRID_RETRIEVER,
+        caller_enforced=frozenset(
+            {
+                AdapterCapability.FILTERING,
+                AdapterCapability.SCORING,
+                AdapterCapability.CANCELLATION,
+                AdapterCapability.REFERENCE_TIME,
+            }
+        ),
+        score=ScoreSemantics(direction=ScoreDirection.HIGHER_IS_BETTER),
+    )
 
     def __init__(
         self,
@@ -137,6 +158,10 @@ class DualRouteRetriever:
             evolution_config = {}
         if (
             self.derived_expander is not None
+            and _supports_declared_capability(
+                self.derived_expander,
+                AdapterCapability.REFERENCE_TIME,
+            )
             and bool(evolution_config.get("enabled", False))
             and str(evolution_config.get("mode", "disabled")) in {"readonly", "active"}
             and merged
@@ -176,6 +201,10 @@ class DualRouteRetriever:
 
         if (
             self.projection_reader is not None
+            and _supports_declared_capability(
+                self.projection_reader,
+                AdapterCapability.REFERENCE_TIME,
+            )
             and bool(evolution_config.get("enabled", False))
             and str(evolution_config.get("mode", "disabled")) in {"readonly", "active"}
             and merged
@@ -548,3 +577,10 @@ class DualRouteRetriever:
 
 
 __all__ = ["DualRouteRetriever"]
+
+
+def _supports_declared_capability(adapter: Any, capability: AdapterCapability) -> bool:
+    """显式 contract 优先；缺失 contract 的历史替身保留旧行为。"""
+
+    contract = declared_adapter_contract(adapter)
+    return contract is None or contract.supports(capability)

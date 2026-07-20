@@ -5,6 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ..adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+    NormalizationScope,
+    ScoreDirection,
+    ScoreSemantics,
+)
 from ..processors.text_processor import TextProcessor
 from ..storage.graph_store import GraphStore
 from ..storage.hierarchy_store import EntityHierarchyStore
@@ -23,6 +31,20 @@ class GraphKeywordResult:
 class GraphKeywordRetriever:
     """通过全文检索、邻居扩展和 G3 层级检索图记忆候选项。"""
 
+    adapter_capabilities = AdapterCapabilityContract(
+        kind=AdapterKind.GRAPH_RETRIEVER,
+        native=frozenset({AdapterCapability.FILTERING}),
+        caller_enforced=frozenset(
+            {AdapterCapability.SCORING, AdapterCapability.CANCELLATION}
+        ),
+        score=ScoreSemantics(
+            direction=ScoreDirection.HIGHER_IS_BETTER,
+            minimum=0.0,
+            maximum=1.0,
+            normalization=NormalizationScope.CALLER,
+        ),
+    )
+
     def __init__(
         self,
         graph_store: GraphStore,
@@ -30,6 +52,8 @@ class GraphKeywordRetriever:
         hierarchy_store: EntityHierarchyStore | None = None,
         config: dict[str, Any] | None = None,
     ):
+        """装配图 Store、分词器、可选层级 Store 与邻居深度配置。"""
+
         self.graph_store = graph_store
         self.text_processor = text_processor
         self.hierarchy_store = hierarchy_store
