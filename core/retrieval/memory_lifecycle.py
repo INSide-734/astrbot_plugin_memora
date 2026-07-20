@@ -105,14 +105,17 @@ class MemoryLifecycleManager:
             )
 
             if not vector_success:
-                logger.error(f"[同步更新] FAISS 更新失败（doc_id={doc_id}）")
+                logger.error("[同步更新] FAISS 更新失败")
                 return False
 
-            logger.info(f"[同步更新] 元数据更新成功（doc_id={doc_id}）")
+            logger.info("[同步更新] 元数据更新成功")
             return True
 
-        except Exception as e:
-            logger.error(f"[同步更新] 失败（doc_id={doc_id}）：{e}", exc_info=True)
+        except Exception as exc:
+            logger.error(
+                "[同步更新] 失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
             return False
 
     async def delete_memory(self, doc_id: int) -> bool:
@@ -146,33 +149,42 @@ class MemoryLifecycleManager:
                                 backup_metadata = {}
                         elif isinstance(metadata_raw, dict):
                             backup_metadata = metadata_raw
-            except Exception as e:
-                logger.warning(f"[删除] 备份文档内容失败（doc_id={doc_id}）：{e}")
+            except Exception as exc:
+                logger.warning(
+                    "[删除] 备份文档内容失败，异常类型=%s",
+                    exc.__class__.__name__,
+                )
 
             # 优先删除 BM25 索引（外键引用）
             try:
                 bm25_deleted = await self.bm25_retriever.delete_document(doc_id)
                 if not bm25_deleted:
-                    logger.warning(f"[删除] BM25 索引删除失败（doc_id={doc_id}）")
+                    logger.warning("[删除] BM25 索引删除失败")
                     return False
-                logger.debug(f"[删除] BM25 索引已删除（doc_id={doc_id}）")
-            except Exception as e:
-                logger.error(f"[删除] BM25 删除异常（doc_id={doc_id}）：{e}")
+                logger.debug("[删除] BM25 索引已删除")
+            except Exception as exc:
+                logger.error(
+                    "[删除] BM25 删除异常，异常类型=%s",
+                    exc.__class__.__name__,
+                )
                 return False
 
             # 再删除向量库（主数据）
             try:
                 vector_deleted = await self.vector_retriever.delete_document(doc_id)
                 if not vector_deleted:
-                    logger.error(f"[删除] 向量库删除失败，需回滚（doc_id={doc_id}）")
+                    logger.error("[删除] 向量库删除失败，需回滚")
                     # 回滚：恢复 BM25 索引
                     await self._rollback_bm25_delete(
                         doc_id, backup_content, backup_metadata
                     )
                     return False
-                logger.debug(f"[删除] 向量库已删除（doc_id={doc_id}）")
-            except Exception as e:
-                logger.error(f"[删除] 向量删除异常，回滚 BM25（doc_id={doc_id}）：{e}")
+                logger.debug("[删除] 向量库已删除")
+            except Exception as exc:
+                logger.error(
+                    "[删除] 向量删除异常，回滚 BM25，异常类型=%s",
+                    exc.__class__.__name__,
+                )
                 # 回滚：恢复 BM25 索引
                 await self._rollback_bm25_delete(
                     doc_id, backup_content, backup_metadata
@@ -184,16 +196,22 @@ class MemoryLifecycleManager:
                 async with self.bm25_retriever._connect() as db:
                     await db.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
                     await db.commit()
-                logger.debug(f"[删除] documents 表已删除（doc_id={doc_id}）")
-            except Exception as e:
-                logger.warning(f"[删除] documents 表删除失败（doc_id={doc_id}）：{e}")
+                logger.debug("[删除] documents 表已删除")
+            except Exception as exc:
+                logger.warning(
+                    "[删除] documents 表删除失败，异常类型=%s",
+                    exc.__class__.__name__,
+                )
                 # documents 表删除失败不影响整体，因为主要数据已删除
 
-            logger.info(f"[删除] 记忆删除成功（doc_id={doc_id}）")
+            logger.info("[删除] 记忆删除成功")
             return True
 
-        except Exception as e:
-            logger.error(f"[删除] 删除记忆失败（doc_id={doc_id}）：{e}", exc_info=True)
+        except Exception as exc:
+            logger.error(
+                "[删除] 删除记忆失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
             return False
 
     async def _rollback_bm25_delete(
@@ -212,8 +230,8 @@ class MemoryLifecycleManager:
         """
         if not content:
             logger.error(
-                f"[回滚] 缺少备份文本，无法恢复 BM25 索引（doc_id={doc_id}）。"
-                "建议执行索引重建修复一致性。"
+                "[回滚] 缺少备份文本，无法恢复 BM25 索引；"
+                "建议执行索引重建修复一致性"
             )
             return
 
@@ -222,15 +240,13 @@ class MemoryLifecycleManager:
                 doc_id, content, metadata or {}
             )
             if rollback_ok:
-                logger.info(f"[回滚] 已恢复 BM25 索引（doc_id={doc_id}）")
+                logger.info("[回滚] 已恢复 BM25 索引")
             else:
-                logger.error(
-                    f"[回滚] BM25 索引恢复失败（doc_id={doc_id}），建议执行索引重建"
-                )
-        except Exception as e:
+                logger.error("[回滚] BM25 索引恢复失败，建议执行索引重建")
+        except Exception as exc:
             logger.error(
-                f"[回滚] BM25 索引恢复异常（doc_id={doc_id}）：{e}",
-                exc_info=True,
+                "[回滚] BM25 索引恢复异常，异常类型=%s",
+                exc.__class__.__name__,
             )
 
 

@@ -2,7 +2,7 @@
 
 # Storage 模块上下文
 
-**最后更新：** 2026-07-19
+**最后更新：** 2026-07-20
 **源码范围：** `core/storage/*.py`（18 个 Python 文件）
 
 ## 职责与边界
@@ -11,9 +11,9 @@
 
 ## Memory Evolution 派生解释平面
 
-`memory_evolution_store.py` 与 canonical `memora.db` 共用连接生命周期，但只保存可失效、可重建的演化数据：job/lease 队列、`memory_relations`、`memory_projections` 及 projection source mapping 四类解释平面。canonical memory 的整数 ID、正文和 revision 仍由主记忆表权威维护，Projection 不创建第二套 canonical ID。
+`memory_evolution_store.py` 与 canonical `memora.db` 共用连接生命周期，但只保存可失效、可重建的演化数据：job/lease 队列、`memory_relations`、`memory_projections` 及 projection source mapping 四类解释平面。relation/projection 写入保留 source revision 和可选 `origin_job_id`；启动维护可标记缺失、陈旧或 scope/privacy 不匹配的派生对象。canonical memory 的整数 ID、正文和 revision 仍由主记忆表权威维护，Projection 不创建第二套 canonical ID。
 
-- Job 写入必须使用 idempotency key；claim/renew/retry/reject/complete/dead 状态转换同时校验 worker token，过期 lease 可恢复为 pending。
+- Job 写入必须使用 idempotency key，并保存入队时 `source_revisions_json`；claim/renew/retry/reject/complete/dead 状态转换同时校验 worker token，过期 lease 可恢复为 pending。旧库初始化时必须补齐 revision 列，不能删除已有 job。
 - `apply_derived_plan()` 在一个事务内写入 relation、projection、mapping 和 source revision；source revision 变化、非法 seed、scope 不一致、坏 mapping 或不支持 role 必须隔离/失效，不能污染其他 bundle。
 - `active_projection_bundles_for_seeds()` 先去重 seed，再批量读取 active projection 与完整 source mapping；支持 `scope_key` 和 projection limit，禁止 N+1 source 查询。读取侧再核对 primary/supporting/conflict role、revision、privacy 和 validity。
 - SQL 动态片段仅来自固定 allowlist，值全部参数绑定；读取失败由上层回退 canonical/relation baseline，不把 query、prompt、正文、source ID 列表或身份写入日志/决策记录。

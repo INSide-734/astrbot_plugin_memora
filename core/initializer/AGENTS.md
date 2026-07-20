@@ -2,13 +2,13 @@
 
 # 初始化与组件装配
 
-**最后核对：** 2026-07-19
+**最后核对：** 2026-07-20
 **公共入口：** `core/initializer/__init__.py`  
 **上游编排：** `core/plugin_initializer.py`
 
 ## 职责边界
 
-本目录只负责启动期基础组件装配：选择并等待 Embedding/LLM Provider、探测并延迟加载 FAISS、初始化主/图向量库与记忆组件、装配 Memory Evolution 的 Store/Gate/Consolidator/Manager 和可选读取器、修复索引和会话计数，以及启动注入决策持久化。配置的默认值合并、Schema 校验、修订冲突与持久化事务属于 `core/base/config_manager.py`，业务检索、API 和命令不应下沉到这里。
+本目录只负责启动期基础组件装配：选择并等待 Embedding/LLM Provider、探测并延迟加载 FAISS、初始化主/图向量库与记忆组件、装配 Memory Evolution 的 Store/Gate/Consolidator/Manager 和可选读取器、按固定顺序协调可重建派生数据、修复索引和会话计数，以及启动注入决策持久化。配置的默认值合并、Schema 校验、修订冲突与持久化事务属于 `core/base/config_manager.py`，业务检索、API 和命令不应下沉到这里。
 
 ```mermaid
 flowchart TD
@@ -27,6 +27,8 @@ flowchart TD
     CF --> CS[ConversationStore / ConversationManager]
     CF --> MP[MemoryProcessor]
     CF --> IV[IndexValidator / DatabaseSetup]
+    DRC[DerivedRebuildCoordinator] --> IV
+    DRC --> MEM
     CF --> BM[BackupManager]
     CF --> DS[DecayScheduler]
     CF --> IDS[InjectionDecisionStore / Recorder]
@@ -44,7 +46,8 @@ flowchart TD
 | `ProviderWaiter` | `start_retry_if_needed(...)` / `cancel()` | 单后台任务；2 秒起、1.5 倍退避、30 秒封顶，默认最多 60 次；就绪后调用异步回调 |
 | `FaissChecker` | `check_runtime()` / `load_vec_db_class()` | 用固定参数 `[sys.executable, "-c", "import faiss"]`、10 秒超时探测，再动态导入 AstrBot `FaissVecDB` |
 | `FaissChecker` | `check_and_fix_dimension_mismatch(path, provider)` | 维度不匹配删除旧索引；不可读索引尽量原子隔离为 `.corrupt_<timestamp>` |
-| `DatabaseSetup` | `auto_rebuild_index_if_needed(...)` | 检查 `IndexValidator`，仅在 `needs_rebuild` 时重建；失败记录但不向上抛出 |
+| `DatabaseSetup` | `auto_rebuild_index_if_needed(...)` | 检查 `IndexValidator`，仅在 `needs_rebuild` 时调用统一协调器；失败记录并返回稳定降级结果 |
+| `DerivedRebuildCoordinator` | `rebuild_all()` | 只读确认 canonical 后，按 FTS5/FAISS、graph、relation/projection 顺序重建；阶段失败不删除 canonical |
 | `DatabaseSetup` | `repair_message_counts(store)` | 调用 `sync_message_counts()` 修复会话计数；失败记录但不阻断启动 |
 | `ComponentFactory` | `build_all(...) -> dict` | 返回数据库、引擎、处理器、备份/会话/索引/衰减、Memory Evolution 及注入决策组件字典 |
 
@@ -62,7 +65,7 @@ flowchart TD
 4. 构造并初始化 `MemoryEngine`；其配置由 `ConfigManager.get()` 逐项投影，覆盖召回、图扩展、重排、成本控制、索引重建、缓存及 Memory Evolution 读取器等，而不是在工厂内再次合并配置。
 5. 初始化 `conversations.db` 与 `ConversationManager`，随后修复 `message_count`。
 6. 构造 `MemoryProcessor`，再以其带重试 LLM 调用构造 `MemoryConsolidator`；`MemoryEvolutionGate` 会把 `enabled=false` 归一为 disabled，Manager 仅在归一后的 mode 非 disabled 时启动单 worker。
-7. 构造 `IndexValidator`，执行一致性检查，并异步加载停用词。
+7. 构造 `IndexValidator`；若索引需要重建，由 `DerivedRebuildCoordinator` 按 canonical → FTS5/FAISS → graph → relation/projection 顺序执行，并异步加载停用词。
 8. 当衰减、自动清理或 `backup_settings.enabled` 启用时启动 `DecayScheduler`；自动备份可以独立于衰减运行。
 9. 在 `memora.db` 上初始化 `InjectionDecisionStore` 和有界异步 `InjectionDecisionRecorder`，应用保留天数与最大行数并安排清理。
 

@@ -18,16 +18,13 @@ from ..models.memory_evolution import (
     JobSpec,
     JobState,
     MemoryEvolutionJob,
-    ProjectionSourceView,
-    ProjectionBundle,
     ProjectionType,
-    ProjectionView,
-    RelationType,
-    RelationView,
     RetrySpec,
     MemorySourceRef,
 )
 from .base_store import BaseStore
+from .memory_evolution_derived import MemoryEvolutionDerivedMixin
+from .memory_evolution_derived_helpers import _metadata_dict
 
 
 def _dt(value: datetime | None) -> str | None:
@@ -40,7 +37,7 @@ def _parse(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
-class MemoryEvolutionStore(BaseStore):
+class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
     """保存 job、relation、projection 和 source mapping 的本地 Store。"""
 
     async def _create_tables(self) -> None:
@@ -49,7 +46,8 @@ class MemoryEvolutionStore(BaseStore):
             CREATE TABLE IF NOT EXISTS memory_evolution_jobs (
               job_id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, bucket_key TEXT NOT NULL,
               state TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0,
-              source_ids_json TEXT NOT NULL DEFAULT '[]', not_before TEXT NOT NULL,
+              source_ids_json TEXT NOT NULL DEFAULT '[]',
+              source_revisions_json TEXT NOT NULL DEFAULT '{}', not_before TEXT NOT NULL,
               lease_until TEXT, worker_token TEXT, idempotency_key TEXT NOT NULL UNIQUE,
               created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_error_code TEXT
             );
@@ -88,6 +86,22 @@ class MemoryEvolutionStore(BaseStore):
               ON memory_projection_sources(memory_id, projection_id);
             """
         )
+        for table in ("memory_relations", "memory_projections"):
+            columns = await self.connection.execute(f"PRAGMA table_info({table})")
+            names = {str(row[1]) for row in await columns.fetchall()}
+            if "origin_job_id" not in names:
+                await self.connection.execute(
+                    f"ALTER TABLE {table} ADD COLUMN origin_job_id TEXT"
+                )
+        job_columns = await self.connection.execute(
+            "PRAGMA table_info(memory_evolution_jobs)"
+        )
+        job_names = {str(row[1]) for row in await job_columns.fetchall()}
+        if "source_revisions_json" not in job_names:
+            await self.connection.execute(
+                "ALTER TABLE memory_evolution_jobs "
+                "ADD COLUMN source_revisions_json TEXT NOT NULL DEFAULT '{}'"
+            )
         await self.connection.commit()
 
     async def enqueue_job(self, spec: JobSpec) -> MemoryEvolutionJob:
@@ -95,11 +109,13 @@ class MemoryEvolutionStore(BaseStore):
         job_id = spec.job_id or uuid.uuid4().hex
         await self._execute(
             """INSERT INTO memory_evolution_jobs
-            (job_id,scope_key,bucket_key,state,attempt_count,source_ids_json,not_before,
-             idempotency_key,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)
+            (job_id,scope_key,bucket_key,state,attempt_count,source_ids_json,
+             source_revisions_json,not_before,idempotency_key,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(idempotency_key) DO NOTHING""",
             (job_id, spec.scope_key, spec.bucket_key, JobState.PENDING.value, 0,
-             _json_ids(spec.source_ids), _dt(spec.not_before), spec.idempotency_key,
+             _json_ids(spec.source_ids), _json_revisions(spec.source_revisions),
+             _dt(spec.not_before), spec.idempotency_key,
              _dt(now), _dt(now)),
         )
         await self._commit()
@@ -165,6 +181,24 @@ class MemoryEvolutionStore(BaseStore):
             sources_by_id[source.memory_id] = source
         return [sources_by_id[memory_id] for memory_id in ids if memory_id in sources_by_id]
 
+    async def load_all_sources(
+        self,
+        *,
+        max_content_chars: int = 4_000,
+    ) -> list[MemorySourceRef]:
+        """按 canonical 整数 ID 顺序读取全部可用 source 快照。"""
+
+        table_exists = await self._fetch_scalar(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents'"
+        )
+        if not table_exists:
+            return []
+        ids = await self._fetch_all("SELECT id FROM documents ORDER BY id ASC")
+        return await self.load_sources(
+            (int(row["id"]) for row in ids),
+            max_content_chars=max_content_chars,
+        )
+
     async def claim_job(self, now: datetime, lease_seconds: int, worker_token: str | None = None) -> JobClaim | None:
         token = worker_token or uuid.uuid4().hex
         lease = now.timestamp() + lease_seconds
@@ -186,7 +220,16 @@ class MemoryEvolutionStore(BaseStore):
                 (JobState.PROCESSING.value, _dt(lease_dt), token, _dt(now), row["job_id"]),
             )
             await self.connection.commit()
-            return JobClaim(row["job_id"], token, row["scope_key"], row["bucket_key"], tuple(_loads_ids(row["source_ids_json"])), int(row["attempt_count"] or 0) + 1, lease_dt)
+            return JobClaim(
+                row["job_id"],
+                token,
+                row["scope_key"],
+                row["bucket_key"],
+                tuple(_loads_ids(row["source_ids_json"])),
+                int(row["attempt_count"] or 0) + 1,
+                lease_dt,
+                _loads_revisions(row["source_revisions_json"]),
+            )
         except BaseException:
             await self.connection.rollback()
             raise
@@ -201,6 +244,15 @@ class MemoryEvolutionStore(BaseStore):
 
     async def reject_job(self, job_id: str, worker_token: str, reason_code: str = "rejected") -> bool:
         return await self._set_job_state(job_id, worker_token, JobState.REJECTED, reason_code)
+
+    async def invalidate_job(
+        self, job_id: str, worker_token: str, reason_code: str = "stale_source"
+    ) -> bool:
+        """将 source revision 已过期的 processing job 标记为 invalidated。"""
+
+        return await self._set_job_state(
+            job_id, worker_token, JobState.INVALIDATED, reason_code
+        )
 
     async def dead_job(self, job_id: str, worker_token: str, reason_code: str) -> bool:
         """将超过重试上限的任务标记为 dead。"""
@@ -233,6 +285,7 @@ class MemoryEvolutionStore(BaseStore):
         now = _dt(datetime.now(timezone.utc))
         await self.connection.execute("BEGIN IMMEDIATE")
         try:
+            await self._validate_plan_sources(plan)
             for rel in plan.relations:
                 source_revision = rel.source_revision or plan.source_revisions.get(
                     rel.source_memory_id, ""
@@ -253,8 +306,8 @@ class MemoryEvolutionStore(BaseStore):
                 )
                 await self.connection.execute(
                     """INSERT INTO memory_relations
-                    (relation_id,relation_key,source_memory_id,target_memory_id,source_revision,target_revision,relation_type,state,confidence,scope_key,privacy_level,valid_from,valid_to,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    (relation_id,relation_key,source_memory_id,target_memory_id,source_revision,target_revision,relation_type,state,confidence,scope_key,privacy_level,valid_from,valid_to,origin_job_id,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(relation_key) DO UPDATE SET
                       state=excluded.state,
                       confidence=excluded.confidence,
@@ -262,6 +315,7 @@ class MemoryEvolutionStore(BaseStore):
                       privacy_level=excluded.privacy_level,
                       valid_from=excluded.valid_from,
                       valid_to=excluded.valid_to,
+                      origin_job_id=excluded.origin_job_id,
                       updated_at=excluded.updated_at""",
                     (
                         rel.relation_id,
@@ -277,6 +331,7 @@ class MemoryEvolutionStore(BaseStore):
                         rel.privacy_level,
                         _dt(rel.valid_from),
                         _dt(rel.valid_to),
+                        plan.origin_job_id,
                         now,
                         now,
                     ),
@@ -312,8 +367,8 @@ class MemoryEvolutionStore(BaseStore):
                 pkey = f"{proj.projection_type.value}:{proj.scope_key}:{source_key}"
                 await self.connection.execute(
                     """INSERT INTO memory_projections
-                    (projection_id,projection_key,projection_type,revision,state,summary,primary_source_memory_id,scope_key,privacy_level,confidence,valid_from,valid_to,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    (projection_id,projection_key,projection_type,revision,state,summary,primary_source_memory_id,scope_key,privacy_level,confidence,valid_from,valid_to,origin_job_id,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(projection_key) DO UPDATE SET
                       revision=memory_projections.revision+1,
                       state=excluded.state,
@@ -324,8 +379,9 @@ class MemoryEvolutionStore(BaseStore):
                       confidence=excluded.confidence,
                       valid_from=excluded.valid_from,
                       valid_to=excluded.valid_to,
+                      origin_job_id=excluded.origin_job_id,
                       updated_at=excluded.updated_at""",
-                    (proj.projection_id, pkey, proj.projection_type.value, 1, proj.state.value, proj.summary, primary_source, proj.scope_key, proj.privacy_level, proj.confidence, _dt(proj.valid_from), _dt(proj.valid_to), now, now),
+                    (proj.projection_id, pkey, proj.projection_type.value, 1, proj.state.value, proj.summary, primary_source, proj.scope_key, proj.privacy_level, proj.confidence, _dt(proj.valid_from), _dt(proj.valid_to), plan.origin_job_id, now, now),
                 )
                 cursor = await self.connection.execute(
                     "SELECT projection_id FROM memory_projections WHERE projection_key=?",
@@ -360,183 +416,75 @@ class MemoryEvolutionStore(BaseStore):
             await self.connection.rollback()
             raise
 
-    async def active_relations_for_seeds(self, seed_ids: Iterable[int], scope_key: str | None = None, limit: int = 100) -> list[RelationView]:
-        ids = tuple(seed_ids)
-        if not ids:
-            return []
-        placeholders = ",".join("?" for _ in ids)
-        params: list = [*ids, *ids]
-        clause = (
-            f"(source_memory_id IN ({placeholders}) "
-            f"OR target_memory_id IN ({placeholders})) AND state=?"
-        )
-        params.append(DerivedState.ACTIVE.value)
-        if scope_key:
-            clause += " AND scope_key=?"; params.append(scope_key)
-        rows = await self._fetch_all(f"SELECT * FROM memory_relations WHERE {clause} ORDER BY confidence DESC LIMIT ?", (*params, limit))
-        return [_relation(r) for r in rows]
-
-    async def active_projections_for_seeds(self, seed_ids: Iterable[int], scope_key: str | None = None, limit: int = 100) -> list[ProjectionView]:
-        bundles = await self.active_projection_bundles_for_seeds(
-            seed_ids,
-            scope_key=scope_key,
-            limit=limit,
-        )
-        return [bundle.projection for bundle in bundles]
-
-    async def active_projection_bundles_for_seeds(
-        self,
-        seed_ids: Iterable[int],
-        *,
-        scope_key: str | None = None,
-        limit: int = 100,
-    ) -> list[ProjectionBundle]:
-        """读取命中 seed 的 active projection 及其 source mapping。"""
-
-        ids = tuple(
-            dict.fromkeys(
-                seed_id
-                for seed_id in seed_ids
-                if isinstance(seed_id, int)
-                and not isinstance(seed_id, bool)
-                and seed_id >= 0
-            )
-        )
-        if not ids or limit <= 0:
-            return []
-        placeholders = ",".join("?" for _ in ids)
-        params: list[object] = [*ids, DerivedState.ACTIVE.value]
-        clause = f"source.memory_id IN ({placeholders}) AND projection.state=?"
-        if scope_key is not None:
-            clause += " AND projection.scope_key=?"
-            params.append(scope_key)
-        rows = await self._fetch_all(
-            "SELECT DISTINCT projection.* FROM memory_projections AS projection "
-            "JOIN memory_projection_sources AS source "
-            "ON source.projection_id=projection.projection_id "
-            f"WHERE {clause} "
-            "ORDER BY projection.confidence DESC, projection.projection_id ASC LIMIT ?",
-            (*params, limit),
-        )
-        if not rows:
-            return []
-
-        projection_ids = tuple(str(row["projection_id"]) for row in rows)
-        projection_placeholders = ",".join("?" for _ in projection_ids)
-        source_rows = await self._fetch_all(
-            "SELECT projection_id,memory_id,revision_token,source_role,ordinal "
-            "FROM memory_projection_sources "
-            f"WHERE projection_id IN ({projection_placeholders}) "
-            "ORDER BY projection_id ASC, ordinal ASC, memory_id ASC",
-            projection_ids,
-        )
-        sources_by_projection: dict[str, list[ProjectionSourceView]] = {
-            projection_id: [] for projection_id in projection_ids
-        }
-        invalid_projection_ids: set[str] = set()
-        for source_row in source_rows:
-            projection_id = str(source_row["projection_id"])
-            try:
-                source = ProjectionSourceView(
-                    projection_id,
-                    int(source_row["memory_id"]),
-                    str(source_row["revision_token"]),
-                    str(source_row["source_role"]),
-                    int(source_row["ordinal"]),
-                )
-            except (TypeError, ValueError, OverflowError):
-                invalid_projection_ids.add(projection_id)
-                continue
-            sources_by_projection[source.projection_id].append(source)
-
-        bundles: list[ProjectionBundle] = []
-        for row in rows:
-            projection_id = str(row["projection_id"])
-            if projection_id in invalid_projection_ids:
-                continue
-            sources = tuple(sources_by_projection.get(projection_id, ()))
-            if not sources:
-                continue
-            projection = _projection(
-                row,
-                tuple(source.memory_id for source in sources),
-            )
-            bundles.append(ProjectionBundle(projection, sources))
-        return bundles
-
-    async def invalidate_for_source_revision(self, memory_id: int, revision_token: str) -> int:
-        if not self.connection:
-            raise RuntimeError("MemoryEvolutionStore 未初始化 -- 先调用 initialize()")
-        now = _dt(datetime.now(timezone.utc))
-        await self.connection.execute("BEGIN IMMEDIATE")
-        try:
-            relation_cursor = await self.connection.execute(
-                "UPDATE memory_relations SET state=?,updated_at=? "
-                "WHERE state!=? AND ((source_memory_id=? AND source_revision!=?) "
-                "OR (target_memory_id=? AND target_revision!=?))",
-                (
-                    DerivedState.INVALIDATED.value,
-                    now,
-                    DerivedState.INVALIDATED.value,
-                    memory_id,
-                    revision_token,
-                    memory_id,
-                    revision_token,
-                ),
-            )
-            projection_cursor = await self.connection.execute(
-                "UPDATE memory_projections SET state=?,updated_at=? "
-                "WHERE state!=? AND projection_id IN ("
-                "SELECT projection_id FROM memory_projection_sources "
-                "WHERE memory_id=? AND revision_token!=?"
-                ")",
-                (
-                    DerivedState.INVALIDATED.value,
-                    now,
-                    DerivedState.INVALIDATED.value,
-                    memory_id,
-                    revision_token,
-                ),
-            )
-            await self.connection.commit()
-            return relation_cursor.rowcount + projection_cursor.rowcount
-        except BaseException:
-            await self.connection.rollback()
-            raise
-
 
 def _json_ids(ids: Iterable[int]) -> str:
+    """把 canonical ID 序列编码成稳定 JSON。"""
+
     return json.dumps([int(x) for x in ids], separators=(",", ":"))
 
 
+def _json_revisions(revisions: dict[int, str]) -> str:
+    """把 job 创建时的 source revision 映射编码成稳定 JSON。"""
+
+    return json.dumps(
+        {str(memory_id): revision for memory_id, revision in revisions.items()},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 def _loads_ids(value: str) -> list[int]:
-    try: return [int(x) for x in json.loads(value or "[]")]
-    except (TypeError, ValueError, json.JSONDecodeError): return []
+    """安全解析 canonical ID JSON，损坏数据降级为空列表。"""
 
-
-def _metadata_dict(value) -> dict:
-    if isinstance(value, dict):
-        return value
-    if not isinstance(value, str) or not value:
-        return {}
     try:
-        parsed = json.loads(value)
+        parsed = json.loads(value or "[]")
+        if not isinstance(parsed, list):
+            return []
+        return [int(item) for item in parsed]
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def _loads_revisions(value: str) -> dict[int, str]:
+    """安全解析 job source revision 映射，忽略非法条目。"""
+
+    try:
+        parsed = json.loads(value or "{}")
     except (TypeError, json.JSONDecodeError):
         return {}
-    return parsed if isinstance(parsed, dict) else {}
+    if not isinstance(parsed, dict):
+        return {}
+    revisions: dict[int, str] = {}
+    for raw_memory_id, raw_revision in parsed.items():
+        try:
+            memory_id = int(raw_memory_id)
+        except (TypeError, ValueError):
+            continue
+        revision = str(raw_revision).strip()
+        if memory_id >= 0 and revision:
+            revisions[memory_id] = revision
+    return revisions
 
 
 def _job(row) -> MemoryEvolutionJob | None:
-    if not row: return None
-    return MemoryEvolutionJob(row["job_id"], row["scope_key"], row["bucket_key"], JobState(row["state"]), int(row["attempt_count"]), _parse(row["not_before"]), _parse(row["lease_until"]), row["idempotency_key"], _parse(row["created_at"]), _parse(row["updated_at"]))
+    """把 SQLite job 行映射成领域对象。"""
 
-
-def _relation(row) -> RelationView:
-    return RelationView(row["relation_id"], int(row["source_memory_id"]), int(row["target_memory_id"]), RelationType(row["relation_type"]), float(row["confidence"]), row["scope_key"], row["privacy_level"], DerivedState(row["state"]), row["source_revision"], row["target_revision"], _parse(row["valid_from"]), _parse(row["valid_to"]))
-
-
-def _projection(row, source_ids: tuple[int, ...]) -> ProjectionView:
-    return ProjectionView(row["projection_id"], ProjectionType(row["projection_type"]), row["summary"], source_ids, row["scope_key"], row["privacy_level"], float(row["confidence"]), DerivedState(row["state"]), _parse(row["valid_from"]), _parse(row["valid_to"]))
+    if not row:
+        return None
+    return MemoryEvolutionJob(
+        job_id=row["job_id"],
+        scope_key=row["scope_key"],
+        bucket_key=row["bucket_key"],
+        state=JobState(row["state"]),
+        attempt_count=int(row["attempt_count"]),
+        not_before=_parse(row["not_before"]),
+        lease_until=_parse(row["lease_until"]),
+        idempotency_key=row["idempotency_key"],
+        created_at=_parse(row["created_at"]),
+        updated_at=_parse(row["updated_at"]),
+        source_revisions=_loads_revisions(row["source_revisions_json"]),
+    )
 
 
 __all__ = ["MemoryEvolutionStore"]

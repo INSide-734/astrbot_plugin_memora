@@ -2,7 +2,7 @@
 
 # `core/models` 模块上下文
 
-**最后更新：** 2026-07-19
+**最后更新：** 2026-07-20
 **模块入口：** `core/models/__init__.py`；各领域模型通常从其子模块直接导入
 
 ## 职责与边界
@@ -86,7 +86,7 @@ erDiagram
 - `MemorySourceRef` / `EvolutionSignal` 是 canonical memory 的带 revision 证据视图；`memory_id` 必须是非负整数，`scope_key` 与 `revision_token` 必须非空，privacy 只能是 `public/shared/confidential`，证据正文受本地长度上限约束。它们不会创建新的 canonical ID。
 - `MemoryRelationProposal`、`MemoryProjectionProposal` 与 `EvolutionProposal` 表达 LLM 的结构化提案；alias 在 manager 边界解析，提案本身不能直接写入 canonical memory 或派生表。
 - `RelationType`、`ProjectionType`、`JobState` 和 `DerivedState` 是稳定持久化枚举。关系类型包括 supports/updates/contradicts/same_episode/preference_change/causes/supersedes/related；projection 类型固定为 episode_summary/preference_state/relationship_state/conflict_set。
-- `JobSpec`、`MemoryEvolutionJob`、`JobClaim`、`RetrySpec` 描述去重键、租约、尝试次数和重试时间；模型只做结构约束，lease 所有权和状态迁移由 Store 保证。
+- `JobSpec`、`MemoryEvolutionJob`、`JobClaim`、`RetrySpec` 描述去重键、创建时 source revision、租约、尝试次数和重试时间；`source_revisions` 只能引用同一 job 的 `source_ids`。模型只做结构约束，lease 所有权和状态迁移由 Store 保证。
 - `RelationView` 与 `ProjectionView` 是派生解释平面的读写契约。它们必须保留 scope/privacy、有效期、confidence 与状态；`ProjectionView.source_memory_ids` 只是来源回指，不能作为第二套记忆身份。
 - `ProjectionSourceView` 固定允许 `primary/supporting/conflict_left/conflict_right` 四种 role，并携带每个 canonical source 的 revision token 与 ordinal。`ProjectionBundle` 将一个 projection 和非空、同 projection ID 的 source mapping 组合起来，供读取侧批量校验。
 - `DerivedApplyPlan` 聚合 relation、projection、source mapping 与 `source_revisions`，用于一次原子应用；任一来源 revision 变化时应由管理/存储层拒绝或失效派生结果。

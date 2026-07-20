@@ -34,6 +34,7 @@ class JobState(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     REJECTED = "rejected"
+    INVALIDATED = "invalidated"
     RETRY_WAIT = "retry_wait"
     DEAD = "dead"
 
@@ -237,6 +238,7 @@ class JobSpec:
     idempotency_key: str
     not_before: datetime
     job_id: str | None = None
+    source_revisions: dict[int, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _require_text(self.scope_key, "scope_key")
@@ -245,11 +247,30 @@ class JobSpec:
         source_ids = tuple(self.source_ids)
         if not source_ids:
             raise ValueError("source_ids must not be empty")
-        if any(not isinstance(source_id, int) or source_id < 0 for source_id in source_ids):
+        if any(
+            not isinstance(source_id, int)
+            or isinstance(source_id, bool)
+            or source_id < 0
+            for source_id in source_ids
+        ):
             raise ValueError("source_ids must contain non-negative integers")
         if len(set(source_ids)) != len(source_ids):
             raise ValueError("source_ids must be unique")
         object.__setattr__(self, "source_ids", source_ids)
+        revisions: dict[int, str] = {}
+        for memory_id, revision in dict(self.source_revisions).items():
+            if (
+                not isinstance(memory_id, int)
+                or isinstance(memory_id, bool)
+                or memory_id < 0
+            ):
+                raise ValueError("source_revisions keys must be non-negative integers")
+            revisions[memory_id] = str(revision).strip()
+        if any(memory_id not in source_ids for memory_id in revisions):
+            raise ValueError("source_revisions must reference source_ids")
+        if any(not revision for revision in revisions.values()):
+            raise ValueError("source_revisions values must be non-empty")
+        object.__setattr__(self, "source_revisions", revisions)
 
 
 @dataclass(frozen=True)
@@ -264,6 +285,7 @@ class MemoryEvolutionJob:
     idempotency_key: str
     created_at: datetime
     updated_at: datetime
+    source_revisions: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -275,6 +297,7 @@ class JobClaim:
     source_ids: tuple[int, ...] = ()
     attempt_count: int = 0
     lease_until: datetime | None = None
+    source_revisions: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -359,6 +382,7 @@ class DerivedApplyPlan:
     projection_sources: tuple["ProjectionSourceView", ...] = ()
     source_revisions: dict[int, str] = field(default_factory=dict)
     reason_code: str = "accepted"
+    origin_job_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "relations", tuple(self.relations))

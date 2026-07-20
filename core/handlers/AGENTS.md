@@ -63,7 +63,7 @@ flowchart TD
 - assistant 消息成功写入会话后计算 `unsummarized_rounds = (total_messages - last_summarized_index) // 2`；阈值来自 `reflection_engine.summary_trigger_rounds`。
 - `try_begin_summary_window()` / `finish_summary_window()` 是反思与手动提交共享的会话级并发门；同一 session 同时只允许一个总结任务。
 - `_storage_task()` 先由 `TopicBatchPreparer` 生成批次，再调用 `MemoryProcessor.process_conversation()`；多批次并行抽取，写入由 3 槽 semaphore 限流。
-- 每条 `MemoryEngine.add_memory()` 成功返回 canonical 整数 ID 后，`_schedule_evolution_after_write()` 才从 Store 重新加载 source 并调用 `MemoryEvolutionManager.schedule_consider()`；缺少 manager/source 或调度普通失败只记录并隔离，不能把已经成功的 canonical 写入回滚或标记失败。
+- 每条 `MemoryEngine.add_memory()` 成功返回 canonical 整数 ID 后，由 `MemoryEngine` 从同一 SQLite Store 重新加载 source 并调用 `MemoryEvolutionManager.schedule_consider()`；缺少 manager/source 或调度普通失败只记录并隔离，不能把已经成功的 canonical 写入回滚或标记失败。`ReflectionHandler._schedule_evolution_after_write()` 仍覆盖反思链的兼容调度路径；稳定 idempotency key 使中央调度与该路径重复触发时不会产生重复可见 job。
 - `shutdown()` 停止新窗口并等待已登记存储任务，不主动取消正在落库的反思任务。
 
 ### `TopicBatchPreparer`

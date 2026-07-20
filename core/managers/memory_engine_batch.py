@@ -62,6 +62,8 @@ class MemoryEngineBatchMixin:
                 await self.db_connection.commit()
                 batch_deleted = int(cursor.rowcount or 0)
                 await self._delete_graph_and_atoms_for_batch(batch)
+                for deleted_id in batch_existing_ids[:batch_deleted]:
+                    await self._invalidate_evolution_after_delete(deleted_id)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -129,6 +131,8 @@ class MemoryEngineBatchMixin:
             f"DELETE FROM documents WHERE id IN ({ph})", memory_ids
         )
         await self.db_connection.commit()
+        for memory_id in memory_ids:
+            await self._invalidate_evolution_after_delete(memory_id)
         return int(cursor.rowcount or 0)
 
     async def _delete_graph_and_atoms_for_batch(self, memory_ids: list[int]) -> None:
