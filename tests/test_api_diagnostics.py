@@ -121,13 +121,14 @@ async def test_diagnostics_events_missing_data_dir_fails_without_relative_db(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """缺少隔离数据目录时应返回稳定错误码且不创建相对数据库。"""
     monkeypatch.chdir(tmp_path)
     api = PluginPageApi(_plugin(include_data_dir=False))
 
     result = await api.get_diagnostics_events_payload({})
 
     assert result["status"] == "error"
-    assert "data_dir" in result["message"]
+    assert result["message"] == "diagnostics_events_failed"
     assert not (tmp_path / "data" / "diagnostics_events.db").exists()
     assert not hasattr(api, "_diagnostic_event_store")
 
@@ -177,13 +178,14 @@ async def test_restart_backfill_action_delegates_response_unchanged(
 async def test_diagnostics_action_delegate_exception_returns_error(
     diagnostics_data_dir,
 ) -> None:
+    """诊断动作异常应隐藏原始消息并返回稳定错误码。"""
     api = _api(diagnostics_data_dir)
     api.start_backfill = AsyncMock(side_effect=RuntimeError("backfill failed"))
 
     result = await api.run_diagnostics_action_payload({"action": "restart_backfill"})
 
     assert result["status"] == "error"
-    assert "backfill failed" in result["message"]
+    assert result["message"] == "diagnostics_action_failed"
 
 
 @pytest.mark.asyncio

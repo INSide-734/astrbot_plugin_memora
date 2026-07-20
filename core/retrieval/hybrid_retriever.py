@@ -89,14 +89,18 @@ class HybridRetriever:
     async def _search_route(
             route_name: str, search_coro
     ) -> tuple[list, Exception | None]:
-        """Run one retrieval route and convert ordinary failures into route errors."""
+        """执行单条检索路由，并把普通失败转换为可降级的路由错误。"""
         try:
             return await search_coro, None
         except asyncio.CancelledError:
             raise
-        except Exception as e:
-            logger.error(f"{route_name}检索异常: {e}", exc_info=True)
-            return [], e
+        except Exception as exc:
+            logger.error(
+                "[混合检索] 路由失败，路由=%s，异常类型=%s",
+                route_name,
+                exc.__class__.__name__,
+            )
+            return [], exc
 
     async def add_memory(
         self, content: str, metadata: dict[str, Any] | None = None

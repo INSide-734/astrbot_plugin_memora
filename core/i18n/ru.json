@@ -150,7 +150,7 @@
       "route": "• Предпросмотр маршрута: режим={mode}, профиль={preset}, причины={reasons}",
       "filtered": "Отфильтровано кандидатов: {count}",
       "results_header": "Результаты:",
-      "result_item": "• #{rank} ID памяти={doc_id}, начальная={initial}, итоговая={final}",
+      "result_item": "• #{rank} начальная={initial}, итоговая={final}",
       "results_none": "Результаты: Нет",
       "stages": {
         "search_memories": "Поиск памяти",

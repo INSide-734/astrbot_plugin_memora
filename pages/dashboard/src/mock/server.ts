@@ -14,6 +14,7 @@ import type {
 
 import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_DATASETS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS, INJECTION_DECISIONS, INJECTION_MOCK_NOW_MS } from "./data";
 import { createMockConfigServer } from "./configServer";
+import { createSafeRecallTraceResponse } from "./recallTrace";
 import type { MockProfile, MockProfilePreferences, MockProfileTag, MockProfileTagCategory } from "./data";
 
 type ApiResponse = { status: string; data?: unknown; message?: string; code?: string; field_errors?: Record<string, string> };
@@ -1032,36 +1033,6 @@ function handleRecallTest(body: Record<string, unknown>): ApiResponse {
   return ok({ results, memories: results });
 }
 
-function clampInt(value: unknown, min: number, max: number, fallback: number): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(n)));
-}
-
-function handleRecallTrace(body: Record<string, unknown>): ApiResponse {
-  const k = clampInt(body.k, 1, 20, 5);
-  const chainDepth = clampInt(body.chain_depth, 0, 5, 2);
-  return ok({
-    ...RECALL_TRACE_SAMPLE,
-    trace_id: `trace-mock-${Date.now()}`,
-    query: String(body.query ?? RECALL_TRACE_SAMPLE.query),
-    results: RECALL_TRACE_SAMPLE.results.slice(0, k),
-    created_at: Date.now() / 1000,
-    metadata: {
-      ...RECALL_TRACE_SAMPLE.metadata,
-      session_id: String(body.session_id ?? ""),
-      user_id: String(body.user_id ?? ""),
-      chat_type: String(body.chat_type ?? "private"),
-      chain_depth: chainDepth,
-      requested_k: k,
-    },
-  });
-}
-
-function handleRecallTraceDetail(): ApiResponse {
-  return ok(RECALL_TRACE_SAMPLE);
-}
-
 function handleEvaluationDatasets(): ApiResponse {
   return ok({ datasets: EVALUATION_DATASETS });
 }
@@ -1678,7 +1649,7 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   if (p === "backup/list" || p.startsWith("backup/list")) return handleBackupList();
   if (p === "backup/status" || p.startsWith("backup/status?")) return handleBackupStatus(params);
   if (p === "learning/status" || p.startsWith("learning/status")) return handleLearningStatus();
-  if (p === "recall/trace/detail" || p.startsWith("recall/trace/detail")) return handleRecallTraceDetail();
+  if (p === "recall/trace/detail" || p.startsWith("recall/trace/detail")) return ok(RECALL_TRACE_SAMPLE);
   if (p === "evaluation/datasets" || p.startsWith("evaluation/datasets")) return handleEvaluationDatasets();
   if (p === "evaluation/reports/detail" || p.startsWith("evaluation/reports/detail")) return handleEvaluationReportDetail(params);
   if (p === "evaluation/reports" || p.startsWith("evaluation/reports?")) return handleEvaluationReports(params);
@@ -1760,7 +1731,7 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   const data = body as Record<string, unknown>;
 
   if (p === "recall/test") return handleRecallTest(data);
-  if (p === "recall/trace") return handleRecallTrace(data);
+  if (p === "recall/trace") return ok(createSafeRecallTraceResponse(RECALL_TRACE_SAMPLE, data));
   if (p === "memory/update") return handleMemoryUpdate(data);
   if (p === "social/create") return handleSocialCreate(data);
   if (p === "social/update") return handleSocialUpdate(data);

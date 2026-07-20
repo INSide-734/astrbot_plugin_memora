@@ -75,7 +75,8 @@ flowchart TD
 - SQL 读取使用参数绑定；外部 ID、分页、枚举、字段必须先规范化。返回异常时不要泄露 SQL、绝对路径、正文或凭据。
 - 注入策略目录与决策 API 是只读的：目录来自不可变 registry，不查询 SQLite；列表/详情只返回 allowlist 脱敏字段，绝不返回 query、记忆内容或会话身份。`InjectionStrategyApiMixin` 的决策列表只接受 `offset>=0`、`1<=limit<=100`、固定筛选枚举与 allowlist `sort_by`，`sort_order` 只能是小写 `asc/desc`。
 - `InjectionDecisionStore.list_decisions()` 返回稳定的 `{items,total,offset,limit}` 页面；`total` 是筛选后的未分页总数，排序列来自固定 SQL allowlist，并以 `decision_id ASC` 作为确定性并列键。列表/详情均不得把 `reason_codes_json` 原文、内部 query/prompt、正文、ID 列表、身份或堆栈带出响应。
-- 召回 trace 只预览路由/检索，不执行 `InjectionExecutor`、不写决策记录。
+- 召回 trace 只预览路由/检索，不执行 `InjectionExecutor`、不写决策记录；创建和详情端点只返回 `sanitize_trace_payload()` 的安全 DTO，不得返回 query、正文/preview、canonical ID、候选 ID、request metadata、source/revision/scope/privacy/role/job 信息。
+- Diagnostics 事件列表/详情只能返回 Store 标量 allowlist；历史行也必须在读取时重新脱敏。Diagnostics 与 Recall Trace 普通失败只返回稳定错误码，日志只记录异常类型，不得回显 action 输入、`str(exc)`、异常 `repr` 或 traceback。
 - 动态记忆传输不提供 `system_prompt`，API catalog 的 deliveries 也不得出现该值；详见 [注入模块 AGENTS.md](../injection/AGENTS.md)。
 - SSE 每客户端队列上限 256；满队列客户端被移除，30 秒心跳，断开时注销。
 
@@ -89,7 +90,7 @@ flowchart TD
 python -m pytest tests/test_page_api.py tests/test_page_api_contract.py -q
 python -m pytest tests/test_api_backup.py tests/test_maintenance_api.py -q
 python -m pytest tests/test_api_config.py tests/test_api_response_utils.py -q
-python -m pytest tests/test_api_injection_strategy.py tests/test_api_recall_trace.py -q
+python -m pytest tests/test_api_injection_strategy.py tests/test_api_recall_trace.py tests/test_api_diagnostics.py tests/test_p0_observability_privacy.py -q
 python -m pytest tests/test_api_memory.py tests/test_api_profile.py tests/test_api_knowledge.py tests/test_api_note.py -q
 python -m pytest tests/test_api_affection.py tests/test_api_social.py tests/test_api_jargon.py tests/test_api_review.py -q
 ```

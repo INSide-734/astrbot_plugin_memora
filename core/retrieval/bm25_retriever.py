@@ -330,8 +330,11 @@ class BM25Retriever:
                 await db.commit()
                 return True
 
-        except Exception as e:
-            logger.error(f"BM25删除失败 (doc_id={doc_id}): {e}")
+        except Exception as exc:
+            logger.error(
+                "[BM25 删除] 失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
             return False
 
     async def update_document(
@@ -371,9 +374,12 @@ class BM25Retriever:
                 )
 
                 await db.commit()
-                logger.debug(f"[BM25] 成功更新文档索引 doc_id={doc_id}")
+                logger.debug("[BM25] 成功更新文档索引")
                 return True
 
-        except Exception as e:
-            logger.error(f"[BM25] 更新文档失败 (doc_id={doc_id}): {e}")
+        except Exception as exc:
+            logger.error(
+                "[BM25] 更新文档失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
             return False

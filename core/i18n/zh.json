@@ -182,7 +182,7 @@
       "route": "• 路由预览: 模式={mode}，预设={preset}，原因={reasons}",
       "filtered": "过滤候选: {count}",
       "results_header": "结果:",
-      "result_item": "• #{rank} 记忆 ID={doc_id}，初始分={initial}，最终分={final}",
+      "result_item": "• #{rank} 初始分={initial}，最终分={final}",
       "results_none": "结果: 无",
       "stages": {
         "search_memories": "记忆检索",

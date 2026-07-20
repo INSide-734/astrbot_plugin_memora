@@ -6,25 +6,17 @@ interface TraceContributionListProps {
   contributions: RecallTraceScoreContribution[];
 }
 
+/** 按当前语言格式化贡献分数。 */
 function formatScore(value: number, locale: string): string {
   return formatDashboardNumber(value, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 }
 
+/** 按当前语言格式化贡献权重。 */
 function formatPercent(value: number, locale: string): string {
   return formatDashboardPercent(value, locale, { maximumFractionDigits: 0 });
 }
 
-function metadataChips(metadata?: Record<string, unknown>) {
-  return Object.entries(metadata ?? {}).slice(0, 4).map(([key, value]) => (
-    <span
-      key={key}
-      className="rounded bg-[var(--color-border-light)] px-1.5 py-0.5 text-2xs text-[var(--text-tertiary)]"
-    >
-      {key}: {String(value)}
-    </span>
-  ));
-}
-
+/** 展示只含来源、分数和权重的安全贡献列表。 */
 export function TraceContributionList({ contributions }: TraceContributionListProps) {
   const { t, currentLang } = useI18n();
   const locale = dashboardLocale(currentLang());
@@ -48,12 +40,6 @@ export function TraceContributionList({ contributions }: TraceContributionListPr
               {t("intelligence.trace.contributionScore", formatScore(item.score, locale), formatPercent(item.weight, locale))}
             </span>
           </div>
-          {item.explanation ? (
-            <p className="mt-1 text-xs text-[var(--text-secondary)]">{item.explanation}</p>
-          ) : null}
-          {item.metadata ? (
-            <div className="mt-2 flex flex-wrap gap-1">{metadataChips(item.metadata)}</div>
-          ) : null}
         </div>
       ))}
     </div>

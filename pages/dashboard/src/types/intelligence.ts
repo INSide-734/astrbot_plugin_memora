@@ -38,38 +38,24 @@ export interface RecallTraceScoreContribution {
   source: string;
   score: number;
   weight: number;
-  explanation?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface RecallTraceGraphPath {
-  nodes: string[];
-  edges: string[];
-  score?: number;
-  metadata: Record<string, unknown>;
 }
 
 export interface RecallTraceResult {
-  doc_id: string;
   rank: number;
   initial_score: number;
   final_score: number;
   score_contributions: RecallTraceScoreContribution[];
-  graph_paths: RecallTraceGraphPath[];
   metadata: Record<string, unknown>;
 }
 
 export interface RecallTraceFilteredCandidate {
-  doc_id: string;
   reason: string;
   stage?: string;
   score?: number;
-  metadata: Record<string, unknown>;
 }
 
 export interface RecallTraceResponse {
   trace_id: string;
-  query: string;
   total_ms: number;
   stages: RecallTraceStage[];
   results: RecallTraceResult[];

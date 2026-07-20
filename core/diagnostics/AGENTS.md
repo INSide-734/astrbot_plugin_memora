@@ -2,7 +2,7 @@
 
 # 运行时诊断与健康评分模块
 
-**Last Updated:** 2026-07-17
+**最后更新：** 2026-07-20
 
 ## 职责与边界
 
@@ -42,10 +42,11 @@ flowchart LR
 ### `DiagnosticEventStore`
 
 - `initialize()` 创建父目录、`diagnostic_events` 表和按新到旧查询的索引。
-- `add_event(event)` 生成 UUID 与 UTC ISO 时间，规范化 domain、severity、title、message、source、payload 和 resolved 时间。
+- `add_event(event)` 生成或校验诊断关联码与 UTC ISO 时间，并把 domain、severity、source 和 payload 收窄到固定允许列表；`title`、`message` 统一为安全 `reason_code`，不保留调用方自由文本。
 - `list_events(limit, domain, severity, include_resolved)` 参数化筛选并稳定排序；非法 limit 回退 50。
 - `get_event(event_id)` / `resolve_event(event_id)` 查询与幂等标记解决时间。
-- payload 经 JSON-safe round trip；不可序列化值退化为空对象。
+- payload 只允许固定文本枚举、安全异常类型、非负有界数值和布尔字段；dict、list、任意嵌套 JSON 与未知字段都会被丢弃。
+- 新增写入、列表、详情和 resolve 返回均经过同一 sanitizer；历史 SQLite 行也在读取时重新脱敏，不能因为旧 payload 已落库而原样返回。
 
 ## 依赖方向
 
@@ -56,7 +57,9 @@ flowchart LR
 
 ## 隐私、安全与修改约束
 
-- `payload` 是任意 JSON，JSON-safe 不等于脱敏。调用者不得写入 token、Provider 凭据、完整 Prompt、用户消息或数据库连接串；API 返回前也应限制敏感字段。
+- `event_id` 只是有界诊断关联码，不得复用用户、群组、会话、消息、记忆、source、revision 或 job ID；非法历史值读取为稳定占位符。
+- payload allowlist 是存储与 API 的共同隐私边界。禁止加入 query、Prompt、正文、原始身份、ID/ID 列表、Provider 请求信息、秘密、异常消息、堆栈或绝对路径；新增字段必须先定义低基数类型并补充 canary 测试。
+- API 失败只返回稳定错误码，日志只允许固定阶段与异常类型，不得拼接 `str(exc)`、异常 `repr` 或 traceback。
 - 事件的 `domain`、`severity`、`source` 是不可信输入，必须继续使用参数化查询，不要拼接 SQL。
 - 健康分是启发式运维摘要，不应直接触发破坏性恢复动作；恢复端点必须在 API 层使用白名单，并保留鉴权/审计边界。
 - 不要把缺失指标当作故障扣分；当前实现只对明确满足的条件扣分。
@@ -65,11 +68,12 @@ flowchart LR
 
 ## 测试定位与验证
 
-- `tests/test_diagnostics_health_scorer.py`：Provider 状态、延迟、写失败增量、任务/索引、等级映射、事件新增/筛选/resolve 和 JSON-safe 行为。
+- `tests/test_diagnostics_health_scorer.py`：Provider 状态、延迟、写失败增量、任务/索引、等级映射、事件新增/筛选/resolve 和标量 allowlist。
 - `tests/test_api_diagnostics.py`：API 快照组装、事件存储和恢复动作契约。
+- `tests/test_p0_observability_privacy.py`：新旧事件读取、嵌套 payload、正文/query/身份/ID/异常 canary 与稳定错误码。
 
 精确验证命令：
 
 ```bash
-python -m pytest -q tests/test_diagnostics_health_scorer.py tests/test_api_diagnostics.py
+python -m pytest -q tests/test_diagnostics_health_scorer.py tests/test_api_diagnostics.py tests/test_p0_observability_privacy.py
 ```
