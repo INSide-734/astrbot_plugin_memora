@@ -1,6 +1,6 @@
 # Memora — AI 协作入口
 
-**最后更新：** 2026-07-19
+**最后更新：** 2026-07-20
 
 ## 项目定位
 
@@ -22,9 +22,11 @@ flowchart LR
     Reflect --> Processor["MemoryProcessor"]
     Processor --> Engine
     Engine --> SQLite["SQLite 权威持久化"]
-    Reflect -->|canonical 写入成功后调度| Evolution["Memory Evolution Gate / Worker"]
+    Engine -->|canonical 提交后调度| Evolution["Memory Evolution Gate / Worker"]
     Evolution --> Derived["Relation / Projection 派生解释平面"]
     Derived --> Retrieval
+    Init --> Rebuild["DerivedRebuildCoordinator"]
+    Rebuild -->|canonical → 索引 → graph → evolution| Derived
     API --> Dashboard["AstrBot bridge / Dashboard"]
 ```
 
@@ -75,6 +77,8 @@ flowchart LR
 
 - 写入链：AstrBot 消息 → `EventHandler` → `ConversationManager`/`MemoryProcessor` → `MemoryEngine` → SQLite。FTS、FAISS 与图索引是可重建派生数据。
 - 演化链：canonical memory 成功写入后 → `MemoryEvolutionGate` → job queue/worker → relation/projection 派生解释平面。canonical SQLite 记录及其整数 ID 始终是唯一权威身份；Projection 只能作为有 source/revision 证据的读时注解，不能形成第二套 canonical memory 或 `doc_id`。
+- 派生重建链：`DerivedRebuildCoordinator` 只读确认 canonical 后按 canonical → FTS5/FAISS → graph → relation/projection 顺序执行；阶段失败只报告降级，不删除 canonical，Evolution worker 在启动期重建完成或安全降级后再启动。
+- `MemoryEngine` 在 canonical add/语义 metadata update 提交后统一重载 source 并调度演化；`ReflectionHandler` 的历史调度入口仍保留用于反思链兼容，依靠稳定 idempotency key 去重，不改变 canonical 提交边界。
 - 召回链：请求 → 改写/隔离过滤 → direct/graph 合并 → relation expansion → projection attachment → reranker → privacy filter → `InjectionStrategyRouter` → `InjectionExecutor`。动态记忆不得进入 System Prompt；请求变更须先完整构建再原子应用。
 - `memory_evolution.enabled=false` 强制等价于 `disabled`；`disabled` 不启动 worker。当前实现中 `shadow`、`readonly`、`active` 都会启动 worker 并可持久化派生对象，但只有 `readonly`/`active` 装配 relation/projection 读取器；不要从 mode 名称推断 canonical 写权限。任何模式都不得绕过 source revision、scope、privacy、validity 与 role 校验。
 - 注入观测只持久化 allowlist 标量；不得记录 query、prompt、记忆正文或 ID 列表、原始身份、Provider 密钥/请求头/API 地址或堆栈。
@@ -89,6 +93,13 @@ flowchart LR
 - `asyncio.CancelledError` 必须传播；普通可恢复失败不得破坏聊天主链路。
 - SQL 值参数绑定；动态标识符只允许固定 allowlist。
 - Dashboard 复用 Base UI-backed shadcn、`PageFrame`、语义 token、Lucide 与三语言 key；桌面/移动端均需可访问、可滚动、无重叠和页面级横向溢出。
+
+## 文件长度与拆分规范
+
+- 新增或本轮负责修改的源码、测试文件以 **800 行为硬上限**，新增文件建议控制在 600 行以内；Markdown 设计/计划文件以 400 行为上限。行数按物理行统计，不能通过把一条语句或文档段落压成超长行规避。
+- 已有超过 800 行的历史文件视为遗留债务：本轮不得继续堆加同一职责；需要新增行为时拆到职责明确的新模块、mixin 或辅助文件，并保持原导入路径和公开契约兼容。除非用户明确要求，不进行无关的大规模重构。
+- 拆分按单一职责、生命周期边界或存储/编排边界进行；禁止复制两套实现、循环导入和用仅转发的空壳文件规避上限。公共类型与稳定导出应留在原模块，内部实现通过明确的依赖方向组合。
+- 完成实现前必须检查本轮新增/修改文件行数；超过上限先拆分再提交。验证至少包含 `git diff --check`、受影响模块测试和相对 Markdown 链接检查。
 
 ## 语言规范
 
