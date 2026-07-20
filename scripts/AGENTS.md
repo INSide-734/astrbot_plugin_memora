@@ -3,7 +3,7 @@
 # Scripts 模块上下文
 
 **最后更新：** 2026-07-17
-**入口：** `scripts/check_all.py`、`scripts/run_smoke.py`、`scripts/benchmark_recall_cost.py`
+**入口：** `scripts/check_all.py`、`scripts/run_smoke.py`、`scripts/package_plugin.py`、`scripts/benchmark_recall_cost.py`
 
 ## 职责与边界
 
@@ -16,6 +16,7 @@
 | `check_all.py` | 顺序执行统一仓库质量门禁，首个失败立即退出 | 运行 pytest、Dashboard 构建/测试/smoke |
 | `run_smoke.py` | 分别执行五条 Python 集成管线并汇总 | 创建各测试自己的临时数据 |
 | `check_dashboard_build_artifacts.py` | 检查生产 Dashboard 的 HTML 与 bundle 兼容约束 | 只读目标构建目录 |
+| `package_plugin.py` | 生成 runtime/source/both 插件 ZIP，校验白名单、排除项和归档路径 | 可能构建 Dashboard；写入 `dist/` 或指定目录 |
 | `benchmark_recall_cost.py` | 运行注入预设与 RecallHandler 全路径确定性基准 | 可选写 JSON 报告；启动隔离 worker |
 | `recall_total_path_benchmark.py` | 全路径测量、基线校验、回归判定和基线记录支持 | 记录基线时读取 Git 状态并写 JSON |
 | `benchmark_injection_decisions.py` | 对 100,000 条脱敏决策测量摘要、分页、入队和清理 | 仅使用临时目录中的 SQLite |
@@ -95,6 +96,16 @@ python scripts/check_dashboard_build_artifacts.py pages/dashboard
 - `assets/` 中也恰好各有一个 JS/CSS，且引用文件存在。
 
 该命令验证已有构建产物，不会替你执行构建。
+
+### `package_plugin.py`
+
+```powershell
+python scripts/package_plugin.py --help
+python scripts/package_plugin.py
+python scripts/package_plugin.py --mode both --from-git
+```
+
+默认生成可安装的 runtime 包；`--mode source` 生成源码包，`--mode both` 同时生成两种包。runtime 和 both 会在 `pages/dashboard/` 执行现有的 `npm run build`，但不会自动安装 Node 依赖；依赖缺失时命令非零退出并提示先执行 `npm ci`。脚本是开发/发布基础设施，不是生产运行时 API；生成的 ZIP 位于被忽略的 `dist/` 或 `--output-dir` 指定目录，不应提交进仓库。
 
 ### `benchmark_recall_cost.py`
 

@@ -161,6 +161,32 @@ npm run check:artifacts
 npm run test
 ```
 
+### 插件打包
+
+仓库根目录提供自动打包脚本。默认生成可直接安装的精简运行时包：
+
+```powershell
+python scripts/package_plugin.py
+```
+
+需要源码包时使用 `--mode source`；需要一次生成两种包时使用 `--mode both`：
+
+```powershell
+python scripts/package_plugin.py --mode source
+python scripts/package_plugin.py --mode both --from-git
+```
+
+`runtime` 模式会在 `pages/dashboard/` 执行 `npm run build`，不会自动执行 `npm ci`。如果 Dashboard 依赖尚未安装，请先在该目录执行 `npm ci`，再重新运行打包脚本。`--from-git` 只影响源码包，使其使用当前 Git `HEAD`；不带该参数时源码包使用当前工作树。
+
+默认产物写入 `dist/`，文件名从 `metadata.yaml` 读取版本：
+
+```text
+dist/astrbot_plugin_memora-1.0.0-runtime.zip
+dist/astrbot_plugin_memora-1.0.0-source.zip
+```
+
+可用 `--output-dir releases` 将产物写入仓库根目录下的 `releases/`。
+
 ### LLM Tools
 
 Memora 为 AstrBot Agent 提供五类工具能力：
