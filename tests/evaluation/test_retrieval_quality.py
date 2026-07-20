@@ -77,9 +77,11 @@ def test_retrieval_fixtures_cover_realistic_routing_metadata() -> None:
 
 
 def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels() -> None:
+    """演化评测夹具必须覆盖 P0 场景且只使用匿名合成标识。"""
+
     cases = load_fixture_dir(FIXTURE_ROOT)["memory_evolution"]
 
-    assert len(cases) == 10
+    assert len(cases) == 17
     assert {case.metadata["scenario"] for case in cases} >= {
         "direct",
         "same_episode",
@@ -89,10 +91,51 @@ def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels()
         "noise_negative",
         "cross_scope",
         "prompt_injection",
+        "canonical_delete",
+        "derived_rebuild",
+        "privacy_negative",
+        "role_negative",
+        "validity_negative",
+        "stale_job",
+        "retry_recovery",
+    }
+    covered_invariants = {
+        invariant
+        for case in cases
+        for invariant in case.metadata.get("p0_invariants", [])
+    }
+    assert covered_invariants >= {
+        "source_revision_unchanged",
+        "source_revision_revised",
+        "single_source_conflict",
+        "multi_source_conflict",
+        "canonical_delete",
+        "derived_rebuild",
+        "privacy_negative",
+        "role_negative",
+        "validity_negative",
+        "stale_job",
+        "retry_recovery",
+        "source_backed_projection",
     }
     assert all(case.metadata["scope"].startswith(("private:", "group:")) for case in cases)
     assert all(case.metadata["privacy_level"] in {"shared", "confidential"} for case in cases)
     assert not any("user-" in case.query or "session-" in case.query for case in cases)
+
+    projection = next(case for case in cases if case.metadata["scenario"] == "projection")
+    assert projection.relevant_doc_ids == set(projection.metadata["projection_source_ids"])
+    assert not any("projection-summary" in doc_id for doc_id in projection.relevant_doc_ids)
+
+    negative_scenarios = {
+        "canonical_delete",
+        "privacy_negative",
+        "role_negative",
+        "validity_negative",
+        "stale_job",
+    }
+    negatives = [case for case in cases if case.metadata["scenario"] in negative_scenarios]
+    assert all(case.metadata.get("expected_no_hit") is True for case in negatives)
+    assert all(case.relevant_doc_ids == {"__no_relevant__"} for case in negatives)
 
 
 def test_ranking_metrics_handle_relevant_documents_at_different_ranks() -> None:
@@ -179,12 +222,19 @@ async def test_evaluate_cases_scores_expected_no_hit_when_retriever_returns_noth
 
 @pytest.mark.asyncio
 async def test_evaluate_cases_reports_evolution_quality_and_cost_metrics() -> None:
+    """完整命中匿名 canonical 来源时应汇总质量、成本和原因码指标。"""
+
     cases = load_fixture_dir(FIXTURE_ROOT)["memory_evolution"]
 
     async def fake_retriever(case: EvaluationCase, _k: int) -> list[RetrievedDocument]:
+        """返回夹具声明的 canonical 相关项，不为 Projection 伪造独立文档。"""
+
         if case.metadata.get("expected_no_hit"):
             return []
-        return [RetrievedDocument(next(iter(case.relevant_doc_ids)), 1.0)]
+        return [
+            RetrievedDocument(doc_id, 1.0)
+            for doc_id in sorted(case.relevant_doc_ids)
+        ]
 
     report = await evaluate_cases(cases, fake_retriever, k=3)
 
@@ -195,8 +245,21 @@ async def test_evaluate_cases_reports_evolution_quality_and_cost_metrics() -> No
     assert report.noise_negative_false_hit == 0.0
     assert report.temporal_consistency == 1.0
     assert report.conflict_accuracy == 1.0
+    assert report.source_supported_projection_rate == 1.0
     assert report.answer_faithfulness == 1.0
     assert report.answer_relevancy == 1.0
+    assert report.provider_calls == 2.0
+    assert report.token_cost == 12.5
+    assert report.reason_code_aggregates == {
+        "conflict_source_roles": 1,
+        "privacy_mismatch": 1,
+        "retry_recovered": 1,
+        "scope_mismatch": 1,
+        "source_memory_not_found": 1,
+        "source_revision_mismatch": 1,
+        "untrusted_evidence": 1,
+        "validity_expired": 1,
+    }
     assert set(report.metrics) >= {
         "recall_at_k",
         "precision_at_k",
