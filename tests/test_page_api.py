@@ -1153,6 +1153,7 @@ class TestEnsurePluginReady:
         assert "memory_engine" in ready_dict
         assert "conversation_manager" in ready_dict
         assert "index_validator" in ready_dict
+        api.plugin._ensure_plugin_ready.assert_awaited_once_with(wait=False)
 
     @pytest.mark.asyncio
     async def test_not_ready_returns_error(self) -> None:
@@ -1167,6 +1168,8 @@ class TestEnsurePluginReady:
         assert error_dict is not None
         assert error_dict["status"] == "error"
         assert "Not ready yet" in error_dict["message"]
+        assert error_dict["code"] == "plugin_not_ready"
+        plugin._ensure_plugin_ready.assert_awaited_once_with(wait=False)
 
     @pytest.mark.asyncio
     async def test_not_ready_no_message_uses_default(self) -> None:

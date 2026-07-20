@@ -1111,7 +1111,9 @@ class PluginPageApi(
         返回值：``(ready_dict, error_dict)``，二者互斥，必有一个为 ``None``。
         """
         try:
-            ready, message = await self.plugin._ensure_plugin_ready()
+            # 页面请求不应在 Provider 缺失时阻塞 30 秒；状态提示由 Dashboard
+            # 通过 metrics/summary 展示，具体数据接口立即返回可识别的未就绪错误。
+            ready, message = await self.plugin._ensure_plugin_ready(wait=False)
         except Exception as exc:
             logger.error("[页面接口] 插件就绪检查异常")
             report_debug_exception(
@@ -1127,7 +1129,10 @@ class PluginPageApi(
                 "插件就绪检查失败", code="plugin_readiness_error"
             )
         if not ready:
-            return None, self._error(message or "插件尚未就绪")
+            return None, error_response(
+                message or "插件尚未就绪",
+                code="plugin_not_ready",
+            )
         try:
             memory_engine = self.plugin.initializer.memory_engine
             if memory_engine is None:

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react"
 import { AnimatePresence, motion } from "framer-motion";
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { RuntimeStatusBanner } from "@/components/layout/RuntimeStatusBanner";
 import { Button } from "@/components/ui/Button";
 import { Toast } from "@/components/ui/Toast";
 import { SearchBar } from "@/components/ui/SearchBar";
@@ -10,6 +11,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useToast } from "@/hooks/useToast";
 import { useI18n, toggleLanguage } from "@/hooks/useI18n";
 import { useRealtimeStream } from "@/hooks/useRealtimeStream";
+import { useRuntimeStatus } from "@/hooks/useRuntimeStatus";
 import { Menu, Loader2 } from "lucide-react";
 import type { PageId, PageNavigationIntent } from "@/types";
 
@@ -109,6 +111,7 @@ export default function App() {
   const ignoredHashChangesRef = useRef(0);
   const browserHashRef = useRef(window.location.hash);
   const { connected: sseConnected, unreadCount, lastEvent, markSeen } = useRealtimeStream();
+  const runtimeStatus = useRuntimeStatus();
 
   const applyPage = useCallback((
     page: PageId,
@@ -397,6 +400,12 @@ export default function App() {
           </div>
           <SearchBar onNavigate={navigate} />
         </header>
+
+        <RuntimeStatusBanner
+          snapshot={runtimeStatus}
+          onConfigure={() => navigate("config")}
+          onRetry={() => void runtimeStatus.refresh()}
+        />
 
         <div className="min-h-0 flex-1 overflow-hidden">
           <ErrorBoundary>

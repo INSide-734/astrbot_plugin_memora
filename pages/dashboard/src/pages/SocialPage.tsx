@@ -689,7 +689,7 @@ export function SocialPage({ showToast, onDirtyChange }: SocialPageProps) {
         </>}
       />
       <Tabs value={category} onValueChange={(value) => { setSelected(new Set()); setCategory(value); }} className="min-h-0 flex-1 gap-0">
-        <PageToolbar className="flex-nowrap overflow-x-auto bg-background"><TabsList variant="line" aria-label={t("social.category")} className="h-9 min-w-max">{categories.map((item) => <TabsTrigger key={item.value} value={item.value} className="px-3 text-xs">{item.label}</TabsTrigger>)}</TabsList></PageToolbar>
+        <PageToolbar className="flex-nowrap overflow-x-auto bg-background"><TabsList variant="line" aria-label={t("social.categoryLabel")} className="h-9 min-w-max">{categories.map((item) => <TabsTrigger key={item.value} value={item.value} className="px-3 text-xs">{item.label}</TabsTrigger>)}</TabsList></PageToolbar>
         {categories.map((item) => <TabsContent key={item.value} value={item.value} className="min-h-0 flex-1 overflow-hidden"><PageContent width="full">{relationTable}</PageContent></TabsContent>)}
       </Tabs>
 
