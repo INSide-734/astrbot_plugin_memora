@@ -438,10 +438,12 @@ class TestMemoraPluginConfig:
         assert first.instance_id != second.instance_id
 
     def test_configures_debug_reporting_with_configured_data_dir(self) -> None:
-        """调试开关沿用配置值，并把 AstrBot 数据目录传给记录器。"""
+        """调试开关沿用配置值，并传递 AstrBot 数据目录与时区。"""
         MemoraPlugin = _load_memora_plugin_class()
         module = sys.modules[MemoraPlugin.__module__]
         astrbot_config = {"debug": True}
+        context = MagicMock()
+        context.get_config.return_value = {"timezone": "Asia/Shanghai"}
 
         with patch.object(
             MemoraPlugin, "_register_official_page_api_if_available"
@@ -450,11 +452,12 @@ class TestMemoraPluginConfig:
             "_create_tracked_task",
             side_effect=lambda coro: coro.close(),
         ), patch.object(module, "set_debug_mode") as set_debug_mode:
-            MemoraPlugin(MagicMock(), astrbot_config)
+            MemoraPlugin(context, astrbot_config)
 
         set_debug_mode.assert_called_once_with(
             True,
             data_dir=str(Path(__file__).resolve().parents[1] / ".pytest_memora_data"),
+            timezone_name="Asia/Shanghai",
         )
 
 

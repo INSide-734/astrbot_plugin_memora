@@ -67,19 +67,29 @@ def reset_trace_context() -> None:
     reset()
 
 
-def set_debug_mode(enabled: bool, *, data_dir: str | Path | None = None) -> None:
+def set_debug_mode(
+    enabled: bool,
+    *,
+    data_dir: str | Path | None = None,
+    timezone_name: str | None = None,
+) -> None:
     """全局启用调试级监控。
 
     首次启用时，会触发真实 ``instrumentation`` 模块的懒加载
     （包括 prometheus_client 指标）。
     禁用时，``@monitored`` 只执行一次轻量布尔判断。
+    调试事件时间戳使用 AstrBot 的 IANA 时区；空值或无效值回退系统本地时区。
     """
     global _runtime_debug_enabled
 
     from .debug_reporter import configure_debug_reporting
 
     # 问题报告记录器与 Prometheus 插桩共用同一开关，但保持实现独立。
-    configure_debug_reporting(bool(enabled), data_dir)
+    configure_debug_reporting(
+        bool(enabled),
+        data_dir,
+        timezone_name=timezone_name,
+    )
     _runtime_debug_enabled = bool(enabled)
 
     if enabled:

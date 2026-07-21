@@ -15,10 +15,11 @@ import math
 import re
 import secrets
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, tzinfo
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from astrbot.api import logger as _astrbot_logger
 
@@ -362,16 +363,19 @@ _lock = threading.RLock()
 _enabled = False
 _file_handler: RotatingFileHandler | None = None
 _file_path: Path | None = None
+_timestamp_timezone: tzinfo | None = None
 _operation_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "memora_debug_operation_token", default=None
 )
 
 
 def _new_token() -> str:
+    """生成不包含业务标识的短期随机关联码。"""
     return secrets.token_hex(6)
 
 
 def _close_file_handler() -> None:
+    """关闭当前文件 sink，并清理相关模块状态。"""
     global _file_handler, _file_path
     handler = _file_handler
     _file_handler = None
@@ -384,6 +388,7 @@ def _close_file_handler() -> None:
 
 
 def _safe_exception_type(exception: BaseException) -> str:
+    """返回不包含异常消息的异常类型名。"""
     return exception.__class__.__name__
 
 
@@ -408,6 +413,7 @@ def _exception_location(exception: BaseException) -> dict[str, Any]:
 
 
 def _valid_number(value: Any) -> bool:
+    """检查数值是否属于诊断字段允许的有限非负范围。"""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
     if isinstance(value, float) and not math.isfinite(value):
@@ -416,6 +422,7 @@ def _valid_number(value: Any) -> bool:
 
 
 def _valid_text(field: str, value: Any) -> bool:
+    """按字段 allowlist 检查诊断文本值。"""
     if not isinstance(value, str) or len(value) > 128:
         return False
     if field == "operation_token":
@@ -425,6 +432,26 @@ def _valid_text(field: str, value: Any) -> bool:
     if field in _ENUM_FIELDS:
         return value in _ENUM_FIELDS[field]
     return _SAFE_TEXT_RE.fullmatch(value) is not None
+
+
+def _resolve_timezone(timezone_name: str | None) -> tzinfo | None:
+    """解析 AstrBot 的 IANA 时区；空值或无效值回退系统本地时区。"""
+    if not isinstance(timezone_name, str) or not timezone_name.strip():
+        return None
+    try:
+        return ZoneInfo(timezone_name.strip())
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def _current_timestamp() -> str:
+    """按 AstrBot 配置时区生成带 UTC 偏移的 ISO 8601 时间戳。"""
+    configured_timezone = _timestamp_timezone
+    if configured_timezone is None:
+        current = datetime.now().astimezone()
+    else:
+        current = datetime.now(configured_timezone)
+    return current.isoformat().replace("+00:00", "Z")
 
 
 def _emit_serialized(serialized: str) -> None:
@@ -452,7 +479,7 @@ def _emit_serialized(serialized: str) -> None:
             except Exception as exception:
                 _file_path = None
                 disabled_event = {
-                    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "timestamp": _current_timestamp(),
                     "schema_version": SCHEMA_VERSION,
                     "event": "debug_file_sink_disabled",
                     "operation_token": _operation_token.get() or _new_token(),
@@ -484,7 +511,7 @@ def _emit_serialized(serialized: str) -> None:
             if _file_handler is handler:
                 _close_file_handler()
             disabled_event = {
-                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "timestamp": _current_timestamp(),
                 "schema_version": SCHEMA_VERSION,
                 "event": "debug_file_sink_disabled",
                 "operation_token": _operation_token.get() or _new_token(),
@@ -500,9 +527,10 @@ def _emit_serialized(serialized: str) -> None:
 
 
 def _emit_rejection(reason_code: str) -> None:
+    """输出不携带非法字段内容的固定拒绝事件。"""
     # 拒绝事件只包含固定值，永远不带入非法键名或值。
     event = {
-        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "timestamp": _current_timestamp(),
         "schema_version": SCHEMA_VERSION,
         "event": "debug_event_rejected",
         "operation_token": _operation_token.get() or _new_token(),
@@ -511,12 +539,22 @@ def _emit_rejection(reason_code: str) -> None:
     _emit_serialized(json.dumps(event, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
 
 
-def configure_debug_reporting(enabled: bool, data_dir: str | Path | None = None) -> None:
-    """配置问题报告调试模式；禁用时不创建目录或文件。"""
-    global _enabled, _file_handler, _file_path
+def configure_debug_reporting(
+    enabled: bool,
+    data_dir: str | Path | None = None,
+    *,
+    timezone_name: str | None = None,
+) -> None:
+    """配置问题报告调试模式、文件目录与 AstrBot 时区。
+
+    禁用时不创建目录或文件。时区为空或无效时与 AstrBot 一致，使用系统本地
+    时区生成时间戳。
+    """
+    global _enabled, _file_handler, _file_path, _timestamp_timezone
     with _lock:
         _close_file_handler()
         _enabled = bool(enabled)
+        _timestamp_timezone = _resolve_timezone(timezone_name)
         if not _enabled or data_dir is None:
             return
         try:
@@ -525,7 +563,7 @@ def configure_debug_reporting(enabled: bool, data_dir: str | Path | None = None)
             _file_path = None
             # 失败事件只发送到控制台，绝不泄露路径或错误文本。
             event = {
-                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "timestamp": _current_timestamp(),
                 "schema_version": SCHEMA_VERSION,
                 "event": "debug_file_sink_disabled",
                 "operation_token": _operation_token.get() or _new_token(),
@@ -549,6 +587,7 @@ def close_debug_reporting() -> None:
 
 
 def is_debug_reporting_enabled() -> bool:
+    """返回问题报告调试事件是否启用。"""
     with _lock:
         return _enabled
 
@@ -591,7 +630,7 @@ def report_debug_event(event_name: str, **fields: Any) -> None:
             normalized[field] = value
     normalized.setdefault("operation_token", _operation_token.get() or _new_token())
     event = {
-        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "timestamp": _current_timestamp(),
         "schema_version": SCHEMA_VERSION,
         "event": event_name,
         **normalized,
