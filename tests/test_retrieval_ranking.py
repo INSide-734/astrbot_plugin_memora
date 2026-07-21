@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.adapter_capabilities import ASTRBOT_FAISS_CAPABILITIES
 from core.retrieval.dual_route_retriever import DualRouteRetriever
 from core.retrieval.graph_keyword_retriever import GraphKeywordResult
 from core.retrieval.graph_retriever import GraphRetriever
@@ -64,6 +65,7 @@ def _ablation_engine(*, reranker: object) -> tuple[object, object]:
         get_vector=MagicMock(
             side_effect=lambda doc_id: [1.0, 0.0] if doc_id == 1 else [0.0, 1.0]
         ),
+        adapter_capabilities=ASTRBOT_FAISS_CAPABILITIES,
     )
 
     class Engine:

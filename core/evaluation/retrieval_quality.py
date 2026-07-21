@@ -246,11 +246,21 @@ def load_jsonl_cases(path: str | Path) -> list[EvaluationCase]:
     return cases
 
 
-def load_fixture_dir(path: str | Path) -> dict[str, list[EvaluationCase]]:
-    """加载目录中的全部检索 JSONL 夹具，并按数据集名称分组。"""
+def load_fixture_dir(
+    path: str | Path,
+    *,
+    include_experimental: bool = False,
+) -> dict[str, list[EvaluationCase]]:
+    """加载标准检索夹具；实验专用数据集需显式 opt-in。"""
     root = Path(path)
     datasets: dict[str, list[EvaluationCase]] = {}
     for file_path in sorted(root.glob("*.jsonl")):
+        if not include_experimental and file_path.stem in {
+            "session_first",
+            "derived_metadata",
+            "feedback_ranking",
+        }:
+            continue
         cases = load_jsonl_cases(file_path)
         dataset_name = file_path.stem
         if cases:
