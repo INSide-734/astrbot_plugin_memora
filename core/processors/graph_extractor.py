@@ -9,53 +9,23 @@ from astrbot.api import logger
 
 from ..models.graph_models import ExtractedGraph, GraphEdge, GraphEntry, GraphNode
 from ..security.guardrails import GraphExtractionResult, validate_llm_response
+from .atom_graph_extractor import (
+    CAUSAL_CAUSED_BY,
+    CAUSAL_PREVENTS,
+    CAUSAL_RESULTS_IN,
+    TEMPORAL_AFTER,
+    TEMPORAL_BEFORE,
+    TEMPORAL_DURING,
+    extract_graph_from_atoms,
+)
 from .entity_resolver import EntityResolver
-
-# G1：时序边类型，表示事件发生的先后关系
-TEMPORAL_BEFORE = "before"
-TEMPORAL_AFTER = "after"
-TEMPORAL_DURING = "during"
-# 同一事件窗口（秒）：在此时间差内的事件视为 DURING（同时发生）
-_DURING_WINDOW_SEC = 3600.0  # 1 小时
-
-# G2：因果边类型，表示事件间的因果关系
-CAUSAL_CAUSED_BY = "caused_by"
-CAUSAL_RESULTS_IN = "results_in"
-CAUSAL_PREVENTS = "prevents"
-
-# 因果关键词模式（中英文）
-_CAUSAL_PATTERNS: list[tuple[str, str]] = [
-    # （关键词, 边类型）
-    ("导致", CAUSAL_RESULTS_IN),
-    ("造成了", CAUSAL_RESULTS_IN),
-    ("引起了", CAUSAL_RESULTS_IN),
-    ("所以", CAUSAL_RESULTS_IN),
-    ("因此", CAUSAL_RESULTS_IN),
-    ("于是", CAUSAL_RESULTS_IN),
-    ("因为", CAUSAL_CAUSED_BY),
-    ("由于", CAUSAL_CAUSED_BY),
-    ("起因", CAUSAL_CAUSED_BY),
-    ("because", CAUSAL_CAUSED_BY),
-    ("due to", CAUSAL_CAUSED_BY),
-    ("therefore", CAUSAL_RESULTS_IN),
-    ("thus", CAUSAL_RESULTS_IN),
-    ("led to", CAUSAL_RESULTS_IN),
-    ("caused by", CAUSAL_CAUSED_BY),
-    ("resulted in", CAUSAL_RESULTS_IN),
-    ("防止", CAUSAL_PREVENTS),
-    ("避免", CAUSAL_PREVENTS),
-    ("阻止", CAUSAL_PREVENTS),
-    ("预防", CAUSAL_PREVENTS),
-    ("prevent", CAUSAL_PREVENTS),
-    ("avoid", CAUSAL_PREVENTS),
-    ("stop", CAUSAL_PREVENTS),
-]
 
 
 class GraphExtractor:
     """将记忆摘要转换为节点、边与可检索的图条目。"""
 
     def __init__(self, config: dict[str, Any] | None = None):
+        """读取图提取数量限制及时序、因果边开关。"""
         self.config = config or {}
         self.max_topics = int(self.config.get("graph_max_topics", 6))
         self.max_participants = int(self.config.get("graph_max_participants", 8))
@@ -76,7 +46,13 @@ class GraphExtractor:
     ) -> ExtractedGraph:
         """根据一条记忆文档构建图快照。"""
         if atoms:
-            return self._extract_from_atoms(source_memory_id, atoms)
+            return extract_graph_from_atoms(
+                source_memory_id,
+                atoms,
+                metadata,
+                temporal_edges_enabled=self.temporal_edges_enabled,
+                causal_edges_enabled=self.causal_edges_enabled,
+            )
         guarded = self._validate_structured_graph(metadata)
         if guarded is not None:
             graph = self._extract_from_structured_graph(
@@ -153,6 +129,7 @@ class GraphExtractor:
             value: str,
             extra: dict[str, Any] | None = None,
         ) -> str:
+            """添加结构化实体节点并返回稳定节点键。"""
             canonical_value = EntityResolver.canonicalize(value)
             if not canonical_value:
                 return ""
@@ -166,6 +143,7 @@ class GraphExtractor:
             return node.node_key
 
         def _confidence(raw: Any, default: float = 0.75) -> float:
+            """将结构化置信度限制在零到一之间。"""
             try:
                 return max(0.0, min(1.0, float(raw)))
             except (TypeError, ValueError):
@@ -178,6 +156,7 @@ class GraphExtractor:
             relation_type: str | None = None,
             confidence: float = 0.75,
         ) -> None:
+            """为结构化图产物添加可检索条目。"""
             payload = (
                 f"{entry_type}|{source_memory_id}|{relation_type or ''}|"
                 f"{'|'.join(node_keys)}|{content_text}"
@@ -325,6 +304,7 @@ class GraphExtractor:
         def _add_node(
             node_type: str, value: str, extra: dict[str, Any] | None = None
         ) -> str:
+            """添加旧版 metadata 节点并返回稳定节点键。"""
             canonical_value = EntityResolver.canonicalize(value)
             if not canonical_value:
                 return ""
@@ -358,6 +338,7 @@ class GraphExtractor:
             relation_type: str | None = None,
             confidence: float = 0.8,
         ) -> None:
+            """为旧版图产物添加可检索条目。"""
             payload = (
                 f"{entry_type}|{source_memory_id}|{relation_type or ''}|"
                 f"{'|'.join(node_keys)}|{content_text}"
@@ -501,357 +482,5 @@ class GraphExtractor:
                 )
 
         return graph
-
-    def _extract_from_atoms(
-        self,
-        source_memory_id: int,
-        atoms: list,
-    ) -> ExtractedGraph:
-        """基于独立记忆原子构建图，并保留逐原子的置信度。"""
-        graph = ExtractedGraph()
-        node_map: dict[str, GraphNode] = {}
-
-        def _add_node(
-            node_type: str, value: str, extra: dict[str, Any] | None = None
-        ) -> str:
-            canonical_value = EntityResolver.canonicalize(value)
-            if not canonical_value:
-                return ""
-            node = GraphNode(
-                node_type=node_type,
-                value=value.strip(),
-                canonical_value=canonical_value,
-                metadata=extra or {},
-            )
-            node_map[node.node_key] = node
-            return node.node_key
-
-        for atom in atoms:
-            atom_confidence = float(getattr(atom, "confidence", 0.7))
-            session_id = getattr(atom, "session_id", None)
-            persona_id = getattr(atom, "persona_id", None)
-            entities = getattr(atom, "entities", []) or []
-
-            # 根据 atom.entities 创建实体节点
-            entity_keys: list[str] = []
-            for entity in entities:
-                entity_key = _add_node("topic", entity)
-                if entity_key:
-                    entity_keys.append(entity_key)
-
-            # 为 atom 内容创建事实节点
-            atom_type = getattr(atom, "atom_type", "unknown")
-            atom_type_str = str(getattr(atom_type, "value", atom_type))
-            fact_key = _add_node("fact", atom.content, {"atom_type": atom_type_str})
-            if not fact_key:
-                continue
-
-            # 使用 atom 自身置信度创建事实条目
-            payload = f"fact|{source_memory_id}||{fact_key}|{atom.content}"
-            entry_key = hashlib.sha1(payload.encode("utf-8")).hexdigest()
-            entry_metadata = {
-                "source_memory_id": source_memory_id,
-                "session_id": session_id,
-                "persona_id": persona_id,
-                "importance": float(getattr(atom, "importance", 0.5)),
-                "graph_confidence": atom_confidence,
-                "atom_type": atom_type_str,
-                "ttl_days": float(getattr(atom, "ttl_days", 30.0)),
-                **self._atom_time_metadata(atom),
-            }
-            graph.entries.append(
-                GraphEntry(
-                    entry_key=entry_key,
-                    source_memory_id=source_memory_id,
-                    session_id=session_id,
-                    persona_id=persona_id,
-                    entry_type="fact",
-                    content=f"记忆原子：{atom.content}",
-                    metadata=entry_metadata,
-                    node_keys=[fact_key],
-                    relation_type="fact",
-                )
-            )
-
-            # 按 atom 置信度将实体与事实建立关联
-            for entity_key in entity_keys:
-                edge_confidence = atom_confidence * 0.9
-                graph.edges.append(
-                    GraphEdge(
-                        source_key=entity_key,
-                        target_key=fact_key,
-                        relation_type="describes",
-                        source_memory_id=source_memory_id,
-                        confidence=edge_confidence,
-                        metadata={"atom_content": atom.content},
-                    )
-                )
-                edge_payload = f"edge|{source_memory_id}|describes|{entity_key}|{fact_key}|{atom.content}"
-                edge_entry_key = hashlib.sha1(edge_payload.encode("utf-8")).hexdigest()
-                graph.entries.append(
-                    GraphEntry(
-                        entry_key=edge_entry_key,
-                        source_memory_id=source_memory_id,
-                        session_id=session_id,
-                        persona_id=persona_id,
-                        entry_type="edge",
-                        content=f"主题 {entity_key} 关联到事实：{atom.content}",
-                        metadata={
-                            **entry_metadata,
-                            "graph_confidence": edge_confidence,
-                        },
-                        node_keys=[entity_key, fact_key],
-                        relation_type="describes",
-                    )
-                )
-
-        graph.nodes = list(node_map.values())
-
-        # G1: 提取时序边（基于 atom event_time）
-        if self.temporal_edges_enabled:
-            temporal_edges = self._extract_temporal_edges(
-                atoms,
-                source_memory_id,
-                node_map,
-            )
-            for edge in temporal_edges:
-                graph.edges.append(edge)
-
-        # G2: 提取因果边（基于 atom content 关键词匹配）
-        if self.causal_edges_enabled:
-            causal_edges = self._extract_causal_edges(
-                atoms,
-                source_memory_id,
-                node_map,
-            )
-            for edge in causal_edges:
-                graph.edges.append(edge)
-
-        # 回退：如果 atoms 没有生成任何条目，则补建摘要条目
-        if not graph.entries:
-            for atom in atoms:
-                summary_key = _add_node("summary", atom.content)
-                if summary_key:
-                    graph.nodes = list(node_map.values())
-                    payload = (
-                        f"summary|{source_memory_id}||{summary_key}|{atom.content}"
-                    )
-                    s_entry_key = hashlib.sha1(payload.encode("utf-8")).hexdigest()
-                    graph.entries.append(
-                        GraphEntry(
-                            entry_key=s_entry_key,
-                            source_memory_id=source_memory_id,
-                            session_id=getattr(atom, "session_id", None),
-                            persona_id=getattr(atom, "persona_id", None),
-                            entry_type="summary",
-                            content=f"记忆原子：{atom.content}",
-                            metadata={
-                                "graph_confidence": float(
-                                    getattr(atom, "confidence", 0.6)
-                                )
-                            },
-                            node_keys=[summary_key],
-                            relation_type="summary",
-                        )
-                    )
-
-        return graph
-
-    @staticmethod
-    def _extract_temporal_edges(
-        atoms: list,
-        source_memory_id: int,
-        node_map: dict[str, GraphNode],
-    ) -> list[GraphEdge]:
-        """G1: 从 atom event_time 中提取 BEFORE/AFTER/DURING 时序边。
-
-        只对同一条 parent_memory 内、有 event_time 的 atom 提取。
-        时序边连接同一 topic 节点下的不同 fact 节点。
-        """
-        edges: list[GraphEdge] = []
-        # 收集（atom, fact_node_key, event_time）的元组
-        timed_atoms: list[tuple[Any, str, float]] = []
-        for atom in atoms:
-            event_time = getattr(atom, "event_time", None)
-            if event_time is None:
-                continue
-            content = getattr(atom, "content", "")
-            if not content:
-                continue
-            # 找到该 atom 对应的 fact node key
-            fact_key = ""
-            for key, node in node_map.items():
-                if node.node_type == "fact" and node.value == content:
-                    fact_key = key
-                    break
-            if not fact_key:
-                continue
-            timed_atoms.append((atom, fact_key, float(event_time)))
-
-        if len(timed_atoms) < 2:
-            return edges
-
-        # 按事件时间排序，创建相邻时序边
-        timed_atoms.sort(key=lambda x: x[2])
-        for i in range(len(timed_atoms) - 1):
-            atom_a, key_a, time_a = timed_atoms[i]
-            atom_b, key_b, time_b = timed_atoms[i + 1]
-            time_diff = time_b - time_a
-
-            if time_diff <= _DURING_WINDOW_SEC:
-                rel_type = TEMPORAL_DURING
-            else:
-                rel_type = TEMPORAL_BEFORE  # A 发生在 B 之前
-
-            edges.append(
-                GraphEdge(
-                    source_key=key_a,
-                    target_key=key_b,
-                    relation_type=rel_type,
-                    source_memory_id=source_memory_id,
-                    confidence=0.75,
-                    weight=1.0,
-                    metadata={
-                        "time_diff_sec": round(time_diff, 1),
-                        "event_time_a": time_a,
-                        "event_time_b": time_b,
-                    },
-                )
-            )
-            # 反方向边（AFTER）
-            if time_diff > _DURING_WINDOW_SEC:
-                edges.append(
-                    GraphEdge(
-                        source_key=key_b,
-                        target_key=key_a,
-                        relation_type=TEMPORAL_AFTER,
-                        source_memory_id=source_memory_id,
-                        confidence=0.75,
-                        weight=1.0,
-                        metadata={
-                            "time_diff_sec": round(time_diff, 1),
-                            "event_time_a": time_a,
-                            "event_time_b": time_b,
-                        },
-                    )
-                )
-
-        return edges
-
-    @staticmethod
-    def _extract_causal_edges(
-        atoms: list,
-        source_memory_id: int,
-        node_map: dict[str, GraphNode],
-    ) -> list[GraphEdge]:
-        """G2: 从 atom content 中检测因果关键词并创建因果边。
-
-        扫描每个 atom 的 content，匹配因果关键词模式。
-        当检测到因果词时，在同批次的其他 atom 间建立因果连接。
-        """
-        edges: list[GraphEdge] = []
-
-        # 收集有因果信号的 atom（content 匹配因果关键词）
-        causal_atoms: list[tuple[Any, str, str]] = []  # (atom, fact_key, relation)
-        for atom in atoms:
-            content = getattr(atom, "content", "")
-            if not content:
-                continue
-            content_lower = content.lower()
-            for keyword, rel_type in _CAUSAL_PATTERNS:
-                if keyword in content_lower:
-                    # 找到该 atom 的 fact node key
-                    for key, node in node_map.items():
-                        if node.node_type == "fact" and node.value == content:
-                            causal_atoms.append((atom, key, rel_type))
-                            break
-                    break  # 每个 atom 只匹配第一个关键词
-
-        if len(causal_atoms) < 2:
-            return edges
-
-        # 在同批次 causal atoms 之间创建因果边
-        for i in range(len(causal_atoms)):
-            for j in range(i + 1, len(causal_atoms)):
-                atom_a, key_a, rel_a = causal_atoms[i]
-                atom_b, key_b, rel_b = causal_atoms[j]
-
-                # 根据关键词类型确定边的方向
-                if rel_a == CAUSAL_RESULTS_IN:
-                    edges.append(
-                        GraphEdge(
-                            source_key=key_a,
-                            target_key=key_b,
-                            relation_type=CAUSAL_RESULTS_IN,
-                            source_memory_id=source_memory_id,
-                            confidence=0.65,
-                            weight=1.0,
-                            metadata={
-                                "keyword_a": rel_a,
-                                "keyword_b": rel_b,
-                                "content_a": getattr(atom_a, "content", "")[:80],
-                                "content_b": getattr(atom_b, "content", "")[:80],
-                                **GraphExtractor._atom_time_metadata(atom_a),
-                            },
-                        )
-                    )
-                elif rel_a == CAUSAL_CAUSED_BY:
-                    edges.append(
-                        GraphEdge(
-                            source_key=key_b,
-                            target_key=key_a,
-                            relation_type=CAUSAL_RESULTS_IN,
-                            source_memory_id=source_memory_id,
-                            confidence=0.65,
-                            weight=1.0,
-                            metadata={
-                                "keyword_a": rel_a,
-                                "keyword_b": rel_b,
-                                "content_a": getattr(atom_a, "content", "")[:80],
-                                "content_b": getattr(atom_b, "content", "")[:80],
-                                **GraphExtractor._atom_time_metadata(atom_b),
-                            },
-                        )
-                    )
-                elif rel_a == CAUSAL_PREVENTS:
-                    edges.append(
-                        GraphEdge(
-                            source_key=key_a,
-                            target_key=key_b,
-                            relation_type=CAUSAL_PREVENTS,
-                            source_memory_id=source_memory_id,
-                            confidence=0.6,
-                            weight=1.0,
-                            metadata={
-                                "keyword_a": rel_a,
-                                "content_a": getattr(atom_a, "content", "")[:80],
-                                "content_b": getattr(atom_b, "content", "")[:80],
-                                **GraphExtractor._atom_time_metadata(atom_a),
-                            },
-                        )
-                    )
-
-        return edges
-
-    @staticmethod
-    def _atom_time_metadata(atom: Any) -> dict[str, float]:
-        metadata: dict[str, float] = {}
-        create_time = GraphExtractor._optional_float(getattr(atom, "created_at", None))
-        event_time = GraphExtractor._optional_float(getattr(atom, "event_time", None))
-        if create_time is not None:
-            metadata["create_time"] = create_time
-        if event_time is not None:
-            metadata["event_time"] = event_time
-        return metadata
-
-    @staticmethod
-    def _optional_float(value: Any) -> float | None:
-        if isinstance(value, bool) or value is None:
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
 
 __all__ = ["GraphExtractor"]
