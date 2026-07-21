@@ -76,6 +76,7 @@ flowchart TD
 ## 安全、隐私与故障边界
 
 - 查询工具应从当前事件推断 scope，不得默认跨 session/persona/group 扩大查询。显式关闭过滤是配置层决策，不在工具内偷偷回退。
+- `ProfileLookupTool` 的 self lookup 只信任 `event.get_sender_id()`；`unified_msg_origin` 仅是会话身份，不能替代用户身份。显式查询其他用户必须经过注入的 `authorization_checker`，缺少授权时返回稳定 `profile_scope_denied`。
 - 工具结果进入模型上下文；只返回完成任务所需字段，禁止加入 Provider 配置、凭据、数据库路径或异常堆栈。
 - JSON 工具使用 `ensure_ascii=False, default=str` 的稳定序列化；错误通常返回结构化 `error`，笔记工具沿用文本错误契约。不要擅自统一返回类型而破坏 Agent/测试契约。
 - `CancelledError` 在记忆工具中继续传播；普通异常记录后只返回 `internal_error`。其他领域工具不保证全部捕获异常，修改时遵循该文件现有契约而非假设全局吞错。

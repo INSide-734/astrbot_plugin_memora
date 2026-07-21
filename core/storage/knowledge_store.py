@@ -7,8 +7,13 @@ import time
 from typing import Any
 
 from ..base.list_sorting import SortQuery, order_by_clause
+from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ..models.knowledge_models import KnowledgeEntry, KnowledgeType
 from .base import BaseStore
+from .domain_object_integrity import (
+    filter_current_domain_objects,
+    validate_domain_object_write,
+)
 
 
 KNOWLEDGE_SORT_COLUMNS = {
@@ -31,29 +36,56 @@ _CREATE_KB = """CREATE TABLE IF NOT EXISTS knowledge_entries (
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     expires_at REAL DEFAULT 0,
-    access_count INTEGER DEFAULT 0
+    access_count INTEGER DEFAULT 0,
+    origin TEXT DEFAULT 'manual',
+    provenance_json TEXT
 )"""
 
 
 class KnowledgeStore(BaseStore):
+    """持久化结构化知识条目并维护 derived 来源可见性。"""
+
     def __init__(self, db_path: str) -> None:
+        """保存 SQLite 路径。"""
+
         self.db_path = db_path
 
     async def init_table(self) -> None:
+        """创建知识表并幂等补齐来源字段。"""
+
         async with self._connect() as db:
             await db.execute(_CREATE_KB)
+            cursor = await db.execute("PRAGMA table_info(knowledge_entries)")
+            columns = {str(row[1]) for row in await cursor.fetchall()}
+            for column, definition in (
+                ("origin", "TEXT DEFAULT 'manual'"),
+                ("provenance_json", "TEXT"),
+            ):
+                if column not in columns:
+                    await db.execute(
+                        f"ALTER TABLE knowledge_entries ADD COLUMN {column} {definition}"
+                    )
             await db.commit()
 
     async def insert(self, entry: KnowledgeEntry) -> int:
+        """校验来源后插入知识条目并返回内部 ID。"""
+
         now = time.time()
         entry.created_at = now
         entry.updated_at = now
         async with self._connect() as db:
-            cursor = await db.execute(
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                await validate_domain_object_write(
+                    db,
+                    entry.origin,
+                    entry.provenance,
+                )
+                cursor = await db.execute(
                 """INSERT INTO knowledge_entries
                    (title, content, category, confidence, source_ids, tags,
-                    created_at, updated_at, expires_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, updated_at, expires_at, origin, provenance_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry.title,
                     entry.content,
@@ -64,18 +96,33 @@ class KnowledgeStore(BaseStore):
                     now,
                     now,
                     entry.expires_at,
+                    entry.origin.value,
+                    (
+                        self._to_json(entry.provenance.to_dict())
+                        if entry.provenance is not None
+                        else None
+                    ),
                 ),
-            )
-            await db.commit()
-            return cursor.lastrowid
+                )
+                await db.commit()
+                return cursor.lastrowid
+            except BaseException:
+                await db.rollback()
+                raise
 
     async def get(self, entry_id: int) -> KnowledgeEntry | None:
+        """读取单条知识，并过滤 stale derived 对象。"""
+
         async with self._connect() as db:
             cursor = await db.execute(
                 "SELECT * FROM knowledge_entries WHERE id = ?", (entry_id,)
             )
             row = await cursor.fetchone()
-            return self._row_to_entry(row) if row else None
+            entry = self._row_to_entry(row) if row else None
+        if entry is None:
+            return None
+        visible = await self.filter_current_sources([entry])
+        return visible[0] if visible else None
 
     async def search(
         self,
@@ -84,6 +131,8 @@ class KnowledgeStore(BaseStore):
         category: str = "",
         sort: SortQuery = SortQuery("updated_at", "desc"),
     ) -> tuple[list[KnowledgeEntry], int]:
+        """按关键词搜索知识，并过滤不可见的 derived 条目。"""
+
         like = f"%{query}%"
         order_by = order_by_clause(
             sort,
@@ -95,20 +144,38 @@ class KnowledgeStore(BaseStore):
                 cursor = await db.execute(
                     f"""SELECT * FROM knowledge_entries
                        WHERE category = ? AND (title LIKE ? OR content LIKE ?)
-                       ORDER BY {order_by} LIMIT ?""",
-                    (category, like, like, limit),
+                       ORDER BY {order_by}""",
+                    (category, like, like),
                 )
             else:
                 cursor = await db.execute(
                     f"""SELECT * FROM knowledge_entries
                        WHERE title LIKE ? OR content LIKE ?
-                       ORDER BY {order_by} LIMIT ?""",
-                    (like, like, limit),
+                       ORDER BY {order_by}""",
+                    (like, like),
                 )
             rows = await cursor.fetchall()
-            cursor2 = await db.execute("SELECT COUNT(*) FROM knowledge_entries")
-            total = (await cursor2.fetchone())[0]
-        return [self._row_to_entry(r) for r in rows], total
+            entries = [self._row_to_entry(r) for r in rows]
+            visible = await filter_current_domain_objects(db, entries)
+        return visible[:limit], len(visible)
+
+    async def search_merge_candidates(
+        self,
+        query: str,
+        limit: int = 5,
+    ) -> list[KnowledgeEntry]:
+        """返回去重恢复候选，允许包含待读写事务重新校验的 stale 条目。"""
+
+        like = f"%{query}%"
+        async with self._connect() as db:
+            cursor = await db.execute(
+                """SELECT * FROM knowledge_entries
+                   WHERE title LIKE ? OR content LIKE ?
+                   ORDER BY updated_at DESC, id DESC LIMIT ?""",
+                (like, like, limit),
+            )
+            rows = await cursor.fetchall()
+        return [self._row_to_entry(row) for row in rows]
 
     async def list_entries(
         self,
@@ -117,6 +184,8 @@ class KnowledgeStore(BaseStore):
         category: str = "",
         sort: SortQuery = SortQuery("updated_at", "desc"),
     ) -> tuple[list[KnowledgeEntry], int]:
+        """分页列出知识，并过滤不可见的 derived 条目。"""
+
         order_by = order_by_clause(
             sort,
             columns=_KNOWLEDGE_SQL_COLUMNS,
@@ -125,45 +194,72 @@ class KnowledgeStore(BaseStore):
         async with self._connect() as db:
             if category:
                 cursor = await db.execute(
-                    "SELECT COUNT(*) FROM knowledge_entries WHERE category = ?",
+                    f"""SELECT * FROM knowledge_entries
+                       WHERE category = ? ORDER BY {order_by}""",
                     (category,),
                 )
-                total = (await cursor.fetchone())[0]
-                cursor = await db.execute(
-                    f"""SELECT * FROM knowledge_entries
-                       WHERE category = ? ORDER BY {order_by} LIMIT ? OFFSET ?""",
-                    (category, limit, offset),
-                )
             else:
-                cursor = await db.execute("SELECT COUNT(*) FROM knowledge_entries")
-                total = (await cursor.fetchone())[0]
                 cursor = await db.execute(
-                    f"SELECT * FROM knowledge_entries ORDER BY {order_by} LIMIT ? OFFSET ?",
-                    (limit, offset),
+                    f"SELECT * FROM knowledge_entries ORDER BY {order_by}",
                 )
             rows = await cursor.fetchall()
-        return [self._row_to_entry(r) for r in rows], total
+            entries = [self._row_to_entry(r) for r in rows]
+            visible = await filter_current_domain_objects(db, entries)
+        return visible[offset : offset + limit], len(visible)
+
+    async def filter_current_sources(
+        self,
+        entries: list[KnowledgeEntry],
+    ) -> list[KnowledgeEntry]:
+        """读取时丢弃 stale derived knowledge，保留人工条目。"""
+
+        if not entries:
+            return []
+        async with self._connect() as db:
+            return await filter_current_domain_objects(db, entries)
 
     async def update(self, entry: KnowledgeEntry) -> None:
+        """重新校验来源后更新知识条目。"""
+
         entry.updated_at = time.time()
         async with self._connect() as db:
-            await db.execute(
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                await validate_domain_object_write(
+                    db,
+                    entry.origin,
+                    entry.provenance,
+                )
+                await db.execute(
                 """UPDATE knowledge_entries SET title=?, content=?, category=?,
-                   confidence=?, tags=?, updated_at=?, access_count=? WHERE id=?""",
+                   confidence=?, tags=?, source_ids=?, updated_at=?, access_count=?,
+                   origin=?, provenance_json=? WHERE id=?""",
                 (
                     entry.title,
                     entry.content,
                     entry.category.value,
                     entry.confidence,
                     json.dumps(entry.tags),
+                    json.dumps(entry.source_ids),
                     entry.updated_at,
                     entry.access_count,
+                    entry.origin.value,
+                    (
+                        self._to_json(entry.provenance.to_dict())
+                        if entry.provenance is not None
+                        else None
+                    ),
                     entry.entry_id,
                 ),
-            )
-            await db.commit()
+                )
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                raise
 
     async def delete(self, entry_id: int) -> bool:
+        """按内部 ID 删除知识条目。"""
+
         async with self._connect() as db:
             cursor = await db.execute(
                 "DELETE FROM knowledge_entries WHERE id = ?", (entry_id,)
@@ -172,12 +268,19 @@ class KnowledgeStore(BaseStore):
             return cursor.rowcount > 0
 
     async def count(self) -> int:
+        """返回知识条目总数。"""
+
         async with self._connect() as db:
             cursor = await db.execute("SELECT COUNT(*) FROM knowledge_entries")
             return (await cursor.fetchone())[0]
 
     @staticmethod
     def _row_to_entry(row: Any) -> KnowledgeEntry:
+        """把数据库行转换为兼容旧字段的知识模型。"""
+
+        provenance_data = (
+            BaseStore._from_json(row[12]) if len(row) > 12 and row[12] else None
+        )
         return KnowledgeEntry(
             title=str(row[1] or ""),
             content=str(row[2] or ""),
@@ -190,6 +293,14 @@ class KnowledgeStore(BaseStore):
             expires_at=float(row[9] or 0),
             access_count=int(row[10] or 0),
             entry_id=int(row[0] or 0),
+            origin=DomainObjectOrigin(str(row[11] or "manual"))
+            if len(row) > 11
+            else DomainObjectOrigin.MANUAL,
+            provenance=(
+                DomainProvenance.from_dict(provenance_data)
+                if isinstance(provenance_data, dict)
+                else None
+            ),
         )
 
 

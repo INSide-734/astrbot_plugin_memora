@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from astrbot.api import logger
@@ -15,6 +16,7 @@ from ..base.entity_editing import (
     compute_entity_revision,
 )
 from ..models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
+from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ..storage.profile_store import ProfileStore
 
 _EDITABLE_PREFERENCE_FIELDS = frozenset(
@@ -26,15 +28,23 @@ class ProfileManager:
     """管理用户画像: 创建、更新、标签积累、衰减。"""
 
     def __init__(self, profile_store: ProfileStore) -> None:
+        """保存画像 Store 依赖。"""
+
         self._store = profile_store
 
     async def ensure_profile(self, user_id: str) -> UserProfile:
+        """返回已有画像，缺失时创建空画像。"""
+
         return await self._store.get_or_create_profile(user_id)
 
     async def get_profile(self, user_id: str) -> UserProfile | None:
+        """按可信用户 ID 读取画像。"""
+
         return await self._store.get_profile(user_id)
 
     async def touch(self, user_id: str) -> None:
+        """更新画像最近活动时间。"""
+
         await self._store.touch(user_id)
 
     async def create_profile_manual(
@@ -88,6 +98,8 @@ class ProfileManager:
 
     @staticmethod
     def revision_for(profile: UserProfile) -> str:
+        """计算管理员编辑使用的稳定画像 revision。"""
+
         return compute_entity_revision(profile.to_dict())
 
     async def update_profile_fields(
@@ -97,12 +109,20 @@ class ProfileManager:
         display_name: str | None = None,
         preferences: dict[str, Any] | UserPreferences | None = None,
     ) -> UserProfile | None:
+        """更新显式人工字段，并为偏好标记人工权威。"""
+
         normalized_preferences: UserPreferences | None = None
         if preferences is not None:
             if isinstance(preferences, UserPreferences):
-                normalized_preferences = preferences
+                normalized_preferences = replace(
+                    preferences,
+                    provenance=DomainProvenance(DomainObjectOrigin.MANUAL),
+                )
             else:
-                normalized_preferences = UserPreferences.from_dict(preferences)
+                normalized_preferences = replace(
+                    UserPreferences.from_dict(preferences),
+                    provenance=DomainProvenance(DomainObjectOrigin.MANUAL),
+                )
         return await self._store.update_profile_fields_atomic(
             user_id,
             display_name=display_name.strip() if display_name is not None else None,
@@ -110,45 +130,71 @@ class ProfileManager:
         )
 
     async def delete_profile(self, user_id: str) -> bool:
+        """删除指定画像及其标签。"""
+
         return await self._store.delete_profile(user_id)
 
     async def add_tag(self, user_id: str, tag: UserTag) -> UserProfile | None:
+        """向画像写入显式人工标签。"""
+
         profile = await self.get_profile(user_id)
         if profile is None:
             return None
+        tag.source = "manual"
+        tag.provenance = DomainProvenance(DomainObjectOrigin.MANUAL)
         await self._store.add_tag(user_id, tag)
         return await self.get_profile(user_id)
 
     async def remove_tag(
         self, user_id: str, category: str, value: str
     ) -> UserProfile | None:
+        """按分类和值删除单个标签。"""
+
         profile = await self.get_profile(user_id)
         if profile is None:
             return None
         await self._store.remove_tag(user_id, category, value)
         return await self.get_profile(user_id)
 
-    async def ingest_tags(self, user_id: str, tags: list[UserTag]) -> UserProfile:
+    async def ingest_tags(
+        self,
+        user_id: str,
+        tags: list[UserTag],
+        *,
+        provenance: DomainProvenance | None = None,
+    ) -> UserProfile:
+        """应用带 canonical 证据的自动标签 proposal。"""
+
+        provenance = self._require_derived_provenance(provenance)
         await self.ensure_profile(user_id)
-        profile, new_count = await self._store.upsert_tags_atomic(user_id, tags)
+        for tag in tags:
+            tag.provenance = provenance
+        profile, new_count = await self._store.upsert_tags_atomic(
+            user_id,
+            tags,
+        )
         if profile is None:
             raise EntityNotFoundError("画像不存在")
         if new_count:
             logger.debug(
-                f"[Profile] {user_id}: +{new_count} new tags, total={len(profile.tags)}"
+                f"[画像] {user_id}: 新增 {new_count} 个标签，合计 {len(profile.tags)} 个"
             )
         return profile
 
     async def get_tag_weights(self, user_id: str) -> dict[str, float]:
+        """返回个性化排序使用的标签权重。"""
+
         profile = await self.get_profile(user_id)
         if profile is None:
             return {}
         return profile.get_weight_vector()
 
     async def decay_and_clean(self, user_id: str) -> int:
+        """衰减并删除指定画像中的低置信度标签。"""
+
         removed = await self._store.decay_and_clean_tags_atomic(user_id)
         if removed:
-            logger.debug(f"[Profile] {user_id}: removed {removed} stale tags")
+            logger.debug(f"[画像] {user_id}: 删除 {removed} 个过期标签")
         return removed
 
     async def decay_and_clean_all(self, batch_size: int = 100) -> dict[str, int]:
@@ -170,7 +216,7 @@ class ProfileManager:
                 except Exception as e:
                     failed += 1
                     logger.warning(
-                        f"[Profile] {profile.user_id}: decay_and_clean failed: {e}"
+                        f"[画像] {profile.user_id}: 标签衰减失败，异常类型={e.__class__.__name__}"
                     )
 
             if len(profiles) < batch_size:
@@ -180,6 +226,8 @@ class ProfileManager:
         return {"scanned": scanned, "removed": removed_total, "failed": failed}
 
     async def record_message(self, user_id: str, message_length: int = 0) -> None:
+        """记录一次用户消息并更新画像统计。"""
+
         await self.ensure_profile(user_id)
         await self._store.record_message_atomic(
             user_id,
@@ -187,12 +235,25 @@ class ProfileManager:
         )
 
     async def update_preferences(
-        self, user_id: str, preferences_update: dict[str, Any]
+        self,
+        user_id: str,
+        preferences_update: dict[str, Any],
+        *,
+        provenance: DomainProvenance | None = None,
     ) -> None:
+        """应用带 canonical 证据的自动偏好 proposal。"""
+
+        provenance = self._require_derived_provenance(provenance)
         await self.ensure_profile(user_id)
-        await self._store.merge_preferences_atomic(user_id, preferences_update)
+        await self._store.merge_preferences_atomic(
+            user_id,
+            preferences_update,
+            provenance=provenance,
+        )
 
     async def get_profile_count(self) -> int:
+        """返回画像总数。"""
+
         _, total = await self._store.list_profiles(limit=1)
         return total
 
@@ -202,6 +263,8 @@ class ProfileManager:
         offset: int = 0,
         sort: SortQuery = SortQuery("last_seen_at", "desc"),
     ) -> tuple[list[UserProfile], int]:
+        """按稳定排序分页列出画像。"""
+
         return await self._store.list_profiles(limit=limit, offset=offset, sort=sort)
 
     @staticmethod
@@ -212,6 +275,8 @@ class ProfileManager:
         allow_empty: bool,
         maximum: int = 128,
     ) -> str:
+        """规范化有限长度文本字段。"""
+
         if not isinstance(value, str):
             raise EntityValidationError({field: "必须为字符串"})
         normalized = value.strip()
@@ -223,6 +288,8 @@ class ProfileManager:
 
     @classmethod
     def _normalize_preferences(cls, value: Any) -> UserPreferences:
+        """规范化管理员可写偏好并标记人工权威。"""
+
         if not isinstance(value, Mapping):
             raise EntityValidationError({"preferences": "必须为对象"})
         if any(not isinstance(key, str) for key in value):
@@ -249,10 +316,15 @@ class ProfileManager:
             normalized["active_hours"] = cls._normalize_active_hours(
                 value["active_hours"]
             )
-        return UserPreferences.from_dict(normalized)
+        return replace(
+            UserPreferences.from_dict(normalized),
+            provenance=DomainProvenance(DomainObjectOrigin.MANUAL),
+        )
 
     @staticmethod
     def _normalize_active_hours(value: Any) -> list[int]:
+        """规范化 0 到 23 的去重小时数组。"""
+
         if not isinstance(value, list):
             raise EntityValidationError(
                 {"preferences.active_hours": "必须为整数数组"}
@@ -270,6 +342,8 @@ class ProfileManager:
 
     @classmethod
     def _normalize_manual_tags(cls, value: Any) -> list[UserTag]:
+        """规范化管理员标签列表并拒绝重复项。"""
+
         if not isinstance(value, list):
             raise EntityValidationError({"tags": "必须为数组"})
         normalized: list[UserTag] = []
@@ -287,6 +361,8 @@ class ProfileManager:
 
     @classmethod
     def _normalize_manual_tag(cls, item: Any, index: int) -> UserTag:
+        """规范化一条管理员标签。"""
+
         prefix = "tags." + str(index)
         if not isinstance(item, Mapping):
             raise EntityValidationError({prefix: "必须为对象"})
@@ -321,11 +397,17 @@ class ProfileManager:
                 "category": normalized_category.value,
                 "value": tag_value,
                 "confidence": normalized_confidence,
+                "source": "manual",
+                "provenance": DomainProvenance(
+                    DomainObjectOrigin.MANUAL
+                ).to_dict(),
             }
         )
 
     @staticmethod
     def _normalize_string_list(value: Any, field: str) -> list[str]:
+        """规范化有限、去重的字符串列表。"""
+
         if not isinstance(value, list):
             raise EntityValidationError({field: "必须为字符串数组"})
         normalized: list[str] = []
@@ -344,6 +426,8 @@ class ProfileManager:
 
     @staticmethod
     def _normalize_revision(value: Any) -> str:
+        """规范化非空 revision 文本。"""
+
         if not isinstance(value, str):
             raise EntityValidationError({"expected_revision": "必须为字符串"})
         normalized = value.strip()
@@ -352,6 +436,19 @@ class ProfileManager:
         if len(normalized) > 256:
             raise EntityValidationError({"expected_revision": "文本过长"})
         return normalized
+
+    @staticmethod
+    def _require_derived_provenance(
+        provenance: DomainProvenance | None,
+    ) -> DomainProvenance:
+        """要求自动写入携带完整 derived provenance。"""
+
+        if (
+            provenance is None
+            or provenance.origin is not DomainObjectOrigin.DERIVED
+        ):
+            raise ValueError("source_provenance_required")
+        return provenance
 
 
 __all__ = ["ProfileManager"]

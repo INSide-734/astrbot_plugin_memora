@@ -18,6 +18,7 @@ from ..models.temporal import canonical_visible_at, normalize_datetime
 from ..retrieval.query_rewriter import resolve_reference_time
 from ..retrieval.rrf_fusion import HybridResult
 from ..utils.number_utils import clamp_float
+from .atom_source_binding import bind_atoms_to_canonical_source
 from .memory_engine_evolution_hooks import memory_revision
 from .write_op_serialization import serialize_atom_for_repair
 
@@ -36,6 +37,8 @@ class MemoryEngineCRUDMixin:
         metadata: dict[str, Any] | None = None,
         atoms: list | None = None,
     ) -> int:
+        """提交 canonical memory，并在成功后维护 Atom、图与演化派生。"""
+
         if not content or not content.strip():
             raise ValueError("记忆内容不能为空")
         write_started = time.perf_counter()
@@ -83,13 +86,19 @@ class MemoryEngineCRUDMixin:
             raise
         atom_write_failed = False
         if atoms and self.atom_store is not None and self.atom_enabled:
-            prepared_atoms = []
+            prepared_atoms = list(atoms)
             for atom in atoms:
                 atom.session_id = atom.session_id or session_id
                 atom.persona_id = atom.persona_id or persona_id
-                atom.parent_memory_id = doc_id
-                prepared_atoms.append(atom)
+            sources_bound = False
             try:
+                canonical_memory = await self.get_memory(doc_id)
+                prepared_atoms = bind_atoms_to_canonical_source(
+                    prepared_atoms,
+                    canonical_memory,
+                    fallback_metadata=full_metadata,
+                )
+                sources_bound = True
                 await self.atom_store.insert_many(prepared_atoms)
                 await self._write_journal.advance_op(
                     op_id, "atoms_indexed", memory_id=doc_id
@@ -99,15 +108,20 @@ class MemoryEngineCRUDMixin:
             except Exception:
                 logger.error("[MemoryEngine] 批量写入记忆原子失败", exc_info=True)
                 failed_atoms: list[dict[str, Any]] = []
-                for atom in prepared_atoms:
-                    if getattr(atom, "atom_id", 0):
-                        continue
-                    try:
-                        await self.atom_store.insert(atom)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        failed_atoms.append(serialize_atom_for_repair(atom))
+                if sources_bound:
+                    for atom in prepared_atoms:
+                        if getattr(atom, "atom_id", 0):
+                            continue
+                        try:
+                            await self.atom_store.insert(atom)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            failed_atoms.append(serialize_atom_for_repair(atom))
+                else:
+                    failed_atoms = [
+                        serialize_atom_for_repair(atom) for atom in prepared_atoms
+                    ]
                 if failed_atoms:
                     await self._write_journal.advance_op(
                         op_id,
@@ -187,6 +201,8 @@ class MemoryEngineCRUDMixin:
 
     @staticmethod
     def _record_add_memory_failure(stage: str) -> None:
+        """按固定阶段记录 canonical 写入失败计数。"""
+
         try:
             from ..monitoring.metrics import MEMORY_WRITE_FAILURES_TOTAL
 
@@ -203,7 +219,7 @@ class MemoryEngineCRUDMixin:
         atoms: list | None,
         duration_s: float,
     ) -> None:
-        """Record low-cost write metrics and quality samples after persistence."""
+        """canonical 提交后记录低成本写入指标与质量样本。"""
         try:
             from ..monitoring.metrics import MEMORY_ATOMS_TOTAL, MEMORY_WRITE_DURATION
 
@@ -256,6 +272,8 @@ class MemoryEngineCRUDMixin:
         debug_trace: list[dict[str, Any]] | None = None,
         reference_time: datetime | None = None,
     ) -> list[HybridResult]:
+        """执行受 scope、privacy 与时间边界约束的多路召回。"""
+
         requested_reference_time = normalize_datetime(reference_time) or resolve_reference_time(
             query_intent
         )
@@ -420,7 +438,7 @@ class MemoryEngineCRUDMixin:
         _t_chain = 0.0
         if chain_depth > 0 and results:
             # R2: 多跳检索 — 仅对关系/时间查询或显式 trace 启用
-            # factual/preference 查询跳过链式扩展以节省计算
+            # 事实类与偏好类查询跳过链式扩展以节省计算
             _should_expand = (
                 intent_str in ("relationship", "temporal")
                 or trace_requested
@@ -480,6 +498,8 @@ class MemoryEngineCRUDMixin:
         return results
 
     async def get_memory(self, memory_id: int) -> dict[str, Any] | None:
+        """按 canonical 整数 ID 读取记忆详情。"""
+
         try:
             docs = await self.faiss_db.document_storage.get_documents(
                 metadata_filters={}, ids=[memory_id], limit=1
@@ -554,6 +574,39 @@ class MemoryEngineCRUDMixin:
             if not new_content or not new_content.strip():
                 self._last_write_reason_code = "invalid_content"
                 return False
+            if expected_revision is not None:
+                if self.hybrid_retriever is None:
+                    self._last_write_reason_code = "not_initialized"
+                    return False
+                guarded_metadata = current_metadata.copy()
+                guarded_metadata["updated_at"] = time.time()
+                success = await self.hybrid_retriever.update_content_if_revision(
+                    memory_id,
+                    new_content,
+                    guarded_metadata,
+                    expected_revision,
+                )
+                if not success:
+                    self._last_write_reason_code = "source_revision_mismatch"
+                    return False
+                await self._invalidate_evolution_after_revision(memory_id)
+                await self._schedule_evolution_after_write(memory_id)
+                self._retrieval.invalidate_cache()
+                if self.graph_memory_manager is not None and not skip_graph_reindex:
+                    try:
+                        await self.graph_memory_manager.index_memory(
+                            memory_id,
+                            new_content,
+                            guarded_metadata,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.warning(
+                            "[更新] 正文已提交但图派生刷新失败",
+                            exc_info=True,
+                        )
+                return True
             try:
                 session_id = current_metadata.get("session_id")
                 persona_id = current_metadata.get("persona_id")
@@ -611,9 +664,17 @@ class MemoryEngineCRUDMixin:
             if self.hybrid_retriever is None:
                 logger.error("混合检索器未初始化")
                 return False
-            success = await self.hybrid_retriever.update_metadata(
-                memory_id, metadata_updates
-            )
+            if expected_revision is None:
+                success = await self.hybrid_retriever.update_metadata(
+                    memory_id,
+                    metadata_updates,
+                )
+            else:
+                success = await self.hybrid_retriever.update_metadata(
+                    memory_id,
+                    metadata_updates,
+                    expected_revision=expected_revision,
+                )
             if success:
                 await self._invalidate_evolution_after_revision(memory_id)
                 await self._schedule_evolution_after_write(memory_id)
@@ -654,6 +715,8 @@ class MemoryEngineCRUDMixin:
         return True
 
     async def delete_memory(self, memory_id: int) -> bool:
+        """删除 canonical memory，并清理或失效关联派生对象。"""
+
         op_id = await self._write_journal.start_op(
             "delete", {"memory_id": memory_id}, memory_id=memory_id
         )

@@ -141,6 +141,7 @@ sequenceDiagram
 
 - 添加：先向量/DocumentStorage 取得 `doc_id`，再写 BM25；BM25 失败时尝试删除向量回滚。
 - metadata 更新：向量层负责同步 DocumentStorage，并推进 `documents.updated_at` 作为 source revision，随后 BM25 更新；失败返回 `False`。
+- 上层提供 `expected_revision` 时，metadata 更新在 DocumentStorage 的 `BEGIN IMMEDIATE` 写锁内比较当前 revision；比较失败不得写入。缺省参数保持既有二参数调用形状。
 - 删除：按 BM25 → 向量/DocumentStorage 删除；后续失败时尝试恢复 BM25。
 
 这仍不是跨文件 ACID 事务；上层 `WriteOpJournal` 才负责更完整的跨存储恢复。

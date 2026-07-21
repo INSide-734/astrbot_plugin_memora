@@ -3,6 +3,7 @@
 封装 AstrBot 的 FaissVecDB，并提供统一的检索接口。
 """
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
@@ -281,19 +282,32 @@ class VectorRetriever:
             )
             return None
 
-    async def update_metadata(self, doc_id: int, metadata: dict[str, Any]) -> bool:
+    async def update_metadata(
+        self,
+        doc_id: int,
+        metadata: dict[str, Any],
+        expected_revision: str | None = None,
+    ) -> bool:
         """
         更新文档元数据（使用 ORM 方式）
 
         参数:
             doc_id: 文档 ID（整数 id）
             metadata: 新的元数据字典
+            expected_revision: 可选的 source revision；提供时使用 SQLite 原子比较更新
 
         返回:
             是否成功更新。
         """
         if not self.backend_capabilities.supports(AdapterCapability.UPDATE):
             return False
+
+        if expected_revision is not None:
+            return await self._update_metadata_if_revision(
+                doc_id,
+                metadata,
+                expected_revision,
+            )
 
         import json
 
@@ -359,6 +373,200 @@ class VectorRetriever:
 
             logger.error(
                 "[元数据更新] 失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return False
+
+    async def _update_metadata_if_revision(
+        self,
+        doc_id: int,
+        metadata: dict[str, Any],
+        expected_revision: str,
+    ) -> bool:
+        """在 SQLite 写锁内校验 revision 后更新 metadata。"""
+
+        import json
+
+        from astrbot.api import logger
+
+        doc_storage = self.faiss_db.document_storage
+        try:
+            from sqlalchemy import text
+        except ModuleNotFoundError:
+            return False
+
+        session = None
+        try:
+            async with doc_storage.get_session() as session:
+                await session.execute(text("BEGIN IMMEDIATE"))
+                result = await session.execute(
+                    text(
+                        "SELECT metadata, created_at, updated_at "
+                        "FROM documents WHERE id = :id"
+                    ),
+                    {"id": doc_id},
+                )
+                row = result.mappings().first()
+                if row is None:
+                    await session.rollback()
+                    return False
+                current_revision = row.get("updated_at") or row.get("created_at")
+                if hasattr(current_revision, "isoformat"):
+                    current_revision = current_revision.isoformat()
+                if str(current_revision or "").strip() != str(expected_revision):
+                    await session.rollback()
+                    return False
+                current_metadata = row.get("metadata")
+                if isinstance(current_metadata, str):
+                    try:
+                        current_metadata = json.loads(current_metadata)
+                    except (TypeError, json.JSONDecodeError):
+                        current_metadata = {}
+                if not isinstance(current_metadata, dict):
+                    current_metadata = {}
+                current_metadata.update(metadata)
+                updated_at = datetime.now(timezone.utc).isoformat()
+                update_result = await session.execute(
+                    text(
+                        "UPDATE documents SET metadata = :metadata, "
+                        "updated_at = :updated_at "
+                        "WHERE id = :id AND CAST(updated_at AS TEXT) = :revision"
+                    ),
+                    {
+                        "metadata": json.dumps(current_metadata, ensure_ascii=False),
+                        "updated_at": updated_at,
+                        "id": doc_id,
+                        "revision": str(expected_revision),
+                    },
+                )
+                if update_result.rowcount != 1:
+                    await session.rollback()
+                    return False
+                await session.commit()
+                logger.debug("[元数据更新] revision 校验通过并完成原子更新")
+                return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if session is not None:
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
+            logger.error(
+                "[元数据更新] revision 原子更新失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return False
+
+    async def update_content_if_revision(
+        self,
+        doc_id: int,
+        content: str,
+        metadata: dict[str, Any],
+        expected_revision: str,
+    ) -> bool:
+        """在 canonical 写锁内原子替换正文、metadata 与向量。"""
+
+        if not self.backend_capabilities.supports(AdapterCapability.UPDATE):
+            return False
+        if not content or not content.strip():
+            return False
+
+        import json
+        import numpy as np
+
+        from astrbot.api import logger
+
+        doc_storage = self.faiss_db.document_storage
+        embedding_provider = getattr(self.faiss_db, "embedding_provider", None)
+        embedding_storage = getattr(self.faiss_db, "embedding_storage", None)
+        if embedding_provider is None or embedding_storage is None:
+            return False
+        try:
+            from sqlalchemy import text
+        except ModuleNotFoundError:
+            return False
+
+        embedding_content = self._fit_content_for_embedding(content, 4000)
+        vector = np.asarray(
+            await embedding_provider.get_embedding(embedding_content),
+            dtype=np.float32,
+        )
+        if vector.shape != (embedding_storage.dimension,):
+            return False
+
+        session = None
+        try:
+            async with doc_storage.get_session() as session:
+                await session.execute(text("BEGIN IMMEDIATE"))
+                result = await session.execute(
+                    text(
+                        "SELECT text, metadata, updated_at, created_at "
+                        "FROM documents WHERE id = :id"
+                    ),
+                    {"id": doc_id},
+                )
+                row = result.mappings().first()
+                if row is None:
+                    await session.rollback()
+                    return False
+                current_revision = row.get("updated_at") or row.get("created_at")
+                if hasattr(current_revision, "isoformat"):
+                    current_revision = current_revision.isoformat()
+                if str(current_revision or "").strip() != str(expected_revision):
+                    await session.rollback()
+                    return False
+
+                current_metadata = row.get("metadata")
+                if isinstance(current_metadata, str):
+                    try:
+                        current_metadata = json.loads(current_metadata)
+                    except (TypeError, json.JSONDecodeError):
+                        current_metadata = {}
+                if not isinstance(current_metadata, dict):
+                    current_metadata = {}
+                current_metadata.update(metadata)
+                updated_at = datetime.now(timezone.utc).isoformat()
+
+                delete_fts = getattr(doc_storage, "_delete_fts_row", None)
+                insert_fts = getattr(doc_storage, "_insert_fts_row", None)
+                if callable(delete_fts) and callable(insert_fts):
+                    await delete_fts(session, doc_id, str(row.get("text") or ""))
+                update_result = await session.execute(
+                    text(
+                        "UPDATE documents SET text = :content, metadata = :metadata, "
+                        "updated_at = :updated_at "
+                        "WHERE id = :id AND CAST(updated_at AS TEXT) = :revision"
+                    ),
+                    {
+                        "content": content,
+                        "metadata": json.dumps(current_metadata, ensure_ascii=False),
+                        "updated_at": updated_at,
+                        "id": doc_id,
+                        "revision": str(expected_revision),
+                    },
+                )
+                if update_result.rowcount != 1:
+                    await session.rollback()
+                    return False
+                if callable(delete_fts) and callable(insert_fts):
+                    await insert_fts(session, doc_id, content)
+                await embedding_storage.delete([doc_id])
+                await embedding_storage.insert(vector, doc_id)
+                await session.commit()
+                logger.debug("[正文更新] revision 校验通过并完成原子更新")
+                return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if session is not None:
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
+            logger.error(
+                "[正文更新] revision 原子更新失败，异常类型=%s",
                 exc.__class__.__name__,
             )
             return False

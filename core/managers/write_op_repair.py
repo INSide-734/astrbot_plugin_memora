@@ -11,6 +11,10 @@ from typing import Any
 from astrbot.api import logger
 
 from ..models.memory_atom import MemoryAtom
+from .atom_source_binding import (
+    bind_atoms_to_canonical_source,
+    validate_bound_atoms_match_canonical_source,
+)
 from .write_op_serialization import _deserialize_atom_from_repair, safe_json_dict
 
 
@@ -100,6 +104,8 @@ class WriteOpRepairMixin:
         memory_id: int | None,
         payload: dict[str, Any],
     ) -> bool:
+        """重放未完成的 canonical 添加派生步骤。"""
+
         if memory_id is None:
             await self.advance_op(
                 op_id,
@@ -150,8 +156,43 @@ class WriteOpRepairMixin:
                 if atom is not None:
                     atoms.append(atom)
 
+        if atoms and not any(
+            atom.parent_revision
+            or atom.parent_scope_key
+            or atom.parent_privacy_level
+            for atom in atoms
+        ):
+            atoms = bind_atoms_to_canonical_source(
+                atoms,
+                memory,
+                fallback_metadata=metadata,
+            )
+
+        try:
+            validate_bound_atoms_match_canonical_source(
+                atoms,
+                memory,
+                fallback_metadata=metadata,
+            )
+        except ValueError as exc:
+            await self.advance_op(
+                op_id,
+                "source_stale",
+                status="failed",
+                memory_id=int(memory_id),
+                error=str(exc),
+            )
+            return False
+
         if self._atom_store is not None and atoms and self._atom_enabled:
-            existing_atoms = await self._atom_store.get_by_parent(int(memory_id))
+            raw_parent_loader = getattr(type(self._atom_store), "get_by_parent_raw", None)
+            if callable(raw_parent_loader):
+                existing_atoms = await self._atom_store.get_by_parent_raw(
+                    int(memory_id)
+                )
+            else:
+                # 兼容只提供旧 Store 协议的测试替身和外部适配器。
+                existing_atoms = await self._atom_store.get_by_parent(int(memory_id))
             if payload.get("failed_atoms"):
                 existing_keys = {
                     (
@@ -202,6 +243,8 @@ class WriteOpRepairMixin:
         memory_id: int | None,
         payload: dict[str, Any],
     ) -> bool:
+        """重放未完成的图索引构建。"""
+
         if memory_id is None:
             await self.advance_op(
                 op_id,
@@ -277,6 +320,8 @@ class WriteOpRepairMixin:
         op_id: int,
         memory_id: int | None,
     ) -> bool:
+        """完成 canonical 删除后的图与 Atom 清理。"""
+
         if memory_id is None:
             await self.advance_op(
                 op_id,
@@ -304,6 +349,8 @@ class WriteOpRepairMixin:
         op_id: int,
         payload: dict[str, Any],
     ) -> bool:
+        """重放批量删除的索引与派生清理。"""
+
         memory_ids_raw = payload.get("memory_ids") or []
         if not isinstance(memory_ids_raw, list):
             await self.advance_op(

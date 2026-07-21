@@ -2,7 +2,7 @@
 
 # `core/models` 模块上下文
 
-**最后更新：** 2026-07-20
+**最后更新：** 2026-07-21
 **模块入口：** `core/models/__init__.py`；各领域模型通常从其子模块直接导入
 
 ## 职责与边界
@@ -48,8 +48,8 @@ erDiagram
 
 ### `memory_atom.py`
 
-- `MemoryAtom` 是当前细粒度持久化/检索核心：`parent_memory_id` 必填；含实体、情绪、重要性、置信度、访问/强化时间、TTL、状态、衰减类型、会话/人格及元数据。
-- 枚举：`AtomType`（episodic/factual/relational/preference/planned/unknown）、`DecayType`（linear/exponential/step）、`AtomStatus`（active/dormant/superseded/expired/forgotten/cold）、`PrivacyLevel`（public/shared/confidential）。`PrivacyLevel` 是导出契约，但当前 `MemoryAtom` 本身没有 `privacy_level` 字段。
+- `MemoryAtom` 是当前细粒度持久化/检索核心：`parent_memory_id` 必填；新写入链还保存 `parent_revision`、`parent_scope_key` 与 `parent_privacy_level`，旧行缺失时保持 `None`，不得伪造为当前 source。
+- 枚举：`AtomType`（episodic/factual/relational/preference/planned/unknown）、`DecayType`（linear/exponential/step）、`AtomStatus`（active/dormant/superseded/expired/forgotten/cold）、`PrivacyLevel`（public/shared/confidential）。Atom 的隐私快照保存在 `parent_privacy_level`，它只描述父 canonical 创建时边界，不形成独立召回身份。
 - `compute_decay_score()` 将 TTL 最小视为 1 天、负 `days_since` 视为 0；线性最低 0，阶跃过期后为 0.05，默认走指数半衰期。
 - `compute_ttl()`：基础 TTL 为 episodic 7、planned 2、factual 180、relational 90、preference 60、unknown 30 天；planned 可加到事件发生的剩余天数。
 - 情绪强度 `>= 0.85` 触发至少 365 天的 LINEAR 闪光灯路径；低重要性、未强化的 UNKNOWN/EPISODIC 默认进入 3 天基准的试用期路径；人格衰减倍率钳制到 `[0.1, 10.0]`；最终 TTL 至少 1 天。
@@ -64,13 +64,18 @@ erDiagram
 
 ### `knowledge_models.py` 与 `note_models.py`
 
-- `KnowledgeEntry` 使用 `KnowledgeType`（fact/concept/rule/event/procedure），支持来源 ID、标签、过期时间与访问计数。
-- `Note` 使用 `NoteStatus`（active/archived/deleted），保存当前版本号、用户和来源记忆 ID；`NoteVersion` 是独立快照类型，不内嵌在 `Note` 中。
+- `KnowledgeEntry` 使用 `KnowledgeType`（fact/concept/rule/event/procedure），支持来源 ID、标签、过期时间与访问计数；显式 `derived` 条目必须携带 `DomainProvenance`，人工条目保持旧序列化形状。
+- `Note` 使用 `NoteStatus`（active/archived/deleted），保存当前版本号、用户和来源记忆 ID；显式 `derived` 笔记必须携带 `DomainProvenance`，`NoteVersion` 仍是独立快照类型。
 - `from_dict()` 会执行 Enum 和数值转换；非法枚举/数字会抛出，不是无条件容错解析。
+
+### `domain_provenance.py`
+
+- `DomainObjectOrigin` 只允许 `manual` 与 `derived`。人工对象不得伪造 canonical source；派生对象必须有唯一 primary、可选 supporting、同一 scope 和不重复的正整数 source ID。
+- `DomainProvenance.to_dict()` 故意排除 canonical 正文，只保存 revision、scope、privacy、role 与时间窗口；Profile、Knowledge 和 Note 复用该契约，不创建第二套 source 类型。
 
 ### `user_profile.py`
 
-- `UserProfile` 聚合 `UserTag` 与 `UserPreferences`。`upsert_tag()` 以 `(category, value)` 去重，已有标签取较高置信度、更新时间并增加出现次数，返回 `False`；新增返回 `True`。
+- `UserProfile` 聚合 `UserTag` 与 `UserPreferences`。自动标签/偏好可携带 `DomainProvenance`，人工值使用 manual authority；派生同名标签不能替换人工来源。
 - `get_tag_values()` 采用 `confidence >= 0.3`；权重向量忽略 `< 0.2` 的标签，并以出现次数最多 10 次封顶。
 - `decay_tags()` 使用 30 天半衰期；`remove_stale_tags()` 返回删除数量。
 - dataclass 构造不会自动把置信度钳制到 `[0,1]`；可信范围应由抽取/管理链维护。
@@ -91,6 +96,11 @@ erDiagram
 - `RelationView`、`ProjectionView` 的 `reference_at`、`discovered_at`、`invalid_at`、`time_source` 和 `time_precision` 只描述派生证据时间；`created_at/updated_at` 仍是行生命周期时间，source revision 才是陈旧判断依据。
 - `ProjectionSourceView` 固定允许 `primary/supporting/conflict_left/conflict_right` 四种 role，并携带每个 canonical source 的 revision token、ordinal 和可选的 source-level 时间窗口。旧 mapping 缺少时间字段时保持未知，不从 projection 生命周期时间推断。`ProjectionBundle` 将一个 projection 和非空、同 projection ID 的 source mapping 组合起来，供读取侧批量校验。
 - `DerivedApplyPlan` 聚合 relation、projection、source mapping 与 `source_revisions`，用于一次原子应用；任一来源 revision 变化时应由管理/存储层拒绝或失效派生结果。
+
+### `derived_metadata.py` 与 `feedback_signal.py`
+
+- `DerivedMetadataSourceRef`、`DerivedMetadataProposal` 和 `DerivedMetadataAnnotation` 只描述 process-local 的 source-backed 派生注解；validator 固定执行 NFKC、去重、内容安全和字段/总预算校验，不写 canonical metadata。
+- `TrustedFeedbackEvent` 只能由受控 builder 从固定 outcome 枚举派生 reward/window/dedupe；`FeedbackSignalPolicy` 与 `FeedbackSignalAggregate` 只表达有界候选权重，不是生产配置或 canonical 身份。
 
 ## 导出契约
 

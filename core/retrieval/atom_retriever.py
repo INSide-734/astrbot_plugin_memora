@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
+
+from astrbot.api import logger
 
 from ..models.memory_atom import MemoryAtom
 from ..storage.atom_store import AtomStore
@@ -38,6 +41,8 @@ class AtomRetriever:
         atom_store: AtomStore,
         config: dict[str, Any] | None = None,
     ):
+        """保存 Atom Store 与可选检索配置。"""
+
         self.atom_store = atom_store
         self.config = config or {}
 
@@ -55,6 +60,7 @@ class AtomRetriever:
             session_id=session_id,
             persona_id=persona_id,
         )
+        atoms = await self._filter_current_sources(atoms)
 
         results: list[AtomRetrievalResult] = []
         for atom in atoms:
@@ -84,6 +90,25 @@ class AtomRetriever:
     async def get_atoms_for_memory(self, parent_memory_id: int) -> list[MemoryAtom]:
         """返回属于某条父记忆的所有原子。"""
         return await self.atom_store.get_by_parent(parent_memory_id)
+
+    async def _filter_current_sources(
+        self,
+        atoms: list[MemoryAtom],
+    ) -> list[MemoryAtom]:
+        """重新核对父来源；普通失败按无原子信号降级。"""
+
+        if not hasattr(type(self.atom_store), "filter_current_sources"):
+            return atoms
+        try:
+            return await self.atom_store.filter_current_sources(atoms)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[AtomRetriever] 父来源校验失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return []
 
     async def touch(self, atom_id: int) -> None:
         """更新原子的访问时间。"""

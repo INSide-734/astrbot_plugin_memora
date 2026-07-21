@@ -396,7 +396,12 @@ class TestWriteOpRepairAddIntegration:
             existing_doc = {
                 "id": 42,
                 "text": "repair this memory",
-                "metadata": {"session_id": "s1", "persona_id": "p1"},
+                "updated_at": "rev-42",
+                "metadata": {
+                    "session_id": "s1",
+                    "persona_id": "p1",
+                    "privacy_level": "shared",
+                },
             }
             mock_get = AsyncMock(return_value=existing_doc)
             mock_atom = MagicMock()
@@ -489,7 +494,12 @@ class TestWriteOpRepairAddIntegration:
             existing_doc = {
                 "id": 42,
                 "text": "dedup repair test",
-                "metadata": {"session_id": "s1", "persona_id": "p1"},
+                "updated_at": "rev-42",
+                "metadata": {
+                    "session_id": "s1",
+                    "persona_id": "p1",
+                    "privacy_level": "shared",
+                },
             }
             mock_get = AsyncMock(return_value=existing_doc)
 

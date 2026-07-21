@@ -105,6 +105,11 @@ class MemoryAtom:
     persona_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # 父 canonical 的创建时证据；旧行缺失时保持 None，不伪造当前值。
+    parent_revision: str | None = None
+    parent_scope_key: str | None = None
+    parent_privacy_level: str | None = None
+
     # 内部 ID，在插入后写入
     atom_id: int = 0
 

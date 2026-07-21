@@ -126,7 +126,7 @@ class TestPipelineRetrieval:
         # 验证每个预填充原子可以取回
         contents: list[str] = []
         for atom_id in preloaded_ids:
-            atom = await atom_store.get(atom_id)
+            atom = await atom_store.get_raw(atom_id)
             assert atom is not None, f"Atom {atom_id} should exist in store"
             contents.append(atom.content)
 

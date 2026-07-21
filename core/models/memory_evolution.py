@@ -85,14 +85,23 @@ class MemorySourceRef:
     ingested_at: datetime | None = None
     time_source: str = "unknown"
     time_precision: str = "unknown"
+    source_role: str = "primary"
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.memory_id, int) or self.memory_id < 0:
-            raise ValueError("memory_id must be a non-negative integer")
+        if (
+            isinstance(self.memory_id, bool)
+            or not isinstance(self.memory_id, int)
+            or self.memory_id <= 0
+        ):
+            raise ValueError("memory_id must be a positive integer")
         _require_text(self.revision_token, "revision_token")
         _require_text(self.scope_key, "scope_key")
         if self.privacy_level not in _PRIVACY_LEVELS:
             raise ValueError("privacy_level must be public, shared, or confidential")
+        if self.source_role not in {"primary", "supporting"}:
+            raise ValueError("source_role must be primary or supporting")
         if self.content is not None:
             if not isinstance(self.content, str):
                 raise ValueError("content must be a string or None")
@@ -104,6 +113,9 @@ class MemorySourceRef:
         else:
             object.__setattr__(self, "reference_at", normalize_datetime(self.reference_at))
         object.__setattr__(self, "ingested_at", normalize_datetime(self.ingested_at))
+        _check_interval(self.valid_from, self.valid_to)
+        object.__setattr__(self, "valid_from", normalize_datetime(self.valid_from))
+        object.__setattr__(self, "valid_to", normalize_datetime(self.valid_to))
         validate_time_labels(self.time_source, self.time_precision)
 
     @property

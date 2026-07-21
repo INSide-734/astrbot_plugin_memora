@@ -1320,6 +1320,7 @@ class RecallHandler:
                 lookahead_sec=lookahead_sec,
                 session_id=session_id,
                 persona_id=persona_id,
+                chat_type=chat_type,
                 limit=prospective_k,
             )
 

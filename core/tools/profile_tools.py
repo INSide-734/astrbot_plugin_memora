@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 from dataclasses import field
 from typing import Any
@@ -25,10 +27,12 @@ class ProfileLookupTool(FunctionTool[AstrAgentContext]):
     __pydantic_config__ = {"arbitrary_types_allowed": True}
 
     profile_manager: Any = field(default=None)
+    authorization_checker: Any = field(default=None)
 
     name: str = "profile_lookup"
     description: str = (
-        "Look up the user profile for a given user ID to understand their interests, "
+        "Look up the current user's profile, or another profile only when an explicit "
+        "authorization checker permits it, to understand interests, "
         "personality traits, habits, preferences, and interaction history. "
         "Use this when you need to personalize responses, recall user context, "
         "or understand the user's background. "
@@ -41,8 +45,8 @@ class ProfileLookupTool(FunctionTool[AstrAgentContext]):
                 "user_id": {
                     "type": "string",
                     "description": (
-                        "The user ID to look up. Can be a username, user ID, or display name. "
-                        "If omitted, looks up the current conversation user."
+                        "The exact user ID to look up. If omitted, the current sender is used. "
+                        "A different target requires explicit authorization."
                     ),
                     "default": "",
                 },
@@ -56,27 +60,24 @@ class ProfileLookupTool(FunctionTool[AstrAgentContext]):
         context: ContextWrapper[AstrAgentContext],
         user_id: str = "",
     ) -> ToolExecResult:
-        user_id = (user_id or "").strip()
+        """按可信事件身份查询画像，并对跨用户目标执行显式授权。"""
 
-        # 自动从事件上下文解析 user_id
-        if not user_id:
-            try:
-                event = context.context.event
-                if hasattr(event, "get_sender_id"):
-                    user_id = str(event.get_sender_id() or "")
-                if not user_id:
-                    user_id = str(getattr(event, "unified_msg_origin", ""))
-            except Exception:
-                pass
-
-        if not user_id:
+        event, trusted_user_id = self._trusted_event_identity(context)
+        if not trusted_user_id:
             return _json_result(
                 {
-                    "user_id": "",
                     "found": False,
-                    "error": "user_id is empty — provide a user_id or ensure the tool has access to the current user",
+                    "error": "trusted_identity_unavailable",
                 }
             )
+        requested_user_id = (user_id or "").strip()
+        user_id = requested_user_id or trusted_user_id
+        if user_id != trusted_user_id and not await self._is_authorized_target(
+            event,
+            trusted_user_id,
+            user_id,
+        ):
+            return _json_result({"found": False, "error": "profile_scope_denied"})
 
         mgr = self.profile_manager
         if mgr is None:
@@ -147,6 +148,42 @@ class ProfileLookupTool(FunctionTool[AstrAgentContext]):
                 },
             }
         )
+
+    @staticmethod
+    def _trusted_event_identity(
+        context: ContextWrapper[AstrAgentContext],
+    ) -> tuple[Any | None, str]:
+        """从当前 AstrBot 事件取得发送者身份，不使用会话 ID 回退。"""
+
+        try:
+            event = context.context.event
+            getter = getattr(event, "get_sender_id", None)
+            if not callable(getter):
+                return event, ""
+            return event, str(getter() or "").strip()
+        except Exception:
+            return None, ""
+
+    async def _is_authorized_target(
+        self,
+        event: Any,
+        requester_id: str,
+        target_id: str,
+    ) -> bool:
+        """调用可选授权边界；缺少授权器或授权异常时拒绝跨用户读取。"""
+
+        checker = self.authorization_checker
+        if checker is None:
+            return False
+        try:
+            result = checker(event, requester_id, target_id)
+            if inspect.isawaitable(result):
+                result = await result
+            return result is True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
 
 
 __all__ = ["ProfileLookupTool"]

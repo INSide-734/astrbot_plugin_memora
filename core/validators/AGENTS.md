@@ -2,7 +2,7 @@
 
 # Validators 模块上下文
 
-**最后更新：** 2026-07-19
+**最后更新：** 2026-07-21
 **源码范围：** `core/validators/*.py`（7 个 Python 文件）
 
 ## 职责与边界
@@ -53,6 +53,7 @@ graph TD
 
 - BM25 中不存在于 documents 的孤儿 doc ID。
 - `memory_atoms.parent_memory_id` 孤儿。
+- `memory_atoms` 的 parent provenance 缺失、revision/scope/privacy 不匹配只报告安全计数和固定 reason，不输出新的正文或 ID 列表。
 - graph entry 的 `source_memory_id`、entry-node 的 entry/node 引用孤儿。
 - `note_versions.note_id` 孤儿及 `(note_id,version)` 重复。
 - 主 FAISS ID 不在 documents、图 FAISS ID 不在 graph entry `vector_doc_id`。
