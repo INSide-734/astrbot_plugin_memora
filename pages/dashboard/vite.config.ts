@@ -12,14 +12,17 @@ const CONFIG_SCHEMA_PATH = path.resolve(ROOT_DIR, "../../_conf_schema.json");
 const CONFIG_SCHEMA_VIRTUAL_ID = "virtual:memora-config-schema";
 const RESOLVED_CONFIG_SCHEMA_VIRTUAL_ID = `\0${CONFIG_SCHEMA_VIRTUAL_ID}`;
 
+/** 创建仅暴露根配置 schema 的 Vite 虚拟模块插件。 */
 export function memoraConfigSchemaPlugin(): Plugin {
   return {
     name: "memora-config-schema",
+    /** 将精确匹配的公开模块 ID 映射为内部虚拟模块 ID。 */
     resolveId(id) {
       return id === CONFIG_SCHEMA_VIRTUAL_ID
         ? RESOLVED_CONFIG_SCHEMA_VIRTUAL_ID
         : null;
     },
+    /** 读取并校验根配置 schema，再返回可导入的模块源码。 */
     load(id) {
       if (id !== RESOLVED_CONFIG_SCHEMA_VIRTUAL_ID) return null;
       const schemaSource = fs.readFileSync(CONFIG_SCHEMA_PATH, "utf-8");
@@ -29,8 +32,7 @@ export function memoraConfigSchemaPlugin(): Plugin {
   };
 }
 
-// Clean stale build artifacts from assets/ before each build.
-// Hashed filenames change every build, so orphaned chunks accumulate.
+/** 在构建前清理 assets 目录内带哈希的旧构建产物。 */
 function cleanOldAssets(): void {
   if (!fs.existsSync(ROOT_ASSETS_DIR)) return;
 
@@ -42,13 +44,14 @@ function cleanOldAssets(): void {
   }
 }
 
+/** 将临时目录中的 Dashboard 产物同步到插件页面目录。 */
 function syncBuiltDashboard(): void {
   const builtIndexPath = path.join(TEMP_BUILD_DIR, "index.html");
   const builtAssetsDir = path.join(TEMP_BUILD_DIR, "assets");
   const targetIndexPath = path.join(ROOT_DIR, "index.html");
 
   if (!fs.existsSync(builtIndexPath)) {
-    throw new Error(`Built dashboard index not found: ${builtIndexPath}`);
+    throw new Error(`未找到 Dashboard 构建入口：${builtIndexPath}`);
   }
 
   fs.mkdirSync(ROOT_ASSETS_DIR, { recursive: true });
@@ -75,6 +78,7 @@ export default defineConfig({
     {
       name: "clean-old-assets",
       apply: "build",
+      /** 在 Rollup 开始构建时移除旧哈希产物。 */
       buildStart() {
         cleanOldAssets();
       },
@@ -82,12 +86,12 @@ export default defineConfig({
     {
       name: "astrbot-compat",
       apply: "build",
-      // AstrBot's regex-based JS rewriting fails on Vite's minified
-      // `from"./chunk.js"` (no space after `from`), so imports land
-      // as unrouted 404s.  IIFE + inlineDynamicImports eliminates all
-      // import/export statements.  We also strip `type="module"` and
-      // `crossorigin` so the browser loads the single bundle as a
-      // classic script — no CORS checks, no module graph.
+      // AstrBot 基于正则的 JS 重写无法识别 Vite 压缩后的
+      // `from"./chunk.js"`（`from` 后没有空格），导致导入请求返回 404。
+      // IIFE 与 inlineDynamicImports 会消除 import/export 语句；同时移除
+      // `type="module"` 和 `crossorigin`，让浏览器以 classic script 加载单包，
+      // 避免触发 CORS 检查和模块图加载。
+      /** 将入口中的模块脚本属性改写为 AstrBot 可加载的 classic script。 */
       transformIndexHtml(html) {
         return html
           .replace(/\s+type="module"/g, " defer")
@@ -97,6 +101,7 @@ export default defineConfig({
     {
       name: "preserve-index-source",
       apply: "build",
+      /** 保存开发入口，避免连续构建把上次生成入口当成源文件。 */
       buildStart() {
         const indexPath = path.resolve(ROOT_DIR, "index.html");
         const backupPath = path.resolve(ROOT_DIR, "index.src.bak");
@@ -114,6 +119,7 @@ export default defineConfig({
     {
       name: "sync-dashboard-build-output",
       apply: "build",
+      /** 构建完成后同步产物，并清理临时构建目录。 */
       closeBundle() {
         syncBuiltDashboard();
       },
@@ -127,15 +133,14 @@ export default defineConfig({
   build: {
     outDir: TEMP_BUILD_DIR,
     emptyOutDir: true,
-    // IIFE single-file bundle eliminates ES module import/export
-    // statements, which AstrBot's regex-based JS rewriting cannot
-    // handle in minified output (no space after `from` keyword).
-    // Without this, the browser receives unreplaced relative import
-    // paths → 404 → black screen.
+    // IIFE 单文件包会消除 ES 模块 import/export 语句，避免 AstrBot 的
+    // 正则重写遗漏压缩后 `from` 关键字后的无空格相对路径；否则浏览器会
+    // 请求未重写的相对路径并得到 404，最终出现黑屏。
     target: "es2017",
     modulePreload: false,
     cssCodeSplit: false,
-    chunkSizeWarningLimit: 3000,
+    // AstrBot Page 要求单个 classic-script 包；当前约 3.25 MB，超过 3.5 MB 时继续告警。
+    chunkSizeWarningLimit: 3500,
     rollupOptions: {
       output: {
         format: "iife",
