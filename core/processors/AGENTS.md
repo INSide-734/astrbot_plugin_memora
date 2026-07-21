@@ -83,7 +83,8 @@ flowchart LR
 | 文件 | 入口/作用 | 失败或回退 |
 |---|---|---|
 | `atom_classifier.py` | `classify_atoms()`：规则分类 PLANNED/PREFERENCE/RELATIONAL/FACTUAL/EPISODIC | 低信息、低置信度/重要性被过滤；UNKNOWN 兜底 |
-| `graph_extractor.py` | `GraphExtractor.extract()`：结构化图、原子或旧 metadata → 节点/边/entry | 非法结构化载荷回退旧提取；实体交给 `EntityResolver` |
+| `graph_extractor.py` | `GraphExtractor.extract()`：在结构化图、原子和旧 metadata 路径间路由并生成节点/边/entry | 非法结构化载荷回退旧提取；实体交给 `EntityResolver` |
+| `atom_graph_extractor.py` | 原子图提取、父记忆人物/主题角色恢复及时序/因果边生成 | 缺少角色 metadata 的原子实体保持 topic 兼容行为 |
 | `entity_resolver.py` | 实体规范化、去重、IS-A 上下扩展和层级文件读写 | 层级 I/O 是尽力而为 |
 | `contradiction_detector.py` | 写前候选搜索和 Jaccard/否定启发式冲突标记 | 未启用/无候选/异常返回空列表 |
 | `episode_clusterer.py` | 24h 时间窗 + topic Jaccard 聚类并分配 episode | 单条更新失败隔离；30 天外不聚类 |
@@ -110,7 +111,7 @@ flowchart LR
 
 主管道：`memory_processor.py`、`llm_client.py`、`prompt_builder.py`、`conversation_formatter.py`、`json_parser.py`、`quality_validator.py`、`storage_builder.py`。  
 话题：`topic_splitter.py`。  
-派生与图：`memory_consolidator.py`、`atom_classifier.py`、`graph_extractor.py`、`entity_resolver.py`、`contradiction_detector.py`、`episode_clusterer.py`、`profile_extractor.py`、`knowledge_extractor.py`、`note_generator.py`、`human_like_formatter.py`。
+派生与图：`memory_consolidator.py`、`atom_classifier.py`、`graph_extractor.py`、`atom_graph_extractor.py`、`entity_resolver.py`、`contradiction_detector.py`、`episode_clusterer.py`、`profile_extractor.py`、`knowledge_extractor.py`、`note_generator.py`、`human_like_formatter.py`。
 文本/兼容：`text_processor.py`、`chatroom_parser.py`、`message_utils.py`、`__init__.py`。
 
 ## 测试定位与验证
