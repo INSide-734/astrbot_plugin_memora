@@ -27,7 +27,23 @@ def _engine(*, hop: int = 1, reranker: object | None = None, vector_access: bool
         graph_retriever=graph,
         config=config,
     )
-    faiss_db = SimpleNamespace(encode_query=lambda _query: [1.0])
+    from core.adapter_capabilities import (
+        ASTRBOT_FAISS_CAPABILITIES,
+        AdapterCapability,
+        AdapterCapabilityContract,
+        AdapterKind,
+    )
+
+    vector_contract = ASTRBOT_FAISS_CAPABILITIES
+    if not vector_access:
+        vector_contract = AdapterCapabilityContract(
+            kind=AdapterKind.VECTOR_BACKEND,
+            native=frozenset({AdapterCapability.EMBEDDING}),
+        )
+    faiss_db = SimpleNamespace(
+        encode_query=lambda _query: [1.0],
+        adapter_capabilities=vector_contract,
+    )
     if vector_access:
         faiss_db.get_vector = lambda _doc_id: [1.0]
     retrieval = SimpleNamespace(
@@ -129,6 +145,25 @@ def test_embedding_variant_requires_document_vector_access() -> None:
     }
 
     descriptor = descriptors["final_reranker_embedding_similarity"]
+    assert descriptor["available"] is False
+    assert descriptor["reason_code"] == "missing_document_vector_access"
+
+
+def test_embedding_variant_rejects_unknown_adapter_with_matching_methods() -> None:
+    """未知 adapter 即使方法同名也不能被推断为支持向量访问。"""
+
+    from core.evaluation.retrieval_ablation import RetrievalAblationController
+
+    engine = _engine()
+    engine.faiss_db = SimpleNamespace(
+        encode_query=lambda _query: [1.0],
+        get_vector=lambda _doc_id: [1.0],
+    )
+    descriptor = {
+        item["name"]: item
+        for item in RetrievalAblationController(engine).descriptors()
+    }["final_reranker_embedding_similarity"]
+
     assert descriptor["available"] is False
     assert descriptor["reason_code"] == "missing_document_vector_access"
 
@@ -300,6 +335,80 @@ def test_embedding_variant_does_not_silently_fallback_on_vector_failure() -> Non
 
     assert prepared.execution_reason_code() == "embedding_query_failed"
     assert "sensitive-vector-provider" not in prepared.execution_reason_code()
+
+
+def test_embedding_probe_failure_is_sticky_across_later_success() -> None:
+    """前一个用例的 embedding 失败不能被后续成功覆盖。"""
+
+    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.retrieval.rrf_fusion import HybridResult
+
+    live = _engine()
+    prepared = RetrievalAblationController(live).prepare(
+        "final_reranker_embedding_similarity"
+    )
+    reranker = prepared.engine.dual_route_retriever.reranker
+    candidates = [
+        HybridResult(1, 0.9, 0.9, None, None, "候选一", {}),
+        HybridResult(2, 0.8, 0.8, None, None, "候选二", {}),
+    ]
+    live.faiss_db.encode_query = lambda _query: (_ for _ in ()).throw(
+        RuntimeError("query-failed")
+    )
+    reranker.rerank(candidates, 1, query="查询")
+    prepared.engine.faiss_db.encode_query = lambda _query: [1.0]
+    reranker.rerank(candidates, 1, query="查询")
+
+    assert prepared.execution_reason_code() == "embedding_query_failed"
+    assert reranker.success_count == 1
+
+
+def test_embedding_probe_success_is_not_reset_by_unexercised_case() -> None:
+    """成功执行后，未触发目标策略的用例不能重置 available 状态。"""
+
+    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.retrieval.rrf_fusion import HybridResult
+
+    prepared = RetrievalAblationController(_engine()).prepare(
+        "final_reranker_embedding_similarity"
+    )
+    reranker = prepared.engine.dual_route_retriever.reranker
+    candidates = [
+        HybridResult(1, 0.9, 0.9, None, None, "候选一", {}),
+        HybridResult(2, 0.8, 0.8, None, None, "候选二", {}),
+    ]
+    reranker.rerank(candidates, 1, query="查询")
+    reranker.rerank(candidates[:1], 1, query="查询")
+
+    assert prepared.execution_reason_code() == "available"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_shallow_copies_real_memory_evolution_store_config(
+    tmp_path,
+) -> None:
+    """真实 MemoryEvolutionStore 配置也必须能创建只读快照。"""
+
+    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.storage.memory_evolution_store import MemoryEvolutionStore
+
+    store = MemoryEvolutionStore(str(tmp_path / "evolution.db"))
+    await store.initialize()
+    live = _engine()
+    live.config["memory_evolution"]["store"] = store
+    live.dual_route_retriever.derived_expander = object()
+
+    prepared = RetrievalAblationController(live).prepare("B")
+
+    try:
+        assert prepared.available is True
+        assert prepared.engine.config is not live.config
+        assert prepared.engine.config["memory_evolution"] is not live.config[
+            "memory_evolution"
+        ]
+        assert prepared.engine.config["memory_evolution"]["store"] is store
+    finally:
+        await store.close()
 
 
 def test_prepare_failure_is_stable_and_cancellation_propagates() -> None:

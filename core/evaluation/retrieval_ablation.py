@@ -7,6 +7,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..adapter_capabilities import AdapterCapability, adapter_contract
+
 
 RETRIEVAL_VARIANT_NAMES = (
     "baseline",
@@ -186,6 +188,8 @@ class RetrievalAblationController:
                 and _same_number(getattr(current, "_lambda", None), target_weight)
             ):
                 return "equivalent_to_baseline"
+            if not adapter_contract(faiss_db).supports(AdapterCapability.VECTOR_ACCESS):
+                return "missing_document_vector_access"
             return (
                 "available"
                 if callable(getattr(faiss_db, "encode_query", None))
@@ -276,7 +280,28 @@ class _EmbeddingSimilarityAblationReranker:
     def __init__(self, faiss_db: Any, weight: float) -> None:
         self._faiss_db = faiss_db
         self._weight = weight
-        self.reason_code = "variant_not_exercised"
+        self._failure_reason: str | None = None
+        self._success_count = 0
+
+    @property
+    def reason_code(self) -> str:
+        """返回跨用例聚合后的稳定执行状态。"""
+
+        if self._failure_reason is not None:
+            return self._failure_reason
+        return "available" if self._success_count else "variant_not_exercised"
+
+    @property
+    def success_count(self) -> int:
+        """返回真实完成 embedding 重排的次数。"""
+
+        return self._success_count
+
+    def _record_failure(self, reason_code: str) -> None:
+        """保留首个失败原因，避免后续 fixture 覆盖可信度结论。"""
+
+        if self._failure_reason is None:
+            self._failure_reason = reason_code
 
     def rerank(
         self,
@@ -290,12 +315,11 @@ class _EmbeddingSimilarityAblationReranker:
 
         fallback = sorted(results, key=lambda item: item.final_score, reverse=True)
         if len(results) <= k or not query:
-            self.reason_code = "variant_not_exercised"
             return fallback[:k]
         try:
             query_vector = self._faiss_db.encode_query(query)
         except Exception:
-            self.reason_code = "embedding_query_failed"
+            self._record_failure("embedding_query_failed")
             return fallback[:k]
 
         similarities: list[tuple[Any, float]] = []
@@ -304,19 +328,19 @@ class _EmbeddingSimilarityAblationReranker:
                 document_vector = self._faiss_db.get_vector(result.doc_id)
                 similarity = _finite_cosine(query_vector, document_vector)
             except Exception:
-                self.reason_code = "missing_document_vector_access"
+                self._record_failure("missing_document_vector_access")
                 return fallback[:k]
             similarities.append((result, similarity))
 
         if not similarities:
-            self.reason_code = "missing_document_vector_access"
+            self._record_failure("missing_document_vector_access")
             return fallback[:k]
         for result, similarity in similarities:
             result.final_score = (
                 self._weight * similarity
                 + (1.0 - self._weight) * float(result.final_score)
             )
-        self.reason_code = "available"
+        self._success_count += 1
         results.sort(key=lambda item: item.final_score, reverse=True)
         return results[:k]
 
@@ -374,7 +398,10 @@ def _snapshot_engine(engine: Any) -> Any:
     snapshot = copy.copy(engine)
     live_config = getattr(engine, "config", None)
     if isinstance(live_config, dict):
-        snapshot.config = copy.deepcopy(live_config)
+        snapshot.config = dict(live_config)
+        evolution = live_config.get("memory_evolution")
+        if isinstance(evolution, dict):
+            snapshot.config["memory_evolution"] = dict(evolution)
 
     for name in (
         "hybrid_retriever",
