@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+import json
+import sqlite3
 
 import pytest
 
@@ -13,8 +15,13 @@ class FakeEngine:
     async def search_memories(self, **kwargs):
         query = kwargs["query"]
         if "咖啡" in query:
-            return [{"doc_id": "mem-coffee", "score": 1.0}]
+            return [{"doc_id": 17, "score": 1.0}]
         return []
+
+    async def get_memory(self, memory_id: int):
+        """只暴露测试标注集引用的 canonical 记忆。"""
+
+        return {"id": 17, "text": "用户喜欢手冲咖啡"} if memory_id == 17 else None
 
 
 def _plugin_with_engine(engine=FakeEngine(), *, data_dir: Path | None = None):
@@ -25,6 +32,19 @@ def _plugin_with_engine(engine=FakeEngine(), *, data_dir: Path | None = None):
     return SimpleNamespace(context=context, initializer=initializer)
 
 
+def _write_production_dataset(data_dir: Path, name: str = "private_basic") -> None:
+    """在插件数据目录写入一条与 FakeEngine 对齐的生产标注用例。"""
+
+    dataset_dir = data_dir / "evaluation_datasets"
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    (dataset_dir / f"{name}.jsonl").write_text(
+        '{"case_id":"coffee","query":"用户喜欢什么咖啡","relevant_doc_ids":["17"],"metadata":{"dataset":"'
+        + name
+        + '","session_id":"private:user-1"}}\n',
+        encoding="utf-8",
+    )
+
+
 def test_evaluation_routes_registered() -> None:
     plugin = _plugin_with_engine()
     api = PluginPageApi(plugin)
@@ -33,6 +53,7 @@ def test_evaluation_routes_registered() -> None:
 
     paths = [call[0][0] for call in plugin.context.register_web_api.call_args_list]
     assert f"{PAGE_API_PREFIX}/evaluation/datasets" in paths
+    assert f"{PAGE_API_PREFIX}/evaluation/datasets/import" in paths
     assert f"{PAGE_API_PREFIX}/evaluation/run" in paths
     assert f"{PAGE_API_PREFIX}/evaluation/reports" in paths
     assert f"{PAGE_API_PREFIX}/evaluation/reports/detail" in paths
@@ -58,6 +79,124 @@ async def test_evaluation_datasets_describe_live_engine_capabilities(tmp_path) -
         "reason_code": "available",
         "default_selected": True,
     }
+    assert result["data"]["datasets"] == []
+
+
+@pytest.mark.asyncio
+async def test_evaluation_api_imports_a_production_dataset(tmp_path) -> None:
+    """导入真实标注集后，数据集列表应立即从插件数据目录发现它。"""
+
+    api = PluginPageApi(_plugin_with_engine(FakeEngine(), data_dir=tmp_path))
+    content = (
+        '{"case_id":"coffee","query":"用户喜欢什么咖啡",'
+        '"relevant_doc_ids":["17"],"metadata":{"session_id":"private:user-1"}}\n'
+    )
+
+    imported = await api.import_evaluation_dataset_payload(
+        {"filename": "actual-memory.jsonl", "content": content}
+    )
+    listed = await api.get_evaluation_datasets_payload({})
+
+    assert imported == {
+        "status": "ok",
+        "data": {
+            "dataset": {
+                "name": "actual-memory",
+                "filename": "actual-memory.jsonl",
+                "case_count": 1,
+                "replaced": False,
+            }
+        },
+    }
+    assert [item["name"] for item in listed["data"]["datasets"]] == [
+        "actual-memory"
+    ]
+    assert listed["data"]["datasets"][0]["path"] == "actual-memory.jsonl"
+
+
+@pytest.mark.asyncio
+async def test_evaluation_api_runs_directly_against_current_memories(tmp_path) -> None:
+    """当前数据库有记忆时，页面应无需上传数据集即可直接运行自检。"""
+
+    db_path = tmp_path / "memora.db"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "CREATE TABLE documents ("
+            "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+        )
+        db.execute(
+            "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+            (
+                17,
+                "canonical-17",
+                "用户喜欢手冲咖啡",
+                json.dumps(
+                    {
+                        "session_id": "private:user-1",
+                        "chat_type": "private",
+                        "memory_type": "PREFERENCE",
+                        "status": "active",
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+
+    engine = FakeEngine()
+    engine.db_path = str(db_path)
+    api = PluginPageApi(_plugin_with_engine(engine, data_dir=tmp_path))
+
+    listed = await api.get_evaluation_datasets_payload({})
+    result = await api.run_evaluation_payload(
+        {
+            "datasets": ["current_memories"],
+            "k": 5,
+            "variants": ["baseline"],
+            "baseline": "baseline",
+            "save_report": True,
+        }
+    )
+
+    assert listed["data"]["datasets"] == [
+        {
+            "name": "current_memories",
+            "case_count": 1,
+            "path": "",
+            "intents": ["self_retrieval"],
+            "chat_types": ["private"],
+            "source": "current_memories",
+        }
+    ]
+    assert result["status"] == "ok"
+    assert result["data"]["datasets"] == ["current_memories"]
+    assert result["data"]["summary"]["total_cases"] == 1
+    assert result["data"]["summary"]["recall_at_k"] == 1.0
+    assert result["data"]["cases"][0]["case_id"] == "current-001"
+    assert "query" not in result["data"]["cases"][0]
+    assert "relevant_doc_ids" not in result["data"]["cases"][0]
+    assert not (tmp_path / "evaluation_datasets").exists()
+
+
+@pytest.mark.asyncio
+async def test_evaluation_api_rejects_unknown_canonical_references(tmp_path) -> None:
+    """不存在的 canonical 记忆 ID 不得进入生产评测数据集。"""
+
+    api = PluginPageApi(_plugin_with_engine(FakeEngine(), data_dir=tmp_path))
+    content = (
+        '{"case_id":"missing","query":"不存在的记忆",'
+        '"relevant_doc_ids":["999"],"metadata":{}}\n'
+    )
+
+    result = await api.import_evaluation_dataset_payload(
+        {"filename": "invalid.jsonl", "content": content}
+    )
+
+    assert result == {
+        "status": "error",
+        "message": "评测数据集引用了不存在的记忆",
+        "code": "evaluation_dataset_unknown_memory",
+    }
+    assert not (tmp_path / "evaluation_datasets" / "invalid.jsonl").exists()
 
 
 @pytest.mark.asyncio
@@ -83,6 +222,7 @@ async def test_evaluation_api_refuses_to_run_without_memory_engine(tmp_path) -> 
 
 @pytest.mark.asyncio
 async def test_evaluation_api_clamps_k_and_unknown_datasets(tmp_path) -> None:
+    _write_production_dataset(tmp_path)
     plugin = _plugin_with_engine(FakeEngine(), data_dir=tmp_path)
     api = PluginPageApi(plugin)
 
@@ -176,6 +316,7 @@ async def test_evaluation_api_ordinary_failure_uses_stable_safe_error(
 async def test_evaluation_api_surfaces_service_error_for_unavailable_baseline(
     tmp_path,
 ) -> None:
+    _write_production_dataset(tmp_path)
     plugin = _plugin_with_engine(FakeEngine(), data_dir=tmp_path)
     api = PluginPageApi(plugin)
 
@@ -196,6 +337,7 @@ async def test_evaluation_api_surfaces_service_error_for_unavailable_baseline(
 
 @pytest.mark.asyncio
 async def test_evaluation_api_reports_round_trip_and_compare(tmp_path) -> None:
+    _write_production_dataset(tmp_path)
     plugin = _plugin_with_engine(FakeEngine(), data_dir=tmp_path)
     api = PluginPageApi(plugin)
     first = (

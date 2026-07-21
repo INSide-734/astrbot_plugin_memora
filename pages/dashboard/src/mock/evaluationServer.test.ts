@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { EVALUATION_REPORTS, EVALUATION_VARIANTS } from "./data";
+import { EVALUATION_DATASETS, EVALUATION_REPORTS, EVALUATION_VARIANTS } from "./data";
 import {
+  handleEvaluationDatasetImport,
   handleEvaluationDatasets,
   handleEvaluationReportDetail,
   handleEvaluationReports,
@@ -16,13 +17,31 @@ function okData(response: { status: string; data?: unknown }): Record<string, un
 
 describe("evaluation mock server", () => {
   let reports: typeof EVALUATION_REPORTS;
+  let datasets: typeof EVALUATION_DATASETS;
 
   beforeEach(() => {
     reports = structuredClone(EVALUATION_REPORTS);
+    datasets = structuredClone(EVALUATION_DATASETS);
   });
 
   afterEach(() => {
     EVALUATION_REPORTS.splice(0, EVALUATION_REPORTS.length, ...reports);
+    EVALUATION_DATASETS.splice(0, EVALUATION_DATASETS.length, ...datasets);
+  });
+
+  it("imports a production dataset into the local catalog", () => {
+    const imported = okData(handleEvaluationDatasetImport({
+      filename: "actual-memory.jsonl",
+      content: '{"case_id":"coffee"}\n',
+    }));
+    const listed = okData(handleEvaluationDatasets());
+
+    expect(imported.dataset).toMatchObject({
+      name: "actual-memory",
+      case_count: 1,
+      replaced: false,
+    });
+    expect((listed.datasets as Array<{ name: string }>).some((item) => item.name === "actual-memory")).toBe(true);
   });
 
   it("returns capability descriptors with datasets", () => {

@@ -15,6 +15,7 @@ import type {
 import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS, INJECTION_DECISIONS, INJECTION_MOCK_NOW_MS } from "./data";
 import { createMockConfigServer } from "./configServer";
 import {
+  handleEvaluationDatasetImport,
   handleEvaluationDatasets,
   handleEvaluationReportDetail,
   handleEvaluationReports,
@@ -1728,6 +1729,7 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   if (p === "backup/batch-delete") return handleBackupBatchDelete(data);
   if (p === "export/memories") return handleExportMemories(data);
   if (p === "learning/reset") return ok({ message: "Learning parameters reset to defaults", reset: true });
+  if (p === "evaluation/datasets/import") return handleEvaluationDatasetImport(data);
   if (p === "evaluation/run") return handleEvaluationRun(data);
   if (p === "diagnostics/actions/run") return handleDiagnosticAction(data);
   if (p === "review/action") return handleReviewAction(data);

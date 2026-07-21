@@ -153,6 +153,7 @@ export interface EvaluationDataset {
   path: string;
   intents: string[];
   chat_types: string[];
+  source?: "current_memories" | "imported" | string;
 }
 
 export interface EvaluationVariantDescriptor {

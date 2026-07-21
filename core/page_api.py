@@ -143,6 +143,12 @@ class PluginPageApi(
             "页面接口：检索评测数据集",
         )
         register(
+            f"{PAGE_API_PREFIX}/evaluation/datasets/import",
+            self.import_evaluation_dataset,
+            ["POST"],
+            "页面接口：导入检索评测数据集",
+        )
+        register(
             f"{PAGE_API_PREFIX}/evaluation/run",
             self.run_evaluation,
             ["POST"],

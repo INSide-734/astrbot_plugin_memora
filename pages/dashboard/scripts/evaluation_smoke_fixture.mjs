@@ -47,16 +47,24 @@ export function evaluationDatasetsPayload() {
   return {
     datasets: [
       {
+        name: "current_memories",
+        case_count: 20,
+        path: "",
+        intents: ["self_retrieval"],
+        chat_types: ["private", "group"],
+        source: "current_memories",
+      },
+      {
         name: "private_basic",
         case_count: 10,
-        path: "tests/fixtures/retrieval/private_basic.jsonl",
+        path: "private_basic.jsonl",
         intents: ["preference"],
         chat_types: ["private"],
       },
       {
         name: "group_context",
         case_count: 12,
-        path: "tests/fixtures/retrieval/group_context.jsonl",
+        path: "group_context.jsonl",
         intents: ["relation", "fact"],
         chat_types: ["group"],
       },

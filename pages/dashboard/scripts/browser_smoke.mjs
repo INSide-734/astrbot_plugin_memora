@@ -3033,6 +3033,7 @@ try {
       "智能控制台",
       "页面壳已就绪",
       "评测工作台",
+      "当前记忆",
       "private_basic",
       "group_context",
       "演化关闭",
@@ -3097,7 +3098,7 @@ try {
     [
       "智能控制",
       "#/intelligence",
-      ["智能控制台", "评测工作台", "private_basic", "演化关闭", "关闭最终重排"],
+      ["智能控制台", "评测工作台", "当前记忆", "演化关闭", "关闭最终重排"],
       "mobile-intelligence-evaluation.png",
     ],
     ["系统概览", "#/system", ["系统概览", "运行观测", "Provider 状态"], "mobile-system.png"],

@@ -2,14 +2,27 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
 from astrbot.api import logger
 from quart import request
 
+from ..evaluation.dataset_repository import (
+    EvaluationDatasetRepository,
+    EvaluationDatasetValidationError,
+    PreparedEvaluationDataset,
+)
 from ..evaluation.evaluation_service import EvaluationService
+from ..evaluation.retrieval_quality import EvaluationCase
+from ..storage.base import apply_perf_pragmas
 from .response_utils import error_response, ok_response
+
+
+_CURRENT_MEMORY_DATASET = "current_memories"
+_CURRENT_MEMORY_CASE_LIMIT = 20
 
 
 class EvaluationApiMixin:
@@ -34,6 +47,24 @@ class EvaluationApiMixin:
         if not isinstance(payload, dict):
             return error_response("请求体必须为 JSON 对象")
         return await self.run_evaluation_payload(payload)
+
+    async def import_evaluation_dataset(self):
+        """读取并导入一份生产评测 JSONL 数据集。"""
+
+        guard = self._maintenance_write_guard()
+        if guard is not None:
+            return guard
+        try:
+            payload = await request.get_json()
+        except Exception as exc:
+            logger.debug(
+                "[评测接口] 数据集导入请求无效，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return error_response("JSON 请求体无效", code="invalid_request")
+        if not isinstance(payload, dict):
+            return error_response("请求体必须为 JSON 对象", code="invalid_request")
+        return await self.import_evaluation_dataset_payload(payload)
 
     async def list_evaluation_reports(self):
         """按查询参数返回评测报告列表。"""
@@ -63,12 +94,20 @@ class EvaluationApiMixin:
     ) -> dict[str, Any]:
         """构造数据集响应，并使用 live engine 只读探测变体能力。"""
 
+        engine = self._get_evaluation_engine()
         service = self._build_evaluation_service(
-            engine=self._get_evaluation_engine(),
+            engine=engine,
             require_engine=False,
         )
         try:
-            return ok_response(service.list_datasets())
+            catalog = service.list_datasets()
+            current_cases = await self._load_current_memory_cases(engine)
+            if current_cases:
+                catalog.setdefault("datasets", []).insert(
+                    0,
+                    self._current_memory_dataset_descriptor(current_cases),
+                )
+            return ok_response(catalog)
         except Exception as exc:
             logger.error("[评测接口] 获取数据集失败，异常类型=%s", exc.__class__.__name__)
             return error_response(
@@ -86,11 +125,28 @@ class EvaluationApiMixin:
         service = self._build_evaluation_service(engine=engine)
         try:
             await service.initialize()
+            requested_dataset_items = self._payload_list(payload.get("datasets"))
+            should_load_current = (
+                _CURRENT_MEMORY_DATASET
+                in {str(item) for item in requested_dataset_items}
+                or "datasets" not in payload
+                or not requested_dataset_items
+            )
+            current_cases = (
+                await self._load_current_memory_cases(engine)
+                if should_load_current
+                else []
+            )
+            runtime_datasets = (
+                {_CURRENT_MEMORY_DATASET: current_cases}
+                if current_cases
+                else {}
+            )
             known_datasets = {
                 item["name"]
                 for item in service.list_datasets().get("datasets", [])
             }
-            requested_dataset_items = self._payload_list(payload.get("datasets"))
+            known_datasets.update(runtime_datasets)
             selected_datasets = [
                 str(item)
                 for item in requested_dataset_items
@@ -106,6 +162,7 @@ class EvaluationApiMixin:
                 variants=self._payload_list(payload.get("variants")) or ["baseline"],
                 baseline=str(payload.get("baseline") or "baseline"),
                 save_report=bool(payload.get("save_report", False)),
+                runtime_datasets=runtime_datasets,
             )
             if result.get("status") == "error":
                 return error_response(result.get("message") or "执行评测失败")
@@ -113,6 +170,43 @@ class EvaluationApiMixin:
         except Exception as exc:
             logger.error("[评测接口] 执行评测失败，异常类型=%s", exc.__class__.__name__)
             return error_response("执行评测失败", code="evaluation_run_failed")
+
+    async def import_evaluation_dataset_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """校验标注集与 canonical 记忆引用，然后原子提交到插件数据目录。"""
+
+        repository = EvaluationDatasetRepository(self._evaluation_dataset_dir())
+        try:
+            prepared = repository.prepare(
+                payload.get("filename"),
+                payload.get("content"),
+            )
+        except EvaluationDatasetValidationError as exc:
+            return error_response(str(exc), code=exc.code)
+
+        engine = self._get_evaluation_engine()
+        if engine is None or not hasattr(engine, "get_memory"):
+            return error_response(
+                "MemoryEngine unavailable",
+                code="evaluation_engine_unavailable",
+            )
+        reference_error = await self._validate_evaluation_references(prepared, engine)
+        if reference_error is not None:
+            return reference_error
+        try:
+            descriptor = repository.save(prepared)
+        except OSError as exc:
+            logger.error(
+                "[评测接口] 保存数据集失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return error_response(
+                "保存评测数据集失败",
+                code="evaluation_dataset_persist_failed",
+            )
+        return ok_response({"dataset": descriptor})
 
     async def list_evaluation_reports_payload(
         self,
@@ -192,9 +286,140 @@ class EvaluationApiMixin:
             engine = self._get_evaluation_engine()
         return EvaluationService(
             engine=engine,
-            fixture_dir="tests/fixtures/retrieval",
+            fixture_dir=self._evaluation_dataset_dir(),
             db_path=self._evaluation_report_db_path(),
+            include_experimental_datasets=True,
         )
+
+    def _evaluation_dataset_dir(self) -> Path:
+        """解析插件隔离的生产评测数据集目录。"""
+
+        plugin = getattr(self, "plugin", None)
+        initializer = getattr(plugin, "initializer", None)
+        for owner in (plugin, initializer):
+            if owner is None:
+                continue
+            data_dir = getattr(owner, "data_dir", None)
+            if data_dir:
+                return Path(data_dir) / "evaluation_datasets"
+        return Path("data") / "evaluation_datasets"
+
+    @staticmethod
+    async def _validate_evaluation_references(
+        prepared: PreparedEvaluationDataset,
+        engine: Any,
+    ) -> dict[str, Any] | None:
+        """确保相关集只引用当前数据库中的 canonical 整数记忆 ID。"""
+
+        reference_ids: set[int] = set()
+        for case in prepared.cases:
+            relevant_ids = case.relevant_doc_ids
+            if "__no_relevant__" in relevant_ids:
+                if len(relevant_ids) != 1:
+                    return error_response(
+                        "无命中标记不能与记忆 ID 混用",
+                        code="evaluation_dataset_invalid_reference",
+                    )
+                continue
+            for reference in relevant_ids:
+                try:
+                    memory_id = int(reference)
+                except (TypeError, ValueError):
+                    return error_response(
+                        "评测数据集必须引用 canonical 整数记忆 ID",
+                        code="evaluation_dataset_invalid_reference",
+                    )
+                if memory_id <= 0 or str(memory_id) != reference:
+                    return error_response(
+                        "评测数据集必须引用 canonical 整数记忆 ID",
+                        code="evaluation_dataset_invalid_reference",
+                    )
+                reference_ids.add(memory_id)
+        for memory_id in sorted(reference_ids):
+            if await engine.get_memory(memory_id) is None:
+                return error_response(
+                    "评测数据集引用了不存在的记忆",
+                    code="evaluation_dataset_unknown_memory",
+                )
+        return None
+
+    @staticmethod
+    async def _load_current_memory_cases(engine: Any | None) -> list[EvaluationCase]:
+        """从 canonical SQLite 读取有限活跃记忆，并构造不落盘的自检用例。"""
+
+        db_path = getattr(engine, "db_path", None) if engine is not None else None
+        if not db_path:
+            return []
+        async with aiosqlite.connect(db_path) as db:
+            await apply_perf_pragmas(db)
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, text, metadata FROM documents "
+                "WHERE TRIM(text) <> '' "
+                "AND COALESCE(CASE WHEN json_valid(metadata) "
+                "THEN json_extract(metadata, '$.status') END, 'active') = 'active' "
+                "ORDER BY id DESC LIMIT ?",
+                (_CURRENT_MEMORY_CASE_LIMIT,),
+            )
+            rows = await cursor.fetchall()
+
+        cases: list[EvaluationCase] = []
+        for row in rows:
+            raw_metadata = row["metadata"]
+            try:
+                metadata = json.loads(raw_metadata) if raw_metadata else {}
+            except (json.JSONDecodeError, TypeError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            query = str(metadata.get("canonical_summary") or row["text"] or "").strip()
+            if not query:
+                continue
+            case_metadata: dict[str, Any] = {
+                "dataset": _CURRENT_MEMORY_DATASET,
+                "intent": "self_retrieval",
+                "chat_type": str(
+                    metadata.get("chat_type")
+                    or ("group" if metadata.get("group_id") else "private")
+                ),
+            }
+            for key in ("session_id", "persona_id", "user_id"):
+                value = metadata.get(key)
+                if value:
+                    case_metadata[key] = str(value)
+            memory_type = metadata.get("memory_type")
+            if memory_type:
+                case_metadata["memory_types"] = [str(memory_type)]
+            cases.append(
+                EvaluationCase(
+                    case_id=f"current-{len(cases) + 1:03d}",
+                    query=query[:4000],
+                    relevant_doc_ids={str(row["id"])},
+                    metadata=case_metadata,
+                )
+            )
+        return cases
+
+    @staticmethod
+    def _current_memory_dataset_descriptor(
+        cases: list[EvaluationCase],
+    ) -> dict[str, Any]:
+        """返回当前记忆自检数据集的无正文目录描述。"""
+
+        return {
+            "name": _CURRENT_MEMORY_DATASET,
+            "case_count": len(cases),
+            "path": "",
+            "intents": ["self_retrieval"],
+            "chat_types": sorted(
+                {
+                    str(case.metadata.get("chat_type"))
+                    for case in cases
+                    if case.metadata.get("chat_type")
+                }
+            ),
+            "source": _CURRENT_MEMORY_DATASET,
+        }
 
     def _get_evaluation_engine(self) -> Any | None:
         """读取当前初始化器装配的 MemoryEngine。"""

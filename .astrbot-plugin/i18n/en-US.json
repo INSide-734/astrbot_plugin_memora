@@ -967,6 +967,15 @@
         "workbench": "Evaluation Workbench",
         "datasets": "Datasets",
         "loadingDatasets": "Loading datasets",
+        "importDataset": "Import dataset",
+        "importingDataset": "Importing",
+        "noDatasets": "No evaluation datasets",
+        "datasetImported": "Dataset {0} imported",
+        "currentMemories": "Current memories",
+        "currentMemoriesDescription": "Uses a temporary sample from this installation",
+        "intent": {
+          "self_retrieval": "Self retrieval"
+        },
         "caseCount": "{0} cases",
         "variants": "Variants",
         "variant": {

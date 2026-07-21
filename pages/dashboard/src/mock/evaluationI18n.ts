@@ -1,4 +1,11 @@
 const EVALUATION_COPY: Record<string, [string, string, string]> = {
+  "intelligence.evaluation.importDataset": ["导入数据集", "Import dataset", "Импортировать набор"],
+  "intelligence.evaluation.importingDataset": ["正在导入", "Importing", "Импорт"],
+  "intelligence.evaluation.noDatasets": ["暂无测评数据集", "No evaluation datasets", "Нет наборов данных для оценки"],
+  "intelligence.evaluation.datasetImported": ["数据集 {0} 已导入", "Dataset {0} imported", "Набор {0} импортирован"],
+  "intelligence.evaluation.currentMemories": ["当前记忆", "Current memories", "Текущие воспоминания"],
+  "intelligence.evaluation.currentMemoriesDescription": ["使用此安装中的临时记忆样本", "Uses a temporary sample from this installation", "Используется временная выборка из этой установки"],
+  "intelligence.evaluation.intent.self_retrieval": ["自身召回", "Self retrieval", "Самопоиск"],
   "intelligence.evaluation.variant.baseline": ["基线", "Baseline", "Базовый"],
   "intelligence.evaluation.variant.a": ["演化关闭", "Evolution disabled", "Эволюция отключена"],
   "intelligence.evaluation.variant.b": ["演化只读", "Evolution readonly", "Эволюция только для чтения"],

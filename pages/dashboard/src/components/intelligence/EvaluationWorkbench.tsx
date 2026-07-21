@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardList, Loader2, Play, RefreshCw } from "lucide-react";
+import { ClipboardList, Loader2, Play, RefreshCw, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -26,6 +26,17 @@ const LEGACY_VARIANT_DESCRIPTORS: EvaluationVariantDescriptor[] = [
   { name: "graph_expansion_off", available: true, reason_code: "available", default_selected: true },
   { name: "topic_expansion_off", available: true, reason_code: "available", default_selected: true },
 ];
+
+/** 读取用户选择的 JSONL；兼容未实现 File.text 的嵌入式浏览器。 */
+function readDatasetFile(file: File): Promise<string> {
+  if (typeof file.text === "function") return file.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error("evaluation_dataset_read_failed"));
+    reader.readAsText(file, "utf-8");
+  });
+}
 
 /** 返回 descriptor 中可执行的默认选择，并保证至少保留一个可执行变体。 */
 function defaultVariantSelection(descriptors: EvaluationVariantDescriptor[]): string[] {
@@ -148,6 +159,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
   const { t, currentLang } = useI18n();
   const tRef = useRef(t);
   tRef.current = t;
+  const datasetInputRef = useRef<HTMLInputElement>(null);
   const locale = dashboardLocale(currentLang());
   const [datasets, setDatasets] = useState<EvaluationDataset[]>([]);
   const [selectedDatasets, setSelectedDatasets] = useState<string[]>([]);
@@ -159,6 +171,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
   const [report, setReport] = useState<EvaluationReport | null>(null);
   const [history, setHistory] = useState<EvaluationReport[]>([]);
   const [loading, setLoading] = useState(true);
+  const [importingDataset, setImportingDataset] = useState(false);
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
   const [runError, setRunError] = useState<string | null>(null);
@@ -219,6 +232,31 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
   useEffect(() => {
     loadWorkbench();
   }, [loadWorkbench]);
+
+  /** 读取并提交生产标注集，成功后重新获取服务端数据集目录。 */
+  const importDataset = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file || importingDataset) return;
+    setImportingDataset(true);
+    try {
+      const content = await readDatasetFile(file);
+      const response = await apiRequest("evaluation/datasets/import", {
+        method: "POST",
+        body: { filename: file.name, content },
+      });
+      const data = unwrapApiData<{
+        dataset?: { name?: string };
+      }>(response);
+      await loadWorkbench();
+      showToast(t("intelligence.evaluation.datasetImported", data.dataset?.name ?? file.name));
+    } catch (error) {
+      showToast(t("common.errorPrefix", error instanceof Error ? error.message : String(error)), true);
+    } finally {
+      input.value = "";
+      setImportingDataset(false);
+    }
+  };
 
   const toggleDataset = (name: string) => {
     setSelectedDatasets((current) => (
@@ -289,12 +327,33 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
     <section className="grid gap-4 xl:grid-cols-[0.78fr_1.22fr]">
       <div className="space-y-4">
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]">
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] px-4 py-3">
             <h3 className="text-sm font-semibold text-[var(--text-primary)]">{t("intelligence.evaluation.workbench")}</h3>
-            <Button variant="outline" size="sm" onClick={loadWorkbench} disabled={loading || running}>
-              <RefreshCw size={13} />
-              {t("common.refresh")}
-            </Button>
+            <div className="flex items-center gap-2">
+              <input
+                ref={datasetInputRef}
+                type="file"
+                accept=".jsonl,application/x-ndjson,application/json"
+                className="sr-only"
+                tabIndex={-1}
+                onChange={(event) => { void importDataset(event); }}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => datasetInputRef.current?.click()}
+                disabled={importingDataset || running}
+              >
+                {importingDataset ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                {t(importingDataset
+                  ? "intelligence.evaluation.importingDataset"
+                  : "intelligence.evaluation.importDataset")}
+              </Button>
+              <Button variant="outline" size="sm" onClick={loadWorkbench} disabled={loading || running || importingDataset}>
+                <RefreshCw size={13} />
+                {t("common.refresh")}
+              </Button>
+            </div>
           </div>
           <div className="space-y-5 p-4">
             <div>
@@ -305,6 +364,10 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
               <div className="space-y-2">
                 {loading ? (
                   <p className="py-3 text-xs text-[var(--text-tertiary)]">{t("intelligence.evaluation.loadingDatasets")}</p>
+                ) : datasets.length === 0 ? (
+                  <p role="status" className="py-3 text-xs text-[var(--text-tertiary)]">
+                    {t("intelligence.evaluation.noDatasets")}
+                  </p>
                 ) : datasets.map((dataset) => (
                   <label
                     key={dataset.name}
@@ -323,15 +386,23 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
                       onCheckedChange={() => toggleDataset(dataset.name)}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium text-[var(--text-primary)]">{dataset.name}</span>
-                      <span className="mt-1 block truncate text-2xs text-[var(--text-tertiary)]">{dataset.path}</span>
+                      <span className="block text-sm font-medium text-[var(--text-primary)]">
+                        {dataset.source === "current_memories"
+                          ? t("intelligence.evaluation.currentMemories")
+                          : dataset.name}
+                      </span>
+                      <span className="mt-1 block text-2xs text-[var(--text-tertiary)]">
+                        {dataset.source === "current_memories"
+                          ? t("intelligence.evaluation.currentMemoriesDescription")
+                          : dataset.path}
+                      </span>
                       <span className="mt-2 flex flex-wrap gap-1">
                         <span className="rounded bg-[var(--color-border-light)] px-1.5 py-0.5 text-2xs text-[var(--text-secondary)]">
                           {t("intelligence.evaluation.caseCount", String(dataset.case_count))}
                         </span>
                         {dataset.intents.map((intent) => (
                           <span key={intent} className="rounded bg-[var(--color-accent)]/10 px-1.5 py-0.5 text-2xs text-[var(--color-accent)]">
-                            {intent}
+                            {translateEnum(t, "intelligence.evaluation.intent", intent, intent)}
                           </span>
                         ))}
                         {dataset.chat_types.map((chatType) => (
