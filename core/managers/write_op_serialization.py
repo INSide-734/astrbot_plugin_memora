@@ -34,6 +34,9 @@ def serialize_atom_for_repair(atom: Any) -> dict[str, Any]:
     status = getattr(atom, "status", AtomStatus.ACTIVE)
     return {
         "parent_memory_id": int(getattr(atom, "parent_memory_id", 0) or 0),
+        "parent_revision": getattr(atom, "parent_revision", None),
+        "parent_scope_key": getattr(atom, "parent_scope_key", None),
+        "parent_privacy_level": getattr(atom, "parent_privacy_level", None),
         "atom_type": getattr(atom_type, "value", str(atom_type)),
         "content": str(getattr(atom, "content", "")),
         "entities": list(getattr(atom, "entities", []) or []),
@@ -82,6 +85,9 @@ def _deserialize_atom_from_repair(
 
     return MemoryAtom(
         parent_memory_id=parent_memory_id,
+        parent_revision=payload.get("parent_revision"),
+        parent_scope_key=payload.get("parent_scope_key"),
+        parent_privacy_level=payload.get("parent_privacy_level"),
         atom_type=atom_type,
         content=content,
         entities=[str(item) for item in payload.get("entities", []) if item],

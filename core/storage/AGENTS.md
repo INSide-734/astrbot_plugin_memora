@@ -2,12 +2,14 @@
 
 # Storage 模块上下文
 
-**最后更新：** 2026-07-20
+**最后更新：** 2026-07-21
 **源码范围：** `core/storage/*.py`（18 个 Python 文件）
 
 ## 职责与边界
 
 `core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存原子、图、会话消息、知识、笔记、画像和注入决策遥测，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
+
+`feedback_signal_store.py` 是仅供离线实验显式传入路径的同步 SQLite Store；它保存最小反馈事件和可重建聚合，使用 dedupe 唯一约束与事务，不得默认连接 `memora.db`，也不得把事件 key/domain/query/正文写入安全摘要。
 
 ## Memory Evolution 派生解释平面
 
@@ -55,7 +57,7 @@ graph TD
 
 ### 记忆原子：`AtomStore` + `AtomFTSMixin`
 
-`memory_atoms` 保存 `parent_memory_id`、类型、正文、实体 JSON、重要性/置信度、时间、TTL、状态、强化次数、衰减类型、session/persona 和 metadata；`memory_atoms_fts` 是 `content, atom_id UNINDEXED` 的 FTS5 表。
+`memory_atoms` 保存 `parent_memory_id`、创建时 `parent_revision`/`parent_scope_key`/`parent_privacy_level`、类型、正文、实体 JSON、重要性/置信度、时间、TTL、状态、强化次数、衰减类型、session/persona 和 metadata；`memory_atoms_fts` 是 `content, atom_id UNINDEXED` 的 FTS5 表。三项父来源列缺失的旧行只可维护，读取时不主动召回。
 
 ```mermaid
 stateDiagram-v2
@@ -68,6 +70,8 @@ stateDiagram-v2
 
 - 单条 `insert()` 在一个事务内写主表和 FTS；`insert_many()` 每 500 条形成独立事务，单批失败 rollback 并重置已准备对象的 `atom_id`。
 - `forget_expired_atoms()`、`cleanup_forgotten()`、按父 ID 删除必须同步主表与 FTS。
+- 当同一数据库存在 `documents` canonical 表时，`insert()`/`insert_many()` 会在事务内拒绝缺失、孤儿、revision、scope 或 privacy 不匹配的父来源；批量任一失败整体回滚。无 canonical 表的纯 Store 测试库保留旧兼容路径。
+- `filter_current_sources()` 与 `query_upcoming_planned()` 在 FTS/前瞻读取后重新核对父 source；普通校验失败只丢弃 Atom，取消异常继续传播。前瞻群聊额外排除 `confidential` 父来源。
 - FTS 搜索使用参数绑定；查询 token 中的引号会转义，session/persona/status 作为参数化过滤。普通搜索只返回 active；cold 不参加常规 FTS。
 
 ### 图记忆：`GraphStore` 与四个 mixin
@@ -97,13 +101,14 @@ stateDiagram-v2
 `user_profiles.user_id` 唯一；`user_tags` 对 `(user_id, category, value)` 唯一并以外键关联画像。
 
 - 严格创建、管理员字段替换、带 revision 删除、偏好合并、标签 upsert、消息计数和标签衰减都使用 `BEGIN IMMEDIATE`。
+- `create_profile_strict()`、`replace_editable_fields()`、`update_profile_fields_atomic()` 与 `update_profile()` 是人工维护入口，必须拒绝带 `derived` provenance 的 `UserPreferences`，避免绕过 ProfileManager 的 source 校验；自动偏好只能通过带当前 canonical source 的受控合并入口写入。
 - 管理员编辑以 `compute_entity_revision()` 做乐观并发检查，冲突抛 `EditConflictError`；不要把旧画像快照整行写回。
 - `_rollback_safely()` 保证回滚清理错误不覆盖原异常。
 
 ### 知识与笔记
 
-- `knowledge_entries`：title/content/category/confidence/source_ids/tags、时间、过期和访问计数；搜索是参数化 `LIKE`，不是 FTS。
-- `notes` + `note_versions`：创建时同事务写 v1；更新以 `WHERE id=? AND version=?` 乐观锁，成功后插入下一版本。
+- `knowledge_entries`：title/content/category/confidence/source_ids/tags、时间、过期和访问计数，并以 `origin`/`provenance_json` 区分人工与派生；搜索是参数化 `LIKE`，不是 FTS。派生写入和读取会重新校验 source revision/scope/privacy。
+- `notes` + `note_versions`：创建时同事务写 v1；更新以 `WHERE id=? AND version=?` 乐观锁，成功后插入下一版本；notes 以 `origin`/`provenance_json` 保存派生来源，primary 仍有效时 supporting source 可在读取投影中裁剪。
 - `idx_note_versions_note_version` 对 `(note_id, version)` 唯一；健康检查仍检测旧数据或损坏造成的重复版本。
 - `soft_delete()` 仅改状态；`delete()` 同事务删版本和主笔记；`prune_versions()` 按创建时间保留最新 N 个。
 

@@ -230,7 +230,7 @@ class TestPipelineIngest:
 
         # 验证：记忆内容正确
         assert len(inserted_ids) == 1
-        atom = await atom_store.get(inserted_ids[0])
+        atom = await atom_store.get_raw(inserted_ids[0])
         assert atom is not None
 
         assert atom.content == "周末和小明去了西湖划船，天气很好"
@@ -313,7 +313,7 @@ class TestPipelineIngest:
         # 验证：每条记录内容正确，topics 不重叠
         atoms = []
         for aid in inserted_ids:
-            atom = await atom_store.get(aid)
+            atom = await atom_store.get_raw(aid)
             assert atom is not None
             atoms.append(atom)
 
@@ -442,7 +442,7 @@ class TestPipelineIngest:
         assert faiss_db.ntotal > 0
 
         # 读回
-        retrieved = await atom_store.get(atom_id)
+        retrieved = await atom_store.get_raw(atom_id)
         assert retrieved is not None
         assert retrieved.atom_id == atom_id
         assert retrieved.parent_memory_id == 42

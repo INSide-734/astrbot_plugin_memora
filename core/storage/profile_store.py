@@ -14,8 +14,16 @@ from ..base.entity_editing import (
     compute_entity_revision,
 )
 from ..base.list_sorting import SortQuery, order_by_clause
+from ..models.domain_provenance import (
+    DomainObjectOrigin,
+    DomainProvenance,
+    merge_domain_provenance,
+)
 from ..models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
 from .base import BaseStore
+from .canonical_source_validation import validate_domain_provenance
+from .domain_object_integrity import filter_current_domain_objects
+from .profile_preferences_integrity import require_manual_preferences
 
 
 PROFILE_SORT_COLUMNS = {
@@ -53,6 +61,7 @@ CREATE TABLE IF NOT EXISTS user_tags (
     created_at REAL NOT NULL,
     last_seen_at REAL NOT NULL,
     occurrence_count INTEGER DEFAULT 1,
+    provenance_json TEXT,
     FOREIGN KEY (user_id) REFERENCES user_profiles(user_id),
     UNIQUE(user_id, category, value)
 )
@@ -67,6 +76,8 @@ class ProfileStore(BaseStore):
     """SQLite 中用户画像的 CRUD 操作。"""
 
     def __init__(self, db_path: str) -> None:
+        """保存画像 SQLite 路径。"""
+
         self.db_path = db_path
 
     @staticmethod
@@ -89,25 +100,39 @@ class ProfileStore(BaseStore):
             pass
 
     async def init_table(self) -> None:
+        """创建画像表并幂等补齐标签 provenance 列。"""
+
         async with self._connect() as db:
             await db.execute(_CREATE_PROFILES)
             await db.execute(_CREATE_TAGS)
+            cursor = await db.execute("PRAGMA table_info(user_tags)")
+            tag_columns = {str(row[1]) for row in await cursor.fetchall()}
+            if "provenance_json" not in tag_columns:
+                await db.execute(
+                    "ALTER TABLE user_tags ADD COLUMN provenance_json TEXT"
+                )
             await db.execute(_CREATE_TAG_INDEX)
             await db.commit()
 
-    # ---- profile CRUD --------------------------------------------
+    # ---- 画像 CRUD -----------------------------------------------
 
     async def get_profile(self, user_id: str) -> UserProfile | None:
+        """按可信用户 ID读取画像聚合。"""
+
         async with self._connect() as db:
             return await self._get_profile_with_db(db, user_id)
 
     async def get_or_create_profile(self, user_id: str) -> UserProfile:
+        """读取画像，不存在时在单个事务中创建。"""
+
         profile = await self.get_profile(user_id)
         if profile is not None:
             return profile
         return await self.create_profile(user_id)
 
     async def create_profile(self, user_id: str, display_name: str = "") -> UserProfile:
+        """创建或返回画像。"""
+
         now = time.time()
         async with self._connect() as db:
             await db.execute(
@@ -136,6 +161,7 @@ class ProfileStore(BaseStore):
         """在单个事务中严格创建画像及其管理员标签。"""
         now = time.time()
         normalized_preferences = preferences or UserPreferences()
+        require_manual_preferences(normalized_preferences)
         async with self._connect() as db:
             try:
                 await db.execute("BEGIN IMMEDIATE")
@@ -180,6 +206,7 @@ class ProfileStore(BaseStore):
         expected_revision: str,
     ) -> UserProfile:
         """按修订版本原子替换画像的全部管理员可写字段。"""
+        require_manual_preferences(preferences)
         async with self._connect() as db:
             try:
                 await db.execute("BEGIN IMMEDIATE")
@@ -249,6 +276,7 @@ class ProfileStore(BaseStore):
         preferences: UserPreferences | None = None,
     ) -> UserProfile | None:
         """仅更新显式提供的画像字段，不写回旧统计快照。"""
+        require_manual_preferences(preferences)
         async with self._connect() as db:
             try:
                 await db.execute("BEGIN IMMEDIATE")
@@ -364,11 +392,20 @@ class ProfileStore(BaseStore):
         self,
         user_id: str,
         preferences_update: dict[str, Any],
+        *,
+        provenance: DomainProvenance | None = None,
     ) -> UserProfile | None:
         """把显式学习结果合并到最新偏好，而非覆盖旧快照。"""
+        if (
+            provenance is not None
+            and provenance.origin is not DomainObjectOrigin.DERIVED
+        ):
+            raise ValueError("derived_provenance_required")
         async with self._connect() as db:
             try:
                 await db.execute("BEGIN IMMEDIATE")
+                if provenance is not None:
+                    await validate_domain_provenance(db, provenance)
                 current = await self._get_profile_with_db(db, user_id)
                 if current is None:
                     await db.commit()
@@ -384,6 +421,11 @@ class ProfileStore(BaseStore):
                     for topic in preferences_update["avoided_topics"] or []:
                         if topic not in preferences.avoided_topics:
                             preferences.avoided_topics.append(topic)
+                if provenance is not None:
+                    preferences.provenance = merge_domain_provenance(
+                        preferences.provenance,
+                        provenance,
+                    )
                 now = time.time()
                 await db.execute(
                     """UPDATE user_profiles
@@ -448,6 +490,9 @@ class ProfileStore(BaseStore):
                 raise
 
     async def update_profile(self, profile: UserProfile) -> None:
+        """保存画像的完整当前快照。"""
+
+        require_manual_preferences(profile.preferences)
         profile.updated_at = time.time()
         async with self._connect() as db:
             await db.execute(
@@ -469,6 +514,8 @@ class ProfileStore(BaseStore):
             await db.commit()
 
     async def touch(self, user_id: str) -> None:
+        """更新画像最近活动时间。"""
+
         now = time.time()
         async with self._connect() as db:
             await db.execute(
@@ -483,6 +530,8 @@ class ProfileStore(BaseStore):
         offset: int = 0,
         sort: SortQuery = SortQuery("last_seen_at", "desc"),
     ) -> tuple[list[UserProfile], int]:
+        """分页列出画像。"""
+
         order_by = order_by_clause(
             sort,
             columns=PROFILE_SORT_COLUMNS,
@@ -500,10 +549,13 @@ class ProfileStore(BaseStore):
         for row in rows:
             profile = self._row_to_profile(row)
             profile.tags = await self._get_tags(profile.user_id)
+            profile = await self._filter_profile_sources(profile)
             profiles.append(profile)
         return profiles, total
 
     async def delete_profile(self, user_id: str) -> bool:
+        """删除画像及其标签。"""
+
         async with self._connect() as db:
             await db.execute("DELETE FROM user_tags WHERE user_id = ?", (user_id,))
             cursor = await db.execute(
@@ -512,9 +564,11 @@ class ProfileStore(BaseStore):
             await db.commit()
             return cursor.rowcount > 0
 
-    # ---- tag CRUD ------------------------------------------------
+    # ---- 标签 CRUD -----------------------------------------------
 
     async def _get_tags(self, user_id: str) -> list[UserTag]:
+        """读取画像标签。"""
+
         async with self._connect() as db:
             cursor = await db.execute(
                 """SELECT * FROM user_tags WHERE user_id = ?
@@ -522,7 +576,10 @@ class ProfileStore(BaseStore):
                 (user_id,),
             )
             rows = await cursor.fetchall()
-        return [self._row_to_tag(row) for row in rows]
+            return await filter_current_domain_objects(
+                db,
+                [self._row_to_tag(row) for row in rows],
+            )
 
     async def _get_profile_with_db(
         self, db: aiosqlite.Connection, user_id: str
@@ -540,7 +597,29 @@ class ProfileStore(BaseStore):
                ORDER BY confidence DESC, category ASC, value ASC""",
             (user_id,),
         )
-        profile.tags = [self._row_to_tag(tag_row) for tag_row in await cursor.fetchall()]
+        profile.tags = await filter_current_domain_objects(
+            db,
+            [self._row_to_tag(tag_row) for tag_row in await cursor.fetchall()],
+        )
+        visible_preferences = await filter_current_domain_objects(
+            db,
+            [profile.preferences],
+        )
+        if not visible_preferences:
+            profile.preferences = UserPreferences()
+        return profile
+
+    async def _filter_profile_sources(self, profile: UserProfile) -> UserProfile:
+        """过滤画像中的 stale derived 标签和偏好。"""
+
+        async with self._connect() as db:
+            profile.tags = await filter_current_domain_objects(db, profile.tags)
+            visible_preferences = await filter_current_domain_objects(
+                db,
+                [profile.preferences],
+            )
+        if not visible_preferences:
+            profile.preferences = UserPreferences()
         return profile
 
     async def _replace_tags_with_db(
@@ -556,8 +635,8 @@ class ProfileStore(BaseStore):
             await db.execute(
                 """INSERT INTO user_tags
                    (user_id, category, value, confidence, source,
-                    created_at, last_seen_at, occurrence_count)
-                   VALUES (?, ?, ?, ?, 'manual', ?, ?, 1)""",
+                    created_at, last_seen_at, occurrence_count, provenance_json)
+                   VALUES (?, ?, ?, ?, 'manual', ?, ?, 1, ?)""",
                 (
                     user_id,
                     tag.category.value,
@@ -565,6 +644,9 @@ class ProfileStore(BaseStore):
                     tag.confidence,
                     now,
                     now,
+                    self._to_json(
+                        DomainProvenance(DomainObjectOrigin.MANUAL).to_dict()
+                    ),
                 ),
             )
 
@@ -574,20 +656,52 @@ class ProfileStore(BaseStore):
         user_id: str,
         tag: UserTag,
     ) -> bool:
+        """合并单个标签，并保证人工权威不会被派生来源替换。"""
+
+        if tag.provenance is not None:
+            await validate_domain_provenance(db, tag.provenance)
         cursor = await db.execute(
-            """SELECT id, occurrence_count, confidence FROM user_tags
+            """SELECT id, occurrence_count, confidence, source, provenance_json
+               FROM user_tags
                WHERE user_id = ? AND category = ? AND value = ?""",
             (user_id, tag.category.value, tag.value),
         )
         existing = await cursor.fetchone()
         if existing:
+            existing_provenance = None
+            if existing[4]:
+                existing_provenance = DomainProvenance.from_dict(
+                    self._from_json(existing[4])
+                )
+            elif str(existing[3] or "") == "manual":
+                existing_provenance = DomainProvenance(
+                    DomainObjectOrigin.MANUAL
+                )
+            merged_provenance = (
+                merge_domain_provenance(existing_provenance, tag.provenance)
+                if tag.provenance is not None
+                else existing_provenance
+            )
+            merged_source = (
+                "manual"
+                if merged_provenance is not None
+                and merged_provenance.origin is DomainObjectOrigin.MANUAL
+                else tag.source
+            )
             await db.execute(
                 """UPDATE user_tags SET confidence = ?, last_seen_at = ?,
-                   occurrence_count = ? WHERE id = ?""",
+                   occurrence_count = ?, source = ?, provenance_json = ?
+                   WHERE id = ?""",
                 (
                     max(existing[2], tag.confidence),
                     tag.last_seen_at,
                     existing[1] + 1,
+                    merged_source,
+                    (
+                        self._to_json(merged_provenance.to_dict())
+                        if merged_provenance is not None
+                        else None
+                    ),
                     existing[0],
                 ),
             )
@@ -595,8 +709,8 @@ class ProfileStore(BaseStore):
         await db.execute(
             """INSERT INTO user_tags
                (user_id, category, value, confidence, source,
-                created_at, last_seen_at, occurrence_count)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                created_at, last_seen_at, occurrence_count, provenance_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user_id,
                 tag.category.value,
@@ -606,17 +720,26 @@ class ProfileStore(BaseStore):
                 tag.created_at,
                 tag.last_seen_at,
                 tag.occurrence_count,
+                (
+                    self._to_json(tag.provenance.to_dict())
+                    if tag.provenance is not None
+                    else None
+                ),
             ),
         )
         return True
 
     async def add_tag(self, user_id: str, tag: UserTag) -> bool:
+        """添加人工标签并保留人工权威。"""
+
         async with self._connect() as db:
             inserted = await self._upsert_tag_with_db(db, user_id, tag)
             await db.commit()
             return inserted
 
     async def remove_tag(self, user_id: str, category: str, value: str) -> bool:
+        """删除指定画像标签。"""
+
         async with self._connect() as db:
             cursor = await db.execute(
                 "DELETE FROM user_tags WHERE user_id = ? AND category = ? AND value = ?",
@@ -625,10 +748,12 @@ class ProfileStore(BaseStore):
             await db.commit()
             return cursor.rowcount > 0
 
-    # ---- row conversion ------------------------------------------
+    # ---- 行转换 --------------------------------------------------
 
     @staticmethod
     def _row_to_profile(row: Any) -> UserProfile:
+        """把画像数据库行转换为聚合模型。"""
+
         prefs = BaseStore._from_json(row[3]) if len(row) > 3 else {}
         return UserProfile(
             user_id=str(row[1]),
@@ -644,6 +769,11 @@ class ProfileStore(BaseStore):
 
     @staticmethod
     def _row_to_tag(row: Any) -> UserTag:
+        """把标签行转换为模型，并兼容缺少 provenance 的旧行。"""
+
+        provenance_data = (
+            BaseStore._from_json(row[9]) if len(row) > 9 and row[9] else None
+        )
         return UserTag(
             category=TagCategory(str(row[2] or "custom")),
             value=str(row[3] or ""),
@@ -652,6 +782,11 @@ class ProfileStore(BaseStore):
             created_at=float(row[6] or 0),
             last_seen_at=float(row[7] or 0),
             occurrence_count=int(row[8] or 1),
+            provenance=(
+                DomainProvenance.from_dict(provenance_data)
+                if isinstance(provenance_data, dict)
+                else None
+            ),
         )
 
 

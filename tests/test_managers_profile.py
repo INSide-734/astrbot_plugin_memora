@@ -1,28 +1,40 @@
 """测试 ProfileManager — 基于 Mock ProfileStore 的用户画像 CRUD。"""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
-from core.base.entity_editing import (
-    EntityNotFoundError,
-    EntityValidationError,
-    compute_entity_revision,
-)
+from core.base.entity_editing import EntityValidationError
 from core.base.list_sorting import SortQuery
 from core.managers.profile_manager import ProfileManager
+from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from core.models.memory_evolution import MemorySourceRef
 from core.models.user_profile import (
     TagCategory,
     UserPreferences,
     UserProfile,
     UserTag,
 )
-from core.storage.profile_store import ProfileStore
+
+
+_DERIVED_PROVENANCE = DomainProvenance(
+    DomainObjectOrigin.DERIVED,
+    (
+        MemorySourceRef(
+            17,
+            "rev-17",
+            "private:user1",
+            "confidential",
+            datetime(2026, 7, 21, tzinfo=timezone.utc),
+        ),
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
-# Construction
+# 构造
 # ---------------------------------------------------------------------------
 
 class TestProfileManagerInit:
@@ -35,7 +47,7 @@ class TestProfileManagerInit:
 
 
 # ---------------------------------------------------------------------------
-# ensure_profile
+# ensure_profile 委托
 # ---------------------------------------------------------------------------
 
 class TestEnsureProfile:
@@ -53,7 +65,7 @@ class TestEnsureProfile:
 
 
 # ---------------------------------------------------------------------------
-# get_profile
+# get_profile 委托
 # ---------------------------------------------------------------------------
 
 class TestGetProfile:
@@ -77,7 +89,7 @@ class TestGetProfile:
 
 
 # ---------------------------------------------------------------------------
-# touch
+# touch 委托
 # ---------------------------------------------------------------------------
 
 class TestTouch:
@@ -93,7 +105,7 @@ class TestTouch:
 
 
 # ---------------------------------------------------------------------------
-# public write helpers
+# 公共写入辅助
 # ---------------------------------------------------------------------------
 
 class TestProfileWriteHelpers:
@@ -209,14 +221,23 @@ class TestProfileManualAdminCRUD:
             "active_hours": [9, 20],
             "avg_reply_length": 0,
             "interaction_frequency": 0.0,
+            "provenance": {
+                "origin": "manual",
+                "scope_key": None,
+                "privacy_level": None,
+                "sources": [],
+            },
         }
         assert len(kwargs["tags"]) == 1
         assert isinstance(kwargs["tags"][0], UserTag)
         assert kwargs["tags"][0].category is TagCategory.INTEREST
         assert kwargs["tags"][0].value == "Python"
         assert kwargs["tags"][0].confidence == 0.9
-        assert kwargs["tags"][0].source == "auto"
+        assert kwargs["tags"][0].source == "manual"
         assert kwargs["tags"][0].occurrence_count == 1
+        assert kwargs["tags"][0].provenance == DomainProvenance(
+            DomainObjectOrigin.MANUAL
+        )
 
     @pytest.mark.asyncio
     async def test_update_profile_manual_delegates_normalized_data(self) -> None:
@@ -509,7 +530,7 @@ def _manager_tag(
 
 
 # ---------------------------------------------------------------------------
-# ingest_tags
+# 自动标签写入
 # ---------------------------------------------------------------------------
 
 class TestIngestTags:
@@ -526,7 +547,9 @@ class TestIngestTags:
             UserTag(category=TagCategory.INTEREST, value="coffee", confidence=0.8),
             UserTag(category=TagCategory.HABIT, value="morning_run", confidence=0.6),
         ]
-        result = await mgr.ingest_tags("user1", tags)
+        result = await mgr.ingest_tags(
+            "user1", tags, provenance=_DERIVED_PROVENANCE
+        )
         assert result is profile
         store.upsert_tags_atomic.assert_awaited_once_with("user1", tags)
 
@@ -550,8 +573,10 @@ class TestIngestTags:
         new_tag = UserTag(
             category=TagCategory.INTEREST, value="coffee", confidence=0.9
         )
-        result = await mgr.ingest_tags("user1", [new_tag])
-        # Existing tag confidence should be updated to 0.9
+        result = await mgr.ingest_tags(
+            "user1", [new_tag], provenance=_DERIVED_PROVENANCE
+        )
+        # 已有标签置信度应更新为 0.9。
         assert result.tags[0].confidence == 0.9
         assert result.tags[0].occurrence_count == 2
 
@@ -562,87 +587,13 @@ class TestIngestTags:
         store.get_or_create_profile = AsyncMock(return_value=profile)
         store.upsert_tags_atomic = AsyncMock(return_value=(profile, 0))
         mgr = ProfileManager(profile_store=store)
-        await mgr.ingest_tags("user1", [])
+        await mgr.ingest_tags(
+            "user1", [], provenance=_DERIVED_PROVENANCE
+        )
         store.upsert_tags_atomic.assert_awaited_once_with("user1", [])
 
-    @pytest.mark.asyncio
-    async def test_ingest_tags_does_not_restore_stale_admin_fields(
-        self, tmp_db_path
-    ) -> None:
-        store = ProfileStore(tmp_db_path)
-        await store.init_table()
-        await store.create_profile_strict(
-            "interleaved-user",
-            display_name="Before admin",
-            preferences=UserPreferences(reply_style="casual"),
-        )
-        mgr = ProfileManager(profile_store=store)
-        original_ensure = mgr.ensure_profile
-
-        async def ensure_then_admin_update(user_id):
-            stale_snapshot = await original_ensure(user_id)
-            current = await store.get_profile(user_id)
-            assert current is not None
-            await store.replace_editable_fields(
-                user_id,
-                display_name="Admin name",
-                preferences=UserPreferences(
-                    reply_style="formal",
-                    preferred_topics=["admin-topic"],
-                ),
-                tags=current.tags,
-                expected_revision=compute_entity_revision(current.to_dict()),
-            )
-            return stale_snapshot
-
-        with patch.object(mgr, "ensure_profile", new=ensure_then_admin_update):
-            result = await mgr.ingest_tags(
-                "interleaved-user",
-                [
-                    UserTag(
-                        category=TagCategory.INTEREST,
-                        value="automatic-tag",
-                        confidence=0.8,
-                    )
-                ],
-            )
-
-        persisted = await store.get_profile("interleaved-user")
-        assert persisted is not None
-        assert result.display_name == "Admin name"
-        assert persisted.display_name == "Admin name"
-        assert persisted.preferences.reply_style == "formal"
-        assert persisted.preferences.preferred_topics == ["admin-topic"]
-        assert "automatic-tag" in [tag.value for tag in persisted.tags]
-
-    @pytest.mark.asyncio
-    async def test_ingest_tags_does_not_return_profile_deleted_after_ensure(
-        self, tmp_db_path
-    ) -> None:
-        store = ProfileStore(tmp_db_path)
-        await store.init_table()
-        await store.create_profile_strict("deleted-during-ingest")
-        mgr = ProfileManager(profile_store=store)
-        original_ensure = mgr.ensure_profile
-
-        async def ensure_then_delete(user_id):
-            stale_snapshot = await original_ensure(user_id)
-            assert await store.delete_profile(user_id) is True
-            return stale_snapshot
-
-        with patch.object(mgr, "ensure_profile", new=ensure_then_delete):
-            with pytest.raises(EntityNotFoundError, match="画像不存在"):
-                await mgr.ingest_tags(
-                    "deleted-during-ingest",
-                    [_manager_tag(value="must-not-persist")],
-                )
-
-        assert await store.get_profile("deleted-during-ingest") is None
-        assert await store._get_tags("deleted-during-ingest") == []
-
-
 # ---------------------------------------------------------------------------
-# get_tag_weights
+# 标签权重
 # ---------------------------------------------------------------------------
 
 class TestGetTagWeights:
@@ -668,16 +619,16 @@ class TestGetTagWeights:
         store.get_profile = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         weights = await mgr.get_tag_weights("user1")
-        # shy has confidence 0.1 < 0.2, excluded
-        # coffee: 0.8 * min(1.0, 10/10) = 0.8
-        # running: 0.3 * min(1.0, 2/10) = 0.3 * 0.2 = 0.06
+        # shy 的置信度 0.1 小于 0.2，因此排除。
+        # coffee：0.8 * min(1.0, 10/10) = 0.8。
+        # running：0.3 * min(1.0, 2/10) = 0.06。
         assert "coffee" in weights
         assert "running" in weights
         assert "shy" not in weights
 
 
 # ---------------------------------------------------------------------------
-# decay_and_clean
+# 标签衰减与清理
 # ---------------------------------------------------------------------------
 
 class TestDecayAndClean:
@@ -710,7 +661,7 @@ class TestDecayAndClean:
 
 
 # ---------------------------------------------------------------------------
-# record_message
+# 消息统计
 # ---------------------------------------------------------------------------
 
 class TestRecordMessage:
@@ -755,7 +706,7 @@ class TestRecordMessage:
 
 
 # ---------------------------------------------------------------------------
-# update_preferences
+# 自动偏好写入
 # ---------------------------------------------------------------------------
 
 class TestUpdatePreferences:
@@ -768,9 +719,15 @@ class TestUpdatePreferences:
         store.get_or_create_profile = AsyncMock(return_value=profile)
         store.merge_preferences_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
-        await mgr.update_preferences("user1", {"reply_style": "formal"})
+        await mgr.update_preferences(
+            "user1",
+            {"reply_style": "formal"},
+            provenance=_DERIVED_PROVENANCE,
+        )
         store.merge_preferences_atomic.assert_awaited_once_with(
-            "user1", {"reply_style": "formal"}
+            "user1",
+            {"reply_style": "formal"},
+            provenance=_DERIVED_PROVENANCE,
         )
 
     @pytest.mark.asyncio
@@ -782,10 +739,14 @@ class TestUpdatePreferences:
         store.merge_preferences_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.update_preferences(
-            "user1", {"preferred_topics": ["coffee", "tea"]}
+            "user1",
+            {"preferred_topics": ["coffee", "tea"]},
+            provenance=_DERIVED_PROVENANCE,
         )
         store.merge_preferences_atomic.assert_awaited_once_with(
-            "user1", {"preferred_topics": ["coffee", "tea"]}
+            "user1",
+            {"preferred_topics": ["coffee", "tea"]},
+            provenance=_DERIVED_PROVENANCE,
         )
 
     @pytest.mark.asyncio
@@ -796,10 +757,14 @@ class TestUpdatePreferences:
         store.merge_preferences_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.update_preferences(
-            "user1", {"avoided_topics": ["politics"]}
+            "user1",
+            {"avoided_topics": ["politics"]},
+            provenance=_DERIVED_PROVENANCE,
         )
         store.merge_preferences_atomic.assert_awaited_once_with(
-            "user1", {"avoided_topics": ["politics"]}
+            "user1",
+            {"avoided_topics": ["politics"]},
+            provenance=_DERIVED_PROVENANCE,
         )
 
     @pytest.mark.asyncio
@@ -809,12 +774,16 @@ class TestUpdatePreferences:
         store.get_or_create_profile = AsyncMock(return_value=profile)
         store.merge_preferences_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
-        await mgr.update_preferences("user1", {})
-        store.merge_preferences_atomic.assert_awaited_once_with("user1", {})
+        await mgr.update_preferences(
+            "user1", {}, provenance=_DERIVED_PROVENANCE
+        )
+        store.merge_preferences_atomic.assert_awaited_once_with(
+            "user1", {}, provenance=_DERIVED_PROVENANCE
+        )
 
 
 # ---------------------------------------------------------------------------
-# get_profile_count / list_profiles
+# 画像计数与分页
 # ---------------------------------------------------------------------------
 
 class TestProfileQuery:

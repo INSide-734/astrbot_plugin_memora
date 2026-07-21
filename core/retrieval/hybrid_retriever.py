@@ -267,9 +267,36 @@ class HybridRetriever:
         current_time = time.time()
         return self.score_weighting.apply_weighting(fused_results, current_time)
 
-    async def update_metadata(self, doc_id: int, metadata: dict[str, Any]) -> bool:
-        """同步更新所有存储层的元数据（委托给 MemoryLifecycleManager）"""
-        return await self.memory_lifecycle.update_metadata(doc_id, metadata)
+    async def update_metadata(
+        self,
+        doc_id: int,
+        metadata: dict[str, Any],
+        expected_revision: str | None = None,
+    ) -> bool:
+        """同步更新所有存储层的元数据，并可执行 revision CAS。"""
+        if expected_revision is None:
+            return await self.memory_lifecycle.update_metadata(doc_id, metadata)
+        return await self.memory_lifecycle.update_metadata(
+            doc_id,
+            metadata,
+            expected_revision=expected_revision,
+        )
+
+    async def update_content_if_revision(
+        self,
+        doc_id: int,
+        content: str,
+        metadata: dict[str, Any],
+        expected_revision: str,
+    ) -> bool:
+        """同步执行带 revision CAS 的 canonical 正文更新。"""
+
+        return await self.memory_lifecycle.update_content_if_revision(
+            doc_id,
+            content,
+            metadata,
+            expected_revision,
+        )
 
     async def delete_memory(self, doc_id: int) -> bool:
         """从多个存储层中删除记忆（委托给 MemoryLifecycleManager）"""

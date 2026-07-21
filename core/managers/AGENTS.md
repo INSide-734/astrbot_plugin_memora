@@ -2,12 +2,14 @@
 
 # Managers 模块上下文
 
-**最后更新：** 2026-07-20
+**最后更新：** 2026-07-21
 **源码范围：** `core/managers/*.py`（40 个 Python 文件）
 
 ## 职责与边界
 
 `core/managers/` 是业务生命周期与编排层。它把 SQLite 文档表、BM25、FAISS、记忆原子和图记忆组合成统一的 `MemoryEngine`，并提供会话、画像、知识、笔记、备份、导入导出、衰减、写故障恢复及 Memory Evolution 后台演化服务。
+
+`feedback_signal_manager.py` 只管理隔离评测 Store 中的可信反馈事件、限流、时间衰减和候选聚合；不得调用 `MABWeightLearner`、`AutoLearningManager`、`update_memory()` 或修改生产检索权重。
 
 本层负责“何时、按什么顺序、失败后如何补偿”；底层表 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，候选召回和排序属于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)，定时触发属于 [`core/schedulers/AGENTS.md`](../schedulers/AGENTS.md)。Memory Evolution 的关系/Projection 事务和 revision 校验由 manager 编排，具体 SQLite 表访问仍属于 storage。
 
@@ -92,7 +94,8 @@ sequenceDiagram
 ```
 
 - 这不是跨 SQLite/FAISS 的单一 ACID 事务。`memory_write_ops` 是跨存储 saga 日志；`repair_incomplete()` 尽力重放 `pending`/`needs_repair` 的 add、delete、batch delete 和 graph reindex。
-- `add_memory()` 在日志中保存最多 500 字符的 `content_preview`、完整 metadata 和可修复原子载荷；它们都可能包含用户数据。
+- `add_memory()` 在 canonical 成功后重新读取 source revision，并为 Atom 绑定 parent revision/scope/privacy；来源读取失败时只进入可修复派生失败，不把未绑定 Atom 写入生产 canonical 库。
+- `memory_write_ops` 的 failed atom payload 保留父来源快照；repair 只接受仍匹配当前 revision 的现代载荷，旧载荷最多恢复为不可主动召回的兼容行。
 - 原子批量失败后逐条补写，仅仍失败的原子进入修复载荷。图失败不撤销已建文档，而是标记修复。
 - 删除先调用 `HybridRetriever.delete_memory()`；随后图或原子清理失败不会把主删除改成失败，但日志保留 `needs_repair`。
 - `WriteOpJournal.start_op()` 失败时可能返回 `None`；业务路径仍继续，因此不能把日志存在等同于事务已保证。
@@ -123,10 +126,10 @@ sequenceDiagram
 |---|---|---|
 | 会话 | `conversation_manager.py` 及 6 个 mixin | `ConversationStore` 上层 LRU、上下文窗口、事件适配和元数据；缓存由 `_cache_lock` 保护 |
 | 图同步 | `graph_memory_manager.py` | 删除旧图产物后重建节点/边/条目与图向量；向量 ID 最终回写 SQLite |
-| 原子生命周期 | `atom_lifecycle_manager.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；后台任务由 `start/stop` 管理 |
+| 原子生命周期 | `atom_lifecycle_manager.py`、`atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理 |
 | 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护 |
-| 画像 | `profile_manager.py` | 管理员编辑使用修订值冲突检测；自动标签与偏好走存储层原子事务 |
-| 知识/笔记 | `knowledge_manager.py`、`note_manager.py` | 知识去重与过期；笔记 CRUD、软删和版本裁剪 |
+| 画像 | `profile_manager.py` | 管理员编辑使用修订值冲突检测；自动标签与偏好携带 derived provenance 并走存储层原子事务 |
+| 知识/笔记 | `knowledge_manager.py`、`note_manager.py` | 知识去重与过期；显式 derived proposal 需 source revision，笔记 CRUD、软删和版本裁剪保持领域权威 |
 | 可靠性 | `write_coordinator.py`、`write_op_*` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复 |
 | 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验及原子应用 |
 | canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |

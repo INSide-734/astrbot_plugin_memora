@@ -19,6 +19,10 @@ from ..models.memory_atom import (
 )
 from .atom_fts import AtomFTSMixin
 from .base import BaseStore
+from .atom_source_integrity import (
+    filter_atoms_by_current_sources,
+    validate_atom_parent_sources,
+)
 
 
 class AtomStore(BaseStore, AtomFTSMixin):
@@ -27,6 +31,8 @@ class AtomStore(BaseStore, AtomFTSMixin):
     _SQLITE_BATCH_SIZE = 500
 
     def __init__(self, db_path: str):
+        """保存 SQLite 路径。"""
+
         self.db_path = db_path
 
     async def initialize(self) -> None:
@@ -37,6 +43,9 @@ class AtomStore(BaseStore, AtomFTSMixin):
                 CREATE TABLE IF NOT EXISTS memory_atoms (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     parent_memory_id INTEGER NOT NULL,
+                    parent_revision TEXT,
+                    parent_scope_key TEXT,
+                    parent_privacy_level TEXT,
                     atom_type TEXT NOT NULL DEFAULT 'unknown',
                     content TEXT NOT NULL,
                     entities TEXT DEFAULT '[]',
@@ -60,6 +69,17 @@ class AtomStore(BaseStore, AtomFTSMixin):
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_atoms_parent ON memory_atoms(parent_memory_id)"
             )
+            cursor = await db.execute("PRAGMA table_info(memory_atoms)")
+            columns = {str(row[1]) for row in await cursor.fetchall()}
+            for column in (
+                "parent_revision",
+                "parent_scope_key",
+                "parent_privacy_level",
+            ):
+                if column not in columns:
+                    await db.execute(
+                        f"ALTER TABLE memory_atoms ADD COLUMN {column} TEXT"
+                    )
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_atoms_status ON memory_atoms(status)"
             )
@@ -97,8 +117,15 @@ class AtomStore(BaseStore, AtomFTSMixin):
         self._prepare_atom_for_insert(atom)
 
         async with self._connect() as db:
-            atom_id = await self._insert_atom(db, atom)
-            await db.commit()
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                await validate_atom_parent_sources(db, [atom])
+                atom_id = await self._insert_atom(db, atom)
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                atom.atom_id = 0
+                raise
         return atom_id
 
     async def insert_many(self, atoms: list[MemoryAtom]) -> list[int]:
@@ -113,9 +140,12 @@ class AtomStore(BaseStore, AtomFTSMixin):
                 batch_atom_ids: list[int] = []
                 prepared_batch: list[MemoryAtom] = []
                 try:
+                    await db.execute("BEGIN IMMEDIATE")
                     for atom in batch:
                         self._prepare_atom_for_insert(atom)
                         prepared_batch.append(atom)
+                    await validate_atom_parent_sources(db, prepared_batch)
+                    for atom in prepared_batch:
                         batch_atom_ids.append(await self._insert_atom(db, atom))
                     await db.commit()
                 except Exception:
@@ -152,18 +182,24 @@ class AtomStore(BaseStore, AtomFTSMixin):
         db: aiosqlite.Connection,
         atom: MemoryAtom,
     ) -> int:
+        """在调用方事务中写入 Atom 主表与 FTS 行。"""
+
         cursor = await db.execute(
             """
             INSERT INTO memory_atoms (
-                parent_memory_id, atom_type, content, entities,
+                parent_memory_id, parent_revision, parent_scope_key,
+                parent_privacy_level, atom_type, content, entities,
                 importance, confidence, created_at, last_accessed_at,
                 last_reinforced_at, event_time, ttl_days, expires_at,
                 status, reinforcement_count, decay_type,
                 session_id, persona_id, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 atom.parent_memory_id,
+                atom.parent_revision,
+                atom.parent_scope_key,
+                atom.parent_privacy_level,
                 atom.atom_type.value,
                 atom.content,
                 json.dumps(atom.entities, ensure_ascii=False),
@@ -193,7 +229,17 @@ class AtomStore(BaseStore, AtomFTSMixin):
         return atom_id
 
     async def get(self, atom_id: int) -> MemoryAtom | None:
-        """按 ID 获取单个原子。"""
+        """按 ID 获取仍绑定当前 canonical source 的原子。"""
+
+        atom = await self.get_raw(atom_id)
+        if atom is None:
+            return None
+        current = await self.filter_current_sources([atom])
+        return current[0] if current else None
+
+    async def get_raw(self, atom_id: int) -> MemoryAtom | None:
+        """按 ID 读取未经父来源校验的原子，仅供维护和修复使用。"""
+
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -203,7 +249,14 @@ class AtomStore(BaseStore, AtomFTSMixin):
         return self._row_to_atom(row) if row else None
 
     async def get_by_parent(self, parent_memory_id: int) -> list[MemoryAtom]:
-        """获取属于同一父记忆文档的全部原子。"""
+        """获取仍绑定当前 canonical source 的全部子原子。"""
+
+        atoms = await self.get_by_parent_raw(parent_memory_id)
+        return await self.filter_current_sources(atoms)
+
+    async def get_by_parent_raw(self, parent_memory_id: int) -> list[MemoryAtom]:
+        """读取父记忆下未经来源校验的原子，仅供维护和修复去重。"""
+
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -212,6 +265,14 @@ class AtomStore(BaseStore, AtomFTSMixin):
             )
             rows = await cursor.fetchall()
         return [self._row_to_atom(row) for row in rows]
+
+    async def filter_current_sources(self, atoms: list[MemoryAtom]) -> list[MemoryAtom]:
+        """按父 canonical 当前 revision、scope 与 privacy 过滤原子。"""
+
+        if not atoms:
+            return []
+        async with self._connect() as db:
+            return await filter_atoms_by_current_sources(db, atoms)
 
     async def update_status(self, atom_id: int, status: AtomStatus) -> bool:
         """更新单个原子的生命周期状态。"""
@@ -493,6 +554,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
         lookahead_sec: float = 86400.0,
         session_id: str | None = None,
         persona_id: str | None = None,
+        chat_type: str | None = None,
         limit: int = 5,
     ) -> list[MemoryAtom]:
         """前瞻记忆 — 查询 event_time 在 lookahead_sec 内的 PLANNED 原子。
@@ -501,6 +563,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
             lookahead_sec: 前瞻窗口（秒），默认 86400 = 24 小时
             session_id: 限定会话
             persona_id: 限定人设
+            chat_type: 当前聊天类型；群聊禁止 confidential 来源
             limit: 返回数量上限
         """
         now = time.time()
@@ -525,15 +588,49 @@ class AtomStore(BaseStore, AtomFTSMixin):
             params.append(persona_id)
 
         where_clause = " AND ".join(conditions)
+        batch_size = max(32, min(500, max(1, limit) * 2))
+        atoms: list[MemoryAtom] = []
+        last_event_time: float | None = None
+        last_atom_id = 0
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                f"SELECT * FROM memory_atoms WHERE {where_clause} "
-                "ORDER BY event_time ASC LIMIT ?",
-                (*params, limit),
-            )
-            rows = await cursor.fetchall()
-        return [self._row_to_atom(row) for row in rows]
+            while len(atoms) < limit:
+                page_conditions = [where_clause]
+                page_params = list(params)
+                if last_event_time is not None:
+                    page_conditions.append(
+                        "(event_time > ? OR (event_time = ? AND id > ?))"
+                    )
+                    page_params.extend(
+                        [last_event_time, last_event_time, last_atom_id]
+                    )
+                page_clause = " AND ".join(page_conditions)
+                cursor = await db.execute(
+                    f"SELECT * FROM memory_atoms WHERE {page_clause} "
+                    "ORDER BY event_time ASC, id ASC LIMIT ?",
+                    (*page_params, batch_size),
+                )
+                rows = await cursor.fetchall()
+                if not rows:
+                    break
+
+                page_atoms = await filter_atoms_by_current_sources(
+                    db,
+                    [self._row_to_atom(row) for row in rows],
+                )
+                if chat_type == "group":
+                    page_atoms = [
+                        atom
+                        for atom in page_atoms
+                        if atom.parent_privacy_level in {"public", "shared"}
+                    ]
+                atoms.extend(page_atoms[: max(0, limit - len(atoms))])
+
+                last_event_time = float(rows[-1]["event_time"])
+                last_atom_id = int(rows[-1]["id"])
+                if len(rows) < batch_size:
+                    break
+        return atoms[:limit]
 
     async def count_by_type(self) -> dict[str, int]:
         """返回前端展示用的按类型统计结果。"""
@@ -553,6 +650,9 @@ class AtomStore(BaseStore, AtomFTSMixin):
         return MemoryAtom(
             atom_id=int(row["id"]),
             parent_memory_id=int(row["parent_memory_id"]),
+            parent_revision=row["parent_revision"],
+            parent_scope_key=row["parent_scope_key"],
+            parent_privacy_level=row["parent_privacy_level"],
             atom_type=AtomType(row["atom_type"]),
             content=row["content"],
             entities=json.loads(row["entities"]) if row["entities"] else [],

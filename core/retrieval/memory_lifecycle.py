@@ -77,7 +77,12 @@ class MemoryLifecycleManager:
 
         return doc_id
 
-    async def update_metadata(self, doc_id: int, metadata: dict[str, Any]) -> bool:
+    async def update_metadata(
+        self,
+        doc_id: int,
+        metadata: dict[str, Any],
+        expected_revision: str | None = None,
+    ) -> bool:
         """
         同步更新所有存储层的元数据
 
@@ -94,15 +99,24 @@ class MemoryLifecycleManager:
         参数:
             doc_id: 文档 ID（整数）
             metadata: 新的元数据字典
+            expected_revision: 可选的 source revision；提供时拒绝 stale writer
 
         返回:
             是否更新成功。
         """
         try:
             # 更新 FAISS 向量库（会同步更新 DocumentStorage 中的 metadata）
-            vector_success = await self.vector_retriever.update_metadata(
-                doc_id, metadata
-            )
+            if expected_revision is None:
+                vector_success = await self.vector_retriever.update_metadata(
+                    doc_id,
+                    metadata,
+                )
+            else:
+                vector_success = await self.vector_retriever.update_metadata(
+                    doc_id,
+                    metadata,
+                    expected_revision=expected_revision,
+                )
 
             if not vector_success:
                 logger.error("[同步更新] FAISS 更新失败")
@@ -114,6 +128,41 @@ class MemoryLifecycleManager:
         except Exception as exc:
             logger.error(
                 "[同步更新] 失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return False
+
+    async def update_content_if_revision(
+        self,
+        doc_id: int,
+        content: str,
+        metadata: dict[str, Any],
+        expected_revision: str,
+    ) -> bool:
+        """委托向量层执行带 revision CAS 的正文更新，并刷新 BM25。"""
+
+        try:
+            canonical_success = await self.vector_retriever.update_content_if_revision(
+                doc_id,
+                content,
+                metadata,
+                expected_revision,
+            )
+            if not canonical_success:
+                return False
+            bm25_success = await self.bm25_retriever.update_document(
+                doc_id,
+                content,
+                metadata,
+            )
+            if not bm25_success:
+                logger.warning("[正文更新] BM25 派生索引刷新失败，保留 canonical 提交")
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "[正文更新] 生命周期同步失败，异常类型=%s",
                 exc.__class__.__name__,
             )
             return False
