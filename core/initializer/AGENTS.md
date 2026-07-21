@@ -2,7 +2,7 @@
 
 # 初始化与组件装配
 
-**最后核对：** 2026-07-20
+**最后核对：** 2026-07-21
 **公共入口：** `core/initializer/__init__.py`  
 **上游编排：** `core/plugin_initializer.py`
 
@@ -44,7 +44,7 @@ flowchart TD
 | `ProviderLoader` | `get_provider_by_id(provider_id, *, silent)` | 正常模式走 Context API；静默轮询只读 `provider_manager.inst_map`，避免尚未完成的框架访问产生噪声 |
 | `ProviderWaiter` | `wait_non_blocking(..., max_wait=5.0)` | 每秒检查，返回 `(embedding, llm, ready)`，不在 5 秒窗口内阻塞整个插件生命周期 |
 | `ProviderWaiter` | `start_retry_if_needed(...)` / `cancel()` | 单后台任务；2 秒起、1.5 倍退避、30 秒封顶，默认最多 60 次；就绪后调用异步回调 |
-| `FaissChecker` | `check_runtime()` / `load_vec_db_class()` | 用固定参数 `[sys.executable, "-c", "import faiss"]`、10 秒超时探测，再动态导入 AstrBot `FaissVecDB` |
+| `FaissChecker` | `check_runtime()` / `load_vec_db_class()` | 父进程已加载 FAISS 时复用成功状态；冷启动用固定参数 `[sys.executable, "-c", "import faiss"]`、30 秒超时探测，再动态导入 AstrBot `FaissVecDB` |
 | `FaissChecker` | `check_and_fix_dimension_mismatch(path, provider)` | 维度不匹配删除旧索引；不可读索引尽量原子隔离为 `.corrupt_<timestamp>` |
 | `DatabaseSetup` | `auto_rebuild_index_if_needed(...)` | 检查 `IndexValidator`，仅在 `needs_rebuild` 时调用统一协调器；失败记录并返回稳定降级结果 |
 | `DerivedRebuildCoordinator` | `rebuild_all()` | 只读确认 canonical 后，按 FTS5/FAISS、graph、relation/projection 顺序重建；阶段失败不删除 canonical |
