@@ -168,10 +168,11 @@ describe("selection-aware UI primitives", () => {
     expect(newlySelected.querySelector("svg")).toBeTruthy();
   });
 
-  it("derives the open Select width from its trigger at runtime", async () => {
+  it("expands the Select popup within the viewport and wraps long identifiers", async () => {
+    const longSessionId = "webchat:FriendMessage:webchat!astrbot!f8905206-db0f-4e1f-9061-6c6ffc85b316";
     const items = [
       { label: "Short", value: "short" },
-      { label: "Long option", value: "long" },
+      { label: longSessionId, value: longSessionId },
     ];
     render(
       <Select items={items} defaultValue="short">
@@ -195,10 +196,15 @@ describe("selection-aware UI primitives", () => {
       "[data-slot='select-content']",
     );
     const classes = content?.className.split(/\s+/) ?? [];
+    const longOption = screen.getByRole("option", { name: longSessionId });
+    const optionText = longOption.querySelector("[class*='break-all']");
 
-    expect(classes).toContain("w-[var(--anchor-width)]");
-    expect(classes).toContain("min-w-[var(--anchor-width)]");
-    expect(classes).not.toContain("min-w-36");
+    expect(classes).toContain("w-max");
+    expect(classes).toContain("min-w-[min(var(--anchor-width),var(--available-width))]");
+    expect(classes).toContain("max-w-[min(32rem,var(--available-width))]");
+    expect(content?.getAttribute("data-align-trigger")).toBe("false");
+    expect(optionText).toBeTruthy();
+    expect(optionText?.className.split(/\s+/)).toContain("whitespace-normal");
   });
 
   it("toggles an enabled Checkbox, preserves disabled state, and exposes focus", () => {
