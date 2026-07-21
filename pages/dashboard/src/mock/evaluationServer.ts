@@ -18,6 +18,36 @@ export function handleEvaluationDatasets(): EvaluationMockResponse {
   return ok({ datasets: EVALUATION_DATASETS, variants: EVALUATION_VARIANTS });
 }
 
+/** 校验并导入一份本地开发用生产数据集摘要。 */
+export function handleEvaluationDatasetImport(body: Record<string, unknown>): EvaluationMockResponse {
+  const filename = typeof body.filename === "string" ? body.filename.trim() : "";
+  const content = typeof body.content === "string" ? body.content.trim() : "";
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.jsonl$/.test(filename) || !content) {
+    return { status: "error", message: "评测数据集无效" };
+  }
+  const name = filename.slice(0, -".jsonl".length);
+  const caseCount = content.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith("#")).length;
+  const nextDataset = {
+    name,
+    case_count: caseCount,
+    path: filename,
+    intents: [],
+    chat_types: [],
+  };
+  const existingIndex = EVALUATION_DATASETS.findIndex((item) => item.name === name);
+  const replaced = existingIndex >= 0;
+  if (replaced) EVALUATION_DATASETS.splice(existingIndex, 1, nextDataset);
+  else EVALUATION_DATASETS.push(nextDataset);
+  return ok({
+    dataset: {
+      name,
+      filename,
+      case_count: caseCount,
+      replaced,
+    },
+  });
+}
+
 /** 按请求上限返回最近的评测报告。 */
 export function handleEvaluationReports(params: Record<string, string>): EvaluationMockResponse {
   const limit = Math.min(50, Math.max(1, parseInt(params.limit ?? "10", 10)));

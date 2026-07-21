@@ -139,6 +139,7 @@ Injection 页面固定为 `dense`：PageHeader 下有 Overview、Strategy Config
 - 实体编辑发送 `expected_revision`；服务端比较 revision 后原子写入。`conflict` / `edit_conflict` 必须展示远端快照及用户可控的解决路径，不能静默 last-write-wins。
 - 成功写回后用服务端返回实体/revision 更新缓存并清理 dirty；失败保留用户输入和字段级错误。高影响批量操作必须显式确认。
 - Evaluation Workbench 从 `evaluation/datasets` 的 `variants` descriptor 动态生成消融选项；只默认选择 `available=true` 且 `default_selected=true` 的项，不可用项必须禁用并展示稳定 `reason_code` 文案。旧后端未返回 descriptor 时仅回退 `baseline`、`graph_expansion_off`、`topic_expansion_off`，不得默认运行全部实验。
+- Evaluation 默认把当前数据库中最近最多 20 条活跃 canonical memory 组装成仅存在于请求内的 `current_memories` 自身召回样本，安装后无需上传即可运行；不得把该样本的 query、正文或 canonical ID 写入报告。人工标注集来自插件 `data_dir`，通过 `evaluation/datasets/import` 导入并重新获取目录；不得从 `tests/fixtures` 或前端 mock 伪造生产选择项。
 - Evaluation 报告展示每个变体的 completed/skipped、稳定 reason 和安全 `effective_settings`。逐用例表只消费 case ID 与 Recall/Precision/RR/nDCG/latency 数值；不得重新要求或展示 query、ranked/relevant canonical ID、身份或任意 metadata。
 
 ### 备份与热恢复

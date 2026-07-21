@@ -42,12 +42,14 @@ class EvaluationService:
         engine: Any,
         fixture_dir: str | Path = "tests/fixtures/retrieval",
         db_path: str | Path | None = None,
+        include_experimental_datasets: bool = False,
     ) -> None:
         """装配评测引擎、夹具目录和可选报告存储。"""
 
         self.engine = engine
         self.fixture_dir = Path(fixture_dir)
         self.store = EvaluationReportStore(db_path) if db_path else None
+        self.include_experimental_datasets = include_experimental_datasets
 
     async def initialize(self) -> None:
         """配置报告存储时初始化持久化。"""
@@ -63,7 +65,7 @@ class EvaluationService:
                 {
                     "name": name,
                     "case_count": len(cases),
-                    "path": str(path),
+                    "path": path.name,
                     "intents": sorted(
                         {
                             str(case.metadata.get("intent"))
@@ -91,10 +93,14 @@ class EvaluationService:
         variants: Sequence[str] | None,
         baseline: str | None,
         save_report: bool,
+        runtime_datasets: Mapping[str, Sequence[EvaluationCase]] | None = None,
     ) -> dict[str, Any]:
-        """评测选定数据集，并按需持久化报告。"""
+        """评测文件或运行时数据集，并按需持久化安全报告。"""
         safe_k = self._clamp_k(k)
-        selected_cases_by_dataset = self._select_datasets(datasets)
+        selected_cases_by_dataset = self._select_datasets(
+            datasets,
+            runtime_datasets=runtime_datasets,
+        )
         cases = [
             case
             for dataset_cases in selected_cases_by_dataset.values()
@@ -233,15 +239,22 @@ class EvaluationService:
     def _load_datasets(self) -> dict[str, list[EvaluationCase]]:
         """从夹具目录加载全部 JSONL 数据集。"""
 
-        return load_fixture_dir(self.fixture_dir)
+        return load_fixture_dir(
+            self.fixture_dir,
+            include_experimental=self.include_experimental_datasets,
+        )
 
     def _select_datasets(
         self,
         requested: Sequence[str] | None,
+        *,
+        runtime_datasets: Mapping[str, Sequence[EvaluationCase]] | None = None,
     ) -> dict[str, list[EvaluationCase]]:
-        """按请求名称筛选已知数据集；空请求表示全部。"""
+        """合并受信运行时用例并按请求名称筛选；空请求表示全部。"""
 
         available = self._load_datasets()
+        for name, cases in (runtime_datasets or {}).items():
+            available[str(name)] = list(cases)
         if not requested:
             return available
         selected = {

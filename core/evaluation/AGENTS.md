@@ -6,7 +6,7 @@
 
 ## 职责与边界
 
-`core/evaluation/` 加载 JSONL 检索用例，适配 `MemoryEngine` 搜索接口，计算查询级 Recall@K、MRR、二元 nDCG@K 和 P95 延迟，通过隔离只读快照运行有限消融并持久化安全报告。它是离线/运维评测设施，不参与在线召回排序、不训练模型，也不把指标结果自动转成生产配置。
+`core/evaluation/` 加载检索用例，适配 `MemoryEngine` 搜索接口，计算查询级 Recall@K、MRR、二元 nDCG@K 和 P95 延迟，通过隔离只读快照运行有限消融并持久化安全报告。它是离线/运维评测设施，不参与在线召回排序、不训练模型，也不把指标结果自动转成生产配置。正式 Page 默认从 canonical SQLite 读取最近最多 20 条活跃记忆，在请求内构造 `current_memories` 自身召回样本；另可读取 `<data_dir>/evaluation_datasets` 中经 `EvaluationDatasetRepository` 校验的人工标注集。`tests/fixtures/retrieval` 只服务自动化测试，不是运行时数据源。
 
 `session_first_ablation.py` 提供 Session-first 的隔离反事实双跑：基线和精确 Session 分支都必须实际执行，保守证据门只产生 `would_short_circuit` 决定，不改变 `RecallHandler`。实验专用 `session_first.jsonl` 默认不进入标准 `load_fixture_dir`，需显式 `include_experimental=True` 或使用专用 loader；报告只保存固定 reason code、指标、延迟和成本标量。
 
@@ -49,13 +49,15 @@ flowchart LR
 
 `EvaluationService` 通过 `RetrievalAblationController` 注册 baseline、A/B/C、chain graph/topic、最终 reranker 和 0/1/2-hop 图邻居变体。`k` 裁剪到 `1..20`；未知数据集被忽略，baseline 不可运行时返回错误且不保存。每个变体复制会被修改的 config、retriever、optimizer 和 cache，Store/索引只读共享；live engine 的配置、缓存和 canonical metadata 不得改变。普通单变体失败只返回稳定 skipped reason 并继续，`asyncio.CancelledError` 传播。
 
+`EvaluationDatasetRepository` 限制 JSONL 文件名、1 MiB 大小、500 个用例、单用例 50 个相关 ID 与全文件 500 个相关 ID，拒绝重复 case 和跨文件逻辑名称。Page API 在原子写入前确认 `relevant_doc_ids` 是当前数据库中存在的 canonical 整数 ID；`__no_relevant__` 只能单独表示正确负例。相同文件名再次导入会原子替换旧版本。
+
 `evaluation/datasets` 返回 `name/available/reason_code/default_selected` descriptor。结果返回 `capability_status/reason_code/effective_settings`；与 baseline 等价、缺少实际组件、运行时 embedding 无有效文档向量或未真实执行目标策略时不得标记 `completed`。现有 `cross_encoder` 实现是 embedding 余弦代理，检索消融变体名称固定为 `embedding_similarity`。
 
 `EvaluationReportStore` 独立于 AstrBot 存储模块，应用 WAL/NORMAL、busy timeout、cache 和 mmap PRAGMA。`evaluation_reports` 保存汇总与完整 payload，`evaluation_cases` 保存逐用例结果并以外键级联；报告 ID 使用毫秒时间与随机后缀。集合和 dataclass 在持久化前转换为稳定 JSON 值。
 
 ## 依赖方向
 
-- 上游：`core/api/evaluation_api.py` 构造 Service，使用 initializer 的 `memory_engine`、fixture 目录和独立报告数据库。
+- 上游：`core/api/evaluation_api.py` 构造 Service，使用 initializer 的 `memory_engine`、生产数据集目录和独立报告数据库，并负责导入时的 canonical ID 校验。
 - 本模块：`evaluation_service.py -> retrieval_quality.py + report_store.py`。
 - 下游：`MemoryEngine` 形状协议、`aiosqlite`、标准库；核心包导入不要求 AstrBot。
 - 相关上下文：[召回模块](../retrieval/AGENTS.md)、[存储模块](../storage/AGENTS.md)、[API 模块](../api/AGENTS.md)。

@@ -963,6 +963,15 @@
         "workbench": "Рабочая область оценки",
         "datasets": "Датасеты",
         "loadingDatasets": "Загрузка датасетов",
+        "importDataset": "Импортировать набор",
+        "importingDataset": "Импорт",
+        "noDatasets": "Нет наборов данных для оценки",
+        "datasetImported": "Набор {0} импортирован",
+        "currentMemories": "Текущие воспоминания",
+        "currentMemoriesDescription": "Используется временная выборка из этой установки",
+        "intent": {
+          "self_retrieval": "Самопоиск"
+        },
         "caseCount": "{0} кейсов",
         "variants": "Варианты",
         "variant": {

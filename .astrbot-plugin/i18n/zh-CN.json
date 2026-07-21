@@ -967,6 +967,15 @@
         "workbench": "评测工作台",
         "datasets": "数据集",
         "loadingDatasets": "正在加载数据集",
+        "importDataset": "导入数据集",
+        "importingDataset": "正在导入",
+        "noDatasets": "暂无测评数据集",
+        "datasetImported": "数据集 {0} 已导入",
+        "currentMemories": "当前记忆",
+        "currentMemoriesDescription": "使用此安装中的临时记忆样本",
+        "intent": {
+          "self_retrieval": "自身召回"
+        },
         "caseCount": "{0} 个用例",
         "variants": "变体",
         "variant": {

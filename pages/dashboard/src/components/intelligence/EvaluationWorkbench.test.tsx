@@ -197,6 +197,92 @@ describe("EvaluationWorkbench", () => {
     expect(screen.getByRole("checkbox", { name: "Baseline" })).toBeTruthy();
   });
 
+  it("imports a production dataset and exposes it in the selector", async () => {
+    let imported = false;
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/evaluation/datasets") {
+        return Promise.resolve(ok({
+          datasets: imported ? [{
+            name: "actual-memory",
+            case_count: 1,
+            path: "actual-memory.jsonl",
+            intents: [],
+            chat_types: ["private"],
+          }] : [],
+        }));
+      }
+      return Promise.resolve(ok({ reports: [] }));
+    });
+    bridge.apiPost.mockImplementation((path: string, body: unknown) => {
+      if (path === "page/evaluation/datasets/import") {
+        imported = true;
+        return Promise.resolve(ok({
+          dataset: {
+            name: "actual-memory",
+            filename: "actual-memory.jsonl",
+            case_count: 1,
+            replaced: false,
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+    const showToast = vi.fn();
+    const { container } = render(<EvaluationWorkbench showToast={showToast} />);
+
+    expect(await screen.findByText("No evaluation datasets")).toBeTruthy();
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).toBeTruthy();
+    const content = '{"case_id":"coffee","query":"coffee","relevant_doc_ids":["17"]}\n';
+    const file = new File([content], "actual-memory.jsonl", {
+      type: "application/x-ndjson",
+    });
+    fireEvent.change(input!, { target: { files: [file] } });
+
+    expect(await screen.findByText("actual-memory")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /actual-memory/ }).getAttribute("aria-checked")).toBe("true");
+    expect(bridge.apiPost).toHaveBeenCalledWith(
+      "page/evaluation/datasets/import",
+      { filename: "actual-memory.jsonl", content },
+    );
+    expect(showToast).toHaveBeenCalledWith("Dataset actual-memory imported");
+  });
+
+  it("selects current memories and runs without a dataset upload", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/evaluation/datasets") {
+        return Promise.resolve(ok({
+          datasets: [{
+            name: "current_memories",
+            case_count: 12,
+            path: "",
+            intents: ["self_retrieval"],
+            chat_types: ["private"],
+            source: "current_memories",
+          }],
+        }));
+      }
+      return Promise.resolve(ok({ reports: [] }));
+    });
+    bridge.apiPost.mockResolvedValueOnce({ status: "error", message: "stop after payload capture" });
+
+    render(<EvaluationWorkbench showToast={() => undefined} />);
+
+    expect(await screen.findByText("Current memories")).toBeTruthy();
+    expect(screen.getByText("Uses a temporary sample from this installation")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^run$/i }));
+
+    await waitFor(() => {
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/evaluation/run", {
+        datasets: ["current_memories"],
+        k: 5,
+        variants: ["baseline", "graph_expansion_off", "topic_expansion_off"],
+        baseline: "baseline",
+        save_report: true,
+      });
+    });
+  });
+
   it("keeps the final variant selected and preserves it in the evaluation payload", async () => {
     bridge.apiPost.mockResolvedValueOnce({ status: "error", message: "stop after payload capture" });
     render(<EvaluationWorkbench showToast={() => undefined} />);

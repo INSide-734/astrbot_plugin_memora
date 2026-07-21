@@ -270,6 +270,14 @@ npm run test      # Vitest: bridge + hooks
 | **System** | System status and maintenance tools |
 | **Preview** | Data preview |
 
+The Evaluation page never reads repository test fixtures. After installation it automatically selects **Current memories** and builds an in-memory self-retrieval sample from up to 20 recent active memories, so **Run** works without an upload and no sample text is persisted. This mode measures whether stored memories can retrieve themselves. To measure relevance for real business questions, choose **Import dataset** and provide a labeled `.jsonl`; every line must contain `case_id`, `query`, and `relevant_doc_ids`, whose values are canonical integer IDs in the current memory database:
+
+```json
+{"case_id":"coffee-preference","query":"Which coffee does the user prefer?","relevant_doc_ids":["17"],"metadata":{"session_id":"private:example","chat_type":"private"}}
+```
+
+Use `"__no_relevant__"` as the sole relevant marker for a correct negative case. Imported datasets appear immediately in the selector and are stored under `evaluation_datasets/` in the plugin data directory.
+
 ## REST API
 
 The plugin automatically registers 14+ REST API endpoints:

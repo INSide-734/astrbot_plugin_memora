@@ -150,6 +150,14 @@ Dashboard 使用 React、Vite、Tailwind CSS 和 Base UI-backed shadcn 组件构
 - **Affection / Social**：查看好感度、Bot 情绪与社交关系。
 - **Injection / System / Config / Preview**：配置注入策略、查看运行状态、编辑配置和预览数据。
 
+测评页不读取仓库测试夹具。安装后会自动选择“当前记忆”，从当前库中最近最多 20 条活跃记忆临时生成自身召回样本，点击“运行”即可直接评测且不会落盘保存样本正文。该模式衡量现有记忆能否召回自身；若要评测真实业务问句的相关性，可点击“导入数据集”选择人工标注 `.jsonl`。每行至少包含 `case_id`、`query` 和 `relevant_doc_ids`，相关 ID 必须是当前记忆库中存在的 canonical 整数 ID：
+
+```json
+{"case_id":"coffee-preference","query":"用户喜欢哪种咖啡","relevant_doc_ids":["17"],"metadata":{"session_id":"private:example","chat_type":"private"}}
+```
+
+正确负例使用唯一相关标记 `"__no_relevant__"`。导入成功后数据集立即出现在选择区域，并保存在插件数据目录的 `evaluation_datasets/` 中。
+
 开发 Dashboard：
 
 ```bash
