@@ -9,29 +9,49 @@ from typing import Any
 from astrbot.api import logger
 
 FaissVecDB: Any = None
+FAISS_RUNTIME_CHECK_TIMEOUT_SECONDS = 30
 
 
 class FaissChecker:
     """FAISS 运行时检查 + 动态加载 + 维度不匹配修复"""
 
     @staticmethod
-    def check_runtime():
+    def check_runtime() -> None:
+        """在隔离子进程中确认首次 FAISS 导入可安全完成。
+
+        父进程已经成功加载 FAISS 时直接返回，避免插件热重载重复执行昂贵探测。
+
+        Raises:
+            InitializationError: 探测超时、子进程无法启动或 FAISS 导入失败。
+        """
+        if "faiss" in sys.modules:
+            return
+
         try:
-            # 安全 — sys.executable 是受信任的 Python 解释器路径;
-            # 参数为固定列表，无用户可控输入。
+            # sys.executable 是受信任的解释器路径，参数固定且不含用户输入。
             result = subprocess.run(
                 [sys.executable, "-c", "import faiss"],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=FAISS_RUNTIME_CHECK_TIMEOUT_SECONDS,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired as exc:
             from ..base.exceptions import InitializationError
 
             raise InitializationError(
-                "FAISS 运行时检查失败，无法安全初始化向量数据库。"
-                "请确认 faiss-cpu 已正确安装，或改用兼容当前 CPU 的 FAISS 包。"
+                "FAISS 运行时检查在 "
+                f"{FAISS_RUNTIME_CHECK_TIMEOUT_SECONDS} 秒内未完成，"
+                "无法安全初始化向量数据库。"
+                "这通常由 Windows 冷启动或安全软件扫描导致；请重试，"
+                "若持续超时请检查 faiss-cpu 安装与运行环境。"
+            ) from exc
+        except OSError as exc:
+            from ..base.exceptions import InitializationError
+
+            raise InitializationError(
+                "无法启动 FAISS 运行时检查子进程。"
+                "请检查当前 Python 解释器和 faiss-cpu 安装状态。"
             ) from exc
 
         if result.returncode != 0:
@@ -47,7 +67,15 @@ class FaissChecker:
                 f"{' 原始错误: ' + details if details else ''}"
             )
 
-    def load_vec_db_class(self):
+    def load_vec_db_class(self) -> Any:
+        """确认 FAISS 兼容性并延迟加载 AstrBot 向量数据库类。
+
+        Returns:
+            AstrBot 的 ``FaissVecDB`` 类。
+
+        Raises:
+            InitializationError: FAISS 探测失败或 AstrBot 数据库类无法导入。
+        """
         global FaissVecDB
         if FaissVecDB is not None:
             return FaissVecDB
@@ -70,8 +98,17 @@ class FaissChecker:
 
     @staticmethod
     async def check_and_fix_dimension_mismatch(
-            index_path: str, embedding_provider
+        index_path: str, embedding_provider: Any
     ) -> None:
+        """检查索引维度，并删除或隔离无法复用的派生索引。
+
+        Args:
+            index_path: 待检查的 FAISS 索引文件路径。
+            embedding_provider: 提供当前向量维度的 Embedding Provider。
+
+        Raises:
+            InitializationError: FAISS 本身无法导入，不能安全读取索引。
+        """
         if not os.path.exists(index_path):
             return
 
