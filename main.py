@@ -98,6 +98,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         set_debug_mode(
             self.config_manager.get("debug", False),
             data_dir=data_dir,
+            timezone_name=self.context.get_config().get("timezone"),
         )
         report_debug_event(
             "plugin_started",
