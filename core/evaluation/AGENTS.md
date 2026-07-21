@@ -2,11 +2,15 @@
 
 # 离线检索质量评测模块
 
-**最后更新：** 2026-07-20
+**最后更新：** 2026-07-21
 
 ## 职责与边界
 
 `core/evaluation/` 加载 JSONL 检索用例，适配 `MemoryEngine` 搜索接口，计算查询级 Recall@K、MRR、二元 nDCG@K 和 P95 延迟，通过隔离只读快照运行有限消融并持久化安全报告。它是离线/运维评测设施，不参与在线召回排序、不训练模型，也不把指标结果自动转成生产配置。
+
+`session_first_ablation.py` 提供 Session-first 的隔离反事实双跑：基线和精确 Session 分支都必须实际执行，保守证据门只产生 `would_short_circuit` 决定，不改变 `RecallHandler`。实验专用 `session_first.jsonl` 默认不进入标准 `load_fixture_dir`，需显式 `include_experimental=True` 或使用专用 loader；报告只保存固定 reason code、指标、延迟和成本标量。
+
+`derived_metadata_ablation.py` 只构造 process-local source-backed annotation index；`feedback_ranking_ablation.py` 只在内存中应用隔离 aggregate 的 document/graph 权重。`derived_metadata.jsonl` 和 `feedback_ranking.jsonl` 与 Session-first 一样默认排除在标准 fixture 目录之外，三类实验均不注册到 `EvaluationService` 或 Page API。
 
 ## Memory Evolution A/B/C 评测
 
@@ -70,6 +74,9 @@ flowchart LR
 - `tests/evaluation/test_retrieval_quality.py`：fixture 加载、路由元数据、排名指标、正确负例、engine 适配和变体差值。
 - `tests/evaluation/test_evaluation_service.py`：无 AstrBot 导入、报告 round-trip、数据集选择、真实配置键、不可用变体、缓存隔离、baseline 失败与历史对比。
 - `tests/evaluation/test_retrieval_ablation.py`：snapshot 复制、live 回调隔离、能力 descriptor、等价检测、稳定失败与取消传播。
+- `tests/evaluation/test_session_first_ablation.py`：Session-first 场景 loader、双跑、证据门、权限/revision/冲突负测、失败回退、取消传播和报告 canary。
+- `tests/evaluation/test_derived_metadata_ablation.py`、`tests/test_derived_metadata_contract.py`：有限派生注解预算、source revalidation、重建和 metadata-dependent 消融。
+- `tests/evaluation/test_feedback_ranking_ablation.py`、`tests/test_feedback_signal_*.py`：反馈事件模型、隔离 Store、抗重放聚合、shadow 权重和安全 canary。
 - `tests/test_graph_hop_ablation.py`、`tests/test_retrieval_ranking.py`：0/1/2 hop、最小图距离和最终 reranker 真实调用路径。
 
 精确验证命令：
