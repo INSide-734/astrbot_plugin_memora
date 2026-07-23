@@ -69,6 +69,20 @@ class TestGraphExtractorLegacy:
         person_nodes = [n for n in graph.nodes if n.node_type == "person"]
         assert len(person_nodes) >= 2
 
+    def test_stable_qq_participant_uses_canonical_person_node(
+        self,
+        extractor: GraphExtractor,
+    ) -> None:
+        """稳定 QQ 标签应在旧 metadata 图路径生成固定 person 节点键。"""
+
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="fallback",
+            metadata={"participants": ["QQ:10001"]},
+        )
+
+        assert any(node.node_key == "person:qq:10001" for node in graph.nodes)
+
     def test_co_occurs_edges_created(self, extractor: GraphExtractor) -> None:
         graph = extractor.extract(
             source_memory_id=1,
@@ -313,6 +327,33 @@ class TestGraphExtractorAtoms:
         graph = extractor.extract(source_memory_id=1, content="", metadata=None, atoms=[atom])
         topic_nodes = [n for n in graph.nodes if n.node_type == "topic"]
         assert len(topic_nodes) >= 2
+
+    def test_atom_stable_qq_entity_restores_person_role(
+        self,
+        extractor: GraphExtractor,
+    ) -> None:
+        """Atom 路径应从父记忆参与者恢复稳定 QQ 的 person 角色。"""
+
+        atom = MagicMock()
+        atom.content = "稳定身份参与了讨论"
+        atom.confidence = 0.8
+        atom.session_id = "s1"
+        atom.persona_id = None
+        atom.entities = ["QQ:10001"]
+        atom.atom_type = "FACTUAL"
+        atom.importance = 0.5
+        atom.ttl_days = 30.0
+        atom.created_at = None
+        atom.event_time = None
+
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="",
+            metadata={"participants": ["QQ:10001"]},
+            atoms=[atom],
+        )
+
+        assert any(node.node_key == "person:qq:10001" for node in graph.nodes)
 
     def test_atom_fallback_to_summary_entry(self, extractor: GraphExtractor) -> None:
         # When an atom creates no fact node (empty canonical), fallback creates summary

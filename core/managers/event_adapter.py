@@ -115,10 +115,11 @@ class EventAdapterMixin:
         )
 
     @staticmethod
-    def _trusted_identity_metadata(identity: ResolvedIdentity) -> dict[str, str]:
+    def _trusted_identity_metadata(identity: ResolvedIdentity) -> dict[str, Any]:
         """生成 Message 使用的可信稳定身份 allowlist 元数据。"""
 
         metadata = {
+            "identity_trusted": True,
             "identity_protocol": identity.protocol,
             "identity_namespace": identity.identity_namespace,
             "stable_user_id": identity.stable_user_id or "",
