@@ -421,6 +421,7 @@ async def test_factory_identity_store_failure_returns_resolver_only_runtime(monk
     assert isinstance(runtime, ProtocolIdentityRuntime)
     assert runtime.service is None
     assert runtime.synchronizer is None
+    assert runtime.enricher is None
     store.close.assert_awaited_once()
 
 
@@ -491,6 +492,7 @@ async def test_factory_identity_runtime_builds_service_and_closes_owned_store(mo
 
     assert runtime.service is not None
     assert runtime.synchronizer is not None
+    assert runtime.enricher is not None
     await runtime.close()
     store.close.assert_awaited_once()
 

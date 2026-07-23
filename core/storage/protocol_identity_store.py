@@ -185,6 +185,80 @@ class ProtocolIdentityStore:
             rows = await cursor.fetchall()
         return [str(row[0]) for row in rows]
 
+    async def find_alias_owner_ids(
+        self,
+        identity_namespace: str,
+        alias: str,
+        scope_type: str,
+        scope_id: str,
+        *,
+        member_scope_type: str | None = None,
+        member_scope_id: str | None = None,
+        limit: int = 2,
+    ) -> list[str]:
+        """按精确别名反查稳定身份，并可限制为指定作用域的现有成员。"""
+
+        connection = self._require_connection()
+        safe_limit = max(1, min(int(limit), 32))
+        membership_enabled = (
+            isinstance(member_scope_type, str)
+            and bool(member_scope_type)
+            and isinstance(member_scope_id, str)
+            and bool(member_scope_id)
+        )
+        async with self._write_lock:
+            if membership_enabled:
+                cursor = await connection.execute(
+                    """
+                    SELECT DISTINCT a.stable_user_id
+                    FROM identity_aliases a
+                    WHERE a.identity_namespace = ?
+                      AND a.alias = ?
+                      AND a.scope_type = ?
+                      AND a.scope_id = ?
+                      AND EXISTS (
+                          SELECT 1 FROM identity_scope_members s
+                          WHERE s.identity_namespace = a.identity_namespace
+                            AND s.stable_user_id = a.stable_user_id
+                            AND s.scope_type = ?
+                            AND s.scope_id = ?
+                      )
+                    ORDER BY a.stable_user_id ASC
+                    LIMIT ?
+                    """,
+                    (
+                        identity_namespace,
+                        alias,
+                        scope_type,
+                        scope_id,
+                        member_scope_type,
+                        member_scope_id,
+                        safe_limit,
+                    ),
+                )
+            else:
+                cursor = await connection.execute(
+                    """
+                    SELECT DISTINCT stable_user_id
+                    FROM identity_aliases
+                    WHERE identity_namespace = ?
+                      AND alias = ?
+                      AND scope_type = ?
+                      AND scope_id = ?
+                    ORDER BY stable_user_id ASC
+                    LIMIT ?
+                    """,
+                    (
+                        identity_namespace,
+                        alias,
+                        scope_type,
+                        scope_id,
+                        safe_limit,
+                    ),
+                )
+            rows = await cursor.fetchall()
+        return [str(row[0]) for row in rows]
+
     async def record_aliases(
         self,
         identity_namespace: str,

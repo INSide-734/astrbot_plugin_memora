@@ -23,13 +23,48 @@ class TestFormatMemoriesForInjection:
         assert format_memories_for_injection([]) == ""
 
     def test_none_content_level_without_budget_returns_empty_string(self):
+        """NONE 级别即使存在临时身份参考也必须保持完全空输出。"""
+
         assert (
             format_memories_for_injection(
-                [{"content": "must not be formatted"}],
+                [
+                    {
+                        "content": "must not be formatted",
+                        "metadata": {
+                            "identity_reference_lines": [
+                                "- “旧名”是历史名称；当前显示为“新名”（QQ:10001）。"
+                            ]
+                        },
+                    }
+                ],
                 content_level=ContentLevel.NONE,
             )
             == ""
         )
+
+    def test_identity_reference_precedes_topics_and_key_facts(self):
+        """临时身份参考应在 topics、participants 和 facts 之前输出。"""
+
+        result = format_memories_for_injection(
+            [
+                {
+                    "content": "群聊讨论",
+                    "score": 0.9,
+                    "metadata": {
+                        "identity_reference_lines": [
+                            "- “旧名”是历史名称；当前显示为“新名”（QQ:10001）。"
+                        ],
+                        "topics": ["主题"],
+                        "participants": ["QQ:10001"],
+                        "key_facts": ["事实"],
+                    },
+                }
+            ]
+        )
+
+        assert result.index("身份参考：") < result.index("Topics: 主题")
+        assert result.index("身份参考：") < result.index("Participants: QQ:10001")
+        assert result.index("身份参考：") < result.index("Key facts: 事实")
 
     def test_dict_based_memories(self):
         """格式化 memories passed as dicts (the normal path)."""
@@ -410,8 +445,14 @@ class TestBudgetedInjectionFormatting:
         assert stats.chars == len(text)
 
     def test_none_content_level_returns_empty_payload(self):
+        """预算模式下 NONE 级别同样不得输出身份参考或正文。"""
+
+        memory = _rich_memory(0)
+        memory["metadata"]["identity_reference_lines"] = [
+            "- “旧名”是历史名称；当前显示为“新名”（QQ:10001）。"
+        ]
         text, stats = format_memories_for_injection(
-            [_rich_memory(0)],
+            [memory],
             budget=_budget(ContentLevel.NONE, 2400),
             content_level=ContentLevel.NONE,
         )
@@ -419,6 +460,28 @@ class TestBudgetedInjectionFormatting:
         assert text == ""
         assert stats.chars == 0
         assert stats.memory_count == 0
+
+    def test_identity_reference_counts_toward_metadata_budget(self):
+        """身份说明占满 metadata 预算后不得继续挤入 topics 或 facts。"""
+
+        line = "- “旧名”是历史名称；当前显示为“新名”（QQ:10001）。"
+        block = f"身份参考：\n{line}"
+        memory = _rich_memory(0)
+        memory["metadata"]["identity_reference_lines"] = [line]
+        text, _ = format_memories_for_injection(
+            [memory],
+            budget=_budget(
+                ContentLevel.COMPACT,
+                1200,
+                metadata_max_chars=len(block),
+            ),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert block in text
+        assert "Topics:" not in text
+        assert "Participants:" not in text
+        assert "Key facts:" not in text
 
     def test_facts_prefers_key_facts_and_excludes_other_metadata(self):
         text, _ = format_memories_for_injection(

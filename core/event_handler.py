@@ -103,6 +103,7 @@ class EventHandler:
             perf_tracker=perf_tracker,
             injection_recorder=injection_recorder,
             memory_tool_available=memory_tool_available,
+            identity_enricher=self._identity_runtime.enricher,
         )
         self._reflection_handler = ReflectionHandler(
             context=context,
