@@ -4,8 +4,7 @@
 """
 
 import time
-
-from astrbot.api import logger
+from typing import Any
 
 from ..models.conversation_models import Message
 
@@ -23,6 +22,7 @@ class MessageOperationsMixin:
         group_id: str | None = None,
         platform: str = "unknown",
         is_bot_message: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> Message:
         """
         添加消息到会话
@@ -35,6 +35,8 @@ class MessageOperationsMixin:
             sender_name: 发送者昵称
             group_id: 群组ID(群聊场景)
             platform: 平台标识
+            is_bot_message: 是否写入 Bot 消息标记
+            metadata: 调用方提供的消息元数据，写入前复制
 
         Returns:
             创建的Message对象
@@ -42,6 +44,10 @@ class MessageOperationsMixin:
         # 如果没有sender_id,使用session_id
         if not sender_id:
             sender_id = session_id
+
+        message_metadata = dict(metadata or {})
+        if is_bot_message:
+            message_metadata["is_bot_message"] = True
 
         # 创建消息对象
         message = Message(
@@ -54,7 +60,7 @@ class MessageOperationsMixin:
             group_id=group_id,
             platform=platform,
             timestamp=time.time(),
-            metadata={"is_bot_message": True} if is_bot_message else {},
+            metadata=message_metadata,
         )
 
         # 存储到数据库
@@ -65,18 +71,6 @@ class MessageOperationsMixin:
         async with self._cache_lock:
             if session_id in self._cache:
                 del self._cache[session_id]
-
-        logger.debug(
-            f"[ConversationManager] 添加消息: session={session_id}, "
-            f"role={role}, sender={sender_id}"
-        )
-
-        # 添加后获取最新的消息统计
-        session_info = await self.store.get_session(session_id)
-        if session_info:
-            logger.debug(
-                f"[DEBUG-AddMessage] [{session_id}] 添加消息后，当前总消息数: {session_info.message_count}"
-            )
 
         return message
 

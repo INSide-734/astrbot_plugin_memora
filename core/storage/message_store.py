@@ -173,6 +173,94 @@ class MessageStoreMixin(MessageQueryMixin):
         messages.reverse()
         return messages
 
+    async def find_user_sender_names(
+        self,
+        *,
+        sender_id: str,
+        session_id: str | None = None,
+        private_platform: str | None = None,
+    ) -> set[str]:
+        """读取同 user 和已证明作用域中的非空历史显示名称。"""
+
+        if self.connection is None:
+            raise RuntimeError("数据库连接未初始化")
+        scope_clause, scope_params = self._identity_name_scope(
+            session_id=session_id,
+            private_platform=private_platform,
+        )
+        cursor = await self.connection.execute(
+            f"""
+            SELECT DISTINCT sender_name
+            FROM messages
+            WHERE role = 'user' AND sender_id = ?
+              AND sender_name IS NOT NULL AND sender_name <> ''
+              {scope_clause}
+            """,
+            (sender_id, *scope_params),
+        )
+        rows = await cursor.fetchall()
+        return {str(row[0]) for row in rows}
+
+    async def update_user_sender_name(
+        self,
+        *,
+        sender_id: str,
+        sender_name: str,
+        session_id: str | None = None,
+        private_platform: str | None = None,
+    ) -> set[str]:
+        """只更新同 user、role=user 和已证明作用域的名称，返回受影响 session。"""
+
+        if self.connection is None:
+            raise RuntimeError("数据库连接未初始化")
+        if not isinstance(sender_name, str) or not sender_name:
+            raise ValueError("sender_name 必须是非空字符串")
+        scope_clause, scope_params = self._identity_name_scope(
+            session_id=session_id,
+            private_platform=private_platform,
+        )
+        params = (sender_id, *scope_params, sender_name)
+        async with self._write_lock:
+            cursor = await self.connection.execute(
+                f"""
+                SELECT DISTINCT session_id
+                FROM messages
+                WHERE role = 'user' AND sender_id = ?
+                  {scope_clause}
+                  AND (sender_name IS NULL OR sender_name <> ?)
+                """,
+                params,
+            )
+            changed_sessions = {str(row[0]) for row in await cursor.fetchall()}
+            if not changed_sessions:
+                return set()
+            await self.connection.execute(
+                f"""
+                UPDATE messages
+                SET sender_name = ?
+                WHERE role = 'user' AND sender_id = ?
+                  {scope_clause}
+                  AND (sender_name IS NULL OR sender_name <> ?)
+                """,
+                (sender_name, sender_id, *scope_params, sender_name),
+            )
+            await self.connection.commit()
+        return changed_sessions
+
+    @staticmethod
+    def _identity_name_scope(
+        *,
+        session_id: str | None,
+        private_platform: str | None,
+    ) -> tuple[str, tuple[str, ...]]:
+        """生成仅含固定 SQL 片段的群聊或私聊名称作用域。"""
+
+        if bool(session_id) == bool(private_platform):
+            raise ValueError("必须且只能提供 session_id 或 private_platform")
+        if session_id:
+            return "AND session_id = ?", (session_id,)
+        return "AND platform = ? AND group_id IS NULL", (private_platform or "",)
+
     async def trim_session_messages(
         self,
         session_id: str,

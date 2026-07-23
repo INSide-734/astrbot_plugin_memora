@@ -9,13 +9,20 @@ class DedupManager:
     """消息去重缓存（惰性过期 + 溢出时逐条淘汰）"""
 
     def __init__(self, max_size: int = 1000, ttl: int = 300) -> None:
+        """初始化有限容量和生存时间的进程内缓存。"""
+
         self._cache: dict[str, float] = {}
         self._max_size = max_size
         self._ttl = ttl
 
     @staticmethod
-    async def build_dedup_key(event, session_id: str, content: str) -> str | None:
-        """构建去重键：优先使用 message_id，缺失时退化为消息内容指纹。"""
+    async def build_dedup_key(
+        event: Any,
+        session_id: str,
+        content: str,
+        sender_id_override: str | None = None,
+    ) -> str | None:
+        """构建去重键，fallback 可优先采用已验证的发送者覆盖值。"""
         raw_message_id = getattr(
             getattr(event, "message_obj", None), "message_id", None
         )
@@ -33,7 +40,11 @@ class DedupManager:
                 scope = ":".join(scope_parts)
                 return f"id:{scope}:{message_id}" if scope else f"id:{message_id}"
 
-        sender_id = event.get_sender_id() if hasattr(event, "get_sender_id") else ""
+        sender_id = (
+            sender_id_override
+            if sender_id_override is not None
+            else event.get_sender_id() if hasattr(event, "get_sender_id") else ""
+        )
         timestamp = getattr(getattr(event, "message_obj", None), "timestamp", 0)
         fingerprint = f"{session_id}|{sender_id}|{timestamp}|{content}"
         digest = hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()
@@ -41,6 +52,8 @@ class DedupManager:
 
     @staticmethod
     def _get_platform_scope(event: Any) -> str:
+        """从事件窄接口或消息对象读取稳定平台作用域。"""
+
         for attr_name in ("get_platform_name", "get_platform"):
             getter = getattr(event, attr_name, None)
             if not callable(getter):
