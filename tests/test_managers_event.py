@@ -229,6 +229,7 @@ class TestAddMessageFromEvent:
         assert adapter._call_kwargs["sender_name"] == "新群名片"
         assert adapter._call_kwargs["group_id"] == "20001"
         assert adapter._call_kwargs["metadata"] == {
+            "identity_trusted": True,
             "identity_protocol": "onebot11",
             "identity_namespace": "qq",
             "stable_user_id": "10001",

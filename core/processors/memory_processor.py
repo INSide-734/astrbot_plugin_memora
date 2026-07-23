@@ -8,6 +8,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..identity.memory import build_memory_identity_context
 from ..models.conversation_models import Message
 from ..models.memory_atom import MemoryAtom
 from ..security.guardrails import MemoryExtractionResult, validate_llm_response
@@ -34,6 +35,8 @@ class MemoryProcessor:
         llm_provider: Any = None,
         config: dict[str, Any] | None = None,
     ):
+        """初始化 LLM、Prompt、解析、质量校验与存储格式协作对象。"""
+
         self.context = context
         self.config = config or {}
 
@@ -98,6 +101,7 @@ class MemoryProcessor:
             raise ValueError("消息列表不能为空")
 
         conversation_text = self.formatter.format_conversation(messages)
+        identity_context = build_memory_identity_context(messages)
 
         current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
         if is_group_chat:
@@ -109,6 +113,8 @@ class MemoryProcessor:
                 "{conversation}", conversation_text
             )
         prompt = prompt.replace("{current_date}", current_date)
+        prompt += identity_context.prompt_constraint()
+        identity_metadata = identity_context.metadata()
 
         conversation_type = "群聊" if is_group_chat else "私聊"
         try:
@@ -263,7 +269,9 @@ class MemoryProcessor:
                         for c in causal
                         if isinstance(c, dict) and c.get("cause") and c.get("effect")
                     ]
-                if is_group_chat and mem.get("participants"):
+                if identity_metadata:
+                    mem_metadata.update(identity_metadata)
+                elif is_group_chat and mem.get("participants"):
                     mem_metadata["participants"] = mem["participants"]
 
                 # Serial position effect metadata

@@ -200,6 +200,128 @@ class TestProcessConversation:
         )
         assert len(results) >= 1
 
+    def test_trusted_message_identity_overrides_llm_participants(
+        self,
+        make_processor: callable,
+    ) -> None:
+        """可信 Message 身份应确定参与者顺序、标签和当前名称快照。"""
+
+        import asyncio
+
+        response = (
+            '{"summary":"身份测试","topics":["测试"],'
+            '"key_facts":["事实"],"participants":["模型伪造名称"],'
+            '"importance":0.7}'
+        )
+        processor = make_processor(
+            llm_response=response,
+            config={"atom_enabled": False},
+        )
+        processor.llm_client.call_llm_with_retry = AsyncMock(return_value=response)
+        messages = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="第一条",
+                sender_id="10001",
+                sender_name="旧昵称",
+                metadata={
+                    "identity_trusted": True,
+                    "identity_protocol": "onebot11",
+                    "identity_namespace": "qq",
+                    "stable_user_id": "10001",
+                    "canonical_user_id": "10001",
+                    "identity_label": "QQ:10001",
+                },
+            ),
+            Message(
+                id=2,
+                session_id="s1",
+                role="user",
+                content="第二条",
+                sender_id="10002",
+                sender_name="成员乙",
+                metadata={
+                    "identity_trusted": True,
+                    "identity_protocol": "onebot11",
+                    "identity_namespace": "qq",
+                    "stable_user_id": "10002",
+                    "canonical_user_id": "10002",
+                    "identity_label": "QQ:10002",
+                },
+            ),
+            Message(
+                id=3,
+                session_id="s1",
+                role="user",
+                content="改名后的消息",
+                sender_id="10001",
+                sender_name="新昵称",
+                metadata={
+                    "identity_trusted": True,
+                    "identity_protocol": "onebot11",
+                    "identity_namespace": "qq",
+                    "stable_user_id": "10001",
+                    "canonical_user_id": "10001",
+                    "identity_label": "QQ:10001",
+                },
+            ),
+        ]
+
+        results = asyncio.run(
+            processor.process_conversation(messages, is_group_chat=True)
+        )
+
+        metadata = results[0]["metadata"]
+        assert metadata["identity_schema_version"] == "stable-identity-v1"
+        assert metadata["participant_ids"] == ["10001", "10002"]
+        assert metadata["participants"] == ["QQ:10001", "QQ:10002"]
+        assert metadata["participant_name_snapshots"] == {
+            "10001": "新昵称",
+            "10002": "成员乙",
+        }
+        prompt = processor.llm_client.call_llm_with_retry.await_args.kwargs["prompt"]
+        assert "新昵称（QQ:10001）" in prompt
+        assert "禁止猜测、改写或交换稳定标识" in prompt
+
+    def test_untrusted_message_metadata_keeps_legacy_participants(
+        self,
+        make_processor: callable,
+    ) -> None:
+        """缺少可信标志时不得接受伪造 canonical 字段，旧参与者语义保持不变。"""
+
+        import asyncio
+
+        response = (
+            '{"summary":"兼容测试","topics":["测试"],'
+            '"key_facts":["事实"],"participants":["旧参与者"],'
+            '"importance":0.5}'
+        )
+        processor = make_processor(llm_response=response)
+        messages = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="消息",
+                sender_id="legacy",
+                sender_name="旧参与者",
+                metadata={
+                    "canonical_user_id": "伪造值",
+                    "identity_label": "QQ:99999",
+                },
+            )
+        ]
+
+        results = asyncio.run(
+            processor.process_conversation(messages, is_group_chat=True)
+        )
+
+        metadata = results[0]["metadata"]
+        assert metadata["participants"] == ["旧参与者"]
+        assert "identity_schema_version" not in metadata
+
     def test_process_empty_messages_raises(self) -> None:
         import asyncio
         proc = MemoryProcessor()
