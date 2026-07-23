@@ -7,6 +7,10 @@ from astrbot.api import logger
 from astrbot.core.provider.provider import Provider
 
 from ..base.exceptions import ProviderNotReadyError
+from ..identity.conversation_sync import ConversationIdentitySynchronizer
+from ..identity.resolver import ProtocolIdentityResolver
+from ..identity.runtime import ProtocolIdentityRuntime
+from ..identity.service import ProtocolIdentityService
 from ..injection.recorder import InjectionDecisionRecorder
 from ..managers.backup_manager import BackupManager
 from ..managers.conversation_manager import ConversationManager
@@ -22,6 +26,7 @@ from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
 from ..storage.memory_evolution_store import MemoryEvolutionStore
+from ..storage.protocol_identity_store import ProtocolIdentityStore
 from .derived_rebuild_coordinator import DerivedRebuildCoordinator
 from ..validators.index_validator import IndexValidator
 
@@ -267,7 +272,9 @@ class ComponentFactory:
             logger.info("DecayScheduler 已启动")
 
         try:
-            injection_components = await self._build_injection_components(db_path)
+            identity_runtime = await self._build_identity_runtime(
+                conversation_manager
+            )
         except BaseException:
             await self._rollback_build_components(
                 decay_scheduler,
@@ -279,6 +286,22 @@ class ComponentFactory:
                 memory_evolution_store,
             )
             raise
+        conversation_manager.identity_runtime = identity_runtime
+
+        try:
+            injection_components = await self._build_injection_components(db_path)
+        except BaseException:
+            await self._rollback_build_components(
+                decay_scheduler,
+                conversation_store,
+                memory_engine,
+                graph_db,
+                db,
+                memory_evolution_manager,
+                memory_evolution_store,
+                identity_runtime,
+            )
+            raise
 
         return {
             "db": db,
@@ -287,6 +310,7 @@ class ComponentFactory:
             "memory_processor": memory_processor,
             "backup_manager": backup_manager,
             "conversation_manager": conversation_manager,
+            "identity_runtime": identity_runtime,
             "index_validator": index_validator,
             "decay_scheduler": decay_scheduler,
             "memory_evolution_store": memory_evolution_store,
@@ -303,11 +327,15 @@ class ComponentFactory:
         db,
         memory_evolution_manager=None,
         memory_evolution_store=None,
+        identity_runtime=None,
     ) -> None:
+        """按依赖顺序尽力关闭工厂已经拥有的组件。"""
+
         cleanup_steps = (
             ("MemoryEvolutionManager", memory_evolution_manager, "stop"),
             ("MemoryEvolutionStore", memory_evolution_store, "close"),
             ("DecayScheduler", decay_scheduler, "stop"),
+            ("ProtocolIdentityRuntime", identity_runtime, "close"),
             ("ConversationStore", conversation_store, "close"),
             ("MemoryEngine", memory_engine, "close"),
             ("GraphDB", graph_db, "close"),
@@ -320,6 +348,45 @@ class ComponentFactory:
                 await getattr(component, method_name)()
             except BaseException:
                 logger.error("回滚组件 %s 失败", label, exc_info=True)
+
+    async def _build_identity_runtime(
+        self,
+        conversation_manager: ConversationManager,
+    ) -> ProtocolIdentityRuntime:
+        """构建身份目录运行时，普通初始化失败时降级为仅解析模式。"""
+
+        resolver = ProtocolIdentityResolver.default()
+        store = ProtocolIdentityStore(str(Path(self.data_dir) / "memora.db"))
+        try:
+            await store.initialize()
+        except asyncio.CancelledError:
+            try:
+                await store.close()
+            except BaseException:
+                pass
+            raise
+        except Exception:
+            try:
+                await store.close()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+            logger.warning("协议身份目录初始化失败，已降级为仅解析模式")
+            return ProtocolIdentityRuntime(resolver)
+
+        service = ProtocolIdentityService(store)
+        synchronizer = ConversationIdentitySynchronizer(
+            conversation_manager.store,
+            service,
+            conversation_manager.invalidate_cache,
+        )
+        return ProtocolIdentityRuntime(
+            resolver,
+            service=service,
+            synchronizer=synchronizer,
+            store=store,
+        )
 
     async def _build_injection_components(self, db_path: Path) -> dict[str, object]:
         decision_store = InjectionDecisionStore(db_path)

@@ -66,6 +66,7 @@ class ProtocolIdentityStore:
         if self._connection is not None:
             return
         connection = await aiosqlite.connect(self.db_path)
+        self._connection = connection
         connection.row_factory = aiosqlite.Row
         await apply_perf_pragmas(connection)
         await connection.execute(
@@ -122,7 +123,6 @@ class ProtocolIdentityStore:
             """
         )
         await connection.commit()
-        self._connection = connection
 
     async def close(self) -> None:
         """等待当前写入完成并关闭持久数据库连接。"""

@@ -18,6 +18,8 @@ from .dedup.dedup_manager import DedupManager
 from .extractors.message_content_extractor import MessageContentExtractor
 from .handlers.recall_handler import RecallHandler
 from .handlers.reflection_handler import ReflectionHandler
+from .identity.models import IdentityTrust, ResolvedIdentity
+from .identity.runtime import ProtocolIdentityRuntime
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
 from .monitoring import (
@@ -58,6 +60,8 @@ class EventHandler:
         memory_tool_available: bool = False,
         memory_evolution_manager: Any | None = None,
     ) -> None:
+        """绑定事件主链依赖，并复用会话管理器持有的协议身份运行时。"""
+
         self.context = context
         self.config_manager = config_manager
         self.memory_engine = memory_engine
@@ -71,6 +75,12 @@ class EventHandler:
         self._injection_recorder = injection_recorder
         self._memory_tool_available = memory_tool_available
         self._memory_evolution_manager = memory_evolution_manager
+        identity_runtime = getattr(conversation_manager, "identity_runtime", None)
+        self._identity_runtime = (
+            identity_runtime
+            if isinstance(identity_runtime, ProtocolIdentityRuntime)
+            else ProtocolIdentityRuntime()
+        )
 
         self._dedup = DedupManager(max_size=1000, ttl=300)
         self._extractor = MessageContentExtractor()
@@ -159,17 +169,37 @@ class EventHandler:
 
         try:
             session_id = event.unified_msg_origin
+            writes_blocked = self._writes_blocked()
+            identity = await self._identity_runtime.prepare(
+                event,
+                writes_blocked=writes_blocked,
+            )
+
+            if identity.trust_status in {
+                IdentityTrust.CONFLICT,
+                IdentityTrust.INVALID,
+            }:
+                report_debug_event(
+                    "message_capture",
+                    component="event_handler",
+                    stage="capture",
+                    status="skipped",
+                    reason_code="identity_untrusted",
+                )
+                return
 
             if session_id and (
                 "Error:" in session_id or "error:" in session_id.lower()
             ):
-                logger.warning(
-                    f"检测到异常的session_id: {session_id}。"
-                    f"这可能是平台适配器初始化问题，建议检查平台配置。"
-                )
+                logger.warning("检测到异常会话标识，跳过输出具体标识")
 
             content = await self._extractor.extract_message_content(event)
-            dedup_key = await self._dedup.build_dedup_key(event, session_id, content)
+            dedup_key = await self._dedup.build_dedup_key(
+                event,
+                session_id,
+                content,
+                sender_id_override=self._conversation_sender_override(identity),
+            )
 
             if dedup_key and await self._dedup.is_duplicate(dedup_key):
                 report_debug_event(
@@ -179,10 +209,10 @@ class EventHandler:
                     status="skipped",
                     reason_code="duplicate",
                 )
-                logger.debug(f"[{session_id}] 消息已存在,跳过: dedup_key={dedup_key}")
+                logger.debug("检测到重复群消息，已跳过")
                 return
 
-            if self._writes_blocked():
+            if writes_blocked:
                 report_debug_event(
                     "message_capture",
                     component="event_handler",
@@ -190,27 +220,22 @@ class EventHandler:
                     status="skipped",
                     reason_code="write_blocked",
                 )
-                logger.warning(f"[{session_id}] 备份恢复待应用，跳过群聊消息写入")
+                logger.warning("写保护已启用，跳过群聊消息写入")
                 return
 
             await self.conversation_manager.add_message_from_event(
                 event=event,
                 role="user",
                 content=content,
+                identity=identity,
             )
-            await self._feed_cognitive_components(event, content)
+            await self._feed_cognitive_components(event, content, identity)
             if dedup_key:
                 await self._dedup.mark_processed(dedup_key)
 
             self._create_maintenance_task(
                 self._enforce_message_limit(session_id),
-                name=f"message-limit-cleanup:{session_id}",
-            )
-
-            logger.debug(
-                f"[{session_id}] 捕获群聊消息: "
-                f"sender={event.get_sender_name()}({event.get_sender_id()}), "
-                f"content={content[:50]}..."
+                name="message-limit-cleanup",
             )
             report_debug_event(
                 "message_capture",
@@ -229,25 +254,28 @@ class EventHandler:
                 reason_code="capture_cancelled",
             )
             raise
-        except Exception as e:
+        except Exception as exception:
             report_debug_exception(
                 "message_capture",
-                e,
+                exception,
                 component="event_handler",
                 stage="capture",
                 status="failed",
                 reason_code="capture_error",
             )
-            logger.error(f"处理群聊全量消息时发生错误: {e}", exc_info=True)
+            logger.error("处理群聊全量消息时发生错误", exc_info=True)
 
     async def _feed_cognitive_components(
         self,
         event: AstrMessageEvent,
         content: str,
+        identity: ResolvedIdentity,
     ) -> None:
         """尽力向可选的 v1.0+ 认知模块投喂输入数据。"""
         group_id = event.unified_msg_origin or "default"
-        sender_id = event.get_sender_id()
+        sender_id = self._user_id_for_identity(event, identity)
+        if sender_id is None:
+            return
         try:
             if self._jargon_filter is not None:
                 self._jargon_filter.update(content, group_id, sender_id)
@@ -297,7 +325,15 @@ class EventHandler:
     ) -> None:
         """在 LLM 请求前检索并注入长期记忆。"""
         with debug_operation():
-            await self._recall_handler.handle_memory_recall(event, req)
+            identity = await self._identity_runtime.prepare(
+                event,
+                writes_blocked=self._writes_blocked(),
+            )
+            await self._recall_handler.handle_memory_recall(
+                event,
+                req,
+                identity=identity,
+            )
 
     @monitored
     async def handle_memory_reflection(
@@ -307,7 +343,15 @@ class EventHandler:
     ) -> None:
         """在 LLM 响应后判断是否需要反思与存储记忆。"""
         with debug_operation():
-            await self._reflection_handler.handle_memory_reflection(event, resp)
+            identity = await self._identity_runtime.prepare(
+                event,
+                writes_blocked=self._writes_blocked(),
+            )
+            await self._reflection_handler.handle_memory_reflection(
+                event,
+                resp,
+                identity=identity,
+            )
 
     async def handle_session_reset(self, event: AstrMessageEvent) -> None:
         """处理 /reset 或 /new 触发的会话清空"""
@@ -346,6 +390,7 @@ class EventHandler:
                         await asyncio.gather(*pending, return_exceptions=True)
                 finally:
                     self._maintenance_tasks.clear()
+            await self._identity_runtime.close()
             if self._injection_recorder is not None:
                 await self._injection_recorder.close(timeout=5.0)
         except asyncio.CancelledError:
@@ -528,6 +573,8 @@ class EventHandler:
             logger.error(f"[{session_id}] 删除旧消息失败: {e}", exc_info=True)
 
     def _writes_blocked(self) -> bool:
+        """读取写保护状态，检查失败时按禁止写入处理。"""
+
         if self._write_guard_cb is None:
             return False
         try:
@@ -535,3 +582,36 @@ class EventHandler:
         except Exception:
             logger.error("[EventHandler] 写入维护状态检查失败", exc_info=True)
             return True
+
+    @staticmethod
+    def _conversation_sender_override(identity: ResolvedIdentity) -> str | None:
+        """返回可用于会话去重的可信或群内匿名发送者标识。"""
+
+        if identity.trust_status is IdentityTrust.TRUSTED:
+            return identity.canonical_user_id
+        if identity.trust_status is IdentityTrust.ANONYMOUS:
+            return identity.conversation_sender_id
+        return None
+
+    @staticmethod
+    def _user_id_for_identity(
+        event: AstrMessageEvent,
+        identity: ResolvedIdentity,
+    ) -> str | None:
+        """选择用户级状态标识；未注册协议保留 AstrBot 原有行为。"""
+
+        if identity.trust_status is IdentityTrust.TRUSTED:
+            return identity.canonical_user_id
+        if identity.trust_status is not IdentityTrust.UNSUPPORTED:
+            return None
+        getter = getattr(event, "get_sender_id", None)
+        if not callable(getter):
+            return None
+        try:
+            sender_id = getter()
+        except Exception:
+            return None
+        if sender_id is None:
+            return None
+        normalized = str(sender_id).strip()
+        return normalized or None

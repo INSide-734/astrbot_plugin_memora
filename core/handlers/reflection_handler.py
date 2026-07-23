@@ -12,6 +12,7 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
+from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..monitoring import report_debug_event, report_debug_exception
@@ -78,8 +79,9 @@ class ReflectionHandler:
         self,
         event: AstrMessageEvent,
         resp: LLMResponse,
+        identity: ResolvedIdentity | None = None,
     ) -> None:
-        """在 LLM 响应后检查是否需要反思与记忆存储。"""
+        """在 LLM 响应后检查反思与存储，并保留已解析协议作用域。"""
         report_debug_event(
             "reflection_state",
             component="reflection",
@@ -234,8 +236,9 @@ class ReflectionHandler:
                 event=event,
                 role="assistant",
                 content=response_text,
+                identity=identity,
             )
-            await self._feed_cognitive_components(event, response_text)
+            await self._feed_cognitive_components(event, response_text, identity)
             report_debug_event(
                 "reflection_state",
                 component="reflection",
@@ -644,10 +647,11 @@ class ReflectionHandler:
         self,
         event: AstrMessageEvent,
         response_text: str,
+        identity: ResolvedIdentity | None = None,
     ) -> None:
         """尽力将助手回复投喂给可选认知模块。"""
         session_id = event.unified_msg_origin or "default"
-        sender_id = event.get_sender_id()
+        sender_id = self._user_id_for_identity(event, identity)
         persona_id = await get_persona_id(self._context, event)
         try:
             if self._expression_learner is not None:
@@ -665,7 +669,7 @@ class ReflectionHandler:
             logger.debug("[认知模块] 助手回复投喂到表达模式学习器失败", exc_info=True)
 
         try:
-            if self._affection_manager is not None:
+            if self._affection_manager is not None and sender_id is not None:
                 user_text = await self._latest_user_text(session_id)
                 await self._affection_manager.process_interaction(
                     user_id=sender_id,
@@ -681,6 +685,30 @@ class ReflectionHandler:
                 await self._jargon_miner.run_once(session_id, limit=2)
         except Exception:
             logger.debug("[认知模块] 基于助手回复触发黑话挖掘失败", exc_info=True)
+
+    @staticmethod
+    def _user_id_for_identity(
+        event: AstrMessageEvent,
+        identity: ResolvedIdentity | None,
+    ) -> str | None:
+        """选择好感度用户标识；未注册协议保持旧事件发送者语义。"""
+
+        if identity is not None:
+            if identity.trust_status is IdentityTrust.TRUSTED:
+                return identity.canonical_user_id
+            if identity.trust_status is not IdentityTrust.UNSUPPORTED:
+                return None
+        getter = getattr(event, "get_sender_id", None)
+        if not callable(getter):
+            return None
+        try:
+            sender_id = getter()
+        except Exception:
+            return None
+        if sender_id is None:
+            return None
+        normalized = str(sender_id).strip()
+        return normalized or None
 
     async def _latest_user_text(self, session_id: str) -> str:
         try:

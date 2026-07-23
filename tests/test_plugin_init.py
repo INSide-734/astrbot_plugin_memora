@@ -1235,6 +1235,8 @@ class TestInjectionDecisionLifecycle:
     async def test_build_all_awaits_and_merges_injection_components(
         self, monkeypatch, tmp_path
     ) -> None:
+        """工厂应合并注入组件，并把同一身份运行时挂到会话管理器。"""
+
         from astrbot.core.provider.provider import Provider
         from core.initializer.component_factory import ComponentFactory
 
@@ -1290,7 +1292,14 @@ class TestInjectionDecisionLifecycle:
         assert components["injection_decision_recorder"] is injection_components[
             "injection_decision_recorder"
         ]
-        await components["memory_evolution_store"].close()
+        assert (
+            components["conversation_manager"].identity_runtime
+            is components["identity_runtime"]
+        )
+        await asyncio.gather(
+            components["memory_evolution_store"].close(),
+            components["identity_runtime"].close(),
+        )
 
     @pytest.mark.asyncio
     async def test_plugin_initializer_retains_and_closes_injection_components_once(
