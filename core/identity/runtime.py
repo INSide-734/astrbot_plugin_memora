@@ -9,6 +9,7 @@ from astrbot.api import logger
 
 from ..storage.protocol_identity_store import ProtocolIdentityStore
 from .conversation_sync import ConversationIdentitySynchronizer
+from .memory import MemoryIdentityEnricher
 from .models import IdentityTrust, ResolvedIdentity
 from .resolver import ProtocolIdentityResolver
 from .service import ProtocolIdentityService
@@ -24,13 +25,15 @@ class ProtocolIdentityRuntime:
         service: ProtocolIdentityService | None = None,
         synchronizer: ConversationIdentitySynchronizer | None = None,
         store: ProtocolIdentityStore | None = None,
+        enricher: MemoryIdentityEnricher | None = None,
     ) -> None:
-        """绑定固定解析器和可选持久化组件。"""
+        """绑定固定解析器和可选持久化、只读增强组件。"""
 
         self._resolver = resolver or ProtocolIdentityResolver.default()
         self._service = service
         self._synchronizer = synchronizer
         self._store = store
+        self._enricher = enricher
 
     @property
     def service(self) -> ProtocolIdentityService | None:
@@ -43,6 +46,12 @@ class ProtocolIdentityRuntime:
         """返回可选会话名称同步器，解析器降级模式下为 ``None``。"""
 
         return self._synchronizer
+
+    @property
+    def enricher(self) -> MemoryIdentityEnricher | None:
+        """返回可选历史别名只读增强器，目录降级模式下为 ``None``。"""
+
+        return self._enricher
 
     async def prepare(
         self,

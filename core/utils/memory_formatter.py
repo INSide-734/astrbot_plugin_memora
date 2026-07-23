@@ -27,6 +27,8 @@ from .injection_budget import (
 _PROJECTION_TYPES = frozenset(
     {"episode_summary", "preference_state", "relationship_state", "conflict_set"}
 )
+_MAX_IDENTITY_REFERENCE_LINES = 8
+_MAX_IDENTITY_REFERENCE_LINE_CHARS = 384
 
 
 def _safe_projection_objects(
@@ -91,16 +93,49 @@ def _format_projection_lines(
     return lines
 
 
+def _format_identity_reference_block(
+    metadata: dict[str, Any], *, max_chars: int
+) -> str:
+    """把 Enricher 生成的固定身份说明限制在 metadata 字符预算内。"""
+
+    raw_lines = metadata.get("identity_reference_lines")
+    if not isinstance(raw_lines, list) or max_chars <= 0:
+        return ""
+    lines: list[str] = []
+    used_chars = len("身份参考：") + 1
+    for raw_line in raw_lines[:_MAX_IDENTITY_REFERENCE_LINES]:
+        if not isinstance(raw_line, str):
+            continue
+        line = raw_line.strip()
+        if (
+            not line
+            or len(line) > _MAX_IDENTITY_REFERENCE_LINE_CHARS
+            or "\n" in line
+            or "\r" in line
+            or not line.startswith("- “")
+            or "”是历史名称；当前显示为“" not in line
+            or not line.endswith("）。")
+        ):
+            continue
+        separator_chars = 1 if lines else 0
+        if used_chars + separator_chars + len(line) > max_chars:
+            continue
+        lines.append(line)
+        used_chars += separator_chars + len(line)
+    if not lines:
+        return ""
+    return "身份参考：\n" + "\n".join(lines)
+
+
 def format_memories_for_injection(
     memories: list,
     budget: InjectionBudget | None = None,
     content_level: ContentLevel = ContentLevel.COMPACT,
 ) -> str | tuple[str, InjectionStats]:
-    """Format recalled memories for prompt injection.
+    """把召回记忆格式化为受字符预算约束的动态注入文本。
 
-    Calls without a budget retain the legacy string format. Budgeted calls return
-    text plus statistics and treat ``total_chars`` as a hard cap over the entire
-    payload, including wrappers, metadata, separators, and newlines.
+    未传预算时保留旧字符串返回格式；传入预算时返回文本与统计，并把
+    ``total_chars`` 作为包装、metadata、分隔符和换行在内的完整硬上限。
     """
     from ..base.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 
@@ -196,6 +231,8 @@ def format_memories_for_injection(
             metadata_chars = 0
 
             def append_metadata(line: str) -> None:
+                """在单条记忆 metadata 预算内追加一个完整可见字段。"""
+
                 nonlocal metadata_chars
                 if use_budget and budget.metadata_max_chars > 0:
                     separator_chars = 3 if metadata_parts else 0
@@ -204,6 +241,14 @@ def format_memories_for_injection(
                     metadata_chars += separator_chars
                 metadata_parts.append(line)
                 metadata_chars += len(line)
+
+            metadata_cap = budget.metadata_max_chars if use_budget else 2_400
+            identity_block = _format_identity_reference_block(
+                metadata,
+                max_chars=max(0, metadata_cap - metadata_chars),
+            )
+            if identity_block:
+                append_metadata(identity_block)
 
             facts: list[str] = []
             if (

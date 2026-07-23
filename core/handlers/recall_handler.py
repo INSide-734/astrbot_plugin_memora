@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from ..injection.recorder import InjectionDecisionRecorder
     from ..security.prompt_sanitizer import PromptProtectionService
     from ..utils.injection_adapter import InjectionAdapter
+    from ..identity.memory import MemoryIdentityEnricher
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +90,10 @@ class RecallHandler:
         perf_tracker: Any | None = None,
         injection_recorder: InjectionDecisionRecorder | None = None,
         memory_tool_available: bool = False,
+        identity_enricher: MemoryIdentityEnricher | None = None,
     ) -> None:
+        """装配召回依赖与可选的历史别名只读增强器。"""
+
         self._context = context
         self._config_manager = config_manager
         self._memory_engine = memory_engine
@@ -104,6 +108,7 @@ class RecallHandler:
         self._perf_tracker = perf_tracker
         self._injection_recorder = injection_recorder
         self._memory_tool_available = memory_tool_available
+        self._identity_enricher = identity_enricher
         self._router = InjectionStrategyRouter()
         self._executor = InjectionExecutor(injection_adapter, prompt_protection_service)
         self._cleaner = InjectionCleaner()
@@ -455,6 +460,12 @@ class RecallHandler:
                     count=len(prospective or []),
                 )
                 memories = self._safe_candidates(ordinary_candidates)
+                if self._identity_enricher is not None:
+                    memories = await self._identity_enricher.enrich(
+                        memories,
+                        identity=identity,
+                        session_id=session_id,
+                    )
                 final_signals = self._final_signals(preflight_signals, memories)
                 candidate_count = final_signals.candidate_count
                 decision_started = time.perf_counter()
@@ -655,8 +666,8 @@ class RecallHandler:
                     "parameters": getattr(tool, "parameters", {}),
                 }
             )
-        # Charge one token per text character: conservative for the
-        # character-denominated injection budget without a Provider tokenizer.
+        # 未提供 Provider tokenizer 时，按每个文本字符计一个 token，
+        # 对以字符计价的注入预算保持保守估算。
         return max(0, max_context_tokens - output_reserve - request_chars)
 
     @staticmethod
@@ -731,6 +742,7 @@ class RecallHandler:
                 metadata = dict(metadata)
                 safe_projection = RecallHandler._safe_projection_metadata(metadata)
                 metadata.pop("derived_projections", None)
+                metadata.pop("identity_reference_lines", None)
                 metadata.update(safe_projection)
             raw_score = getattr(candidate, "final_score", 0.0)
             try:
@@ -1117,7 +1129,7 @@ class RecallHandler:
         candidates: list[Any],
         top_k: int,
     ) -> list[Any]:
-        """De-duplicate multi-source recall candidates and enforce inject budget."""
+        """对多来源召回候选去重，并执行注入数量上限。"""
         if top_k <= 0 or not candidates:
             return []
 

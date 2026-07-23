@@ -10,6 +10,7 @@ from ..base.exceptions import ProviderNotReadyError
 from ..identity.conversation_sync import ConversationIdentitySynchronizer
 from ..identity.resolver import ProtocolIdentityResolver
 from ..identity.runtime import ProtocolIdentityRuntime
+from ..identity.memory import MemoryIdentityEnricher
 from ..identity.service import ProtocolIdentityService
 from ..injection.recorder import InjectionDecisionRecorder
 from ..managers.backup_manager import BackupManager
@@ -386,6 +387,7 @@ class ComponentFactory:
             service=service,
             synchronizer=synchronizer,
             store=store,
+            enricher=MemoryIdentityEnricher(store),
         )
 
     async def _build_injection_components(self, db_path: Path) -> dict[str, object]:
