@@ -5,13 +5,21 @@ Memora 项目的所有重要变更都将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased] — 2026-07-03
+## [Unreleased] — 2026-07-23
 
 ### feat: 只读诊断命令
 
 - **健康评分** — 新增管理员命令 `/lmem health`，以本地化文本展示运行时健康分、异常领域和固定排障建议，不回显 Provider 原始错误。
 - **实时快照** — 新增管理员命令 `/lmem diagnostics`，仅输出 Provider、召回、后台任务、索引、写协调器和 Prometheus 的 allowlist 标量。
 - **召回追踪** — 新增管理员命令 `/lmem trace <query> [k]`，按当前会话和群聊隐私边界执行可解释召回；聊天只显示阶段、路由、记忆 ID 与评分，完整 trace 沿用现有 200 条有界存储。
+
+### feat: 稳定协议用户身份
+
+- **OneBot 11 QQ 主键** — 可信用户统一以规范化 QQ 号作为 canonical user ID；昵称、群名片和 AstrBot 包装层显示名不再充当人物主键，冲突或非法身份按 fail-closed 处理。
+- **名称与别名同步** — 当前名称按群聊/私聊作用域更新，已保存会话消息同步新名称，旧名称保留为作用域别名；Bot 回复固定使用平台 `self_id`。
+- **协议扩展边界** — 固定适配器注册表、不可变解析结果和统一 Runtime 允许后续协议实现相同身份契约，不需要修改事件主链或记忆处理器。
+- **稳定记忆参与者** — 记忆抽取以 `QQ:10001` 标签和稳定参与者 ID 锚定人物；历史别名仅在唯一证据成立时于候选副本上只读增强，并统一覆盖五种动态交付方式，绝不写入 System Prompt。
+- **无数据库迁移** — 身份目录仅幂等创建三张独立表；本次不执行 `ALTER TABLE`、历史扫描、canonical memory 重写、迁移或回填。
 
 ### Breaking: 自适应记忆注入策略
 

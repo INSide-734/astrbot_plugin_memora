@@ -1,6 +1,6 @@
 # `core` 运行时总览
 
-**最后更新：** 2026-07-20
+**最后更新：** 2026-07-23
 **导航：** [项目根级 `AGENTS.md`](../AGENTS.md) / `core`
 
 ## 职责边界
@@ -18,7 +18,7 @@
 |---|---|---|
 | `../main.py` | AstrBot 插件入口；创建并持有初始化器、事件处理器、命令处理器、页面 API 与功能委托 | 本表其余入口 |
 | `plugin_initializer.py` · `PluginInitializer` | 提供商等待、数据库/FAISS 准备、组件装配、认知组件初始化与有序关闭 | `initializer/`、`managers/`、`processors/`、`storage/`、`schedulers/` |
-| `initializer/component_factory.py` · `ComponentFactory` | 在 `build_all(...)` 中构造共享数据库、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、验证器、调度器、注入记录与 Memory Evolution 组件 | `base/`、`storage/`、`retrieval/`、`managers/`、`processors/` |
+| `initializer/component_factory.py` · `ComponentFactory` | 在 `build_all(...)` 中构造共享数据库、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、协议身份 Runtime、验证器、调度器、注入记录与 Memory Evolution 组件 | `base/`、`identity/`、`storage/`、`retrieval/`、`managers/`、`processors/` |
 | `adapter_capabilities.py` / `provider_adapters.py` | 定义不可变能力快照，并在构建时冻结 LLM/Embedding Provider 调用入口 | `initializer/`、`processors/`、`validators/`、`retrieval/`、`utils/` |
 | `event_handler.py` · `EventHandler` | 处理全量群消息、LLM 请求前召回注入、LLM 响应后反思、会话重置与维护任务关闭 | `handlers/`、`injection/`、`cleaners/`、`dedup/`、`extractors/` |
 | `managers/memory_engine.py` · `MemoryEngine` | 长期记忆的统一运行时门面；组合 managers 中的生命周期、CRUD、召回、统计等能力 | `storage/`、`retrieval/`、`processors/`、`models/` |
@@ -35,7 +35,7 @@
 
 1. `main.py` 建立配置、插件级 `BackupManager` 与 `PluginInitializer(context, config_manager, data_dir)`；`_initialize_plugin()` 先执行按需自动备份和 `apply_pending_restores()`，再调用 `initialize()`，避免在恢复事务未应用时发布运行时。
 2. `PluginInitializer` 使用 `ProviderLoader` 与 `ProviderWaiter` 非阻塞等待 embedding/LLM provider；`ComponentFactory` 在索引或数据库 I/O 前验证文本生成和 Embedding 入口并冻结调用方式，能力不足时不发布半初始化运行时。
-3. provider 就绪后，`_run_full_init()` 调用 `ComponentFactory.build_all(...)`，完成数据库、图存储、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、索引验证器、衰减调度器、注入决策组件以及 Memory Evolution Store/Gate/Consolidator/Manager 的装配；仅 `enabled=true` 且 mode 为 `readonly`/`active` 时向引擎注入派生 relation/projection 读取器。
+3. provider 就绪后，`_run_full_init()` 调用 `ComponentFactory.build_all(...)`，完成数据库、图存储、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、`ProtocolIdentityRuntime`、索引验证器、衰减调度器、注入决策组件以及 Memory Evolution Store/Gate/Consolidator/Manager 的装配；身份目录普通初始化失败降级为仅解析模式，仅 `enabled=true` 且 mode 为 `readonly`/`active` 时向引擎注入派生 relation/projection 读取器。
 4. 初始化器再建立共享提示词保护服务，以及可选的 affection、expression、jargon、social 认知组件；可选组件失败按现有路径记录并隔离，不得伪装为已就绪。
 5. `main.py` 仅使用初始化器发布的实例创建 `EventHandler`、`CommandHandler` 和 `PluginPageApi`，保证消息、命令和页面请求共享同一存储与引擎。
 6. 关闭阶段先阻止新工作并等待/取消事件维护任务，再停止 Memory Evolution worker 并关闭其 Store，然后按依赖顺序关闭注入记录器、调度器、其他 manager/store 和数据库；`CancelledError` 必须继续传播，清理失败不能覆盖原始初始化失败。
@@ -53,10 +53,15 @@ flowchart TD
     Factory --> Engine[managers/MemoryEngine]
     Factory --> Processor[processors/MemoryProcessor]
     Factory --> Conversation[managers/ConversationManager]
+    Factory --> Identity[identity/ProtocolIdentityRuntime]
     Factory --> Stores[storage/]
     Factory --> Evolution[Memory Evolution Gate / Worker]
 
     Main --> Events[EventHandler]
+    Events --> Identity
+    Identity --> Conversation
+    Identity --> Recall
+    Identity --> Reflection
     Events --> Recall[handlers/RecallHandler]
     Events --> Reflection[handlers/ReflectionHandler]
     Events --> Injection[injection/ · cleaners/ · security/]
@@ -87,6 +92,7 @@ flowchart TD
 ### 消息事件
 
 - `handle_all_group_messages(...)` 仅捕获有效群消息：排除自身消息，提取内容，按会话去重，在写保护允许时交给 `ConversationManager`，并登记受跟踪的清理任务。
+- 每条支持协议的事件先由 `ProtocolIdentityRuntime.prepare(...)` 严格解析；可信身份按作用域尽力保存当前名称并同步历史会话，普通目录失败不阻断消息主链，取消必须传播。OneBot 11 的用户级状态、消息 sender 与记忆参与者都使用 canonical QQ，名称只作显示和 legacy 别名证据。
 - `handle_memory_recall(...)` 在 LLM 请求前委托 `RecallHandler` 检索和注入；`handle_memory_reflection(...)` 在响应后委托 `ReflectionHandler` 反思与持久化。
 - `ReflectionHandler` 只有在 canonical memory 成功写入并从 Store 重读 source 后才调用 Memory Evolution manager；普通调度失败只降级记录，取消信号必须传播，不能回滚已经成功的 canonical 写入。
 - `/reset`、`/new` 通过 `handle_session_reset(...)` 清理插件会话上下文；关闭必须等待 reflection 与维护任务，不能遗留无所有者的 `asyncio.Task`。
@@ -112,12 +118,13 @@ Memory Evolution 只在 canonical 写入之后生成可失效、可重建的 rel
 - **异步纪律：** 捕获普通异常时记录足够上下文；不要吞掉取消信号。所有后台任务必须登记、可观察并在关闭时收束。
 - **演化模式：** `enabled=false` 强制禁用；`disabled` 不启动 worker。当前 `shadow`、`readonly`、`active` 都会启动 worker 并可写派生解释平面，只有 `readonly`/`active` 向检索器注入读取器；mode 不授予修改 canonical memory 的权限。读取侧仍须逐条验证 active state、primary/source role、revision、scope、privacy 与有效期。
 - **派生数据安全：** canonical 整数 ID 是唯一检索身份；模型可见 Projection 仅含 `type/summary/confidence`。source mapping、revision、scope、privacy、内部 ID、job 信息、query、prompt 和正文不得进入日志或注入记录。
+- **协议身份安全：** 身份目录不迁移或回填历史业务表；legacy 别名只读增强必须复制候选、精确匹配且拒绝同名歧义。模型只可见当前名称、必要的历史名称和适配器稳定标签，身份查询细节不得进入日志、指标或 trace。
 - **导入成本：** `core/__init__.py` 的延迟导出用于避免重依赖和循环导入；新增包级导出时保持轻量，并验证无 AstrBot 运行时也可完成测试导入。
 - **依赖下沉：** 顶层编排器可以依赖子模块；store、retriever、processor 和领域 manager 不得依赖页面/命令适配层。
 
 ## 子模块导航
 
-以下 27 个 Python 子模块维护各自的详细上下文：
+以下 28 个 Python 子模块维护各自的详细上下文：
 
 - [`affection/AGENTS.md`](affection/AGENTS.md)
 - [`api/AGENTS.md`](api/AGENTS.md)
@@ -130,6 +137,7 @@ Memory Evolution 只在 canonical 写入之后生成可失效、可重建的 rel
 - [`expression/AGENTS.md`](expression/AGENTS.md)
 - [`extractors/AGENTS.md`](extractors/AGENTS.md)
 - [`handlers/AGENTS.md`](handlers/AGENTS.md)
+- [`identity/AGENTS.md`](identity/AGENTS.md)
 - [`injection/AGENTS.md`](injection/AGENTS.md)
 - [`initializer/AGENTS.md`](initializer/AGENTS.md)
 - [`jargon/AGENTS.md`](jargon/AGENTS.md)
@@ -163,6 +171,7 @@ Memory Evolution 只在 canonical 写入之后生成可失效、可重建的 rel
 ```bash
 python -m pytest tests/test_plugin_package_imports.py
 python -m pytest tests/test_plugin_init.py
+python -m pytest tests/test_protocol_identity_resolver.py tests/test_protocol_identity_store.py tests/test_protocol_identity_service.py tests/test_memory_identity_enricher.py tests/integration/test_pipeline_identity.py
 python -m pytest tests/test_memory_evolution_gate.py tests/test_memory_evolution_manager.py tests/test_memory_evolution_store.py
 python -m pytest tests/test_derived_relation_expander.py tests/test_projection_reader.py tests/test_dual_route_retriever.py
 python -m pytest tests/test_adapter_capabilities.py tests/test_llm_client.py tests/test_validators.py
