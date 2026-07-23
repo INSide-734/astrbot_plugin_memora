@@ -1,6 +1,6 @@
 # Memora — AI 协作入口
 
-**最后更新：** 2026-07-20
+**最后更新：** 2026-07-23
 
 ## 项目定位
 
@@ -15,6 +15,10 @@ flowchart LR
     Plugin --> Events["EventHandler"]
     Plugin --> API["PluginPageApi"]
     Init --> Engine["MemoryEngine"]
+    Init --> Identity["ProtocolIdentityRuntime"]
+    Events --> Identity
+    Identity --> Recall
+    Identity --> Reflect
     Events --> Recall["RecallHandler"]
     Events --> Reflect["ReflectionHandler"]
     Recall --> Retrieval["BM25 + FAISS + Graph + Derived"]
@@ -43,6 +47,7 @@ flowchart LR
 | `core/` | 后端总览 | [AGENTS.md](./core/AGENTS.md) |
 | `core/base/` | 配置、异常、基础约束 | [AGENTS.md](./core/base/AGENTS.md) |
 | `core/initializer/` | Provider、数据库与组件构造 | [AGENTS.md](./core/initializer/AGENTS.md) |
+| `core/identity/` | 协议稳定身份、名称目录、会话同步与只读召回增强 | [AGENTS.md](./core/identity/AGENTS.md) |
 | `core/handlers/` | 召回与反思编排 | [AGENTS.md](./core/handlers/AGENTS.md) |
 | `core/injection/` | 注入路由、选择、执行与记录 | [AGENTS.md](./core/injection/AGENTS.md) |
 | `core/managers/` | 生命周期与领域管理器 | [AGENTS.md](./core/managers/AGENTS.md) |
@@ -76,6 +81,8 @@ flowchart LR
 ## 跨模块契约
 
 - 写入链：AstrBot 消息 → `EventHandler` → `ConversationManager`/`MemoryProcessor` → `MemoryEngine` → SQLite。FTS、FAISS 与图索引是可重建派生数据。
+- 身份链：协议事件 → 固定适配器 `ProtocolIdentityResolver` → `ResolvedIdentity` → 身份目录/会话名称同步 → 召回与反思。OneBot 11 只把规范化 QQ 号作为 canonical user ID；名称是可更新辅助数据，匿名、冲突和非法事件不得写用户目录。
+- 稳定身份 metadata 由可信来源消息确定并锚定长期记忆参与者；legacy 别名只在原会话作用域且唯一匹配时附着到召回候选副本，不改 canonical memory、分数、排序、ID、revision 或 System Prompt。
 - 演化链：canonical memory 成功写入后 → `MemoryEvolutionGate` → job queue/worker → relation/projection 派生解释平面。canonical SQLite 记录及其整数 ID 始终是唯一权威身份；Projection 只能作为有 source/revision 证据的读时注解，不能形成第二套 canonical memory 或 `doc_id`。
 - 派生重建链：`DerivedRebuildCoordinator` 只读确认 canonical 后按 canonical → FTS5/FAISS → graph → relation/projection 顺序执行；阶段失败只报告降级，不删除 canonical，Evolution worker 在启动期重建完成或安全降级后再启动。
 - `MemoryEngine` 在 canonical add/语义 metadata update 提交后统一重载 source 并调度演化；`ReflectionHandler` 的历史调度入口仍保留用于反思链兼容，依靠稳定 idempotency key 去重，不改变 canonical 提交边界。
@@ -83,6 +90,7 @@ flowchart LR
 - `memory_evolution.enabled=false` 强制等价于 `disabled`；`disabled` 不启动 worker。当前实现中 `shadow`、`readonly`、`active` 都会启动 worker 并可持久化派生对象，但只有 `readonly`/`active` 装配 relation/projection 读取器；不要从 mode 名称推断 canonical 写权限。任何模式都不得绕过 source revision、scope、privacy、validity 与 role 校验。
 - 注入观测只持久化 allowlist 标量；不得记录 query、prompt、记忆正文或 ID 列表、原始身份、Provider 密钥/请求头/API 地址或堆栈。
 - 模型可见的 Projection metadata 只允许 `type`、`summary`、`confidence`；source mapping、revision、scope、privacy、role、内部 ID 与 job 信息不得进入 prompt、fake tool call 或 DeepSeek V4 转录。
+- 模型可见身份说明只允许当前名称、单个历史名称和适配器确定的稳定标签；身份表内部 ID、候选列表、查询过程、时间戳和歧义过程不得进入 prompt、日志、指标或 trace。
 - `PluginPageApi` 与 `src/lib/bridge.ts` 是后端/前端边界。写回保留 revision、字段校验、冲突处理和显式错误 envelope；不得伪造客户端分页。
 - 配置叶变更同步 `_conf_schema.json`、Pydantic 模型、运行时读取、Dashboard 类型/默认值与契约测试。
 
