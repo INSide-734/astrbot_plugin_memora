@@ -19,6 +19,7 @@ from ..base.constants import FAKE_TOOL_CALL_NAME
 from ..base.config_manager import ConfigManager
 from ..cleaners.injection_cleaner import InjectionCleaner
 from ..extractors.message_content_extractor import MessageContentExtractor
+from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..monitoring import monitored, report_debug_event, report_debug_exception
@@ -117,8 +118,9 @@ class RecallHandler:
         self,
         event: AstrMessageEvent,
         req: ProviderRequest,
+        identity: ResolvedIdentity | None = None,
     ) -> None:
-        """在 LLM 请求前查询并注入长期记忆。"""
+        """在 LLM 请求前查询并注入长期记忆，可使用已解析协议身份。"""
         recall_started = time.perf_counter()
         injected_count = 0
         filtered_count = 0
@@ -201,7 +203,12 @@ class RecallHandler:
                 )
 
                 is_group = event.get_message_type() == MessageType.GROUP_MESSAGE
-                if not is_group and actual_query:
+                should_store_private_user = (
+                    identity is None
+                    or identity.trust_status
+                    in {IdentityTrust.TRUSTED, IdentityTrust.UNSUPPORTED}
+                )
+                if not is_group and actual_query and should_store_private_user:
                     message_to_store = request_query
                     if not message_to_store:
                         message_to_store = (
@@ -213,6 +220,7 @@ class RecallHandler:
                         event=event,
                         role="user",
                         content=message_to_store,
+                        identity=identity,
                     )
                     await self._enforce_limit_cb(session_id)
 
@@ -389,7 +397,7 @@ class RecallHandler:
                     recall_reason = "passive_recall_only"
                     return
 
-                user_id = self._get_event_sender_id(event)
+                user_id = self._get_event_sender_id(event, identity)
                 retrieval_started = time.perf_counter()
                 recalled_memories = await self._memory_engine.search_memories(
                     query=primary_query,
@@ -1080,7 +1088,17 @@ class RecallHandler:
                 pass
 
     @staticmethod
-    def _get_event_sender_id(event: AstrMessageEvent) -> str | None:
+    def _get_event_sender_id(
+        event: AstrMessageEvent,
+        identity: ResolvedIdentity | None = None,
+    ) -> str | None:
+        """优先返回可信 canonical ID，未注册协议沿用事件发送者。"""
+
+        if identity is not None:
+            if identity.trust_status is IdentityTrust.TRUSTED:
+                return identity.canonical_user_id
+            if identity.trust_status is not IdentityTrust.UNSUPPORTED:
+                return None
         getter = getattr(event, "get_sender_id", None)
         if not callable(getter):
             return None

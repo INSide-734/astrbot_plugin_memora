@@ -349,6 +349,8 @@ class TestEventHandlerMemoryRecall:
 
     @pytest.mark.asyncio
     async def test_delegates_to_recall_handler(self) -> None:
+        """召回入口应准备身份并把同一快照传给子处理器。"""
+
         from core.event_handler import EventHandler
 
         handler = EventHandler(
@@ -364,9 +366,9 @@ class TestEventHandlerMemoryRecall:
         req = MagicMock()
 
         await handler.handle_memory_recall(event, req)
-        handler._recall_handler.handle_memory_recall.assert_awaited_once_with(
-            event, req
-        )
+        call = handler._recall_handler.handle_memory_recall.await_args
+        assert call.args == (event, req)
+        assert call.kwargs["identity"].trust_status.value == "unsupported"
 
 
 class TestEventHandlerMemoryReflection:
@@ -374,6 +376,8 @@ class TestEventHandlerMemoryReflection:
 
     @pytest.mark.asyncio
     async def test_delegates_to_reflection_handler(self) -> None:
+        """反思入口应准备身份并把同一快照传给子处理器。"""
+
         from core.event_handler import EventHandler
 
         handler = EventHandler(
@@ -389,9 +393,9 @@ class TestEventHandlerMemoryReflection:
         resp = MagicMock()
 
         await handler.handle_memory_reflection(event, resp)
-        handler._reflection_handler.handle_memory_reflection.assert_awaited_once_with(
-            event, resp
-        )
+        call = handler._reflection_handler.handle_memory_reflection.await_args
+        assert call.args == (event, resp)
+        assert call.kwargs["identity"].trust_status.value == "unsupported"
 
 
 class TestEnforceMessageLimit:

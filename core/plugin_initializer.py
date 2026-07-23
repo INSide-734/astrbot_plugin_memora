@@ -14,6 +14,7 @@ from astrbot.core.provider.provider import EmbeddingProvider, Provider
 from .base.config_manager import ConfigManager
 from .base.exceptions import InitializationError
 from .initializer.component_factory import ComponentFactory
+from .identity.runtime import ProtocolIdentityRuntime
 from .initializer.db_setup import DatabaseSetup
 from .initializer.faiss_checker import FaissChecker
 from .initializer.provider_loader import ProviderLoader
@@ -731,9 +732,15 @@ class PluginInitializer:
                 raise first_error
 
     async def close_extension_components(self) -> None:
+        """关闭可选认知组件及会话管理器持有的身份运行时。"""
+
         for label, obj in (
             ("AffectionStore", self.affection_store),
             ("JargonStore", self.jargon_store),
         ):
             if obj and hasattr(obj, "close"):
                 await self._safe_step(f"关闭{label}", obj.close())
+        conversation_manager = self.conversation_manager
+        identity_runtime = getattr(conversation_manager, "identity_runtime", None)
+        if isinstance(identity_runtime, ProtocolIdentityRuntime):
+            await self._safe_step("关闭协议身份运行时", identity_runtime.close())
