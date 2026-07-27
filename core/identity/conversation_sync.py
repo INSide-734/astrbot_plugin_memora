@@ -88,6 +88,8 @@ class ConversationIdentitySynchronizer:
             return {"session_id": session_id, "private_platform": None}
         if identity.scope_type == "private" and identity.protocol == "onebot11":
             return {"session_id": None, "private_platform": "aiocqhttp"}
+        if identity.scope_type == "private" and identity.protocol == "qq_official":
+            return {"session_id": session_id, "private_platform": None}
         return None
 
     @staticmethod

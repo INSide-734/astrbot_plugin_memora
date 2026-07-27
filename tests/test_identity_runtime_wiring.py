@@ -207,6 +207,26 @@ async def test_runtime_degrades_storage_errors_but_propagates_cancellation() -> 
 
 
 @pytest.mark.asyncio
+async def test_runtime_exposes_read_only_current_identity_lookup() -> None:
+    """身份运行时通过只读边界返回当前目录记录，并在无 Store 时安全降级。"""
+
+    from core.identity.runtime import ProtocolIdentityRuntime
+
+    store = MagicMock()
+    stored = SimpleNamespace(
+        identity_namespace="qq",
+        stable_user_id="10001",
+        display_name="新昵称",
+    )
+    store.get_identity = AsyncMock(return_value=stored)
+    runtime = ProtocolIdentityRuntime(store=store)
+
+    assert await runtime.get_identity("qq", "10001") is stored
+    store.get_identity.assert_awaited_once_with("qq", "10001")
+    assert await ProtocolIdentityRuntime().get_identity("qq", "10001") is None
+
+
+@pytest.mark.asyncio
 async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> None:
     """群捕获的去重、消息写入和用户级认知投喂使用 QQ canonical ID。"""
 

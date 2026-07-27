@@ -66,6 +66,35 @@ class TestFormatMemoriesForInjection:
         assert result.index("身份参考：") < result.index("Participants: QQ:10001")
         assert result.index("身份参考：") < result.index("Key facts: 事实")
 
+    def test_internal_identity_sources_are_never_formatted(self):
+        """内部参与者来源映射不得进入普通注入或伪工具调用转录。"""
+
+        canary = "INTERNAL-STABLE-SOURCE-CANARY"
+        memories = [
+            {
+                "id": 17,
+                "content": "允许输出的记忆正文",
+                "score": 0.9,
+                "metadata": {
+                    "participants": ["QQ官方:instance:OPENID"],
+                    "participant_identity_sources": {
+                        "canonical": {
+                            "identity_namespace": canary,
+                            "stable_user_id": canary,
+                        }
+                    },
+                },
+            }
+        ]
+
+        ordinary = format_memories_for_injection(memories)
+        fake_messages = format_memories_for_fake_tool_call(memories, "查询")
+        deepseek = format_memories_for_fake_tool_call_deepseek_v4(memories, "查询")
+
+        assert canary not in ordinary
+        assert canary not in json.dumps(fake_messages, ensure_ascii=False)
+        assert canary not in deepseek
+
     def test_dict_based_memories(self):
         """格式化 memories passed as dicts (the normal path)."""
         memories = [

@@ -21,6 +21,54 @@ class TestPromptBuilder:
         assert len(builder.private_chat_prompt) > 0
         assert len(builder.group_chat_prompt) > 0
 
+    def test_default_templates_demonstrate_stable_identity_labels(
+        self, prompt_dir: Path
+    ) -> None:
+        """默认模板应示范多协议稳定标签，并禁止复制或猜测示例值。"""
+
+        builder = PromptBuilder(prompt_dir=prompt_dir)
+        prompts = (builder.private_chat_prompt, builder.group_chat_prompt)
+
+        for prompt in prompts:
+            assert "# 稳定参与者身份约束（系统确定，不可由模型覆盖）" in prompt
+            assert (
+                "示例中的 `QQ:123456` 和 "
+                "`QQ官方:0123456789abcdef01234567:A1B2C3D4` "
+                "仅用于展示协议标签格式，禁止复制到实际结果"
+                in prompt
+            )
+            assert (
+                "实际稳定标识只能使用末尾“稳定参与者身份约束”中明确提供的完整值"
+                in prompt
+            )
+            assert (
+                "未提供稳定参与者身份约束时，不得根据昵称、消息前缀中的普通账号字段"
+                "或示例自行猜测、构造任何协议身份标识"
+                in prompt
+            )
+
+        assert "张三（QQ:123456）提醒我" in builder.private_chat_prompt
+        assert "张三（QQ:123456）安排明天下午3点会议" in (
+            builder.private_chat_prompt
+        )
+        assert "张三（QQ:123456）需要确保会议准备就绪" in (
+            builder.private_chat_prompt
+        )
+
+        for participant in (
+            "张三（QQ:123456）",
+            "李四（QQ:234567）",
+            "王五（QQ:345678）",
+        ):
+            assert participant in builder.group_chat_prompt
+        assert (
+            '"participants": ["QQ:123456", "QQ:234567", "QQ:345678"]'
+            in builder.group_chat_prompt
+        )
+        assert '"participants": ["张三", "李四", "王五", "我(Bot)"]' not in (
+            builder.group_chat_prompt
+        )
+
     def test_load_with_custom_templates(self, prompt_dir: Path) -> None:
         config = {
             "group_chat_template": "自定义群聊模板: {conversation}",

@@ -6,6 +6,7 @@ from collections.abc import Iterable
 
 from .models import IdentityProtocolAdapter, IdentityTrust, ResolvedIdentity
 from .onebot11 import OneBot11IdentityAdapter
+from .qq_official import QQOfficialIdentityAdapter
 
 
 def _untrusted_identity(trust_status: IdentityTrust) -> ResolvedIdentity:
@@ -37,9 +38,9 @@ class ProtocolIdentityResolver:
 
     @classmethod
     def default(cls) -> "ProtocolIdentityResolver":
-        """构建当前只注册 OneBot 11 的默认解析器。"""
+        """构建固定注册 OneBot 11 与 QQ 官方协议的默认解析器。"""
 
-        return cls((OneBot11IdentityAdapter(),))
+        return cls((OneBot11IdentityAdapter(), QQOfficialIdentityAdapter()))
 
     def resolve(self, event: object) -> ResolvedIdentity:
         """解析事件；重复接管或普通适配器异常均按不可信结果降级。"""

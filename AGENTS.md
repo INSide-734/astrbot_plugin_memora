@@ -81,8 +81,8 @@ flowchart LR
 ## 跨模块契约
 
 - 写入链：AstrBot 消息 → `EventHandler` → `ConversationManager`/`MemoryProcessor` → `MemoryEngine` → SQLite。FTS、FAISS 与图索引是可重建派生数据。
-- 身份链：协议事件 → 固定适配器 `ProtocolIdentityResolver` → `ResolvedIdentity` → 身份目录/会话名称同步 → 召回与反思。OneBot 11 只把规范化 QQ 号作为 canonical user ID；名称是可更新辅助数据，匿名、冲突和非法事件不得写用户目录。
-- 稳定身份 metadata 由可信来源消息确定并锚定长期记忆参与者；legacy 别名只在原会话作用域且唯一匹配时附着到召回候选副本，不改 canonical memory、分数、排序、ID、revision 或 System Prompt。
+- 身份链：协议事件 → 固定适配器 `ProtocolIdentityResolver` → `ResolvedIdentity` → 身份目录/会话名称同步 → 召回与反思。OneBot 11 只把规范化 QQ 号作为 canonical user ID；QQ 官方按平台实例隔离场景 OpenID，不能伪装成 QQ 号，`union_openid` 不参与主键；名称是可更新辅助数据，匿名、冲突和非法事件不得写用户目录。
+- 稳定身份 metadata 由可信来源消息确定并锚定长期记忆参与者；新记忆携带 canonical → protocol/namespace/stable/label 的内部来源证据，legacy 别名只在原会话作用域且唯一匹配时附着到召回候选副本，不改 canonical memory、分数、排序、ID、revision 或 System Prompt。
 - 演化链：canonical memory 成功写入后 → `MemoryEvolutionGate` → job queue/worker → relation/projection 派生解释平面。canonical SQLite 记录及其整数 ID 始终是唯一权威身份；Projection 只能作为有 source/revision 证据的读时注解，不能形成第二套 canonical memory 或 `doc_id`。
 - 派生重建链：`DerivedRebuildCoordinator` 只读确认 canonical 后按 canonical → FTS5/FAISS → graph → relation/projection 顺序执行；阶段失败只报告降级，不删除 canonical，Evolution worker 在启动期重建完成或安全降级后再启动。
 - `MemoryEngine` 在 canonical add/语义 metadata update 提交后统一重载 source 并调度演化；`ReflectionHandler` 的历史调度入口仍保留用于反思链兼容，依靠稳定 idempotency key 去重，不改变 canonical 提交边界。
