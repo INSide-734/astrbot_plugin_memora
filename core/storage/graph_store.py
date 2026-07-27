@@ -8,6 +8,7 @@ import aiosqlite
 
 from astrbot.api import logger
 
+from .graph_canvas import GraphCanvasMixin
 from .graph_crud import GraphCRUDMixin
 from .graph_delete import GraphDeleteMixin
 from .graph_query import GraphQueryMixin
@@ -15,13 +16,18 @@ from .graph_subgraph import GraphSubgraphMixin
 
 
 class GraphStore(
-    GraphQueryMixin, GraphSubgraphMixin, GraphCRUDMixin, GraphDeleteMixin
+    GraphQueryMixin,
+    GraphCanvasMixin,
+    GraphSubgraphMixin,
+    GraphCRUDMixin,
+    GraphDeleteMixin,
 ):
     """持久化图节点、边和可搜索条目。"""
 
     _SQLITE_BATCH_SIZE = 500
 
     def __init__(self, db_path: str):
+        """保存 SQLite 数据库路径，供各图存储混入类共享连接。"""
         self.db_path = db_path
 
     async def initialize(self) -> None:
@@ -133,6 +139,7 @@ class GraphStore(
 
     @staticmethod
     def _chunked(items: list[int], size: int) -> list[list[int]]:
+        """按固定大小把整数列表拆分为连续批次。"""
         return [items[index : index + size] for index in range(0, len(items), size)]
 
     async def get_graph_snapshot(
@@ -143,8 +150,15 @@ class GraphStore(
         limit_entries: int = 36,
         limit_nodes: int = 48,
         limit_edges: int = 72,
+        *,
+        full: bool = False,
     ) -> dict[str, Any]:
-        """返回用于概览界面的最近图快照。"""
+        """返回图概览；全量模式跳过记忆、条目、节点和边数量裁剪。"""
+        if full:
+            return await self._get_full_graph_snapshot(
+                session_id=session_id,
+                persona_id=persona_id,
+            )
         memory_ids = await self.get_recent_memory_ids(
             limit=limit_memories,
             session_id=session_id,

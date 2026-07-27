@@ -1,5 +1,7 @@
-"""图谱 API — 概览 + 查询"""
+"""图谱 API — 概览 + 查询。"""
 
+import asyncio
+import re
 from typing import Any
 
 from quart import request
@@ -7,17 +9,25 @@ from quart import request
 from astrbot.api import logger
 
 
+_ONEBOT11_PERSON_LABEL = re.compile(r"QQ:([1-9][0-9]{0,18})", re.ASCII)
+_POSITIVE_INT64_MAX = 9_223_372_036_854_775_807
+
+
 class GraphApiMixin:
     """混入类：图谱概览 / 图谱查询 / 图谱搜索 (GET) / 图谱视图构建"""
 
     @staticmethod
     def _json_object_payload_or_error(payload: Any):
+        """校验请求体为 JSON 对象并返回稳定错误文本。"""
+
         if isinstance(payload, dict):
             return payload, None
         return None, "request body must be a JSON object"
 
     @staticmethod
     def _safe_score_breakdown(value: Any) -> dict[str, float]:
+        """把分数明细收敛为有限的数字映射。"""
+
         if not isinstance(value, dict):
             return {}
         normalized: dict[str, float] = {}
@@ -31,18 +41,130 @@ class GraphApiMixin:
     @staticmethod
     def _coerce_memory_id(raw_id: Any) -> int:
         """将外部传入的 memory ID 转换为整数，同时拒绝 JSON 布尔值。"""
+
         if isinstance(raw_id, bool):
             raise TypeError("boolean values are not valid memory ids")
         return int(raw_id)
 
     @staticmethod
     def _safe_round_score(value: Any) -> float | None:
+        """把外部分数安全转换为六位小数，非法值返回 ``None``。"""
+
         if value is None or isinstance(value, bool):
             return None
         try:
             return round(float(value), 6)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _canvas_response_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        """移除画布渲染不需要的内部字段、条目与记忆详情。"""
+        node_fields = (
+            "id",
+            "label",
+            "display_name",
+            "type",
+            "identity_namespace",
+            "stable_user_id",
+            "weight",
+            "memory_count",
+            "degree",
+            "entry_count",
+        )
+        edge_fields = ("id", "source", "target", "type", "weight", "timestamp")
+        nodes = [
+            {field: item[field] for field in node_fields if field in item}
+            for item in snapshot.get("nodes", [])
+            if isinstance(item, dict)
+        ]
+        edges = [
+            {field: item[field] for field in edge_fields if field in item}
+            for item in snapshot.get("edges", [])
+            if isinstance(item, dict)
+        ]
+        return {"nodes": nodes, "edges": edges}
+
+    @staticmethod
+    def _stable_person_identity(
+        node: dict[str, Any],
+    ) -> tuple[str, str] | None:
+        """从字段完全一致的人物节点提取 OneBot 11 稳定 QQ 身份。"""
+
+        if node.get("type") != "person":
+            return None
+        label = node.get("label")
+        if not isinstance(label, str):
+            return None
+        matched = _ONEBOT11_PERSON_LABEL.fullmatch(label)
+        if matched is None:
+            return None
+        stable_user_id = matched.group(1)
+        if int(stable_user_id) > _POSITIVE_INT64_MAX:
+            return None
+        if node.get("canonical_value") != f"qq:{stable_user_id}":
+            return None
+        if node.get("key") != f"person:qq:{stable_user_id}":
+            return None
+        return "qq", stable_user_id
+
+    async def _enrich_graph_identity_nodes(
+        self,
+        snapshot: dict[str, Any],
+        identity_runtime: Any,
+    ) -> dict[str, Any]:
+        """在图快照副本中投影当前身份名称，不修改持久化节点。"""
+
+        nodes = snapshot.get("nodes")
+        get_identity = getattr(identity_runtime, "get_identity", None)
+        if not isinstance(nodes, list) or not callable(get_identity):
+            return snapshot
+
+        cached_identities: dict[tuple[str, str], Any | None] = {}
+        projected_nodes: list[Any] = []
+        for item in nodes:
+            if not isinstance(item, dict):
+                projected_nodes.append(item)
+                continue
+            node = dict(item)
+            identity_key = GraphApiMixin._stable_person_identity(node)
+            if identity_key is None:
+                projected_nodes.append(node)
+                continue
+
+            if identity_key not in cached_identities:
+                try:
+                    cached_identities[identity_key] = await get_identity(*identity_key)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("图谱身份目录读取失败，已保留稳定人物标签")
+                    return snapshot
+
+            identity = cached_identities[identity_key]
+            identity_namespace, stable_user_id = identity_key
+            display_name = getattr(identity, "display_name", None)
+            if (
+                getattr(identity, "identity_namespace", None) != identity_namespace
+                or getattr(identity, "stable_user_id", None) != stable_user_id
+                or getattr(identity, "canonical_user_id", None) != stable_user_id
+                or not isinstance(display_name, str)
+                or not display_name
+            ):
+                projected_nodes.append(node)
+                continue
+
+            node.update(
+                {
+                    "label": display_name,
+                    "identity_namespace": identity_namespace,
+                    "stable_user_id": stable_user_id,
+                    "display_name": display_name,
+                }
+            )
+            projected_nodes.append(node)
+
+        return {**snapshot, "nodes": projected_nodes}
 
     # ---- 公开端点 ----
 
@@ -62,6 +184,8 @@ class GraphApiMixin:
                     )
                 except (TypeError, ValueError):
                     return self._error("memory_id 必须是整数")
+            if str(args.get("canvas", "")).strip().lower() in {"1", "true"}:
+                payload["canvas"] = True
             return await self._query_graph_impl(payload)
         except Exception as exc:
             logger.error(f"[PageAPI] 图谱搜索失败: {exc}", exc_info=True)
@@ -76,6 +200,8 @@ class GraphApiMixin:
         return await self._query_graph_impl(payload)
 
     async def get_graph_overview(self):
+        """返回全量图概览；显式限制参数继续使用有限快照。"""
+
         ready, error = await self._ensure_plugin_ready()
         if error:
             return error
@@ -84,6 +210,13 @@ class GraphApiMixin:
         args = request.args
         session_id = str(args.get("session_id", "")).strip() or None
         persona_id = str(args.get("persona_id", "")).strip() or None
+        limit_keys = (
+            "limit_memories",
+            "limit_entries",
+            "limit_nodes",
+            "limit_edges",
+        )
+        has_explicit_limits = any(key in args for key in limit_keys)
 
         try:
             limit_memories = max(1, min(int(args.get("limit_memories", 12)), 24))
@@ -106,13 +239,27 @@ class GraphApiMixin:
                     )
                 )
 
-            snapshot = await graph_store.get_graph_snapshot(
-                session_id=session_id,
-                persona_id=persona_id,
-                limit_memories=limit_memories,
-                limit_entries=limit_entries,
-                limit_nodes=limit_nodes,
-                limit_edges=limit_edges,
+            if has_explicit_limits:
+                snapshot = await graph_store.get_graph_snapshot(
+                    session_id=session_id,
+                    persona_id=persona_id,
+                    limit_memories=limit_memories,
+                    limit_entries=limit_entries,
+                    limit_nodes=limit_nodes,
+                    limit_edges=limit_edges,
+                )
+            else:
+                snapshot = await graph_store.get_graph_snapshot(
+                    session_id=session_id,
+                    persona_id=persona_id,
+                    full=True,
+                )
+            identity_runtime = getattr(
+                ready.get("conversation_manager"), "identity_runtime", None
+            )
+            snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
+                self,
+                snapshot, identity_runtime
             )
             return self._ok(
                 self._build_graph_view_payload(
@@ -136,7 +283,15 @@ class GraphApiMixin:
         session_id = str(payload.get("session_id", "")).strip() or None
         persona_id = str(payload.get("persona_id", "")).strip() or None
         memory_id_raw = payload.get("memory_id")
+        canvas_view = payload.get("canvas") is True
         filters = {"session_id": session_id, "persona_id": persona_id}
+        limit_keys = (
+            "limit_memories",
+            "limit_entries",
+            "limit_nodes",
+            "limit_edges",
+        )
+        has_explicit_limits = any(key in payload for key in limit_keys)
 
         try:
             limit_memories = max(1, min(int(payload.get("limit_memories", 10)), 24))
@@ -174,6 +329,13 @@ class GraphApiMixin:
                     limit_nodes=limit_nodes,
                     limit_edges=limit_edges,
                 )
+                identity_runtime = getattr(
+                    ready.get("conversation_manager"), "identity_runtime", None
+                )
+                snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
+                    self,
+                    snapshot, identity_runtime
+                )
                 return self._ok(
                     self._build_graph_view_payload(
                         snapshot,
@@ -186,14 +348,35 @@ class GraphApiMixin:
                 )
 
             if not query_text:
-                snapshot = await graph_store.get_graph_snapshot(
-                    session_id=session_id,
-                    persona_id=persona_id,
-                    limit_memories=limit_memories,
-                    limit_entries=limit_entries,
-                    limit_nodes=limit_nodes,
-                    limit_edges=limit_edges,
+                if canvas_view and not has_explicit_limits:
+                    snapshot = await graph_store.get_canvas_snapshot(
+                        session_id=session_id,
+                        persona_id=persona_id,
+                    )
+                elif has_explicit_limits:
+                    snapshot = await graph_store.get_graph_snapshot(
+                        session_id=session_id,
+                        persona_id=persona_id,
+                        limit_memories=limit_memories,
+                        limit_entries=limit_entries,
+                        limit_nodes=limit_nodes,
+                        limit_edges=limit_edges,
+                    )
+                else:
+                    snapshot = await graph_store.get_graph_snapshot(
+                        session_id=session_id,
+                        persona_id=persona_id,
+                        full=True,
+                    )
+                identity_runtime = getattr(
+                    ready.get("conversation_manager"), "identity_runtime", None
                 )
+                snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
+                    self,
+                    snapshot, identity_runtime
+                )
+                if canvas_view and not has_explicit_limits:
+                    snapshot = GraphApiMixin._canvas_response_snapshot(snapshot)
                 return self._ok(
                     self._build_graph_view_payload(
                         snapshot, stats, enabled=True, mode="overview", filters=filters
@@ -274,6 +457,13 @@ class GraphApiMixin:
                 limit_entries=limit_entries,
                 limit_nodes=limit_nodes,
                 limit_edges=limit_edges,
+            )
+            identity_runtime = getattr(
+                ready.get("conversation_manager"), "identity_runtime", None
+            )
+            snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
+                self,
+                snapshot, identity_runtime
             )
             return self._ok(
                 self._build_graph_view_payload(
