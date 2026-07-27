@@ -52,6 +52,8 @@ flowchart LR
 
 `min(context_headroom_chars, memory_budget_chars + cognitive_budget_chars + prospective_budget_chars)`。
 
+`headroom.py` 遵循 AstrBot 的 Provider 语义：`max_context_tokens <= 0` 或字段缺失表示宿主不限制上下文，而不是零剩余空间；此时只使用 Memora 自身的记忆、认知与前瞻总硬上限 `13000` 字符。只有 Provider 给出正上限时，才按当前请求文本与输出预留做保守扣减。
+
 分层顺序为前瞻计划、普通记忆、认知上下文；包装开销也计入预算。候选按确定性 utility、稳定 ID 和原始顺序排序，并受 `max_memories`、单条估算与总字符预算共同约束。超预算时从最低优先级候选开始移除，不得截断安全边界标签。
 
 ### 不可违反的 System Prompt 边界
