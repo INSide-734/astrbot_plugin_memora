@@ -266,8 +266,9 @@ astrbot_plugin_memora/
 
 ```bash
 # 后端
-python -m pytest tests -q
-python scripts/run_smoke.py -q
+uv sync --locked --dev
+uv run --locked python -m pytest tests -q
+uv run --locked python scripts/run_smoke.py -q
 
 # Dashboard
 cd pages/dashboard
@@ -276,7 +277,7 @@ npm run check:artifacts
 npm run test
 
 # 仓库级质量门禁（在仓库根目录执行）
-python scripts/check_all.py
+uv run --locked python scripts/check_all.py
 ```
 
 Dashboard 的 `npm run smoke:runtime` 与 `npm run smoke:browser` 属于完整门禁；浏览器 smoke 完成后还需要人工检查生成的截图。

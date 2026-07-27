@@ -191,14 +191,10 @@ pip install -r requirements.txt
 3. Перезапустите AstrBot — плагин автоматически зарегистрируется и начнет фоновую инициализацию.
 
 4. Для инициализации требуются правильно настроенные Embedding Provider и LLM Provider в AstrBot. Если Providers временно недоступны, плагин переходит в режим фоновых повторных попыток (до 60 попыток).
-
 ## Проверка разработки
 
-Подготовка окружения разработчика и единый quality gate описаны в `docs/DEV_SETUP.md`; последний результат gate фиксируется в `docs/QUALITY_GATE_STATUS.md`.
-
-```bash
-python scripts/check_all.py
-```
+Подготовка окружения разработчика и единый quality gate описаны в `docs/DEV_SETUP.md`. За воспроизводимое окружение разработки и CI отвечает lock-файл uv; `requirements.txt` остаётся точкой установки плагина AstrBot.
+Выполните `uv sync --locked --dev`, затем `uv run --locked python scripts/check_all.py`.
 
 ## Адаптивная инъекция памяти
 

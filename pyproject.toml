@@ -1,0 +1,49 @@
+[project]
+name = "astrbot-plugin-memora"
+version = "1.0.0"
+description = "为 AstrBot 提供完整记忆生命周期的长期记忆插件"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "faiss-cpu>=1.7.0",
+    "networkx>=3.0",
+    "jieba>=0.42.1",
+    "pytz>=2021.3",
+    "aiofiles>=23.0.0",
+    "aiosqlite>=0.20.0",
+    "numpy>=1.26.0",
+    "pydantic>=2.0.0",
+    "PyYAML>=6.0.0",
+    "quart>=0.19.0",
+    "sqlalchemy>=2.0.0",
+    "astrbot",
+]
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.0",
+    "pre-commit>=4.6,<5",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff==0.16.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+extend-exclude = [
+    ".agents",
+    ".ccg",
+    ".codex",
+    ".worktrees",
+    "dist",
+    "node_modules",
+    "pages/dashboard/assets",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
