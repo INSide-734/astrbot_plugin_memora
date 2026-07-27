@@ -112,6 +112,31 @@ class TestMemoryExtractionResult:
         with pytest.raises(ValidationError):
             MemoryExtractionResult(extraction_quality="super")
 
+    def test_accepts_summary_prompt_contract(self):
+        """总结 Prompt 的 summary 结构应通过护栏且保留业务字段。"""
+
+        result = MemoryExtractionResult(
+            memories=[
+                {
+                    "summary": "我记得用户明确说过喜欢深烘咖啡",
+                    "topics": ["咖啡偏好"],
+                    "key_facts": ["用户喜欢深烘咖啡"],
+                    "participants": ["用户"],
+                    "sentiment": "positive",
+                    "importance": 0.8,
+                    "emotion_tags": ["开心"],
+                    "causal_relations": [],
+                }
+            ]
+        )
+
+        memory = result.memories[0]
+        assert memory.content == "我记得用户明确说过喜欢深烘咖啡"
+        assert memory.topics == ["咖啡偏好"]
+        assert memory.key_facts == ["用户喜欢深烘咖啡"]
+        assert memory.participants == ["用户"]
+        assert memory.sentiment == "positive"
+
 
 # =============================================================================
 # GraphExtractionResult

@@ -94,7 +94,7 @@ class MemoryProcessor:
     ) -> list[dict[str, Any]]:
         """处理对话批次并生成结构化记忆（可能返回多条独立话题记忆）。
 
-        Returns:
+        返回:
             list[dict]: 每条 dict = {content, metadata, importance, atoms}
         """
         if not messages:
@@ -165,7 +165,7 @@ class MemoryProcessor:
             if structured_data.get("_guardrail_fallback"):
                 metadata["guardrail_fallback"] = True
 
-            # 情感标签：优先使用 LLM 输出的 emotion_tags，外部传入的作为 fallback
+            # 情感标签：优先使用 LLM 输出，外部传入值仅作为后备。
             llm_emotion_tags = structured_data.get("emotion_tags") or []
             llm_emotion_tags = [
                 t for t in llm_emotion_tags if isinstance(t, str) and t.strip()
@@ -274,7 +274,7 @@ class MemoryProcessor:
                 elif is_group_chat and mem.get("participants"):
                     mem_metadata["participants"] = mem["participants"]
 
-                # Serial position effect metadata
+                # 记录首因与近因位置效应。
                 if serial_position_hint in ("first", "first_and_last"):
                     mem_metadata["serial_position"] = "primacy"
                 if serial_position_hint in ("last", "first_and_last"):
@@ -284,7 +284,7 @@ class MemoryProcessor:
                         else "primacy+recency"
                     )
 
-                # Interest match metadata
+                # 记录兴趣主题匹配及其重要性增益。
                 if interest_profile and mem_topics:
                     topic_text = " ".join(t.lower() for t in mem_topics)
                     matched = [i for i in interest_profile if i.lower() in topic_text]
@@ -324,7 +324,7 @@ class MemoryProcessor:
         response_text: str,
         is_group_chat: bool,
     ) -> dict[str, Any]:
-        """Parse LLM output with guardrails first, then legacy fallback."""
+        """优先通过结构护栏解析 LLM 输出，失败后使用旧解析器。"""
         if self.config.get("security.guardrails_enabled", True):
             try:
                 guarded = validate_llm_response(
@@ -355,20 +355,23 @@ class MemoryProcessor:
     def _guarded_result_to_structured_data(
         guarded: MemoryExtractionResult,
     ) -> dict[str, Any]:
-        """Convert validated guardrail schema to the processor's legacy shape."""
+        """把通过护栏的结构转换为处理器既有字段契约。"""
         memories: list[dict[str, Any]] = []
         for atom in guarded.memories:
             content = atom.content.strip()
             if not content:
                 continue
+            key_facts = [fact for fact in atom.key_facts if fact.strip()]
             memories.append(
                 {
                     "summary": content,
-                    "key_facts": [content],
-                    "topics": list(atom.entities),
+                    "key_facts": key_facts or [content],
+                    "topics": list(atom.topics or atom.entities),
                     "importance": atom.importance,
-                    "sentiment": "neutral",
+                    "sentiment": atom.sentiment,
                     "emotion_tags": list(atom.emotion_tags),
+                    "participants": list(atom.participants),
+                    "causal_relations": list(atom.causal_relations),
                     "confidence": atom.confidence,
                     "atom_type": atom.atom_type,
                 }
@@ -393,7 +396,7 @@ class MemoryProcessor:
         is_group_chat: bool = False,
         fallback_excerpt: str = "",
     ) -> dict[str, Any]:
-        """Build a memory dict from structured data (includes atom classification)."""
+        """从结构化数据构建包含 Atom 分类结果的记忆字典。"""
         quality = self.quality.validate_summary_quality(structured_data)
         normalized = self.quality.normalize_parsed_data(structured_data, is_group_chat)
         normalized["_quality"] = quality
@@ -461,14 +464,14 @@ class MemoryProcessor:
         - 侦探 persona: "线索：嫌疑人A在案发时出现在现场"
         - 医生 persona: "患者A在症状出现前的活动轨迹"
 
-        Args:
+        参数:
             content: 已生成的记忆内容
             conversation_text: 原始对话文本
             primary_persona_id: 主角色 ID（已用于主 LLM 调用，跳过）
             secondary_persona_ids: 需要生成解读的次要角色 ID 列表
             persona_contexts: {persona_id: persona_description} 角色描述字典
 
-        Returns:
+        返回:
             {persona_id: interpretation_text, ...}
         """
         if not secondary_persona_ids or not self.config.get(
