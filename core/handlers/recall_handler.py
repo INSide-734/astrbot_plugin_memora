@@ -9,7 +9,7 @@ import uuid
 import random
 from dataclasses import dataclass, replace
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
@@ -25,6 +25,7 @@ from ..managers.memory_engine import MemoryEngine
 from ..monitoring import monitored, report_debug_event, report_debug_exception
 from ..retrieval.query_rewriter import QueryRewriter, resolve_reference_time
 from ..injection.executor import InjectionExecutionContext, InjectionExecutor
+from ..injection.headroom import estimate_context_headroom_chars
 from ..injection.models import (
     DeliveryMode,
     InjectionDecision,
@@ -601,7 +602,7 @@ class RecallHandler:
             provider_model=str(provider_model or ""),
             tools_supported=tools_supported is True,
             memory_tool_available=self._request_has_memory_tool(req),
-            context_headroom_chars=self._context_headroom_chars(provider, req),
+            context_headroom_chars=estimate_context_headroom_chars(provider, req),
             chat_type=chat_type,
         )
 
@@ -623,73 +624,6 @@ class RecallHandler:
             )
         except Exception:
             return False
-
-    @classmethod
-    def _context_headroom_chars(cls, provider: Any, req: Any) -> int:
-        raw_override = getattr(req, "context_headroom_chars", None)
-        if isinstance(raw_override, (int, float, str)) and not isinstance(
-            raw_override, bool
-        ):
-            try:
-                return max(0, int(raw_override))
-            except (OverflowError, TypeError, ValueError):
-                pass
-
-        config = getattr(provider, "provider_config", None)
-        if not isinstance(config, Mapping):
-            return 0
-        max_context_tokens = cls._nonnegative_int(config.get("max_context_tokens"))
-        if max_context_tokens <= 0:
-            return 0
-        output_reserve = max(
-            cls._nonnegative_int(config.get("max_tokens")),
-            cls._nonnegative_int(config.get("max_completion_tokens")),
-        )
-        request_chars = sum(
-            cls._text_chars(getattr(req, field, None))
-            for field in (
-                "prompt",
-                "system_prompt",
-                "contexts",
-                "extra_user_content_parts",
-                "tool_calls_result",
-                "image_urls",
-                "audio_urls",
-            )
-        )
-        tool_set = getattr(req, "func_tool", None)
-        for tool in getattr(tool_set, "tools", ()):
-            request_chars += cls._text_chars(
-                {
-                    "name": getattr(tool, "name", ""),
-                    "description": getattr(tool, "description", ""),
-                    "parameters": getattr(tool, "parameters", {}),
-                }
-            )
-        # 未提供 Provider tokenizer 时，按每个文本字符计一个 token，
-        # 对以字符计价的注入预算保持保守估算。
-        return max(0, max_context_tokens - output_reserve - request_chars)
-
-    @staticmethod
-    def _nonnegative_int(value: Any) -> int:
-        try:
-            return max(0, int(value))
-        except (OverflowError, TypeError, ValueError):
-            return 0
-
-    @classmethod
-    def _text_chars(cls, value: Any) -> int:
-        if isinstance(value, str):
-            return len(value)
-        if isinstance(value, Mapping):
-            return sum(
-                len(str(key)) + cls._text_chars(item)
-                for key, item in value.items()
-            )
-        if isinstance(value, (list, tuple)):
-            return sum(cls._text_chars(item) for item in value)
-        text = getattr(value, "text", None)
-        return len(text) if isinstance(text, str) else 0
 
     @staticmethod
     def _safe_projection_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -919,6 +853,17 @@ class RecallHandler:
             configured_budget_chars=max(0, int(result.configured_budget_chars)),
             effective_budget_chars=max(0, int(result.effective_budget_chars)),
             payload_chars=max(0, int(result.actual_payload_chars)),
+        )
+        logger.info(
+            "[召回流程] 注入结果：outcome=%s, route=%s, delivery=%s, "
+            "candidates=%d, selected=%d, budget=%d/%d",
+            outcome,
+            decision.resolved_preset.value,
+            actual_delivery.value,
+            max(0, int(signals.candidate_count)),
+            max(0, int(result.selected_count)),
+            max(0, int(result.effective_budget_chars)),
+            max(0, int(result.configured_budget_chars)),
         )
 
     def _record_injection_decision(
