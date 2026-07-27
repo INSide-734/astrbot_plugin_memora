@@ -1596,9 +1596,10 @@ async function runUnifiedEditingSmoke(page, browser, errors, screenshotsDir) {
         "#/affection:editing-mobile",
       );
 
-      const affectionRow = mobilePage.getByRole("row")
+      const affectionRow = mobilePage.locator('[data-table-id="affection-users"]').getByRole("row")
         .filter({ hasText: "task18-affection-user" })
         .first();
+      await affectionRow.scrollIntoViewIfNeeded();
       await affectionRow.focus();
       await affectionRow.press("Enter");
       const affectionTitle = "好感：task18-affection-user";
@@ -2095,7 +2096,7 @@ async function waitForConfigReady(page, label) {
     ({ sections, fields }) =>
       document.querySelectorAll("[data-config-section]").length === sections
       && document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length === fields,
-    { sections: 43, fields: 234 },
+    { sections: 45, fields: 238 },
     { timeout: 10_000 },
   );
   const counts = await page.evaluate(() => ({
@@ -2109,7 +2110,7 @@ async function waitForConfigReady(page, label) {
     "Loading configuration",
     "Загрузка конфигурации",
   ].filter((text) => counts.text.includes(text));
-  if (counts.sections !== 43 || counts.fields !== 234 || lingeringLoading.length > 0) {
+  if (counts.sections !== 45 || counts.fields !== 238 || lingeringLoading.length > 0) {
     throw new Error(
       `${label} did not render the complete settled schema: ${JSON.stringify({
         sections: counts.sections,
