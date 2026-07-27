@@ -605,3 +605,48 @@ class TestConfigApplyApi:
 
         assert result["status"] == "ok"
         assert result["data"]["reload_scheduled"] is False
+
+    @pytest.mark.asyncio
+    async def test_debug_change_applies_to_current_process_before_reload(
+        self,
+        tmp_path,
+    ) -> None:
+        """调试叶保存成功后应立即启用当前进程，不依赖宿主热重载能力。"""
+
+        manager = MagicMock()
+        manager.apply_config_changes = AsyncMock(
+            return_value=ConfigApplyResult("rev-new", ("debug",))
+        )
+        manager.get.side_effect = lambda path, default=None: (
+            True if path == "debug" else default
+        )
+        api, plugin = _make_api(
+            request=_Request(
+                body={"base_revision": "rev-old", "changes": {"debug": True}}
+            ),
+            config_manager=manager,
+            hot_reload=False,
+        )
+        plugin.initializer = SimpleNamespace(data_dir=str(tmp_path))
+        plugin.context.get_config = lambda: {"timezone": "Asia/Shanghai"}
+
+        with patch("core.api.config_api.set_debug_mode") as set_debug_mode, patch(
+            "core.api.config_api.report_debug_event"
+        ) as report_debug_event:
+            result = await api.apply_config()
+
+        assert result["status"] == "ok"
+        assert result["data"]["reload_scheduled"] is False
+        set_debug_mode.assert_called_once_with(
+            True,
+            data_dir=str(tmp_path),
+            timezone_name="Asia/Shanghai",
+        )
+        report_debug_event.assert_called_once_with(
+            "plugin_initialized",
+            component="plugin",
+            stage="runtime_publish",
+            status="completed",
+            reason_code="runtime_already_published",
+            capability="debug_reporting",
+        )

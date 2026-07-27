@@ -10,6 +10,12 @@ from quart import request
 from astrbot.api import logger
 from ..injection.models import DeliveryMode, PresetName, RoutingMode
 from ..injection.router import InjectionRoutingConfig
+from ..monitoring import (
+    debug_operation,
+    is_debug_reporting_enabled,
+    report_debug_event,
+    report_debug_exception,
+)
 
 from ..models.recall_strategy import RecallStrategy
 from ..retrieval.explainable_recall import capture_explainable_recall
@@ -37,20 +43,56 @@ class RecallTraceApiMixin:
             return self._error("query_required")
 
         params = self._build_trace_request_params(payload, query)
-        try:
-            store = await self._get_recall_trace_store()
-            trace = await capture_explainable_recall(
-                engine,
-                params,
-                store=store,
-                routing_config=self._trace_routing_config(),
+        debug_reporting_enabled = is_debug_reporting_enabled()
+        with debug_operation():
+            try:
+                store = await self._get_recall_trace_store()
+                trace = await capture_explainable_recall(
+                    engine,
+                    params,
+                    store=store,
+                    routing_config=self._trace_routing_config(),
+                    debug_reporting_enabled=debug_reporting_enabled,
+                )
+            except Exception as exc:
+                report_debug_exception(
+                    "recall_failed",
+                    exc,
+                    component="page_api",
+                    stage="recall",
+                    status="failed",
+                    reason_code="recall_error",
+                )
+                logger.error(
+                    "[召回追踪接口] 执行召回追踪失败，异常类型=%s",
+                    exc.__class__.__name__,
+                )
+                return self._error("recall_trace_failed")
+
+            candidate_count = len(trace.get("results", []))
+            filtered_count = len(trace.get("filtered", []))
+            duration_ms = trace.get("total_ms", 0.0)
+            report_debug_event(
+                "recall_completed",
+                component="page_api",
+                stage="recall",
+                status="completed",
+                reason_code="memory_search_completed",
+                duration_ms=duration_ms,
+                candidate_count=candidate_count,
+                filtered_count=filtered_count,
             )
-        except Exception as exc:
-            logger.error(
-                "[召回追踪接口] 执行召回追踪失败，异常类型=%s",
-                exc.__class__.__name__,
+            score_trace_available = bool(
+                trace.get("metadata", {}).get("debug_trace_available", False)
             )
-            return self._error("recall_trace_failed")
+            logger.info(
+                "[召回追踪接口] 追踪完成：candidates=%d, filtered=%d, "
+                "debug_reporting=%s, score_trace=%s",
+                candidate_count,
+                filtered_count,
+                debug_reporting_enabled,
+                score_trace_available,
+            )
         return self._ok(trace)
 
     async def get_recall_trace_detail(self):
@@ -92,9 +134,9 @@ class RecallTraceApiMixin:
         params: dict[str, Any] = {
             "query": query,
             "k": self._coerce_trace_k(payload.get("k", 5)),
-            "session_id": payload.get("session_id"),
-            "persona_id": payload.get("persona_id"),
-            "user_id": payload.get("user_id"),
+            "session_id": self._coerce_optional_text(payload.get("session_id")),
+            "persona_id": self._coerce_optional_text(payload.get("persona_id")),
+            "user_id": self._coerce_optional_text(payload.get("user_id")),
             "chat_type": str(payload.get("chat_type") or "private"),
             "memory_types": self._coerce_optional_list(payload.get("memory_types")),
             "emotion_context": self._coerce_optional_list(
@@ -110,6 +152,14 @@ class RecallTraceApiMixin:
             ),
         }
         return params
+
+    @staticmethod
+    def _coerce_optional_text(value: Any) -> str | None:
+        """把空白可选标识规范化为未提供，避免生成空字符串过滤器。"""
+        if value is None or isinstance(value, bool):
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
     @staticmethod
     def _coerce_trace_k(value: Any) -> int:

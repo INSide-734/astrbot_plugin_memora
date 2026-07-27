@@ -54,6 +54,7 @@ function metadataEntries(metadata: Record<string, unknown>, limit = 5) {
 
 /** 展示已经过后端固定 allowlist 过滤的标量。 */
 function MetadataChips({ metadata, limit = 5 }: { metadata: Record<string, unknown>; limit?: number }) {
+  const { t } = useI18n();
   const entries = metadataEntries(metadata, limit);
   if (entries.length === 0) return null;
 
@@ -64,7 +65,7 @@ function MetadataChips({ metadata, limit = 5 }: { metadata: Record<string, unkno
           key={key}
           className="rounded bg-[var(--color-border-light)] px-1.5 py-0.5 text-2xs text-[var(--text-tertiary)]"
         >
-          {key}: {String(value)}
+          {translateEnum(t, "intelligence.trace.metadata", key, key)}: {String(value)}
         </span>
       ))}
     </div>
@@ -174,11 +175,13 @@ export function RecallTracePanel({
     const body: RecallTraceRequest = {
       query: trimmedQuery,
       k: clampedK,
-      session_id: sessionId.trim(),
-      user_id: userId.trim(),
       chat_type: chatType,
       chain_depth: clampedChainDepth,
     };
+    const trimmedSessionId = sessionId.trim();
+    const trimmedUserId = userId.trim();
+    if (trimmedSessionId) body.session_id = trimmedSessionId;
+    if (trimmedUserId) body.user_id = trimmedUserId;
 
     setK(clampedK);
     setChainDepth(clampedChainDepth);

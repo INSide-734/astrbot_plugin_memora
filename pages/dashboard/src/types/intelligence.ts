@@ -67,8 +67,8 @@ export interface RecallTraceResponse {
 export interface RecallTraceRequest {
   query: string;
   k: number;
-  session_id: string;
-  user_id: string;
+  session_id?: string;
+  user_id?: string;
   chat_type: string;
   chain_depth: number;
 }

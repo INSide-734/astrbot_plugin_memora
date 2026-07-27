@@ -15,6 +15,7 @@ from ..base.config_manager import (
     ConfigPersistenceError,
     ConfigValidationError,
 )
+from ..monitoring import report_debug_event, set_debug_mode
 from .response_utils import ok_response
 
 _PLUGIN_NAME = "astrbot_plugin_memora"
@@ -158,6 +159,7 @@ class ConfigApiMixin:
         ) as exc:
             return self._config_apply_error(exc)
 
+        self._apply_live_debug_mode(result.changed_paths)
         self._schedule_injection_decision_cleanup(result.changed_paths)
         reload_scheduled = self._schedule_plugin_reload(result.changed_paths)
 
@@ -173,6 +175,59 @@ class ConfigApiMixin:
                 "reload_scheduled": reload_scheduled,
                 "instance_id": self.plugin.instance_id,
             }
+        )
+
+    def _apply_live_debug_mode(self, changed_paths: tuple[str, ...]) -> None:
+        """在配置持久化后立即切换当前进程的安全调试记录器。"""
+
+        if "debug" not in changed_paths:
+            return
+        initializer = getattr(self.plugin, "initializer", None)
+        data_dir = getattr(initializer, "data_dir", None)
+        if data_dir is None:
+            logger.warning("[ConfigApi] 调试配置已保存，但当前运行时数据目录不可用")
+            return
+
+        timezone_name: str | None = None
+        context = getattr(self.plugin, "context", None)
+        get_host_config = getattr(context, "get_config", None)
+        if callable(get_host_config):
+            try:
+                host_config = get_host_config()
+                raw_timezone = (
+                    host_config.get("timezone")
+                    if isinstance(host_config, Mapping)
+                    else None
+                )
+                if isinstance(raw_timezone, str):
+                    timezone_name = raw_timezone
+            except Exception:
+                logger.warning("[ConfigApi] 读取 AstrBot 时区失败，将使用系统本地时区")
+
+        enabled = bool(self.plugin.config_manager.get("debug", False))
+        try:
+            set_debug_mode(
+                enabled,
+                data_dir=data_dir,
+                timezone_name=timezone_name,
+            )
+        except Exception:
+            logger.error("[ConfigApi] 当前进程应用调试配置失败", exc_info=True)
+            return
+
+        if enabled:
+            # 立即写入一条合法事件，证明日志与 JSONL 两个 sink 已经可用。
+            report_debug_event(
+                "plugin_initialized",
+                component="plugin",
+                stage="runtime_publish",
+                status="completed",
+                reason_code="runtime_already_published",
+                capability="debug_reporting",
+            )
+        logger.info(
+            "[ConfigApi] 问题报告调试模式已在当前进程%s",
+            "启用" if enabled else "停用",
         )
 
     def _schedule_injection_decision_cleanup(

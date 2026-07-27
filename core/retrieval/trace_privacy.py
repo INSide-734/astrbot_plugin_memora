@@ -120,12 +120,21 @@ def sanitize_trace_payload(value: Any) -> dict[str, Any]:
         "results": results,
         "filtered": filtered,
         "created_at": _safe_number(value.get("created_at"), default=time.time()),
-        "metadata": {
-            "debug_trace_available": bool(
-                _mapping(value.get("metadata")).get("debug_trace_available", False)
-            )
-        },
+        "metadata": _sanitize_trace_metadata(value.get("metadata")),
     }
+
+
+def _sanitize_trace_metadata(value: Any) -> dict[str, bool]:
+    """仅保留问题报告状态和候选评分轨迹状态两个安全布尔值。"""
+    source = _mapping(value)
+    sanitized = {
+        "debug_trace_available": bool(source.get("debug_trace_available", False))
+    }
+    if "debug_reporting_enabled" in source:
+        sanitized["debug_reporting_enabled"] = bool(
+            source.get("debug_reporting_enabled", False)
+        )
+    return sanitized
 
 
 def _sanitize_stages(value: Any) -> list[dict[str, Any]]:

@@ -1155,6 +1155,10 @@
         "candidates": "{0} candidates",
         "filteredCandidates": "Filtered candidates",
         "noFilteredCandidates": "No filtered candidates",
+        "metadata": {
+          "debug_trace_available": "Candidate score details",
+          "debug_reporting_enabled": "Problem-report debug"
+        },
         "table": {
           "doc": "Doc",
           "reason": "Reason",

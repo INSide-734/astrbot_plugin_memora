@@ -112,8 +112,6 @@ describe("RecallTracePanel", () => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/recall/trace", {
         query: "用户喜欢喝什么咖啡",
         k: 20,
-        session_id: "",
-        user_id: "",
         chat_type: "private",
         chain_depth: 5,
       });

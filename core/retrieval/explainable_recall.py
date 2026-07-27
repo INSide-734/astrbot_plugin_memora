@@ -50,6 +50,7 @@ async def capture_explainable_recall(
     *,
     store: RecallTraceStore | None = None,
     routing_config: InjectionRoutingConfig | None = None,
+    debug_reporting_enabled: bool | None = None,
 ) -> dict[str, Any]:
     """执行召回并只持久化固定安全标量组成的 trace DTO。"""
     query = str(request_params.get("query", "") or "")
@@ -75,6 +76,9 @@ async def capture_explainable_recall(
         _candidate_signals(result_list, normalized_results, request_params),
     )
     decision_ms = (time.perf_counter() - decision_started) * 1000
+    trace_metadata = {"debug_trace_available": bool(debug_trace)}
+    if debug_reporting_enabled is not None:
+        trace_metadata["debug_reporting_enabled"] = bool(debug_reporting_enabled)
     trace = RecallTrace(
         trace_id=str(uuid.uuid4()),
         query="",
@@ -102,7 +106,7 @@ async def capture_explainable_recall(
         ],
         results=normalized_results,
         filtered=filtered,
-        metadata={"debug_trace_available": bool(debug_trace)},
+        metadata=trace_metadata,
     )
     payload = trace.to_dict()
 
