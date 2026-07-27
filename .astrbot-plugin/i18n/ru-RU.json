@@ -1151,6 +1151,10 @@
         "candidates": "{0} кандидатов",
         "filteredCandidates": "Отфильтрованные кандидаты",
         "noFilteredCandidates": "Нет отфильтрованных кандидатов",
+        "metadata": {
+          "debug_trace_available": "Детали оценки кандидатов",
+          "debug_reporting_enabled": "Отладка отчёта"
+        },
         "table": {
           "doc": "Док.",
           "reason": "Причина",

@@ -22,6 +22,8 @@ from core.injection.models import (
     RoutingMode,
 )
 from core.monitoring import debug_reporter
+from core.page_api import PluginPageApi
+from core.retrieval.trace_store import RecallTraceStore
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +44,7 @@ def _records(path: Path) -> list[dict[str, object]]:
 
 
 def _decision() -> InjectionDecision:
+    """构造不会携带请求正文的固定注入决策。"""
     return InjectionDecision(
         routing_mode=RoutingMode.AUTO,
         configured_preset=PresetName.BALANCED,
@@ -55,6 +58,51 @@ def _decision() -> InjectionDecision:
         skip_passive_recall=False,
         allow_tool_fallback=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_recall_trace_page_api_writes_debug_completion_event(
+    tmp_path: Path,
+) -> None:
+    """控制台召回追踪应把安全完成事件写入问题报告文件。"""
+
+    class EmptyEngine:
+        """返回零候选以覆盖用户问题中的控制台场景。"""
+
+        async def search_memories(self, **_kwargs: object) -> list[object]:
+            """模拟一次成功但无命中的检索。"""
+            return []
+
+    class Config:
+        """提供路由预览所需的最小配置读取接口。"""
+
+        runtime_injection_fallback = False
+
+        @staticmethod
+        def get(_key: str, default: object = None) -> object:
+            """返回调用方提供的默认配置值。"""
+            return default
+
+    debug_reporter.configure_debug_reporting(True, tmp_path)
+    plugin = SimpleNamespace(
+        initializer=SimpleNamespace(memory_engine=EmptyEngine(), data_dir=None),
+        config_manager=Config(),
+    )
+    api = PluginPageApi(plugin)
+    api._recall_trace_store = RecallTraceStore()
+
+    response = await api.test_recall_with_trace_payload({"query": "safe query"})
+
+    assert response["status"] == "ok"
+    assert response["data"]["metadata"] == {
+        "debug_trace_available": False,
+        "debug_reporting_enabled": True,
+    }
+    records = _records(tmp_path / "diagnostics" / "memora-debug.jsonl")
+    event = next(record for record in records if record["event"] == "recall_completed")
+    assert event["component"] == "page_api"
+    assert event["reason_code"] == "memory_search_completed"
+    assert event["candidate_count"] == 0
 
 
 def test_injection_and_recall_events_exclude_sensitive_request_signals(

@@ -1155,6 +1155,10 @@
         "candidates": "{0} 个候选",
         "filteredCandidates": "过滤候选",
         "noFilteredCandidates": "暂无过滤候选",
+        "metadata": {
+          "debug_trace_available": "候选评分明细",
+          "debug_reporting_enabled": "问题报告 Debug"
+        },
         "table": {
           "doc": "文档",
           "reason": "原因",

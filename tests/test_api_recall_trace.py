@@ -436,6 +436,69 @@ async def test_recall_trace_endpoint_returns_trace(page_api_with_fake_engine):
 
 
 @pytest.mark.asyncio
+async def test_recall_trace_omits_blank_optional_scope_filters(
+    page_api_with_fake_engine,
+):
+    """空白可选标识不得变成只匹配空字符串的检索过滤器。"""
+    engine = page_api_with_fake_engine.plugin.initializer.memory_engine
+
+    response = await page_api_with_fake_engine.test_recall_with_trace_payload(
+        {
+            "query": "coffee",
+            "session_id": "  ",
+            "persona_id": "",
+            "user_id": "\t",
+        }
+    )
+
+    assert response["status"] == "ok"
+    call = engine.calls[-1]
+    assert "session_id" not in call
+    assert "persona_id" not in call
+    assert "user_id" not in call
+
+
+@pytest.mark.asyncio
+async def test_recall_trace_reports_debug_mode_separately_from_score_trace(
+    page_api_with_fake_engine,
+    monkeypatch,
+):
+    """无候选时仍应报告问题诊断开关，并写入安全的完成事件。"""
+    engine = page_api_with_fake_engine.plugin.initializer.memory_engine
+    engine.debug_trace = []
+    engine.search_memories = AsyncMock(return_value=[])
+    report_debug_event = MagicMock()
+    monkeypatch.setattr(
+        "core.api.recall_trace_api.is_debug_reporting_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "core.api.recall_trace_api.report_debug_event",
+        report_debug_event,
+    )
+
+    response = await page_api_with_fake_engine.test_recall_with_trace_payload(
+        {"query": "coffee"}
+    )
+
+    assert response["status"] == "ok"
+    assert response["data"]["metadata"] == {
+        "debug_trace_available": False,
+        "debug_reporting_enabled": True,
+    }
+    report_debug_event.assert_called_once_with(
+        "recall_completed",
+        component="page_api",
+        stage="recall",
+        status="completed",
+        reason_code="memory_search_completed",
+        duration_ms=response["data"]["total_ms"],
+        candidate_count=0,
+        filtered_count=0,
+    )
+
+
+@pytest.mark.asyncio
 async def test_trace_contains_non_executing_injection_decision(
     page_api_with_fake_engine,
     monkeypatch,
@@ -570,7 +633,10 @@ async def test_recall_trace_invalid_k_uses_default(page_api_with_fake_engine):
 
     assert response["status"] == "ok"
     assert page_api_with_fake_engine.plugin.initializer.memory_engine.calls[-1]["k"] == 5
-    assert response["data"]["metadata"] == {"debug_trace_available": True}
+    assert response["data"]["metadata"] == {
+        "debug_trace_available": True,
+        "debug_reporting_enabled": False,
+    }
 
 
 @pytest.mark.asyncio

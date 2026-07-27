@@ -134,6 +134,7 @@ sequenceDiagram
 - query、prompt、正文/preview/summary、canonical `doc_id`、图路径、贡献 explanation、request metadata、session/persona/user ID、source mapping、revision、scope/privacy/role/job 信息和任意 metadata 都不得持久化或返回。
 - `RecallTraceStore` 使用内存 `OrderedDict` 和可选 SQLite，按 `retention_count` 裁剪；新写入、缓存载入、列表与详情读取都重新执行 sanitizer，因此旧数据库 payload 也不能绕过当前 allowlist。
 - API 普通失败只返回稳定错误码并记录异常类型；`asyncio.CancelledError` 仍按协程取消语义传播。
+- `debug_trace_available` 只说明本次是否产生候选评分贡献；问题报告总开关由独立的 `debug_reporting_enabled` 安全布尔值表示，二者不得混用。
 
 ## 生命周期与异常语义
 
