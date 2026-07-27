@@ -551,6 +551,30 @@ class TestProcessConversation:
         assert results[0]["metadata"]["guardrails_validated"] is True
         assert results[0]["importance"] == 0.8
 
+    def test_process_guardrails_accepts_configured_summary_contract(
+        self, make_processor: callable, sample_messages: list[Message]
+    ) -> None:
+        """Prompt 约定的 summary 输出应通过护栏并完整进入存储 metadata。"""
+
+        import asyncio
+
+        response = (
+            '{"memories": [{"summary": "我记得用户明确说过喜欢深烘咖啡", '
+            '"topics": ["咖啡偏好"], "key_facts": ["用户喜欢深烘咖啡"], '
+            '"participants": ["用户"], "sentiment": "positive", '
+            '"importance": 0.8, "emotion_tags": ["开心"], '
+            '"causal_relations": []}]}'
+        )
+        proc = make_processor(llm_response=response)
+
+        results = asyncio.run(proc.process_conversation(sample_messages))
+
+        assert len(results) == 1
+        assert results[0]["metadata"]["guardrails_validated"] is True
+        assert results[0]["metadata"]["topics"] == ["咖啡偏好"]
+        assert results[0]["metadata"]["key_facts"] == ["用户喜欢深烘咖啡"]
+        assert results[0]["metadata"].get("guardrail_fallback") is not True
+
     def test_process_guardrails_empty_memories_falls_back_to_legacy_parser(
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:

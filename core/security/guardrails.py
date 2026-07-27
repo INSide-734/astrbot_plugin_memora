@@ -12,13 +12,10 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, Field, field_validator
-
-logger = logging.getLogger("astrbot.memora.security.guardrails")
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -63,6 +60,28 @@ class MemoryAtomSchema(BaseModel):
         le=1.0,
         description="抽取置信度（可选，LLM 可能不提供）",
     )
+    topics: list[str] = Field(default_factory=list, description="记忆主题列表")
+    key_facts: list[str] = Field(default_factory=list, description="长期事实列表")
+    participants: list[str] = Field(default_factory=list, description="参与者列表")
+    sentiment: str = Field(default="neutral", description="整体情感基调")
+    causal_relations: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="明确因果关系列表",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_summary_prompt_contract(cls, value: Any) -> Any:
+        """把现有 Prompt 的 summary/topics 字段映射到护栏基础字段。"""
+
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        if not normalized.get("content") and normalized.get("summary"):
+            normalized["content"] = normalized["summary"]
+        if not normalized.get("entities") and normalized.get("topics"):
+            normalized["entities"] = normalized["topics"]
+        return normalized
 
     @field_validator("content")
     @classmethod
@@ -79,6 +98,16 @@ class MemoryAtomSchema(BaseModel):
         if v not in allowed:
             raise ValueError(f"atom_type 必须是 {allowed} 之一，收到: {v!r}")
         return v
+
+    @field_validator("sentiment")
+    @classmethod
+    def _valid_sentiment(cls, value: str) -> str:
+        """限制总结情感字段为 Prompt 公开的三个固定值。"""
+
+        allowed = {"positive", "neutral", "negative"}
+        if value not in allowed:
+            raise ValueError(f"sentiment 必须是 {allowed} 之一，收到: {value!r}")
+        return value
 
 
 class MemoryExtractionResult(BaseModel):
@@ -198,11 +227,10 @@ def validate_and_clean_json(
     repaired = _repair_json(working)
     try:
         return json.loads(repaired)
-    except json.JSONDecodeError as e:
-        logger.debug("JSON 修复后仍无法解析: %s", e)
+    except json.JSONDecodeError as exc:
         if fallback_return_none:
             return None
-        raise ValueError(f"JSON 解析失败: {e}") from e
+        raise ValueError(f"JSON 解析失败: {exc}") from exc
 
 
 def _strip_markdown_fences(text: str) -> str:
@@ -319,13 +347,13 @@ def validate_llm_response(
 
     解析 LLM 输出为指定 Pydantic 模型，验证字段约束。
 
-    Args:
+    参数:
         response: LLM 返回的原始文本
         model: Pydantic 模型类
         add_json_instruction: 若为 True，在 response 后追加 JSON 格式指令后重新解析
         fallback_return_none: 失败时返回 None 而非抛出异常
 
-    Returns:
+    返回:
         验证通过的模型实例，或 None
     """
     data = validate_and_clean_json(response, fallback_return_none=True)
@@ -335,7 +363,6 @@ def validate_llm_response(
         data = validate_and_clean_json(augmented, fallback_return_none=True)
 
     if data is None:
-        logger.warning("无法从 LLM 响应中解析 JSON")
         if fallback_return_none:
             return None
         raise ValueError("无法从 LLM 响应中解析 JSON")
@@ -351,18 +378,17 @@ def safe_validate(
 ) -> T | None:
     """安全 Pydantic 验证 — 失败返回 None（不抛异常）。
 
-    Args:
+    参数:
         model: Pydantic 模型类
         data: 要验证的 dict
         fallback_return_none: 若为 False，验证失败时 raise
 
-    Returns:
+    返回:
         验证通过的模型实例，或 None
     """
     try:
         return model(**data)
-    except Exception as e:
-        logger.debug("Pydantic 验证失败 [%s]: %s", model.__name__, e)
+    except Exception:
         if fallback_return_none:
             return None
         raise
