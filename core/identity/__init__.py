@@ -7,6 +7,7 @@ from .models import (
     ResolvedIdentity,
 )
 from .onebot11 import OneBot11IdentityAdapter
+from .qq_official import QQOfficialIdentityAdapter
 from .resolver import ProtocolIdentityResolver
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "NameFieldState",
     "OneBot11IdentityAdapter",
     "ProtocolIdentityResolver",
+    "QQOfficialIdentityAdapter",
     "ResolvedIdentity",
 ]

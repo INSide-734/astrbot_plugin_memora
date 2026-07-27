@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -47,6 +48,44 @@ def _onebot_group_event(*, card: str, timestamp: int) -> MagicMock:
         },
     )
     return event
+
+
+def _qq_official_group_event(*, username: str, timestamp: str) -> SimpleNamespace:
+    """构造 OpenID 固定、协议名称可变化的 QQ 官方群事件。"""
+
+    openid = "00A1B2C3D4E5F60718293A4B5C6D7E8F"
+    group_openid = "GROUP-OPENID-1"
+    raw_data = {
+        "author": {
+            "id": openid,
+            "member_openid": openid,
+            "username": username,
+        },
+        "group_openid": group_openid,
+        "timestamp": timestamp,
+    }
+    message_obj = SimpleNamespace(
+        self_id="official-bot",
+        sender=SimpleNamespace(user_id=openid, nickname=username),
+        group_id=group_openid,
+        raw_message=SimpleNamespace(
+            raw_data=raw_data,
+            author=SimpleNamespace(member_openid=openid),
+            group_openid=group_openid,
+            timestamp=timestamp,
+        ),
+    )
+    return SimpleNamespace(
+        unified_msg_origin="qq_official:GroupMessage:GROUP-OPENID-1",
+        message_obj=message_obj,
+        get_platform_name=lambda: "qq_official",
+        get_platform_id=lambda: "official-bot-1",
+        get_message_type=lambda: MessageType.GROUP_MESSAGE,
+        get_sender_id=lambda: openid,
+        get_sender_name=lambda: username,
+        get_group_id=lambda: group_openid,
+        get_self_id=lambda: "official-bot",
+    )
 
 
 @pytest.mark.asyncio
@@ -106,6 +145,93 @@ async def test_onebot_rename_keeps_qq_identity_and_updates_memory_name(
             "group",
             "20001",
         ) == ["旧名称"]
+    finally:
+        await runtime.close()
+        await conversation_store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_qq_official_rename_keeps_openid_and_updates_memory_prompt(
+    tmp_path: Path,
+) -> None:
+    """QQ 官方改名后应保留 namespaced OpenID 并更新记忆名称约束。"""
+
+    conversation_store = ConversationStore(str(tmp_path / "official-conversations.db"))
+    identity_store = ProtocolIdentityStore(str(tmp_path / "official-memora.db"))
+    await conversation_store.initialize()
+    await identity_store.initialize()
+    manager = ConversationManager(conversation_store)
+    service = ProtocolIdentityService(identity_store)
+    synchronizer = ConversationIdentitySynchronizer(
+        conversation_store,
+        service,
+        manager.invalidate_cache,
+    )
+    runtime = ProtocolIdentityRuntime(
+        ProtocolIdentityResolver.default(),
+        service=service,
+        synchronizer=synchronizer,
+        store=identity_store,
+        enricher=MemoryIdentityEnricher(identity_store),
+    )
+    manager.identity_runtime = runtime
+
+    instance_key = hashlib.sha256(b"official-bot-1").hexdigest()[:24]
+    namespace = f"qq-official:{instance_key}"
+    openid = "00A1B2C3D4E5F60718293A4B5C6D7E8F"
+    canonical = f"{namespace}:{openid}"
+    label = f"QQ官方:{instance_key}:{openid}"
+    try:
+        observations = (
+            ("官方旧名称", "2026-07-23T12:00:00+08:00"),
+            ("官方新名称", "2026-07-23T12:01:00+08:00"),
+        )
+        for index, (username, timestamp) in enumerate(observations, start=1):
+            event = _qq_official_group_event(
+                username=username,
+                timestamp=timestamp,
+            )
+            identity = await runtime.prepare(event)
+            message = await manager.add_message_from_event(
+                event,
+                role="user",
+                content=f"官方第 {index} 条消息",
+                identity=identity,
+            )
+            assert message is not None
+
+        messages = await manager.get_messages(
+            "qq_official:GroupMessage:GROUP-OPENID-1",
+            limit=10,
+            use_cache=False,
+        )
+        memory_identity = build_memory_identity_context(messages)
+        metadata = memory_identity.metadata()
+
+        assert [message.sender_id for message in messages] == [canonical, canonical]
+        assert [message.sender_name for message in messages] == [
+            "官方新名称",
+            "官方新名称",
+        ]
+        assert memory_identity.participant_ids == (canonical,)
+        assert memory_identity.participant_labels == (label,)
+        assert memory_identity.participant_name_snapshots == {
+            canonical: "官方新名称"
+        }
+        assert metadata["participant_identity_sources"][canonical] == {
+            "protocol": "qq_official",
+            "identity_namespace": namespace,
+            "stable_user_id": openid,
+            "identity_label": label,
+        }
+        assert f"官方新名称（{label}）" in memory_identity.prompt_constraint()
+        assert await identity_store.find_aliases(
+            namespace,
+            openid,
+            "global",
+            "",
+        ) == ["官方旧名称"]
     finally:
         await runtime.close()
         await conversation_store.close()

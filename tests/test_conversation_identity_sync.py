@@ -52,6 +52,32 @@ def _identity(
     )
 
 
+def _qq_official_identity() -> ResolvedIdentity:
+    """构造 QQ 官方 C2C 改名同步使用的可信 OpenID 身份。"""
+
+    namespace = "qq-official:instance-key"
+    canonical = f"{namespace}:OPENID-1"
+    return ResolvedIdentity(
+        protocol="qq_official",
+        identity_namespace=namespace,
+        stable_user_id="OPENID-1",
+        canonical_user_id=canonical,
+        scope_type="private",
+        scope_id=canonical,
+        global_name="官方新昵称",
+        scope_name=None,
+        display_name="官方新昵称",
+        observed_at=200.0,
+        trust_status=IdentityTrust.TRUSTED,
+        name_field_states={
+            "nickname": NameFieldState.VALID,
+            "card": NameFieldState.MISSING,
+        },
+        conversation_sender_id=canonical,
+        identity_label="QQ官方:instance-key:OPENID-1",
+    )
+
+
 def _message(
     *,
     session_id: str,
@@ -185,6 +211,62 @@ async def test_private_sync_updates_only_proven_onebot_private_sessions(tmp_path
             await identity_store.find_aliases("qq", "10001", "global", "")
         ) == {"旧昵称A", "旧昵称B"}
         assert {call.args[0] for call in invalidator.await_args_list} == changed
+    finally:
+        await conversations.close()
+        await identity_store.close()
+
+
+@pytest.mark.asyncio
+async def test_qq_official_private_sync_updates_only_current_session(tmp_path) -> None:
+    """QQ 官方私聊改名只同步当前平台实例的完整会话。"""
+
+    sync, identity_store, conversations, invalidator = await _build_sync(tmp_path)
+    canonical = "qq-official:instance-key:OPENID-1"
+    try:
+        await conversations.add_message(
+            _message(
+                session_id="qq_official:FriendMessage:OPENID-1",
+                sender_id=canonical,
+                sender_name="官方旧昵称",
+                group_id=None,
+                platform="qq_official",
+            )
+        )
+        await conversations.add_message(
+            _message(
+                session_id="qq_official_webhook:FriendMessage:OPENID-1",
+                sender_id=canonical,
+                sender_name="另一实例旧昵称",
+                group_id=None,
+                platform="qq_official_webhook",
+            )
+        )
+
+        changed = await sync.synchronize(
+            _qq_official_identity(),
+            session_id="qq_official:FriendMessage:OPENID-1",
+        )
+
+        assert changed == {"qq_official:FriendMessage:OPENID-1"}
+        current = await conversations.get_messages(
+            "qq_official:FriendMessage:OPENID-1", 10
+        )
+        other = await conversations.get_messages(
+            "qq_official_webhook:FriendMessage:OPENID-1", 10
+        )
+        assert current[0].sender_id == canonical
+        assert current[0].sender_name == "官方新昵称"
+        assert current[0].content == "原始正文"
+        assert other[0].sender_name == "另一实例旧昵称"
+        assert await identity_store.find_aliases(
+            "qq-official:instance-key",
+            "OPENID-1",
+            "global",
+            "",
+        ) == ["官方旧昵称"]
+        invalidator.assert_awaited_once_with(
+            "qq_official:FriendMessage:OPENID-1"
+        )
     finally:
         await conversations.close()
         await identity_store.close()

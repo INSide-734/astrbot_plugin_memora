@@ -6,7 +6,7 @@ import asyncio
 import unicodedata
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from ..models.conversation_models import Message
 from .models import IdentityTrust, ResolvedIdentity
@@ -27,6 +27,7 @@ class MemoryIdentityContext:
     participant_ids: tuple[str, ...]
     participant_labels: tuple[str, ...]
     participant_name_snapshots: dict[str, str]
+    participant_identity_sources: dict[str, dict[str, str]]
 
     def metadata(self) -> dict[str, Any]:
         """返回可写入 canonical memory 的确定性身份元数据副本。"""
@@ -38,6 +39,9 @@ class MemoryIdentityContext:
             "participant_ids": list(self.participant_ids),
             "participants": list(self.participant_labels),
             "participant_name_snapshots": dict(self.participant_name_snapshots),
+            "participant_identity_sources": deepcopy(
+                self.participant_identity_sources
+            ),
         }
 
     def prompt_constraint(self) -> str:
@@ -223,6 +227,7 @@ class MemoryIdentityEnricher:
         participant_ids = metadata.get("participant_ids")
         participant_labels = metadata.get("participants")
         snapshots = metadata.get("participant_name_snapshots")
+        sources = metadata.get("participant_identity_sources")
         if (
             not isinstance(participant_ids, list)
             or not isinstance(participant_labels, list)
@@ -248,7 +253,26 @@ class MemoryIdentityEnricher:
                 or canonical_id in seen_ids
             ):
                 continue
-            if label == f"QQ:{canonical_id}":
+            source = sources.get(canonical_id) if isinstance(sources, dict) else None
+            if isinstance(source, Mapping):
+                protocol = _plain_identifier(source.get("protocol"))
+                namespace = _plain_identifier(source.get("identity_namespace"))
+                stable_id = _plain_identifier(source.get("stable_user_id"))
+                source_label = _normalize_reference_text(source.get("identity_label"))
+                if (
+                    protocol is None
+                    or namespace is None
+                    or stable_id is None
+                    or source_label != label
+                    or namespace != identity.identity_namespace
+                ):
+                    continue
+            elif isinstance(sources, dict) and canonical_id in sources:
+                continue
+            elif (
+                identity.identity_namespace == "qq"
+                and label == f"QQ:{canonical_id}"
+            ):
                 namespace = "qq"
                 stable_id = canonical_id
             elif (
@@ -419,16 +443,18 @@ def build_memory_identity_context(
     ordered_ids: list[str] = []
     labels: dict[str, str] = {}
     names: dict[str, str] = {}
+    sources: dict[str, dict[str, str]] = {}
+    invalid_ids: set[str] = set()
     for message in messages:
         metadata = message.metadata if isinstance(message.metadata, dict) else {}
         if message.role != "user" or metadata.get("identity_trusted") is not True:
             continue
-        protocol = _non_empty_text(metadata.get("identity_protocol"))
-        namespace = _non_empty_text(metadata.get("identity_namespace"))
-        stable_user_id = _non_empty_text(metadata.get("stable_user_id"))
-        user_id = _non_empty_text(metadata.get("canonical_user_id"))
-        label = _non_empty_text(metadata.get("identity_label"))
-        sender_id = _non_empty_text(message.sender_id)
+        protocol = _plain_identifier(metadata.get("identity_protocol"))
+        namespace = _plain_identifier(metadata.get("identity_namespace"))
+        stable_user_id = _plain_identifier(metadata.get("stable_user_id"))
+        user_id = _plain_identifier(metadata.get("canonical_user_id"))
+        label = _normalize_reference_text(metadata.get("identity_label"))
+        sender_id = _plain_identifier(message.sender_id)
         if (
             protocol is None
             or namespace is None
@@ -442,11 +468,28 @@ def build_memory_identity_context(
             stable_user_id != user_id or label != f"QQ:{user_id}"
         ):
             continue
+        source = {
+            "protocol": protocol,
+            "identity_namespace": namespace,
+            "stable_user_id": stable_user_id,
+            "identity_label": label,
+        }
+        if user_id in invalid_ids:
+            continue
+        previous_source = sources.get(user_id)
+        if previous_source is not None and previous_source != source:
+            invalid_ids.add(user_id)
+            ordered_ids.remove(user_id)
+            labels.pop(user_id, None)
+            names.pop(user_id, None)
+            sources.pop(user_id, None)
+            continue
         if user_id not in labels:
             if len(ordered_ids) >= 32:
                 continue
             ordered_ids.append(user_id)
             labels[user_id] = label
+            sources[user_id] = source
         name = _non_empty_text(message.sender_name)
         names[user_id] = name or labels[user_id]
     return MemoryIdentityContext(
@@ -454,6 +497,9 @@ def build_memory_identity_context(
         participant_labels=tuple(labels[user_id] for user_id in ordered_ids),
         participant_name_snapshots={
             user_id: names.get(user_id, labels[user_id]) for user_id in ordered_ids
+        },
+        participant_identity_sources={
+            user_id: dict(sources[user_id]) for user_id in ordered_ids
         },
     )
 

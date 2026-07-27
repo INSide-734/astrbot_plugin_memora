@@ -92,7 +92,7 @@ flowchart TD
 ### 消息事件
 
 - `handle_all_group_messages(...)` 仅捕获有效群消息：排除自身消息，提取内容，按会话去重，在写保护允许时交给 `ConversationManager`，并登记受跟踪的清理任务。
-- 每条支持协议的事件先由 `ProtocolIdentityRuntime.prepare(...)` 严格解析；可信身份按作用域尽力保存当前名称并同步历史会话，普通目录失败不阻断消息主链，取消必须传播。OneBot 11 的用户级状态、消息 sender 与记忆参与者都使用 canonical QQ，名称只作显示和 legacy 别名证据。
+- 每条支持协议的事件先由 `ProtocolIdentityRuntime.prepare(...)` 严格解析；可信身份按作用域尽力保存当前名称并同步历史会话，普通目录失败不阻断消息主链，取消必须传播。OneBot 11 使用 canonical QQ；QQ 官方使用带平台实例边界的 canonical OpenID，并同时接管 WebSocket/Webhook。名称只作显示和 legacy 别名证据，`union_openid` 不得动态替换主键。
 - `handle_memory_recall(...)` 在 LLM 请求前委托 `RecallHandler` 检索和注入；`handle_memory_reflection(...)` 在响应后委托 `ReflectionHandler` 反思与持久化。
 - `ReflectionHandler` 只有在 canonical memory 成功写入并从 Store 重读 source 后才调用 Memory Evolution manager；普通调度失败只降级记录，取消信号必须传播，不能回滚已经成功的 canonical 写入。
 - `/reset`、`/new` 通过 `handle_session_reset(...)` 清理插件会话上下文；关闭必须等待 reflection 与维护任务，不能遗留无所有者的 `asyncio.Task`。

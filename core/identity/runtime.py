@@ -7,7 +7,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..storage.protocol_identity_store import ProtocolIdentityStore
+from ..storage.protocol_identity_store import ProtocolIdentityStore, StoredIdentity
 from .conversation_sync import ConversationIdentitySynchronizer
 from .memory import MemoryIdentityEnricher
 from .models import IdentityTrust, ResolvedIdentity
@@ -52,6 +52,17 @@ class ProtocolIdentityRuntime:
         """返回可选历史别名只读增强器，目录降级模式下为 ``None``。"""
 
         return self._enricher
+
+    async def get_identity(
+        self,
+        identity_namespace: str,
+        stable_user_id: str,
+    ) -> StoredIdentity | None:
+        """读取稳定身份的当前目录记录；无 Store 时返回 ``None``。"""
+
+        if self._store is None:
+            return None
+        return await self._store.get_identity(identity_namespace, stable_user_id)
 
     async def prepare(
         self,

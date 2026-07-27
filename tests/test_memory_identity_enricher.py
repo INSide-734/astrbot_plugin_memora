@@ -91,6 +91,63 @@ def _stable_candidate(user_id: str, old_name: str) -> dict[str, object]:
     return candidate
 
 
+def _official_identity(
+    user_id: str,
+    *,
+    name: str,
+    observed_at: float,
+) -> ResolvedIdentity:
+    """构造同一 QQ 官方频道实例中的可信成员身份。"""
+
+    namespace = "qq-official:instance-key"
+    canonical = f"{namespace}:{user_id}"
+    return ResolvedIdentity(
+        protocol="qq_official",
+        identity_namespace=namespace,
+        stable_user_id=user_id,
+        canonical_user_id=canonical,
+        scope_type="group",
+        scope_id="CHANNEL-1",
+        global_name=name,
+        scope_name=None,
+        display_name=name,
+        observed_at=observed_at,
+        trust_status=IdentityTrust.TRUSTED,
+        name_field_states={
+            "nickname": NameFieldState.VALID,
+            "card": NameFieldState.MISSING,
+        },
+        conversation_sender_id=canonical,
+        identity_label=f"QQ官方:instance-key:{user_id}",
+    )
+
+
+def _official_stable_candidate(user_id: str, old_name: str) -> dict[str, object]:
+    """构造带通用内部来源证据的 QQ 官方 canonical 候选。"""
+
+    namespace = "qq-official:instance-key"
+    canonical = f"{namespace}:{user_id}"
+    label = f"QQ官方:instance-key:{user_id}"
+    candidate = _candidate(label)
+    candidate["metadata"].update(
+        {
+            "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+            "participant_ids": [canonical],
+            "participants": [label],
+            "participant_name_snapshots": {canonical: old_name},
+            "participant_identity_sources": {
+                canonical: {
+                    "protocol": "qq_official",
+                    "identity_namespace": namespace,
+                    "stable_user_id": user_id,
+                    "identity_label": label,
+                }
+            },
+        }
+    )
+    return candidate
+
+
 @pytest_asyncio.fixture
 async def identity_directory(tmp_path):
     """提供隔离的真实身份 Store、Service 与 Enricher。"""
@@ -175,6 +232,54 @@ async def test_trusted_source_wins_and_enrichment_never_mutates_candidate(
     assert result[0]["metadata"]["identity_reference_lines"] == [
         "- “共同旧名”是历史名称；当前显示为“当前甲”（QQ:10001）。"
     ]
+
+
+@pytest.mark.asyncio
+async def test_generic_source_updates_other_qq_official_group_member(
+    identity_directory,
+) -> None:
+    """QQ 官方群内非当前成员改名后也应按可信来源生成身份说明。"""
+
+    await identity_directory.service.observe(
+        _official_identity("BOB-OPENID", name="小博旧名", observed_at=100.0)
+    )
+    await identity_directory.service.observe(
+        _official_identity("BOB-OPENID", name="小博新名", observed_at=200.0)
+    )
+    current = _official_identity("ALICE-OPENID", name="小爱", observed_at=200.0)
+    candidate = _official_stable_candidate("BOB-OPENID", "小博旧名")
+
+    result = await identity_directory.enricher.enrich(
+        [candidate],
+        identity=current,
+        session_id="qq_official:GroupMessage:CHANNEL-1",
+    )
+
+    assert result[0]["metadata"]["identity_reference_lines"] == [
+        "- “小博旧名”是历史名称；当前显示为“小博新名”"
+        "（QQ官方:instance-key:BOB-OPENID）。"
+    ]
+    assert "identity_reference_lines" not in candidate["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_generic_source_mismatch_is_rejected(identity_directory) -> None:
+    """通用来源中的 namespace、stable ID 或标签不一致时不得查询目录。"""
+
+    current = _official_identity("ALICE-OPENID", name="小爱", observed_at=200.0)
+    candidate = _official_stable_candidate("BOB-OPENID", "小博旧名")
+    canonical = "qq-official:instance-key:BOB-OPENID"
+    candidate["metadata"]["participant_identity_sources"][canonical][
+        "identity_label"
+    ] = "QQ官方:instance-key:FORGED"
+
+    result = await identity_directory.enricher.enrich(
+        [candidate],
+        identity=current,
+        session_id="qq_official:GroupMessage:CHANNEL-1",
+    )
+
+    assert "identity_reference_lines" not in result[0]["metadata"]
 
 
 @pytest.mark.asyncio
