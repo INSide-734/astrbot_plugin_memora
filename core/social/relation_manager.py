@@ -11,8 +11,6 @@ from astrbot.api import logger
 from ..base.entity_editing import EntityValidationError, compute_entity_revision
 from ..base.list_sorting import SortQuery
 from .models import (
-    RELATION_CATEGORIES,
-    RELATION_DIFFICULTY,
     RelationChange,
     SocialRelation,
     get_difficulty,
@@ -138,7 +136,10 @@ class RelationManager:
     ) -> SocialRelation:
         """获取现有关系；若不存在则创建默认关系。"""
         existing = await self._store.get_relation(
-            from_user, to_user, relation_type, group_id,
+            from_user,
+            to_user,
+            relation_type,
+            group_id,
         )
         if existing is not None:
             return existing
@@ -158,7 +159,10 @@ class RelationManager:
     async def update_relation(self, change: RelationChange) -> SocialRelation:
         """应用带难度门控的关系强度更新。"""
         existing = await self._store.get_relation(
-            change.from_user, change.to_user, change.relation_type, "",
+            change.from_user,
+            change.to_user,
+            change.relation_type,
+            "",
         )
 
         if existing is None:
@@ -188,7 +192,10 @@ class RelationManager:
     ) -> SocialRelation:
         """便捷封装：获取或创建关系、计算门控增量并持久化。"""
         rel = await self.get_or_create(
-            from_user, to_user, group_id, relation_type=relation_type,
+            from_user,
+            to_user,
+            group_id,
+            relation_type=relation_type,
         )
         return await self._apply_delta(rel, delta, reason)
 
@@ -200,9 +207,7 @@ class RelationManager:
         """返回指定群组内按指定稳定顺序排列的全部关系。"""
         return await self._store.get_group_relations(group_id, sort=sort)
 
-    async def get_user_network(
-        self, user_id: str
-    ) -> list[SocialRelation]:
+    async def get_user_network(self, user_id: str) -> list[SocialRelation]:
         """返回涉及指定用户的全部关系（不限群组）。"""
         return await self._store.get_user_network(user_id)
 
@@ -221,7 +226,10 @@ class RelationManager:
     ) -> bool:
         """删除单条带类型的关系，成功时返回 ``True``。"""
         return await self._store.delete_relation(
-            from_user, to_user, relation_type, group_id,
+            from_user,
+            to_user,
+            relation_type,
+            group_id,
         )
 
     async def update_tags(
@@ -234,7 +242,10 @@ class RelationManager:
     ) -> SocialRelation | None:
         """替换现有关系上的标签列表。"""
         rel = await self._store.get_relation(
-            from_user, to_user, relation_type, group_id,
+            from_user,
+            to_user,
+            relation_type,
+            group_id,
         )
         if rel is None:
             return None

@@ -12,7 +12,6 @@ from core.managers.sender_resolver import (
     _resolve_sender_name,
 )
 
-
 # ---------------------------------------------------------------------------
 # _normalize_sender_name tests
 # ---------------------------------------------------------------------------
@@ -165,7 +164,9 @@ class TestResolveSenderName:
         event = MagicMock(spec=["sender_name", "message_obj"])
         event.sender_name = "Bob"
         event.message_obj = MagicMock(spec=["sender"])
-        event.message_obj.sender = MagicMock(spec=["first_name", "last_name", "nickname"])
+        event.message_obj.sender = MagicMock(
+            spec=["first_name", "last_name", "nickname"]
+        )
         event.message_obj.sender.first_name = None
         event.message_obj.sender.last_name = None
         event.message_obj.sender.nickname = None
@@ -212,8 +213,15 @@ class TestResolveSenderName:
         event.message_obj = MagicMock(spec=["sender", "raw_message"])
         event.message_obj.sender = None
         # raw_message exists but has None for all candidates and no extra attributes
-        raw = MagicMock(spec=["from_user", "message", "effective_message",
-                              "callback_query", "effective_user"])
+        raw = MagicMock(
+            spec=[
+                "from_user",
+                "message",
+                "effective_message",
+                "callback_query",
+                "effective_user",
+            ]
+        )
         raw.from_user = None
         raw.message = None
         raw.effective_message = None
@@ -232,14 +240,23 @@ class TestResolveSenderName:
         event.get_sender_name.return_value = None
         event.message_obj = MagicMock()
         # sender has no valid names
-        event.message_obj.sender = MagicMock(spec=["first_name", "last_name", "nickname"])
+        event.message_obj.sender = MagicMock(
+            spec=["first_name", "last_name", "nickname"]
+        )
         event.message_obj.sender.first_name = None
         event.message_obj.sender.last_name = None
         event.message_obj.sender.nickname = None
 
         # Set up raw_message with callback_query->from_user
-        raw = MagicMock(spec=["from_user", "message", "effective_message",
-                              "callback_query", "effective_user"])
+        raw = MagicMock(
+            spec=[
+                "from_user",
+                "message",
+                "effective_message",
+                "callback_query",
+                "effective_user",
+            ]
+        )
         raw.from_user = None
         raw.message = None
         raw.effective_message = None
@@ -259,13 +276,22 @@ class TestResolveSenderName:
         event = MagicMock()
         event.get_sender_name.return_value = None
         event.message_obj = MagicMock()
-        event.message_obj.sender = MagicMock(spec=["first_name", "last_name", "nickname"])
+        event.message_obj.sender = MagicMock(
+            spec=["first_name", "last_name", "nickname"]
+        )
         event.message_obj.sender.first_name = None
         event.message_obj.sender.last_name = None
         event.message_obj.sender.nickname = None
 
-        raw = MagicMock(spec=["from_user", "message", "effective_message",
-                              "callback_query", "effective_user"])
+        raw = MagicMock(
+            spec=[
+                "from_user",
+                "message",
+                "effective_message",
+                "callback_query",
+                "effective_user",
+            ]
+        )
         raw.from_user = None
         raw.message = None
         raw.callback_query = None
@@ -306,8 +332,15 @@ class TestResolveSenderName:
         event.get_sender_name.return_value = None
         event.message_obj = MagicMock(spec=["sender", "raw_message"])
         event.message_obj.sender = None
-        raw = MagicMock(spec=["from_user", "message", "effective_message",
-                              "callback_query", "effective_user"])
+        raw = MagicMock(
+            spec=[
+                "from_user",
+                "message",
+                "effective_message",
+                "callback_query",
+                "effective_user",
+            ]
+        )
         raw.from_user = None
         raw.message = None
         raw.effective_message = None
@@ -333,8 +366,15 @@ class TestIterRawSenderCandidates:
 
         event = MagicMock()
         user = MagicMock()
-        raw = MagicMock(spec=["from_user", "message", "effective_message",
-                              "callback_query", "effective_user"])
+        raw = MagicMock(
+            spec=[
+                "from_user",
+                "message",
+                "effective_message",
+                "callback_query",
+                "effective_user",
+            ]
+        )
         raw.from_user = user
         raw.message = None
         raw.effective_message = None
@@ -355,8 +395,15 @@ class TestIterRawSenderCandidates:
         user = MagicMock()
         inner = MagicMock(spec=["from_user"])
         inner.from_user = user
-        raw = MagicMock(spec=["from_user", "message", "effective_message",
-                              "callback_query", "effective_user"])
+        raw = MagicMock(
+            spec=[
+                "from_user",
+                "message",
+                "effective_message",
+                "callback_query",
+                "effective_user",
+            ]
+        )
         raw.from_user = None
         raw.message = inner
         raw.effective_message = None

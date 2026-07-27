@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
@@ -34,10 +33,18 @@ class TestDeleteDocumentIndexesBatch:
 
         async with aiosqlite.connect(tmp_db_path) as db:
             db.row_factory = aiosqlite.Row
-            await db.execute("CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)")
-            await db.execute("CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)")
-            await db.execute("INSERT INTO memora_memories_fts (doc_id) VALUES (1), (2), (3)")
-            await db.execute("INSERT INTO documents (id, doc_id) VALUES (1, 'uuid-1'), (2, 'uuid-2'), (3, 'uuid-3')")
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)"
+            )
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)"
+            )
+            await db.execute(
+                "INSERT INTO memora_memories_fts (doc_id) VALUES (1), (2), (3)"
+            )
+            await db.execute(
+                "INSERT INTO documents (id, doc_id) VALUES (1, 'uuid-1'), (2, 'uuid-2'), (3, 'uuid-3')"
+            )
             await db.commit()
 
             engine = MemoryEngine(db_path=tmp_db_path, faiss_db=mock_faiss)
@@ -60,8 +67,12 @@ class TestDeleteDocumentIndexesBatch:
 
         async with aiosqlite.connect(tmp_db_path) as db:
             db.row_factory = aiosqlite.Row
-            await db.execute("CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)")
-            await db.execute("CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)")
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)"
+            )
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)"
+            )
             await db.execute("INSERT INTO memora_memories_fts (doc_id) VALUES (1)")
             await db.execute("INSERT INTO documents (id, doc_id) VALUES (1, 'uuid-1')")
             await db.commit()
@@ -129,10 +140,18 @@ class TestBatchDeleteMemoriesIntegration:
             db.row_factory = aiosqlite.Row
 
             # Set up schema
-            await db.execute("CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)")
-            await db.execute("CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)")
-            await db.execute("INSERT INTO memora_memories_fts (doc_id) VALUES (1), (2), (3)")
-            await db.execute("INSERT INTO documents (id, doc_id) VALUES (1, 'uuid-1'), (2, 'uuid-2'), (3, 'uuid-3')")
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)"
+            )
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)"
+            )
+            await db.execute(
+                "INSERT INTO memora_memories_fts (doc_id) VALUES (1), (2), (3)"
+            )
+            await db.execute(
+                "INSERT INTO documents (id, doc_id) VALUES (1, 'uuid-1'), (2, 'uuid-2'), (3, 'uuid-3')"
+            )
             await db.commit()
 
             engine = MemoryEngine(db_path=tmp_db_path, faiss_db=mock_faiss)
@@ -151,14 +170,20 @@ class TestBatchDeleteMemoriesIntegration:
             rows = await cursor.fetchall()
             assert len(rows) == 0
 
-    async def test_batch_delete_detailed_reports_not_found(self, tmp_db_path: str) -> None:
+    async def test_batch_delete_detailed_reports_not_found(
+        self, tmp_db_path: str
+    ) -> None:
         mock_faiss = MagicMock()
         mock_faiss.delete = AsyncMock()
 
         async with aiosqlite.connect(tmp_db_path) as db:
             db.row_factory = aiosqlite.Row
-            await db.execute("CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)")
-            await db.execute("CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)")
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)"
+            )
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)"
+            )
             await db.execute("INSERT INTO memora_memories_fts (doc_id) VALUES (1)")
             await db.execute("INSERT INTO documents (id, doc_id) VALUES (1, 'uuid-1')")
             await db.commit()
@@ -185,8 +210,12 @@ class TestBatchDeleteMemoriesIntegration:
         async with aiosqlite.connect(tmp_db_path) as db:
             db.row_factory = aiosqlite.Row
 
-            await db.execute("CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)")
-            await db.execute("CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)")
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)"
+            )
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)"
+            )
 
             # Create 250 docs
             for i in range(1, 251):

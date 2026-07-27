@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 
 # ============================================================================
 # QueryCommandMixin tests
@@ -18,9 +17,7 @@ class TestFormatErrorMessage:
     def test_returns_non_empty_string(self) -> None:
         from core.commands.query_commands import QueryCommandMixin
 
-        msg = QueryCommandMixin._format_error_message(
-            "测试", ValueError("错误")
-        )
+        msg = QueryCommandMixin._format_error_message("测试", ValueError("错误"))
         assert isinstance(msg, str)
         assert len(msg) > 0
 
@@ -28,8 +25,7 @@ class TestFormatErrorMessage:
         from core.commands.query_commands import QueryCommandMixin
 
         msg = QueryCommandMixin._format_error_message(
-            "测试", ValueError("错误"),
-            suggestions=["建议1", "建议2"]
+            "测试", ValueError("错误"), suggestions=["建议1", "建议2"]
         )
         assert isinstance(msg, str)
         # The format uses t() fallback — check it's longer with suggestions
@@ -51,9 +47,7 @@ class TestComponentNotReadyMessage:
     def test_returns_non_empty_string(self) -> None:
         from core.commands.query_commands import QueryCommandMixin
 
-        msg = QueryCommandMixin._component_not_ready_message(
-            "记忆引擎", "/memora status"
-        )
+        msg = QueryCommandMixin._component_not_ready_message("记忆引擎", "/memora status")
         assert isinstance(msg, str)
         assert len(msg) > 0
 
@@ -374,9 +368,7 @@ class TestMaintenanceHandleCleanupErrors:
 
         ctx = MagicMock()
         ctx.conversation_manager = MagicMock()
-        ctx.conversation_manager.get_curr_conversation_id = AsyncMock(
-            return_value=None
-        )
+        ctx.conversation_manager.get_curr_conversation_id = AsyncMock(return_value=None)
 
         class TestMixin(MaintenanceCommandMixin):
             context = ctx
@@ -407,9 +399,7 @@ class TestMaintenanceHandleCleanupErrors:
         )
         conversation = MagicMock()
         conversation.history = None
-        ctx.conversation_manager.get_conversation = AsyncMock(
-            return_value=conversation
-        )
+        ctx.conversation_manager.get_conversation = AsyncMock(return_value=conversation)
 
         class Handler(MaintenanceCommandMixin):
             context = ctx
@@ -436,9 +426,7 @@ class TestMaintenanceHandleCleanupErrors:
         )
         conversation = MagicMock()
         conversation.history = "not valid json{{{"
-        ctx.conversation_manager.get_conversation = AsyncMock(
-            return_value=conversation
-        )
+        ctx.conversation_manager.get_conversation = AsyncMock(return_value=conversation)
 
         class Handler(MaintenanceCommandMixin):
             context = ctx

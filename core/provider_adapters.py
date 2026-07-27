@@ -175,7 +175,9 @@ class EmbeddingProviderAdapter:
         return self._validate_vectors(raw_vectors, expected_count=len(contents))
 
     @staticmethod
-    def _validate_vectors(raw_vectors: Any, *, expected_count: int) -> list[list[float]]:
+    def _validate_vectors(
+        raw_vectors: Any, *, expected_count: int
+    ) -> list[list[float]]:
         """把 Provider 向量规范化为有限、同维度的 float 列表。"""
 
         if isinstance(raw_vectors, (str, bytes, bytearray)):

@@ -100,7 +100,9 @@ def _decision_query(**values: object):
 async def test_catalog_is_registry_backed_and_contains_no_system_prompt() -> None:
     store = SimpleNamespace(
         summary=AsyncMock(side_effect=AssertionError("catalog must not query SQLite")),
-        list_decisions=AsyncMock(side_effect=AssertionError("catalog must not query SQLite")),
+        list_decisions=AsyncMock(
+            side_effect=AssertionError("catalog must not query SQLite")
+        ),
     )
     api = _make_api(
         store=store,
@@ -336,9 +338,7 @@ async def test_detail_validates_uuid_and_reports_missing_record_stably() -> None
     invalid = await api.get_injection_decision_detail_payload(
         {"decision_id": "../../unsafe"}
     )
-    missing = await api.get_injection_decision_detail_payload(
-        {"decision_id": VALID_ID}
-    )
+    missing = await api.get_injection_decision_detail_payload({"decision_id": VALID_ID})
 
     assert invalid == {"status": "error", "message": "decision_id must be a valid UUID"}
     assert missing == {"status": "error", "message": "Injection decision not found"}

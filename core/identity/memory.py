@@ -39,9 +39,7 @@ class MemoryIdentityContext:
             "participant_ids": list(self.participant_ids),
             "participants": list(self.participant_labels),
             "participant_name_snapshots": dict(self.participant_name_snapshots),
-            "participant_identity_sources": deepcopy(
-                self.participant_identity_sources
-            ),
+            "participant_identity_sources": deepcopy(self.participant_identity_sources),
         }
 
     def prompt_constraint(self) -> str:
@@ -154,9 +152,13 @@ class MemoryIdentityEnricher:
 
         lines: list[str] = []
         seen_lines: set[str] = set()
-        for namespace, stable_id, canonical_id, old_name, label in (
-            self._trusted_source_evidence(metadata, identity)
-        ):
+        for (
+            namespace,
+            stable_id,
+            canonical_id,
+            old_name,
+            label,
+        ) in self._trusted_source_evidence(metadata, identity):
             stored = await self._identity_in_scope(namespace, stable_id, identity)
             if stored is None or stored.canonical_user_id != canonical_id:
                 continue
@@ -248,10 +250,7 @@ class MemoryIdentityEnricher:
             if canonical_id is None or label is None:
                 continue
             old_name = _normalize_reference_text(snapshots.get(canonical_id))
-            if (
-                old_name is None
-                or canonical_id in seen_ids
-            ):
+            if old_name is None or canonical_id in seen_ids:
                 continue
             source = sources.get(canonical_id) if isinstance(sources, dict) else None
             if isinstance(source, Mapping):
@@ -269,10 +268,7 @@ class MemoryIdentityEnricher:
                     continue
             elif isinstance(sources, dict) and canonical_id in sources:
                 continue
-            elif (
-                identity.identity_namespace == "qq"
-                and label == f"QQ:{canonical_id}"
-            ):
+            elif identity.identity_namespace == "qq" and label == f"QQ:{canonical_id}":
                 namespace = "qq"
                 stable_id = canonical_id
             elif (
@@ -285,9 +281,7 @@ class MemoryIdentityEnricher:
             else:
                 continue
             seen_ids.add(canonical_id)
-            evidence.append(
-                (namespace, stable_id, canonical_id, old_name, label)
-            )
+            evidence.append((namespace, stable_id, canonical_id, old_name, label))
         return evidence
 
     async def _identity_in_scope(
@@ -309,10 +303,7 @@ class MemoryIdentityEnricher:
         if identity.scope_type == "private":
             if stored.canonical_user_id != identity.canonical_user_id:
                 return None
-        elif (
-            stored.scope_type != "group"
-            or stored.scope_id != identity.scope_id
-        ):
+        elif stored.scope_type != "group" or stored.scope_id != identity.scope_id:
             return None
         return stored
 

@@ -33,12 +33,11 @@ from .api.note_api import NoteApiMixin
 from .api.profile_api import ProfileApiMixin
 from .api.quality_api import QualityApiMixin
 from .api.recall_trace_api import RecallTraceApiMixin
-from .api.review_api import ReviewApiMixin
 from .api.response_utils import error_response, ok_response
-from .monitoring.debug_reporter import report_debug_exception
+from .api.review_api import ReviewApiMixin
 from .api.social_api import SocialApiMixin
 from .api.topic_segmentation_api import TopicSegmentationApiMixin
-from .storage.base import apply_perf_pragmas
+from .monitoring.debug_reporter import report_debug_exception
 from .utils.number_utils import safe_float
 
 PLUGIN_NAME = "astrbot_plugin_memora"
@@ -98,9 +97,14 @@ class PluginPageApi(
             )
             result = raw_register(path, handler, methods, description)
             if path.startswith(PAGE_API_PREFIX):
-                suffix = path[len(PAGE_API_PREFIX):]
+                suffix = path[len(PAGE_API_PREFIX) :]
                 for alias_prefix in PAGE_API_ALIAS_PREFIXES:
-                    raw_register(alias_prefix + suffix, handler, methods, f"{description}（别名）")
+                    raw_register(
+                        alias_prefix + suffix,
+                        handler,
+                        methods,
+                        f"{description}（别名）",
+                    )
             return result
 
         register(
@@ -913,7 +917,8 @@ class PluginPageApi(
                 or path.endswith("/config/state")
                 or path.endswith("/config/apply")
             ),
-            "write_guard": risk in {
+            "write_guard": risk
+            in {
                 "write",
                 "maintenance",
                 "destructive",
@@ -928,7 +933,10 @@ class PluginPageApi(
         lowered = path.lower()
         if "/dashboard/install" in lowered or "/dashboard/build" in lowered:
             return "runtime_exec"
-        if any(token in lowered for token in ("/delete", "batch-delete", "/purge", "/restore", "/reset")):
+        if any(
+            token in lowered
+            for token in ("/delete", "batch-delete", "/purge", "/restore", "/reset")
+        ):
             return "destructive"
         if any(
             token in lowered
@@ -994,7 +1002,11 @@ class PluginPageApi(
 
         # 1. 来自黑话存储
         try:
-            jargon_store = await self._get_jargon_store() if hasattr(self, "_get_jargon_store") else None
+            jargon_store = (
+                await self._get_jargon_store()
+                if hasattr(self, "_get_jargon_store")
+                else None
+            )
             if jargon_store and hasattr(jargon_store, "list_group_ids"):
                 group_ids = await jargon_store.list_group_ids()
                 for gid in group_ids:
@@ -1373,7 +1385,9 @@ class PluginPageApi(
         relation_breakdown: dict[str, int] = {}
 
         for node in nodes:
-            node["highlighted"] = _coerce_int(node.get("id", 0), 0) in matched_node_id_set
+            node["highlighted"] = (
+                _coerce_int(node.get("id", 0), 0) in matched_node_id_set
+            )
             nt = str(node.get("type", "unknown") or "unknown")
             node_type_breakdown[nt] = node_type_breakdown.get(nt, 0) + 1
 

@@ -8,12 +8,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.utils.style_analyzer import (
+    _7_DIMENSIONS,
     StyleAnalyzer,
     StyleEvolution,
     StyleProfile,
-    _7_DIMENSIONS,
 )
-
 
 # ---------------------------------------------------------------------------
 # StyleProfile tests

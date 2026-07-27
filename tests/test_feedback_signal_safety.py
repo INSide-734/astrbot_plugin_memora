@@ -121,13 +121,19 @@ def test_none_persona_is_exact_domain_not_wildcard(tmp_path) -> None:
     try:
         assert first.accepted is True
         assert second.accepted is True
-        assert len(store.list_events(scope_domain="scope-synthetic", persona_domain=None)) == 1
-        assert len(
-            store.list_events(
-                scope_domain="scope-synthetic",
-                persona_domain="persona-synthetic",
+        assert (
+            len(store.list_events(scope_domain="scope-synthetic", persona_domain=None))
+            == 1
+        )
+        assert (
+            len(
+                store.list_events(
+                    scope_domain="scope-synthetic",
+                    persona_domain="persona-synthetic",
+                )
             )
-        ) == 1
+            == 1
+        )
         assert len(aggregates) == 2
     finally:
         store.close()

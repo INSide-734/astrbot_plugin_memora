@@ -4,13 +4,13 @@ import pytest
 
 
 class TestEntityHierarchyStore:
-
     @pytest.fixture
     def make_store(self):
         import os
         import tempfile
 
         import aiosqlite
+
         from core.storage.hierarchy_store import EntityHierarchyStore
 
         async def _make():
@@ -19,6 +19,7 @@ class TestEntityHierarchyStore:
             store = EntityHierarchyStore(db)
             await store.init_table()
             return store, db, db_path
+
         return _make
 
     @pytest.mark.asyncio

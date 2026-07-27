@@ -69,11 +69,7 @@ class TraitEvolutionTracker:
             if ratio < self._contradiction_ratio:
                 continue
             direction = pl if pos > neg else nl
-            old = (
-                nl
-                if pos > neg > 0
-                else (pl if neg > pos > 0 else "neutral")
-            )
+            old = nl if pos > neg > 0 else (pl if neg > pos > 0 else "neutral")
             existing = self._active_drifts.get(dim)
             if existing and existing.get("direction") == direction:
                 continue

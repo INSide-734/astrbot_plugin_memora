@@ -20,7 +20,6 @@ from core.base.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
-    EntityValidationError,
 )
 from core.base.list_sorting import SortQuery
 from core.jargon.jargon_admin_service import JargonAdminService
@@ -76,8 +75,16 @@ def _make_jargon_meaning(term="破防", group_id="g1", confirmed=True):
     )
 
 
-def _make_stub(*, has_filter=True, has_store=True, has_miner=False,
-               candidates=None, meanings=None, store_count=5, store_confirmed=3):
+def _make_stub(
+    *,
+    has_filter=True,
+    has_store=True,
+    has_miner=False,
+    candidates=None,
+    meanings=None,
+    store_count=5,
+    store_confirmed=3,
+):
     """Create a JargonApiMixin stub with mocked dependencies."""
 
     class Stub:
@@ -88,9 +95,7 @@ def _make_stub(*, has_filter=True, has_store=True, has_miner=False,
         mine_jargon = JargonApiMixin.mine_jargon
         _get_jargon_filter = JargonApiMixin._get_jargon_filter
         _get_jargon_resolution_lock = JargonApiMixin._get_jargon_resolution_lock
-        _is_closed_jargon_store = staticmethod(
-            JargonApiMixin._is_closed_jargon_store
-        )
+        _is_closed_jargon_store = staticmethod(JargonApiMixin._is_closed_jargon_store)
         _find_open_jargon_store = JargonApiMixin._find_open_jargon_store
         _close_unpublished_jargon_store = staticmethod(
             JargonApiMixin._close_unpublished_jargon_store
@@ -121,10 +126,14 @@ def _make_stub(*, has_filter=True, has_store=True, has_miner=False,
     if has_filter:
         jf = MagicMock()
         jf.get_candidates = MagicMock(return_value=candidates or [])
-        jf.get_stats = MagicMock(return_value=MagicMock(
-            group_id="g1", total_terms=50, candidate_count=8,
-            top_candidates=candidates or [],
-        ))
+        jf.get_stats = MagicMock(
+            return_value=MagicMock(
+                group_id="g1",
+                total_terms=50,
+                candidate_count=8,
+                top_candidates=candidates or [],
+            )
+        )
         stub.plugin._jargon_filter = jf
 
     if has_store:
@@ -166,7 +175,10 @@ class TestJargonCandidates:
 
     @pytest.mark.asyncio
     async def test_returns_candidates(self) -> None:
-        cands = [_make_jargon_candidate("破防", "g1"), _make_jargon_candidate("躺平", "g1")]
+        cands = [
+            _make_jargon_candidate("破防", "g1"),
+            _make_jargon_candidate("躺平", "g1"),
+        ]
         stub = _make_stub(candidates=cands)
         mock_req = _make_mock_request(group_id="g1", limit="10")
         with patch("core.api.jargon_api.request", mock_req):
@@ -235,7 +247,10 @@ class TestJargonCandidates:
 
     @pytest.mark.asyncio
     async def test_negative_limit_falls_back_to_default_window(self) -> None:
-        cands = [_make_jargon_candidate("破防", "g1"), _make_jargon_candidate("躺平", "g1")]
+        cands = [
+            _make_jargon_candidate("破防", "g1"),
+            _make_jargon_candidate("躺平", "g1"),
+        ]
         stub = _make_stub(candidates=cands)
         mock_req = _make_mock_request(group_id="g1", limit="-1")
         with patch("core.api.jargon_api.request", mock_req):
@@ -251,7 +266,9 @@ class TestJargonCandidates:
     @pytest.mark.asyncio
     async def test_skips_malformed_candidate_items(self) -> None:
         broken = MagicMock()
-        type(broken).term = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken candidate")))
+        type(broken).term = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("broken candidate"))
+        )
         cands = [_make_jargon_candidate("破防", "g1"), broken]
         stub = _make_stub(candidates=cands)
         mock_req = _make_mock_request(group_id="g1", limit="10")
@@ -276,9 +293,7 @@ class TestJargonCandidates:
         if failure_source == "filter_resolution":
             stub._get_jargon_filter = MagicMock(side_effect=failure)
         else:
-            stub.plugin._jargon_filter.get_candidates = MagicMock(
-                side_effect=failure
-            )
+            stub.plugin._jargon_filter.get_candidates = MagicMock(side_effect=failure)
         mock_req = _make_mock_request(group_id=group_secret, limit="10")
 
         with (
@@ -338,7 +353,10 @@ class TestJargonMeanings:
 
     @pytest.mark.asyncio
     async def test_returns_meanings(self) -> None:
-        meanings = [_make_jargon_meaning("破防", "g1"), _make_jargon_meaning("躺平", "g1")]
+        meanings = [
+            _make_jargon_meaning("破防", "g1"),
+            _make_jargon_meaning("躺平", "g1"),
+        ]
         stub = _make_stub(meanings=meanings)
         service = MagicMock()
         service.revision_for = MagicMock(side_effect=lambda item: f"rev-{item.term}")
@@ -348,9 +366,7 @@ class TestJargonMeanings:
             result = await stub.get_jargon_meanings()
         assert result["status"] == "ok"
         assert len(result["data"]["meanings"]) == 2
-        assert result["data"]["meanings"][0]["context_examples"] == [
-            "我今天真的破防了"
-        ]
+        assert result["data"]["meanings"][0]["context_examples"] == ["我今天真的破防了"]
         assert [item["revision"] for item in result["data"]["meanings"]] == [
             "rev-破防",
             "rev-躺平",
@@ -422,7 +438,9 @@ class TestJargonMeanings:
     @pytest.mark.asyncio
     async def test_skips_malformed_meaning_items(self) -> None:
         broken = MagicMock()
-        type(broken).term = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken meaning")))
+        type(broken).term = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("broken meaning"))
+        )
         good = _make_jargon_meaning("破防", "g1")
         revision_failure = _make_jargon_meaning("躺平", "g1")
         meanings = [good, broken, revision_failure]
@@ -763,9 +781,7 @@ class TestJargonAdminServiceResolution:
     async def test_existing_store_is_returned_without_ownership_cleanup(self) -> None:
         existing = SimpleNamespace(close=AsyncMock())
         api = JargonApiMixin()
-        api.plugin = SimpleNamespace(
-            initializer=SimpleNamespace(jargon_store=existing)
-        )
+        api.plugin = SimpleNamespace(initializer=SimpleNamespace(jargon_store=existing))
 
         resolved = await api._get_jargon_store()
 
@@ -902,7 +918,10 @@ class TestJargonAdminServiceResolution:
             assert plugin._jargon_store is replacement_store
             assert plugin._jargon_admin_service is second_service
         finally:
-            if replacement_store is not None and replacement_store.connection is not None:
+            if (
+                replacement_store is not None
+                and replacement_store.connection is not None
+            ):
                 await replacement_store.close()
 
     @pytest.mark.asyncio
@@ -1000,7 +1019,9 @@ class TestJargonCrud:
             await store.close()
 
     @pytest.mark.asyncio
-    async def test_create_returns_complete_entity_revision_and_manual_defaults(self) -> None:
+    async def test_create_returns_complete_entity_revision_and_manual_defaults(
+        self,
+    ) -> None:
         created = _make_jargon_meaning("灰度", "g1")
         created.meaning = "Gradual rollout"
         created.confidence = 0.9
@@ -1044,7 +1065,10 @@ class TestJargonCrud:
         service.create.assert_awaited_once_with(**payload)
         service.revision_for.assert_called_once_with(created)
         rendered_audit = repr(audit.call_args_list)
-        assert "action=%s entity=jargon identity=%s result=%s error_code=%s" in rendered_audit
+        assert (
+            "action=%s entity=jargon identity=%s result=%s error_code=%s"
+            in rendered_audit
+        )
         assert "'success', 'none'" in rendered_audit
         assert "Gradual rollout" not in rendered_audit
 
@@ -1113,7 +1137,9 @@ class TestJargonCrud:
         service.update.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_update_returns_service_revision_for_full_persisted_meaning(self) -> None:
+    async def test_update_returns_service_revision_for_full_persisted_meaning(
+        self,
+    ) -> None:
         updated = _make_jargon_meaning("灰度", "g1")
         service = MagicMock()
         service.update = AsyncMock(return_value=updated)
@@ -1211,7 +1237,9 @@ class TestJargonCrud:
             "unknown": secret,
         }
 
-        with patch("core.api.jargon_api.request", _request_json(payload)) as request_mock:
+        with patch(
+            "core.api.jargon_api.request", _request_json(payload)
+        ) as request_mock:
             result = await api.create_jargon()
 
         audits = [
@@ -1305,9 +1333,7 @@ class TestJargonCrud:
             await api.create_jargon()
 
         assert not [
-            record
-            for record in caplog.records
-            if "[黑话 AUDIT]" in record.getMessage()
+            record for record in caplog.records if "[黑话 AUDIT]" in record.getMessage()
         ]
 
     @pytest.mark.asyncio
@@ -1414,9 +1440,7 @@ class TestJargonCrud:
         exposed.context_examples = [context_secret]
         service = MagicMock()
         service.create = AsyncMock(return_value=exposed)
-        service.revision_for = MagicMock(
-            side_effect=RuntimeError(exception_secret)
-        )
+        service.revision_for = MagicMock(side_effect=RuntimeError(exception_secret))
         api = _make_admin_api(service)
         payload = {
             "term": "term-secret-d810c",
@@ -1505,7 +1529,9 @@ class TestJargonBatch:
         json.dumps(result, ensure_ascii=False, allow_nan=False)
 
     @pytest.mark.asyncio
-    async def test_batch_rejects_arbitrary_replacement_via_domain_dispatcher(self) -> None:
+    async def test_batch_rejects_arbitrary_replacement_via_domain_dispatcher(
+        self,
+    ) -> None:
         service = JargonAdminService(MagicMock())
         api = _make_admin_api(service)
         payload = {
@@ -1670,14 +1696,23 @@ class TestJargonStats:
     @pytest.mark.asyncio
     async def test_stats_skips_malformed_top_candidates(self) -> None:
         broken = MagicMock()
-        type(broken).term = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken top candidate")))
-        cands = [_make_jargon_candidate("破防", "g1"), broken, _make_jargon_candidate("躺平", "g1")]
+        type(broken).term = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("broken top candidate"))
+        )
+        cands = [
+            _make_jargon_candidate("破防", "g1"),
+            broken,
+            _make_jargon_candidate("躺平", "g1"),
+        ]
         stub = _make_stub(candidates=cands, store_count=5, store_confirmed=3)
         mock_req = _make_mock_request(group_id="g1")
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.get_jargon_stats()
         assert result["status"] == "ok"
-        assert [item["term"] for item in result["data"]["top_candidates"]] == ["破防", "躺平"]
+        assert [item["term"] for item in result["data"]["top_candidates"]] == [
+            "破防",
+            "躺平",
+        ]
 
     @pytest.mark.asyncio
     async def test_stats_tolerates_malformed_top_candidate_container(self) -> None:
@@ -1752,9 +1787,13 @@ class TestJargonConfirm:
     async def test_confirm_success(self) -> None:
         stub = _make_stub()
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "term": "破防", "group_id": "g1", "confirmed": True,
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "term": "破防",
+                "group_id": "g1",
+                "confirmed": True,
+            }
+        )
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.confirm_jargon()
         assert result["status"] == "ok"
@@ -1764,9 +1803,13 @@ class TestJargonConfirm:
     async def test_reject_success(self) -> None:
         stub = _make_stub()
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "term": "破防", "group_id": "g1", "confirmed": False,
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "term": "破防",
+                "group_id": "g1",
+                "confirmed": False,
+            }
+        )
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.confirm_jargon()
         assert result["status"] == "ok"
@@ -1774,12 +1817,18 @@ class TestJargonConfirm:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("confirmed", [1, 0, "true", None, [], {}])
-    async def test_confirm_rejects_non_boolean_without_mutation(self, confirmed) -> None:
+    async def test_confirm_rejects_non_boolean_without_mutation(
+        self, confirmed
+    ) -> None:
         stub = _make_stub()
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "term": "破防", "group_id": "g1", "confirmed": confirmed,
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "term": "破防",
+                "group_id": "g1",
+                "confirmed": confirmed,
+            }
+        )
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.confirm_jargon()
         assert result["code"] == "validation_error"
@@ -1789,9 +1838,12 @@ class TestJargonConfirm:
     async def test_missing_term_returns_error(self) -> None:
         stub = _make_stub()
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "group_id": "g1", "confirmed": True,
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "group_id": "g1",
+                "confirmed": True,
+            }
+        )
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.confirm_jargon()
         assert result["status"] == "error"
@@ -1855,9 +1907,12 @@ class TestJargonMine:
         stub = _make_stub(has_miner=True)
         stub.plugin._jargon_miner.run_once = AsyncMock(return_value=meanings)
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "group_id": "g1", "limit": 5,
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "group_id": "g1",
+                "limit": 5,
+            }
+        )
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.mine_jargon()
         assert result["status"] == "ok"
@@ -1878,9 +1933,12 @@ class TestJargonMine:
         stub = _make_stub(has_miner=True)
         stub.plugin._jargon_miner.run_once = AsyncMock(return_value=meanings)
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "group_id": "g1", "limit": -3,
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "group_id": "g1",
+                "limit": -3,
+            }
+        )
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.mine_jargon()
         assert result["status"] == "ok"
@@ -1890,14 +1948,23 @@ class TestJargonMine:
     @pytest.mark.asyncio
     async def test_mine_skips_malformed_result_items(self) -> None:
         broken = MagicMock()
-        type(broken).term = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken mined meaning")))
-        meanings = [_make_jargon_meaning("躺平", "g1"), broken, _make_jargon_meaning("破防", "g1")]
+        type(broken).term = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("broken mined meaning"))
+        )
+        meanings = [
+            _make_jargon_meaning("躺平", "g1"),
+            broken,
+            _make_jargon_meaning("破防", "g1"),
+        ]
         stub = _make_stub(has_miner=True)
         stub.plugin._jargon_miner.run_once = AsyncMock(return_value=meanings)
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "group_id": "g1", "limit": 5,
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "group_id": "g1",
+                "limit": 5,
+            }
+        )
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.mine_jargon()
         assert result["status"] == "ok"
@@ -1919,9 +1986,12 @@ class TestJargonMine:
         stub = _make_stub(has_miner=True)
         stub.plugin._jargon_miner.run_once = AsyncMock(return_value=BrokenResults())
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "group_id": "g1", "limit": 5,
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "group_id": "g1",
+                "limit": 5,
+            }
+        )
         with patch("core.api.jargon_api.request", mock_req):
             result = await stub.mine_jargon()
         assert result["status"] == "ok"
@@ -1998,9 +2068,7 @@ async def test_legacy_component_and_execution_failures_are_redacted(
         patch("core.api.jargon_api.request", _request_json(payload)),
         patch("core.api.jargon_api.logger") as logged,
     ):
-        result = await getattr(
-            api, "confirm_jargon" if is_confirm else "mine_jargon"
-        )()
+        result = await getattr(api, "confirm_jargon" if is_confirm else "mine_jargon")()
 
     rendered = json.dumps(result, ensure_ascii=False) + str(logged.method_calls)
     assert result["code"] == "internal_error"

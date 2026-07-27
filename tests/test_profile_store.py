@@ -5,8 +5,8 @@ import time
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
-import pytest
 import aiosqlite
+import pytest
 
 from core.base.entity_editing import (
     EditConflictError,
@@ -15,7 +15,7 @@ from core.base.entity_editing import (
     compute_entity_revision,
 )
 from core.base.list_sorting import SortQuery
-from core.models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
+from core.models.user_profile import TagCategory, UserPreferences, UserTag
 from core.storage.profile_store import ProfileStore
 
 
@@ -171,6 +171,7 @@ class TestProfileStoreCRUD:
         assert original is not None
 
         import asyncio
+
         await asyncio.sleep(0.02)
         await store.touch("user-touch")
         updated = await store.get_profile("user-touch")
@@ -191,7 +192,9 @@ class TestProfileStoreCRUD:
         assert total == 5
 
     @pytest.mark.asyncio
-    async def test_list_profiles_sorts_display_names_before_pagination(self, tmp_db_path):
+    async def test_list_profiles_sorts_display_names_before_pagination(
+        self, tmp_db_path
+    ):
         store = ProfileStore(tmp_db_path)
         await store.init_table()
 
@@ -212,7 +215,11 @@ class TestProfileStoreCRUD:
         store = ProfileStore(tmp_db_path)
         await store.init_table()
 
-        for user_id, total_messages in (("user-low", 2), ("user-high", 9), ("user-mid", 5)):
+        for user_id, total_messages in (
+            ("user-low", 2),
+            ("user-high", 9),
+            ("user-mid", 5),
+        ):
             profile = await store.create_profile(user_id)
             profile.total_messages = total_messages
             await store.update_profile(profile)
@@ -344,9 +351,15 @@ class TestProfileStoreTags:
         await store.init_table()
 
         await store.create_profile("user-full")
-        await store.add_tag("user-full", _make_tag(category=TagCategory.INTEREST, value="AI"))
-        await store.add_tag("user-full", _make_tag(category=TagCategory.PERSONALITY, value="curious"))
-        await store.add_tag("user-full", _make_tag(category=TagCategory.HABIT, value="early_bird"))
+        await store.add_tag(
+            "user-full", _make_tag(category=TagCategory.INTEREST, value="AI")
+        )
+        await store.add_tag(
+            "user-full", _make_tag(category=TagCategory.PERSONALITY, value="curious")
+        )
+        await store.add_tag(
+            "user-full", _make_tag(category=TagCategory.HABIT, value="early_bird")
+        )
 
         profile = await store.get_profile("user-full")
         assert profile is not None
@@ -480,7 +493,9 @@ class TestProfileStoreAtomicAdminCRUD:
         assert profile.created_at == profile.updated_at
 
     @pytest.mark.asyncio
-    async def test_create_profile_strict_duplicate_preserves_existing(self, tmp_db_path):
+    async def test_create_profile_strict_duplicate_preserves_existing(
+        self, tmp_db_path
+    ):
         store = ProfileStore(tmp_db_path)
         await store.init_table()
         await store.create_profile_strict(
@@ -735,7 +750,9 @@ class TestProfileStoreAtomicAdminCRUD:
         assert after is not None
         assert after.to_dict() == remote.to_dict()
         assert raised.value.current_entity == remote.to_dict()
-        assert raised.value.current_revision == compute_entity_revision(remote.to_dict())
+        assert raised.value.current_revision == compute_entity_revision(
+            remote.to_dict()
+        )
 
     @pytest.mark.asyncio
     async def test_replace_missing_profile_raises_not_found(self, tmp_db_path):
@@ -832,7 +849,9 @@ class TestProfileStoreAtomicAdminCRUD:
         assert after is not None
         assert after.to_dict() == remote.to_dict()
         assert raised.value.current_entity == remote.to_dict()
-        assert raised.value.current_revision == compute_entity_revision(remote.to_dict())
+        assert raised.value.current_revision == compute_entity_revision(
+            remote.to_dict()
+        )
 
     @pytest.mark.asyncio
     async def test_replace_rolls_back_non_cancellation_base_exception(
@@ -897,9 +916,7 @@ class TestProfileStoreAtomicAdminCRUD:
         assert [tag.value for tag in recovered.tags] == ["recovered-tag"]
 
     @pytest.mark.asyncio
-    async def test_delete_rolls_back_non_cancellation_base_exception(
-        self, tmp_db_path
-    ):
+    async def test_delete_rolls_back_non_cancellation_base_exception(self, tmp_db_path):
         store = ProfileStore(tmp_db_path)
         await store.init_table()
         await store.create_profile_strict(
@@ -999,9 +1016,7 @@ class TestProfileStoreAtomicAdminCRUD:
         await store.touch("rollback-retry")
 
     @pytest.mark.asyncio
-    async def test_commit_error_survives_transient_rollback_failure(
-        self, tmp_db_path
-    ):
+    async def test_commit_error_survives_transient_rollback_failure(self, tmp_db_path):
         store = ProfileStore(tmp_db_path)
         await store.init_table()
         await store.create_profile_strict(

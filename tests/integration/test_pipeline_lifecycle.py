@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import shutil
+import sqlite3
 import tempfile
 import time
 from pathlib import Path
@@ -30,10 +30,10 @@ from core.models.memory_atom import (
     compute_decay_score,
 )
 
-
 # ============================================================================
 # test_memory_decay_over_time
 # ============================================================================
+
 
 @pytest.mark.asyncio
 @pytest.mark.integration
@@ -50,7 +50,6 @@ async def test_memory_decay_over_time(
     """
     # Arrange
     store = integration_atom_store
-    now = time.time()
 
     # 清除 store 中已有数据，隔离测试
     await _clear_all_atoms(store)
@@ -83,9 +82,7 @@ async def test_memory_decay_over_time(
     score_fresh = retrieved.compute_temporal_score(
         reference_time=retrieved.last_accessed_at
     )
-    assert score_fresh >= 0.99, (
-        f"新鲜记忆的时间分应接近 1.0，实际 {score_fresh:.6f}"
-    )
+    assert score_fresh >= 0.99, f"新鲜记忆的时间分应接近 1.0，实际 {score_fresh:.6f}"
 
     # 验证插入后 expires_at 被正确计算 (TTL=7天左右)
     expected_expiry = retrieved.created_at + retrieved.ttl_days * 86400.0
@@ -102,9 +99,7 @@ async def test_memory_decay_over_time(
     # EXPONENTIAL decay: exp(-ln(2) * days_since / (ttl_days/2))
     # days_since=7, ttl_days=7 → exp(-ln(2) * 7 / 3.5) = exp(-2*ln(2)) = 0.25
     # 实际因 effective_ttl = max(1.0, ttl_days) = 7，half_life = 3.5
-    assert score_7d < 0.5, (
-        f"7天后的时间分应显著下降，实际 {score_7d:.6f}"
-    )
+    assert score_7d < 0.5, f"7天后的时间分应显著下降，实际 {score_7d:.6f}"
 
     # 验证过期判定 — 使用实际计算的 expires_at 进行验证
     # _prepare_atom_for_insert 使用 compute_ttl 计算实时 TTL（此处 ~13.65 天）
@@ -130,8 +125,7 @@ async def test_memory_decay_over_time(
         ref_time = retrieved.last_accessed_at + day * 86400.0
         score = retrieved.compute_temporal_score(reference_time=ref_time)
         assert score <= prev, (
-            f"temporal_score 应单调递减: day={day}, "
-            f"prev={prev:.6f}, curr={score:.6f}"
+            f"temporal_score 应单调递减: day={day}, prev={prev:.6f}, curr={score:.6f}"
         )
         prev = score
 
@@ -151,6 +145,7 @@ async def test_memory_decay_over_time(
 # ============================================================================
 # test_expired_memories_cleanup
 # ============================================================================
+
 
 @pytest.mark.asyncio
 @pytest.mark.integration
@@ -224,7 +219,7 @@ async def test_expired_memories_cleanup(
     expired_id = await store.insert(expired_atom)
     lt1_id = await store.insert(long_term_1)
     lt2_id = await store.insert(long_term_2)
-    all_ids = {expired_id, lt1_id, lt2_id}
+    assert len({expired_id, lt1_id, lt2_id}) == 3
 
     # 同时添加 FAISS 向量（模拟真实场景）
     for atom in [expired_atom, long_term_1, long_term_2]:
@@ -288,9 +283,7 @@ async def test_expired_memories_cleanup(
     assert expired_retrieved.status == AtomStatus.EXPIRED
 
     # Assert — FAISS 仍保留所有向量（forget 阶段才移除 FTS）
-    assert faiss.ntotal == 3, (
-        f"expire 阶段不应移除 FAISS 向量，实际 {faiss.ntotal}"
-    )
+    assert faiss.ntotal == 3, f"expire 阶段不应移除 FAISS 向量，实际 {faiss.ntotal}"
 
     # Act — 手动推进 expires_at 使过期记忆的 expires_at 超过 forget 阈值
     past_forget_threshold = now - (mgr._forget_delay_days + 1.0) * 86400.0
@@ -325,6 +318,7 @@ async def test_expired_memories_cleanup(
 # test_backup_and_restore_roundtrip
 # ============================================================================
 
+
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_backup_and_restore_roundtrip(
@@ -338,13 +332,10 @@ async def test_backup_and_restore_roundtrip(
     4. 从备份恢复
     5. 验证恢复后的记忆数量和内容与原始一致
     """
-    from core.managers.backup_manager import BackupManager
 
     # Arrange — 清除已有数据
     store = integration_atom_store
     await _clear_all_atoms(store)
-
-    now = time.time()
 
     # 创建 3 条不同类型的记忆
     atoms: list[MemoryAtom] = [
@@ -506,6 +497,7 @@ async def test_restore_reload_lifecycle_applies_then_validates(tmp_path: Path) -
 # ============================================================================
 # helpers
 # ============================================================================
+
 
 async def _clear_all_atoms(store: Any) -> None:
     """清空 memory_atoms 表和 FTS 索引（保留表结构）。"""

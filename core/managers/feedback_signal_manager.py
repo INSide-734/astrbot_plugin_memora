@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
 from ..models.feedback_signal import (
     FeedbackAdapterKind,
     FeedbackSignalAggregate,
@@ -56,7 +56,10 @@ class FeedbackSignalManager:
 
         if event.adapter_kind not in self._registered_adapters:
             return FeedbackIngestResult(False, "untrusted_event_source")
-        if event.scope_domain != trusted_scope or event.persona_domain != trusted_persona:
+        if (
+            event.scope_domain != trusted_scope
+            or event.persona_domain != trusted_persona
+        ):
             return FeedbackIngestResult(False, "scope_mismatch")
         try:
             now = _utc(reference_time)
@@ -93,13 +96,20 @@ class FeedbackSignalManager:
         """从已提交事件按固定 reference time 完整重建聚合。"""
 
         now = _utc(reference_time)
-        groups: dict[tuple[str, str | None, str], list[TrustedFeedbackEvent]] = defaultdict(list)
+        groups: dict[tuple[str, str | None, str], list[TrustedFeedbackEvent]] = (
+            defaultdict(list)
+        )
         events = self.store.list_events()
         for event in events:
             age = (now - _utc(event.observed_at)).total_seconds()
-            if age < -self.policy.max_future_skew_seconds or age > self.policy.max_event_age_seconds:
+            if (
+                age < -self.policy.max_future_skew_seconds
+                or age > self.policy.max_event_age_seconds
+            ):
                 continue
-            groups[(event.scope_domain, event.persona_domain, event.window_key)].append(event)
+            groups[(event.scope_domain, event.persona_domain, event.window_key)].append(
+                event
+            )
         domain_windows: dict[tuple[str, str | None], set[str]] = defaultdict(set)
         for scope, persona, window_key in groups:
             domain_windows[(scope, persona)].add(window_key)
@@ -111,7 +121,11 @@ class FeedbackSignalManager:
         for (scope, persona, window_key), group in ordered_groups:
             support = _decayed_support(group, now, self.policy)
             independent = len(domain_windows[(scope, persona)])
-            status = "candidate" if independent >= self.policy.min_independent_windows else "baseline_retained"
+            status = (
+                "candidate"
+                if independent >= self.policy.min_independent_windows
+                else "baseline_retained"
+            )
             delta = 0.0
             if status == "candidate":
                 delta = _bounded_delta(support, self.policy.max_weight_delta)
@@ -166,7 +180,10 @@ class FeedbackSignalManager:
                 row["status"] == "baseline_retained" for row in rows
             ),
             "max_abs_delta": round(
-                max((abs(float(row["delta_from_baseline"])) for row in rows), default=0.0),
+                max(
+                    (abs(float(row["delta_from_baseline"])) for row in rows),
+                    default=0.0,
+                ),
                 6,
             ),
         }

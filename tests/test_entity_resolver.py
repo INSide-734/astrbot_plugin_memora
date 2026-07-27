@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 
@@ -47,7 +46,9 @@ class TestDedupePreserveOrder:
         assert EntityResolver.dedupe_preserve_order([]) == []
 
     def test_all_duplicates(self) -> None:
-        assert EntityResolver.dedupe_preserve_order(["Alice", "Alice", "alice"]) == ["Alice"]
+        assert EntityResolver.dedupe_preserve_order(["Alice", "Alice", "alice"]) == [
+            "Alice"
+        ]
 
 
 class TestISAHierarchy:

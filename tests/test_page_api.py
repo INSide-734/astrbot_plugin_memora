@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
-from types import SimpleNamespace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,7 +19,6 @@ from core.page_api import (
     PLUGIN_NAME,
     PluginPageApi,
 )
-
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -136,12 +133,18 @@ class TestMemoryFullFormUpdate:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("full_form", [False, True])
-    async def test_memory_lookup_failure_is_stable_and_redacted(self, full_form) -> None:
+    async def test_memory_lookup_failure_is_stable_and_redacted(
+        self, full_form
+    ) -> None:
         secret = r"lookup-secret C:\\private\\memory.db"
         api, _ = self._api_and_engine()
         api._get_memory_record.side_effect = RuntimeError(secret)
         request_mock = MagicMock()
-        payload = {"memory_id": 7, "changes": {"importance": 0.8}} if full_form else {"memory_id": 7, "field": "importance", "value": 0.8}
+        payload = (
+            {"memory_id": 7, "changes": {"importance": 0.8}}
+            if full_form
+            else {"memory_id": 7, "field": "importance", "value": 0.8}
+        )
         request_mock.get_json = AsyncMock(return_value=payload)
         with (
             patch("core.api.memory_write_api.request", request_mock),
@@ -189,9 +192,9 @@ class TestMemoryFullFormUpdate:
             "type",
             "status",
         ]
-        assert {
-            item["reason"] for item in added["metadata"]["update_history"]
-        } == {"corrected by administrator"}
+        assert {item["reason"] for item in added["metadata"]["update_history"]} == {
+            "corrected by administrator"
+        }
 
     @pytest.mark.asyncio
     async def test_memory_full_form_validates_every_change_before_writing(self) -> None:
@@ -213,7 +216,9 @@ class TestMemoryFullFormUpdate:
         engine.update_memory.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_memory_full_form_updates_metadata_once_with_field_history(self) -> None:
+    async def test_memory_full_form_updates_metadata_once_with_field_history(
+        self,
+    ) -> None:
         api, engine = self._api_and_engine()
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
@@ -240,7 +245,9 @@ class TestMemoryFullFormUpdate:
         ]
 
     @pytest.mark.asyncio
-    async def test_memory_full_form_cleans_up_new_memory_when_old_delete_fails(self) -> None:
+    async def test_memory_full_form_cleans_up_new_memory_when_old_delete_fails(
+        self,
+    ) -> None:
         api, engine = self._api_and_engine()
         engine.delete_memory = AsyncMock(side_effect=[False, True])
         request_mock = MagicMock()
@@ -256,7 +263,9 @@ class TestMemoryFullFormUpdate:
         assert engine.delete_memory.await_args_list[1].args == (8,)
 
     @pytest.mark.asyncio
-    async def test_memory_full_form_rejects_read_only_changes_before_writing(self) -> None:
+    async def test_memory_full_form_rejects_read_only_changes_before_writing(
+        self,
+    ) -> None:
         api, engine = self._api_and_engine()
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
@@ -342,7 +351,10 @@ class TestMemoryFullFormUpdate:
             result = await api.update_memory()
 
         assert result["code"] == "replacement_failed"
-        assert [call.args for call in engine.delete_memory.await_args_list] == [(7,), (8,)]
+        assert [call.args for call in engine.delete_memory.await_args_list] == [
+            (7,),
+            (8,),
+        ]
 
     @pytest.mark.asyncio
     async def test_memory_full_form_reports_rollback_failed_when_cleanup_returns_false(
@@ -355,9 +367,10 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock) as request_patch, patch(
-            "core.api.memory_write_api.logger.error"
-        ) as log_error:
+        with (
+            patch("core.api.memory_write_api.request", request_mock) as request_patch,
+            patch("core.api.memory_write_api.logger.error") as log_error,
+        ):
             result = await api.update_memory()
 
         assert result == {
@@ -365,7 +378,10 @@ class TestMemoryFullFormUpdate:
             "message": "替换回滚失败，请稍后检查记忆状态",
             "code": "rollback_failed",
         }
-        assert [call.args for call in engine.delete_memory.await_args_list] == [(7,), (8,)]
+        assert [call.args for call in engine.delete_memory.await_args_list] == [
+            (7,),
+            (8,),
+        ]
         assert "New content" not in str(log_error.call_args_list)
         assert log_error.call_args.args[1:] == (7, 8, "False", None)
         request_patch.get_json.assert_awaited_once()
@@ -383,18 +399,24 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock), patch(
-            "core.api.memory_write_api.logger.error"
-        ) as log_error:
+        with (
+            patch("core.api.memory_write_api.request", request_mock),
+            patch("core.api.memory_write_api.logger.error") as log_error,
+        ):
             result = await api.update_memory()
 
         assert result["code"] == "rollback_failed"
-        assert [call.args for call in engine.delete_memory.await_args_list] == [(7,), (8,)]
+        assert [call.args for call in engine.delete_memory.await_args_list] == [
+            (7,),
+            (8,),
+        ]
         assert "cleanup database failure" not in str(log_error.call_args_list)
         assert "RuntimeError" in str(log_error.call_args_list)
 
     @pytest.mark.asyncio
-    async def test_memory_full_form_backend_add_cancellation_keeps_original(self) -> None:
+    async def test_memory_full_form_backend_add_cancellation_keeps_original(
+        self,
+    ) -> None:
         api, engine = self._api_and_engine()
 
         async def add_memory(**_kwargs):
@@ -406,9 +428,10 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock), patch(
-            "core.api.memory_write_api.logger.error"
-        ) as log_error:
+        with (
+            patch("core.api.memory_write_api.request", request_mock),
+            patch("core.api.memory_write_api.logger.error") as log_error,
+        ):
             result = await api.update_memory()
 
         assert result == {
@@ -438,9 +461,10 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock), patch(
-            "core.api.memory_write_api.logger.error"
-        ) as log_error:
+        with (
+            patch("core.api.memory_write_api.request", request_mock),
+            patch("core.api.memory_write_api.logger.error") as log_error,
+        ):
             result = await api.update_memory()
 
         assert result == {
@@ -471,14 +495,20 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock), patch(
-            "core.api.memory_write_api.logger.error"
-        ) as log_error:
+        with (
+            patch("core.api.memory_write_api.request", request_mock),
+            patch("core.api.memory_write_api.logger.error") as log_error,
+        ):
             result = await api.update_memory()
 
         assert result["code"] == "rollback_failed"
         assert delete_calls == [7, 8]
-        assert log_error.call_args.args[1:] == (7, 8, "backend_cancelled", "CancelledError")
+        assert log_error.call_args.args[1:] == (
+            7,
+            8,
+            "backend_cancelled",
+            "CancelledError",
+        )
 
     @pytest.mark.asyncio
     async def test_memory_full_form_preserves_terminal_add_caller_cancellation(
@@ -503,7 +533,9 @@ class TestMemoryFullFormUpdate:
 
         with (
             patch("core.api.memory_write_api.request", request_mock),
-            patch("core.api.memory_write_api.asyncio.shield", cancel_after_completed_add),
+            patch(
+                "core.api.memory_write_api.asyncio.shield", cancel_after_completed_add
+            ),
         ):
             with pytest.raises(asyncio.CancelledError):
                 await api.update_memory()
@@ -928,9 +960,9 @@ class TestBuildGraphViewPayload:
             matched_node_ids=[1, 3],
         )
         nodes = payload["nodes"]
-        assert nodes[0]["highlighted"] is True   # id=1
+        assert nodes[0]["highlighted"] is True  # id=1
         assert nodes[1]["highlighted"] is False  # id=2
-        assert nodes[2]["highlighted"] is True   # id=3
+        assert nodes[2]["highlighted"] is True  # id=3
 
     def test_node_type_breakdown(self) -> None:
         """节点 type breakdown is computed in summary."""
@@ -1270,7 +1302,9 @@ class TestMaintenanceWriteGuard:
     def test_returns_error_when_restore_status_check_raises(self) -> None:
         plugin = MagicMock()
         plugin._backup_manager = MagicMock()
-        plugin._backup_manager.has_pending_restores.side_effect = RuntimeError("status broken")
+        plugin._backup_manager.has_pending_restores.side_effect = RuntimeError(
+            "status broken"
+        )
         api = PluginPageApi(plugin)
 
         result = api._maintenance_write_guard()
@@ -1340,9 +1374,7 @@ class TestGetMemoryDetail:
         engine.get_memory = AsyncMock(return_value=None)
         engine.db_connection = MagicMock()
         engine.db_connection.execute = AsyncMock()
-        plugin = SimpleNamespace(
-            initializer=SimpleNamespace(memory_engine=engine)
-        )
+        plugin = SimpleNamespace(initializer=SimpleNamespace(memory_engine=engine))
         api = PluginPageApi(plugin)
         api._ensure_plugin_ready = AsyncMock(
             return_value=({"memory_engine": engine}, None)
@@ -1384,8 +1416,7 @@ class TestGetMemoryDetail:
             if "operation=get_memory_detail" in record.getMessage()
         ]
         assert messages == [
-            "[PageAPI] operation=get_memory_detail memory_id=7 "
-            "error_class=RuntimeError"
+            "[PageAPI] operation=get_memory_detail memory_id=7 error_class=RuntimeError"
         ]
         rendered = repr(result) + caplog.text
         assert secret not in rendered
@@ -1432,17 +1463,24 @@ class TestGetMemoryRecord:
         """PluginPageApi with a memory_engine that has get_memory."""
         plugin = MagicMock()
         engine = MagicMock()
-        engine.get_memory = AsyncMock(return_value={
-            "id": 1, "doc_id": "doc-1", "text": "hello",
-            "metadata": {"key": "val"},
-            "created_at": "2024-01-01", "updated_at": "2024-01-02",
-        })
+        engine.get_memory = AsyncMock(
+            return_value={
+                "id": 1,
+                "doc_id": "doc-1",
+                "text": "hello",
+                "metadata": {"key": "val"},
+                "created_at": "2024-01-01",
+                "updated_at": "2024-01-02",
+            }
+        )
         plugin.initializer = MagicMock()
         plugin.initializer.memory_engine = engine
         return PluginPageApi(plugin)
 
     @pytest.mark.asyncio
-    async def test_returns_memory_from_engine(self, api_with_engine: PluginPageApi) -> None:
+    async def test_returns_memory_from_engine(
+        self, api_with_engine: PluginPageApi
+    ) -> None:
         """当 engine.get_memory returns a record, it is returned directly."""
         result = await api_with_engine._get_memory_record(1)
         assert result is not None
@@ -1468,9 +1506,9 @@ class TestGetMemoryRecord:
         engine.db_connection = AsyncMock()
         engine.db_connection.execute = AsyncMock()
         cursor = AsyncMock()
-        cursor.fetchone = AsyncMock(return_value=(
-            1, "doc-1", "hello", '{"a":1}', "2024-01-01", "2024-01-02"
-        ))
+        cursor.fetchone = AsyncMock(
+            return_value=(1, "doc-1", "hello", '{"a":1}', "2024-01-01", "2024-01-02")
+        )
         engine.db_connection.execute.return_value = cursor
         plugin.initializer = MagicMock()
         plugin.initializer.memory_engine = engine
@@ -1629,7 +1667,9 @@ class TestGetGroups:
         assert result["data"]["sources"]["affection"] == {"ok": True, "count": 1}
 
     @pytest.mark.asyncio
-    async def test_merges_duplicate_groups_and_keeps_highest_message_count(self) -> None:
+    async def test_merges_duplicate_groups_and_keeps_highest_message_count(
+        self,
+    ) -> None:
         """Duplicate groups across sources collapse to one entry with max count."""
 
         class JargonStoreStub:
@@ -1673,7 +1713,9 @@ class TestGetGroups:
         assert groups["session-only"]["message_count"] == 2
 
     @pytest.mark.asyncio
-    async def test_social_source_count_uses_distinct_groups_in_list_all_fallback(self) -> None:
+    async def test_social_source_count_uses_distinct_groups_in_list_all_fallback(
+        self,
+    ) -> None:
         """Social fallback count should report distinct groups, not relation rows."""
 
         class RelationManagerStub:
@@ -1928,8 +1970,7 @@ class TestRegisterRoutes:
 
         calls = plugin.context.register_web_api.call_args_list
         registered = {
-            (call.args[0], tuple(call.args[2])): call.args[1]
-            for call in calls
+            (call.args[0], tuple(call.args[2])): call.args[1] for call in calls
         }
         for suffix, methods in (
             ("/config/schema", ("GET",)),
@@ -1952,7 +1993,9 @@ class TestRegisterRoutes:
         assert apply_metadata["write_guard"] is True
         assert all(not path.startswith("/Memora/page") for path in metadata)
 
-    def test_injection_strategy_routes_register_primary_aliases_and_metadata(self) -> None:
+    def test_injection_strategy_routes_register_primary_aliases_and_metadata(
+        self,
+    ) -> None:
         plugin = MagicMock()
         api = PluginPageApi(plugin)
 
@@ -1960,8 +2003,7 @@ class TestRegisterRoutes:
 
         calls = plugin.context.register_web_api.call_args_list
         registered = {
-            (call.args[0], tuple(call.args[2])): call.args[1]
-            for call in calls
+            (call.args[0], tuple(call.args[2])): call.args[1] for call in calls
         }
         suffixes = (
             "/injection-strategy/catalog",
@@ -2058,7 +2100,9 @@ class TestRegisterRoutes:
         assert metadata[f"{PAGE_API_PREFIX}/jargon/delete"]["risk"] == "destructive"
         assert metadata[f"{PAGE_API_PREFIX}/jargon/batch"]["risk"] == "write"
 
-    def test_affection_editing_routes_register_all_prefixes_with_expected_methods(self) -> None:
+    def test_affection_editing_routes_register_all_prefixes_with_expected_methods(
+        self,
+    ) -> None:
         plugin = MagicMock()
         api = PluginPageApi(plugin)
 
@@ -2085,8 +2129,13 @@ class TestRegisterRoutes:
                 assert (f"{prefix}{suffix}", (other_method,)) not in registered
 
         metadata = {item["path"]: item for item in api.get_route_metadata()}
-        assert metadata[f"{PAGE_API_PREFIX}/affection/users/delete"]["risk"] == "destructive"
-        assert metadata[f"{PAGE_API_PREFIX}/affection/mood/reset"]["write_guard"] is True
+        assert (
+            metadata[f"{PAGE_API_PREFIX}/affection/users/delete"]["risk"]
+            == "destructive"
+        )
+        assert (
+            metadata[f"{PAGE_API_PREFIX}/affection/mood/reset"]["write_guard"] is True
+        )
 
     def test_route_metadata_declares_risk_auth_and_guards_for_post_routes(self) -> None:
         """Plugin-side route metadata is available for audit and frontend contracts."""
@@ -2098,7 +2147,9 @@ class TestRegisterRoutes:
         api.register_routes()
 
         metadata = api.get_route_metadata()
-        registered_paths = [c[0][0] for c in plugin.context.register_web_api.call_args_list]
+        registered_paths = [
+            c[0][0] for c in plugin.context.register_web_api.call_args_list
+        ]
         primary_registered_paths = [
             path for path in registered_paths if path.startswith(PAGE_API_PREFIX)
         ]
@@ -2143,7 +2194,9 @@ class TestMaintenanceWriteGuardCoverage:
     ) -> None:
         backup_manager = MagicMock()
         backup_manager.has_pending_restores.return_value = True
-        backup_manager.list_pending_restores.return_value = ["memory.db.pending_restore"]
+        backup_manager.list_pending_restores.return_value = [
+            "memory.db.pending_restore"
+        ]
         plugin = MagicMock()
         plugin._backup_manager = backup_manager
         plugin._ensure_plugin_ready = AsyncMock(return_value=(True, None))

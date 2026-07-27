@@ -94,7 +94,9 @@ class MemoryConsolidator:
             raise ValueError("relation proposal 数量超过上限")
         if len(parsed.projections) > self.max_output_projections:
             raise ValueError("projection proposal 数量超过上限")
-        if any(len(item.summary) > self.max_projection_chars for item in parsed.projections):
+        if any(
+            len(item.summary) > self.max_projection_chars for item in parsed.projections
+        ):
             raise ValueError("projection summary 超过字符上限")
         return EvolutionProposal(
             relations=tuple(
@@ -151,7 +153,7 @@ class MemoryConsolidator:
             "preference_change, causes, supersedes, related。\n"
             "允许 projection_type: episode_summary, preference_state, "
             "relationship_state, conflict_set。\n"
-            "返回对象格式：{\"relations\": [], \"projections\": [], \"notes\": []}\n\n"
+            '返回对象格式：{"relations": [], "projections": [], "notes": []}\n\n'
             "--- evidence data begin ---\n"
             + "\n\n".join(evidence_lines)
             + "\n--- evidence data end ---"

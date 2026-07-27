@@ -6,8 +6,6 @@ import json
 import time
 from typing import Any
 
-import pytest
-
 from core.api.history_tracker import HistoryTracker
 
 

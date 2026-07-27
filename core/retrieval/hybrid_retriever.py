@@ -109,7 +109,7 @@ class HybridRetriever:
 
     @staticmethod
     async def _search_route(
-            route_name: str, search_coro
+        route_name: str, search_coro
     ) -> tuple[list, Exception | None]:
         """执行单条检索路由，并把普通失败转换为可降级的路由错误。"""
         try:

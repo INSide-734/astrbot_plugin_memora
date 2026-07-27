@@ -4,11 +4,11 @@ import json
 from unittest.mock import AsyncMock
 
 import pytest
+
 from core.processors.note_generator import NoteGenerator
 
 
 class TestNoteGenerator:
-
     @pytest.fixture
     def llm_client(self):
         return AsyncMock()
@@ -20,8 +20,12 @@ class TestNoteGenerator:
     @pytest.mark.asyncio
     async def test_valid_generation(self, llm_client):
         llm_client.complete.return_value = json.dumps(
-            {"title": "Meeting Notes", "content": "### Key points\n- item 1",
-             "tags": ["meeting"]})
+            {
+                "title": "Meeting Notes",
+                "content": "### Key points\n- item 1",
+                "tags": ["meeting"],
+            }
+        )
         gen = self.make_gen(llm_client)
         result = await gen.generate("x" * 100)
         assert result is not None

@@ -19,6 +19,7 @@ def mock_knowledge_store():
 @pytest.fixture
 async def knowledge_mgr(mock_knowledge_store):
     from core.managers.knowledge_manager import KnowledgeManager
+
     return KnowledgeManager(mock_knowledge_store)
 
 
@@ -36,13 +37,19 @@ class TestCleanupExpired:
     @pytest.mark.asyncio
     async def test_cleanup_expired_paginates(self, mock_knowledge_store):
         from core.managers.knowledge_manager import KnowledgeManager
+
         # Page 1: 3 entries (2 expired), Page 2: 2 entries (1 expired), Page 3: empty
         now = time.time()
-        page1 = [self._make_entry(1, now - 100), self._make_entry(2, now - 200),
-                 self._make_entry(3, now + 9999)]
+        page1 = [
+            self._make_entry(1, now - 100),
+            self._make_entry(2, now - 200),
+            self._make_entry(3, now + 9999),
+        ]
         page2 = [self._make_entry(4, now - 300), self._make_entry(5, now + 9999)]
         mock_knowledge_store.list_entries.side_effect = [
-            (page1, 3), (page2, 2), ([], 0),
+            (page1, 3),
+            (page2, 2),
+            ([], 0),
         ]
         mgr = KnowledgeManager(mock_knowledge_store)
         removed = await mgr.cleanup_expired()
@@ -53,10 +60,12 @@ class TestCleanupExpired:
     @pytest.mark.asyncio
     async def test_no_expired_entries(self, mock_knowledge_store):
         from core.managers.knowledge_manager import KnowledgeManager
+
         now = time.time()
         entry = self._make_entry(1, now + 9999)
         mock_knowledge_store.list_entries.side_effect = [
-            ([entry], 1), ([], 0),
+            ([entry], 1),
+            ([], 0),
         ]
         mgr = KnowledgeManager(mock_knowledge_store)
         removed = await mgr.cleanup_expired()
@@ -65,6 +74,7 @@ class TestCleanupExpired:
     @pytest.mark.asyncio
     async def test_empty_store(self, mock_knowledge_store):
         from core.managers.knowledge_manager import KnowledgeManager
+
         mock_knowledge_store.list_entries.return_value = ([], 0)
         mgr = KnowledgeManager(mock_knowledge_store)
         removed = await mgr.cleanup_expired()
@@ -73,10 +83,12 @@ class TestCleanupExpired:
     @pytest.mark.asyncio
     async def test_all_expired(self, mock_knowledge_store):
         from core.managers.knowledge_manager import KnowledgeManager
+
         now = time.time()
         entries = [self._make_entry(i, now - i * 100) for i in range(50)]
         mock_knowledge_store.list_entries.side_effect = [
-            (entries, 50), ([], 0),
+            (entries, 50),
+            ([], 0),
         ]
         mgr = KnowledgeManager(mock_knowledge_store)
         removed = await mgr.cleanup_expired()

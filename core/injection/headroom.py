@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-
 # AstrBot 将 ``max_context_tokens <= 0`` 定义为不限制。这里使用所有注入层的
 # 配置硬上限（记忆 10000 + 认知 2000 + 前瞻 1000），既避免把不限制误判为
 # 零预算，也不会因此放宽 Memora 自身的载荷上限。
@@ -74,10 +73,7 @@ def _text_chars(value: Any) -> int:
     if isinstance(value, str):
         return len(value)
     if isinstance(value, Mapping):
-        return sum(
-            len(str(key)) + _text_chars(item)
-            for key, item in value.items()
-        )
+        return sum(len(str(key)) + _text_chars(item) for key, item in value.items())
     if isinstance(value, (list, tuple)):
         return sum(_text_chars(item) for item in value)
     text = getattr(value, "text", None)

@@ -14,7 +14,6 @@ from core.models.domain_provenance import (
 )
 from core.models.memory_evolution import MemorySourceRef
 
-
 REFERENCE_TIME = datetime(2026, 7, 21, 8, 0, tzinfo=timezone.utc)
 
 

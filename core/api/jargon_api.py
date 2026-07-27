@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextvars import ContextVar
 from functools import wraps
-import asyncio
 from typing import Any
 
 from astrbot.api import logger
@@ -16,8 +16,8 @@ from ..base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
-from ..base.list_sorting import parse_sort_query
 from ..base.feature_config import is_jargon_discovery_enabled
+from ..base.list_sorting import parse_sort_query
 from ..jargon.jargon_store import JARGON_MEANING_SORT_COLUMNS
 from ..jargon.statistical_filter import JARGON_CANDIDATE_SORT_FIELDS
 from .editing_utils import (
@@ -28,7 +28,6 @@ from .editing_utils import (
     required_text,
 )
 from .response_utils import error_response, ok_response
-
 
 _CREATE_FIELDS = frozenset(
     {
@@ -111,9 +110,7 @@ def _audit_boundary(action: str):
                         "unavailable",
                         result="failure",
                         error_code=(
-                            code
-                            if isinstance(code, str) and code
-                            else "request_error"
+                            code if isinstance(code, str) and code else "request_error"
                         ),
                     )
                 return response
@@ -218,10 +215,14 @@ def _exception_response(
     exc: Exception, *, operation: str, audit: bool = True
 ) -> dict[str, Any]:
     error_code = (
-        "validation_error" if isinstance(exc, EntityValidationError)
-        else "already_exists" if isinstance(exc, EntityAlreadyExistsError)
-        else "not_found" if isinstance(exc, EntityNotFoundError)
-        else "edit_conflict" if isinstance(exc, EditConflictError)
+        "validation_error"
+        if isinstance(exc, EntityValidationError)
+        else "already_exists"
+        if isinstance(exc, EntityAlreadyExistsError)
+        else "not_found"
+        if isinstance(exc, EntityNotFoundError)
+        else "edit_conflict"
+        if isinstance(exc, EditConflictError)
         else "internal_error"
     )
     if audit:
@@ -303,9 +304,7 @@ def _parse_changes(value: Any) -> tuple[dict[str, Any] | None, dict | None]:
     if unknown:
         return None, unknown
     if not changes:
-        return None, _validation_error(
-            EntityValidationError({"changes": "不能为空"})
-        )
+        return None, _validation_error(EntityValidationError({"changes": "不能为空"}))
     return changes, None
 
 
@@ -493,9 +492,7 @@ class JargonApiMixin:
 
         plugin = getattr(self, "plugin", None)
         if plugin is None:
-            logger.warning(
-                "[黑话接口] operation=resolve_service unavailable=plugin"
-            )
+            logger.warning("[黑话接口] operation=resolve_service unavailable=plugin")
             return None
         cached = getattr(plugin, "_jargon_admin_service", None)
         if cached is not None and not self._is_closed_jargon_store(
@@ -546,9 +543,7 @@ class JargonApiMixin:
         plugin = getattr(self, "plugin", None)
         if plugin is None:
             return None
-        if not is_jargon_discovery_enabled(
-            getattr(plugin, "config_manager", None)
-        ):
+        if not is_jargon_discovery_enabled(getattr(plugin, "config_manager", None)):
             logger.info("[黑话接口] 黑话自动发现功能已禁用")
             return None
         for attr_name in ("_jargon_miner", "jargon_miner"):
@@ -649,11 +644,13 @@ class JargonApiMixin:
                 for item in (_safe_candidate_to_dict(c) for c in candidates)
                 if item is not None
             ]
-            return ok_response({
-                "candidates": serialized_candidates,
-                "total": len(serialized_candidates),
-                "group_id": group_id,
-            })
+            return ok_response(
+                {
+                    "candidates": serialized_candidates,
+                    "total": len(serialized_candidates),
+                    "group_id": group_id,
+                }
+            )
         except Exception as exc:
             return _exception_response(exc, operation="list_candidates")
 
@@ -708,11 +705,13 @@ class JargonApiMixin:
                 except Exception:
                     continue
                 serialized_meanings.append(item)
-            return ok_response({
-                "meanings": serialized_meanings,
-                "total": len(serialized_meanings),
-                "group_id": group_id,
-            })
+            return ok_response(
+                {
+                    "meanings": serialized_meanings,
+                    "total": len(serialized_meanings),
+                    "group_id": group_id,
+                }
+            )
         except Exception as exc:
             return _exception_response(exc, operation="list_meanings")
 
@@ -882,9 +881,7 @@ class JargonApiMixin:
             top_candidates = _safe_list_items(getattr(stats, "top_candidates", []))
             serialized_candidates = [
                 item
-                for item in (
-                    _safe_candidate_to_dict(c) for c in top_candidates
-                )
+                for item in (_safe_candidate_to_dict(c) for c in top_candidates)
                 if item is not None
             ]
             result = {
@@ -952,9 +949,7 @@ class JargonApiMixin:
         group_id = (body.get("group_id", "") or "").strip()
         confirmed = body.get("confirmed", True)
         if not isinstance(confirmed, bool):
-            return error_response(
-                "confirmed 必须为布尔值", code="validation_error"
-            )
+            return error_response("confirmed 必须为布尔值", code="validation_error")
 
         if not term:
             return error_response("缺少必填参数 term")
@@ -971,12 +966,14 @@ class JargonApiMixin:
                 )
                 action = "confirmed" if confirmed else "rejected"
                 action_text = "已确认" if confirmed else "已驳回"
-                return ok_response({
-                    "term": term,
-                    "group_id": group_id,
-                    "action": action,
-                    "message": f"词条“{term}”{action_text}",
-                })
+                return ok_response(
+                    {
+                        "term": term,
+                        "group_id": group_id,
+                        "action": action,
+                        "message": f"词条“{term}”{action_text}",
+                    }
+                )
             service = await self._get_jargon_admin_service()
             if service is None:
                 return _component_unavailable()
@@ -996,12 +993,14 @@ class JargonApiMixin:
             )
             action = "confirmed" if confirmed else "rejected"
             action_text = "已确认" if confirmed else "已驳回"
-            return ok_response({
-                "term": term,
-                "group_id": group_id,
-                "action": action,
-                "message": f"词条“{term}”{action_text}",
-            })
+            return ok_response(
+                {
+                    "term": term,
+                    "group_id": group_id,
+                    "action": action,
+                    "message": f"词条“{term}”{action_text}",
+                }
+            )
         except Exception as exc:
             return _exception_response(exc, operation="confirm")
 
@@ -1060,12 +1059,14 @@ class JargonApiMixin:
                 for item in (_safe_meaning_to_dict(r) for r in results)
                 if item is not None
             ]
-            response = ok_response({
-                "group_id": group_id,
-                "inferred_count": len(results),
-                "results": serialized_results,
-                "message": f"黑话挖掘完成，共推断出 {len(results)} 个词条",
-            })
+            response = ok_response(
+                {
+                    "group_id": group_id,
+                    "inferred_count": len(results),
+                    "results": serialized_results,
+                    "message": f"黑话挖掘完成，共推断出 {len(results)} 个词条",
+                }
+            )
             _audit_event(
                 "mine",
                 {"group_id": group_id},

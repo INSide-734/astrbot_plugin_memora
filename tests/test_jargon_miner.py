@@ -27,7 +27,7 @@ from core.jargon.jargon_miner import (
 from core.jargon.jargon_query import JargonQueryService, TTLCache
 from core.jargon.jargon_store import JargonStore
 from core.jargon.models import JargonCandidate, JargonMeaning
-
+from core.jargon.statistical_filter import JargonStatisticalFilter
 
 # ============================================================================
 # 数据模型测试
@@ -335,10 +335,22 @@ class TestJargonStore:
         store = await _init_store()
         try:
             await store.upsert(
-                _make_meaning("yyds", meaning="永远的神", is_jargon=True, is_confirmed=True, count=50)
+                _make_meaning(
+                    "yyds",
+                    meaning="永远的神",
+                    is_jargon=True,
+                    is_confirmed=True,
+                    count=50,
+                )
             )
             await store.upsert(
-                _make_meaning("xswl", meaning="笑死我了", is_jargon=True, is_confirmed=True, count=30)
+                _make_meaning(
+                    "xswl",
+                    meaning="笑死我了",
+                    is_jargon=True,
+                    is_confirmed=True,
+                    count=30,
+                )
             )
             results = await store.list_by_group("group-test", confirmed_only=True)
             assert len(results) == 2
@@ -361,13 +373,31 @@ class TestJargonStore:
         store = await _init_store()
         try:
             await store.upsert(
-                _make_meaning("yyds", meaning="永远的神", is_jargon=True, is_confirmed=True, count=50)
+                _make_meaning(
+                    "yyds",
+                    meaning="永远的神",
+                    is_jargon=True,
+                    is_confirmed=True,
+                    count=50,
+                )
             )
             await store.upsert(
-                _make_meaning("yyds2", meaning="永远的神 v2", is_jargon=True, is_confirmed=True, count=10)
+                _make_meaning(
+                    "yyds2",
+                    meaning="永远的神 v2",
+                    is_jargon=True,
+                    is_confirmed=True,
+                    count=10,
+                )
             )
             await store.upsert(
-                _make_meaning("xswl", meaning="笑死我了", is_jargon=True, is_confirmed=True, count=20)
+                _make_meaning(
+                    "xswl",
+                    meaning="笑死我了",
+                    is_jargon=True,
+                    is_confirmed=True,
+                    count=20,
+                )
             )
             results = await store.search("yyds", "group-test")
             assert len(results) >= 1
@@ -381,7 +411,13 @@ class TestJargonStore:
         store = await _init_store()
         try:
             await store.upsert(
-                _make_meaning("yyds", meaning="永远的神", is_jargon=True, is_confirmed=True, count=50)
+                _make_meaning(
+                    "yyds",
+                    meaning="永远的神",
+                    is_jargon=True,
+                    is_confirmed=True,
+                    count=50,
+                )
             )
             results = await store.search("zzzz", "group-test")
             assert results == []
@@ -435,7 +471,13 @@ class TestJargonStore:
         store = await _init_store()
         try:
             await store.upsert(
-                _make_meaning("yyds", meaning="永远的神", is_jargon=True, is_confirmed=True, count=50)
+                _make_meaning(
+                    "yyds",
+                    meaning="永远的神",
+                    is_jargon=True,
+                    is_confirmed=True,
+                    count=50,
+                )
             )
             count = await store.count_by_group("group-test")
             assert count == 1
@@ -774,13 +816,34 @@ class TestJargonQueryService:
         """Build a store with 3 pre-inserted jargon terms."""
         store = await _init_store()
         await store.upsert(
-            _make_meaning("yyds", group_id="group-1", meaning="永远的神", is_jargon=True, is_confirmed=True, count=50)
+            _make_meaning(
+                "yyds",
+                group_id="group-1",
+                meaning="永远的神",
+                is_jargon=True,
+                is_confirmed=True,
+                count=50,
+            )
         )
         await store.upsert(
-            _make_meaning("xswl", group_id="group-1", meaning="笑死我了", is_jargon=True, is_confirmed=True, count=30)
+            _make_meaning(
+                "xswl",
+                group_id="group-1",
+                meaning="笑死我了",
+                is_jargon=True,
+                is_confirmed=True,
+                count=30,
+            )
         )
         await store.upsert(
-            _make_meaning("nbcs", group_id="group-1", meaning="nobody cares", is_jargon=True, is_confirmed=True, count=15)
+            _make_meaning(
+                "nbcs",
+                group_id="group-1",
+                meaning="nobody cares",
+                is_jargon=True,
+                is_confirmed=True,
+                count=15,
+            )
         )
         return store
 
@@ -864,9 +927,7 @@ class TestJargonQueryService:
         store = await self._populated_store()
         try:
             svc = JargonQueryService(store)
-            result = await svc.check_and_explain(
-                "nbcs 这个功能太垃圾了", "group-1"
-            )
+            result = await svc.check_and_explain("nbcs 这个功能太垃圾了", "group-1")
             assert result is not None
             assert "nbcs" in result
         finally:
@@ -890,26 +951,38 @@ class TestJargonQueryService:
         entries = [
             JargonMeaning(term="测试词", group_id="g1", meaning="test", is_jargon=True)
         ]
-        matched = JargonQueryService._match_jargon_in_text("这是测试词的上下文", entries)
+        matched = JargonQueryService._match_jargon_in_text(
+            "这是测试词的上下文", entries
+        )
         assert len(matched) == 1
         assert matched[0].term == "测试词"
 
     async def test_match_ascii_jargon_word_boundary(self) -> None:
         """测试 ASCII 黑话 word-boundary 匹配。"""
         entries = [
-            JargonMeaning(term="btw", group_id="g1", meaning="by the way", is_jargon=True)
+            JargonMeaning(
+                term="btw", group_id="g1", meaning="by the way", is_jargon=True
+            )
         ]
-        matched = JargonQueryService._match_jargon_in_text("btw I forgot to tell you", entries)
+        matched = JargonQueryService._match_jargon_in_text(
+            "btw I forgot to tell you", entries
+        )
         assert len(matched) == 1
 
-        matched2 = JargonQueryService._match_jargon_in_text("something between us", entries)
+        matched2 = JargonQueryService._match_jargon_in_text(
+            "something between us", entries
+        )
         assert len(matched2) == 0
 
     async def test_match_multiple_jargon(self) -> None:
         """测试匹配多个黑话。"""
         entries = [
-            JargonMeaning(term="yyds", group_id="g1", meaning="永远的神", is_jargon=True),
-            JargonMeaning(term="xswl", group_id="g1", meaning="笑死我了", is_jargon=True),
+            JargonMeaning(
+                term="yyds", group_id="g1", meaning="永远的神", is_jargon=True
+            ),
+            JargonMeaning(
+                term="xswl", group_id="g1", meaning="笑死我了", is_jargon=True
+            ),
         ]
         matched = JargonQueryService._match_jargon_in_text("yyds 你说的 xswl", entries)
         assert len(matched) == 2

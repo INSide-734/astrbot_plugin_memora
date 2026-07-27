@@ -97,9 +97,7 @@ class TopicBatchPreparer:
         try:
             return await strat.chunk_messages(history_messages)
         except Exception:
-            logger.warning(
-                "[话题批次准备器] 策略 C 切分失败，已回退为单批次处理。"
-            )
+            logger.warning("[话题批次准备器] 策略 C 切分失败，已回退为单批次处理。")
             return [list(history_messages)]
 
     async def _prepare_strategy_d(
@@ -157,9 +155,7 @@ class TopicBatchPreparer:
                 "topic_shift_threshold": c.get(
                     "topic_segmentation.strategy_c.topic_shift_threshold"
                 ),
-                "min_chunk_size": c.get(
-                    "topic_segmentation.strategy_c.min_chunk_size"
-                ),
+                "min_chunk_size": c.get("topic_segmentation.strategy_c.min_chunk_size"),
             },
             "strategy_d": {
                 "stage1_max_topics": c.get(

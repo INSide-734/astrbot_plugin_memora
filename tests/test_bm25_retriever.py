@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-import tempfile
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,7 +11,6 @@ from core.storage.base import apply_perf_pragmas
 
 
 class TestBM25Retriever:
-
     @pytest.fixture
     def text_processor(self) -> MagicMock:
         tp = MagicMock()
@@ -23,6 +20,7 @@ class TestBM25Retriever:
     @pytest.fixture
     def retriever(self, text_processor: MagicMock) -> Any:
         from core.retrieval.bm25_retriever import BM25Retriever
+
         return BM25Retriever(
             db_path=":memory:",
             text_processor=text_processor,
@@ -31,6 +29,7 @@ class TestBM25Retriever:
     async def _setup_table(self, retriever: Any) -> None:
         """Create the FTS table + documents table in the in-memory db."""
         import aiosqlite
+
         db = await aiosqlite.connect(":memory:")
         await apply_perf_pragmas(db)
         await db.execute("""
@@ -76,19 +75,24 @@ class TestBM25Retriever:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_no_tokens(self, retriever: Any, text_processor: MagicMock) -> None:
+    async def test_search_no_tokens(
+        self, retriever: Any, text_processor: MagicMock
+    ) -> None:
         """When tokenizer returns empty tokens, return empty list."""
         text_processor.tokenize_async.return_value = []
         results = await retriever.search("...", limit=10)
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_filters_by_session_id(self, retriever: Any, text_processor: MagicMock) -> None:
+    async def test_search_filters_by_session_id(
+        self, retriever: Any, text_processor: MagicMock
+    ) -> None:
         """BM25 search applies session_id filtering — uses a real in-memory SQLite."""
         text_processor.tokenize_async.return_value = ["test"]
 
-        import aiosqlite
         from contextlib import asynccontextmanager
+
+        import aiosqlite
 
         async with aiosqlite.connect(":memory:") as db:
             await db.execute("""
@@ -177,12 +181,15 @@ class TestBM25Retriever:
         await retriever.initialize()
 
     @pytest.mark.asyncio
-    async def test_search_filters_by_persona_id(self, retriever: Any, text_processor: MagicMock) -> None:
+    async def test_search_filters_by_persona_id(
+        self, retriever: Any, text_processor: MagicMock
+    ) -> None:
         """BM25 search applies persona_id filtering — uses a real in-memory SQLite."""
         text_processor.tokenize_async.return_value = ["testing"]
 
-        import aiosqlite
         from contextlib import asynccontextmanager
+
+        import aiosqlite
 
         @asynccontextmanager
         async def _fake_connect():
@@ -233,11 +240,14 @@ class TestBM25Retriever:
             retriever._connect = original_connect
 
     @pytest.mark.asyncio
-    async def test_add_document(self, retriever: Any, text_processor: MagicMock) -> None:
+    async def test_add_document(
+        self, retriever: Any, text_processor: MagicMock
+    ) -> None:
         """add_document tokenizes and inserts into FTS table."""
         text_processor.tokenize_async.return_value = ["hello", "world"]
-        import aiosqlite
         from contextlib import asynccontextmanager
+
+        import aiosqlite
 
         @asynccontextmanager
         async def _fake_connect():
@@ -264,8 +274,9 @@ class TestBM25Retriever:
     @pytest.mark.asyncio
     async def test_delete_document(self, retriever: Any) -> None:
         """delete_document removes from FTS table."""
-        import aiosqlite
         from contextlib import asynccontextmanager
+
+        import aiosqlite
 
         @asynccontextmanager
         async def _fake_connect():
@@ -291,11 +302,14 @@ class TestBM25Retriever:
             retriever._connect = original_connect
 
     @pytest.mark.asyncio
-    async def test_update_document(self, retriever: Any, text_processor: MagicMock) -> None:
+    async def test_update_document(
+        self, retriever: Any, text_processor: MagicMock
+    ) -> None:
         """update_document re-indexes content."""
         text_processor.tokenize_async.return_value = ["updated", "content"]
-        import aiosqlite
         from contextlib import asynccontextmanager
+
+        import aiosqlite
 
         @asynccontextmanager
         async def _fake_connect():
@@ -321,11 +335,14 @@ class TestBM25Retriever:
             retriever._connect = original_connect
 
     @pytest.mark.asyncio
-    async def test_search_normalizes_scores(self, retriever: Any, text_processor: MagicMock) -> None:
+    async def test_search_normalizes_scores(
+        self, retriever: Any, text_processor: MagicMock
+    ) -> None:
         """BM25 scores are normalized to [0,1]."""
         text_processor.tokenize_async.return_value = ["normalize"]
-        import aiosqlite
         from contextlib import asynccontextmanager
+
+        import aiosqlite
 
         @asynccontextmanager
         async def _fake_connect():
@@ -343,7 +360,7 @@ class TestBM25Retriever:
             """)
             await conn.execute(
                 "INSERT INTO documents(id, text, metadata) VALUES (?, ?, ?)",
-                (1, "normalize test", '{}'),
+                (1, "normalize test", "{}"),
             )
             await conn.execute(
                 "INSERT INTO memora_memories_fts(content, doc_id) VALUES (?, ?)",
@@ -367,11 +384,14 @@ class TestBM25Retriever:
             retriever._connect = original_connect
 
     @pytest.mark.asyncio
-    async def test_search_empty_fts_results(self, retriever: Any, text_processor: MagicMock) -> None:
+    async def test_search_empty_fts_results(
+        self, retriever: Any, text_processor: MagicMock
+    ) -> None:
         """When FTS returns no rows, empty list returned."""
         text_processor.tokenize_async.return_value = ["nonexistent"]
-        import aiosqlite
         from contextlib import asynccontextmanager
+
+        import aiosqlite
 
         @asynccontextmanager
         async def _fake_connect():
@@ -402,12 +422,15 @@ class TestBM25Retriever:
             retriever._connect = original_connect
 
     @pytest.mark.asyncio
-    async def test_search_with_persona_and_session_id(self, retriever: Any, text_processor: MagicMock) -> None:
+    async def test_search_with_persona_and_session_id(
+        self, retriever: Any, text_processor: MagicMock
+    ) -> None:
         """BM25 search applies both persona_id and session_id filtering."""
         text_processor.tokenize_async.return_value = ["multi"]
 
-        import aiosqlite
         from contextlib import asynccontextmanager
+
+        import aiosqlite
 
         @asynccontextmanager
         async def _fake_connect():
@@ -424,9 +447,14 @@ class TestBM25Retriever:
                 )
             """)
             import json
+
             await conn.execute(
                 "INSERT INTO documents(id, text, metadata) VALUES (?, ?, ?)",
-                (1, "multi filter test", json.dumps({"session_id": "s1", "persona_id": "p1"})),
+                (
+                    1,
+                    "multi filter test",
+                    json.dumps({"session_id": "s1", "persona_id": "p1"}),
+                ),
             )
             await conn.execute(
                 "INSERT INTO memora_memories_fts(content, doc_id) VALUES (?, ?)",
@@ -434,7 +462,11 @@ class TestBM25Retriever:
             )
             await conn.execute(
                 "INSERT INTO documents(id, text, metadata) VALUES (?, ?, ?)",
-                (2, "multi filter other", json.dumps({"session_id": "s2", "persona_id": "p1"})),
+                (
+                    2,
+                    "multi filter other",
+                    json.dumps({"session_id": "s2", "persona_id": "p1"}),
+                ),
             )
             await conn.execute(
                 "INSERT INTO memora_memories_fts(content, doc_id) VALUES (?, ?)",
@@ -450,19 +482,25 @@ class TestBM25Retriever:
         retriever._connect = _fake_connect
 
         try:
-            results = await retriever.search("multi", limit=5, session_id="s1", persona_id="p1")
+            results = await retriever.search(
+                "multi", limit=5, session_id="s1", persona_id="p1"
+            )
             assert len(results) == 1
             assert results[0].doc_id == 1
         finally:
             retriever._connect = original_connect
 
     @pytest.mark.asyncio
-    async def test_search_persona_id_only(self, retriever: Any, text_processor: MagicMock) -> None:
+    async def test_search_persona_id_only(
+        self, retriever: Any, text_processor: MagicMock
+    ) -> None:
         """BM25 search with persona_id filter only."""
         text_processor.tokenize_async.return_value = ["persona"]
 
-        import aiosqlite, json
+        import json
         from contextlib import asynccontextmanager
+
+        import aiosqlite
 
         @asynccontextmanager
         async def _fake_connect():
@@ -512,7 +550,7 @@ class TestBM25Retriever:
 
     def test_rejects_unapproved_fts_table_identifier(self, retriever: Any) -> None:
         """Unsafe FTS table overrides should be rejected before SQL is built."""
-        retriever.fts_table = 'memora_memories_fts; DROP TABLE documents;--'
+        retriever.fts_table = "memora_memories_fts; DROP TABLE documents;--"
         with pytest.raises(ValueError, match="Unsupported FTS table"):
             _ = retriever._fts_table_sql
 

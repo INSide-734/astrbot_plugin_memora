@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import aiosqlite
 import pytest
 
 from core.managers.memory_engine import MemoryEngine
@@ -61,7 +60,10 @@ class TestMemoryEngineConstructor:
         engine = MemoryEngine(
             db_path=":memory:",
             faiss_db=mock_faiss,
-            config={"write_reliability.repair_enabled": False, "write_reliability.max_retries": 5},
+            config={
+                "write_reliability.repair_enabled": False,
+                "write_reliability.max_retries": 5,
+            },
         )
         assert engine._write_op_repair_enabled is False
         assert engine._write_journal._max_retries == 5
@@ -133,7 +135,9 @@ class TestMemoryEngineDelegation:
 
     def test_update_importance_delegates(self) -> None:
         mock_faiss = MagicMock()
-        with patch.object(MemoryEngine, "update_memory", new_callable=AsyncMock) as mock_upd:
+        with patch.object(
+            MemoryEngine, "update_memory", new_callable=AsyncMock
+        ) as mock_upd:
             engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
             asyncio.run(engine.update_importance(10, 0.8))
             mock_upd.assert_called_once_with(10, {"importance": 0.8})

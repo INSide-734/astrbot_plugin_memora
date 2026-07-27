@@ -16,7 +16,9 @@ from core.storage.injection_decision_store import (
 )
 
 
-def record(decision_id: str, created_at_ms: int, **overrides) -> InjectionDecisionRecord:
+def record(
+    decision_id: str, created_at_ms: int, **overrides
+) -> InjectionDecisionRecord:
     values = {
         "decision_id": decision_id,
         "created_at_ms": created_at_ms,
@@ -129,9 +131,7 @@ async def test_summary_and_filtered_page_use_expected_indexes(tmp_path) -> None:
             """,
             ("balanced", 50, 0),
         )
-        assert any(
-            "idx_injection_decisions_preset" in row["detail"] for row in plan
-        )
+        assert any("idx_injection_decisions_preset" in row["detail"] for row in plan)
     finally:
         await store.close()
 
@@ -256,7 +256,10 @@ def test_injection_decision_sort_columns_are_fixed() -> None:
         ({"routing_mode": "hybrid"}, {"routing_mode": "hybrid"}),
         ({"resolved_preset": "quality"}, {"resolved_preset": "quality"}),
         ({"provider_type": "openai"}, {"provider_type": "openai"}),
-        ({"primary_reason": "AUTO_HISTORY_INTENT"}, {"primary_reason": "AUTO_HISTORY_INTENT"}),
+        (
+            {"primary_reason": "AUTO_HISTORY_INTENT"},
+            {"primary_reason": "AUTO_HISTORY_INTENT"},
+        ),
         ({"fallback_applied": True}, {"fallback_applied": True}),
         ({"outcome": "error"}, {"outcome": "error", "error_code": "FORMAT_FAILED"}),
     ],
@@ -283,7 +286,12 @@ async def test_time_filters_are_inclusive_and_composable(tmp_path) -> None:
     await store.initialize()
     try:
         await store.insert_many(
-            [record("before", 9), record("from", 10), record("to", 20), record("after", 21)]
+            [
+                record("before", 9),
+                record("from", 10),
+                record("to", 20),
+                record("after", 21),
+            ]
         )
         page = await store.list_decisions(DecisionQuery(from_ms=10, to_ms=20))
         assert page.total == 2
@@ -403,7 +411,10 @@ async def test_summary_reports_deterministic_p95_distribution_fallback_and_event
         ]
         assert summary["recent_events"]
         assert summary["recent_events"][0]["decision_id"] == "d-01"
-        assert all("query" not in event and "content" not in event for event in summary["recent_events"])
+        assert all(
+            "query" not in event and "content" not in event
+            for event in summary["recent_events"]
+        )
     finally:
         await store.close()
 
@@ -446,15 +457,19 @@ async def test_retention_runs_before_row_cap(tmp_path) -> None:
     try:
         now = int(time.time() * 1000)
         day = 86_400_000
-        await store.insert_many([
-            record("expired", now - 31 * day),
-            record("oldest-live", now - 2 * day),
-            record("newest", now),
-        ])
+        await store.insert_many(
+            [
+                record("expired", now - 31 * day),
+                record("oldest-live", now - 2 * day),
+                record("newest", now),
+            ]
+        )
         result = await store.cleanup(retention_days=30, max_rows=1, now_ms=now)
         assert result.deleted_expired == 1
         assert result.deleted_overflow == 1
-        assert (await store.list_decisions(DecisionQuery())).items[0]["decision_id"] == "newest"
+        assert (await store.list_decisions(DecisionQuery())).items[0][
+            "decision_id"
+        ] == "newest"
     finally:
         await store.close()
 

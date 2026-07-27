@@ -166,9 +166,7 @@ class QualityApiMixin:
             return error_response("质量评分器不可用")
         try:
             args = request.args
-            limit = _parse_bounded_limit(
-                args.get("limit", 20), default=20, maximum=100
-            )
+            limit = _parse_bounded_limit(args.get("limit", 20), default=20, maximum=100)
 
             scores = _safe_history_list(getattr(scorer, "_score_history", []))
             recent = scores[-limit:] if len(scores) > limit else scores
@@ -177,10 +175,12 @@ class QualityApiMixin:
                 for item in (_safe_score_to_dict(s) for s in reversed(recent))
                 if item is not None
             ]
-            return ok_response({
-                "scores": serialized_scores,
-                "total_scores": len(scores),
-            })
+            return ok_response(
+                {
+                    "scores": serialized_scores,
+                    "total_scores": len(scores),
+                }
+            )
         except Exception as e:
             logger.error(f"[质量接口] 获取最近评分记录失败: {e}", exc_info=True)
             return error_response(f"获取最近评分记录失败: {e}")
@@ -197,9 +197,7 @@ class QualityApiMixin:
         try:
             args = request.args
             level_filter = args.get("level", "").strip().lower()
-            limit = _parse_bounded_limit(
-                args.get("limit", 50), default=50, maximum=200
-            )
+            limit = _parse_bounded_limit(args.get("limit", 50), default=50, maximum=200)
 
             all_alerts = _safe_history_list(getattr(scorer, "_alert_history", []))
             filtered = all_alerts
@@ -211,7 +209,8 @@ class QualityApiMixin:
                         f"必须为以下之一：{', '.join(sorted(valid_levels))}"
                     )
                 filtered = [
-                    a for a in all_alerts
+                    a
+                    for a in all_alerts
                     if (_safe_alert_level(a) or "").lower() == level_filter
                 ]
 
@@ -222,11 +221,13 @@ class QualityApiMixin:
                 for item in [_safe_alert_to_dict(a, i)]
                 if item is not None
             ]
-            return ok_response({
-                "alerts": serialized_alerts,
-                "total_alerts": len(all_alerts),
-                "filtered_count": len(filtered),
-            })
+            return ok_response(
+                {
+                    "alerts": serialized_alerts,
+                    "total_alerts": len(all_alerts),
+                    "filtered_count": len(filtered),
+                }
+            )
         except Exception as e:
             logger.error(f"[质量接口] 获取质量告警失败: {e}", exc_info=True)
             return error_response(f"获取告警记录失败: {e}")

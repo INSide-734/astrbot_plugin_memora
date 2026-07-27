@@ -5,11 +5,10 @@ config_validator.py - 配置验证模块
 
 from typing import Any, Literal
 
+from astrbot.api import logger
 from pydantic import BaseModel, Field, model_validator
 
-from astrbot.api import logger
 from .feature_config import AgentToolsConfig, DashboardConfig, JargonConfig
-
 
 PresetName = Literal["tool_first", "low_cost", "balanced", "quality"]
 
@@ -161,12 +160,13 @@ class RecallEngineConfig(BaseModel):
         default=True, description="是否使用紧凑版注入 header/footer（省略英文安全规则）"
     )
     cognitive_context_budget_chars: int = Field(
-        default=300, ge=0, le=2000,
-        description="认知上下文（黑话/表达/好感度）预算字符数"
+        default=300,
+        ge=0,
+        le=2000,
+        description="认知上下文（黑话/表达/好感度）预算字符数",
     )
     proactive_plan_budget_chars: int = Field(
-        default=240, ge=0, le=1000,
-        description="前瞻提醒预算字符数"
+        default=240, ge=0, le=1000, description="前瞻提醒预算字符数"
     )
     serial_position_enabled: bool = Field(
         default=True, description="是否启用序列位置效应"
@@ -227,8 +227,10 @@ class CostControlConfig(BaseModel):
         description="成本模式: balanced(默认，禁止额外LLM调用), low_cost(最小化token), quality(允许高成本路径)",
     )
     max_extra_llm_calls_per_turn: int = Field(
-        default=0, ge=0, le=10,
-        description="每轮额外 LLM 调用上限。balanced/low_cost 下默认 0"
+        default=0,
+        ge=0,
+        le=10,
+        description="每轮额外 LLM 调用上限。balanced/low_cost 下默认 0",
     )
     allow_llm_reranker_in_passive_recall: bool = Field(
         default=False, description="是否允许被动召回中触发 LLM reranker"
@@ -405,12 +407,8 @@ class GraphMemoryConfig(BaseModel):
     score_delta: float = Field(
         default=0.1, ge=0.0, le=1.0, description="图结构特征权重"
     )
-    temporal_edges_enabled: bool = Field(
-        default=True, description="是否启用时序图边"
-    )
-    causal_edges_enabled: bool = Field(
-        default=True, description="是否启用因果图边"
-    )
+    temporal_edges_enabled: bool = Field(default=True, description="是否启用时序图边")
+    causal_edges_enabled: bool = Field(default=True, description="是否启用因果图边")
 
     @model_validator(mode="after")
     def validate_route_weights(self):
@@ -439,7 +437,10 @@ class RerankerConfig(BaseModel):
         default=0.7, ge=0.0, le=1.0, description="MMR 相关性权重。值越高越偏相关性"
     )
     cross_encoder_lambda: float = Field(
-        default=0.7, ge=0.0, le=1.0, description="Cross-Encoder query-doc 相似度融合权重"
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Cross-Encoder query-doc 相似度融合权重",
     )
     llm_batch_size: int = Field(
         default=10, ge=1, le=50, description="LLM 重排序每批候选记忆数上限"

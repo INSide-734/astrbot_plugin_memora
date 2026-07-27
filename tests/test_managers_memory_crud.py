@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
-import time
 import inspect
-from unittest.mock import AsyncMock, MagicMock, patch
+import json
+from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
 import pytest
@@ -15,7 +14,9 @@ from core.managers.memory_engine import MemoryEngine
 from core.models.recall_strategy import RecallStrategy
 
 
-def _metric_sample_value(sample_name: str, labels: dict[str, str] | None = None) -> float:
+def _metric_sample_value(
+    sample_name: str, labels: dict[str, str] | None = None
+) -> float:
     labels = labels or {}
     for metric in monitoring_metrics.REGISTRY.collect():
         for sample in metric.samples:
@@ -129,6 +130,7 @@ class TestMemoryEngineAddMemoryErrors:
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
 
         import asyncio
+
         with pytest.raises(ValueError, match="记忆内容不能为空"):
             asyncio.run(engine.add_memory(""))
         with pytest.raises(ValueError, match="记忆内容不能为空"):
@@ -141,6 +143,7 @@ class TestMemoryEngineAddMemoryErrors:
         engine._write_journal.start_op = AsyncMock(return_value=1)
 
         import asyncio
+
         with pytest.raises(RuntimeError, match="混合检索器未初始化"):
             asyncio.run(engine.add_memory("test content"))
 
@@ -365,7 +368,9 @@ class TestMemoryEngineSearchMemories:
         assert kwargs["user_id"] == "user-1"
 
     @pytest.mark.asyncio
-    async def test_search_forwards_strategy_and_debug_trace_to_retrieval_path(self) -> None:
+    async def test_search_forwards_strategy_and_debug_trace_to_retrieval_path(
+        self,
+    ) -> None:
         from core.retrieval.rrf_fusion import HybridResult
 
         mock_faiss = MagicMock()
@@ -573,7 +578,9 @@ class TestMemoryEngineUpdateMetadata:
         engine._retrieval = MagicMock()
         engine._retrieval.invalidate_cache = MagicMock()
 
-        result = await engine.update_memory(42, {"importance": 0.7, "metadata": {"new_key": "new_val"}})
+        result = await engine.update_memory(
+            42, {"importance": 0.7, "metadata": {"new_key": "new_val"}}
+        )
         assert result is True
 
     @pytest.mark.asyncio
@@ -652,9 +659,14 @@ class TestMemoryEngineUpdateMetadata:
     async def test_update_metadata_string_metadata(self) -> None:
         """Metadata stored as JSON string should be parsed."""
         import json
+
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
-        doc = {"id": 42, "text": "content", "metadata": json.dumps({"str_key": "str_val"})}
+        doc = {
+            "id": 42,
+            "text": "content",
+            "metadata": json.dumps({"str_key": "str_val"}),
+        }
         mock_faiss.document_storage.get_documents = AsyncMock(return_value=[doc])
 
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)

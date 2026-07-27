@@ -44,7 +44,11 @@ def test_safe_candidates_drops_invalid_projection_without_dropping_memory() -> N
             "derived_projections": [
                 {"type": "unknown", "summary": "不应出现", "confidence": 0.8},
                 {"type": "episode_summary", "summary": "", "confidence": 0.8},
-                {"type": "episode_summary", "summary": "非法置信度", "confidence": "nan"},
+                {
+                    "type": "episode_summary",
+                    "summary": "非法置信度",
+                    "confidence": "nan",
+                },
             ]
         },
     )

@@ -173,8 +173,7 @@ class FeatureDelegation:
             True 表示外部插件可调用 recall_memory()。
         """
         return (
-            self._memory_engine is not None
-            and self.self_learning_plugin() is not None
+            self._memory_engine is not None and self.self_learning_plugin() is not None
         )
 
     def can_provide_knowledge_service(self) -> bool:
@@ -223,9 +222,7 @@ class FeatureDelegation:
                 raw = await raw
             return raw if isinstance(raw, list) else []
         except Exception:
-            logger.warning(
-                "[功能融合] recall_memory 调用失败", exc_info=True
-            )
+            logger.warning("[功能融合] recall_memory 调用失败", exc_info=True)
             return []
 
     async def search_knowledge(
@@ -256,9 +253,7 @@ class FeatureDelegation:
                 raw = await raw
             return raw if isinstance(raw, list) else []
         except Exception:
-            logger.warning(
-                "[功能融合] search_knowledge 调用失败", exc_info=True
-            )
+            logger.warning("[功能融合] search_knowledge 调用失败", exc_info=True)
             return []
 
     # ------------------------------------------------------------------

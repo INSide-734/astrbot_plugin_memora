@@ -54,7 +54,7 @@ _lazy: dict[str, Any] = {}
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy-import heavy subpackages on first access."""
+    """首次访问公开符号时延迟导入对应子模块。"""
     global _lazy
 
     if name in _lazy:
@@ -72,37 +72,84 @@ def __getattr__(name: str) -> Any:
         "RetrievalError",
         "ValidationError",
     ):
-        from .base import (  # type: ignore[no-redef]  # noqa: F811
-            ConfigManager,
-            ConfigurationError,
-            DatabaseError,
-            InitializationError,
-            MemoraException,
-            MemoryProcessingError,
-            ProviderNotReadyError,
-            RetrievalError,
-            ValidationError,
+        from .base import (
+            ConfigManager as ConfigManager,
         )
+        from .base import (
+            ConfigurationError as ConfigurationError,
+        )
+        from .base import (
+            DatabaseError as DatabaseError,
+        )
+        from .base import (
+            InitializationError as InitializationError,
+        )
+        from .base import (
+            MemoraException as MemoraException,
+        )
+        from .base import (
+            MemoryProcessingError as MemoryProcessingError,
+        )
+        from .base import (
+            ProviderNotReadyError as ProviderNotReadyError,
+        )
+        from .base import (
+            RetrievalError as RetrievalError,
+        )
+        from .base import (
+            ValidationError as ValidationError,
+        )
+
         _lazy.update({k: v for k, v in locals().items() if k in __all__})
         return _lazy[name]
 
     # ── models ──
-    if name in ("MemoryEvent", "Message", "Session", "GraphNode", "GraphEdge", "GraphEntry", "ExtractedGraph"):
-        from .models import (  # type: ignore[no-redef]  # noqa: F811
-            ExtractedGraph,
-            GraphEdge,
-            GraphEntry,
-            GraphNode,
-            MemoryEvent,
-            Message,
-            Session,
+    if name in (
+        "MemoryEvent",
+        "Message",
+        "Session",
+        "GraphNode",
+        "GraphEdge",
+        "GraphEntry",
+        "ExtractedGraph",
+    ):
+        from .models import (
+            ExtractedGraph as ExtractedGraph,
         )
+        from .models import (
+            GraphEdge as GraphEdge,
+        )
+        from .models import (
+            GraphEntry as GraphEntry,
+        )
+        from .models import (
+            GraphNode as GraphNode,
+        )
+        from .models import (
+            MemoryEvent as MemoryEvent,
+        )
+        from .models import (
+            Message as Message,
+        )
+        from .models import (
+            Session as Session,
+        )
+
         _lazy.update({k: v for k, v in locals().items() if k in __all__})
         return _lazy[name]
 
     # ── managers ──
     if name in ("ConversationManager", "GraphMemoryManager", "MemoryEngine"):
-        from .managers import ConversationManager, GraphMemoryManager, MemoryEngine  # type: ignore[no-redef]  # noqa: F811
+        from .managers import (
+            ConversationManager as ConversationManager,
+        )
+        from .managers import (
+            GraphMemoryManager as GraphMemoryManager,
+        )
+        from .managers import (
+            MemoryEngine as MemoryEngine,
+        )
+
         _lazy.update({k: v for k, v in locals().items() if k in __all__})
         return _lazy[name]
 
@@ -115,20 +162,32 @@ def __getattr__(name: str) -> Any:
         "TextProcessor",
         "store_round_with_length_check",
     ):
-        from .processors import (  # type: ignore[no-redef]  # noqa: F811
-            ChatroomContextParser,
-            EntityResolver,
-            GraphExtractor,
-            MemoryProcessor,
-            TextProcessor,
-            store_round_with_length_check,
+        from .processors import (
+            ChatroomContextParser as ChatroomContextParser,
         )
+        from .processors import (
+            EntityResolver as EntityResolver,
+        )
+        from .processors import (
+            GraphExtractor as GraphExtractor,
+        )
+        from .processors import (
+            MemoryProcessor as MemoryProcessor,
+        )
+        from .processors import (
+            TextProcessor as TextProcessor,
+        )
+        from .processors import (
+            store_round_with_length_check as store_round_with_length_check,
+        )
+
         _lazy.update({k: v for k, v in locals().items() if k in __all__})
         return _lazy[name]
 
     # ── validators ──
     if name == "IndexValidator":
-        from .validators import IndexValidator  # type: ignore[no-redef]  # noqa: F811
+        from .validators import IndexValidator as IndexValidator
+
         _lazy["IndexValidator"] = IndexValidator
         return IndexValidator
 

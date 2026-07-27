@@ -15,8 +15,8 @@ from astrbot.core.agent.message import TextPart
 from ..base.constants import FAKE_TOOL_CALL_ID_PREFIX, FAKE_TOOL_CALL_NAME
 from ..utils.injection_budget import InjectionBudget, InjectionStats
 from .models import (
-    DeliveryMode,
     ContentLevel,
+    DeliveryMode,
     InjectionDecision,
     InjectionExecutionResult,
     InjectionOutcome,
@@ -25,8 +25,8 @@ from .models import (
 from .selection import candidate_utility, select_candidates
 
 if TYPE_CHECKING:
-    from ..utils.injection_adapter import InjectionAdapter
     from ..security.prompt_sanitizer import PromptProtectionService
+    from ..utils.injection_adapter import InjectionAdapter
 
 __all__ = ["InjectionExecutionContext", "InjectionExecutor", "candidate_utility"]
 
@@ -122,7 +122,9 @@ class InjectionExecutor:
         delivery = decision.resolved_delivery
         fallback_applied = False
         try:
-            delivery, fallback_reason = self._adapter.resolve(context.provider, delivery)
+            delivery, fallback_reason = self._adapter.resolve(
+                context.provider, delivery
+            )
             fallback_applied = fallback_reason is not None
         except asyncio.CancelledError:
             raise
@@ -169,7 +171,7 @@ class InjectionExecutor:
 
         if self._prompt_protection is not None:
             escaped_raw_payload = protected_payload[
-                len(_PROTECTION_PREFIX):-len(_PROTECTION_SUFFIX)
+                len(_PROTECTION_PREFIX) : -len(_PROTECTION_SUFFIX)
             ]
             try:
                 self._prompt_protection.wrap_prompt(
@@ -199,7 +201,9 @@ class InjectionExecutor:
                 )
 
         return self._result(
-            InjectionOutcome.FALLBACK if fallback_applied else InjectionOutcome.INJECTED,
+            InjectionOutcome.FALLBACK
+            if fallback_applied
+            else InjectionOutcome.INJECTED,
             configured_budget,
             effective_budget,
             actual_payload_chars=len(protected_payload),

@@ -63,11 +63,15 @@ def test_sanitize_fqn_replaces_dots() -> None:
     assert inst._sanitize_fqn("core.mod.Class.method") == "core_mod_Class_method"
 
 
-def test_sync_monitored_records_metrics_when_debug_and_trace_disabled(monkeypatch) -> None:
+def test_sync_monitored_records_metrics_when_debug_and_trace_disabled(
+    monkeypatch,
+) -> None:
     histogram = _FakeHistogram()
     counter = _FakeCounter()
     error_counter = _FakeCounter()
-    monkeypatch.setattr(inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram)
+    monkeypatch.setattr(
+        inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram
+    )
     monkeypatch.setattr(inst, "_get_or_create_counter", lambda *args, **kwargs: counter)
     monkeypatch.setattr(
         inst, "_get_or_create_error_counter", lambda *args, **kwargs: error_counter
@@ -104,11 +108,15 @@ def test_dynamic_metrics_register_on_plugin_registry() -> None:
         assert "memora_test_instrumented_registry" in names
 
 
-def test_sync_monitored_records_call_and_latency_when_debug_enabled(monkeypatch) -> None:
+def test_sync_monitored_records_call_and_latency_when_debug_enabled(
+    monkeypatch,
+) -> None:
     histogram = _FakeHistogram()
     counter = _FakeCounter()
     error_counter = _FakeCounter()
-    monkeypatch.setattr(inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram)
+    monkeypatch.setattr(
+        inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram
+    )
     monkeypatch.setattr(inst, "_get_or_create_counter", lambda *args, **kwargs: counter)
     monkeypatch.setattr(
         inst, "_get_or_create_error_counter", lambda *args, **kwargs: error_counter
@@ -159,7 +167,9 @@ def test_sync_monitored_records_errors_and_restores_trace_depth(monkeypatch) -> 
     counter = _FakeCounter()
     error_counter = _FakeCounter()
     debug_log = MagicMock()
-    monkeypatch.setattr(inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram)
+    monkeypatch.setattr(
+        inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram
+    )
     monkeypatch.setattr(inst, "_get_or_create_counter", lambda *args, **kwargs: counter)
     monkeypatch.setattr(
         inst, "_get_or_create_error_counter", lambda *args, **kwargs: error_counter
@@ -187,7 +197,9 @@ async def test_async_monitored_records_metrics_when_debug_enabled(monkeypatch) -
     histogram = _FakeHistogram()
     counter = _FakeCounter()
     error_counter = _FakeCounter()
-    monkeypatch.setattr(inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram)
+    monkeypatch.setattr(
+        inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram
+    )
     monkeypatch.setattr(inst, "_get_or_create_counter", lambda *args, **kwargs: counter)
     monkeypatch.setattr(
         inst, "_get_or_create_error_counter", lambda *args, **kwargs: error_counter
@@ -213,7 +225,9 @@ async def test_async_trace_mode_logs_nested_call_hierarchy_and_resets_depth(
     counter = _FakeCounter()
     error_counter = _FakeCounter()
     debug_log = MagicMock()
-    monkeypatch.setattr(inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram)
+    monkeypatch.setattr(
+        inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram
+    )
     monkeypatch.setattr(inst, "_get_or_create_counter", lambda *args, **kwargs: counter)
     monkeypatch.setattr(
         inst, "_get_or_create_error_counter", lambda *args, **kwargs: error_counter
@@ -246,7 +260,9 @@ async def test_async_monitored_records_nested_errors_and_restores_trace_depth(
     counter = _FakeCounter()
     error_counter = _FakeCounter()
     debug_log = MagicMock()
-    monkeypatch.setattr(inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram)
+    monkeypatch.setattr(
+        inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram
+    )
     monkeypatch.setattr(inst, "_get_or_create_counter", lambda *args, **kwargs: counter)
     monkeypatch.setattr(
         inst, "_get_or_create_error_counter", lambda *args, **kwargs: error_counter
@@ -303,7 +319,9 @@ def test_trace_mode_logs_nested_call_hierarchy_and_resets_depth(monkeypatch) -> 
     counter = _FakeCounter()
     error_counter = _FakeCounter()
     debug_log = MagicMock()
-    monkeypatch.setattr(inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram)
+    monkeypatch.setattr(
+        inst, "_get_or_create_histogram", lambda *args, **kwargs: histogram
+    )
     monkeypatch.setattr(inst, "_get_or_create_counter", lambda *args, **kwargs: counter)
     monkeypatch.setattr(
         inst, "_get_or_create_error_counter", lambda *args, **kwargs: error_counter

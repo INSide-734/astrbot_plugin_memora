@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import aiosqlite
-
 from astrbot.api import logger
 
 from ..adapter_capabilities import (
@@ -169,7 +168,7 @@ class BM25Retriever:
 
     @staticmethod
     async def _is_legacy_memora_documents_fts(
-            db: aiosqlite.Connection,
+        db: aiosqlite.Connection,
         create_sql: str,
     ) -> bool:
         normalized_sql = " ".join(create_sql.lower().replace("\n", " ").split())

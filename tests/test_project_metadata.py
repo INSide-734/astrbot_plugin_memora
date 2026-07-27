@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import ast
+import configparser
 import json
 import re
-import ast
 import sys
-import configparser
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
@@ -116,7 +116,9 @@ def test_localized_readmes_follow_current_command_set_and_version_floor() -> Non
         for command in required_commands:
             assert command in text, f"{path} is missing command: {command}"
         for command in stale_commands:
-            assert command not in text, f"{path} still documents stale command: {command}"
+            assert command not in text, (
+                f"{path} still documents stale command: {command}"
+            )
 
 
 def test_readme_documents_fast_context_fallback() -> None:
@@ -129,7 +131,7 @@ def test_readme_documents_fast_context_fallback() -> None:
 def test_root_agents_links_point_to_existing_module_docs() -> None:
     agents_text = _read_text("AGENTS.md")
     click_targets = re.findall(r'click\s+\w+\s+"\.\/([^"]+)"', agents_text)
-    markdown_targets = re.findall(r'\]\(\.\/([^\s)#]+)(?:#[^)]+)?\)', agents_text)
+    markdown_targets = re.findall(r"\]\(\.\/([^\s)#]+)(?:#[^)]+)?\)", agents_text)
     targets = sorted(set(click_targets + markdown_targets))
 
     assert targets, "No module doc links found in AGENTS.md"
@@ -211,7 +213,9 @@ def test_dashboard_real_browser_smoke_is_wired_into_quality_gate() -> None:
 
     assert "smoke:browser" in package_json["scripts"]
     assert package_json["scripts"]["smoke:browser"] == "node scripts/browser_smoke.mjs"
-    assert (REPO_ROOT / "pages" / "dashboard" / "scripts" / "browser_smoke.mjs").exists()
+    assert (
+        REPO_ROOT / "pages" / "dashboard" / "scripts" / "browser_smoke.mjs"
+    ).exists()
     assert "Dashboard browser smoke" in check_all
     assert '"smoke:browser"' in check_all
 
@@ -220,7 +224,7 @@ def test_dashboard_browser_smoke_uses_real_navigation_and_screenshots() -> None:
     browser_smoke = _read_text("pages/dashboard/scripts/browser_smoke.mjs")
 
     assert "clickSidebarNav" in browser_smoke
-    assert "page.getByRole(\"button\"" in browser_smoke
+    assert 'page.getByRole("button"' in browser_smoke
     assert "screenshots" in browser_smoke
     assert "page.screenshot" in browser_smoke
     assert "assertScreenshotLooksNonEmpty" in browser_smoke
@@ -336,7 +340,10 @@ def test_dashboard_browser_smoke_covers_backup_destructive_confirmation_flow() -
     assert "backup/restore" in browser_smoke
     assert "backup/delete" in browser_smoke
     assert "backup/batch-delete" in browser_smoke
-    assert "Restore data from backup-smoke-a? This will overwrite current data." in browser_smoke
+    assert (
+        "Restore data from backup-smoke-a? This will overwrite current data."
+        in browser_smoke
+    )
     assert "Delete backup backup-smoke-a? This cannot be undone." in browser_smoke
     assert "Delete 2 backups? This cannot be undone." in browser_smoke
     assert "assertNoPostCall" in browser_smoke
@@ -361,7 +368,9 @@ def test_run_smoke_reports_each_target_status_and_total_duration(
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(run_smoke, "SMOKE_TARGETS", [target_a, target_b])
-    monkeypatch.setattr(run_smoke.Path, "resolve", lambda self: tmp_path / "scripts" / "run_smoke.py")
+    monkeypatch.setattr(
+        run_smoke.Path, "resolve", lambda self: tmp_path / "scripts" / "run_smoke.py"
+    )
     monkeypatch.setattr(run_smoke, "which", lambda command: None)
     monkeypatch.setattr(run_smoke.subprocess, "run", _fake_run)
     monkeypatch.setattr(
@@ -485,7 +494,7 @@ def test_dashboard_build_artifact_checker_rejects_module_graph(
     assert check_dashboard_build_artifacts.main([str(dashboard)]) == 1
 
     output = capsys.readouterr().out
-    assert "type=\"module\"" in output
+    assert 'type="module"' in output
     assert "crossorigin" in output
     assert "/src/main" in output
     assert "expected exactly one JS file in assets" in output
@@ -602,9 +611,7 @@ def test_recall_cost_benchmark_covers_each_routing_mode_and_p95() -> None:
     ]:
         assert marker in source
 
-    baseline = json.loads(
-        _read_text("scripts/baselines/recall_total_path.json")
-    )
+    baseline = json.loads(_read_text("scripts/baselines/recall_total_path.json"))
     assert baseline["schema_version"] == 1
     assert baseline["metric"] == "RecallHandler.handle_memory_recall total-path p95"
     assert baseline["scenario"] == "balanced_full_path_with_fixed_retrieval"
@@ -684,7 +691,9 @@ def test_security_switches_are_aligned_across_schema_and_model() -> None:
     }
 
     for switch, default in expected.items():
-        assert switch in security_props, f"_conf_schema.json is missing security.{switch}"
+        assert switch in security_props, (
+            f"_conf_schema.json is missing security.{switch}"
+        )
         assert switch in model_fields, f"SecurityConfig is missing {switch}"
         assert defaults[switch] == default
 
@@ -726,15 +735,69 @@ def test_runtime_dependency_imports_are_declared_or_allowlisted() -> None:
         if line.strip() and not line.strip().startswith("#")
     }
     stdlib_modules = {
-        "__future__", "abc", "argparse", "array", "ast", "asyncio", "base64", "bisect",
-        "collections", "concurrent", "contextlib", "copy", "csv", "dataclasses",
-        "contextvars", "datetime", "difflib", "enum", "fnmatch", "functools", "gc", "hashlib", "heapq",
-        "html", "importlib", "inspect", "io", "itertools", "json", "logging",
-        "math", "numbers", "operator", "os", "pathlib", "pickle", "platform",
-        "queue", "random", "re", "secrets", "shlex", "shutil", "sqlite3",
-        "statistics", "string", "subprocess", "sys", "tempfile", "textwrap",
-        "threading", "time", "traceback", "types", "typing", "unicodedata",
-        "unittest", "urllib", "uuid", "warnings", "weakref", "xml",
+        "__future__",
+        "abc",
+        "argparse",
+        "array",
+        "ast",
+        "asyncio",
+        "base64",
+        "bisect",
+        "collections",
+        "concurrent",
+        "contextlib",
+        "copy",
+        "csv",
+        "dataclasses",
+        "contextvars",
+        "datetime",
+        "difflib",
+        "enum",
+        "fnmatch",
+        "functools",
+        "gc",
+        "hashlib",
+        "heapq",
+        "html",
+        "importlib",
+        "inspect",
+        "io",
+        "itertools",
+        "json",
+        "logging",
+        "math",
+        "numbers",
+        "operator",
+        "os",
+        "pathlib",
+        "pickle",
+        "platform",
+        "queue",
+        "random",
+        "re",
+        "secrets",
+        "shlex",
+        "shutil",
+        "sqlite3",
+        "statistics",
+        "string",
+        "subprocess",
+        "sys",
+        "tempfile",
+        "textwrap",
+        "threading",
+        "time",
+        "traceback",
+        "types",
+        "typing",
+        "unicodedata",
+        "unittest",
+        "urllib",
+        "uuid",
+        "warnings",
+        "weakref",
+        "xml",
+        "zoneinfo",
     }
     local_or_optional = {
         "astrbot",
@@ -763,7 +826,9 @@ def test_runtime_dependency_imports_are_declared_or_allowlisted() -> None:
     for root in scan_roots:
         files = [root] if root.is_file() else list(root.rglob("*.py"))
         for file_path in files:
-            tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
+            tree = ast.parse(
+                file_path.read_text(encoding="utf-8"), filename=str(file_path)
+            )
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
@@ -783,4 +848,6 @@ def test_runtime_dependency_imports_are_declared_or_allowlisted() -> None:
         if requirement_name not in requirements:
             missing.add(requirement_name)
 
-    assert not missing, f"requirements.txt is missing imported runtime dependencies: {sorted(missing)}"
+    assert not missing, (
+        f"requirements.txt is missing imported runtime dependencies: {sorted(missing)}"
+    )

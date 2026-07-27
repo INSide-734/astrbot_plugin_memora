@@ -11,18 +11,15 @@ through the full IndexValidator or monkey-patch the missing methods onto the mix
 
 from __future__ import annotations
 
-import asyncio
-import json
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_faiss_mock(ntotal: int = 0):
     """构建 a mock FaissVecDB with controlled vector index count."""
@@ -37,6 +34,7 @@ def _make_faiss_mock(ntotal: int = 0):
 
 def _make_validator(db_path: str = ":memory:", faiss_db=None):
     from core.validators.index_validator import IndexValidator
+
     return IndexValidator(db_path, faiss_db or MagicMock())
 
 
@@ -44,13 +42,15 @@ def _make_validator(db_path: str = ":memory:", faiss_db=None):
 # IndexValidator + IndexStatus — check_consistency
 # ---------------------------------------------------------------------------
 
-class TestIndexValidator:
 
+class TestIndexValidator:
     @pytest.mark.asyncio
     async def test_consistency_empty_database(self, tmp_db_path):
         """空 database is always consistent."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
             await db.commit()
 
         validator = _make_validator(tmp_db_path)
@@ -64,13 +64,21 @@ class TestIndexValidator:
     async def test_consistency_fully_synced(self, tmp_db_path):
         """当 documents, BM25, and vector counts all match, status is consistent."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
             for i in range(3):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
-                await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
-                                 (i, f"content_{i}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
+                await db.execute(
+                    "INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
+                    (i, f"content_{i}"),
+                )
             await db.commit()
 
         faiss = _make_faiss_mock(ntotal=3)
@@ -86,14 +94,22 @@ class TestIndexValidator:
     async def test_consistency_missing_in_bm25(self, tmp_db_path):
         """Documents exist but BM25 is missing entries — needs_rebuild=True."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
             for i in range(5):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
             for i in range(3):
-                await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
-                                 (i, f"content_{i}"))
+                await db.execute(
+                    "INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
+                    (i, f"content_{i}"),
+                )
             await db.commit()
 
         faiss = _make_faiss_mock(ntotal=5)
@@ -108,13 +124,21 @@ class TestIndexValidator:
     async def test_consistency_missing_in_vector(self, tmp_db_path):
         """Documents exist but vector index is missing entries — needs_rebuild=True."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
             for i in range(4):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
-                await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
-                                 (i, f"content_{i}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
+                await db.execute(
+                    "INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
+                    (i, f"content_{i}"),
+                )
             await db.commit()
 
         faiss = _make_faiss_mock(ntotal=2)
@@ -129,13 +153,21 @@ class TestIndexValidator:
     async def test_consistency_vector_redundant_slots_ignored(self, tmp_db_path):
         """FAISS ntotal > documents count is treated as consistent (mark-deleted slots)."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
             for i in range(3):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
-                await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
-                                 (i, f"content_{i}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
+                await db.execute(
+                    "INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
+                    (i, f"content_{i}"),
+                )
             await db.commit()
 
         faiss = _make_faiss_mock(ntotal=8)
@@ -146,17 +178,27 @@ class TestIndexValidator:
         assert "冗余" in status.reason
 
     @pytest.mark.asyncio
-    async def test_consistency_bm25_redundant_entries_triggers_rebuild(self, tmp_db_path):
+    async def test_consistency_bm25_redundant_entries_triggers_rebuild(
+        self, tmp_db_path
+    ):
         """BM25 entries exceeding documents count triggers rebuild."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
             for i in range(2):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
             for i in range(5):
-                await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
-                                 (i, f"content_{i}"))
+                await db.execute(
+                    "INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
+                    (i, f"content_{i}"),
+                )
             await db.commit()
 
         faiss = _make_faiss_mock(ntotal=2)
@@ -171,10 +213,14 @@ class TestIndexValidator:
     async def test_consistency_no_fts_table(self, tmp_db_path):
         """缺失 FTS table is detected as zero BM25 entries."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
             for i in range(3):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
             await db.commit()
 
         faiss = _make_faiss_mock(ntotal=3)
@@ -197,13 +243,21 @@ class TestIndexValidator:
     async def test_consistency_with_concrete_vector_ids(self, tmp_db_path):
         """当 FAISS has an id_map, compare by exact IDs."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
             for i in range(5):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
-                await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
-                                 (i, f"content_{i}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
+                await db.execute(
+                    "INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
+                    (i, f"content_{i}"),
+                )
             await db.commit()
 
         with patch("faiss.vector_to_array", return_value=[0, 1, 2, 3, 4]):
@@ -219,13 +273,21 @@ class TestIndexValidator:
     async def test_consistency_missing_with_concrete_ids(self, tmp_db_path):
         """向量 ID set is a strict subset of documents — triggers rebuild."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
             for i in range(5):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
-                await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
-                                 (i, f"content_{i}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
+                await db.execute(
+                    "INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
+                    (i, f"content_{i}"),
+                )
             await db.commit()
 
         with patch("faiss.vector_to_array", return_value=[0, 1, 2]):
@@ -242,31 +304,65 @@ class TestIndexValidator:
 # PersistenceHealthValidator
 # ---------------------------------------------------------------------------
 
-class TestPersistenceHealthValidator:
 
+class TestPersistenceHealthValidator:
     @pytest.mark.asyncio
-    async def test_reports_cross_table_orphans_and_duplicate_note_versions(self, tmp_db_path):
-        from core.validators.persistence_health_validator import PersistenceHealthValidator
+    async def test_reports_cross_table_orphans_and_duplicate_note_versions(
+        self, tmp_db_path
+    ):
+        from core.validators.persistence_health_validator import (
+            PersistenceHealthValidator,
+        )
 
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (1, 'doc_1', 'text', '{}')")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
-            await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (1, 'ok')")
-            await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (99, 'orphan')")
-            await db.execute("CREATE TABLE memory_atoms (id INTEGER PRIMARY KEY, parent_memory_id INTEGER)")
-            await db.execute("INSERT INTO memory_atoms (id, parent_memory_id) VALUES (10, 99)")
-            await db.execute("CREATE TABLE graph_entries (id INTEGER PRIMARY KEY, source_memory_id INTEGER, vector_doc_id TEXT)")
-            await db.execute("INSERT INTO graph_entries (id, source_memory_id, vector_doc_id) VALUES (20, 99, '200')")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "INSERT INTO documents (id, doc_id, text, metadata) VALUES (1, 'doc_1', 'text', '{}')"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
+            await db.execute(
+                "INSERT INTO memora_memories_fts (doc_id, content) VALUES (1, 'ok')"
+            )
+            await db.execute(
+                "INSERT INTO memora_memories_fts (doc_id, content) VALUES (99, 'orphan')"
+            )
+            await db.execute(
+                "CREATE TABLE memory_atoms (id INTEGER PRIMARY KEY, parent_memory_id INTEGER)"
+            )
+            await db.execute(
+                "INSERT INTO memory_atoms (id, parent_memory_id) VALUES (10, 99)"
+            )
+            await db.execute(
+                "CREATE TABLE graph_entries (id INTEGER PRIMARY KEY, source_memory_id INTEGER, vector_doc_id TEXT)"
+            )
+            await db.execute(
+                "INSERT INTO graph_entries (id, source_memory_id, vector_doc_id) VALUES (20, 99, '200')"
+            )
             await db.execute("CREATE TABLE graph_nodes (id INTEGER PRIMARY KEY)")
-            await db.execute("CREATE TABLE graph_entry_nodes (entry_id INTEGER, node_id INTEGER)")
-            await db.execute("INSERT INTO graph_entry_nodes (entry_id, node_id) VALUES (999, 888)")
+            await db.execute(
+                "CREATE TABLE graph_entry_nodes (entry_id INTEGER, node_id INTEGER)"
+            )
+            await db.execute(
+                "INSERT INTO graph_entry_nodes (entry_id, node_id) VALUES (999, 888)"
+            )
             await db.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY)")
             await db.execute("INSERT INTO notes (id) VALUES (5)")
-            await db.execute("CREATE TABLE note_versions (note_id INTEGER, version INTEGER)")
-            await db.execute("INSERT INTO note_versions (note_id, version) VALUES (5, 1)")
-            await db.execute("INSERT INTO note_versions (note_id, version) VALUES (5, 1)")
-            await db.execute("INSERT INTO note_versions (note_id, version) VALUES (7, 1)")
+            await db.execute(
+                "CREATE TABLE note_versions (note_id INTEGER, version INTEGER)"
+            )
+            await db.execute(
+                "INSERT INTO note_versions (note_id, version) VALUES (5, 1)"
+            )
+            await db.execute(
+                "INSERT INTO note_versions (note_id, version) VALUES (5, 1)"
+            )
+            await db.execute(
+                "INSERT INTO note_versions (note_id, version) VALUES (7, 1)"
+            )
             await db.commit()
 
         main_faiss = MagicMock()
@@ -284,17 +380,23 @@ class TestPersistenceHealthValidator:
         assert issues["graph_entry_nodes_orphan_entry_ids"] == [999]
         assert issues["graph_entry_nodes_orphan_node_ids"] == [888]
         assert issues["orphan_note_version_note_ids"] == [7]
-        assert issues["duplicate_note_versions"] == [{"note_id": 5, "version": 1, "count": 2}]
+        assert issues["duplicate_note_versions"] == [
+            {"note_id": 5, "version": 1, "count": 2}
+        ]
         assert issues["orphan_bm25_doc_ids"] == [99]
         assert issues["orphan_main_vector_ids"] == [77]
         assert issues["orphan_graph_vector_ids"] == ["999"]
 
     @pytest.mark.asyncio
     async def test_reports_ok_when_optional_tables_are_missing(self, tmp_db_path):
-        from core.validators.persistence_health_validator import PersistenceHealthValidator
+        from core.validators.persistence_health_validator import (
+            PersistenceHealthValidator,
+        )
 
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
             await db.commit()
 
         validator = PersistenceHealthValidator(tmp_db_path, MagicMock())
@@ -309,8 +411,8 @@ class TestPersistenceHealthValidator:
 # _get_rebuild_options
 # ---------------------------------------------------------------------------
 
-class TestRebuildOptions:
 
+class TestRebuildOptions:
     def test_defaults_returned_without_config(self):
         """_get_rebuild_options returns defaults when engine has no config."""
         engine = MagicMock(spec=[])
@@ -331,7 +433,7 @@ class TestRebuildOptions:
         validator = _make_validator()
         opts = validator._get_rebuild_options(engine)
         assert opts["batch_size"] == 500  # clamped to max
-        assert opts["max_retries"] == 1   # clamped to min
+        assert opts["max_retries"] == 1  # clamped to min
         assert opts["max_failure_ratio"] == 1.0  # clamped to max
 
 
@@ -339,8 +441,8 @@ class TestRebuildOptions:
 # IndexValidator._failure_ratio / _is_rate_limit_error
 # ---------------------------------------------------------------------------
 
-class TestFailureRatioAndRateLimit:
 
+class TestFailureRatioAndRateLimit:
     def test_failure_ratio(self):
         validator = _make_validator()
         assert validator._failure_ratio(0, 100) == 0.0
@@ -363,16 +465,24 @@ class TestFailureRatioAndRateLimit:
 # IndexRebuilderMixin — _try_restore_from_backup
 # ---------------------------------------------------------------------------
 
-class TestBackupRestore:
 
+class TestBackupRestore:
     @pytest.mark.asyncio
     async def test_restore_when_documents_empty(self, tmp_db_path):
         """当 documents table is empty and backup table exists, restore data."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, created_at REAL, updated_at REAL)")
-            await db.execute("CREATE TABLE _documents_rebuild_backup (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, created_at REAL, updated_at REAL)")
-            await db.execute("INSERT INTO _documents_rebuild_backup (id, doc_id, text, metadata, created_at, updated_at) VALUES (1, 'd1', 'text1', '{}', 1.0, 1.0)")
-            await db.execute("INSERT INTO _documents_rebuild_backup (id, doc_id, text, metadata, created_at, updated_at) VALUES (2, 'd2', 'text2', '{}', 2.0, 2.0)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, created_at REAL, updated_at REAL)"
+            )
+            await db.execute(
+                "CREATE TABLE _documents_rebuild_backup (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, created_at REAL, updated_at REAL)"
+            )
+            await db.execute(
+                "INSERT INTO _documents_rebuild_backup (id, doc_id, text, metadata, created_at, updated_at) VALUES (1, 'd1', 'text1', '{}', 1.0, 1.0)"
+            )
+            await db.execute(
+                "INSERT INTO _documents_rebuild_backup (id, doc_id, text, metadata, created_at, updated_at) VALUES (2, 'd2', 'text2', '{}', 2.0, 2.0)"
+            )
             await db.commit()
 
         validator = _make_validator(tmp_db_path)
@@ -387,10 +497,18 @@ class TestBackupRestore:
     async def test_restore_skips_when_not_empty(self, tmp_db_path):
         """当 documents already have data, skip restore to avoid duplication."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, created_at REAL, updated_at REAL)")
-            await db.execute("CREATE TABLE _documents_rebuild_backup (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, created_at REAL, updated_at REAL)")
-            await db.execute("INSERT INTO documents (id, doc_id, text, metadata, created_at, updated_at) VALUES (99, 'existing', 'kept', '{}', 0.0, 0.0)")
-            await db.execute("INSERT INTO _documents_rebuild_backup (id, doc_id, text, metadata, created_at, updated_at) VALUES (1, 'd1', 'text1', '{}', 1.0, 1.0)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, created_at REAL, updated_at REAL)"
+            )
+            await db.execute(
+                "CREATE TABLE _documents_rebuild_backup (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, created_at REAL, updated_at REAL)"
+            )
+            await db.execute(
+                "INSERT INTO documents (id, doc_id, text, metadata, created_at, updated_at) VALUES (99, 'existing', 'kept', '{}', 0.0, 0.0)"
+            )
+            await db.execute(
+                "INSERT INTO _documents_rebuild_backup (id, doc_id, text, metadata, created_at, updated_at) VALUES (1, 'd1', 'text1', '{}', 1.0, 1.0)"
+            )
             await db.commit()
 
         validator = _make_validator(tmp_db_path)
@@ -408,7 +526,9 @@ class TestBackupRestore:
     async def test_restore_no_backup_table(self, tmp_db_path):
         """当 backup table does not exist, silently skip."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, created_at REAL, updated_at REAL)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, created_at REAL, updated_at REAL)"
+            )
             await db.commit()
 
         validator = _make_validator(tmp_db_path)
@@ -425,8 +545,8 @@ class TestBackupRestore:
 # IndexRebuilderMixin — rebuild_indexes orchestration (through IndexValidator)
 # ---------------------------------------------------------------------------
 
-class TestRebuildOrchestration:
 
+class TestRebuildOrchestration:
     @pytest.mark.asyncio
     async def test_empty_database_returns_early(self):
         """rebuild_indexes returns early success for empty database."""
@@ -444,15 +564,34 @@ class TestRebuildOrchestration:
         """当 BM25 failure rate exceeds threshold, vector rebuild is skipped."""
         validator = _make_validator()
 
-        with patch.object(validator, "_get_document_count", AsyncMock(return_value=100)):
-            with patch.object(validator, "_get_rebuild_options", return_value={
-                "batch_size": 50, "embedding_batch_size": 8, "tasks_limit": 1,
-                "max_retries": 3, "retry_base_delay": 1.0, "batch_delay": 0.1,
-                "request_delay": 0.1, "max_failure_ratio": 0.02,
-            }):
-                with patch.object(validator, "_rebuild_bm25_index", AsyncMock(return_value={
-                    "processed": 90, "errors": 10, "failed_ids": set(range(10)),
-                })):
+        with patch.object(
+            validator, "_get_document_count", AsyncMock(return_value=100)
+        ):
+            with patch.object(
+                validator,
+                "_get_rebuild_options",
+                return_value={
+                    "batch_size": 50,
+                    "embedding_batch_size": 8,
+                    "tasks_limit": 1,
+                    "max_retries": 3,
+                    "retry_base_delay": 1.0,
+                    "batch_delay": 0.1,
+                    "request_delay": 0.1,
+                    "max_failure_ratio": 0.02,
+                },
+            ):
+                with patch.object(
+                    validator,
+                    "_rebuild_bm25_index",
+                    AsyncMock(
+                        return_value={
+                            "processed": 90,
+                            "errors": 10,
+                            "failed_ids": set(range(10)),
+                        }
+                    ),
+                ):
                     result = await validator.rebuild_indexes(MagicMock())
                     assert result["success"] is False
                     assert result["partial"] is True
@@ -465,18 +604,45 @@ class TestRebuildOrchestration:
         validator = _make_validator()
 
         with patch.object(validator, "_get_document_count", AsyncMock(return_value=50)):
-            with patch.object(validator, "_get_rebuild_options", return_value={
-                "batch_size": 50, "embedding_batch_size": 8, "tasks_limit": 1,
-                "max_retries": 3, "retry_base_delay": 1.0, "batch_delay": 0.1,
-                "request_delay": 0.1, "max_failure_ratio": 0.02,
-            }):
-                with patch.object(validator, "_rebuild_bm25_index", AsyncMock(return_value={
-                    "processed": 50, "errors": 0, "failed_ids": set(),
-                })):
-                    with patch.object(validator, "_rebuild_or_repair_vector_index", AsyncMock(return_value={
-                        "processed": 50, "errors": 0, "failed_ids": set(),
-                        "mode": "full", "switched": True, "partial": False,
-                    })):
+            with patch.object(
+                validator,
+                "_get_rebuild_options",
+                return_value={
+                    "batch_size": 50,
+                    "embedding_batch_size": 8,
+                    "tasks_limit": 1,
+                    "max_retries": 3,
+                    "retry_base_delay": 1.0,
+                    "batch_delay": 0.1,
+                    "request_delay": 0.1,
+                    "max_failure_ratio": 0.02,
+                },
+            ):
+                with patch.object(
+                    validator,
+                    "_rebuild_bm25_index",
+                    AsyncMock(
+                        return_value={
+                            "processed": 50,
+                            "errors": 0,
+                            "failed_ids": set(),
+                        }
+                    ),
+                ):
+                    with patch.object(
+                        validator,
+                        "_rebuild_or_repair_vector_index",
+                        AsyncMock(
+                            return_value={
+                                "processed": 50,
+                                "errors": 0,
+                                "failed_ids": set(),
+                                "mode": "full",
+                                "switched": True,
+                                "partial": False,
+                            }
+                        ),
+                    ):
                         result = await validator.rebuild_indexes(MagicMock())
                         assert result["success"] is True
                         assert result["processed"] == 50
@@ -488,7 +654,11 @@ class TestRebuildOrchestration:
         """Unhandled exceptions in rebuild return a structured error dict."""
         validator = _make_validator()
 
-        with patch.object(validator, "_get_document_count", AsyncMock(side_effect=RuntimeError("connection lost"))):
+        with patch.object(
+            validator,
+            "_get_document_count",
+            AsyncMock(side_effect=RuntimeError("connection lost")),
+        ):
             result = await validator.rebuild_indexes(MagicMock())
             assert result["success"] is False
             assert "error" in result
@@ -499,19 +669,48 @@ class TestRebuildOrchestration:
         """A few errors below max_failure_ratio are accepted, flagged as partial."""
         validator = _make_validator()
 
-        with patch.object(validator, "_get_document_count", AsyncMock(return_value=100)):
-            with patch.object(validator, "_get_rebuild_options", return_value={
-                "batch_size": 50, "embedding_batch_size": 8, "tasks_limit": 1,
-                "max_retries": 3, "retry_base_delay": 1.0, "batch_delay": 0.1,
-                "request_delay": 0.1, "max_failure_ratio": 0.05,
-            }):
-                with patch.object(validator, "_rebuild_bm25_index", AsyncMock(return_value={
-                    "processed": 99, "errors": 1, "failed_ids": {42},
-                })):
-                    with patch.object(validator, "_rebuild_or_repair_vector_index", AsyncMock(return_value={
-                        "processed": 98, "errors": 2, "failed_ids": {43, 44},
-                        "mode": "full", "switched": True, "partial": True,
-                    })):
+        with patch.object(
+            validator, "_get_document_count", AsyncMock(return_value=100)
+        ):
+            with patch.object(
+                validator,
+                "_get_rebuild_options",
+                return_value={
+                    "batch_size": 50,
+                    "embedding_batch_size": 8,
+                    "tasks_limit": 1,
+                    "max_retries": 3,
+                    "retry_base_delay": 1.0,
+                    "batch_delay": 0.1,
+                    "request_delay": 0.1,
+                    "max_failure_ratio": 0.05,
+                },
+            ):
+                with patch.object(
+                    validator,
+                    "_rebuild_bm25_index",
+                    AsyncMock(
+                        return_value={
+                            "processed": 99,
+                            "errors": 1,
+                            "failed_ids": {42},
+                        }
+                    ),
+                ):
+                    with patch.object(
+                        validator,
+                        "_rebuild_or_repair_vector_index",
+                        AsyncMock(
+                            return_value={
+                                "processed": 98,
+                                "errors": 2,
+                                "failed_ids": {43, 44},
+                                "mode": "full",
+                                "switched": True,
+                                "partial": True,
+                            }
+                        ),
+                    ):
                         result = await validator.rebuild_indexes(MagicMock())
                         assert result["success"] is True
                         assert result["partial"] is True
@@ -523,21 +722,29 @@ class TestRebuildOrchestration:
 # Bm25RebuilderMixin — through IndexValidator with monkey-patching
 # ---------------------------------------------------------------------------
 
-class TestBm25Rebuild:
 
+class TestBm25Rebuild:
     @pytest.mark.asyncio
     async def test_rebuild_calls_text_processor_and_writes_fts(self, tmp_db_path):
         """BM25 rebuild processes documents through TextProcessor and writes to FTS."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
             for i in range(5):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"文本内容_{i}", "{}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"文本内容_{i}", "{}"),
+                )
             await db.commit()
 
         text_proc = MagicMock()
-        text_proc.preprocess_for_bm25 = MagicMock(side_effect=lambda t: f"processed_{t}")
+        text_proc.preprocess_for_bm25 = MagicMock(
+            side_effect=lambda t: f"processed_{t}"
+        )
 
         bm25_retriever = MagicMock()
         bm25_retriever.text_processor = text_proc
@@ -592,17 +799,25 @@ class TestBm25Rebuild:
     async def test_preprocess_failures_tracked_as_errors(self, tmp_db_path):
         """当 text preprocessing fails for some docs, they are counted as errors."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
             for i in range(5):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
             await db.commit()
 
         # Text processor that fails on doc_id=2
         text_proc = MagicMock()
-        text_proc.preprocess_for_bm25 = MagicMock(side_effect=lambda t: (
-            "processed" if "2" not in t else (_ for _ in ()).throw(RuntimeError("bad text"))
-        ))
+        text_proc.preprocess_for_bm25 = MagicMock(
+            side_effect=lambda t: (
+                "processed"
+                if "2" not in t
+                else (_ for _ in ()).throw(RuntimeError("bad text"))
+            )
+        )
 
         bm25_retriever = MagicMock()
         bm25_retriever.text_processor = text_proc
@@ -618,11 +833,13 @@ class TestBm25Rebuild:
         validator._clear_bm25_with_retry = AsyncMock()
 
         # Mock _iter_document_batches to return controlled data without DB
-        rows = [(0, "d0", "text_0", "{}"),
-                (1, "d1", "text_1", "{}"),
-                (2, "d2", "text_2", "{}"),
-                (3, "d3", "text_3", "{}"),
-                (4, "d4", "text_4", "{}")]
+        rows = [
+            (0, "d0", "text_0", "{}"),
+            (1, "d1", "text_1", "{}"),
+            (2, "d2", "text_2", "{}"),
+            (3, "d3", "text_3", "{}"),
+            (4, "d4", "text_4", "{}"),
+        ]
 
         async def _iter_doc_batches(batch_size, document_ids=None):
             yield rows
@@ -646,13 +863,15 @@ class TestBm25Rebuild:
 # VectorRebuilderMixin — through IndexValidator
 # ---------------------------------------------------------------------------
 
-class TestVectorRebuildOrRepair:
 
+class TestVectorRebuildOrRepair:
     @pytest.mark.asyncio
     async def test_skip_when_documents_empty(self):
         """当 there are no document IDs, skip vector rebuild entirely."""
         validator = _make_validator()
-        with patch.object(validator, "_get_document_ids", AsyncMock(return_value=set())):
+        with patch.object(
+            validator, "_get_document_ids", AsyncMock(return_value=set())
+        ):
             result = await validator._rebuild_or_repair_vector_index(MagicMock(), 0, {})
             assert result["mode"] == "skip"
             assert result["processed"] == 0
@@ -661,10 +880,16 @@ class TestVectorRebuildOrRepair:
     async def test_skip_when_vectors_match(self):
         """当 vector IDs are an exact superset of document IDs, skip."""
         validator = _make_validator()
-        with patch.object(validator, "_get_document_ids", AsyncMock(return_value={1, 2, 3})):
-            with patch.object(validator, "_get_vector_ids", return_value={1, 2, 3, 4, 5}):
+        with patch.object(
+            validator, "_get_document_ids", AsyncMock(return_value={1, 2, 3})
+        ):
+            with patch.object(
+                validator, "_get_vector_ids", return_value={1, 2, 3, 4, 5}
+            ):
                 with patch.object(validator, "_get_vector_count", return_value=5):
-                    result = await validator._rebuild_or_repair_vector_index(MagicMock(), 3, {})
+                    result = await validator._rebuild_or_repair_vector_index(
+                        MagicMock(), 3, {}
+                    )
                     assert result["mode"] == "skip"
                     assert result["processed"] == 0
                     assert result["partial"] is False
@@ -673,14 +898,28 @@ class TestVectorRebuildOrRepair:
     async def test_incremental_repair_on_partial_missing(self):
         """当 some vector IDs are missing, run incremental repair."""
         validator = _make_validator()
-        with patch.object(validator, "_get_document_ids", AsyncMock(return_value={1, 2, 3, 4, 5})):
+        with patch.object(
+            validator, "_get_document_ids", AsyncMock(return_value={1, 2, 3, 4, 5})
+        ):
             with patch.object(validator, "_get_vector_ids", return_value={1, 2, 3}):
                 with patch.object(validator, "_get_vector_count", return_value=3):
-                    with patch.object(validator, "_repair_missing_vectors", AsyncMock(return_value={
-                        "mode": "repair", "processed": 2, "errors": 0,
-                        "failed_ids": set(), "switched": False, "partial": False,
-                    })):
-                        result = await validator._rebuild_or_repair_vector_index(MagicMock(), 5, {})
+                    with patch.object(
+                        validator,
+                        "_repair_missing_vectors",
+                        AsyncMock(
+                            return_value={
+                                "mode": "repair",
+                                "processed": 2,
+                                "errors": 0,
+                                "failed_ids": set(),
+                                "switched": False,
+                                "partial": False,
+                            }
+                        ),
+                    ):
+                        result = await validator._rebuild_or_repair_vector_index(
+                            MagicMock(), 5, {}
+                        )
                         assert result["mode"] == "repair"
                         assert result["processed"] == 2
                         assert result["switched"] is False
@@ -689,14 +928,28 @@ class TestVectorRebuildOrRepair:
     async def test_full_rebuild_when_vector_ids_unavailable(self):
         """当 vector IDs cannot be read (None), fall back to full rebuild."""
         validator = _make_validator()
-        with patch.object(validator, "_get_document_ids", AsyncMock(return_value={1, 2, 3, 4, 5})):
+        with patch.object(
+            validator, "_get_document_ids", AsyncMock(return_value={1, 2, 3, 4, 5})
+        ):
             with patch.object(validator, "_get_vector_ids", return_value=None):
                 with patch.object(validator, "_get_vector_count", return_value=0):
-                    with patch.object(validator, "_rebuild_vector_index_full", AsyncMock(return_value={
-                        "mode": "full", "processed": 5, "errors": 0,
-                        "failed_ids": set(), "switched": True, "partial": False,
-                    })):
-                        result = await validator._rebuild_or_repair_vector_index(MagicMock(), 5, {})
+                    with patch.object(
+                        validator,
+                        "_rebuild_vector_index_full",
+                        AsyncMock(
+                            return_value={
+                                "mode": "full",
+                                "processed": 5,
+                                "errors": 0,
+                                "failed_ids": set(),
+                                "switched": True,
+                                "partial": False,
+                            }
+                        ),
+                    ):
+                        result = await validator._rebuild_or_repair_vector_index(
+                            MagicMock(), 5, {}
+                        )
                         assert result["mode"] == "full"
                         assert result["switched"] is True
 
@@ -728,10 +981,14 @@ class TestVectorRebuildOrRepair:
     async def test_skip_when_vector_count_not_less_than_total(self):
         """当 vector IDs are None but count >= total, skip rebuild."""
         validator = _make_validator()
-        with patch.object(validator, "_get_document_ids", AsyncMock(return_value={1, 2, 3})):
+        with patch.object(
+            validator, "_get_document_ids", AsyncMock(return_value={1, 2, 3})
+        ):
             with patch.object(validator, "_get_vector_ids", return_value=None):
                 with patch.object(validator, "_get_vector_count", return_value=5):
-                    result = await validator._rebuild_or_repair_vector_index(MagicMock(), 3, {})
+                    result = await validator._rebuild_or_repair_vector_index(
+                        MagicMock(), 3, {}
+                    )
                     assert result["mode"] == "skip"
                     assert result["processed"] == 0
 
@@ -742,14 +999,18 @@ class TestVectorRebuildOrRepair:
 # via the full IndexValidator instance (which has _is_rate_limit_error etc.)
 # ---------------------------------------------------------------------------
 
-class TestBm25RebuildEdgeCases:
 
+class TestBm25RebuildEdgeCases:
     @pytest.mark.asyncio
     async def test_fallback_to_engine_text_processor(self, tmp_db_path):
         """当 bm25_retriever lacks text_processor, fall back to engine's text_processor."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (1, 'd1', 'text', '{}')")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "INSERT INTO documents (id, doc_id, text, metadata) VALUES (1, 'd1', 'text', '{}')"
+            )
             await db.commit()
 
         text_proc = MagicMock()
@@ -769,27 +1030,38 @@ class TestBm25RebuildEdgeCases:
         async def _iter_doc_batches(batch_size, document_ids=None):
             async with aiosqlite.connect(tmp_db_path) as db:
                 await db.execute("PRAGMA busy_timeout = 30000")
-                cursor = await db.execute("SELECT id, doc_id, text, metadata FROM documents ORDER BY id")
+                cursor = await db.execute(
+                    "SELECT id, doc_id, text, metadata FROM documents ORDER BY id"
+                )
                 rows = await cursor.fetchall()
                 if rows:
                     yield rows
+
         validator._iter_document_batches = _iter_doc_batches
 
-        result = await validator._rebuild_bm25_index(engine, 1, {"batch_size": 10, "max_failure_ratio": 0.1})
+        result = await validator._rebuild_bm25_index(
+            engine, 1, {"batch_size": 10, "max_failure_ratio": 0.1}
+        )
         assert result["processed"] >= 0
 
     @pytest.mark.asyncio
     async def test_batch_write_failure_falls_back_to_single_insert(self, tmp_db_path):
         """当 batch insert fails, it retries with single-row inserts."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
             for i in range(3):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
             await db.commit()
 
         text_proc = MagicMock()
-        text_proc.preprocess_for_bm25 = MagicMock(side_effect=lambda t: f"processed_{t}")
+        text_proc.preprocess_for_bm25 = MagicMock(
+            side_effect=lambda t: f"processed_{t}"
+        )
 
         bm25_retriever = MagicMock()
         bm25_retriever.text_processor = text_proc
@@ -801,7 +1073,12 @@ class TestBm25RebuildEdgeCases:
         validator._clear_bm25_with_retry = AsyncMock()
 
         async def _iter_doc_batches(batch_size, document_ids=None):
-            yield [(0, "d0", "text_0", "{}"), (1, "d1", "text_1", "{}"), (2, "d2", "text_2", "{}")]
+            yield [
+                (0, "d0", "text_0", "{}"),
+                (1, "d1", "text_1", "{}"),
+                (2, "d2", "text_2", "{}"),
+            ]
+
         validator._iter_document_batches = _iter_doc_batches
 
         # First executemany fails, then individual inserts succeed
@@ -810,10 +1087,13 @@ class TestBm25RebuildEdgeCases:
         class _MockConn:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *args):
                 pass
+
             async def execute(self, sql, params=None):
                 return None
+
             async def commit(self):
                 pass
 
@@ -831,21 +1111,29 @@ class TestBm25RebuildEdgeCases:
         mock_conn.executemany = _mock_executemany
 
         with patch.object(aiosqlite, "connect", return_value=mock_conn):
-            result = await validator._rebuild_bm25_index(engine, 3, {"batch_size": 10, "max_failure_ratio": 0.5})
+            result = await validator._rebuild_bm25_index(
+                engine, 3, {"batch_size": 10, "max_failure_ratio": 0.5}
+            )
         assert result["processed"] >= 0
 
     @pytest.mark.asyncio
     async def test_progress_callback_called(self, tmp_db_path):
         """Progress callback receives updates during BM25 rebuild."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
             for i in range(3):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
             await db.commit()
 
         text_proc = MagicMock()
-        text_proc.preprocess_for_bm25 = MagicMock(side_effect=lambda t: f"processed_{t}")
+        text_proc.preprocess_for_bm25 = MagicMock(
+            side_effect=lambda t: f"processed_{t}"
+        )
 
         bm25_retriever = MagicMock()
         bm25_retriever.text_processor = text_proc
@@ -857,7 +1145,12 @@ class TestBm25RebuildEdgeCases:
         validator._clear_bm25_with_retry = AsyncMock()
 
         async def _iter_doc_batches(batch_size, document_ids=None):
-            yield [(0, "d0", "text_0", "{}"), (1, "d1", "text_1", "{}"), (2, "d2", "text_2", "{}")]
+            yield [
+                (0, "d0", "text_0", "{}"),
+                (1, "d1", "text_1", "{}"),
+                (2, "d2", "text_2", "{}"),
+            ]
+
         validator._iter_document_batches = _iter_doc_batches
 
         progress_cb = AsyncMock()
@@ -870,7 +1163,12 @@ class TestBm25RebuildEdgeCases:
         mock_conn.commit = AsyncMock()
 
         with patch.object(aiosqlite, "connect", return_value=mock_conn):
-            await validator._rebuild_bm25_index(engine, 3, {"batch_size": 10, "max_failure_ratio": 0.5}, progress_callback=progress_cb)
+            await validator._rebuild_bm25_index(
+                engine,
+                3,
+                {"batch_size": 10, "max_failure_ratio": 0.5},
+                progress_callback=progress_cb,
+            )
             assert progress_cb.called
 
 
@@ -878,20 +1176,26 @@ class TestBm25RebuildEdgeCases:
 # IndexValidator — _iter_document_batches (by ID, by cursor)
 # ---------------------------------------------------------------------------
 
-class TestIterDocumentBatches:
 
+class TestIterDocumentBatches:
     @pytest.mark.asyncio
     async def test_by_specific_ids(self, tmp_db_path):
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
             for i in range(10):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
             await db.commit()
 
         validator = _make_validator(tmp_db_path)
         batches = []
-        async for batch in validator._iter_document_batches(3, document_ids={0, 2, 4, 6, 8}):
+        async for batch in validator._iter_document_batches(
+            3, document_ids={0, 2, 4, 6, 8}
+        ):
             batches.append(batch)
         total = sum(len(b) for b in batches)
         assert total == 5
@@ -899,10 +1203,16 @@ class TestIterDocumentBatches:
     @pytest.mark.asyncio
     async def test_by_cursor_based(self, tmp_db_path):
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            for i in range(1, 11):  # start from 1, cursor-based iter uses WHERE id > last_id
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            for i in range(
+                1, 11
+            ):  # start from 1, cursor-based iter uses WHERE id > last_id
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
             await db.commit()
 
         validator = _make_validator(tmp_db_path)
@@ -916,7 +1226,9 @@ class TestIterDocumentBatches:
     @pytest.mark.asyncio
     async def test_by_specific_ids_empty_set(self, tmp_db_path):
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
             await db.commit()
 
         validator = _make_validator(tmp_db_path)
@@ -928,10 +1240,14 @@ class TestIterDocumentBatches:
     @pytest.mark.asyncio
     async def test_get_document_count(self, tmp_db_path):
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
             for i in range(5):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
             await db.commit()
 
         validator = _make_validator(tmp_db_path)
@@ -941,10 +1257,14 @@ class TestIterDocumentBatches:
     @pytest.mark.asyncio
     async def test_get_document_ids(self, tmp_db_path):
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
             for i in range(5):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
             await db.commit()
 
         validator = _make_validator(tmp_db_path)
@@ -956,8 +1276,8 @@ class TestIterDocumentBatches:
 # VectorRebuilderMixin — additional tests
 # ---------------------------------------------------------------------------
 
-class TestVectorRebuildFull:
 
+class TestVectorRebuildFull:
     @pytest.mark.asyncio
     async def test_full_rebuild_zero_dimension(self):
         """零 dimension raises RuntimeError."""
@@ -971,7 +1291,9 @@ class TestVectorRebuildFull:
         validator = _make_validator()
         with pytest.raises(RuntimeError, match="维度"):
             await validator._rebuild_vector_index_full(
-                engine, 10, {"batch_size": 5, "batch_delay": 0, "max_failure_ratio": 0.1}
+                engine,
+                10,
+                {"batch_size": 5, "batch_delay": 0, "max_failure_ratio": 0.1},
             )
 
     @pytest.mark.asyncio
@@ -989,13 +1311,14 @@ class TestVectorRebuildFull:
 
         async def _iter_doc_batches(batch_size, document_ids=None):
             yield [(0, "d0", "text", "{}")]
+
         validator._iter_document_batches = _iter_doc_batches
 
-        with patch.object(validator, "_embed_batch_with_retry",
-                          AsyncMock(return_value=[[0.1] * 64])):  # 64 != 128
+        with patch.object(
+            validator, "_embed_batch_with_retry", AsyncMock(return_value=[[0.1] * 64])
+        ):  # 64 != 128
             result = await validator._rebuild_vector_index_full(
-                engine, 1,
-                {"batch_size": 5, "batch_delay": 0, "max_failure_ratio": 0.5}
+                engine, 1, {"batch_size": 5, "batch_delay": 0, "max_failure_ratio": 0.5}
             )
             assert result["switched"] is False
             assert result["errors"] >= 0
@@ -1014,16 +1337,18 @@ class TestVectorRebuildFull:
         validator = _make_validator()
 
         # Make _embed_batch_with_retry fail for both batches
-        validator._embed_batch_with_retry = AsyncMock(side_effect=RuntimeError("embed fail"))
+        validator._embed_batch_with_retry = AsyncMock(
+            side_effect=RuntimeError("embed fail")
+        )
 
         async def _iter_doc_batches(batch_size, document_ids=None):
             yield [(0, "d0", "text", "{}")]
             yield [(1, "d1", "text", "{}")]
+
         validator._iter_document_batches = _iter_doc_batches
 
         result = await validator._rebuild_vector_index_full(
-            engine, 2,
-            {"batch_size": 1, "batch_delay": 0, "max_failure_ratio": 0.3}
+            engine, 2, {"batch_size": 1, "batch_delay": 0, "max_failure_ratio": 0.3}
         )
         assert result["switched"] is False
         assert result["partial"] is True
@@ -1046,11 +1371,11 @@ class TestVectorRebuildFull:
 
         async def _iter_doc_batches(batch_size, document_ids=None):
             yield [(0, "d0", "text", "{}")]
+
         validator._iter_document_batches = _iter_doc_batches
 
         result = await validator._rebuild_vector_index_full(
-            engine, 1,
-            {"batch_size": 1, "batch_delay": 0, "max_failure_ratio": 0.02}
+            engine, 1, {"batch_size": 1, "batch_delay": 0, "max_failure_ratio": 0.02}
         )
         assert result["switched"] is False
         assert result["processed"] == 0
@@ -1086,11 +1411,11 @@ class TestVectorRebuildFull:
 
         async def _iter_doc_batches(batch_size, document_ids=None):
             yield [(42, "doc_42", "text content", "{}")]
+
         validator._iter_document_batches = _iter_doc_batches
 
         result = await validator._repair_missing_vectors(
-            engine, {42},
-            {"batch_size": 10, "batch_delay": 0, "max_failure_ratio": 0.1}
+            engine, {42}, {"batch_size": 10, "batch_delay": 0, "max_failure_ratio": 0.1}
         )
         assert result["mode"] == "repair"
         assert result["processed"] == 1
@@ -1101,14 +1426,20 @@ class TestVectorRebuildFull:
 # IndexValidator — clear_bm25_with_retry
 # ---------------------------------------------------------------------------
 
-class TestClearBm25WithRetry:
 
+class TestClearBm25WithRetry:
     @pytest.mark.asyncio
     async def test_successful_clear(self, tmp_db_path):
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
-            await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (1, 'test')")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
+            await db.execute(
+                "INSERT INTO memora_memories_fts (doc_id, content) VALUES (1, 'test')"
+            )
             await db.commit()
 
         validator = _make_validator(tmp_db_path)
@@ -1120,7 +1451,9 @@ class TestClearBm25WithRetry:
         validator = _make_validator("/nonexistent/db.sqlite")
         # Should raise after exhausting retries on nonexistent path
         with pytest.raises(Exception):
-            await validator._clear_bm25_with_retry("memora_memories_fts", max_attempts=2)
+            await validator._clear_bm25_with_retry(
+                "memora_memories_fts", max_attempts=2
+            )
 
     @pytest.mark.asyncio
     async def test_rejects_unknown_fts_table(self, tmp_db_path):
@@ -1137,24 +1470,34 @@ class TestClearBm25WithRetry:
 # IndexValidator — consistency with concrete vector IDs (edge cases)
 # ---------------------------------------------------------------------------
 
-class TestConsistencyConcreteVectorIDs:
 
+class TestConsistencyConcreteVectorIDs:
     @pytest.mark.asyncio
     async def test_vector_id_map_read_failure(self, tmp_db_path):
         """当 faiss.vector_to_array raises, fall back to count-based comparison."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
             for i in range(3):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
-                await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
-                                 (i, f"content_{i}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
+                await db.execute(
+                    "INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
+                    (i, f"content_{i}"),
+                )
             await db.commit()
 
         faiss = _make_faiss_mock(ntotal=3)
         faiss.embedding_storage.index.id_map = MagicMock()
-        with patch("faiss.vector_to_array", side_effect=RuntimeError("id map read error")):
+        with patch(
+            "faiss.vector_to_array", side_effect=RuntimeError("id map read error")
+        ):
             validator = _make_validator(tmp_db_path, faiss)
             status = await validator.check_consistency()
             assert status.documents_count == 3
@@ -1165,13 +1508,21 @@ class TestConsistencyConcreteVectorIDs:
     async def test_vector_id_map_missing_vector_to_array(self, tmp_db_path):
         """当 faiss.vector_to_array is not callable, fall back to count mode."""
         async with aiosqlite.connect(tmp_db_path) as db:
-            await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)")
-            await db.execute("CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)")
+            await db.execute(
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            await db.execute(
+                "CREATE VIRTUAL TABLE memora_memories_fts USING fts5(doc_id, content)"
+            )
             for i in range(3):
-                await db.execute("INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
-                                 (i, f"doc_{i}", f"text_{i}", "{}"))
-                await db.execute("INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
-                                 (i, f"content_{i}"))
+                await db.execute(
+                    "INSERT INTO documents (id, doc_id, text, metadata) VALUES (?, ?, ?, ?)",
+                    (i, f"doc_{i}", f"text_{i}", "{}"),
+                )
+                await db.execute(
+                    "INSERT INTO memora_memories_fts (doc_id, content) VALUES (?, ?)",
+                    (i, f"content_{i}"),
+                )
             await db.commit()
 
         faiss = _make_faiss_mock(ntotal=3)
@@ -1186,8 +1537,8 @@ class TestConsistencyConcreteVectorIDs:
 # _get_rebuild_options — additional config clamping
 # ---------------------------------------------------------------------------
 
-class TestRebuildOptionsAdvanced:
 
+class TestRebuildOptionsAdvanced:
     def test_invalid_config_values_use_defaults(self):
         """Non-numeric config values fall back to defaults."""
         engine = MagicMock()
@@ -1218,15 +1569,21 @@ class TestRebuildOptionsAdvanced:
 # EmbeddingRetryMixin — through IndexValidator
 # ---------------------------------------------------------------------------
 
-class TestEmbeddingRetry:
 
+class TestEmbeddingRetry:
     @pytest.mark.asyncio
     async def test_empty_contents_returns_empty(self):
         """空 contents list returns empty vectors immediately."""
         validator = _make_validator()
         result = await validator._embed_batch_with_retry(
-            MagicMock(), [], {"max_retries": 3, "retry_base_delay": 1.0,
-                              "embedding_batch_size": 8, "request_delay": 0.0}
+            MagicMock(),
+            [],
+            {
+                "max_retries": 3,
+                "retry_base_delay": 1.0,
+                "embedding_batch_size": 8,
+                "request_delay": 0.0,
+            },
         )
         assert result == []
 
@@ -1238,8 +1595,10 @@ class TestEmbeddingRetry:
 
         validator = _make_validator()
         result = await validator._embed_request_with_retry(
-            provider, ["hello"],
-            max_retries=3, retry_base_delay=0.01,
+            provider,
+            ["hello"],
+            max_retries=3,
+            retry_base_delay=0.01,
         )
         assert result == [[0.1, 0.2]]
         provider.get_embeddings.assert_called_once_with(["hello"])
@@ -1252,8 +1611,10 @@ class TestEmbeddingRetry:
 
         validator = _make_validator()
         result = await validator._embed_request_with_retry(
-            provider, ["a", "b"],
-            max_retries=2, retry_base_delay=0.01,
+            provider,
+            ["a", "b"],
+            max_retries=2,
+            retry_base_delay=0.01,
         )
         assert result == [[0.1], [0.2]]
         provider.get_embeddings_batch.assert_called_once()
@@ -1266,8 +1627,10 @@ class TestEmbeddingRetry:
 
         validator = _make_validator()
         result = await validator._embed_request_with_retry(
-            provider, ["a", "b"],
-            max_retries=2, retry_base_delay=0.01,
+            provider,
+            ["a", "b"],
+            max_retries=2,
+            retry_base_delay=0.01,
         )
         assert result == [[0.1], [0.2]]
         assert provider.get_embedding.call_count == 2
@@ -1276,16 +1639,20 @@ class TestEmbeddingRetry:
     async def test_retries_on_failure(self):
         """Transient failures are retried with exponential backoff."""
         provider = MagicMock()
-        provider.get_embeddings = AsyncMock(side_effect=[
-            Exception("transient error"),
-            Exception("transient error"),
-            [[1.0, 2.0]],
-        ])
+        provider.get_embeddings = AsyncMock(
+            side_effect=[
+                Exception("transient error"),
+                Exception("transient error"),
+                [[1.0, 2.0]],
+            ]
+        )
 
         validator = _make_validator()
         result = await validator._embed_request_with_retry(
-            provider, ["content"],
-            max_retries=3, retry_base_delay=0.001,
+            provider,
+            ["content"],
+            max_retries=3,
+            retry_base_delay=0.001,
         )
         assert result == [[1.0, 2.0]]
         assert provider.get_embeddings.call_count == 3
@@ -1299,8 +1666,10 @@ class TestEmbeddingRetry:
         validator = _make_validator()
         with pytest.raises(RuntimeError, match="重试失败"):
             await validator._embed_request_with_retry(
-                provider, ["content"],
-                max_retries=3, retry_base_delay=0.001,
+                provider,
+                ["content"],
+                max_retries=3,
+                retry_base_delay=0.001,
             )
         assert provider.get_embeddings.call_count == 3
 
@@ -1308,15 +1677,19 @@ class TestEmbeddingRetry:
     async def test_rate_limit_uses_longer_wait(self):
         """Rate limit errors trigger longer wait times via _is_rate_limit_error."""
         provider = MagicMock()
-        provider.get_embeddings = AsyncMock(side_effect=[
-            Exception("429 Too Many Requests"),
-            [[0.5, 0.6]],
-        ])
+        provider.get_embeddings = AsyncMock(
+            side_effect=[
+                Exception("429 Too Many Requests"),
+                [[0.5, 0.6]],
+            ]
+        )
 
         validator = _make_validator()
         result = await validator._embed_request_with_retry(
-            provider, ["content"],
-            max_retries=2, retry_base_delay=0.001,
+            provider,
+            ["content"],
+            max_retries=2,
+            retry_base_delay=0.001,
         )
         assert result == [[0.5, 0.6]]
         assert provider.get_embeddings.call_count == 2
@@ -1326,6 +1699,7 @@ class TestEmbeddingRetry:
         """Large content lists are split into embedding_batch_size chunks."""
         provider = MagicMock()
         call_count = 0
+
         async def _side_effect(contents):
             nonlocal call_count
             call_count += 1
@@ -1336,9 +1710,14 @@ class TestEmbeddingRetry:
 
         validator = _make_validator()
         result = await validator._embed_batch_with_retry(
-            provider, ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
-            {"max_retries": 2, "retry_base_delay": 0.01,
-             "embedding_batch_size": 3, "request_delay": 0.0},
+            provider,
+            ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+            {
+                "max_retries": 2,
+                "retry_base_delay": 0.01,
+                "embedding_batch_size": 3,
+                "request_delay": 0.0,
+            },
         )
         assert len(result) == 10
         assert call_count == 4  # 3+3+3+1
@@ -1351,7 +1730,9 @@ class TestEmbeddingRetry:
 
         validator = _make_validator()
         result = await validator._embed_request_with_retry(
-            provider, ["a", "b"],
-            max_retries=2, retry_base_delay=0.01,
+            provider,
+            ["a", "b"],
+            max_retries=2,
+            retry_base_delay=0.01,
         )
         assert result == [[0.1], [0.2]]

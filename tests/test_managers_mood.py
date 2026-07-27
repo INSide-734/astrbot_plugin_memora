@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.managers.mood_state import MoodState, _VALENCE_MAP
+from core.managers.mood_state import _VALENCE_MAP, MoodState
 
 
 class TestMoodStateDefaults:
@@ -194,5 +194,3 @@ class TestValenceMap:
     def test_neutral_valence(self) -> None:
         """中性情绪愉悦度为 0。"""
         assert _VALENCE_MAP["neutral"] == 0.0
-
-import pytest

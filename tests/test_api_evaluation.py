@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
-import json
-import sqlite3
 
 import pytest
 
@@ -70,9 +70,7 @@ async def test_evaluation_datasets_describe_live_engine_capabilities(tmp_path) -
     result = await api.get_evaluation_datasets_payload({})
 
     assert result["status"] == "ok"
-    descriptors = {
-        item["name"]: item for item in result["data"]["variants"]
-    }
+    descriptors = {item["name"]: item for item in result["data"]["variants"]}
     assert descriptors["graph_expansion_off"] == {
         "name": "graph_expansion_off",
         "available": True,
@@ -108,9 +106,7 @@ async def test_evaluation_api_imports_a_production_dataset(tmp_path) -> None:
             }
         },
     }
-    assert [item["name"] for item in listed["data"]["datasets"]] == [
-        "actual-memory"
-    ]
+    assert [item["name"] for item in listed["data"]["datasets"]] == ["actual-memory"]
     assert listed["data"]["datasets"][0]["path"] == "actual-memory.jsonl"
 
 

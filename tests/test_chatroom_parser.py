@@ -25,7 +25,9 @@ class TestChatroomParser:
         assert ChatroomContextParser.is_chatroom_context(prompt) is False
 
     def test_is_chatroom_context_false_with_only_header(self) -> None:
-        prompt = "You are now in a chatroom. The chat history is as follows:\nsome history"
+        prompt = (
+            "You are now in a chatroom. The chat history is as follows:\nsome history"
+        )
         assert ChatroomContextParser.is_chatroom_context(prompt) is False
 
     def test_is_chatroom_context_false_with_only_marker(self) -> None:

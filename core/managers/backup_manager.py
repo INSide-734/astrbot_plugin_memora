@@ -17,6 +17,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
+from ..utils.version import PLUGIN_VERSION  # single source of truth: metadata.yaml
 from .backup_models import (
     BackupIntegrity,
     BackupOperationError,
@@ -33,7 +34,6 @@ from .backup_snapshot import (
     sha256_file,
     snapshot_sqlite,
 )
-from ..utils.version import PLUGIN_VERSION  # single source of truth: metadata.yaml
 
 _VERSION_FILE = ".plugin_version"
 _BACKUP_INFO_FILE = "backup_info.json"
@@ -168,9 +168,13 @@ class BackupManager:
                     if value.get("pre_restore_backup_name")
                     else None
                 ),
-                reason_code=(str(value["reason_code"]) if value.get("reason_code") else None),
+                reason_code=(
+                    str(value["reason_code"]) if value.get("reason_code") else None
+                ),
                 reload_scheduled=bool(value.get("reload_scheduled", False)),
-                requires_manual_restart=bool(value.get("requires_manual_restart", False)),
+                requires_manual_restart=bool(
+                    value.get("requires_manual_restart", False)
+                ),
             )
         except (KeyError, ValueError, TypeError) as exc:
             raise BackupOperationError("restore_plan_invalid") from exc
@@ -184,7 +188,11 @@ class BackupManager:
 
     def _read_plan(self, operation_id: str | None = None) -> RestorePlan | None:
         root = self._restore_root()
-        paths = [self._plan_path(operation_id)] if operation_id else sorted(root.glob("*/restore_plan.json"))
+        paths = (
+            [self._plan_path(operation_id)]
+            if operation_id
+            else sorted(root.glob("*/restore_plan.json"))
+        )
         plans: list[RestorePlan] = []
         for path in paths:
             if not path.exists() or not path.is_file() or path.is_symlink():
@@ -223,7 +231,9 @@ class BackupManager:
         plan = self._read_plan()
         return {
             "blocked": bool(plan and self._restore_is_blocking(plan.status)),
-            "operation_id": plan.operation_id if plan and self._restore_is_blocking(plan.status) else None,
+            "operation_id": plan.operation_id
+            if plan and self._restore_is_blocking(plan.status)
+            else None,
             "status": plan.status.value if plan else None,
         }
 
@@ -248,7 +258,9 @@ class BackupManager:
             "reason_code": plan.reason_code,
         }
 
-    def get_restore_status(self, operation_id: str | None = None) -> dict[str, object] | None:
+    def get_restore_status(
+        self, operation_id: str | None = None
+    ) -> dict[str, object] | None:
         plan = self._read_plan(operation_id)
         return self._public_restore_status(plan) if plan else None
 
@@ -266,7 +278,9 @@ class BackupManager:
             if not self._is_restorable_file_name(name):
                 continue
             os.replace(source, payload_dir / name)
-            role = _BACKUP_FILE_SPECS.get(name, (FileRole.OPERATIONAL, "regular", False))[0]
+            role = _BACKUP_FILE_SPECS.get(
+                name, (FileRole.OPERATIONAL, "regular", False)
+            )[0]
             files.append(RestoreFileProgress(name=name, role=role))
         if not files:
             shutil.rmtree(operation_dir, ignore_errors=True)
@@ -300,7 +314,9 @@ class BackupManager:
         canonical = self.data_dir / "memora.db"
         return canonical.is_file() and not canonical.is_symlink()
 
-    def _backup_name(self, backup_type: BackupType, previous_version: str | None) -> str:
+    def _backup_name(
+        self, backup_type: BackupType, previous_version: str | None
+    ) -> str:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         suffix = uuid.uuid4().hex[:6]
         if backup_type is BackupType.VERSION_CHANGE:
@@ -540,7 +556,9 @@ class BackupManager:
         if not isinstance(info, dict):
             raise BackupOperationError("backup_invalid")
         manifest_files = info.get("files")
-        verified = info.get("manifest_version") == 2 and isinstance(manifest_files, dict)
+        verified = info.get("manifest_version") == 2 and isinstance(
+            manifest_files, dict
+        )
         file_specs: list[dict[str, object]] = []
         if verified:
             if info.get("status") != "ready":
@@ -596,7 +614,9 @@ class BackupManager:
             "warning_codes": ["legacy_unverified"] if not verified else [],
         }
 
-    def stage_restore(self, name: str, apply_mode: str = "restart") -> dict[str, object]:
+    def stage_restore(
+        self, name: str, apply_mode: str = "restart"
+    ) -> dict[str, object]:
         """校验备份并把恢复文件暂存为一个有状态事务。"""
         if apply_mode not in {"reload", "restart"}:
             raise ValueError("invalid apply mode")
@@ -631,7 +651,9 @@ class BackupManager:
                 files=progress,
                 requires_manual_restart=apply_mode == "restart",
                 reason_code=(
-                    "legacy_unverified" if preflight["integrity"] == "legacy_unverified" else None
+                    "legacy_unverified"
+                    if preflight["integrity"] == "legacy_unverified"
+                    else None
                 ),
             )
             self._write_plan(plan)
@@ -761,7 +783,11 @@ class BackupManager:
             self._write_plan(plan)
             return self._public_restore_status(plan)
         except (OSError, sqlite3.DatabaseError, BackupOperationError) as exc:
-            plan.reason_code = str(exc) if isinstance(exc, BackupOperationError) else "restore_apply_failed"
+            plan.reason_code = (
+                str(exc)
+                if isinstance(exc, BackupOperationError)
+                else "restore_apply_failed"
+            )
             if not started_apply:
                 plan.status = RestoreStatus.FAILED_BEFORE_APPLY
                 self._write_plan(plan)
@@ -779,8 +805,12 @@ class BackupManager:
         plan.status = RestoreStatus.SUCCEEDED
         plan.reason_code = None
         self._write_plan(plan)
-        shutil.rmtree(self._restore_root() / plan.operation_id / "payload", ignore_errors=True)
-        shutil.rmtree(self._restore_root() / plan.operation_id / "previous", ignore_errors=True)
+        shutil.rmtree(
+            self._restore_root() / plan.operation_id / "payload", ignore_errors=True
+        )
+        shutil.rmtree(
+            self._restore_root() / plan.operation_id / "previous", ignore_errors=True
+        )
 
     def mark_restore_startup_failure_if_needed(self, failed: bool) -> None:
         if not failed:
@@ -875,7 +905,9 @@ class BackupManager:
                     if invalid or info.get("status") != "ready"
                     else BackupIntegrity.VERIFIED.value
                 )
-                backup_status = "invalid" if invalid else str(info.get("status", "ready"))
+                backup_status = (
+                    "invalid" if invalid else str(info.get("status", "ready"))
+                )
                 file_count = len(manifest_files)
                 total_size = int(info.get("total_size_bytes", 0) or 0)
                 warning_codes = list(info.get("warning_codes", []) or [])

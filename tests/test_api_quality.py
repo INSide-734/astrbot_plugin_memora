@@ -191,15 +191,24 @@ class TestQualityRecent:
     @pytest.mark.asyncio
     async def test_recent_skips_malformed_score_history_items(self) -> None:
         broken = MagicMock()
-        type(broken).atom_id = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken score")))
-        scores = [_make_quality_score("good-1", 0.61), broken, _make_quality_score("good-2", 0.72)]
+        type(broken).atom_id = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("broken score"))
+        )
+        scores = [
+            _make_quality_score("good-1", 0.61),
+            broken,
+            _make_quality_score("good-2", 0.72),
+        ]
         stub = _make_stub_scorer(score_history=scores)
         mock_req = _make_mock_request(limit="10")
         with patch("core.api.quality_api.request", mock_req):
             result = await stub.get_quality_recent()
         assert result["status"] == "ok"
         assert result["data"]["total_scores"] == 3
-        assert [item["atom_id"] for item in result["data"]["scores"]] == ["good-2", "good-1"]
+        assert [item["atom_id"] for item in result["data"]["scores"]] == [
+            "good-2",
+            "good-1",
+        ]
 
     @pytest.mark.asyncio
     async def test_recent_tolerates_non_iterable_score_history_container(self) -> None:
@@ -279,7 +288,9 @@ class TestQualityAlerts:
     @pytest.mark.asyncio
     async def test_alerts_skip_malformed_alert_history_items(self) -> None:
         broken = MagicMock()
-        type(broken).level = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken alert")))
+        type(broken).level = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("broken alert"))
+        )
         alerts = [
             _make_quality_alert("high", "consistency", 0.42),
             broken,
@@ -292,7 +303,10 @@ class TestQualityAlerts:
         assert result["status"] == "ok"
         assert result["data"]["total_alerts"] == 3
         assert result["data"]["filtered_count"] == 3
-        assert [item["level"] for item in result["data"]["alerts"]] == ["critical", "high"]
+        assert [item["level"] for item in result["data"]["alerts"]] == [
+            "critical",
+            "high",
+        ]
 
     @pytest.mark.asyncio
     async def test_alerts_filter_skips_malformed_alert_items(self) -> None:

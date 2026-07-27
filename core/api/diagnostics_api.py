@@ -170,7 +170,9 @@ class DiagnosticsApiMixin:
     def _score_diagnostics_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         """评分并推进写失败累计值基线。"""
         scorer = self._get_diagnostics_health_scorer()
-        previous_failures = getattr(self, "_diagnostics_previous_write_failures_total", None)
+        previous_failures = getattr(
+            self, "_diagnostics_previous_write_failures_total", None
+        )
         health = scorer.score(
             snapshot,
             previous_write_failures_total=previous_failures,
@@ -207,7 +209,9 @@ class DiagnosticsApiMixin:
             data_dir = getattr(owner, "data_dir", None)
             if data_dir:
                 return Path(data_dir) / "diagnostics_events.db"
-        raise RuntimeError("diagnostics event store requires plugin initializer data_dir")
+        raise RuntimeError(
+            "diagnostics event store requires plugin initializer data_dir"
+        )
 
     async def _clear_completed_diagnostic_events(self) -> dict[str, Any]:
         """报告已解决事件数量；当前保持无删除的 noop 语义。"""

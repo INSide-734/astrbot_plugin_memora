@@ -96,7 +96,9 @@ def select_by_utility(
     selected: list[dict[str, Any]] = []
     estimated_chars = 0
     while remaining and len(selected) < decision.max_memories:
-        ranked = ranked_candidates(decision, preset.cost_penalty_weight, remaining, selected)
+        ranked = ranked_candidates(
+            decision, preset.cost_penalty_weight, remaining, selected
+        )
         negative_utility, _, chosen_index, chosen = ranked[0]
         utility = -negative_utility
         estimate = estimate_candidate_chars(decision, chosen)
@@ -131,9 +133,7 @@ def ranked_candidates(
             source_value=bounded_float(metadata.get("source_value", 0.0)),
             redundancy=redundancy,
             cost_penalty=(
-                cost_penalty_weight
-                * estimate
-                / max(1, decision.memory_budget_chars)
+                cost_penalty_weight * estimate / max(1, decision.memory_budget_chars)
             ),
         )
         ranked.append((-utility, stable_memory_id(memory), index, memory))
@@ -192,13 +192,9 @@ def estimate_candidate_chars(
 ) -> int:
     content = str(memory.get("content", "") or "")
     content_limit = (
-        decision.memory_max_chars
-        if decision.memory_max_chars > 0
-        else len(content)
+        decision.memory_max_chars if decision.memory_max_chars > 0 else len(content)
     )
     metadata_limit = (
-        decision.metadata_max_chars
-        if decision.metadata_max_chars > 0
-        else 180
+        decision.metadata_max_chars if decision.metadata_max_chars > 0 else 180
     )
     return min(len(content), content_limit) + min(metadata_limit, 180)

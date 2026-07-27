@@ -22,10 +22,10 @@ from core.handlers.recall_handler import RecallHandler
 from core.utils.injection_adapter import InjectionAdapter
 from core.utils.memory_formatter import format_memories_for_injection
 
-
 # =============================================================================
 # Helpers
 # =============================================================================
+
 
 def _make_provider_request(
     prompt: str = "",
@@ -164,9 +164,7 @@ class TestPipelineEvent:
         mock_event.unified_msg_origin = "test-session-001"
         mock_event.session_id = "test-session-001"
         _setup_event_message(mock_event, "周末去西湖玩")
-        mock_event.get_message_type.return_value = MagicMock(
-            value="GROUP_MESSAGE"
-        )
+        mock_event.get_message_type.return_value = MagicMock(value="GROUP_MESSAGE")
 
         # 6. 配置: extra_user_content 注入方式 (最简路径)
         cfg = MagicMock()
@@ -183,7 +181,10 @@ class TestPipelineEvent:
             "recall_engine.interest_boost_enabled": False,
             "recall_engine.serial_position_enabled": False,
         }.get(key, default)
-        cfg.filtering_settings = {"use_persona_filtering": False, "use_session_filtering": False}
+        cfg.filtering_settings = {
+            "use_persona_filtering": False,
+            "use_session_filtering": False,
+        }
 
         # 7. 构造 mock context 用于 get_using_provider
         mock_context.get_using_provider = MagicMock(return_value=None)
@@ -206,11 +207,7 @@ class TestPipelineEvent:
         extra_parts = req.extra_user_content_parts
         assert len(extra_parts) > 0, "应至少注入 1 个 extra_user_content_parts"
 
-        # 从 TextPart 的 mock call 中提取注入文本
-        injected_text = extra_parts[0].text
-        # Note: TextPart is mocked in conftest so .text is a MagicMock.
-        # We verify injection through append() count and engine search.
-        # The injection happened — confirmed by the log and append() count.
+        # TextPart 在 conftest 中是替身，因此通过追加数量和引擎查询验证注入。
 
         # 2. 确认 search_memories 被正确调用
         mock_engine.search_memories.assert_awaited_once()
@@ -236,9 +233,7 @@ class TestPipelineEvent:
         mock_event = MagicMock()
         mock_event.unified_msg_origin = ""
         mock_event.session_id = ""
-        mock_event.get_message_type.return_value = MagicMock(
-            value="GROUP_MESSAGE"
-        )
+        mock_event.get_message_type.return_value = MagicMock(value="GROUP_MESSAGE")
 
         mock_engine = MagicMock()
         mock_engine.search_memories = AsyncMock(return_value=[])
@@ -261,7 +256,10 @@ class TestPipelineEvent:
             "recall_engine.prospective_recall_enabled": False,
             "recall_engine.query_rewrite_enabled": False,
         }.get(key, default)
-        cfg.filtering_settings = {"use_persona_filtering": False, "use_session_filtering": False}
+        cfg.filtering_settings = {
+            "use_persona_filtering": False,
+            "use_session_filtering": False,
+        }
 
         mock_context.get_using_provider = MagicMock(return_value=None)
 
@@ -301,9 +299,7 @@ class TestPipelineEvent:
         mock_event = MagicMock()
         mock_event.unified_msg_origin = "Error: platform adapter init failed"
         mock_event.session_id = "Error: platform adapter init failed"
-        mock_event.get_message_type.return_value = MagicMock(
-            value="GROUP_MESSAGE"
-        )
+        mock_event.get_message_type.return_value = MagicMock(value="GROUP_MESSAGE")
 
         mock_engine = MagicMock()
         mock_engine.search_memories = AsyncMock(return_value=[])
@@ -326,7 +322,10 @@ class TestPipelineEvent:
             "recall_engine.prospective_recall_enabled": False,
             "recall_engine.query_rewrite_enabled": False,
         }.get(key, default)
-        cfg.filtering_settings = {"use_persona_filtering": False, "use_session_filtering": False}
+        cfg.filtering_settings = {
+            "use_persona_filtering": False,
+            "use_session_filtering": False,
+        }
 
         mock_context.get_using_provider = MagicMock(return_value=None)
 
@@ -401,9 +400,7 @@ class TestPipelineEvent:
         mock_event.unified_msg_origin = "test-session-001"
         mock_event.session_id = "test-session-001"
         _setup_event_message(mock_event, original_message)
-        mock_event.get_message_type.return_value = MagicMock(
-            value="GROUP_MESSAGE"
-        )
+        mock_event.get_message_type.return_value = MagicMock(value="GROUP_MESSAGE")
 
         cfg = MagicMock()
         cfg.get.side_effect = lambda key, default=None: {
@@ -416,7 +413,10 @@ class TestPipelineEvent:
             "recall_engine.prospective_recall_enabled": False,
             "recall_engine.query_rewrite_enabled": False,
         }.get(key, default)
-        cfg.filtering_settings = {"use_persona_filtering": False, "use_session_filtering": False}
+        cfg.filtering_settings = {
+            "use_persona_filtering": False,
+            "use_session_filtering": False,
+        }
 
         mock_context.get_using_provider = MagicMock(return_value=None)
 
@@ -489,9 +489,7 @@ class TestPipelineEvent:
         mock_event.unified_msg_origin = "test-session-001"
         mock_event.session_id = "test-session-001"
         _setup_event_message(mock_event, original_message)
-        mock_event.get_message_type.return_value = MagicMock(
-            value="GROUP_MESSAGE"
-        )
+        mock_event.get_message_type.return_value = MagicMock(value="GROUP_MESSAGE")
 
         cfg = MagicMock()
         cfg.get.side_effect = lambda key, default=None: {
@@ -504,7 +502,10 @@ class TestPipelineEvent:
             "recall_engine.prospective_recall_enabled": False,
             "recall_engine.query_rewrite_enabled": False,
         }.get(key, default)
-        cfg.filtering_settings = {"use_persona_filtering": False, "use_session_filtering": False}
+        cfg.filtering_settings = {
+            "use_persona_filtering": False,
+            "use_session_filtering": False,
+        }
 
         mock_context.get_using_provider = MagicMock(return_value=None)
 
@@ -595,19 +596,21 @@ class TestPipelineEvent:
         """InjectionCleaner 清理后原消息保留：注入 + 清理的闭环验证。"""
         # --- Arrange ---
         original_message = "今天天气真好，适合出去走走"
-        injected = format_memories_for_injection([
-            {
-                "id": 5001,
-                "content": "用户喜欢在晴天去公园散步",
-                "score": 0.75,
-                "metadata": {
-                    "create_time": time.time() - 86400,
-                    "importance": 0.65,
-                    "topics": ["散步", "公园", "晴天"],
+        injected = format_memories_for_injection(
+            [
+                {
+                    "id": 5001,
+                    "content": "用户喜欢在晴天去公园散步",
+                    "score": 0.75,
+                    "metadata": {
+                        "create_time": time.time() - 86400,
+                        "importance": 0.65,
+                        "topics": ["散步", "公园", "晴天"],
+                    },
+                    "timestamp": time.time() - 86400,
                 },
-                "timestamp": time.time() - 86400,
-            },
-        ])
+            ]
+        )
 
         # 模拟 user_message_before 注入后的 prompt
         combined_prompt = injected + "\n\n" + original_message
@@ -619,9 +622,7 @@ class TestPipelineEvent:
 
         # --- Assert ---
         assert removed >= 1, "应成功清理至少 1 处注入片段"
-        assert original_message in req.prompt, (
-            "清理后原始消息必须完整保留"
-        )
+        assert original_message in req.prompt, "清理后原始消息必须完整保留"
         assert MEMORY_INJECTION_HEADER not in req.prompt, (
             "清理后不应残留 MEMORY_INJECTION_HEADER"
         )
@@ -629,9 +630,7 @@ class TestPipelineEvent:
             "清理后不应残留 MEMORY_INJECTION_FOOTER"
         )
         # 记忆内容短语不应出现在清理后的 prompt 中
-        assert "晴天去公园散步" not in req.prompt, (
-            "清理后注入的记忆内容应被移除"
-        )
+        assert "晴天去公园散步" not in req.prompt, "清理后注入的记忆内容应被移除"
 
     # ------------------------------------------------------------------
     # test_top_k_zero_skips_recall
@@ -655,9 +654,7 @@ class TestPipelineEvent:
         req = _make_provider_request(prompt="你好")
         mock_event.unified_msg_origin = "test-session-001"
         mock_event.session_id = "test-session-001"
-        mock_event.get_message_type.return_value = MagicMock(
-            value="GROUP_MESSAGE"
-        )
+        mock_event.get_message_type.return_value = MagicMock(value="GROUP_MESSAGE")
 
         cfg = MagicMock()
         cfg.get.side_effect = lambda key, default=None: {
@@ -670,7 +667,10 @@ class TestPipelineEvent:
             "recall_engine.prospective_recall_enabled": False,
             "recall_engine.query_rewrite_enabled": False,
         }.get(key, default)
-        cfg.filtering_settings = {"use_persona_filtering": False, "use_session_filtering": False}
+        cfg.filtering_settings = {
+            "use_persona_filtering": False,
+            "use_session_filtering": False,
+        }
 
         mock_context.get_using_provider = MagicMock(return_value=None)
 
@@ -690,6 +690,4 @@ class TestPipelineEvent:
         # search_memories 不应被调用（top_k=0 提前返回）
         mock_engine.search_memories.assert_not_called()
         # extra_user_content_parts 不应有新增
-        assert len(req.extra_user_content_parts) == 0, (
-            "top_k=0 时不应注入任何记忆"
-        )
+        assert len(req.extra_user_content_parts) == 0, "top_k=0 时不应注入任何记忆"

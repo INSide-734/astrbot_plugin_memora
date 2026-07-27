@@ -8,11 +8,11 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..affection.models import MoodType
 from ..affection.affection_store import (
     AFFECTION_USER_SORT_COLUMNS,
     MOOD_HISTORY_SORT_COLUMNS,
 )
+from ..affection.models import MoodType
 from ..base.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
@@ -30,7 +30,6 @@ from .editing_utils import (
     required_text,
 )
 from .response_utils import error_response, ok_response
-
 
 _CREATE_FIELDS = frozenset({"group_id", "user_id", "affection_score"})
 _UPDATE_FIELDS = frozenset({"identity", "changes", "expected_revision"})
@@ -60,7 +59,9 @@ def _affection_user_to_dict(user: Any) -> dict[str, Any]:
         "user_id": getattr(user, "user_id", ""),
         "group_id": getattr(user, "group_id", ""),
         "affection_score": getattr(user, "affection_score", 0),
-        "affection_level": getattr(user, "level", None).name if hasattr(getattr(user, "level", None), "name") else str(getattr(user, "level", "NEUTRAL")),
+        "affection_level": getattr(user, "level", None).name
+        if hasattr(getattr(user, "level", None), "name")
+        else str(getattr(user, "level", "NEUTRAL")),
         "level_name": getattr(user, "level_name", ""),
         "interaction_count": getattr(user, "interaction_count", 0),
         "last_interaction": getattr(user, "last_interaction", 0.0),
@@ -70,12 +71,16 @@ def _affection_user_to_dict(user: Any) -> dict[str, Any]:
 def _mood_to_dict(mood: Any) -> dict[str, Any]:
     """将 ``BotMood`` 转换为 JSON 响应字典。"""
     return {
-        "mood_type": getattr(mood, "mood_type", None).value if hasattr(getattr(mood, "mood_type", None), "value") else str(getattr(mood, "mood_type", "NEUTRAL")),
+        "mood_type": getattr(mood, "mood_type", None).value
+        if hasattr(getattr(mood, "mood_type", None), "value")
+        else str(getattr(mood, "mood_type", "NEUTRAL")),
         "intensity": getattr(mood, "intensity", 0.0),
         "description": getattr(mood, "description", ""),
         "start_time": getattr(mood, "start_time", 0.0),
         "duration_hours": getattr(mood, "duration_hours", 4.0),
-        "is_active": getattr(mood, "is_active", lambda: False)() if callable(getattr(mood, "is_active", None)) else False,
+        "is_active": getattr(mood, "is_active", lambda: False)()
+        if callable(getattr(mood, "is_active", None))
+        else False,
     }
 
 
@@ -145,7 +150,9 @@ def _parse_identity(value: Any) -> tuple[dict[str, str] | None, dict | None]:
         return None, unknown
     try:
         return {
-            "group_id": required_text(identity.get("group_id"), field="identity.group_id"),
+            "group_id": required_text(
+                identity.get("group_id"), field="identity.group_id"
+            ),
             "user_id": required_text(identity.get("user_id"), field="identity.user_id"),
         }, None
     except EntityValidationError as exc:
@@ -170,14 +177,18 @@ def _parse_query_int(
     if value is None or value == "":
         return default, None
     try:
-        return bounded_int(int(value), field=field, minimum=minimum, maximum=maximum), None
+        return bounded_int(
+            int(value), field=field, minimum=minimum, maximum=maximum
+        ), None
     except (TypeError, ValueError):
         return None, _validation_error(EntityValidationError({field: "必须为整数"}))
     except EntityValidationError as exc:
         return None, _validation_error(exc)
 
 
-def _batch_failure(identity: Mapping[str, Any], error: Mapping[str, Any]) -> dict[str, Any]:
+def _batch_failure(
+    identity: Mapping[str, Any], error: Mapping[str, Any]
+) -> dict[str, Any]:
     failure: dict[str, Any] = {
         "identity": dict(identity),
         "code": error.get("code", "internal_error"),
@@ -259,9 +270,17 @@ class AffectionApiMixin:
                 if store is not None:
                     try:
                         # 尝试从存储层取第一个群组
-                        groups = await store.list_groups() if hasattr(store, "list_groups") else []
+                        groups = (
+                            await store.list_groups()
+                            if hasattr(store, "list_groups")
+                            else []
+                        )
                         if groups:
-                            group_id = groups[0] if isinstance(groups[0], str) else getattr(groups[0], "group_id", str(groups[0]))
+                            group_id = (
+                                groups[0]
+                                if isinstance(groups[0], str)
+                                else getattr(groups[0], "group_id", str(groups[0]))
+                            )
                     except Exception as exc:
                         logger.debug(
                             "[AffectionApi] list_groups fallback failed: %s",
@@ -595,7 +614,15 @@ class AffectionApiMixin:
                 return error
             unknown = reject_unknown_fields(
                 payload,
-                frozenset({"group_id", "mood_type", "intensity", "duration_hours", "description"}),
+                frozenset(
+                    {
+                        "group_id",
+                        "mood_type",
+                        "intensity",
+                        "duration_hours",
+                        "description",
+                    }
+                ),
             )
             if unknown:
                 return unknown
@@ -694,7 +721,9 @@ class AffectionApiMixin:
                     "group_id": group_id,
                     "limit": limit,
                     "history": [
-                        item for mood in history if (item := _safe_mood_to_dict(mood)) is not None
+                        item
+                        for mood in history
+                        if (item := _safe_mood_to_dict(mood)) is not None
                     ],
                 }
             )

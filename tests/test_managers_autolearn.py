@@ -1,11 +1,8 @@
 """FeedbackCollector、ParamOptimizer 和 AutoLearningManager 测试。"""
+
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,10 +12,10 @@ from core.managers.auto_learning import (
     ParamOptimizer,
 )
 
-
 # ---------------------------------------------------------------------------
 # FeedbackCollector
 # ---------------------------------------------------------------------------
+
 
 class TestFeedbackCollector:
     """Unit tests for feedback collection."""
@@ -107,6 +104,7 @@ class TestFeedbackCollector:
 # ParamOptimizer
 # ---------------------------------------------------------------------------
 
+
 class TestParamOptimizer:
     """Unit tests for online parameter optimization."""
 
@@ -135,7 +133,9 @@ class TestParamOptimizer:
         changes = opt.update(fc)
         assert "importance_threshold" in changes
         assert changes["importance_threshold"] < 0.3
-        assert opt.get_all_params()["importance_threshold"] == round(max(0.1, 0.3 - 0.05), 4)
+        assert opt.get_all_params()["importance_threshold"] == round(
+            max(0.1, 0.3 - 0.05), 4
+        )
 
     def test_high_hit_rate_raises_threshold(self) -> None:
         fc = FeedbackCollector()
@@ -225,6 +225,7 @@ class TestParamOptimizer:
 # AutoLearningManager
 # ---------------------------------------------------------------------------
 
+
 class TestAutoLearningManager:
     """Integration tests for the combined manager."""
 
@@ -241,6 +242,7 @@ class TestAutoLearningManager:
     def test_disabled_bypasses_optimize(self) -> None:
         mgr = AutoLearningManager(enabled=False)
         import asyncio
+
         result = asyncio.run(mgr.optimize())
         assert result == {}
 

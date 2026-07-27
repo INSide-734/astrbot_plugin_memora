@@ -75,7 +75,9 @@ class CommandHandler(
             if self._write_guard_cb():
                 return "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。"
         except Exception as exc:
-            logger.error("[CommandHandler] 写入维护状态检查失败: %s", exc, exc_info=True)
+            logger.error(
+                "[CommandHandler] 写入维护状态检查失败: %s", exc, exc_info=True
+            )
             return f"维护状态检查失败: {exc}"
         return None
 
@@ -106,11 +108,15 @@ class CommandHandler(
         window_reserved = False
         try:
             if self._summary_window_locker is not None:
-                window_reserved = await self._summary_window_locker.try_begin_summary_window(
-                    session_id
+                window_reserved = (
+                    await self._summary_window_locker.try_begin_summary_window(
+                        session_id
+                    )
                 )
                 if not window_reserved:
-                    yield event.plain_result("该会话已有记忆总结任务正在执行，请稍后再试。")
+                    yield event.plain_result(
+                        "该会话已有记忆总结任务正在执行，请稍后再试。"
+                    )
                     return
 
             # 获取当前消息数和总结进度
@@ -262,7 +268,7 @@ class CommandHandler(
 
     @staticmethod
     async def handle_help(
-            event: AstrMessageEvent
+        event: AstrMessageEvent,
     ) -> AsyncGenerator[MessageEventResult, None]:
         """处理 /memora help 命令"""
         message = t("help.text")

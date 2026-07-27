@@ -70,8 +70,17 @@ class TestEpisodeClusterer:
     def test_clusters_by_topic_overlap(self, now: float) -> None:
         clusterer = EpisodeClusterer(time_window_sec=86400, topic_overlap_threshold=0.3)
         memories: list[dict] = [
-            {"id": 1, "metadata": {"create_time": now - 100, "topics": ["coffee", "espresso"]}},
-            {"id": 2, "metadata": {"create_time": now - 200, "topics": ["coffee", "latte"]}},
+            {
+                "id": 1,
+                "metadata": {
+                    "create_time": now - 100,
+                    "topics": ["coffee", "espresso"],
+                },
+            },
+            {
+                "id": 2,
+                "metadata": {"create_time": now - 200, "topics": ["coffee", "latte"]},
+            },
         ]
         result = asyncio.run(clusterer.cluster_memories(memories))
         assert len(result) > 0
@@ -98,7 +107,10 @@ class TestEpisodeClusterer:
         clusterer = EpisodeClusterer()
         memories: list[dict] = [
             {"id": 1, "metadata": {"create_time": now - 100, "topics": ["topic"]}},
-            {"id": 2, "metadata": {"create_time": now - 40 * 86400, "topics": ["topic"]}},
+            {
+                "id": 2,
+                "metadata": {"create_time": now - 40 * 86400, "topics": ["topic"]},
+            },
         ]
         result = asyncio.run(clusterer.cluster_memories(memories))
         # Only memory 1 is in the 30-day window; single memories don't get episodes
@@ -132,6 +144,7 @@ class TestEpisodeClusterer:
 
     def test_memory_with_string_metadata(self, now: float) -> None:
         import json
+
         clusterer = EpisodeClusterer()
         metadata_str = json.dumps({"create_time": now - 100, "topics": ["coffee"]})
         memories: list[dict] = [

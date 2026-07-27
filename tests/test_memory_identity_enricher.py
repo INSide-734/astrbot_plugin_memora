@@ -509,7 +509,9 @@ async def test_legacy_group_alias_requires_exact_memory_session(
 
 
 @pytest.mark.asyncio
-async def test_store_failure_returns_clean_baseline_without_sensitive_logs(caplog) -> None:
+async def test_store_failure_returns_clean_baseline_without_sensitive_logs(
+    caplog,
+) -> None:
     """普通读取失败应返回候选副本，且不得记录身份、昵称或异常正文。"""
 
     class FailingStore:
@@ -555,6 +557,7 @@ async def test_recall_handler_enriches_safe_candidates_before_execution() -> Non
     """RecallHandler 应在候选安全复制后增强，并把结果交给统一执行器。"""
 
     from astrbot.api.platform import MessageType
+
     from core.handlers.recall_handler import RecallHandler
 
     config = MagicMock()
@@ -672,6 +675,5 @@ def test_event_handler_passes_runtime_enricher_to_recall_handler() -> None:
         )
 
     assert (
-        recall_handler_type.call_args.kwargs["identity_enricher"]
-        is identity_enricher
+        recall_handler_type.call_args.kwargs["identity_enricher"] is identity_enricher
     )

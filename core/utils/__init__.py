@@ -6,12 +6,12 @@ import re
 from datetime import datetime
 
 import pytz
-
 from astrbot.api import logger, sp
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 
 from ..processors.text_processor import TextProcessor
+from .cache_manager import CacheManager, get_cache_manager
 from .data_helpers import (
     OperationContext,
     retry_on_failure,
@@ -19,12 +19,15 @@ from .data_helpers import (
     safe_serialize_metadata,
     validate_timestamp,
 )
-from .memory_formatter import (
-    format_memories_for_fake_tool_call,
-    format_memories_for_fake_tool_call_deepseek_v4,
-    format_memories_for_injection,
+from .diversity_manager import (
+    EXPRESSION_VARIATIONS,
+    LANGUAGE_STYLES,
+    RESPONSE_PATTERNS,
+    TEMPERATURE_RANGES,
+    HomogeneityReport,
+    ResponseDiversityManager,
+    VariationComposition,
 )
-from .stopwords_manager import StopwordsManager, get_stopwords_manager
 from .json_utils import (
     _convert_single_quotes,
     clean_control_characters,
@@ -35,16 +38,12 @@ from .json_utils import (
     remove_thinking_content,
     safe_parse_llm_json,
 )
-from .cache_manager import CacheManager, get_cache_manager
-from .diversity_manager import (
-    EXPRESSION_VARIATIONS,
-    LANGUAGE_STYLES,
-    RESPONSE_PATTERNS,
-    TEMPERATURE_RANGES,
-    HomogeneityReport,
-    ResponseDiversityManager,
-    VariationComposition,
+from .memory_formatter import (
+    format_memories_for_fake_tool_call,
+    format_memories_for_fake_tool_call_deepseek_v4,
+    format_memories_for_injection,
 )
+from .stopwords_manager import StopwordsManager, get_stopwords_manager
 from .style_analyzer import StyleAnalyzer, StyleEvolution, StyleProfile
 from .task_scheduler import TaskScheduler, get_task_scheduler
 

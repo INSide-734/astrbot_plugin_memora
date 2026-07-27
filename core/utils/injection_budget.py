@@ -7,8 +7,7 @@ injection_budget.py - 记忆注入 token 预算管理
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from astrbot.api import logger
@@ -124,9 +123,13 @@ def select_memories_with_budget(
         content = str(mem.get("content", "") or "")
         # Estimate the complete entry fields; zero per-field limits mean no
         # truncation, not zero cost.
-        content_limit = budget.memory_max_chars if budget.memory_max_chars > 0 else len(content)
+        content_limit = (
+            budget.memory_max_chars if budget.memory_max_chars > 0 else len(content)
+        )
         est_chars = min(len(content), content_limit)
-        metadata_limit = budget.metadata_max_chars if budget.metadata_max_chars > 0 else 180
+        metadata_limit = (
+            budget.metadata_max_chars if budget.metadata_max_chars > 0 else 180
+        )
         est_chars += min(metadata_limit, 180)
 
         if running_chars + est_chars <= effective_budget:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,7 +12,6 @@ from core.utils.task_scheduler import (
     _NoOpScheduler,
     get_task_scheduler,
 )
-
 
 # ---------------------------------------------------------------------------
 # _NoOpScheduler

@@ -7,13 +7,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.models.user_profile import TagCategory, UserTag
+from core.models.user_profile import TagCategory
 from core.processors.profile_extractor import ProfileExtractor
 
 
 class TestParseResponse:
     def test_parse_valid_json(self) -> None:
-        raw = '{"tags": [{"category": "interest", "value": "coffee", "confidence": 0.8}]}'
+        raw = (
+            '{"tags": [{"category": "interest", "value": "coffee", "confidence": 0.8}]}'
+        )
         result = ProfileExtractor._parse_response(raw)
         assert "tags" in result
         assert len(result["tags"]) == 1
@@ -127,50 +129,50 @@ class TestProfileExtractor:
     @pytest.fixture
     def mock_llm_client(self) -> MagicMock:
         client = MagicMock()
-        response = json.dumps({
-            "tags": [
-                {"category": "interest", "value": "coffee", "confidence": 0.8},
-                {"category": "personality", "value": "outgoing", "confidence": 0.7},
-            ],
-            "preferences": {
-                "reply_style": "casual",
-                "preferred_topics": ["coffee", "music"],
-            },
-        })
+        response = json.dumps(
+            {
+                "tags": [
+                    {"category": "interest", "value": "coffee", "confidence": 0.8},
+                    {"category": "personality", "value": "outgoing", "confidence": 0.7},
+                ],
+                "preferences": {
+                    "reply_style": "casual",
+                    "preferred_topics": ["coffee", "music"],
+                },
+            }
+        )
         client.complete = AsyncMock(return_value=response)
         return client
 
     def test_extract_success(self, mock_llm_client: MagicMock) -> None:
         import asyncio
+
         extractor = ProfileExtractor(llm_client=mock_llm_client)
-        tags, prefs = asyncio.run(
-            extractor.extract("I like coffee", "That's great!")
-        )
+        tags, prefs = asyncio.run(extractor.extract("I like coffee", "That's great!"))
         assert len(tags) >= 1
         assert len(prefs.get("preferred_topics", [])) >= 1
 
     def test_extract_no_llm_client_returns_empty(self) -> None:
         import asyncio
+
         extractor = ProfileExtractor(llm_client=None)
-        tags, prefs = asyncio.run(
-            extractor.extract("some message")
-        )
+        tags, prefs = asyncio.run(extractor.extract("some message"))
         assert tags == []
         assert prefs == {}
 
     def test_extract_llm_failure_returns_empty(self) -> None:
         import asyncio
+
         client = MagicMock()
         client.complete = AsyncMock(side_effect=RuntimeError("LLM error"))
         extractor = ProfileExtractor(llm_client=client)
-        tags, prefs = asyncio.run(
-            extractor.extract("some message")
-        )
+        tags, prefs = asyncio.run(extractor.extract("some message"))
         assert tags == []
         assert prefs == {}
 
     def test_extract_with_context(self, mock_llm_client: MagicMock) -> None:
         import asyncio
+
         extractor = ProfileExtractor(llm_client=mock_llm_client)
         tags, prefs = asyncio.run(
             extractor.extract(

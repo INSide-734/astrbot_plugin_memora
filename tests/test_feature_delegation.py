@@ -20,10 +20,10 @@ import pytest
 
 from core.feature_delegation import FeatureDelegation
 
-
 # ---------------------------------------------------------------------------
 # Helper: build a mock Star instance
 # ---------------------------------------------------------------------------
+
 
 def _make_star(
     name: str = "test_plugin",
@@ -58,8 +58,10 @@ def _make_context(
     ctx = MagicMock()
 
     if registered_stars is not None:
+
         def _get_star(alias: str) -> MagicMock | None:
             return registered_stars.get(alias)
+
         ctx.get_registered_star = _get_star
     else:
         ctx.get_registered_star = None
@@ -75,6 +77,7 @@ def _make_context(
 # ---------------------------------------------------------------------------
 # No companion plugin
 # ---------------------------------------------------------------------------
+
 
 class TestNoCompanionPlugin:
     """When no companion plugin is active, all delegation checks return False."""
@@ -140,6 +143,7 @@ class TestNoCompanionPlugin:
 # ---------------------------------------------------------------------------
 # self_learning detected
 # ---------------------------------------------------------------------------
+
 
 class TestSelfLearningDetected:
     """When self_learning is active, Memora delegates jargon/expression/affection."""
@@ -239,6 +243,7 @@ class TestSelfLearningDetected:
 # GroupChatPlus detected
 # ---------------------------------------------------------------------------
 
+
 class TestChatPlusDetected:
     """When GroupChatPlus is active, Memora delegates reply influence."""
 
@@ -306,6 +311,7 @@ class TestChatPlusDetected:
 # Both plugins detected
 # ---------------------------------------------------------------------------
 
+
 class TestBothPluginsDetected:
     """When both companions are active, all delegations should be active."""
 
@@ -366,6 +372,7 @@ class TestBothPluginsDetected:
 # Inactive / unactivated plugins are ignored
 # ---------------------------------------------------------------------------
 
+
 class TestInactivePluginIgnored:
     """Plugins with activated=False or missing star_cls should be ignored."""
 
@@ -408,6 +415,7 @@ class TestInactivePluginIgnored:
 # Context with no star API (graceful degradation)
 # ---------------------------------------------------------------------------
 
+
 class TestNoStarAPIAvailable:
     """When context has no get_registered_star or get_all_stars, degrade gracefully."""
 
@@ -431,6 +439,7 @@ class TestNoStarAPIAvailable:
 # ---------------------------------------------------------------------------
 # Debounce log behavior
 # ---------------------------------------------------------------------------
+
 
 class TestDebounceLog:
     """log_status() should only log on state change."""
@@ -465,17 +474,22 @@ class TestDebounceLog:
             root_dir_name="astrbot_plugin_self_learning",
             module_path="astrbot_plugin_self_learning",
         )
-        ctx.get_registered_star = lambda alias: sl_star if alias in FeatureDelegation.SELF_LEARNING_ALIASES else None
+        ctx.get_registered_star = lambda alias: (
+            sl_star if alias in FeatureDelegation.SELF_LEARNING_ALIASES else None
+        )
 
         with patch.object(logging.getLogger("astrbot.test"), "info") as mock_info:
             fd.log_status()
             # Should log again — state changed from no_plugins → self_learning
-            assert mock_info.call_count == 2  # one for sl detected, one for cp not detected
+            assert (
+                mock_info.call_count == 2
+            )  # one for sl detected, one for cp not detected
 
 
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestEdgeCases:
     """Edge cases and boundary conditions."""
@@ -512,6 +526,7 @@ class TestEdgeCases:
 
         def _exploding_getter(alias: str) -> None:
             raise RuntimeError("simulated failure")
+
         ctx.get_registered_star = _exploding_getter
 
         fd = FeatureDelegation(ctx)
@@ -681,7 +696,9 @@ class TestProvidedServicesWithEngine:
         fd = self._make_fd_with_engines(has_self_learning=True)
         results = await fd.recall_memory("hello", session_id="s1", top_k=3)
         fd._memory_engine.recall.assert_called_once_with(
-            query="hello", session_id="s1", top_k=3,
+            query="hello",
+            session_id="s1",
+            top_k=3,
         )
         assert results == [{"content": "memory 1", "score": 0.9}]
 
@@ -690,7 +707,8 @@ class TestProvidedServicesWithEngine:
         fd = self._make_fd_with_engines(has_self_learning=True)
         results = await fd.search_knowledge("hello", top_k=3)
         fd._knowledge_manager.search.assert_called_once_with(
-            query="hello", top_k=3,
+            query="hello",
+            top_k=3,
         )
         assert results == [{"content": "knowledge 1", "source": "doc"}]
 

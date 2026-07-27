@@ -142,7 +142,9 @@ class TestGraphDeleteSharedEdges:
     """delete_memory should not remove shared semantic edges still referenced by entries."""
 
     @pytest.mark.asyncio
-    async def test_delete_memory_keeps_edge_referenced_by_other_memory(self, tmp_db_path):
+    async def test_delete_memory_keeps_edge_referenced_by_other_memory(
+        self, tmp_db_path
+    ):
         store = GraphStore(tmp_db_path)
         await store.initialize()
 

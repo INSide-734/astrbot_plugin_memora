@@ -3,19 +3,17 @@
 import asyncio
 import builtins
 import json
-import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-class TestDecayScheduler:
 
+class TestDecayScheduler:
     @pytest.fixture
     def mock_engine(self):
         engine = AsyncMock()
@@ -29,6 +27,7 @@ class TestDecayScheduler:
     @staticmethod
     def _make_scheduler(mock_engine, tmp_path, **kwargs):
         from core.schedulers.decay_scheduler import DecayScheduler
+
         defaults = dict(
             memory_engine=mock_engine,
             decay_rate=0.01,
@@ -74,7 +73,9 @@ class TestDecayScheduler:
         assert loaded["last_decay_date"] == "2026-06-22"
 
     @pytest.mark.asyncio
-    async def test_save_state_write_failure_keeps_previous_state(self, mock_engine, tmp_path, monkeypatch):
+    async def test_save_state_write_failure_keeps_previous_state(
+        self, mock_engine, tmp_path, monkeypatch
+    ):
         s = self._make_scheduler(mock_engine, tmp_path)
         s._state_file.parent.mkdir(parents=True, exist_ok=True)
         s._state_file.write_text('{"last_decay_date": "old"}', encoding="utf-8")
@@ -121,6 +122,7 @@ class TestDecayScheduler:
     async def test_calculate_missed_days_one_day_ago(self, mock_engine, tmp_path):
         s = self._make_scheduler(mock_engine, tmp_path)
         from datetime import datetime, timedelta
+
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         with patch.object(s, "_get_last_decay_date", AsyncMock(return_value=yesterday)):
             missed = await s._calculate_missed_days()
@@ -129,7 +131,9 @@ class TestDecayScheduler:
     @pytest.mark.asyncio
     async def test_calculate_missed_days_invalid_date(self, mock_engine, tmp_path):
         s = self._make_scheduler(mock_engine, tmp_path)
-        with patch.object(s, "_get_last_decay_date", AsyncMock(return_value="not-a-date")):
+        with patch.object(
+            s, "_get_last_decay_date", AsyncMock(return_value="not-a-date")
+        ):
             missed = await s._calculate_missed_days()
             assert missed == 0
 
@@ -139,7 +143,9 @@ class TestDecayScheduler:
     async def test_no_duplicate_same_day(self, mock_engine, tmp_path):
         s = self._make_scheduler(mock_engine, tmp_path)
         today_str = s._get_today_str()
-        with patch.object(s, "_load_state", AsyncMock(return_value={"last_decay_date": today_str})):
+        with patch.object(
+            s, "_load_state", AsyncMock(return_value={"last_decay_date": today_str})
+        ):
             await s._check_and_execute()
             assert mock_engine.apply_daily_decay.call_count == 0
 
@@ -155,9 +161,14 @@ class TestDecayScheduler:
     async def test_check_and_execute_with_missed_days(self, mock_engine, tmp_path):
         s = self._make_scheduler(mock_engine, tmp_path)
         from datetime import datetime, timedelta
+
         two_days_ago = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
-        with patch.object(s, "_load_state", AsyncMock(return_value={"last_decay_date": two_days_ago})):
-            with patch.object(s, "_execute_decay", AsyncMock(return_value=True)) as mock_exec:
+        with patch.object(
+            s, "_load_state", AsyncMock(return_value={"last_decay_date": two_days_ago})
+        ):
+            with patch.object(
+                s, "_execute_decay", AsyncMock(return_value=True)
+            ) as mock_exec:
                 await s._check_and_execute()
                 mock_exec.assert_called_once()
                 # Should call with total_days > 1
@@ -169,9 +180,11 @@ class TestDecayScheduler:
     @pytest.mark.asyncio
     async def test_execute_decay_with_zero_rate(self, mock_engine, tmp_path):
         s = self._make_scheduler(mock_engine, tmp_path, decay_rate=0.0)
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_backup", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_backup", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             result = await s._execute_decay(1)
             assert result is True
             mock_engine.apply_daily_decay.assert_not_called()
@@ -185,9 +198,11 @@ class TestDecayScheduler:
         }
         mock_engine.cleanup_old_memories = AsyncMock(return_value=5)
         s = self._make_scheduler(mock_engine, tmp_path)
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_backup", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_backup", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             result = await s._execute_decay(1)
             assert result is True
             assert mock_engine.cleanup_old_memories.called
@@ -195,11 +210,15 @@ class TestDecayScheduler:
     @pytest.mark.asyncio
     async def test_execute_decay_cleanup_handles_error(self, mock_engine, tmp_path):
         mock_engine.config = {"auto_cleanup_enabled": True}
-        mock_engine.cleanup_old_memories = AsyncMock(side_effect=RuntimeError("cleanup fail"))
+        mock_engine.cleanup_old_memories = AsyncMock(
+            side_effect=RuntimeError("cleanup fail")
+        )
         s = self._make_scheduler(mock_engine, tmp_path)
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_backup", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_backup", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             result = await s._execute_decay(1)
             assert result is True  # Should not fail overall
 
@@ -207,54 +226,74 @@ class TestDecayScheduler:
     async def test_execute_decay_consolidation(self, mock_engine, tmp_path):
         mock_engine.consolidate_memories = AsyncMock(return_value={"paired": 3})
         s = self._make_scheduler(mock_engine, tmp_path)
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_backup", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_backup", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             result = await s._execute_decay(1)
             assert result is True
             mock_engine.consolidate_memories.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_execute_decay_consolidation_error(self, mock_engine, tmp_path):
-        mock_engine.consolidate_memories = AsyncMock(side_effect=RuntimeError("consolidate fail"))
+        mock_engine.consolidate_memories = AsyncMock(
+            side_effect=RuntimeError("consolidate fail")
+        )
         s = self._make_scheduler(mock_engine, tmp_path)
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_backup", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_backup", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             result = await s._execute_decay(1)
             assert result is True  # Should not fail overall
 
     @pytest.mark.asyncio
-    async def test_execute_decay_storage_maintenance_success(self, mock_engine, tmp_path):
+    async def test_execute_decay_storage_maintenance_success(
+        self, mock_engine, tmp_path
+    ):
         mock_engine.maintain_storage = AsyncMock(
             return_value={"success": True, "bytes_reclaimed": 1048576}
         )
         s = self._make_scheduler(mock_engine, tmp_path)
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_backup", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_backup", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             result = await s._execute_decay(1)
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_execute_decay_storage_maintenance_failure(self, mock_engine, tmp_path):
+    async def test_execute_decay_storage_maintenance_failure(
+        self, mock_engine, tmp_path
+    ):
         mock_engine.maintain_storage = AsyncMock(
             return_value={"success": False, "error": "disk full"}
         )
         s = self._make_scheduler(mock_engine, tmp_path)
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_backup", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_backup", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             result = await s._execute_decay(1)
             assert result is True  # Should not fail overall
 
     @pytest.mark.asyncio
-    async def test_execute_decay_storage_maintenance_exception(self, mock_engine, tmp_path):
-        mock_engine.maintain_storage = AsyncMock(side_effect=RuntimeError("maintain fail"))
+    async def test_execute_decay_storage_maintenance_exception(
+        self, mock_engine, tmp_path
+    ):
+        mock_engine.maintain_storage = AsyncMock(
+            side_effect=RuntimeError("maintain fail")
+        )
         s = self._make_scheduler(mock_engine, tmp_path)
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_backup", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_backup", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             result = await s._execute_decay(1)
             assert result is True
 
@@ -264,12 +303,15 @@ class TestDecayScheduler:
         backup_mgr.create_backup = AsyncMock(return_value={"name": "scheduled_ok"})
         backup_mgr.prune_backups = MagicMock(return_value={"removed": []})
         s = self._make_scheduler(
-            mock_engine, tmp_path,
+            mock_engine,
+            tmp_path,
             backup_manager=backup_mgr,
             backup_enabled=True,
         )
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             result = await s._execute_decay(1)
             assert result is True
             backup_mgr.create_backup.assert_called_once_with(kind="scheduled")
@@ -279,12 +321,15 @@ class TestDecayScheduler:
     async def test_execute_decay_backup_disabled(self, mock_engine, tmp_path):
         backup_mgr = AsyncMock()
         s = self._make_scheduler(
-            mock_engine, tmp_path,
+            mock_engine,
+            tmp_path,
             backup_manager=backup_mgr,
             backup_enabled=False,
         )
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             result = await s._execute_decay(1)
             assert result is True
             backup_mgr.create_backup.assert_not_called()
@@ -324,7 +369,9 @@ class TestDecayScheduler:
         s = self._make_scheduler(mock_engine, tmp_path)
         mock_engine.profile_manager = AsyncMock()
         mock_engine.knowledge_manager = AsyncMock()
-        mock_engine.profile_manager.decay_and_clean_all = AsyncMock(side_effect=RuntimeError("crash"))
+        mock_engine.profile_manager.decay_and_clean_all = AsyncMock(
+            side_effect=RuntimeError("crash")
+        )
         mock_engine.knowledge_manager.cleanup_expired = AsyncMock(return_value=5)
         await s._run_optional_maintenance()
         mock_engine.knowledge_manager.cleanup_expired.assert_called_once()
@@ -377,15 +424,25 @@ class TestDecayScheduler:
         """Every optional sub-task error is isolated and does not propagate."""
         s = self._make_scheduler(mock_engine, tmp_path)
         mock_engine.profile_manager = AsyncMock()
-        mock_engine.profile_manager.decay_and_clean_all = AsyncMock(side_effect=RuntimeError("profile"))
+        mock_engine.profile_manager.decay_and_clean_all = AsyncMock(
+            side_effect=RuntimeError("profile")
+        )
         mock_engine.knowledge_manager = AsyncMock()
-        mock_engine.knowledge_manager.cleanup_expired = AsyncMock(side_effect=RuntimeError("knowledge"))
+        mock_engine.knowledge_manager.cleanup_expired = AsyncMock(
+            side_effect=RuntimeError("knowledge")
+        )
         mock_engine.auto_learning = AsyncMock()
-        mock_engine.auto_learning.optimize = AsyncMock(side_effect=RuntimeError("learning"))
+        mock_engine.auto_learning.optimize = AsyncMock(
+            side_effect=RuntimeError("learning")
+        )
         mock_engine.note_manager = AsyncMock()
-        mock_engine.note_manager.prune_versions = AsyncMock(side_effect=RuntimeError("notes"))
+        mock_engine.note_manager.prune_versions = AsyncMock(
+            side_effect=RuntimeError("notes")
+        )
         mock_engine.atom_store = AsyncMock()
-        mock_engine.atom_store.query_upcoming_planned = AsyncMock(side_effect=RuntimeError("proactive"))
+        mock_engine.atom_store.query_upcoming_planned = AsyncMock(
+            side_effect=RuntimeError("proactive")
+        )
         # Should not raise
         await s._run_optional_maintenance()
 
@@ -440,7 +497,8 @@ class TestDecayScheduler:
         backup_mgr = MagicMock()
         backup_mgr.prune_backups.return_value = {"removed": ["old_backup_001"]}
         s = self._make_scheduler(
-            mock_engine, tmp_path,
+            mock_engine,
+            tmp_path,
             backup_manager=backup_mgr,
             backup_keep_days=7,
         )
@@ -490,9 +548,11 @@ class TestDecayScheduler:
     async def test_seconds_past_midnight(self, mock_engine, tmp_path):
         """When time has already passed check_hour:check_minute today, target tomorrow."""
         import datetime as _dt
+
         now = _dt.datetime.now()
         s = self._make_scheduler(
-            mock_engine, tmp_path,
+            mock_engine,
+            tmp_path,
             check_hour=(now.hour - 1) % 24 if now.hour > 0 else 23,
             check_minute=0,
         )
@@ -578,7 +638,9 @@ class TestDecayScheduler:
         s._running = True
         # Make _execute_decay fail, then stop the loop
         with patch.object(s, "_seconds_until_next_run", return_value=0.01):
-            with patch.object(s, "_execute_decay", AsyncMock(side_effect=RuntimeError("decay fail"))):
+            with patch.object(
+                s, "_execute_decay", AsyncMock(side_effect=RuntimeError("decay fail"))
+            ):
                 task = asyncio.create_task(s._scheduler_loop())
                 await asyncio.sleep(0.2)  # Let it run a cycle
                 s._running = False
@@ -604,9 +666,11 @@ class TestDecayScheduler:
     async def test_execute_decay_multi_day(self, mock_engine, tmp_path):
         mock_engine.apply_daily_decay = AsyncMock(return_value=5)
         s = self._make_scheduler(mock_engine, tmp_path)
-        with patch.object(s, "_set_last_decay_date", AsyncMock()), \
-             patch.object(s, "_run_backup", AsyncMock()), \
-             patch.object(s, "_run_optional_maintenance", AsyncMock()):
+        with (
+            patch.object(s, "_set_last_decay_date", AsyncMock()),
+            patch.object(s, "_run_backup", AsyncMock()),
+            patch.object(s, "_run_optional_maintenance", AsyncMock()),
+        ):
             await s._execute_decay(days=7)
             mock_engine.apply_daily_decay.assert_called_once_with(0.01, 7)
 
@@ -623,7 +687,8 @@ class TestDecayScheduler:
     def test_constructor_full_params(self, mock_engine, tmp_path):
         backup_mgr = AsyncMock()
         s = self._make_scheduler(
-            mock_engine, tmp_path,
+            mock_engine,
+            tmp_path,
             decay_rate=0.05,
             check_hour=3,
             check_minute=30,

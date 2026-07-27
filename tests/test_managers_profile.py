@@ -1,8 +1,9 @@
 """测试 ProfileManager — 基于 Mock ProfileStore 的用户画像 CRUD。"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -17,7 +18,6 @@ from core.models.user_profile import (
     UserProfile,
     UserTag,
 )
-
 
 _DERIVED_PROVENANCE = DomainProvenance(
     DomainObjectOrigin.DERIVED,
@@ -37,6 +37,7 @@ _DERIVED_PROVENANCE = DomainProvenance(
 # 构造
 # ---------------------------------------------------------------------------
 
+
 class TestProfileManagerInit:
     """构造方法测试。"""
 
@@ -49,6 +50,7 @@ class TestProfileManagerInit:
 # ---------------------------------------------------------------------------
 # ensure_profile 委托
 # ---------------------------------------------------------------------------
+
 
 class TestEnsureProfile:
     """ensure_profile 方法测试。"""
@@ -67,6 +69,7 @@ class TestEnsureProfile:
 # ---------------------------------------------------------------------------
 # get_profile 委托
 # ---------------------------------------------------------------------------
+
 
 class TestGetProfile:
     """get_profile 方法测试。"""
@@ -92,6 +95,7 @@ class TestGetProfile:
 # touch 委托
 # ---------------------------------------------------------------------------
 
+
 class TestTouch:
     """touch 方法测试。"""
 
@@ -107,6 +111,7 @@ class TestTouch:
 # ---------------------------------------------------------------------------
 # 公共写入辅助
 # ---------------------------------------------------------------------------
+
 
 class TestProfileWriteHelpers:
     @pytest.mark.asyncio
@@ -332,9 +337,7 @@ class TestProfileManualAdminCRUD:
                 tags=[],
             )
 
-        assert raised.value.field_errors == {
-            "preferences": "字段名称必须为字符串"
-        }
+        assert raised.value.field_errors == {"preferences": "字段名称必须为字符串"}
         store.create_profile_strict.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -389,9 +392,7 @@ class TestProfileManualAdminCRUD:
         mgr = ProfileManager(profile_store=store)
 
         with pytest.raises(EntityValidationError):
-            await mgr.create_profile_manual(
-                user_id="user-1", preferences={}, tags=tags
-            )
+            await mgr.create_profile_manual(user_id="user-1", preferences={}, tags=tags)
 
         store.create_profile_strict.assert_not_awaited()
 
@@ -460,9 +461,7 @@ class TestProfileManualAdminCRUD:
         mgr = ProfileManager(profile_store=store)
 
         with pytest.raises(EntityValidationError):
-            await mgr.create_profile_manual(
-                user_id=user_id, preferences={}, tags=[]
-            )
+            await mgr.create_profile_manual(user_id=user_id, preferences={}, tags=[])
 
         store.create_profile_strict.assert_not_awaited()
 
@@ -486,9 +485,7 @@ class TestProfileManualAdminCRUD:
         store.create_profile_strict.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "expected_revision", [None, 1, True, "", "   ", "x" * 257]
-    )
+    @pytest.mark.parametrize("expected_revision", [None, 1, True, "", "   ", "x" * 257])
     async def test_update_profile_manual_rejects_invalid_revision(
         self, expected_revision
     ) -> None:
@@ -533,6 +530,7 @@ def _manager_tag(
 # 自动标签写入
 # ---------------------------------------------------------------------------
 
+
 class TestIngestTags:
     """ingest_tags 方法测试。"""
 
@@ -547,32 +545,30 @@ class TestIngestTags:
             UserTag(category=TagCategory.INTEREST, value="coffee", confidence=0.8),
             UserTag(category=TagCategory.HABIT, value="morning_run", confidence=0.6),
         ]
-        result = await mgr.ingest_tags(
-            "user1", tags, provenance=_DERIVED_PROVENANCE
-        )
+        result = await mgr.ingest_tags("user1", tags, provenance=_DERIVED_PROVENANCE)
         assert result is profile
         store.upsert_tags_atomic.assert_awaited_once_with("user1", tags)
 
     @pytest.mark.asyncio
     async def test_ingest_existing_tag_updates_confidence(self) -> None:
         initial = UserProfile(user_id="user1")
-        initial.tags.append(UserTag(
-            category=TagCategory.INTEREST, value="coffee", confidence=0.5
-        ))
+        initial.tags.append(
+            UserTag(category=TagCategory.INTEREST, value="coffee", confidence=0.5)
+        )
         profile = UserProfile(user_id="user1")
-        profile.tags.append(UserTag(
-            category=TagCategory.INTEREST,
-            value="coffee",
-            confidence=0.9,
-            occurrence_count=2,
-        ))
+        profile.tags.append(
+            UserTag(
+                category=TagCategory.INTEREST,
+                value="coffee",
+                confidence=0.9,
+                occurrence_count=2,
+            )
+        )
         store = MagicMock()
         store.get_or_create_profile = AsyncMock(return_value=initial)
         store.upsert_tags_atomic = AsyncMock(return_value=(profile, 0))
         mgr = ProfileManager(profile_store=store)
-        new_tag = UserTag(
-            category=TagCategory.INTEREST, value="coffee", confidence=0.9
-        )
+        new_tag = UserTag(category=TagCategory.INTEREST, value="coffee", confidence=0.9)
         result = await mgr.ingest_tags(
             "user1", [new_tag], provenance=_DERIVED_PROVENANCE
         )
@@ -587,14 +583,14 @@ class TestIngestTags:
         store.get_or_create_profile = AsyncMock(return_value=profile)
         store.upsert_tags_atomic = AsyncMock(return_value=(profile, 0))
         mgr = ProfileManager(profile_store=store)
-        await mgr.ingest_tags(
-            "user1", [], provenance=_DERIVED_PROVENANCE
-        )
+        await mgr.ingest_tags("user1", [], provenance=_DERIVED_PROVENANCE)
         store.upsert_tags_atomic.assert_awaited_once_with("user1", [])
+
 
 # ---------------------------------------------------------------------------
 # 标签权重
 # ---------------------------------------------------------------------------
+
 
 class TestGetTagWeights:
     """get_tag_weights 方法测试。"""
@@ -611,9 +607,24 @@ class TestGetTagWeights:
     async def test_returns_weight_vector(self) -> None:
         profile = UserProfile(user_id="user1")
         profile.tags = [
-            UserTag(category=TagCategory.INTEREST, value="coffee", confidence=0.8, occurrence_count=10),
-            UserTag(category=TagCategory.HABIT, value="running", confidence=0.3, occurrence_count=2),
-            UserTag(category=TagCategory.PERSONALITY, value="shy", confidence=0.1, occurrence_count=1),
+            UserTag(
+                category=TagCategory.INTEREST,
+                value="coffee",
+                confidence=0.8,
+                occurrence_count=10,
+            ),
+            UserTag(
+                category=TagCategory.HABIT,
+                value="running",
+                confidence=0.3,
+                occurrence_count=2,
+            ),
+            UserTag(
+                category=TagCategory.PERSONALITY,
+                value="shy",
+                confidence=0.1,
+                occurrence_count=1,
+            ),
         ]
         store = MagicMock()
         store.get_profile = AsyncMock(return_value=profile)
@@ -630,6 +641,7 @@ class TestGetTagWeights:
 # ---------------------------------------------------------------------------
 # 标签衰减与清理
 # ---------------------------------------------------------------------------
+
 
 class TestDecayAndClean:
     """decay_and_clean 方法测试。"""
@@ -664,6 +676,7 @@ class TestDecayAndClean:
 # 消息统计
 # ---------------------------------------------------------------------------
 
+
 class TestRecordMessage:
     """record_message 方法测试。"""
 
@@ -675,9 +688,7 @@ class TestRecordMessage:
         store.record_message_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.record_message("user1", message_length=50)
-        store.record_message_atomic.assert_awaited_once_with(
-            "user1", message_length=50
-        )
+        store.record_message_atomic.assert_awaited_once_with("user1", message_length=50)
 
     @pytest.mark.asyncio
     async def test_record_message_ema_avg_length(self) -> None:
@@ -700,14 +711,13 @@ class TestRecordMessage:
         store.record_message_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
         await mgr.record_message("user1", message_length=80)
-        store.record_message_atomic.assert_awaited_once_with(
-            "user1", message_length=80
-        )
+        store.record_message_atomic.assert_awaited_once_with("user1", message_length=80)
 
 
 # ---------------------------------------------------------------------------
 # 自动偏好写入
 # ---------------------------------------------------------------------------
+
 
 class TestUpdatePreferences:
     """update_preferences 方法测试。"""
@@ -774,9 +784,7 @@ class TestUpdatePreferences:
         store.get_or_create_profile = AsyncMock(return_value=profile)
         store.merge_preferences_atomic = AsyncMock(return_value=profile)
         mgr = ProfileManager(profile_store=store)
-        await mgr.update_preferences(
-            "user1", {}, provenance=_DERIVED_PROVENANCE
-        )
+        await mgr.update_preferences("user1", {}, provenance=_DERIVED_PROVENANCE)
         store.merge_preferences_atomic.assert_awaited_once_with(
             "user1", {}, provenance=_DERIVED_PROVENANCE
         )
@@ -785,6 +793,7 @@ class TestUpdatePreferences:
 # ---------------------------------------------------------------------------
 # 画像计数与分页
 # ---------------------------------------------------------------------------
+
 
 class TestProfileQuery:
     """get_profile_count / list_profiles 方法测试。"""

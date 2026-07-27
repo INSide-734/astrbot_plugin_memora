@@ -12,7 +12,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import aiosqlite
-
 from astrbot.api import logger
 
 from .write_op_repair import WriteOpRepairMixin

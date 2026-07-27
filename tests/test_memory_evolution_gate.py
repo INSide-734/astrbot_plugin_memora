@@ -89,4 +89,3 @@ def test_unknown_mode_fails_closed() -> None:
 
     assert decision.should_enqueue is False
     assert decision.reason_code == "mode_disabled"
-

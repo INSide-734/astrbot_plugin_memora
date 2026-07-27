@@ -9,7 +9,6 @@ from core.evaluation.dataset_repository import (
     EvaluationDatasetValidationError,
 )
 
-
 VALID_DATASET = """{"case_id":"coffee","query":"用户喜欢什么咖啡","relevant_doc_ids":["17"],"metadata":{"session_id":"private:user-1"}}\n"""
 
 
@@ -27,7 +26,9 @@ def test_repository_prepares_and_atomically_saves_a_dataset(tmp_path) -> None:
         "case_count": 1,
         "replaced": False,
     }
-    assert (tmp_path / "daily-recall.jsonl").read_text(encoding="utf-8") == VALID_DATASET
+    assert (tmp_path / "daily-recall.jsonl").read_text(
+        encoding="utf-8"
+    ) == VALID_DATASET
 
 
 @pytest.mark.parametrize(

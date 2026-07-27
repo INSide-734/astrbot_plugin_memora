@@ -52,7 +52,10 @@ def _contains_injection(value: str) -> bool:
 
 
 def _is_memora_fake_call_id(value: object) -> bool:
-    return isinstance(value, str) and _FAKE_TOOL_CALL_ID_PATTERN.fullmatch(value) is not None
+    return (
+        isinstance(value, str)
+        and _FAKE_TOOL_CALL_ID_PATTERN.fullmatch(value) is not None
+    )
 
 
 def _legacy_fake_tool_payload(value: str, expected_query: str) -> bool:
@@ -60,7 +63,7 @@ def _legacy_fake_tool_payload(value: str, expected_query: str) -> bool:
     payload = None
     for match in re.finditer(r"\{", value):
         try:
-            candidate, _ = decoder.raw_decode(value[match.start():])
+            candidate, _ = decoder.raw_decode(value[match.start() :])
         except json.JSONDecodeError:
             continue
         if isinstance(candidate, dict) and "results" in candidate:
@@ -83,8 +86,14 @@ def _legacy_fake_tool_payload(value: str, expected_query: str) -> bool:
     ):
         return False
     result_keys = {
-        "id", "content", "score", "importance", "session_id", "persona_id",
-        "create_time", "last_access_time",
+        "id",
+        "content",
+        "score",
+        "importance",
+        "session_id",
+        "persona_id",
+        "create_time",
+        "last_access_time",
     }
     return all(
         isinstance(result, dict)
@@ -123,17 +132,11 @@ class InjectionCleaner:
                     kept_parts.append(part)
                 req.extra_user_content_parts = kept_parts
 
-            if (
-                hasattr(req, "prompt")
-                and req.prompt
-                and isinstance(req.prompt, str)
-            ):
+            if hasattr(req, "prompt") and req.prompt and isinstance(req.prompt, str):
                 original_prompt = req.prompt
                 if _contains_injection(original_prompt):
                     cleaned_prompt = pattern.sub("", original_prompt)
-                    cleaned_prompt = re.sub(
-                        r"\n{3,}", "\n\n", cleaned_prompt
-                    ).strip()
+                    cleaned_prompt = re.sub(r"\n{3,}", "\n\n", cleaned_prompt).strip()
                     req.prompt = cleaned_prompt
                     if cleaned_prompt != original_prompt:
                         removed_count += 1

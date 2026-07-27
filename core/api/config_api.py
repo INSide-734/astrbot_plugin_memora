@@ -103,9 +103,10 @@ class ConfigApiMixin:
     async def get_config_state(self) -> dict[str, Any]:
         """返回不依赖记忆引擎的条件配置快照。"""
         try:
-            config, revision = (
-                await self.plugin.config_manager.get_config_snapshot_async()
-            )
+            (
+                config,
+                revision,
+            ) = await self.plugin.config_manager.get_config_snapshot_async()
         except Exception:
             logger.error("[ConfigApi] 获取配置状态失败", exc_info=True)
             return _config_error(
@@ -266,32 +267,52 @@ class ConfigApiMixin:
         try:
             body = await self._get_web_request().json()
         except Exception:
-            return None, None, _config_error(
-                "invalid_request",
-                "请求体必须是有效的 JSON 对象",
+            return (
+                None,
+                None,
+                _config_error(
+                    "invalid_request",
+                    "请求体必须是有效的 JSON 对象",
+                ),
             )
         if not isinstance(body, dict):
-            return None, None, _config_error(
-                "invalid_request",
-                "请求体必须是 JSON 对象",
+            return (
+                None,
+                None,
+                _config_error(
+                    "invalid_request",
+                    "请求体必须是 JSON 对象",
+                ),
             )
         if set(body) != {"base_revision", "changes"}:
-            return None, None, _config_error(
-                "invalid_request",
-                "请求体字段必须严格为 base_revision 和 changes",
+            return (
+                None,
+                None,
+                _config_error(
+                    "invalid_request",
+                    "请求体字段必须严格为 base_revision 和 changes",
+                ),
             )
 
         base_revision = body.get("base_revision")
         changes = body.get("changes")
         if not isinstance(base_revision, str) or not base_revision.strip():
-            return None, None, _config_error(
-                "invalid_request",
-                "base_revision 必须是非空字符串",
+            return (
+                None,
+                None,
+                _config_error(
+                    "invalid_request",
+                    "base_revision 必须是非空字符串",
+                ),
             )
         if not isinstance(changes, dict):
-            return None, None, _config_error(
-                "invalid_request",
-                "changes 必须是 JSON 对象",
+            return (
+                None,
+                None,
+                _config_error(
+                    "invalid_request",
+                    "changes 必须是 JSON 对象",
+                ),
             )
         return base_revision, changes, None
 

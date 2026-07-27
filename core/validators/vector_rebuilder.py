@@ -7,7 +7,6 @@ from typing import Any
 
 import faiss
 import numpy as np
-
 from astrbot.api import logger
 
 

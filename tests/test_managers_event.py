@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.managers.event_adapter import EventAdapterMixin
 from core.identity import IdentityTrust, NameFieldState, ResolvedIdentity
+from core.managers.event_adapter import EventAdapterMixin
 
 
 def _trusted_group_identity() -> ResolvedIdentity:
@@ -49,9 +49,18 @@ class _TestAdapter(EventAdapterMixin):
         self._session_id_captured = None
         self._call_kwargs = None
 
-    async def add_message(self, session_id, role, content, sender_id=None,
-                          sender_name=None, group_id=None, platform="unknown",
-                          is_bot_message=False, metadata=None):
+    async def add_message(
+        self,
+        session_id,
+        role,
+        content,
+        sender_id=None,
+        sender_name=None,
+        group_id=None,
+        platform="unknown",
+        is_bot_message=False,
+        metadata=None,
+    ):
         """记录调用参数并返回伪造 Message。"""
         self._session_id_captured = session_id
         self._call_kwargs = {
@@ -138,8 +147,14 @@ class TestAddMessageFromEvent:
         """缺少 sender_id 时应回退到 session_id。"""
         adapter = _TestAdapter()
         # 使用 spec 严格限制事件可用属性。
-        event = MagicMock(spec=["unified_msg_origin", "get_message_type",
-                                 "get_sender_name", "message_obj"])
+        event = MagicMock(
+            spec=[
+                "unified_msg_origin",
+                "get_message_type",
+                "get_sender_name",
+                "message_obj",
+            ]
+        )
         event.unified_msg_origin = "session-fallback"
         event.get_sender_name.return_value = None
         event.get_message_type.return_value = "PRIVATE_MESSAGE"
@@ -279,7 +294,9 @@ class TestAddMessageFromEvent:
             name_field_states={},
         )
 
-        result = await adapter.add_message_from_event(event, "user", "正文", identity=identity)
+        result = await adapter.add_message_from_event(
+            event, "user", "正文", identity=identity
+        )
 
         assert result is None
         assert adapter._call_kwargs is None

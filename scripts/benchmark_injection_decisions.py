@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark sanitized injection decision persistence and queries."""
+"""对脱敏注入决策的持久化与查询执行基准测试。"""
 
 from __future__ import annotations
 
@@ -15,9 +15,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.injection.models import InjectionDecisionRecord
-from core.injection.recorder import InjectionDecisionRecorder
-from core.storage.injection_decision_store import DecisionQuery, InjectionDecisionStore
+# 脚本需先把仓库根目录加入模块路径，以下运行时代码导入必须后置。
+from core.injection.models import InjectionDecisionRecord  # noqa: E402
+from core.injection.recorder import InjectionDecisionRecorder  # noqa: E402
+from core.storage.injection_decision_store import (  # noqa: E402
+    DecisionQuery,
+    InjectionDecisionStore,
+)
 
 ROW_COUNT = 100_000
 RUNS = 5

@@ -5,6 +5,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis.strategies import lists, text
+
 from core.processors.topic_splitter import (
     EmbeddingClusteringStrategy,
     HybridSegmentationStrategy,
@@ -14,10 +17,9 @@ from core.processors.topic_splitter import (
     TopicSegmentationRouter,
     TwoStageLLMStrategy,
 )
-from hypothesis import HealthCheck, given, settings
-from hypothesis.strategies import lists, text
 
 # ---- Strategy A ----
+
 
 @pytest.mark.asyncio
 async def test_prompt_strategy_parses_memories_array():
@@ -90,6 +92,7 @@ async def test_prompt_strategy_skips_empty_entries():
 
 # ---- Strategy B ----
 
+
 @pytest.mark.asyncio
 async def test_embedding_strategy_single_fact_shortcut():
     strat = EmbeddingClusteringStrategy({"similarity_threshold": 0.5})
@@ -100,7 +103,9 @@ async def test_embedding_strategy_single_fact_shortcut():
 
 @pytest.mark.asyncio
 async def test_embedding_strategy_clusters_dissimilar():
-    strat = EmbeddingClusteringStrategy({"similarity_threshold": 0.99, "max_clusters": 5})
+    strat = EmbeddingClusteringStrategy(
+        {"similarity_threshold": 0.99, "max_clusters": 5}
+    )
     data = {
         "summary": "混合",
         "key_facts": [
@@ -117,7 +122,9 @@ async def test_embedding_strategy_clusters_dissimilar():
 
 @pytest.mark.asyncio
 async def test_embedding_strategy_merges_similar():
-    strat = EmbeddingClusteringStrategy({"similarity_threshold": 0.0, "max_clusters": 5})
+    strat = EmbeddingClusteringStrategy(
+        {"similarity_threshold": 0.0, "max_clusters": 5}
+    )
     data = {
         "summary": "同类",
         "key_facts": [
@@ -132,6 +139,7 @@ async def test_embedding_strategy_merges_similar():
 
 
 # ---- A+B Hybrid ----
+
 
 @pytest.mark.asyncio
 async def test_hybrid_uses_a_when_multiple():
@@ -149,7 +157,11 @@ async def test_hybrid_uses_a_when_multiple():
 @pytest.mark.asyncio
 async def test_hybrid_falls_back_when_single_with_many_facts():
     strat = HybridSegmentationStrategy(
-        {"hybrid_fallback_fact_threshold": 2, "similarity_threshold": 0.99, "max_clusters": 5}
+        {
+            "hybrid_fallback_fact_threshold": 2,
+            "similarity_threshold": 0.99,
+            "max_clusters": 5,
+        }
     )
     data = {
         "summary": "混合摘要",
@@ -161,6 +173,7 @@ async def test_hybrid_falls_back_when_single_with_many_facts():
 
 
 # ---- Router ----
+
 
 @pytest.mark.asyncio
 async def test_router_selects_strategy_by_config():
@@ -178,6 +191,7 @@ async def test_router_defaults_on_invalid_strategy():
 
 # ---- MemorySegment ----
 
+
 def test_memory_segment_defaults():
     seg = MemorySegment(content="test", metadata={}, importance=0.5)
     assert seg.key_facts == []
@@ -186,6 +200,7 @@ def test_memory_segment_defaults():
 
 
 # ---- PBT Properties (hypothesis) ----
+
 
 @settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow])
 @given(lists(text(min_size=1, max_size=30), min_size=1, max_size=5))
@@ -199,6 +214,7 @@ def test_pbt_single_fact_never_splits(facts):
         assert len(segments) == 1
 
     import asyncio
+
     asyncio.run(run())
 
 
@@ -210,7 +226,9 @@ def test_pbt_fact_conservation(facts):
     if not valid:
         return
 
-    strat = EmbeddingClusteringStrategy({"similarity_threshold": 0.99, "max_clusters": len(valid)})
+    strat = EmbeddingClusteringStrategy(
+        {"similarity_threshold": 0.99, "max_clusters": len(valid)}
+    )
 
     async def run():
         data = {"summary": "test", "key_facts": valid}
@@ -219,6 +237,7 @@ def test_pbt_fact_conservation(facts):
         assert total == len(valid)
 
     import asyncio
+
     asyncio.run(run())
 
 
@@ -230,17 +249,24 @@ def test_pbt_idempotent(facts):
     if not valid:
         return
 
-    strat = EmbeddingClusteringStrategy({"similarity_threshold": 0.5, "max_clusters": 5})
+    strat = EmbeddingClusteringStrategy(
+        {"similarity_threshold": 0.5, "max_clusters": 5}
+    )
 
     async def run():
         data = {"summary": "test", "key_facts": valid}
         s1 = await strat.segment(data)
         s2 = await strat.segment(data)
         assert len(s1) == len(s2)
-        for a, b in zip(sorted(s1, key=lambda x: x.content), sorted(s2, key=lambda x: x.content), strict=False):
+        for a, b in zip(
+            sorted(s1, key=lambda x: x.content),
+            sorted(s2, key=lambda x: x.content),
+            strict=False,
+        ):
             assert a.key_facts == b.key_facts
 
     import asyncio
+
     asyncio.run(run())
 
 
@@ -255,10 +281,12 @@ def test_pbt_empty_input_no_exception():
         assert segments2 == []
 
     import asyncio
+
     asyncio.run(run())
 
 
 # ---- Strategy C (chunk_messages) ----
+
 
 @pytest.mark.asyncio
 async def test_chunking_empty_or_single():
@@ -349,6 +377,7 @@ async def test_chunking_with_embed_fn():
 
 # ---- Strategy D (TwoStageLLM) ----
 
+
 @pytest.mark.asyncio
 async def test_two_stage_identify_topics_no_llm():
     strat = TwoStageLLMStrategy({"stage1_max_topics": 3})
@@ -359,7 +388,9 @@ async def test_two_stage_identify_topics_no_llm():
 @pytest.mark.asyncio
 async def test_two_stage_identify_topics_with_llm():
     mock_llm = AsyncMock()
-    mock_llm.call_llm_with_retry = AsyncMock(return_value='{"topics": [{"topic": "滑雪计划", "line_range": [1, 4]}]}')
+    mock_llm.call_llm_with_retry = AsyncMock(
+        return_value='{"topics": [{"topic": "滑雪计划", "line_range": [1, 4]}]}'
+    )
     strat = TwoStageLLMStrategy({"stage1_max_topics": 3}, llm_client=mock_llm)
     topics = await strat.identify_topics("1. a\n2. b\n3. c\n4. d")
     assert topics == [{"topic": "滑雪计划", "line_range": [1, 4]}]
@@ -412,7 +443,9 @@ async def test_two_stage_segment_pass_through():
 @pytest.mark.asyncio
 async def test_two_stage_identify_topics_max_topics_truncation():
     mock_llm = AsyncMock()
-    mock_llm.call_llm_with_retry = AsyncMock(return_value='[{"topic": "a", "line_range": [1, 2]}, {"topic": "b", "line_range": [3, 4]}, {"topic": "c", "line_range": [5, 6]}, {"topic": "d", "line_range": [7, 8]}]')
+    mock_llm.call_llm_with_retry = AsyncMock(
+        return_value='[{"topic": "a", "line_range": [1, 2]}, {"topic": "b", "line_range": [3, 4]}, {"topic": "c", "line_range": [5, 6]}, {"topic": "d", "line_range": [7, 8]}]'
+    )
     strat = TwoStageLLMStrategy({"stage1_max_topics": 2}, llm_client=mock_llm)
     topics = await strat.identify_topics("conversation text")
     assert len(topics) <= 2
@@ -429,50 +462,63 @@ async def test_two_stage_identify_topics_invalid_format():
 
 # ---- Router (additional config tests) ----
 
+
 def test_router_strategy_b_key():
-    router = TopicSegmentationRouter({
-        "topic_segmentation.strategy": "b",
-        "topic_segmentation.similarity_threshold": 0.5,
-        "topic_segmentation.max_clusters": 5,
-    })
+    router = TopicSegmentationRouter(
+        {
+            "topic_segmentation.strategy": "b",
+            "topic_segmentation.similarity_threshold": 0.5,
+            "topic_segmentation.max_clusters": 5,
+        }
+    )
     assert isinstance(router.strategy, EmbeddingClusteringStrategy)
     assert router.strategy_key == "b"
 
 
 def test_router_strategy_c_key():
-    router = TopicSegmentationRouter({
-        "topic_segmentation.strategy": "c",
-        "topic_segmentation.topic_shift_threshold": 0.3,
-    })
+    router = TopicSegmentationRouter(
+        {
+            "topic_segmentation.strategy": "c",
+            "topic_segmentation.topic_shift_threshold": 0.3,
+        }
+    )
     assert isinstance(router.strategy, TopicChunkingStrategy)
     assert router.strategy_key == "c"
 
 
 def test_router_strategy_d_key():
-    router = TopicSegmentationRouter({
-        "topic_segmentation.strategy": "d",
-        "topic_segmentation.stage1_max_topics": 3,
-    })
+    router = TopicSegmentationRouter(
+        {
+            "topic_segmentation.strategy": "d",
+            "topic_segmentation.stage1_max_topics": 3,
+        }
+    )
     assert isinstance(router.strategy, TwoStageLLMStrategy)
     assert router.strategy_key == "d"
 
 
 def test_router_strategy_b_with_embed_fn():
     embed_fn = AsyncMock()
-    router = TopicSegmentationRouter({
-        "topic_segmentation.strategy": "b",
-        "topic_segmentation.similarity_threshold": 0.5,
-    }, embed_fn=embed_fn)
+    router = TopicSegmentationRouter(
+        {
+            "topic_segmentation.strategy": "b",
+            "topic_segmentation.similarity_threshold": 0.5,
+        },
+        embed_fn=embed_fn,
+    )
     assert isinstance(router.strategy, EmbeddingClusteringStrategy)
 
 
 @pytest.mark.asyncio
 async def test_router_strategy_b_uses_embed_fn():
     embed_fn = AsyncMock(return_value=[[1.0, 0.0], [0.0, 1.0]])
-    router = TopicSegmentationRouter({
-        "topic_segmentation.strategy": "b",
-        "topic_segmentation.similarity_threshold": 0.9,
-    }, embed_fn=embed_fn)
+    router = TopicSegmentationRouter(
+        {
+            "topic_segmentation.strategy": "b",
+            "topic_segmentation.similarity_threshold": 0.9,
+        },
+        embed_fn=embed_fn,
+    )
 
     await router.segment({"summary": "mixed", "key_facts": ["fact-a", "fact-b"]})
 
@@ -502,17 +548,22 @@ def test_router_segment_delegates():
 
     # Test segment call delegation
     import asyncio
+
     async def _run():
-        segments = await router.segment({
-            "memories": [
-                {"summary": "test", "key_facts": ["f"]},
-            ]
-        })
+        segments = await router.segment(
+            {
+                "memories": [
+                    {"summary": "test", "key_facts": ["f"]},
+                ]
+            }
+        )
         assert len(segments) == 1
+
     asyncio.run(_run())
 
 
 # ---- EmbeddingClusteringStrategy with embed_fn ----
+
 
 @pytest.mark.asyncio
 async def test_embedding_strategy_with_custom_embed_fn():
@@ -548,12 +599,17 @@ async def test_embedding_strategy_embed_fn_returns_mismatch():
 
 # ---- HybridSegmentationStrategy with embed_fn ----
 
+
 @pytest.mark.asyncio
 async def test_hybrid_with_embed_fn_for_fallback():
     """当 embed_fn is provided and A fails to split, B should use it."""
     embed_fn = AsyncMock(return_value=[[0.1], [0.2], [0.3]])
     strat = HybridSegmentationStrategy(
-        {"hybrid_fallback_fact_threshold": 2, "similarity_threshold": 0.99, "max_clusters": 5},
+        {
+            "hybrid_fallback_fact_threshold": 2,
+            "similarity_threshold": 0.99,
+            "max_clusters": 5,
+        },
         embed_fn=embed_fn,
     )
     data = {
@@ -567,8 +623,10 @@ async def test_hybrid_with_embed_fn_for_fallback():
 
 # ---- _safe_bool helper ----
 
+
 def test_safe_bool_true_values():
     from core.processors.topic_splitter import _safe_bool
+
     assert _safe_bool(True) is True
     assert _safe_bool("True") is True
     assert _safe_bool("true") is True
@@ -581,6 +639,7 @@ def test_safe_bool_true_values():
 
 def test_safe_bool_false_values():
     from core.processors.topic_splitter import _safe_bool
+
     assert _safe_bool(False) is False
     assert _safe_bool("False") is False
     assert _safe_bool("false") is False
@@ -593,12 +652,14 @@ def test_safe_bool_false_values():
 
 def test_safe_bool_default():
     from core.processors.topic_splitter import _safe_bool
+
     assert _safe_bool(None) is True
     assert _safe_bool(object()) is True
     assert _safe_bool([1, 2, 3]) is True
 
 
 # ---- _msg_text helper ----
+
 
 def test_msg_text_from_content():
     from core.processors.topic_splitter import _msg_text
@@ -668,33 +729,40 @@ def test_msg_text_content_to_text_exception():
 
 # ---- _cosine_sim / _similarity_matrix edge cases ----
 
+
 def test_cosine_sim_identical():
     from core.processors.topic_splitter import _cosine_sim
+
     assert _cosine_sim([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
 
 
 def test_cosine_sim_orthogonal():
     from core.processors.topic_splitter import _cosine_sim
+
     assert _cosine_sim([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
 
 
 def test_cosine_sim_zero_vector():
     from core.processors.topic_splitter import _cosine_sim
+
     assert _cosine_sim([0.0, 0.0], [1.0, 0.0]) == 0.0
 
 
 def test_cosine_sim_empty():
     from core.processors.topic_splitter import _cosine_sim
+
     assert _cosine_sim([], []) == 0.0
 
 
 def test_cosine_sim_dimension_mismatch():
     from core.processors.topic_splitter import _cosine_sim
+
     assert _cosine_sim([1.0, 2.0], [1.0]) == 0.0
 
 
 def test_similarity_matrix_diagonal_is_one():
     from core.processors.topic_splitter import _similarity_matrix
+
     embeddings = [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]]
     mat = _similarity_matrix(embeddings)
     for i in range(len(embeddings)):
@@ -703,8 +771,10 @@ def test_similarity_matrix_diagonal_is_one():
 
 # ---- _dummy_embeddings ----
 
+
 def test_dummy_embeddings_deterministic():
     from core.processors.topic_splitter import _dummy_embeddings
+
     texts = ["hello", "world"]
     vecs1 = _dummy_embeddings(texts)
     vecs2 = _dummy_embeddings(texts)
@@ -713,6 +783,7 @@ def test_dummy_embeddings_deterministic():
 
 def test_dummy_embeddings_dimension():
     from core.processors.topic_splitter import _dummy_embeddings
+
     texts = ["a", "b"]
     vecs = _dummy_embeddings(texts)
     assert len(vecs) == 2
@@ -722,8 +793,10 @@ def test_dummy_embeddings_dimension():
 
 # ---- _single_segment helper ----
 
+
 def test_single_segment_normal():
     from core.processors.topic_splitter import _single_segment
+
     data = {"summary": "test summary", "key_facts": ["fact1"]}
     segments = _single_segment(data, data["key_facts"])
     assert len(segments) == 1
@@ -732,14 +805,17 @@ def test_single_segment_normal():
 
 def test_single_segment_empty():
     from core.processors.topic_splitter import _single_segment
+
     segments = _single_segment({"summary": "", "key_facts": []}, [])
     assert segments == []
 
 
 # ---- _build_segments_from_clusters ----
 
+
 def test_build_segments_from_clusters_single():
     from core.processors.topic_splitter import _build_segments_from_clusters
+
     data = {"summary": "s", "key_facts": ["f1", "f2"], "importance": 0.5}
     clusters = [["f1", "f2"]]
     segments = _build_segments_from_clusters(data, clusters)
@@ -748,6 +824,7 @@ def test_build_segments_from_clusters_single():
 
 def test_build_segments_from_clusters_multiple():
     from core.processors.topic_splitter import _build_segments_from_clusters
+
     data = {"summary": "s", "key_facts": ["f1", "f2"], "importance": 0.5}
     clusters = [["f1"], ["f2"]]
     segments = _build_segments_from_clusters(data, clusters)
@@ -758,6 +835,7 @@ def test_build_segments_from_clusters_multiple():
 
 def test_build_segments_from_clusters_empty_cluster():
     from core.processors.topic_splitter import _build_segments_from_clusters
+
     data = {"summary": "s"}
     clusters = [["f1"], [], ["f2"]]
     segments = _build_segments_from_clusters(data, clusters)

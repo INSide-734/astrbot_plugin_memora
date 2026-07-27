@@ -19,14 +19,13 @@ from ..adapter_capabilities import (
 )
 from ..models.memory_evolution import (
     DerivedApplyPlan,
-    DerivedState,
     JobClaim,
     JobSpec,
     JobState,
     MemoryEvolutionJob,
+    MemorySourceRef,
     ProjectionType,
     RetrySpec,
-    MemorySourceRef,
 )
 from ..models.temporal import infer_time_precision, parse_datetime, serialize_datetime
 from .base_store import BaseStore
@@ -164,20 +163,42 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
              source_revisions_json,not_before,idempotency_key,created_at,updated_at)
              VALUES (?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(idempotency_key) DO NOTHING""",
-            (job_id, spec.scope_key, spec.bucket_key, JobState.PENDING.value, 0,
-             _json_ids(spec.source_ids), _json_revisions(spec.source_revisions),
-             _dt(spec.not_before), spec.idempotency_key,
-             _dt(now), _dt(now)),
+            (
+                job_id,
+                spec.scope_key,
+                spec.bucket_key,
+                JobState.PENDING.value,
+                0,
+                _json_ids(spec.source_ids),
+                _json_revisions(spec.source_revisions),
+                _dt(spec.not_before),
+                spec.idempotency_key,
+                _dt(now),
+                _dt(now),
+            ),
         )
         await self._commit()
-        row = await self._fetch_one("SELECT * FROM memory_evolution_jobs WHERE idempotency_key=?", (spec.idempotency_key,))
+        row = await self._fetch_one(
+            "SELECT * FROM memory_evolution_jobs WHERE idempotency_key=?",
+            (spec.idempotency_key,),
+        )
         return _job(row)
 
     async def get_job(self, job_id: str) -> MemoryEvolutionJob | None:
-        return _job(await self._fetch_one("SELECT * FROM memory_evolution_jobs WHERE job_id=?", (job_id,)))
+        return _job(
+            await self._fetch_one(
+                "SELECT * FROM memory_evolution_jobs WHERE job_id=?", (job_id,)
+            )
+        )
 
     async def pending_count(self) -> int:
-        return int(await self._fetch_scalar("SELECT COUNT(*) FROM memory_evolution_jobs WHERE state IN (?,?)", (JobState.PENDING.value, JobState.RETRY_WAIT.value)) or 0)
+        return int(
+            await self._fetch_scalar(
+                "SELECT COUNT(*) FROM memory_evolution_jobs WHERE state IN (?,?)",
+                (JobState.PENDING.value, JobState.RETRY_WAIT.value),
+            )
+            or 0
+        )
 
     async def load_sources(
         self,
@@ -199,7 +220,9 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
         sources_by_id: dict[int, MemorySourceRef] = {}
         for row in rows:
             metadata = _metadata_dict(row.get("metadata"))
-            revision_token = str(row.get("updated_at") or row.get("created_at") or "").strip()
+            revision_token = str(
+                row.get("updated_at") or row.get("created_at") or ""
+            ).strip()
             explicit_occurred = (
                 metadata.get("occurred_at")
                 or metadata.get("event_time")
@@ -221,7 +244,7 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                 or metadata.get("persona_id")
                 or "private:default"
             )
-            content = str(row.get("text") or "")[:max(1, max_content_chars)]
+            content = str(row.get("text") or "")[: max(1, max_content_chars)]
             source = MemorySourceRef(
                 memory_id=int(row["id"]),
                 revision_token=revision_token,
@@ -239,7 +262,9 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                 ),
             )
             sources_by_id[source.memory_id] = source
-        return [sources_by_id[memory_id] for memory_id in ids if memory_id in sources_by_id]
+        return [
+            sources_by_id[memory_id] for memory_id in ids if memory_id in sources_by_id
+        ]
 
     async def load_all_sources(
         self,
@@ -260,7 +285,9 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
         )
 
     @_serialized_write
-    async def claim_job(self, now: datetime, lease_seconds: int, worker_token: str | None = None) -> JobClaim | None:
+    async def claim_job(
+        self, now: datetime, lease_seconds: int, worker_token: str | None = None
+    ) -> JobClaim | None:
         token = worker_token or uuid.uuid4().hex
         lease = now.timestamp() + lease_seconds
         lease_dt = datetime.fromtimestamp(lease, tz=timezone.utc)
@@ -278,7 +305,13 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                 return None
             await self.connection.execute(
                 "UPDATE memory_evolution_jobs SET state=?, lease_until=?, worker_token=?, attempt_count=attempt_count+1, updated_at=? WHERE job_id=?",
-                (JobState.PROCESSING.value, _dt(lease_dt), token, _dt(now), row["job_id"]),
+                (
+                    JobState.PROCESSING.value,
+                    _dt(lease_dt),
+                    token,
+                    _dt(now),
+                    row["job_id"],
+                ),
             )
             await self.connection.commit()
             return JobClaim(
@@ -296,16 +329,31 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
             raise
 
     @_serialized_write
-    async def renew_lease(self, job_id: str, worker_token: str, lease_until: datetime) -> bool:
-        cur = await self._execute("UPDATE memory_evolution_jobs SET lease_until=?,updated_at=? WHERE job_id=? AND state=? AND worker_token=?", (_dt(lease_until), _dt(datetime.now(timezone.utc)), job_id, JobState.PROCESSING.value, worker_token))
+    async def renew_lease(
+        self, job_id: str, worker_token: str, lease_until: datetime
+    ) -> bool:
+        cur = await self._execute(
+            "UPDATE memory_evolution_jobs SET lease_until=?,updated_at=? WHERE job_id=? AND state=? AND worker_token=?",
+            (
+                _dt(lease_until),
+                _dt(datetime.now(timezone.utc)),
+                job_id,
+                JobState.PROCESSING.value,
+                worker_token,
+            ),
+        )
         await self._commit()
         return cur.rowcount == 1
 
     async def complete_job(self, job_id: str, worker_token: str) -> bool:
         return await self._set_job_state(job_id, worker_token, JobState.COMPLETED)
 
-    async def reject_job(self, job_id: str, worker_token: str, reason_code: str = "rejected") -> bool:
-        return await self._set_job_state(job_id, worker_token, JobState.REJECTED, reason_code)
+    async def reject_job(
+        self, job_id: str, worker_token: str, reason_code: str = "rejected"
+    ) -> bool:
+        return await self._set_job_state(
+            job_id, worker_token, JobState.REJECTED, reason_code
+        )
 
     async def invalidate_job(
         self, job_id: str, worker_token: str, reason_code: str = "stale_source"
@@ -319,7 +367,9 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
     async def dead_job(self, job_id: str, worker_token: str, reason_code: str) -> bool:
         """将超过重试上限的任务标记为 dead。"""
 
-        return await self._set_job_state(job_id, worker_token, JobState.DEAD, reason_code)
+        return await self._set_job_state(
+            job_id, worker_token, JobState.DEAD, reason_code
+        )
 
     async def restore_pending(self, job_id: str, worker_token: str) -> bool:
         """取消或暂时中断时把 processing 任务恢复为 pending。"""
@@ -328,19 +378,45 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
 
     @_serialized_write
     async def retry_job(self, job_id: str, worker_token: str, retry: RetrySpec) -> bool:
-        cur = await self._execute("UPDATE memory_evolution_jobs SET state=?,not_before=?,lease_until=NULL,worker_token=NULL,last_error_code=?,updated_at=? WHERE job_id=? AND state=? AND worker_token=?", (JobState.RETRY_WAIT.value, _dt(retry.not_before), retry.reason_code, _dt(datetime.now(timezone.utc)), job_id, JobState.PROCESSING.value, worker_token))
+        cur = await self._execute(
+            "UPDATE memory_evolution_jobs SET state=?,not_before=?,lease_until=NULL,worker_token=NULL,last_error_code=?,updated_at=? WHERE job_id=? AND state=? AND worker_token=?",
+            (
+                JobState.RETRY_WAIT.value,
+                _dt(retry.not_before),
+                retry.reason_code,
+                _dt(datetime.now(timezone.utc)),
+                job_id,
+                JobState.PROCESSING.value,
+                worker_token,
+            ),
+        )
         await self._commit()
         return cur.rowcount == 1
 
     @_serialized_write
-    async def _set_job_state(self, job_id: str, worker_token: str, state: JobState, reason: str | None = None) -> bool:
-        cur = await self._execute("UPDATE memory_evolution_jobs SET state=?,lease_until=NULL,worker_token=NULL,last_error_code=?,updated_at=? WHERE job_id=? AND state=? AND worker_token=?", (state.value, reason, _dt(datetime.now(timezone.utc)), job_id, JobState.PROCESSING.value, worker_token))
+    async def _set_job_state(
+        self, job_id: str, worker_token: str, state: JobState, reason: str | None = None
+    ) -> bool:
+        cur = await self._execute(
+            "UPDATE memory_evolution_jobs SET state=?,lease_until=NULL,worker_token=NULL,last_error_code=?,updated_at=? WHERE job_id=? AND state=? AND worker_token=?",
+            (
+                state.value,
+                reason,
+                _dt(datetime.now(timezone.utc)),
+                job_id,
+                JobState.PROCESSING.value,
+                worker_token,
+            ),
+        )
         await self._commit()
         return cur.rowcount == 1
 
     @_serialized_write
     async def recover_expired_leases(self, now: datetime) -> int:
-        cur = await self._execute("UPDATE memory_evolution_jobs SET state=?,lease_until=NULL,worker_token=NULL,updated_at=? WHERE state=? AND lease_until IS NOT NULL AND lease_until<?", (JobState.PENDING.value, _dt(now), JobState.PROCESSING.value, _dt(now)))
+        cur = await self._execute(
+            "UPDATE memory_evolution_jobs SET state=?,lease_until=NULL,worker_token=NULL,updated_at=? WHERE state=? AND lease_until IS NOT NULL AND lease_until<?",
+            (JobState.PENDING.value, _dt(now), JobState.PROCESSING.value, _dt(now)),
+        )
         await self._commit()
         return cur.rowcount
 
@@ -462,7 +538,28 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                       time_precision=excluded.time_precision,
                       origin_job_id=excluded.origin_job_id,
                       updated_at=excluded.updated_at""",
-                    (proj.projection_id, pkey, proj.projection_type.value, 1, proj.state.value, proj.summary, primary_source, proj.scope_key, proj.privacy_level, proj.confidence, _dt(proj.valid_from), _dt(proj.valid_to), _dt(proj.reference_at), _dt(proj.discovered_at) or now, _dt(proj.invalid_at), proj.time_source, proj.time_precision, plan.origin_job_id, now, now),
+                    (
+                        proj.projection_id,
+                        pkey,
+                        proj.projection_type.value,
+                        1,
+                        proj.state.value,
+                        proj.summary,
+                        primary_source,
+                        proj.scope_key,
+                        proj.privacy_level,
+                        proj.confidence,
+                        _dt(proj.valid_from),
+                        _dt(proj.valid_to),
+                        _dt(proj.reference_at),
+                        _dt(proj.discovered_at) or now,
+                        _dt(proj.invalid_at),
+                        proj.time_source,
+                        proj.time_precision,
+                        plan.origin_job_id,
+                        now,
+                        now,
+                    ),
                 )
                 cursor = await self.connection.execute(
                     "SELECT projection_id FROM memory_projections WHERE projection_key=?",
@@ -479,7 +576,9 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
             for src in plan.projection_sources:
                 stored_projection_id = projection_id_map.get(src.projection_id)
                 if stored_projection_id is None:
-                    raise ValueError("projection source references an unknown projection")
+                    raise ValueError(
+                        "projection source references an unknown projection"
+                    )
                 await self.connection.execute(
                     "INSERT INTO memory_projection_sources"
                     "(projection_id,memory_id,revision_token,source_role,ordinal,occurred_at,valid_from,valid_to) "

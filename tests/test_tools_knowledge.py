@@ -9,7 +9,6 @@ import pytest
 
 from core.tools.knowledge_tools import KnowledgeReadTool, KnowledgeSearchTool
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -68,8 +67,12 @@ class TestKnowledgeSearchTool:
     @pytest.mark.asyncio
     async def test_search_happy_path_returns_entries(self):
         """当 knowledge_manager.search() returns entries, tool should serialize them."""
-        entry1 = _make_mock_knowledge_entry(1, "Rule A", "Content A", category="rule", confidence=0.9)
-        entry2 = _make_mock_knowledge_entry(2, "Concept B", "Content B", category="concept")
+        entry1 = _make_mock_knowledge_entry(
+            1, "Rule A", "Content A", category="rule", confidence=0.9
+        )
+        entry2 = _make_mock_knowledge_entry(
+            2, "Concept B", "Content B", category="concept"
+        )
 
         mock_mgr = MagicMock()
         mock_mgr.search = AsyncMock(return_value=([entry1, entry2], 2))

@@ -4,6 +4,12 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+import core.injection as injection
+import core.injection.executor as executor_module
+import core.injection.models as model_module
+import core.injection.presets as preset_module
+import core.injection.recorder as recorder_module
+import core.injection.router as router_module
 from core.injection.models import (
     ContentLevel,
     DeliveryMode,
@@ -16,12 +22,6 @@ from core.injection.models import (
     RequestSignals,
     RoutingMode,
 )
-import core.injection as injection
-import core.injection.executor as executor_module
-import core.injection.models as model_module
-import core.injection.presets as preset_module
-import core.injection.recorder as recorder_module
-import core.injection.router as router_module
 
 
 def test_package_exports_are_exact_and_identity_preserving() -> None:

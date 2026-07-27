@@ -12,10 +12,10 @@ import pytest
 
 from core.api.backup_api import BackupApiMixin
 
-
 # ---------------------------------------------------------------------------
 # 最小化 Mixin 设置辅助函数
 # ---------------------------------------------------------------------------
+
 
 def _make_mixin(plugin) -> BackupApiMixin:
     """创建 BackupApiMixin 实例。"""
@@ -26,10 +26,12 @@ def _make_mixin(plugin) -> BackupApiMixin:
 
         def _ok(self, data):
             from core.api.response_utils import ok_response
+
             return ok_response(data)
 
         def _error(self, msg):
             from core.api.response_utils import error_response
+
             return error_response(msg)
 
     return C()
@@ -153,7 +155,9 @@ class TestBackupApiRestoreLifecycle:
         from unittest.mock import AsyncMock, MagicMock
 
         request = MagicMock()
-        request.get_json = AsyncMock(return_value={"name": "backup-a", "apply_mode": "reload"})
+        request.get_json = AsyncMock(
+            return_value={"name": "backup-a", "apply_mode": "reload"}
+        )
         manager = MagicMock()
         manager.stage_restore.return_value = {
             "operation_id": "op-1",
@@ -182,7 +186,9 @@ class TestBackupApiRestoreLifecycle:
         from unittest.mock import AsyncMock, MagicMock
 
         request = MagicMock()
-        request.get_json = AsyncMock(return_value={"name": "backup-a", "apply_mode": "live"})
+        request.get_json = AsyncMock(
+            return_value={"name": "backup-a", "apply_mode": "live"}
+        )
         plugin = MagicMock(_backup_manager=MagicMock())
         mixin = _make_mixin(plugin)
 

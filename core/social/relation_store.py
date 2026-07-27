@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from typing import Any
 
 import aiosqlite
-
-from astrbot.api import logger
 
 from ..base.entity_editing import (
     EditConflictError,
@@ -20,7 +17,6 @@ from ..base.entity_editing import (
 from ..base.list_sorting import SortQuery, order_by_clause
 from ..storage.base import BaseStore
 from .models import SocialRelation
-
 
 SOCIAL_SORT_COLUMNS = {
     "from_user": "from_user COLLATE NOCASE",
@@ -105,8 +101,15 @@ class RelationStore(BaseStore):
 
     # 列名顺序与 social_relations 表的 SELECT * 输出保持一致。
     _COLUMNS = (
-        "id", "from_user", "to_user", "relation_type", "strength",
-        "frequency", "last_interaction", "group_id", "tags_json",
+        "id",
+        "from_user",
+        "to_user",
+        "relation_type",
+        "strength",
+        "frequency",
+        "last_interaction",
+        "group_id",
+        "tags_json",
     )
 
     @classmethod
@@ -115,9 +118,7 @@ class RelationStore(BaseStore):
 
     # ---- CRUD -----------------------------------------------------------
 
-    async def get_or_create_relation(
-        self, rel: SocialRelation
-    ) -> SocialRelation:
+    async def get_or_create_relation(self, rel: SocialRelation) -> SocialRelation:
         """仅在缺失时插入自动关系，并返回数据库中的当前记录。"""
         identity = (
             rel.from_user,
@@ -233,9 +234,7 @@ class RelationStore(BaseStore):
                 await db.rollback()
                 raise
 
-    async def create_relation_strict(
-        self, rel: SocialRelation
-    ) -> SocialRelation:
+    async def create_relation_strict(self, rel: SocialRelation) -> SocialRelation:
         """严格插入关系；复合键已存在时不覆盖现有记录。"""
         async with self._connect() as db:
             try:
@@ -545,9 +544,7 @@ class RelationStore(BaseStore):
             await db.commit()
             return cursor.rowcount > 0
 
-    async def delete_user_relations(
-        self, user_id: str, group_id: str
-    ) -> int:
+    async def delete_user_relations(self, user_id: str, group_id: str) -> int:
         """删除指定群组内涉及该用户的全部关系。"""
         async with self._connect() as db:
             table_sql = self._table_sql
@@ -574,9 +571,7 @@ class RelationStore(BaseStore):
         )
         async with self._connect() as db:
             table_sql = self._table_sql
-            cursor = await db.execute(
-                f"SELECT * FROM {table_sql} ORDER BY {order_by}"
-            )
+            cursor = await db.execute(f"SELECT * FROM {table_sql} ORDER BY {order_by}")
             rows = await cursor.fetchall()
             return [SocialRelation.from_row(self._row_to_dict(r)) for r in rows]
 

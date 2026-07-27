@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -66,7 +66,9 @@ class TestEventHandlerConstruction:
         assert handler._reflection_handler._memory_evolution_manager is manager
 
     @pytest.mark.asyncio
-    async def test_reflection_schedules_only_after_reloaded_canonical_source(self) -> None:
+    async def test_reflection_schedules_only_after_reloaded_canonical_source(
+        self,
+    ) -> None:
         from core.handlers.reflection_handler import ReflectionHandler
 
         source = MagicMock(memory_id=17)
@@ -89,7 +91,9 @@ class TestEventHandlerConstruction:
         manager.schedule_consider.assert_awaited_once_with(source)
 
     @pytest.mark.asyncio
-    async def test_reflection_skips_schedule_when_canonical_source_missing(self) -> None:
+    async def test_reflection_skips_schedule_when_canonical_source_missing(
+        self,
+    ) -> None:
         from core.handlers.reflection_handler import ReflectionHandler
 
         manager = MagicMock()
@@ -300,8 +304,9 @@ class TestEventHandlerGroupMessages:
 
     @pytest.mark.asyncio
     async def test_skips_non_group_messages(self) -> None:
-        from core.event_handler import EventHandler
         from astrbot.api.platform import MessageType
+
+        from core.event_handler import EventHandler
 
         cfg = MagicMock()
         cfg.get.return_value = True  # enable_full_group_capture = True
@@ -322,8 +327,9 @@ class TestEventHandlerGroupMessages:
 
     @pytest.mark.asyncio
     async def test_skips_messages_from_self(self) -> None:
-        from core.event_handler import EventHandler
         from astrbot.api.platform import MessageType
+
+        from core.event_handler import EventHandler
 
         cfg = MagicMock()
         cfg.get.return_value = True

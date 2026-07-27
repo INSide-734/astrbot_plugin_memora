@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 from shutil import which
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD_ROOT = REPO_ROOT / "pages" / "dashboard"
 

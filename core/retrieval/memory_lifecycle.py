@@ -5,6 +5,7 @@
 创建、更新和删除操作，包含事务性回滚机制。
 """
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -279,8 +280,7 @@ class MemoryLifecycleManager:
         """
         if not content:
             logger.error(
-                "[回滚] 缺少备份文本，无法恢复 BM25 索引；"
-                "建议执行索引重建修复一致性"
+                "[回滚] 缺少备份文本，无法恢复 BM25 索引；建议执行索引重建修复一致性"
             )
             return
 

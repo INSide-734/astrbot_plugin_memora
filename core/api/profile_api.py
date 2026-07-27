@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextvars import ContextVar
 from functools import wraps
-from collections.abc import Mapping
 from typing import Any
 
+from astrbot.api import logger
 from quart import request
 
-from astrbot.api import logger
-
-from ..base.list_sorting import parse_sort_query
 from ..base.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     EntityValidationError,
 )
+from ..base.list_sorting import parse_sort_query
 from ..models.user_profile import TagCategory, UserTag
 from ..storage.profile_store import PROFILE_SORT_COLUMNS
 from .editing_utils import (
@@ -29,7 +28,6 @@ from .editing_utils import (
     required_text,
 )
 from .response_utils import error_response, ok_response
-
 
 _CREATE_FIELDS = frozenset({"user_id", "display_name", "preferences", "tags"})
 _UPDATE_FIELDS = frozenset({"identity", "changes", "expected_revision"})
@@ -125,9 +123,7 @@ def _audit_boundary(action: str):
                         _AUDIT_IDENTITY.get(),
                         result="failure",
                         error_code=(
-                            code
-                            if isinstance(code, str) and code
-                            else "request_error"
+                            code if isinstance(code, str) and code else "request_error"
                         ),
                     )
                 return response
@@ -149,8 +145,11 @@ def _coerce_user_id(raw_user_id: Any) -> str:
         return ""
     return str(raw_user_id).strip()
 
+
 def _safe_identity(raw_user_id: Any) -> Any:
-    if raw_user_id is None or isinstance(raw_user_id, (bool, Mapping, list, tuple, set)):
+    if raw_user_id is None or isinstance(
+        raw_user_id, (bool, Mapping, list, tuple, set)
+    ):
         return "unavailable"
     user_id = _coerce_user_id(raw_user_id)
     return {"user_id": user_id} if user_id else "unavailable"
@@ -242,10 +241,14 @@ def _exception_response(
     audit: bool = True,
 ) -> dict[str, Any]:
     error_code = (
-        "validation_error" if isinstance(exc, EntityValidationError)
-        else "already_exists" if isinstance(exc, EntityAlreadyExistsError)
-        else "not_found" if isinstance(exc, EntityNotFoundError)
-        else "edit_conflict" if isinstance(exc, EditConflictError)
+        "validation_error"
+        if isinstance(exc, EntityValidationError)
+        else "already_exists"
+        if isinstance(exc, EntityAlreadyExistsError)
+        else "not_found"
+        if isinstance(exc, EntityNotFoundError)
+        else "edit_conflict"
+        if isinstance(exc, EditConflictError)
         else "internal_error"
     )
     if audit:
@@ -301,7 +304,9 @@ def _validate_preferences(value: Any, *, field: str) -> dict | None:
         normalized: list[str] = []
         for item in items:
             if not isinstance(item, str) or not item.strip() or len(item.strip()) > 128:
-                return _field_error(field + "." + name, "每项必须为非空字符串且不超过 128 字符")
+                return _field_error(
+                    field + "." + name, "每项必须为非空字符串且不超过 128 字符"
+                )
             if item.strip() in normalized:
                 return _field_error(field + "." + name, "项目不得重复")
             normalized.append(item.strip())
@@ -309,7 +314,10 @@ def _validate_preferences(value: Any, *, field: str) -> dict | None:
         hours = value["active_hours"]
         if not isinstance(hours, list) or len(hours) > 24:
             return _field_error(field + ".active_hours", "必须为最多 24 项的数组")
-        if any(isinstance(hour, bool) or not isinstance(hour, int) or not 0 <= hour <= 23 for hour in hours):
+        if any(
+            isinstance(hour, bool) or not isinstance(hour, int) or not 0 <= hour <= 23
+            for hour in hours
+        ):
             return _field_error(field + ".active_hours", "每项必须为 0 到 23 的整数")
         if len(set(hours)) != len(hours):
             return _field_error(field + ".active_hours", "项目不得重复")
@@ -349,7 +357,9 @@ def _validate_editable_payload(
     return None
 
 
-def _parse_identity(value: Any) -> tuple[dict[str, str] | None, str | None, dict | None]:
+def _parse_identity(
+    value: Any,
+) -> tuple[dict[str, str] | None, str | None, dict | None]:
     identity, error = require_object(value)
     if error:
         return None, None, _field_error("identity", "必须为对象")
@@ -427,9 +437,7 @@ def _normalize_batch_tag(value: Any) -> dict[str, Any]:
         value.get("confidence", 0.5), field="params.tag.confidence"
     )
     if not 0.0 <= confidence <= 1.0:
-        raise EntityValidationError(
-            {"params.tag.confidence": "必须在 0.0 到 1.0 之间"}
-        )
+        raise EntityValidationError({"params.tag.confidence": "必须在 0.0 到 1.0 之间"})
     return {"category": category, "value": tag_value, "confidence": confidence}
 
 
@@ -546,9 +554,7 @@ class ProfileApiMixin:
             revision = manager.revision_for(profile)
             return _profile_response_or_error(profile, revision=revision)
         except Exception as exc:
-            return _exception_response(
-                exc, operation="detail_mapping", audit=False
-            )
+            return _exception_response(exc, operation="detail_mapping", audit=False)
 
     @_audit_boundary("create")
     async def create_profile(self):
@@ -854,9 +860,7 @@ class ProfileApiMixin:
         except EntityValidationError as exc:
             return _validation_error(exc)
         if action not in _BATCH_ACTIONS:
-            return _field_error(
-                "action", "仅支持 delete、tags_add 或 tags_remove"
-            )
+            return _field_error("action", "仅支持 delete、tags_add 或 tags_remove")
         items = payload.get("items")
         if not isinstance(items, list):
             return _field_error("items", "必须为数组")
@@ -910,7 +914,8 @@ class ProfileApiMixin:
                 succeeded_ids.append(identity)
             except Exception as exc:
                 item_response = _exception_response(
-                    exc, operation="batch_" + action + "_item",
+                    exc,
+                    operation="batch_" + action + "_item",
                     audit=False,
                 )
                 failures.append(_batch_failure(identity_ref, item_response))

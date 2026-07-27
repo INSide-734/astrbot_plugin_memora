@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import aiosqlite
 import pytest
 
 from core.managers.memory_engine import MemoryEngine
@@ -38,7 +36,9 @@ class TestMemoryEngineInitialize:
         # Mock SchemaManager to avoid creating memory_write_ops table
         engine._schema.create_tables = AsyncMock()
         # Mock BM25Retriever initialize
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+        with patch(
+            "core.managers.memory_engine_lifecycle.BM25Retriever"
+        ) as mock_bm25_cls:
             mock_bm25 = mock_bm25_cls.return_value
             mock_bm25.initialize = AsyncMock()
             await engine.initialize()
@@ -78,7 +78,9 @@ class TestMemoryEngineInitialize:
             },
         )
         engine._schema.create_tables = AsyncMock()
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+        with patch(
+            "core.managers.memory_engine_lifecycle.BM25Retriever"
+        ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
@@ -110,7 +112,9 @@ class TestMemoryEngineInitialize:
             },
         )
         engine._schema.create_tables = AsyncMock()
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+        with patch(
+            "core.managers.memory_engine_lifecycle.BM25Retriever"
+        ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
@@ -147,7 +151,9 @@ class TestMemoryEngineInitialize:
             },
         )
         engine._schema.create_tables = AsyncMock()
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+        with patch(
+            "core.managers.memory_engine_lifecycle.BM25Retriever"
+        ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
@@ -177,7 +183,9 @@ class TestMemoryEngineInitialize:
             },
         )
         engine._schema.create_tables = AsyncMock()
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+        with patch(
+            "core.managers.memory_engine_lifecycle.BM25Retriever"
+        ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
@@ -207,7 +215,9 @@ class TestMemoryEngineInitialize:
             },
         )
         engine._schema.create_tables = AsyncMock()
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+        with patch(
+            "core.managers.memory_engine_lifecycle.BM25Retriever"
+        ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
@@ -240,8 +250,13 @@ class TestMemoryEngineInitialize:
         engine._schema.create_tables = AsyncMock()
         mock_al_instance = MagicMock()
         mock_al_instance.load_state = AsyncMock()
-        with patch("core.managers.auto_learning.AutoLearningManager", return_value=mock_al_instance) as mock_al_cls:
-            with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+        with patch(
+            "core.managers.auto_learning.AutoLearningManager",
+            return_value=mock_al_instance,
+        ) as mock_al_cls:
+            with patch(
+                "core.managers.memory_engine_lifecycle.BM25Retriever"
+            ) as mock_bm25_cls:
                 mock_bm25_cls.return_value.initialize = AsyncMock()
                 await engine.initialize()
 
@@ -254,7 +269,9 @@ class TestMemoryEngineInitialize:
         await engine.close()
 
     @pytest.mark.asyncio
-    async def test_initialize_reranker_failure_does_not_break(self, tmp_db_path: str) -> None:
+    async def test_initialize_reranker_failure_does_not_break(
+        self, tmp_db_path: str
+    ) -> None:
         """When reranker creation fails, initialize should still succeed."""
         mock_faiss = MagicMock()
         engine = MemoryEngine(
@@ -274,10 +291,14 @@ class TestMemoryEngineInitialize:
             },
         )
         engine._schema.create_tables = AsyncMock()
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+        with patch(
+            "core.managers.memory_engine_lifecycle.BM25Retriever"
+        ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
-            with patch("core.retrieval.reranker_factory.create_reranker",
-                       side_effect=Exception("reranker failure")):
+            with patch(
+                "core.retrieval.reranker_factory.create_reranker",
+                side_effect=Exception("reranker failure"),
+            ):
                 await engine.initialize()
 
         # Should still have basic components
@@ -314,7 +335,9 @@ class TestMemoryEngineInitialize:
             "core.managers.trait_evolution.TraitEvolutionTracker",
             return_value=mock_trait_instance,
         ) as mock_trait_cls:
-            with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+            with patch(
+                "core.managers.memory_engine_lifecycle.BM25Retriever"
+            ) as mock_bm25_cls:
                 mock_bm25_cls.return_value.initialize = AsyncMock()
                 await engine.initialize()
 
@@ -324,7 +347,9 @@ class TestMemoryEngineInitialize:
         await engine.close()
 
     @pytest.mark.asyncio
-    async def test_initialize_optional_subsystems_disabled(self, tmp_db_path: str) -> None:
+    async def test_initialize_optional_subsystems_disabled(
+        self, tmp_db_path: str
+    ) -> None:
         """Optional subsystems should stay None when disabled."""
         mock_faiss = MagicMock()
         engine = MemoryEngine(
@@ -350,13 +375,21 @@ class TestMemoryEngineInitialize:
             },
         )
         engine._schema.create_tables = AsyncMock()
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+        with patch(
+            "core.managers.memory_engine_lifecycle.BM25Retriever"
+        ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
         # These attrs are initialized conditionally in initialize(), so they won't exist
-        assert not hasattr(engine, "continuity_tracker") or engine.continuity_tracker is None
-        assert not hasattr(engine, "relationship_tracker") or engine.relationship_tracker is None
+        assert (
+            not hasattr(engine, "continuity_tracker")
+            or engine.continuity_tracker is None
+        )
+        assert (
+            not hasattr(engine, "relationship_tracker")
+            or engine.relationship_tracker is None
+        )
         assert not hasattr(engine, "reconsolidation") or engine.reconsolidation is None
         assert not hasattr(engine, "weight_learner") or engine.weight_learner is None
         assert engine.trait_tracker is None  # always set in MainEngine.__init__
@@ -387,7 +420,9 @@ class TestMemoryEngineLifecycleClose:
             },
         )
         engine._schema.create_tables = AsyncMock()
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as mock_bm25_cls:
+        with patch(
+            "core.managers.memory_engine_lifecycle.BM25Retriever"
+        ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 

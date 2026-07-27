@@ -5,15 +5,13 @@ from __future__ import annotations
 import time
 from unittest.mock import patch
 
-import pytest
-
 from core.monitoring.quality_scorer import (
+    _SOURCE_RELEVANCE_WEIGHT,
+    _SOURCE_RELIABILITY,
     AlertLevel,
     MemoryQualityScorer,
     QualityAlert,
     QualityScore,
-    _SOURCE_RELIABILITY,
-    _SOURCE_RELEVANCE_WEIGHT,
     _count_connectors,
     _count_segments,
     _has_contradictory_sentiment,
@@ -23,7 +21,6 @@ from core.monitoring.quality_scorer import (
     _text_to_simple_embedding,
     _tokenize,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -195,11 +192,23 @@ class TestQualityScore:
 
     def test_timestamp_is_auto_generated(self):
         qs1 = QualityScore(
-            atom_id="a", consistency=1, coherence=1, relevance=1, freshness=1, accuracy=1, overall=1
+            atom_id="a",
+            consistency=1,
+            coherence=1,
+            relevance=1,
+            freshness=1,
+            accuracy=1,
+            overall=1,
         )
         time.sleep(0.01)
         qs2 = QualityScore(
-            atom_id="b", consistency=1, coherence=1, relevance=1, freshness=1, accuracy=1, overall=1
+            atom_id="b",
+            consistency=1,
+            coherence=1,
+            relevance=1,
+            freshness=1,
+            accuracy=1,
+            overall=1,
         )
         assert qs2.timestamp > qs1.timestamp
 
@@ -289,7 +298,9 @@ class TestScoreAtomHighQuality:
             ttl_days=365.0,
         )
         score = scorer.score_atom(atom)
-        assert score.overall > 0.7, f"Expected high quality, got overall={score.overall}"
+        assert score.overall > 0.7, (
+            f"Expected high quality, got overall={score.overall}"
+        )
         assert score.accuracy > 0.8, "Admin + verified should have high accuracy"
         assert score.freshness > 0.8, "Brand new atom should be very fresh"
 
@@ -303,11 +314,16 @@ class TestScoreAtomHighQuality:
         context = _make_context(
             recent_messages=["Python 编程", "语法简洁", "生态丰富"],
             existing_atoms=[
-                {"content": "完全无关的足球话题", "embedding": _text_to_simple_embedding("足球比赛")}
+                {
+                    "content": "完全无关的足球话题",
+                    "embedding": _text_to_simple_embedding("足球比赛"),
+                }
             ],
         )
         score = scorer.score_atom(atom, context=context)
-        assert score.overall > 0.7, f"Expected high quality, got overall={score.overall}"
+        assert score.overall > 0.7, (
+            f"Expected high quality, got overall={score.overall}"
+        )
 
 
 class TestScoreAtomLowQuality:
@@ -327,7 +343,9 @@ class TestScoreAtomLowQuality:
         scorer = MemoryQualityScorer()
         atom = _make_atom(content="", source_type="group_chat")
         score = scorer.score_atom(atom)
-        assert score.coherence < 0.5, f"Empty content should have low coherence, got {score.coherence}"
+        assert score.coherence < 0.5, (
+            f"Empty content should have low coherence, got {score.coherence}"
+        )
 
 
 class TestScoreAtomFreshness:
@@ -335,7 +353,9 @@ class TestScoreAtomFreshness:
         scorer = MemoryQualityScorer()
         atom = _make_atom(created_at=time.time(), ttl_days=30.0)
         score = scorer.score_atom(atom)
-        assert score.freshness > 0.8, f"Brand new atom should be fresh, got {score.freshness}"
+        assert score.freshness > 0.8, (
+            f"Brand new atom should be fresh, got {score.freshness}"
+        )
 
     def test_half_expired_atom_has_lower_freshness(self):
         scorer = MemoryQualityScorer()
@@ -343,7 +363,9 @@ class TestScoreAtomFreshness:
         atom = _make_atom(created_at=half_life_ago, ttl_days=30.0)
         score = scorer.score_atom(atom)
         # At 50% TTL remaining, freshness should be lower but > 0
-        assert 0.2 <= score.freshness <= 0.7, f"Half-life freshness got {score.freshness}"
+        assert 0.2 <= score.freshness <= 0.7, (
+            f"Half-life freshness got {score.freshness}"
+        )
 
     def test_fully_expired_atom_scores_zero_or_near_zero(self):
         scorer = MemoryQualityScorer()
@@ -352,7 +374,9 @@ class TestScoreAtomFreshness:
             ttl_days=30.0,
         )
         score = scorer.score_atom(atom)
-        assert score.freshness < 0.1, f"Fully expired atom should have near-zero freshness, got {score.freshness}"
+        assert score.freshness < 0.1, (
+            f"Fully expired atom should have near-zero freshness, got {score.freshness}"
+        )
 
     def test_zero_ttl_returns_zero(self):
         scorer = MemoryQualityScorer()
@@ -376,17 +400,25 @@ class TestScoreAtomAccuracy:
 
     def test_verified_bonus(self):
         scorer = MemoryQualityScorer()
-        unverified = scorer.score_atom(_make_atom(source_type="group_chat", verified=False))
-        verified = scorer.score_atom(_make_atom(source_type="group_chat", verified=True))
+        unverified = scorer.score_atom(
+            _make_atom(source_type="group_chat", verified=False)
+        )
+        verified = scorer.score_atom(
+            _make_atom(source_type="group_chat", verified=True)
+        )
         assert verified.accuracy > unverified.accuracy, (
             f"Verified={verified.accuracy} should > unverified={unverified.accuracy}"
         )
 
     def test_url_bonus(self):
         scorer = MemoryQualityScorer()
-        no_url = scorer.score_atom(_make_atom(content="普通文本", source_type="group_chat"))
+        no_url = scorer.score_atom(
+            _make_atom(content="普通文本", source_type="group_chat")
+        )
         with_url = scorer.score_atom(
-            _make_atom(content="参考 https://example.com 了解更多", source_type="group_chat")
+            _make_atom(
+                content="参考 https://example.com 了解更多", source_type="group_chat"
+            )
         )
         assert with_url.accuracy > no_url.accuracy, (
             f"URL accuracy={with_url.accuracy} should > no-url={no_url.accuracy}"
@@ -411,7 +443,9 @@ class TestScoreAtomWithContext:
         )
         score = scorer.score_atom(atom, context=context)
         # With near-duplicate existing content, consistency should be lower (< 0.8 default)
-        assert score.consistency < 0.8, f"Expected low consistency, got {score.consistency}"
+        assert score.consistency < 0.8, (
+            f"Expected low consistency, got {score.consistency}"
+        )
 
     def test_consistency_high_when_context_has_unrelated_atoms(self):
         scorer = MemoryQualityScorer()
@@ -423,7 +457,9 @@ class TestScoreAtomWithContext:
             ]
         )
         score = scorer.score_atom(atom, context=context)
-        assert score.consistency >= 0.7, f"Expected high consistency, got {score.consistency}"
+        assert score.consistency >= 0.7, (
+            f"Expected high consistency, got {score.consistency}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -662,7 +698,11 @@ class TestGetStats:
         assert "avg_accuracy" in stats
         assert stats["paused"] is False
         assert len(stats["recent_scores"]) <= 10
-        assert all(isinstance(v, float) for v in stats["recent_scores"][0].values() if v != stats["recent_scores"][0].get("atom_id"))
+        assert all(
+            isinstance(v, float)
+            for v in stats["recent_scores"][0].values()
+            if v != stats["recent_scores"][0].get("atom_id")
+        )
 
     def test_stats_reflects_pause_state(self):
         scorer = MemoryQualityScorer()
@@ -676,20 +716,32 @@ class TestGetStats:
         scorer = MemoryQualityScorer()
         scorer._alert_history.append(
             QualityAlert(
-                level=AlertLevel.CRITICAL, dimension="x", score=0.1, threshold=0.3,
-                message="m", suggestion="s",
+                level=AlertLevel.CRITICAL,
+                dimension="x",
+                score=0.1,
+                threshold=0.3,
+                message="m",
+                suggestion="s",
             )
         )
         scorer._alert_history.append(
             QualityAlert(
-                level=AlertLevel.HIGH, dimension="x", score=0.4, threshold=0.45,
-                message="m", suggestion="s",
+                level=AlertLevel.HIGH,
+                dimension="x",
+                score=0.4,
+                threshold=0.45,
+                message="m",
+                suggestion="s",
             )
         )
         scorer._alert_history.append(
             QualityAlert(
-                level=AlertLevel.CRITICAL, dimension="x", score=0.2, threshold=0.3,
-                message="m", suggestion="s",
+                level=AlertLevel.CRITICAL,
+                dimension="x",
+                score=0.2,
+                threshold=0.3,
+                message="m",
+                suggestion="s",
             )
         )
         stats = scorer.get_stats()

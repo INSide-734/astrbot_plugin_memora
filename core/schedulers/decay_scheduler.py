@@ -281,7 +281,9 @@ class DecayScheduler:
                             f"[衰减调度] 画像衰减完成: removed={removed}, failed={failed}"
                         )
                 else:
-                    logger.warning("[衰减调度] 画像管理器缺少 decay_and_clean_all，已跳过")
+                    logger.warning(
+                        "[衰减调度] 画像管理器缺少 decay_and_clean_all，已跳过"
+                    )
         except Exception as e:
             logger.warning(f"[衰减调度] 画像衰减异常: {e}")
 
@@ -374,9 +376,7 @@ class DecayScheduler:
         if not self.backup_manager:
             return
         try:
-            result = self.backup_manager.prune_backups(
-                keep_days=self.backup_keep_days
-            )
+            result = self.backup_manager.prune_backups(keep_days=self.backup_keep_days)
             if isinstance(result, dict):
                 self.last_backup_prune = result
         except Exception:

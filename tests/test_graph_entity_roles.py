@@ -47,16 +47,10 @@ def test_atom_graph_preserves_participant_and_topic_roles() -> None:
     assert "topic:inside_734" not in nodes_by_key
     assert "topic:图谱设计" in nodes_by_key
 
-    relations = {
-        (edge.source_key, edge.relation_type)
-        for edge in graph.edges
-    }
+    relations = {(edge.source_key, edge.relation_type) for edge in graph.edges}
     assert ("person:inside_734", "mentioned_in") in relations
     assert ("topic:图谱设计", "describes") in relations
-    assert sum(
-        edge.source_key == "person:inside_734"
-        for edge in graph.edges
-    ) == 1
+    assert sum(edge.source_key == "person:inside_734" for edge in graph.edges) == 1
 
 
 def test_same_participant_uses_stable_person_key_across_memories() -> None:
@@ -113,9 +107,7 @@ async def test_shared_participant_connects_two_memories_in_subgraph(
 
     snapshot = await store.get_subgraph_for_memories([1, 2])
     person_nodes = [
-        node
-        for node in snapshot["nodes"]
-        if node["key"] == "person:inside_734"
+        node for node in snapshot["nodes"] if node["key"] == "person:inside_734"
     ]
     assert len(person_nodes) == 1
     assert person_nodes[0]["memory_count"] == 2
@@ -125,7 +117,6 @@ async def test_shared_participant_connects_two_memories_in_subgraph(
     person_edges = [
         edge
         for edge in snapshot["edges"]
-        if edge["source"] == person_id
-        and edge["relation_type"] == "mentioned_in"
+        if edge["source"] == person_id and edge["relation_type"] == "mentioned_in"
     ]
     assert len(person_edges) == 2

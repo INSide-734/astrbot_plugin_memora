@@ -47,20 +47,24 @@ class _MetricsApiStub(MetricsApiMixin):
 async def test_metrics_summary_returns_serializable_runtime_snapshot() -> None:
     reset_write_metrics_snapshot()
     tracker = PerfTracker(maxlen=10)
-    tracker.record({
-        "total_ms": 100.0,
-        "bm25_ms": 10.0,
-        "vector_ms": 30.0,
-        "graph_ms": 20.0,
-        "rerank_ms": 40.0,
-    })
-    tracker.record({
-        "total_ms": 200.0,
-        "bm25_ms": 20.0,
-        "vector_ms": 60.0,
-        "graph_ms": 40.0,
-        "rerank_ms": 80.0,
-    })
+    tracker.record(
+        {
+            "total_ms": 100.0,
+            "bm25_ms": 10.0,
+            "vector_ms": 30.0,
+            "graph_ms": 20.0,
+            "rerank_ms": 40.0,
+        }
+    )
+    tracker.record(
+        {
+            "total_ms": 200.0,
+            "bm25_ms": 20.0,
+            "vector_ms": 60.0,
+            "graph_ms": 40.0,
+            "rerank_ms": 80.0,
+        }
+    )
 
     quality_scorer = MagicMock()
     quality_scorer.get_stats.return_value = {
@@ -123,7 +127,9 @@ async def test_metrics_summary_handles_missing_components_without_error() -> Non
 
 
 @pytest.mark.asyncio
-async def test_metrics_summary_exposes_provider_index_and_failed_background_tasks() -> None:
+async def test_metrics_summary_exposes_provider_index_and_failed_background_tasks() -> (
+    None
+):
     failed_task = _TaskStub(
         done=True,
         exc=RuntimeError("scheduler exploded"),
@@ -306,10 +312,12 @@ async def test_metrics_summary_includes_recovery_suggestions_for_failures() -> N
 async def test_metrics_summary_exposes_scheduler_run_metadata(tmp_path) -> None:
     decay_state = tmp_path / "decay_state.json"
     decay_state.write_text(
-        json.dumps({
-            "last_decay_date": "2026-07-04",
-            "last_decay_timestamp": 1783140000.5,
-        }),
+        json.dumps(
+            {
+                "last_decay_date": "2026-07-04",
+                "last_decay_timestamp": 1783140000.5,
+            }
+        ),
         encoding="utf-8",
     )
     backfill_scheduler = SimpleNamespace(

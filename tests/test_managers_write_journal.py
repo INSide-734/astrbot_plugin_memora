@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
 import pytest
 
 from core.managers.write_op_journal import WriteOpJournal
-from core.managers.write_op_repair import WriteOpRepairMixin
-from core.models.memory_atom import MemoryAtom
 
 
 class TestWriteOpJournalConstructor:
@@ -65,7 +62,9 @@ class TestWriteOpJournalDBOps:
     """测试 WriteOpJournal 数据库操作。"""
 
     async def test_create_table_skips_when_db_none(self) -> None:
-        journal = WriteOpJournal(db_connection=None, graph_memory_manager=None, atom_store=None)
+        journal = WriteOpJournal(
+            db_connection=None, graph_memory_manager=None, atom_store=None
+        )
         # Should not raise
         await journal.create_table()
 
@@ -85,7 +84,9 @@ class TestWriteOpJournalDBOps:
             assert row is not None
 
     async def test_start_op_skips_when_db_none(self) -> None:
-        journal = WriteOpJournal(db_connection=None, graph_memory_manager=None, atom_store=None)
+        journal = WriteOpJournal(
+            db_connection=None, graph_memory_manager=None, atom_store=None
+        )
         result = await journal.start_op("add", {"key": "val"}, memory_id=42)
         assert result is None
 
@@ -101,7 +102,9 @@ class TestWriteOpJournalDBOps:
             assert op_id is not None
             assert op_id > 0
 
-            cursor = await db.execute("SELECT * FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT * FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row is not None
             assert row["op_type"] == "add"
@@ -121,12 +124,16 @@ class TestWriteOpJournalDBOps:
             op_id = await journal.start_op("delete")
             assert op_id is not None
 
-            cursor = await db.execute("SELECT * FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT * FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert json.loads(row["payload"]) == {}
 
     async def test_advance_op_skips_when_db_none(self) -> None:
-        journal = WriteOpJournal(db_connection=None, graph_memory_manager=None, atom_store=None)
+        journal = WriteOpJournal(
+            db_connection=None, graph_memory_manager=None, atom_store=None
+        )
         # Should not raise
         await journal.advance_op(1, "step_name", status="pending")
 
@@ -155,7 +162,9 @@ class TestWriteOpJournalDBOps:
                 payload_patch={"extra": "data"},
             )
 
-            cursor = await db.execute("SELECT * FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT * FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row["step"] == "indexed"
             assert row["status"] == "pending"
@@ -175,13 +184,17 @@ class TestWriteOpJournalDBOps:
 
             # First advance with error
             await journal.advance_op(op_id, "step", error="some error")
-            cursor = await db.execute("SELECT * FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT * FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row["error"] == "some error"
 
             # Complete — should clear error
             await journal.advance_op(op_id, "completed", status="completed")
-            cursor = await db.execute("SELECT * FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT * FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row["error"] is None
 
@@ -191,7 +204,9 @@ class TestWriteOpRepairMixinBasics:
     """测试 WriteOpRepairMixin 基本路径。"""
 
     async def test_repair_incomplete_skips_when_db_none(self) -> None:
-        journal = WriteOpJournal(db_connection=None, graph_memory_manager=None, atom_store=None)
+        journal = WriteOpJournal(
+            db_connection=None, graph_memory_manager=None, atom_store=None
+        )
         result = await journal.repair_incomplete()
         assert result == 0
 
@@ -226,7 +241,9 @@ class TestWriteOpRepairMixinBasics:
             assert result == 0  # unrepairable
 
             # Verify marked as failed
-            cursor = await db.execute("SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row["status"] == "failed"
             assert row["step"] == "unrepairable"
@@ -251,7 +268,9 @@ class TestWriteOpRepairMixinBasics:
             result = await journal.repair_incomplete()
             assert result == 0
 
-            cursor = await db.execute("SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row["status"] == "failed"
 
@@ -272,7 +291,9 @@ class TestWriteOpRepairMixinBasics:
             result = await journal.repair_incomplete()
             assert result == 0
 
-    async def test_repair_batch_delete_missing_memory_ids(self, tmp_db_path: str) -> None:
+    async def test_repair_batch_delete_missing_memory_ids(
+        self, tmp_db_path: str
+    ) -> None:
         async with aiosqlite.connect(tmp_db_path) as db:
             db.row_factory = aiosqlite.Row
             journal = WriteOpJournal(
@@ -318,7 +339,9 @@ class TestWriteOpRepairMixinBasics:
             mock_atom.delete_by_parent.assert_called_once_with(42)
 
             # Verify completed
-            cursor = await db.execute("SELECT status FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT status FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row["status"] == "completed"
 
@@ -341,7 +364,8 @@ class TestWriteOpRepairMixinBasics:
             op_id = await journal.start_op("batch_delete", {"memory_ids": [1, 2, 3]})
 
             await db.execute(
-                "UPDATE memory_write_ops SET status='needs_repair' WHERE id = ?", (op_id,)
+                "UPDATE memory_write_ops SET status='needs_repair' WHERE id = ?",
+                (op_id,),
             )
             await db.commit()
 
@@ -351,7 +375,9 @@ class TestWriteOpRepairMixinBasics:
             mock_del_idx.assert_called_once_with([1, 2, 3])
             mock_del_ga.assert_called_once_with([1, 2, 3])
 
-            cursor = await db.execute("SELECT status FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT status FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row["status"] == "completed"
 
@@ -371,14 +397,17 @@ class TestWriteOpRepairMixinBasics:
             op_id = await journal.start_op("add", memory_id=42)
 
             await db.execute(
-                "UPDATE memory_write_ops SET status='needs_repair' WHERE id = ?", (op_id,)
+                "UPDATE memory_write_ops SET status='needs_repair' WHERE id = ?",
+                (op_id,),
             )
             await db.commit()
 
             result = await journal.repair_incomplete()
             assert result == 0
 
-            cursor = await db.execute("SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row["status"] == "failed"
             assert row["step"] == "source_missing"
@@ -437,7 +466,8 @@ class TestWriteOpRepairAddIntegration:
             )
 
             await db.execute(
-                "UPDATE memory_write_ops SET status='needs_repair' WHERE id = ?", (op_id,)
+                "UPDATE memory_write_ops SET status='needs_repair' WHERE id = ?",
+                (op_id,),
             )
             await db.commit()
 
@@ -446,7 +476,9 @@ class TestWriteOpRepairAddIntegration:
             mock_atom.insert_many.assert_called_once()
             mock_atom.get_by_parent.assert_called_once_with(42)
 
-            cursor = await db.execute("SELECT status FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT status FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row["status"] == "completed"
 
@@ -474,7 +506,8 @@ class TestWriteOpRepairAddIntegration:
             op_id = await journal.start_op("add", memory_id=42)
 
             await db.execute(
-                "UPDATE memory_write_ops SET status='needs_repair' WHERE id = ?", (op_id,)
+                "UPDATE memory_write_ops SET status='needs_repair' WHERE id = ?",
+                (op_id,),
             )
             await db.commit()
 
@@ -482,7 +515,9 @@ class TestWriteOpRepairAddIntegration:
             assert result == 1
             mock_graph.index_memory.assert_called_once()
 
-            cursor = await db.execute("SELECT status FROM memory_write_ops WHERE id = ?", (op_id,))
+            cursor = await db.execute(
+                "SELECT status FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
             row = await cursor.fetchone()
             assert row["status"] == "completed"
 
@@ -504,6 +539,7 @@ class TestWriteOpRepairAddIntegration:
             mock_get = AsyncMock(return_value=existing_doc)
 
             from core.models.memory_atom import AtomType, MemoryAtom
+
             existing_atom = MemoryAtom(
                 parent_memory_id=42,
                 content="existing atom",
@@ -551,7 +587,8 @@ class TestWriteOpRepairAddIntegration:
             )
 
             await db.execute(
-                "UPDATE memory_write_ops SET status='needs_repair' WHERE id = ?", (op_id,)
+                "UPDATE memory_write_ops SET status='needs_repair' WHERE id = ?",
+                (op_id,),
             )
             await db.commit()
 

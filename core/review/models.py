@@ -10,7 +10,6 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from typing import Any
 
-
 JsonDict = dict[str, Any]
 
 
@@ -53,8 +52,7 @@ def json_safe(value: Any) -> Any:
 
     if is_dataclass(value) and not isinstance(value, type):
         return {
-            item.name: json_safe(getattr(value, item.name))
-            for item in fields(value)
+            item.name: json_safe(getattr(value, item.name)) for item in fields(value)
         }
 
     if isinstance(value, Mapping):

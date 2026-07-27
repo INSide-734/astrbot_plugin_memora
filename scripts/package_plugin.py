@@ -17,7 +17,6 @@ from typing import Sequence
 
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = Path("dist")
 TOP_LEVEL_PACKAGE = "astrbot_plugin_memora"
@@ -205,7 +204,12 @@ def copy_runtime_files(
     if not asset_files:
         raise PackageError(f"Dashboard 构建资源目录为空：{dashboard_assets}")
     for source in asset_files:
-        relative = Path("pages") / "dashboard" / "assets" / source.relative_to(dashboard_assets)
+        relative = (
+            Path("pages")
+            / "dashboard"
+            / "assets"
+            / source.relative_to(dashboard_assets)
+        )
         _copy_file(source, staging_root, package_name, relative)
 
 
@@ -223,9 +227,7 @@ def _is_source_excluded(
     repo_root: Path,
 ) -> bool:
     root_runtime_dirs = {"data", "storage"}
-    if any(
-        part in EXCLUDED_DIRS - root_runtime_dirs for part in relative.parts
-    ):
+    if any(part in EXCLUDED_DIRS - root_runtime_dirs for part in relative.parts):
         return True
     if relative.parts and relative.parts[0] in root_runtime_dirs:
         return True
@@ -256,7 +258,9 @@ def copy_worktree_source(
 
     repo_root = repo_root.resolve()
     output_dir = output_dir.resolve()
-    for current, directories, filenames in os.walk(repo_root, topdown=True, followlinks=False):
+    for current, directories, filenames in os.walk(
+        repo_root, topdown=True, followlinks=False
+    ):
         current_path = Path(current)
         current_relative = current_path.relative_to(repo_root)
         kept_directories: list[str] = []
@@ -322,7 +326,9 @@ def create_zip(staging_root: Path, output_path: Path) -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     files = sorted(
-        path for path in staging_root.rglob("*") if path.is_file() and not path.is_symlink()
+        path
+        for path in staging_root.rglob("*")
+        if path.is_file() and not path.is_symlink()
     )
     with zipfile.ZipFile(
         output_path,
@@ -407,8 +413,7 @@ def validate_archive(
         if dashboard_index not in name_set:
             raise PackageError("runtime 包缺少 Dashboard index.html")
         if not any(
-            path.parts[1:4] == ("pages", "dashboard", "assets")
-            for path in normalized
+            path.parts[1:4] == ("pages", "dashboard", "assets") for path in normalized
         ):
             raise PackageError("runtime 包缺少 Dashboard 构建资源")
     elif mode == "source":
@@ -439,7 +444,9 @@ def run_dashboard_build(repo_root: Path) -> None:
     try:
         completed = subprocess.run([npm, "run", "build"], cwd=dashboard, check=False)
     except OSError as exc:
-        raise PackageError("启动 npm run build 失败；请先在 pages/dashboard 执行 npm ci") from exc
+        raise PackageError(
+            "启动 npm run build 失败；请先在 pages/dashboard 执行 npm ci"
+        ) from exc
     if completed.returncode != 0:
         raise PackageError("Dashboard 构建失败；请先在 pages/dashboard 执行 npm ci")
 
@@ -510,7 +517,9 @@ def create_packages(
             if from_git:
                 copy_git_source(repo_root, source_staging, metadata.name)
             else:
-                copy_worktree_source(repo_root, source_staging, metadata.name, resolved_output)
+                copy_worktree_source(
+                    repo_root, source_staging, metadata.name, resolved_output
+                )
 
         if mode in {"runtime", "both"}:
             run_dashboard_build(repo_root)

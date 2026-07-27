@@ -8,7 +8,6 @@ import pytest
 from core.models.memory_evolution import MemorySourceRef
 from core.processors.memory_consolidator import MemoryConsolidator
 
-
 UTC = timezone.utc
 
 
@@ -98,9 +97,9 @@ async def test_output_limits_are_enforced() -> None:
         )
     )
     with pytest.raises(ValueError, match="relation proposal"):
-        await MemoryConsolidator(caller, {**limits(), "max_output_relations": 0}).propose(
-            [source(17)]
-        )
+        await MemoryConsolidator(
+            caller, {**limits(), "max_output_relations": 0}
+        ).propose([source(17)])
 
 
 @pytest.mark.asyncio

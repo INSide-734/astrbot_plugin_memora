@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 
 # ============================================================================
 # CommandHandler — construction and routing tests
@@ -83,9 +82,7 @@ class TestFormatErrorMethod:
     def test_formats_error_with_action_and_details(self) -> None:
         from core.command_handler import CommandHandler
 
-        msg = CommandHandler._format_error_message(
-            "测试操作", ValueError("测试错误")
-        )
+        msg = CommandHandler._format_error_message("测试操作", ValueError("测试错误"))
         # _format_error_message uses t() which falls back to key when translations
         # are not loaded. Verify the message is a string with content.
         assert isinstance(msg, str)
@@ -95,8 +92,7 @@ class TestFormatErrorMethod:
         from core.command_handler import CommandHandler
 
         msg = CommandHandler._format_error_message(
-            "搜索", ValueError("超时"),
-            suggestions=["请检查网络连接", "请稍后重试"]
+            "搜索", ValueError("超时"), suggestions=["请检查网络连接", "请稍后重试"]
         )
         assert isinstance(msg, str)
         assert len(msg) > 0
@@ -104,9 +100,7 @@ class TestFormatErrorMethod:
     def test_formats_error_without_suggestions(self) -> None:
         from core.command_handler import CommandHandler
 
-        msg = CommandHandler._format_error_message(
-            "重建索引", RuntimeError("数据库锁")
-        )
+        msg = CommandHandler._format_error_message("重建索引", RuntimeError("数据库锁"))
         assert isinstance(msg, str)
         assert len(msg) > 0
 
@@ -127,9 +121,7 @@ class TestComponentNotReady:
     def test_includes_component_and_command(self) -> None:
         from core.command_handler import CommandHandler
 
-        msg = CommandHandler._component_not_ready_message(
-            "记忆引擎", "/memora status"
-        )
+        msg = CommandHandler._component_not_ready_message("记忆引擎", "/memora status")
         # Should contain some meaningful text
         assert len(msg) > 0
         # The t() function may use a fallback format
@@ -326,7 +318,9 @@ class TestMaintenanceWriteGuard:
         from core.command_handler import CommandHandler
 
         context = MagicMock()
-        context.conversation_manager.get_curr_conversation_id = AsyncMock(return_value=None)
+        context.conversation_manager.get_curr_conversation_id = AsyncMock(
+            return_value=None
+        )
         handler = CommandHandler(
             context=context,
             config_manager=MagicMock(),

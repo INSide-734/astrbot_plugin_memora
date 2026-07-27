@@ -28,9 +28,7 @@ def test_check_runtime_uses_cold_start_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """冷启动探测应为 Windows 上较慢的首次导入保留足够时间。"""
-    run = MagicMock(
-        return_value=subprocess.CompletedProcess(args=[], returncode=0)
-    )
+    run = MagicMock(return_value=subprocess.CompletedProcess(args=[], returncode=0))
     monkeypatch.delitem(sys.modules, "faiss", raising=False)
     monkeypatch.setattr(faiss_checker_module.subprocess, "run", run)
 

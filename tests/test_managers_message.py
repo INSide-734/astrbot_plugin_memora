@@ -9,7 +9,6 @@ import pytest
 from core.managers.message_operations import MessageOperationsMixin
 from core.models.conversation_models import Message
 
-
 # ---------------------------------------------------------------------------
 # 具体测试类
 # ---------------------------------------------------------------------------
@@ -72,9 +71,7 @@ class TestAddMessage:
     @pytest.mark.asyncio
     async def test_sender_id_fallback_to_session(self, mgr: _TestMsgManager) -> None:
         """未提供 sender_id 时，使用 session_id 作为回退。"""
-        msg = await mgr.add_message(
-            session_id="s1", role="user", content="test"
-        )
+        msg = await mgr.add_message(session_id="s1", role="user", content="test")
         assert msg.sender_id == "s1"
 
     @pytest.mark.asyncio
@@ -138,10 +135,22 @@ class TestGetMessages:
         """未命中缓存时从数据库获取消息。"""
         mgr = self._make_mgr()
         msgs = [
-            Message(id=1, session_id="s1", role="user", content="a",
-                    sender_id="u1", platform="test"),
-            Message(id=2, session_id="s1", role="assistant", content="b",
-                    sender_id="bot", platform="test"),
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="a",
+                sender_id="u1",
+                platform="test",
+            ),
+            Message(
+                id=2,
+                session_id="s1",
+                role="assistant",
+                content="b",
+                sender_id="bot",
+                platform="test",
+            ),
         ]
         mgr.store.get_messages = AsyncMock(return_value=msgs)
 
@@ -156,12 +165,28 @@ class TestGetMessages:
         """指定 sender_id 时跳过缓存，直接查询数据库。"""
         mgr = self._make_mgr()
         # 预先填充缓存
-        cached = [Message(id=99, session_id="s1", role="user", content="cached",
-                          sender_id="other", platform="test")]
+        cached = [
+            Message(
+                id=99,
+                session_id="s1",
+                role="user",
+                content="cached",
+                sender_id="other",
+                platform="test",
+            )
+        ]
         mgr._cache["s1"] = [cached, MagicMock()]
 
-        msgs = [Message(id=1, session_id="s1", role="user", content="filtered",
-                        sender_id="u1", platform="test")]
+        msgs = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="filtered",
+                sender_id="u1",
+                platform="test",
+            )
+        ]
         mgr.store.get_messages = AsyncMock(return_value=msgs)
 
         result = await mgr.get_messages("s1", sender_id="u1")
@@ -176,12 +201,30 @@ class TestGetMessages:
         """缓存命中时直接返回消息，不查询数据库。"""
         mgr = self._make_mgr()
         cached = [
-            Message(id=1, session_id="s1", role="user", content="cached-a",
-                    sender_id="u1", platform="test"),
-            Message(id=2, session_id="s1", role="assistant", content="cached-b",
-                    sender_id="bot", platform="test"),
-            Message(id=3, session_id="s1", role="user", content="cached-c",
-                    sender_id="u1", platform="test"),
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="cached-a",
+                sender_id="u1",
+                platform="test",
+            ),
+            Message(
+                id=2,
+                session_id="s1",
+                role="assistant",
+                content="cached-b",
+                sender_id="bot",
+                platform="test",
+            ),
+            Message(
+                id=3,
+                session_id="s1",
+                role="user",
+                content="cached-c",
+                sender_id="u1",
+                platform="test",
+            ),
         ]
         mgr._cache["s1"] = [cached, 0.0]
 
@@ -197,8 +240,14 @@ class TestGetMessages:
         """未指定 limit 且命中缓存时，返回所有缓存消息。"""
         mgr = self._make_mgr()
         cached = [
-            Message(id=1, session_id="s1", role="user", content="a",
-                    sender_id="u1", platform="test"),
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="a",
+                sender_id="u1",
+                platform="test",
+            ),
         ]
         mgr._cache["s1"] = [cached, 0.0]
 
@@ -219,10 +268,23 @@ class TestGetContext:
         """get_context 将消息格式化为 LLM 可消费格式。"""
         mgr = _TestMsgManager()
         msgs = [
-            Message(id=1, session_id="s1", role="user", content="hello",
-                    sender_id="u1", sender_name="Alice", platform="test"),
-            Message(id=2, session_id="s1", role="assistant", content="hi there",
-                    sender_id="bot", platform="test"),
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="hello",
+                sender_id="u1",
+                sender_name="Alice",
+                platform="test",
+            ),
+            Message(
+                id=2,
+                session_id="s1",
+                role="assistant",
+                content="hi there",
+                sender_id="bot",
+                platform="test",
+            ),
         ]
         mgr.store.get_messages = AsyncMock(return_value=msgs)
 
@@ -237,8 +299,14 @@ class TestGetContext:
         """format_for_llm=False 时返回 to_dict 格式。"""
         mgr = _TestMsgManager()
         msgs = [
-            Message(id=1, session_id="s1", role="user", content="hello",
-                    sender_id="u1", platform="test"),
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="hello",
+                sender_id="u1",
+                platform="test",
+            ),
         ]
         mgr.store.get_messages = AsyncMock(return_value=msgs)
 
@@ -252,9 +320,16 @@ class TestGetContext:
         """LLM 格式中群组消息包含发送者名称。"""
         mgr = _TestMsgManager()
         msgs = [
-            Message(id=1, session_id="group-1", role="user", content="hello",
-                    sender_id="u1", sender_name="Alice", group_id="group-1",
-                    platform="test"),
+            Message(
+                id=1,
+                session_id="group-1",
+                role="user",
+                content="hello",
+                sender_id="u1",
+                sender_name="Alice",
+                group_id="group-1",
+                platform="test",
+            ),
         ]
         mgr.store.get_messages = AsyncMock(return_value=msgs)
 
@@ -268,8 +343,14 @@ class TestGetContext:
         mgr = _TestMsgManager()
         mgr.context_window_size = 50
         msgs = [
-            Message(id=i, session_id="s1", role="user", content=f"msg{i}",
-                    sender_id="u1", platform="test")
+            Message(
+                id=i,
+                session_id="s1",
+                role="user",
+                content=f"msg{i}",
+                sender_id="u1",
+                platform="test",
+            )
             for i in range(10)
         ]
         mgr.store.get_messages = AsyncMock(return_value=msgs)

@@ -30,15 +30,17 @@ class MetricsApiMixin:
     async def get_metrics_summary(self):
         """Return recall, quality, background task, and metric registry summary."""
         try:
-            return ok_response({
-                "recall": self._build_recall_summary(),
-                "quality": self._build_quality_summary(),
-                "background_tasks": self._build_background_task_summary(),
-                "provider": self._build_provider_summary(),
-                "index": self._build_index_summary(),
-                "write_coordinator": self._build_write_coordinator_summary(),
-                "prometheus": self._build_prometheus_summary(),
-            })
+            return ok_response(
+                {
+                    "recall": self._build_recall_summary(),
+                    "quality": self._build_quality_summary(),
+                    "background_tasks": self._build_background_task_summary(),
+                    "provider": self._build_provider_summary(),
+                    "index": self._build_index_summary(),
+                    "write_coordinator": self._build_write_coordinator_summary(),
+                    "prometheus": self._build_prometheus_summary(),
+                }
+            )
         except Exception as exc:
             logger.error("[指标接口] 获取运行观测摘要失败: %s", exc, exc_info=True)
             return error_response(f"获取运行观测摘要失败: {exc}")
@@ -71,7 +73,11 @@ class MetricsApiMixin:
 
         if not isinstance(data, dict):
             data = {}
-        sample_count = _safe_int(data.get("count_total_ms", len(tracker) if hasattr(tracker, "__len__") else 0))
+        sample_count = _safe_int(
+            data.get(
+                "count_total_ms", len(tracker) if hasattr(tracker, "__len__") else 0
+            )
+        )
         return {
             "sample_count": sample_count,
             "avg_total_ms": _safe_float(data.get("avg_total_ms")) or 0.0,
@@ -142,15 +148,17 @@ class MetricsApiMixin:
                 task_exc = None
             if task_exc is not None:
                 failed += 1
-                failed_tasks.append({
-                    "name": self._task_name(task),
-                    "error": task_exc.__class__.__name__,
-                    "message": str(task_exc),
-                    "suggestion": self._failure_recovery_suggestion(
-                        self._task_name(task),
-                        task_exc.__class__.__name__,
-                    ),
-                })
+                failed_tasks.append(
+                    {
+                        "name": self._task_name(task),
+                        "error": task_exc.__class__.__name__,
+                        "message": str(task_exc),
+                        "suggestion": self._failure_recovery_suggestion(
+                            self._task_name(task),
+                            task_exc.__class__.__name__,
+                        ),
+                    }
+                )
             else:
                 completed += 1
         return {
@@ -187,7 +195,9 @@ class MetricsApiMixin:
                 if isinstance(raw_snapshot, dict):
                     snapshot = raw_snapshot
             except Exception as exc:
-                logger.warning("[指标接口] 读取 readiness snapshot 失败: %s", exc, exc_info=True)
+                logger.warning(
+                    "[指标接口] 读取 readiness snapshot 失败: %s", exc, exc_info=True
+                )
 
         waiter = getattr(initializer, "_provider_waiter", None)
         attempts = _safe_int(
@@ -200,8 +210,14 @@ class MetricsApiMixin:
         providers_ready = bool(getattr(waiter, "providers_ready", False))
         retry_task = getattr(waiter, "_retry_task", None)
         retry_active = self._task_active(retry_task)
-        is_initialized = bool(snapshot.get("is_initialized", getattr(initializer, "is_initialized", False)))
-        is_failed = bool(snapshot.get("is_failed", getattr(initializer, "is_failed", False)))
+        is_initialized = bool(
+            snapshot.get(
+                "is_initialized", getattr(initializer, "is_initialized", False)
+            )
+        )
+        is_failed = bool(
+            snapshot.get("is_failed", getattr(initializer, "is_failed", False))
+        )
         missing_provider = snapshot.get("missing_provider", [])
         if not isinstance(missing_provider, list):
             missing_provider = []
@@ -227,7 +243,9 @@ class MetricsApiMixin:
             "missing_provider": [str(item) for item in missing_provider],
             "is_initialized": is_initialized,
             "is_failed": is_failed,
-            "error_message": snapshot.get("error_message", getattr(initializer, "error_message", None)),
+            "error_message": snapshot.get(
+                "error_message", getattr(initializer, "error_message", None)
+            ),
             "components_ready": dict(components_ready),
         }
 
@@ -289,10 +307,10 @@ class MetricsApiMixin:
                 ),
                 "retry_count": _safe_int(progress.get("retry_count")),
             }
-            if (
-                summary["backfill"]["errors"] > 0
-                or summary["backfill"]["status"] in {"failed", "completed_with_errors"}
-            ):
+            if summary["backfill"]["errors"] > 0 or summary["backfill"]["status"] in {
+                "failed",
+                "completed_with_errors",
+            }:
                 summary["backfill"]["suggestion"] = (
                     "检查话题分割配置和最近的错误详情；修复后可重新启动存量回填。"
                 )
@@ -446,7 +464,9 @@ class MetricsApiMixin:
                 "metric_names": [getattr(item, "name", "") for item in collectors],
             }
         except Exception as exc:
-            logger.warning("[指标接口] 读取 Prometheus registry 失败: %s", exc, exc_info=True)
+            logger.warning(
+                "[指标接口] 读取 Prometheus registry 失败: %s", exc, exc_info=True
+            )
             return {
                 "available": False,
                 "collector_count": 0,

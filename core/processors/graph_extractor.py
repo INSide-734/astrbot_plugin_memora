@@ -10,12 +10,24 @@ from astrbot.api import logger
 from ..models.graph_models import ExtractedGraph, GraphEdge, GraphEntry, GraphNode
 from ..security.guardrails import GraphExtractionResult, validate_llm_response
 from .atom_graph_extractor import (
-    CAUSAL_CAUSED_BY,
-    CAUSAL_PREVENTS,
-    CAUSAL_RESULTS_IN,
-    TEMPORAL_AFTER,
-    TEMPORAL_BEFORE,
-    TEMPORAL_DURING,
+    CAUSAL_CAUSED_BY as CAUSAL_CAUSED_BY,
+)
+from .atom_graph_extractor import (
+    CAUSAL_PREVENTS as CAUSAL_PREVENTS,
+)
+from .atom_graph_extractor import (
+    CAUSAL_RESULTS_IN as CAUSAL_RESULTS_IN,
+)
+from .atom_graph_extractor import (
+    TEMPORAL_AFTER as TEMPORAL_AFTER,
+)
+from .atom_graph_extractor import (
+    TEMPORAL_BEFORE as TEMPORAL_BEFORE,
+)
+from .atom_graph_extractor import (
+    TEMPORAL_DURING as TEMPORAL_DURING,
+)
+from .atom_graph_extractor import (
     extract_graph_from_atoms,
 )
 from .entity_resolver import EntityResolver
@@ -97,8 +109,7 @@ class GraphExtractor:
                 return GraphExtractionResult(**payload)
             except Exception:
                 logger.warning(
-                    "[图提取器] 结构化图元数据未通过护栏校验；"
-                    "已回退到旧版提取流程",
+                    "[图提取器] 结构化图元数据未通过护栏校验；已回退到旧版提取流程",
                     exc_info=True,
                 )
                 return None
@@ -220,7 +231,10 @@ class GraphExtractor:
                 source_key = _add_node(
                     "entity",
                     source_name,
-                    {"graph_guardrails_validated": True, "generated_from_relation": True},
+                    {
+                        "graph_guardrails_validated": True,
+                        "generated_from_relation": True,
+                    },
                 )
                 if source_key:
                     name_to_key[source_name] = source_key
@@ -229,7 +243,10 @@ class GraphExtractor:
                 target_key = _add_node(
                     "entity",
                     target_name,
-                    {"graph_guardrails_validated": True, "generated_from_relation": True},
+                    {
+                        "graph_guardrails_validated": True,
+                        "generated_from_relation": True,
+                    },
                 )
                 if target_key:
                     name_to_key[target_name] = target_key
@@ -483,4 +500,13 @@ class GraphExtractor:
 
         return graph
 
-__all__ = ["GraphExtractor"]
+
+__all__ = [
+    "CAUSAL_CAUSED_BY",
+    "CAUSAL_PREVENTS",
+    "CAUSAL_RESULTS_IN",
+    "GraphExtractor",
+    "TEMPORAL_AFTER",
+    "TEMPORAL_BEFORE",
+    "TEMPORAL_DURING",
+]

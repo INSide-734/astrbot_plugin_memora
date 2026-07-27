@@ -11,7 +11,6 @@ from core.identity import (
     IdentityProtocolAdapter,
     IdentityTrust,
     NameFieldState,
-    OneBot11IdentityAdapter,
     ProtocolIdentityResolver,
     ResolvedIdentity,
 )
@@ -251,9 +250,7 @@ def test_onebot_normalizes_names_and_limits_to_128_codepoints() -> None:
     """名称应执行 NFKC、控制字符过滤、首尾清理和长度限制。"""
 
     nickname = " \x00ＡＢ\n" + ("名" * 140) + " "
-    event = _onebot_event(
-        sender={"user_id": 10001, "nickname": nickname, "card": None}
-    )
+    event = _onebot_event(sender={"user_id": 10001, "nickname": nickname, "card": None})
 
     identity = ProtocolIdentityResolver.default().resolve(event)
 
@@ -287,9 +284,7 @@ def test_onebot_marks_non_string_names_invalid() -> None:
 def test_onebot_invalid_group_id_fails_closed() -> None:
     """群作用域无法验证时不得产生可信 QQ 身份。"""
 
-    identity = ProtocolIdentityResolver.default().resolve(
-        _onebot_event(group_id=0)
-    )
+    identity = ProtocolIdentityResolver.default().resolve(_onebot_event(group_id=0))
 
     assert identity.trust_status is IdentityTrust.INVALID
     assert identity.canonical_user_id is None
@@ -364,7 +359,10 @@ def test_future_adapter_satisfies_protocol_and_uses_shared_resolver() -> None:
     assert identity == _resolved_future_identity()
     with pytest.raises(TypeError):
         identity.name_field_states["global_name"] = NameFieldState.EMPTY
-    assert replace(identity, display_name="新名称").canonical_user_id == identity.canonical_user_id
+    assert (
+        replace(identity, display_name="新名称").canonical_user_id
+        == identity.canonical_user_id
+    )
 
 
 def test_adapter_exception_becomes_untrusted_identity() -> None:

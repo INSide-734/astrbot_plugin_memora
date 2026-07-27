@@ -96,7 +96,9 @@ class TestStorageBuilder:
         assert content == "这是一段回退文本"
         assert metadata["canonical_summary"] == ""
 
-    def test_build_empty_persona_interpretations_ignored(self, builder: StorageBuilder) -> None:
+    def test_build_empty_persona_interpretations_ignored(
+        self, builder: StorageBuilder
+    ) -> None:
         data = {
             "summary": "s",
             "key_facts": ["f"],

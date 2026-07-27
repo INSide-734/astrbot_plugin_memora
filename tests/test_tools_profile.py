@@ -9,7 +9,6 @@ import pytest
 
 from core.tools.profile_tools import ProfileLookupTool
 
-
 # ---------------------------------------------------------------------------
 # 测试辅助
 # ---------------------------------------------------------------------------
@@ -216,7 +215,9 @@ class TestProfileLookupTool:
         profile = _make_mock_profile("u1")
         mock_mgr = MagicMock()
         mock_mgr.get_profile = AsyncMock(return_value=profile)
-        mock_mgr.get_tag_weights = AsyncMock(side_effect=RuntimeError("weights unavailable"))
+        mock_mgr.get_tag_weights = AsyncMock(
+            side_effect=RuntimeError("weights unavailable")
+        )
 
         tool = ProfileLookupTool(profile_manager=mock_mgr)
         result = await tool.call(_make_mock_context("u1"), user_id="u1")

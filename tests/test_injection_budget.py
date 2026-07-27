@@ -2,7 +2,6 @@
 
 from core.base.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 from core.injection.models import ContentLevel
-
 from core.utils.injection_budget import (
     InjectionBudget,
     format_compact_footer,
@@ -101,6 +100,8 @@ def test_selection_reserves_exact_full_wrapper() -> None:
     assert dropped_at_wrapper == [memory]
     assert selected_at_threshold == [memory]
     assert dropped_at_threshold == []
+
+
 def test_compact_format_preserves_cleanup_boundaries() -> None:
     """紧凑格式仍须保留 InjectionCleaner 依赖的稳定边界。"""
     assert format_compact_header().startswith(MEMORY_INJECTION_HEADER)

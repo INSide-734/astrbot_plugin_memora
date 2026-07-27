@@ -113,9 +113,10 @@ def test_bounded_int_rejects_booleans_non_integers_and_out_of_range() -> None:
 
 
 def test_normalized_string_list_trims_deduplicates_and_validates_items() -> None:
-    assert normalized_string_list(
-        [" one ", "", "one", "two"], field="tags"
-    ) == ["one", "two"]
+    assert normalized_string_list([" one ", "", "one", "two"], field="tags") == [
+        "one",
+        "two",
+    ]
     with pytest.raises(EntityValidationError):
         normalized_string_list("not-a-list", field="tags")
     with pytest.raises(EntityValidationError) as item_error:

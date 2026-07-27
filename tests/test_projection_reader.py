@@ -23,7 +23,6 @@ from core.retrieval.projection_reader import (
 )
 from core.retrieval.rrf_fusion import HybridResult
 
-
 UTC = timezone.utc
 NOW = datetime(2026, 7, 19, tzinfo=UTC)
 
@@ -40,7 +39,9 @@ def candidate(memory_id: int, score: float = 0.9) -> HybridResult:
     )
 
 
-def source(memory_id: int, *, revision: str | None = None, privacy: str = "shared") -> MemorySourceRef:
+def source(
+    memory_id: int, *, revision: str | None = None, privacy: str = "shared"
+) -> MemorySourceRef:
     return MemorySourceRef(
         memory_id=memory_id,
         revision_token=revision or f"rev-{memory_id}",
@@ -79,13 +80,17 @@ def bundle(
         projection=projection,
         sources=(
             ProjectionSourceView(projection_id, primary, f"rev-{primary}", roles[0], 0),
-            ProjectionSourceView(projection_id, supporting, f"rev-{supporting}", roles[1], 1),
+            ProjectionSourceView(
+                projection_id, supporting, f"rev-{supporting}", roles[1], 1
+            ),
         ),
     )
 
 
 class FakeStore:
-    def __init__(self, bundles: list[ProjectionBundle], sources: dict[int, MemorySourceRef]):
+    def __init__(
+        self, bundles: list[ProjectionBundle], sources: dict[int, MemorySourceRef]
+    ):
         self.bundles = bundles
         self.sources = sources
         self.bundle_calls: list[tuple[tuple[int, ...], str, int]] = []
@@ -115,7 +120,12 @@ def read_scope(**overrides) -> ProjectionScope:
 
 
 def read_budget(**overrides) -> ProjectionBudget:
-    values = {"max_chars": 2_000, "max_items": 16, "max_per_candidate": 4, "max_summary_chars": 600}
+    values = {
+        "max_chars": 2_000,
+        "max_items": 16,
+        "max_per_candidate": 4,
+        "max_summary_chars": 600,
+    }
     values.update(overrides)
     return ProjectionBudget(**values)
 
@@ -123,11 +133,17 @@ def read_budget(**overrides) -> ProjectionBudget:
 @pytest.mark.asyncio
 async def test_reader_attaches_only_to_primary_candidate() -> None:
     reader = make_reader(bundle())
-    result = await reader.attach([candidate(17), candidate(18)], scope=read_scope(), budget=read_budget())
+    result = await reader.attach(
+        [candidate(17), candidate(18)], scope=read_scope(), budget=read_budget()
+    )
 
     assert [item.doc_id for item in result] == [17, 18]
     assert result[0].metadata["derived_projections"] == [
-        {"type": "episode_summary", "summary": "先完成迁移，再进行灰度发布。", "confidence": 0.86}
+        {
+            "type": "episode_summary",
+            "summary": "先完成迁移，再进行灰度发布。",
+            "confidence": 0.86,
+        }
     ]
     assert "derived_projections" not in result[1].metadata
     assert result[0].content == "canonical-17"
@@ -137,7 +153,9 @@ async def test_reader_attaches_only_to_primary_candidate() -> None:
 @pytest.mark.asyncio
 async def test_reader_drops_when_only_supporting_candidate_is_present() -> None:
     reader = make_reader(bundle())
-    result = await reader.attach([candidate(18)], scope=read_scope(), budget=read_budget())
+    result = await reader.attach(
+        [candidate(18)], scope=read_scope(), budget=read_budget()
+    )
     assert result[0].metadata.get("derived_projections") is None
 
 
@@ -145,19 +163,28 @@ async def test_reader_drops_when_only_supporting_candidate_is_present() -> None:
 async def test_reader_drops_stale_source_and_invalid_scope_or_time() -> None:
     reader = make_reader(bundle())
     reader.store.sources[18] = source(18, revision="new-revision")
-    result = await reader.attach([candidate(17)], scope=read_scope(), budget=read_budget())
+    result = await reader.attach(
+        [candidate(17)], scope=read_scope(), budget=read_budget()
+    )
     assert result[0].metadata.get("derived_projections") is None
 
     reader = make_reader(bundle(valid_to=NOW - timedelta(seconds=1)))
-    result = await reader.attach([candidate(17)], scope=read_scope(), budget=read_budget())
+    result = await reader.attach(
+        [candidate(17)], scope=read_scope(), budget=read_budget()
+    )
     assert result[0].metadata.get("derived_projections") is None
 
 
 @pytest.mark.asyncio
 async def test_reader_requires_both_conflict_roles() -> None:
-    invalid = bundle(projection_type=ProjectionType.CONFLICT_SET, roles=("conflict_left", "supporting"))
+    invalid = bundle(
+        projection_type=ProjectionType.CONFLICT_SET,
+        roles=("conflict_left", "supporting"),
+    )
     reader = make_reader(invalid)
-    result = await reader.attach([candidate(17)], scope=read_scope(), budget=read_budget())
+    result = await reader.attach(
+        [candidate(17)], scope=read_scope(), budget=read_budget()
+    )
     assert result[0].metadata.get("derived_projections") is None
 
 
@@ -178,7 +205,9 @@ async def test_reader_orders_deduplicates_and_obeys_budgets() -> None:
 @pytest.mark.asyncio
 async def test_reader_returns_baseline_on_store_error() -> None:
     reader = make_reader(bundle())
-    reader.store.active_projection_bundles_for_seeds = AsyncMock(side_effect=RuntimeError("内部错误"))
+    reader.store.active_projection_bundles_for_seeds = AsyncMock(
+        side_effect=RuntimeError("内部错误")
+    )
     seeds = [candidate(17)]
     result = await reader.attach(seeds, scope=read_scope(), budget=read_budget())
     assert result[0].doc_id == 17
@@ -189,7 +218,9 @@ async def test_reader_returns_baseline_on_store_error() -> None:
 @pytest.mark.asyncio
 async def test_reader_propagates_cancelled_error() -> None:
     reader = make_reader(bundle())
-    reader.store.active_projection_bundles_for_seeds = AsyncMock(side_effect=asyncio.CancelledError())
+    reader.store.active_projection_bundles_for_seeds = AsyncMock(
+        side_effect=asyncio.CancelledError()
+    )
     with pytest.raises(asyncio.CancelledError):
         await reader.attach([candidate(17)], scope=read_scope(), budget=read_budget())
 

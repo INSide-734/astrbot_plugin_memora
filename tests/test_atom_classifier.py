@@ -23,7 +23,9 @@ class TestQualityFilter:
 
     def test_min_content_length_filters_short(self):
         """短于 min_content_length 的内容应被过滤."""
-        result = classify_atoms(["ab"], enable_quality_filter=True, min_content_length=5)
+        result = classify_atoms(
+            ["ab"], enable_quality_filter=True, min_content_length=5
+        )
         assert len(result) == 0
 
     def test_min_importance_filters_low(self):
@@ -50,7 +52,8 @@ class TestQualityFilter:
     def test_filter_disabled_keeps_all(self):
         """关闭质量过滤时应保留所有原子."""
         result = classify_atoms(
-            ["短"], enable_quality_filter=False,
+            ["短"],
+            enable_quality_filter=False,
         )
         assert len(result) >= 1
 
@@ -108,12 +111,15 @@ class TestNegationDetection:
         assert result[0].atom_type.value != "preference"
 
     def test_multiple_facts_with_mixed_negation(self):
-        results = classify_atoms([
-            "我喜欢跑步",
-            "我不喜欢游泳",
-            "明天开会讨论项目",
-            "他是医生",
-        ], enable_quality_filter=False)
+        results = classify_atoms(
+            [
+                "我喜欢跑步",
+                "我不喜欢游泳",
+                "明天开会讨论项目",
+                "他是医生",
+            ],
+            enable_quality_filter=False,
+        )
         types = [r.atom_type.value for r in results]
         # "不喜欢游泳" should NOT be PREFERENCE
         assert "preference" in types  # from "我喜欢跑步"
@@ -126,9 +132,7 @@ class TestAtomClassification:
     def test_planned_classification(self):
         # 注："评审"+"会议" 均不在 _ACTION_VERBS 中 → 实际分类为 UNKNOWN
         # 使用含明确动作词+时间的句子测试 PLANNED
-        result = classify_atoms(
-            ["下周三月度项目讨论会议"], enable_quality_filter=False
-        )
+        result = classify_atoms(["下周三月度项目讨论会议"], enable_quality_filter=False)
         assert result[0].atom_type.value == "planned"
 
     def test_factual_classification(self):
@@ -172,7 +176,7 @@ class TestAtomClassification:
 
 
 class TestNegationDetectionExtended:
-    """ Extended: 20 negation sentences (zh + en) to validate _NEGATION_RE."""
+    """Extended: 20 negation sentences (zh + en) to validate _NEGATION_RE."""
 
     ZH_NEG = [
         ("我不喜欢吃辣", "preference"),
@@ -207,19 +211,24 @@ class TestNegationDetectionExtended:
     def test_zh_negation_not_classified_as(self, content, excluded_type):
         result = classify_atoms([content], enable_quality_filter=False)
         assert len(result) == 1
-        assert result[0].atom_type.value != excluded_type, \
+        assert result[0].atom_type.value != excluded_type, (
             f"'{content}' should NOT be {excluded_type}"
+        )
 
     @pytest.mark.parametrize("content,excluded_type", EN_NEG)
     def test_en_negation_not_classified_as(self, content, excluded_type):
         result = classify_atoms([content], enable_quality_filter=False)
         assert len(result) == 1
-        assert result[0].atom_type.value != excluded_type, \
+        assert result[0].atom_type.value != excluded_type, (
             f"'{content}' should NOT be {excluded_type}"
+        )
 
     def test_all_negations_produce_valid_atoms(self):
-        all_s = [s for s, _ in TestNegationDetectionExtended.ZH_NEG
-                 + TestNegationDetectionExtended.EN_NEG]
+        all_s = [
+            s
+            for s, _ in TestNegationDetectionExtended.ZH_NEG
+            + TestNegationDetectionExtended.EN_NEG
+        ]
         results = classify_atoms(all_s, enable_quality_filter=False)
         assert len(results) == len(all_s)
         for r in results:

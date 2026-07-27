@@ -27,7 +27,6 @@ from ..base.list_sorting import SortQuery, order_by_clause
 from ..storage.base_store import BaseStore
 from .models import JargonMeaning
 
-
 # ---------------------------------------------------------------------------
 # 表结构
 # ---------------------------------------------------------------------------
@@ -53,8 +52,7 @@ CREATE TABLE IF NOT EXISTS jargon_terms (
 """
 
 _JARGON_TERM_INDEX = (
-    "CREATE INDEX IF NOT EXISTS idx_jargon_terms_group "
-    "ON jargon_terms(group_id, term);"
+    "CREATE INDEX IF NOT EXISTS idx_jargon_terms_group ON jargon_terms(group_id, term);"
 )
 
 JARGON_MEANING_SORT_COLUMNS = {
@@ -166,9 +164,7 @@ class JargonStore(BaseStore):
             is_complete=bool(row["is_complete"]),
             count=int(row["count"] or 0),
             last_inference_count=int(row["last_inference_count"] or 0),
-            context_examples=self._deserialize_context(
-                row["context_examples"] or "[]"
-            ),
+            context_examples=self._deserialize_context(row["context_examples"] or "[]"),
             created_at=float(row["created_at"] or 0.0),
             updated_at=float(row["updated_at"] or 0.0),
         )
@@ -369,9 +365,7 @@ class JargonStore(BaseStore):
                 tuple(row.values()),
             )
 
-    async def get_by_term(
-        self, term: str, group_id: str
-    ) -> JargonMeaning | None:
+    async def get_by_term(self, term: str, group_id: str) -> JargonMeaning | None:
         """按词和群组查询黑话含义。
 
         Args:
@@ -417,9 +411,7 @@ class JargonStore(BaseStore):
         rows = await self._fetch_all(query, (group_id,))
         return [self._row_to_meaning(r) for r in rows]
 
-    async def search(
-        self, keyword: str, group_id: str
-    ) -> list[JargonMeaning]:
+    async def search(self, keyword: str, group_id: str) -> list[JargonMeaning]:
         """模糊搜索黑话。
 
         使用 LIKE 在 term 和 meaning 列中搜索 keyword。
@@ -440,9 +432,7 @@ class JargonStore(BaseStore):
 
     # ---- 确认 -------------------------------------------------------------------
 
-    async def confirm(
-        self, term: str, group_id: str, confirmed: bool = True
-    ) -> None:
+    async def confirm(self, term: str, group_id: str, confirmed: bool = True) -> None:
         """手动确认/取消确认黑话条目。
 
         Args:
@@ -456,9 +446,7 @@ class JargonStore(BaseStore):
                 (int(confirmed), term, group_id),
             )
         action = "确认" if confirmed else "取消确认"
-        logger.info(
-            f"[JargonStore] {action} jargon: term={term}, group={group_id}"
-        )
+        logger.info(f"[JargonStore] {action} jargon: term={term}, group={group_id}")
 
     async def delete(self, term: str, group_id: str) -> None:
         """删除黑话条目。

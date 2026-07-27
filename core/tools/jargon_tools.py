@@ -6,11 +6,10 @@ import json
 from dataclasses import field
 from typing import Any
 
-from pydantic.dataclasses import dataclass
-
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
+from pydantic.dataclasses import dataclass
 
 from ..jargon.jargon_query import JargonQueryService
 
@@ -83,7 +82,11 @@ class JargonExplainTool(FunctionTool[AstrAgentContext]):
         svc = self.jargon_query_service
         if svc is None:
             return _json_result(
-                {"term": term, "found": False, "error": "jargon_query_service not available"}
+                {
+                    "term": term,
+                    "found": False,
+                    "error": "jargon_query_service not available",
+                }
             )
 
         try:
@@ -92,7 +95,12 @@ class JargonExplainTool(FunctionTool[AstrAgentContext]):
             raise
         except Exception:
             return _json_result(
-                {"term": term, "group_id": group_id, "found": False, "error": "query_failed"}
+                {
+                    "term": term,
+                    "group_id": group_id,
+                    "found": False,
+                    "error": "query_failed",
+                }
             )
 
         if not results:
@@ -149,13 +157,21 @@ class JargonListTool(FunctionTool[AstrAgentContext]):
 
         if not group_id:
             return _json_result(
-                {"group_id": "", "found": False, "error": "group_id is empty — provide a group_id or ensure the tool has access to conversation context"}
+                {
+                    "group_id": "",
+                    "found": False,
+                    "error": "group_id is empty — provide a group_id or ensure the tool has access to conversation context",
+                }
             )
 
         svc = self.jargon_query_service
         if svc is None:
             return _json_result(
-                {"group_id": group_id, "found": False, "error": "jargon_query_service not available"}
+                {
+                    "group_id": group_id,
+                    "found": False,
+                    "error": "jargon_query_service not available",
+                }
             )
 
         try:

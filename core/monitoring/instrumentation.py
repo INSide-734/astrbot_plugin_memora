@@ -7,11 +7,11 @@ import contextvars
 import functools
 import re
 import time
-from typing import Any, Callable, Coroutine, TypeVar
+from typing import Any, Callable, TypeVar
 
 from astrbot.api import logger
 
-from .metrics import Counter, Histogram, REGISTRY
+from .metrics import REGISTRY, Counter, Histogram
 
 # ---------------------------------------------------------------------------
 # 全局开关
@@ -69,7 +69,9 @@ _counter_cache: dict[str, Counter] = {}
 _error_counter_cache: dict[str, Counter] = {}
 
 
-def _get_or_create_histogram(name: str, description: str, labelnames: list[str]) -> Histogram:
+def _get_or_create_histogram(
+    name: str, description: str, labelnames: list[str]
+) -> Histogram:
     """返回缓存的 Histogram；首次访问时自动创建。"""
     if name not in _histogram_cache:
         _histogram_cache[name] = Histogram(
@@ -182,7 +184,7 @@ def monitored(func: _F) -> _F:
                 latency_hist.labels(function=safe_fqn).observe(elapsed)
                 if _trace_enabled:
                     _trace_depth.set(depth)
-                    logger.debug(f"{indent}<<< {fqn} ({elapsed*1000:.2f} ms)")
+                    logger.debug(f"{indent}<<< {fqn} ({elapsed * 1000:.2f} ms)")
                 _report_instrumented_call(
                     function=safe_fqn,
                     status="completed",
@@ -197,7 +199,7 @@ def monitored(func: _F) -> _F:
                 latency_hist.labels(function=safe_fqn).observe(elapsed)
                 if _trace_enabled:
                     _trace_depth.set(depth)
-                    logger.debug(f"{indent}<<< {fqn} ERROR ({elapsed*1000:.2f} ms)")
+                    logger.debug(f"{indent}<<< {fqn} ERROR ({elapsed * 1000:.2f} ms)")
                 _report_instrumented_call(
                     function=safe_fqn,
                     status="failed",
@@ -228,7 +230,7 @@ def monitored(func: _F) -> _F:
             latency_hist.labels(function=safe_fqn).observe(elapsed)
             if _trace_enabled:
                 _trace_depth.set(depth)
-                logger.debug(f"{indent}<<< {fqn} ({elapsed*1000:.2f} ms)")
+                logger.debug(f"{indent}<<< {fqn} ({elapsed * 1000:.2f} ms)")
             _report_instrumented_call(
                 function=safe_fqn,
                 status="completed",
@@ -254,7 +256,7 @@ def monitored(func: _F) -> _F:
             latency_hist.labels(function=safe_fqn).observe(elapsed)
             if _trace_enabled:
                 _trace_depth.set(depth)
-                logger.debug(f"{indent}<<< {fqn} ERROR ({elapsed*1000:.2f} ms)")
+                logger.debug(f"{indent}<<< {fqn} ERROR ({elapsed * 1000:.2f} ms)")
             _report_instrumented_call(
                 function=safe_fqn,
                 status="failed",

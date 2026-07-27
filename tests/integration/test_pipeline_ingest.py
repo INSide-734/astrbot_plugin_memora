@@ -20,7 +20,6 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-
 # ============================================================================
 # 管线 1.1：单条消息摄入全流程
 # ============================================================================
@@ -179,7 +178,6 @@ class TestPipelineIngest:
 
         # 记录摄入前的初始状态
         before_count = await self._count_atoms(atom_store)
-        before_faiss = faiss_db.ntotal
 
         # 模拟 LLM 输出：单话题记忆
         llm_output = self._single_topic_llm_output()
@@ -209,8 +207,12 @@ class TestPipelineIngest:
             seg.metadata["schema_version"] = "v3"
 
             atom_id = await self._insert_segment_via_store(
-                atom_store, faiss_db, mock_embedding_fn, seg,
-                session_id=session_id, persona_id=persona_id,
+                atom_store,
+                faiss_db,
+                mock_embedding_fn,
+                seg,
+                session_id=session_id,
+                persona_id=persona_id,
             )
             inserted_ids.append(atom_id)
 
@@ -240,7 +242,11 @@ class TestPipelineIngest:
         assert atom.persona_id == persona_id
 
         # 验证：metadata 正确传递
-        meta = json.loads(atom.metadata) if isinstance(atom.metadata, str) else atom.metadata
+        meta = (
+            json.loads(atom.metadata)
+            if isinstance(atom.metadata, str)
+            else atom.metadata
+        )
         assert meta.get("sentiment") == "positive"
         assert meta.get("schema_version") == "v3"
 
@@ -291,8 +297,12 @@ class TestPipelineIngest:
 
         for seg in segments:
             atom_id = await self._insert_segment_via_store(
-                atom_store, faiss_db, mock_embedding_fn, seg,
-                session_id=session_id, persona_id=persona_id,
+                atom_store,
+                faiss_db,
+                mock_embedding_fn,
+                seg,
+                session_id=session_id,
+                persona_id=persona_id,
             )
             inserted_ids.append(atom_id)
 
@@ -323,14 +333,22 @@ class TestPipelineIngest:
         assert atoms[0].content == "讨论了周末滑雪计划，张三提议去长白山"
 
         # 测试/工作话题 — 不应包含滑雪相关内容
-        assert "项目A" in atoms[1].entities or any("项目A" in e for e in atoms[1].entities)
-        assert "测试" in atoms[1].entities or any("测试" in e for e in atoms[1].entities)
+        assert "项目A" in atoms[1].entities or any(
+            "项目A" in e for e in atoms[1].entities
+        )
+        assert "测试" in atoms[1].entities or any(
+            "测试" in e for e in atoms[1].entities
+        )
         assert "滑雪" not in atoms[1].entities
         assert "长白山" not in atoms[1].entities
 
         # 健康话题 — 不应包含滑雪或工作相关内容
-        assert "失眠" in atoms[2].entities or any("失眠" in e for e in atoms[2].entities)
-        assert "健康" in atoms[2].entities or any("健康" in e for e in atoms[2].entities)
+        assert "失眠" in atoms[2].entities or any(
+            "失眠" in e for e in atoms[2].entities
+        )
+        assert "健康" in atoms[2].entities or any(
+            "健康" in e for e in atoms[2].entities
+        )
         assert "滑雪" not in atoms[2].entities
         assert "项目A" not in atoms[2].entities
 
@@ -403,7 +421,7 @@ class TestPipelineIngest:
         if atom_store is None:
             pytest.skip("AtomStore 不可用 — atom 子系统可能已禁用")
 
-        from core.models.memory_atom import MemoryAtom, AtomType
+        from core.models.memory_atom import AtomType, MemoryAtom
 
         # 构造一个覆盖所有持久化字段的原子
         # 注意：emotion_tags 不在 DB schema 中，不是持久化字段；通过 metadata 传递

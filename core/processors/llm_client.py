@@ -60,8 +60,7 @@ class LLMClient:
                     return provider
             except Exception as exc:
                 logger.debug(
-                    "按 ID 获取 LLM Provider 失败，"
-                    f"异常类型={exc.__class__.__name__}"
+                    f"按 ID 获取 LLM Provider 失败，异常类型={exc.__class__.__name__}"
                 )
 
         try:
@@ -70,8 +69,7 @@ class LLMClient:
                 return provider
         except Exception as exc:
             logger.debug(
-                "获取默认 LLM Provider 失败，"
-                f"异常类型={exc.__class__.__name__}"
+                f"获取默认 LLM Provider 失败，异常类型={exc.__class__.__name__}"
             )
 
         return None

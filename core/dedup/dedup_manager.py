@@ -43,7 +43,9 @@ class DedupManager:
         sender_id = (
             sender_id_override
             if sender_id_override is not None
-            else event.get_sender_id() if hasattr(event, "get_sender_id") else ""
+            else event.get_sender_id()
+            if hasattr(event, "get_sender_id")
+            else ""
         )
         timestamp = getattr(getattr(event, "message_obj", None), "timestamp", 0)
         fingerprint = f"{session_id}|{sender_id}|{timestamp}|{content}"

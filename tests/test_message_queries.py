@@ -154,7 +154,9 @@ class TestMessageQueryWithData:
         await store.initialize()
         try:
             await self._setup_session_with_messages(store)
-            results = await store.search_messages("sess-q", "zzz_nonexistent_zzz", limit=10)
+            results = await store.search_messages(
+                "sess-q", "zzz_nonexistent_zzz", limit=10
+            )
             assert results == []
         finally:
             await store.close()

@@ -7,9 +7,9 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .response_utils import error_response, ok_response
 from ..managers.backup_manager import BackupManager
 from ..managers.backup_models import BackupOperationError
+from .response_utils import error_response, ok_response
 
 _BACKUP_ERROR_CODES = {
     "invalid_backup_type",
@@ -164,7 +164,9 @@ class BackupApiMixin:
             for item in backups:
                 # 新格式摘要带有 can_restore；旧客户端伪造的极简摘要不额外注入字段。
                 if "can_restore" in item or hot_reload:
-                    item["can_hot_restore"] = bool(item.get("can_restore", False)) and hot_reload
+                    item["can_hot_restore"] = (
+                        bool(item.get("can_restore", False)) and hot_reload
+                    )
             return ok_response(
                 {
                     "backups": backups,
@@ -192,7 +194,9 @@ class BackupApiMixin:
         if not name:
             return error_response("缺少备份名称", code="invalid_request")
         if apply_mode not in {"reload", "restart"}:
-            return error_response("apply_mode 必须是 reload 或 restart", code="invalid_request")
+            return error_response(
+                "apply_mode 必须是 reload 或 restart", code="invalid_request"
+            )
         try:
             name = BackupManager.validate_backup_name(name)
         except ValueError:
@@ -234,7 +238,9 @@ class BackupApiMixin:
             scheduled = False
             if apply_mode == "reload":
                 schedule = getattr(self.plugin, "schedule_backup_restore_reload", None)
-                scheduled = bool(schedule(operation_id)) if callable(schedule) else False
+                scheduled = (
+                    bool(schedule(operation_id)) if callable(schedule) else False
+                )
                 manager.mark_reload_scheduled(operation_id, scheduled)
             status = manager.get_restore_status(operation_id) or result
             message = (
@@ -260,7 +266,9 @@ class BackupApiMixin:
         manager = BackupApiMixin._backup_manager(self)
         if manager is None:
             return ok_response({"restore_status": None})
-        operation_id = str((getattr(request, "args", {}) or {}).get("operation_id", "")) or None
+        operation_id = (
+            str((getattr(request, "args", {}) or {}).get("operation_id", "")) or None
+        )
         try:
             status = manager.get_restore_status(operation_id)
             if operation_id and status is None:
@@ -334,7 +342,9 @@ class BackupApiMixin:
             return error
         names = payload.get("names", [])
         if not isinstance(names, list) or not names or len(names) > 100:
-            return error_response("names 必须是 1 到 100 个名称", code="invalid_request")
+            return error_response(
+                "names 必须是 1 到 100 个名称", code="invalid_request"
+            )
         manager = BackupApiMixin._backup_manager(self)
         if manager is None:
             return error_response("备份管理器不可用", code="backup_not_found")
@@ -347,9 +357,13 @@ class BackupApiMixin:
                 if manager.delete_backup(normalized):
                     deleted_names.append(normalized)
                 else:
-                    failed_items.append({"name": normalized, "reason_code": "backup_not_found"})
+                    failed_items.append(
+                        {"name": normalized, "reason_code": "backup_not_found"}
+                    )
             except ValueError:
-                failed_items.append({"name": name, "reason_code": "invalid_backup_name"})
+                failed_items.append(
+                    {"name": name, "reason_code": "invalid_backup_name"}
+                )
             except Exception as exc:
                 code = str(exc) if str(exc) in _BACKUP_ERROR_CODES else "backup_in_use"
                 failed_items.append({"name": name, "reason_code": code})

@@ -11,7 +11,6 @@ from collections.abc import Callable
 from typing import Any
 
 import aiofiles
-
 from astrbot.api import logger
 
 
@@ -40,7 +39,9 @@ class MemoryExporter:
         session_id: str | None = None,
     ) -> int:
         memories = await self._fetch_memories(session_id)
-        await asyncio.to_thread(os.makedirs, os.path.dirname(output_path) or ".", exist_ok=True)
+        await asyncio.to_thread(
+            os.makedirs, os.path.dirname(output_path) or ".", exist_ok=True
+        )
         async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
             for mem in memories:
                 await f.write(self._build_jsonl_line(mem))
@@ -86,7 +87,9 @@ class MemoryExporter:
             lines.append("")
             lines.append("---")
             lines.append("")
-        await asyncio.to_thread(os.makedirs, os.path.dirname(output_path) or ".", exist_ok=True)
+        await asyncio.to_thread(
+            os.makedirs, os.path.dirname(output_path) or ".", exist_ok=True
+        )
         async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
             await f.write("\n".join(lines))
         logger.info(f"[Export] Markdown: {len(memories)} memories → {output_path}")

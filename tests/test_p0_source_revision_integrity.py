@@ -23,7 +23,6 @@ from core.models.memory_evolution import (
 from core.retrieval.vector_retriever import VectorRetriever
 from core.storage.memory_evolution_store import MemoryEvolutionStore
 
-
 UTC = timezone.utc
 
 
@@ -55,12 +54,8 @@ def _plan(revision: str = "r17") -> DerivedApplyPlan:
             ),
         ),
         projection_sources=(
-            ProjectionSourceView(
-                "projection-17-18", 17, revision, "primary", 0
-            ),
-            ProjectionSourceView(
-                "projection-17-18", 18, "r18", "supporting", 1
-            ),
+            ProjectionSourceView("projection-17-18", 17, revision, "primary", 0),
+            ProjectionSourceView("projection-17-18", 18, "r18", "supporting", 1),
         ),
     )
 
@@ -87,7 +82,9 @@ async def _create_documents(path: str, *, revision: str = "r17") -> None:
                     17,
                     "doc-17",
                     "证据 17",
-                    json.dumps({"scope_key": "private:user-a", "privacy_level": "shared"}),
+                    json.dumps(
+                        {"scope_key": "private:user-a", "privacy_level": "shared"}
+                    ),
                     datetime(2026, 7, 20, tzinfo=UTC).isoformat(),
                     revision,
                 ),
@@ -95,7 +92,9 @@ async def _create_documents(path: str, *, revision: str = "r17") -> None:
                     18,
                     "doc-18",
                     "证据 18",
-                    json.dumps({"scope_key": "private:user-a", "privacy_level": "shared"}),
+                    json.dumps(
+                        {"scope_key": "private:user-a", "privacy_level": "shared"}
+                    ),
                     datetime(2026, 7, 20, tzinfo=UTC).isoformat(),
                     "r18",
                 ),
@@ -207,9 +206,10 @@ async def test_engine_rejects_stale_update_and_invalidates_deleted_source():
     evolution_store.invalidate_for_deleted_source = AsyncMock(return_value=1)
     engine.memory_evolution_store = evolution_store
 
-    assert await engine.update_memory(
-        17, {"importance": 0.9}, expected_revision="r-stale"
-    ) is False
+    assert (
+        await engine.update_memory(17, {"importance": 0.9}, expected_revision="r-stale")
+        is False
+    )
     engine.hybrid_retriever.update_metadata.assert_not_awaited()
 
     engine.hybrid_retriever.delete_memory = AsyncMock(return_value=True)
@@ -274,7 +274,9 @@ async def test_rollback_job_invalidates_only_its_derived_objects(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cleanup_orphaned_derived_preserves_projection_with_other_sources(tmp_path):
+async def test_cleanup_orphaned_derived_preserves_projection_with_other_sources(
+    tmp_path,
+):
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
     await _create_documents(store.db_path)
@@ -296,10 +298,13 @@ async def test_cleanup_orphaned_derived_preserves_projection_with_other_sources(
 async def test_rebuild_from_canonical_invalidates_old_and_requeues_sources(tmp_path):
     from core.managers.memory_evolution_gate import MemoryEvolutionGate
     from core.managers.memory_evolution_manager import MemoryEvolutionManager
+
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
     await _create_documents(store.db_path)
-    await store.apply_derived_plan(_plan(),)
+    await store.apply_derived_plan(
+        _plan(),
+    )
     manager = MemoryEvolutionManager(
         store,
         MemoryEvolutionGate(
@@ -326,9 +331,12 @@ async def test_rebuild_from_canonical_invalidates_old_and_requeues_sources(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_rebuild_failure_returns_degraded_result_without_losing_canonical(tmp_path):
+async def test_rebuild_failure_returns_degraded_result_without_losing_canonical(
+    tmp_path,
+):
     from core.managers.memory_evolution_gate import MemoryEvolutionGate
     from core.managers.memory_evolution_manager import MemoryEvolutionManager
+
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
     await _create_documents(store.db_path)

@@ -105,7 +105,9 @@ class ReviewStore:
                     winner = rows[0]
                     payload["item_id"] = winner["item_id"]
                     payload["created_at"] = float(winner["created_at"])
-                    payload["updated_at"] = max(float(payload["updated_at"]), time.time())
+                    payload["updated_at"] = max(
+                        float(payload["updated_at"]), time.time()
+                    )
                     await db.execute(
                         """
                         UPDATE review_items
@@ -180,7 +182,9 @@ class ReviewStore:
             where.append("severity = ?")
             params.append(normalize_severity(severity).value)
         if reason is not None:
-            where.append("EXISTS (SELECT 1 FROM json_each(reasons_json) WHERE value = ?)")
+            where.append(
+                "EXISTS (SELECT 1 FROM json_each(reasons_json) WHERE value = ?)"
+            )
             params.append(normalize_reason(reason).value)
         if cursor is not None:
             cursor_item = await self.get_item(str(cursor))

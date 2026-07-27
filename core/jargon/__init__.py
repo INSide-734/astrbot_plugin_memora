@@ -1,4 +1,4 @@
-"""Jargon 系统 — 群组黑话/方言自动发现。
+"""群组黑话与方言自动发现系统。
 
 两层架构：
   1. **JargonStatisticalFilter** — 零 LLM 成本的统计学预过滤器
@@ -27,7 +27,7 @@ _lazy: dict[str, Any] = {}
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy-import submodules on first access."""
+    """首次访问公开符号时延迟导入对应子模块。"""
     global _lazy
 
     if name in _lazy:
@@ -35,31 +35,46 @@ def __getattr__(name: str) -> Any:
 
     # ── models ──
     if name in ("JargonCandidate", "JargonMeaning", "JargonStats"):
-        from .models import JargonCandidate, JargonMeaning, JargonStats  # noqa: F811
+        from .models import (
+            JargonCandidate as JargonCandidate,
+        )
+        from .models import (
+            JargonMeaning as JargonMeaning,
+        )
+        from .models import (
+            JargonStats as JargonStats,
+        )
+
         _lazy.update({k: v for k, v in locals().items() if k in __all__})
         return _lazy[name]
 
     # ── statistical_filter ──
     if name == "JargonStatisticalFilter":
-        from .statistical_filter import JargonStatisticalFilter  # noqa: F811
+        from .statistical_filter import (
+            JargonStatisticalFilter as JargonStatisticalFilter,
+        )
+
         _lazy["JargonStatisticalFilter"] = JargonStatisticalFilter
         return JargonStatisticalFilter
 
     # ── jargon_miner ──
     if name == "JargonMiner":
-        from .jargon_miner import JargonMiner  # noqa: F811
+        from .jargon_miner import JargonMiner as JargonMiner
+
         _lazy["JargonMiner"] = JargonMiner
         return JargonMiner
 
     # ── jargon_query ──
     if name == "JargonQueryService":
-        from .jargon_query import JargonQueryService  # noqa: F811
+        from .jargon_query import JargonQueryService as JargonQueryService
+
         _lazy["JargonQueryService"] = JargonQueryService
         return JargonQueryService
 
     # ── jargon_store ──
     if name == "JargonStore":
-        from .jargon_store import JargonStore  # noqa: F811
+        from .jargon_store import JargonStore as JargonStore
+
         _lazy["JargonStore"] = JargonStore
         return JargonStore
 

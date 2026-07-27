@@ -1,6 +1,5 @@
 """测试 VectorRebuilderMixin — FAISS vector index repair and rebuild edge cases."""
 
-import asyncio
 import os
 import tempfile
 from typing import Any
@@ -11,7 +10,6 @@ import numpy as np
 import pytest
 
 from core.validators.vector_rebuilder import VectorRebuilderMixin
-
 
 # ---------------------------------------------------------------------------
 # Test harness — implements the methods VectorRebuilderMixin depends on
@@ -73,7 +71,12 @@ class TestVectorRebuilder(VectorRebuilderMixin):
     def _get_vector_ids(self) -> set[int] | None:
         """返回 vector IDs from the index id_map."""
         try:
-            return {int(i) for i in faiss.vector_to_array(self.faiss_db.embedding_storage.index.id_map)}
+            return {
+                int(i)
+                for i in faiss.vector_to_array(
+                    self.faiss_db.embedding_storage.index.id_map
+                )
+            }
         except Exception:
             return None
 
@@ -89,7 +92,9 @@ class TestVectorRebuilder(VectorRebuilderMixin):
         ids = sorted(int(d) for d in (document_ids or {1, 2, 3}))
         for start in range(0, len(ids), batch_size):
             chunk = ids[start : start + batch_size]
-            batch_rows = [(i, f"doc_{i}", f"text for document {i}", "{}") for i in chunk]
+            batch_rows = [
+                (i, f"doc_{i}", f"text for document {i}", "{}") for i in chunk
+            ]
             yield batch_rows
 
     async def _embed_batch_with_retry(
@@ -129,6 +134,7 @@ class TestRepairMissingVectors:
                 "max_failure_ratio": 0.5,
             }
             progress_calls = []
+
             async def progress_cb(current, total, msg):
                 progress_calls.append((current, total))
 
@@ -300,6 +306,7 @@ class TestRebuildVectorIndexFull:
                 "max_failure_ratio": 0.5,
             }
             progress_calls = []
+
             async def progress_cb(current, total, msg):
                 progress_calls.append((current, total))
 
@@ -337,9 +344,7 @@ class TestRebuildVectorIndexFull:
                 "batch_delay": 0.0,
                 "max_failure_ratio": 0.5,
             }
-            result = await harness._rebuild_vector_index_full(
-                memory_engine, 1, options
-            )
+            result = await harness._rebuild_vector_index_full(memory_engine, 1, options)
             assert result["mode"] == "full"
             assert result["errors"] > 0
             assert result["switched"] is False
@@ -385,7 +390,10 @@ class TestRebuildVectorIndexFull:
             async def bad_count_embed(provider, contents, options):
                 # Return wrong number of vectors
                 dim = harness.faiss_db.embedding_storage.dimension
-                return [list(np.random.randn(dim).astype(np.float32)) for _ in range(len(contents) + 1)]
+                return [
+                    list(np.random.randn(dim).astype(np.float32))
+                    for _ in range(len(contents) + 1)
+                ]
 
             harness._embed_batch_with_retry = bad_count_embed
 
@@ -421,7 +429,9 @@ class TestRebuildVectorIndexFull:
                     "batch_delay": 0.0,
                     "max_failure_ratio": 0.01,  # very low — first failure triggers
                 }
-                result = await harness._rebuild_vector_index_full(memory_engine, 3, options)
+                result = await harness._rebuild_vector_index_full(
+                    memory_engine, 3, options
+                )
                 assert result["switched"] is False
                 assert result["errors"] > 0
         finally:
@@ -452,6 +462,7 @@ class TestRebuildOrRepairVectorIndex:
             # Override _get_document_ids to return empty
             async def no_docs():
                 return set()
+
             harness._get_document_ids = no_docs
 
             memory_engine = MagicMock()
@@ -468,10 +479,12 @@ class TestRebuildOrRepairVectorIndex:
             # Make _get_vector_ids return all doc ids (simulating complete index)
             async def get_ids():
                 return {1, 2, 3}
+
             harness._get_document_ids = get_ids
 
             def get_vector_ids():
                 return {1, 2, 3}
+
             harness._get_vector_ids = get_vector_ids
 
             memory_engine = MagicMock()
@@ -485,12 +498,15 @@ class TestRebuildOrRepairVectorIndex:
         """缺失 vectors trigger repair (line 236)."""
         harness, db_path = self._make_harness()
         try:
+
             async def get_ids():
                 return {1, 2, 3, 4}
+
             harness._get_document_ids = get_ids
 
             def get_vector_ids():
                 return {1, 2}  # Missing 3, 4
+
             harness._get_vector_ids = get_vector_ids
 
             memory_engine = MagicMock()
@@ -501,7 +517,9 @@ class TestRebuildOrRepairVectorIndex:
                 "batch_delay": 0.0,
                 "max_failure_ratio": 0.5,
             }
-            result = await harness._rebuild_or_repair_vector_index(memory_engine, 4, options)
+            result = await harness._rebuild_or_repair_vector_index(
+                memory_engine, 4, options
+            )
             assert result["mode"] == "repair"
             assert result["processed"] > 0
         finally:
@@ -512,16 +530,20 @@ class TestRebuildOrRepairVectorIndex:
         """当 vector_ids is None and vector_count >= total, skip (line 240)."""
         harness, db_path = self._make_harness()
         try:
+
             async def get_ids():
                 return {1, 2, 3}
+
             harness._get_document_ids = get_ids
 
             def get_vector_ids():
                 return None  # Can't read IDs
+
             harness._get_vector_ids = get_vector_ids
 
             def get_vector_count():
                 return 5  # Count >= total (3)
+
             harness._get_vector_count = get_vector_count
 
             memory_engine = MagicMock()
@@ -537,12 +559,15 @@ class TestRebuildOrRepairVectorIndex:
         """当 vector_ids is None and vector_count < total, full rebuild (line 251)."""
         harness, db_path = self._make_harness()
         try:
+
             async def get_ids():
                 return {1, 2, 3}
+
             harness._get_document_ids = get_ids
 
             def get_vector_ids():
                 return None
+
             harness._get_vector_ids = get_vector_ids
 
             def get_vector_count():
@@ -558,7 +583,9 @@ class TestRebuildOrRepairVectorIndex:
                 "batch_delay": 0.0,
                 "max_failure_ratio": 0.5,
             }
-            result = await harness._rebuild_or_repair_vector_index(memory_engine, 3, options)
+            result = await harness._rebuild_or_repair_vector_index(
+                memory_engine, 3, options
+            )
             assert result["mode"] == "full"
             assert result["processed"] == 3
         finally:
@@ -569,12 +596,15 @@ class TestRebuildOrRepairVectorIndex:
         """当 vector_ids is empty (all vectors missing), triggers full rebuild."""
         harness, db_path = self._make_harness()
         try:
+
             async def get_ids():
                 return {1, 2, 3}
+
             harness._get_document_ids = get_ids
 
             def get_vector_ids():
                 return set()  # No vector IDs
+
             harness._get_vector_ids = get_vector_ids
 
             memory_engine = MagicMock()
@@ -585,7 +615,9 @@ class TestRebuildOrRepairVectorIndex:
                 "batch_delay": 0.0,
                 "max_failure_ratio": 0.5,
             }
-            result = await harness._rebuild_or_repair_vector_index(memory_engine, 3, options)
+            result = await harness._rebuild_or_repair_vector_index(
+                memory_engine, 3, options
+            )
             assert result["mode"] == "full"
         finally:
             os.unlink(db_path)

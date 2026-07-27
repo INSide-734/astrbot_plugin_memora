@@ -11,7 +11,6 @@ from core.base.config_manager import ConfigManager
 from core.tools.memory_memorize_tool import MemoryMemorizeTool
 from core.tools.memory_search_tool import MemorySearchTool
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -62,13 +61,17 @@ def _make_mock_memory_item(
     mem.doc_id = doc_id
     mem.content = content
     mem.final_score = final_score
-    mem.metadata = metadata if metadata is not None else {
-        "importance": 0.75,
-        "session_id": "s-001",
-        "persona_id": "p-001",
-        "create_time": 1719000000.0,
-        "last_access_time": 1719100000.0,
-    }
+    mem.metadata = (
+        metadata
+        if metadata is not None
+        else {
+            "importance": 0.75,
+            "session_id": "s-001",
+            "persona_id": "p-001",
+            "create_time": 1719000000.0,
+            "last_access_time": 1719100000.0,
+        }
+    )
     return mem
 
 
@@ -96,18 +99,24 @@ class TestMemorySearchTool:
     async def test_search_happy_path_returns_memories(self):
         """当 memory_engine.search_memories() returns results, tool should serialize them."""
         mock_engine = MagicMock()
-        mock_engine.search_memories = AsyncMock(return_value=[
-            _make_mock_memory_item("mem-1", "Memory one"),
-            _make_mock_memory_item("mem-2", "Memory two"),
-        ])
+        mock_engine.search_memories = AsyncMock(
+            return_value=[
+                _make_mock_memory_item("mem-1", "Memory one"),
+                _make_mock_memory_item("mem-2", "Memory two"),
+            ]
+        )
 
         ctx = _make_mock_ctx_with_event()
         mock_plugin_ctx = MagicMock()
         mock_plugin_ctx.get_using_provider.return_value = None
 
-        cm = _make_test_config_manager(use_persona_filtering=True, use_session_filtering=True)
+        cm = _make_test_config_manager(
+            use_persona_filtering=True, use_session_filtering=True
+        )
 
-        with patch("core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock) as mock_gpi:
+        with patch(
+            "core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock
+        ) as mock_gpi:
             mock_gpi.return_value = "p-test"
 
             tool = MemorySearchTool(
@@ -161,9 +170,13 @@ class TestMemorySearchTool:
         mock_engine.search_memories = AsyncMock(return_value=[])
 
         ctx = _make_mock_ctx_with_event()
-        cm = _make_test_config_manager(use_persona_filtering=False, use_session_filtering=False)
+        cm = _make_test_config_manager(
+            use_persona_filtering=False, use_session_filtering=False
+        )
 
-        with patch("core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock) as mock_gpi:
+        with patch(
+            "core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock
+        ) as mock_gpi:
             mock_gpi.return_value = "p-test"
 
             tool = MemorySearchTool(
@@ -184,9 +197,13 @@ class TestMemorySearchTool:
         mock_engine.search_memories = AsyncMock(return_value=[])
 
         ctx = _make_mock_ctx_with_event()
-        cm = _make_test_config_manager(top_k=5, max_k=10, use_persona_filtering=False, use_session_filtering=False)
+        cm = _make_test_config_manager(
+            top_k=5, max_k=10, use_persona_filtering=False, use_session_filtering=False
+        )
 
-        with patch("core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock) as mock_gpi:
+        with patch(
+            "core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock
+        ) as mock_gpi:
             mock_gpi.return_value = "p-test"
 
             tool = MemorySearchTool(
@@ -214,9 +231,13 @@ class TestMemorySearchTool:
         mock_engine.search_memories = AsyncMock(side_effect=RuntimeError("crash"))
 
         ctx = _make_mock_ctx_with_event()
-        cm = _make_test_config_manager(use_persona_filtering=False, use_session_filtering=False)
+        cm = _make_test_config_manager(
+            use_persona_filtering=False, use_session_filtering=False
+        )
 
-        with patch("core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock) as mock_gpi:
+        with patch(
+            "core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock
+        ) as mock_gpi:
             mock_gpi.return_value = "p-test"
 
             tool = MemorySearchTool(
@@ -279,7 +300,9 @@ class TestMemoryMemorizeTool:
 
         mock_plugin_ctx = MagicMock()
 
-        with patch("core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock) as mock_gpi:
+        with patch(
+            "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
+        ) as mock_gpi:
             mock_gpi.return_value = "persona-abc"
 
             tool = MemoryMemorizeTool(
@@ -366,7 +389,9 @@ class TestMemoryMemorizeTool:
         wrapper = MagicMock()
         wrapper.context = inner_ctx
 
-        with patch("core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock) as mock_gpi:
+        with patch(
+            "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
+        ) as mock_gpi:
             mock_gpi.return_value = "p"
 
             tool = MemoryMemorizeTool(
@@ -405,7 +430,9 @@ class TestMemoryMemorizeTool:
         wrapper = MagicMock()
         wrapper.context = inner_ctx
 
-        with patch("core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock) as mock_gpi:
+        with patch(
+            "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
+        ) as mock_gpi:
             mock_gpi.return_value = "p"
 
             tool = MemoryMemorizeTool(
@@ -442,7 +469,9 @@ class TestMemoryMemorizeTool:
         wrapper = MagicMock()
         wrapper.context = inner_ctx
 
-        with patch("core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock) as mock_gpi:
+        with patch(
+            "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
+        ) as mock_gpi:
             mock_gpi.return_value = "p"
 
             tool = MemoryMemorizeTool(
@@ -478,7 +507,9 @@ class TestMemoryMemorizeTool:
         wrapper = MagicMock()
         wrapper.context = inner_ctx
 
-        with patch("core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock) as mock_gpi:
+        with patch(
+            "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
+        ) as mock_gpi:
             mock_gpi.return_value = "p"
 
             tool = MemoryMemorizeTool(
@@ -504,7 +535,13 @@ def test_normalize_list_trims_and_limits():
     assert _normalize_list([" a ", " b ", " c "]) == ["a", "b", "c"]
     assert _normalize_list(["  ", "\t"]) == []
     assert _normalize_list("  single  ") == ["single"]
-    assert _normalize_list(["a", "b", "c", "d", "e", "f", "g"]) == ["a", "b", "c", "d", "e"]
+    assert _normalize_list(["a", "b", "c", "d", "e", "f", "g"]) == [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+    ]
     assert _normalize_list([]) == []
     assert _normalize_list(None) == []
     assert _normalize_list(42) == []

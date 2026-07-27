@@ -106,6 +106,7 @@ def set_debug_mode(
     if _set_debug is not None:
         _set_debug(False)
 
+
 # ---------------------------------------------------------------------------
 # 重依赖可选模块的懒加载属性访问
 # ---------------------------------------------------------------------------
@@ -168,7 +169,12 @@ def __getattr__(name: str) -> Any:
     if name in ("MemoryQualityScorer", "QualityScore", "QualityAlert", "AlertLevel"):
         from . import quality_scorer as _mod
 
-        for _attr in ("MemoryQualityScorer", "QualityScore", "QualityAlert", "AlertLevel"):
+        for _attr in (
+            "MemoryQualityScorer",
+            "QualityScore",
+            "QualityAlert",
+            "AlertLevel",
+        ):
             if hasattr(_mod, _attr):
                 _lazy[_attr] = getattr(_mod, _attr)
         return _lazy[name]

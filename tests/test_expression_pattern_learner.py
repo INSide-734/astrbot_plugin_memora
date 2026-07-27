@@ -21,12 +21,15 @@ import pytest
 from core.base.list_sorting import SortQuery
 from core.expression.models import ExpressionPattern, GroupState, PatternScope
 from core.expression.pattern_learner import ExpressionPatternLearner
-from core.expression.pattern_store import EXPRESSION_SORT_COLUMNS, ExpressionPatternStore
-
+from core.expression.pattern_store import (
+    EXPRESSION_SORT_COLUMNS,
+    ExpressionPatternStore,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _new_store(db_path: str) -> ExpressionPatternStore:
     s = ExpressionPatternStore(db_path)
@@ -102,9 +105,17 @@ _SAMPLE_MESSAGES = [
     {"sender_id": "user_1", "content": "今天天气真好啊", "timestamp": 1000.0},
     {"sender_id": "bot", "content": "是呀，阳光明媚适合出去走走", "timestamp": 1001.0},
     {"sender_id": "user_2", "content": "有人知道附近好吃的吗", "timestamp": 1002.0},
-    {"sender_id": "bot", "content": "推荐转角那家面馆，牛肉面很好吃", "timestamp": 1003.0},
+    {
+        "sender_id": "bot",
+        "content": "推荐转角那家面馆，牛肉面很好吃",
+        "timestamp": 1003.0,
+    },
     {"sender_id": "user_1", "content": "我也想吃面了", "timestamp": 1004.0},
-    {"sender_id": "bot", "content": "那一起去吧，我知道一家特别好的", "timestamp": 1005.0},
+    {
+        "sender_id": "bot",
+        "content": "那一起去吧，我知道一家特别好的",
+        "timestamp": 1005.0,
+    },
 ]
 
 
@@ -498,12 +509,18 @@ class TestGetPatternsForInjection:
         learner = _make_learner(store)
 
         p_g1 = ExpressionPattern(
-            situation="g1 situation", expression="g1 expr",
-            group_id="g1", persona_id="default", weight=10.0,
+            situation="g1 situation",
+            expression="g1 expr",
+            group_id="g1",
+            persona_id="default",
+            weight=10.0,
         )
         p_g2 = ExpressionPattern(
-            situation="g2 situation", expression="g2 expr",
-            group_id="g2", persona_id="default", weight=5.0,
+            situation="g2 situation",
+            expression="g2 expr",
+            group_id="g2",
+            persona_id="default",
+            weight=5.0,
         )
         await store.upsert(p_g1)
         await store.upsert(p_g2)
@@ -527,7 +544,9 @@ class TestGetPatternsForInjection:
         p = ExpressionPattern(
             situation="user said hello",
             expression="bot replied hi",
-            group_id="g1", persona_id="default", weight=1.0,
+            group_id="g1",
+            persona_id="default",
+            weight=1.0,
         )
         await store.upsert(p)
 
@@ -582,8 +601,10 @@ class TestStoreCRUD:
     async def test_upsert_creates_new(self, tmp_db_path):
         store = await _new_store(tmp_db_path)
         p = ExpressionPattern(
-            situation="hello", expression="hi",
-            group_id="g1", persona_id="default",
+            situation="hello",
+            expression="hi",
+            group_id="g1",
+            persona_id="default",
         )
         result = await store.upsert(p)
         assert result.pattern_id > 0
@@ -593,8 +614,11 @@ class TestStoreCRUD:
     async def test_upsert_updates_existing(self, tmp_db_path):
         store = await _new_store(tmp_db_path)
         p = ExpressionPattern(
-            situation="hello", expression="hi",
-            group_id="g1", persona_id="default", weight=1.0,
+            situation="hello",
+            expression="hi",
+            group_id="g1",
+            persona_id="default",
+            weight=1.0,
         )
         r1 = await store.upsert(p)
         r2 = await store.upsert(p)
@@ -606,8 +630,10 @@ class TestStoreCRUD:
         store = await _new_store(tmp_db_path)
         for i in range(3):
             p = ExpressionPattern(
-                situation=f"s{i}", expression=f"e{i}",
-                group_id="g1", persona_id="default",
+                situation=f"s{i}",
+                expression=f"e{i}",
+                group_id="g1",
+                persona_id="default",
             )
             await store.upsert(p)
         count = await store.count_by_scope(PatternScope("g1", "default"))
@@ -618,8 +644,11 @@ class TestStoreCRUD:
         store = await _new_store(tmp_db_path)
         for w in [0.5, 1.0, 2.0, 3.0]:
             p = ExpressionPattern(
-                situation=f"w{w}", expression=f"e{w}",
-                group_id="g1", persona_id="default", weight=w,
+                situation=f"w{w}",
+                expression=f"e{w}",
+                group_id="g1",
+                persona_id="default",
+                weight=w,
             )
             await store.upsert(p)
         scope = PatternScope(group_id="g1", persona_id="default")
@@ -633,8 +662,11 @@ class TestStoreCRUD:
         store = await _new_store(tmp_db_path)
         for w in [1.0, 2.0, 3.0, 4.0, 5.0]:
             p = ExpressionPattern(
-                situation=f"w{w}", expression=f"e{w}",
-                group_id="g1", persona_id="default", weight=w,
+                situation=f"w{w}",
+                expression=f"e{w}",
+                group_id="g1",
+                persona_id="default",
+                weight=w,
             )
             await store.upsert(p)
         scope = PatternScope(group_id="g1", persona_id="default")
@@ -650,8 +682,10 @@ class TestStoreCRUD:
     async def test_mark_used(self, tmp_db_path):
         store = await _new_store(tmp_db_path)
         p = ExpressionPattern(
-            situation="hello", expression="hi",
-            group_id="g1", persona_id="default",
+            situation="hello",
+            expression="hi",
+            group_id="g1",
+            persona_id="default",
         )
         result = await store.upsert(p)
         await store.mark_used(result.pattern_id)
@@ -663,8 +697,11 @@ class TestStoreCRUD:
         store = await _new_store(tmp_db_path)
         for i in range(20):
             p = ExpressionPattern(
-                situation=f"s{i:02d}", expression=f"e{i:02d}",
-                group_id="g1", persona_id="default", weight=float(i),
+                situation=f"s{i:02d}",
+                expression=f"e{i:02d}",
+                group_id="g1",
+                persona_id="default",
+                weight=float(i),
             )
             await store.upsert(p)
         result = await store.get_by_scope(PatternScope("g1", "default"), limit=5)

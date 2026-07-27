@@ -108,10 +108,14 @@ async def test_same_revision_allows_only_one_metadata_update(tmp_path) -> None:
     assert sorted(results) == [False, True]
     async with storage.get_session() as session:
         row = (
-            await session.execute(
-                text("SELECT metadata, updated_at FROM documents WHERE id = 17")
+            (
+                await session.execute(
+                    text("SELECT metadata, updated_at FROM documents WHERE id = 17")
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
     stored = json.loads(row["metadata"])
     assert stored["winner"] in {"first", "second"}
     assert row["updated_at"] != "rev-current"
@@ -126,18 +130,25 @@ async def test_stale_revision_does_not_change_metadata(tmp_path) -> None:
     await _create_document(storage)
     retriever = VectorRetriever(SimpleNamespace(document_storage=storage))
 
-    assert await retriever.update_metadata(
-        17,
-        {"importance": 0.9},
-        expected_revision="rev-stale",
-    ) is False
+    assert (
+        await retriever.update_metadata(
+            17,
+            {"importance": 0.9},
+            expected_revision="rev-stale",
+        )
+        is False
+    )
 
     async with storage.get_session() as session:
         row = (
-            await session.execute(
-                text("SELECT metadata, updated_at FROM documents WHERE id = 17")
+            (
+                await session.execute(
+                    text("SELECT metadata, updated_at FROM documents WHERE id = 17")
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
     assert json.loads(row["metadata"]) == {"importance": 0.5}
     assert row["updated_at"] == "rev-current"
     await storage.close()
@@ -150,9 +161,7 @@ async def test_same_revision_content_update_keeps_canonical_id(tmp_path) -> None
     storage = _DocumentStorage(str(tmp_path / "canonical-content-cas.db"))
     await _create_document(storage)
     vectors = _EmbeddingStorage()
-    provider = SimpleNamespace(
-        get_embedding=AsyncMock(return_value=[0.1, 0.2, 0.3])
-    )
+    provider = SimpleNamespace(get_embedding=AsyncMock(return_value=[0.1, 0.2, 0.3]))
     db = SimpleNamespace(
         document_storage=storage,
         embedding_provider=provider,
@@ -160,21 +169,28 @@ async def test_same_revision_content_update_keeps_canonical_id(tmp_path) -> None
     )
     retriever = VectorRetriever(db)
 
-    assert await retriever.update_content_if_revision(
-        17,
-        "更新后的正文",
-        {"importance": 0.9},
-        "rev-current",
-    ) is True
+    assert (
+        await retriever.update_content_if_revision(
+            17,
+            "更新后的正文",
+            {"importance": 0.9},
+            "rev-current",
+        )
+        is True
+    )
     assert vectors.deleted == [[17]]
     assert vectors.inserted == [17]
 
     async with storage.get_session() as session:
         row = (
-            await session.execute(
-                text("SELECT id, text, metadata FROM documents WHERE id = 17")
+            (
+                await session.execute(
+                    text("SELECT id, text, metadata FROM documents WHERE id = 17")
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
     assert row["id"] == 17
     assert row["text"] == "更新后的正文"
     assert json.loads(row["metadata"])["importance"] == 0.9

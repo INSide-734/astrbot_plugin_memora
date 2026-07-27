@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import timezone
 from typing import Any
 
 from ..models.memory_evolution import EvolutionSignal, GateDecision
@@ -30,9 +30,8 @@ class MemoryEvolutionGate:
             0, _bounded_int(config.get("max_pending_jobs", 100), default=100)
         )
         self.debounce_seconds = max(
-            1, _bounded_int(
-                config.get("consolidation_debounce_seconds", 60), default=60
-            )
+            1,
+            _bounded_int(config.get("consolidation_debounce_seconds", 60), default=60),
         )
         self.policy_version = str(config.get("policy_version", "v1")) or "v1"
 

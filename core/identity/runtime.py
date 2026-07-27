@@ -73,10 +73,7 @@ class ProtocolIdentityRuntime:
         """解析事件，并在可信且允许写入时尽力保存当前名称。"""
 
         identity = self._resolver.resolve(event)
-        if (
-            writes_blocked
-            or identity.trust_status is not IdentityTrust.TRUSTED
-        ):
+        if writes_blocked or identity.trust_status is not IdentityTrust.TRUSTED:
             return identity
 
         try:

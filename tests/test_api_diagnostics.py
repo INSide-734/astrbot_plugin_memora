@@ -104,7 +104,9 @@ async def test_diagnostics_events_newest_first_and_detail_lookup(
     )
 
     listed = await api.get_diagnostics_events_payload({"limit": 10})
-    detail = await api.get_diagnostics_event_detail_payload({"event_id": older["event_id"]})
+    detail = await api.get_diagnostics_event_detail_payload(
+        {"event_id": older["event_id"]}
+    )
 
     assert listed["status"] == "ok"
     assert [item["event_id"] for item in listed["data"]["events"]] == [

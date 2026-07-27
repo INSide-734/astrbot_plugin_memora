@@ -43,7 +43,9 @@ async def test_initialize_does_not_scan_or_rewrite_existing_unrelated_data(
 
     async with aiosqlite.connect(tmp_db_path) as connection:
         await connection.execute("CREATE TABLE legacy_values (value TEXT NOT NULL)")
-        await connection.execute("INSERT INTO legacy_values(value) VALUES (?)", ("保留",))
+        await connection.execute(
+            "INSERT INTO legacy_values(value) VALUES (?)", ("保留",)
+        )
         await connection.commit()
 
     store = ProtocolIdentityStore(tmp_db_path)
@@ -58,7 +60,9 @@ async def test_initialize_does_not_scan_or_rewrite_existing_unrelated_data(
 
 
 @pytest.mark.asyncio
-async def test_identity_lookup_returns_none_before_observation(tmp_db_path: str) -> None:
+async def test_identity_lookup_returns_none_before_observation(
+    tmp_db_path: str,
+) -> None:
     """未观察过的稳定身份查询应返回空结果。"""
 
     store = ProtocolIdentityStore(tmp_db_path)
@@ -87,9 +91,7 @@ async def test_aliases_are_scoped_and_parameterized(tmp_db_path: str) -> None:
 
     assert await store.find_aliases("qq", "10001", "global", "") == ["全局旧名"]
     assert await store.find_aliases("qq", "10001", "group", "20001") == ["群内旧名"]
-    assert await store.find_aliases("qq", "10001", "group", "20002") == [
-        "另一个群旧名"
-    ]
+    assert await store.find_aliases("qq", "10001", "group", "20002") == ["另一个群旧名"]
     assert await store.find_aliases("qq", "10002", "global", "") == ["全局旧名"]
 
     await store.close()
@@ -102,6 +104,7 @@ async def test_store_requires_initialize(tmp_db_path: str) -> None:
     store = ProtocolIdentityStore(tmp_db_path)
     with pytest.raises(RuntimeError):
         await store.record_aliases("qq", "10001", ())
+
 
 @pytest.mark.asyncio
 async def test_store_creates_parent_directory(tmp_path: Path) -> None:

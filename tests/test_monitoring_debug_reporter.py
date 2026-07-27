@@ -260,7 +260,9 @@ def test_exception_event_contains_only_safe_location_fields(
     assert sentinel not in caplog.text
 
 
-def test_file_rotation_keeps_current_file_and_two_backups(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_file_rotation_keeps_current_file_and_two_backups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """诊断文件按大小轮转，保留数量严格限制为三个。"""
     monkeypatch.setattr(debug_reporter, "MAX_BYTES", 128)
     debug_reporter.configure_debug_reporting(True, tmp_path)
@@ -291,7 +293,9 @@ def test_file_sink_initialization_failure_is_safe(
         def __init__(self, *args: object, **kwargs: object) -> None:
             raise OSError(sentinel)
 
-    monkeypatch.setattr(debug_reporter, "RotatingFileHandler", _BrokenRotatingFileHandler)
+    monkeypatch.setattr(
+        debug_reporter, "RotatingFileHandler", _BrokenRotatingFileHandler
+    )
 
     debug_reporter.configure_debug_reporting(True, tmp_path)
     debug_reporter.report_debug_event(
@@ -303,4 +307,7 @@ def test_file_sink_initialization_failure_is_safe(
 
     assert sentinel not in caplog.text
     assert str(tmp_path) not in caplog.text
-    assert any(record["event"] == "debug_file_sink_disabled" for record in _debug_records(caplog))
+    assert any(
+        record["event"] == "debug_file_sink_disabled"
+        for record in _debug_records(caplog)
+    )

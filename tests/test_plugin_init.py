@@ -31,15 +31,17 @@ def _load_memora_plugin_class():
     )  # type: ignore[attr-defined]
     temp_data_dir = root / ".pytest_memora_data"
     temp_data_dir.mkdir(exist_ok=True)
-    star_mod.StarTools = types.SimpleNamespace(
-        get_data_dir=lambda: temp_data_dir
-    )  # type: ignore[attr-defined]
-    star_mod.register = lambda *args, **kwargs: (lambda cls: cls)  # type: ignore[attr-defined]
+    star_mod.StarTools = types.SimpleNamespace(get_data_dir=lambda: temp_data_dir)  # type: ignore[attr-defined]
+    star_mod.register = lambda *args, **kwargs: lambda cls: cls  # type: ignore[attr-defined]
     event_mod = sys.modules["astrbot.api.event"]
-    event_mod.filter.platform_adapter_type.side_effect = lambda *args, **kwargs: (lambda fn: fn)  # type: ignore[attr-defined]
-    event_mod.filter.on_llm_request.side_effect = lambda *args, **kwargs: (lambda fn: fn)  # type: ignore[attr-defined]
-    event_mod.filter.on_llm_response.side_effect = lambda *args, **kwargs: (lambda fn: fn)  # type: ignore[attr-defined]
-    event_mod.filter.after_message_sent.side_effect = lambda *args, **kwargs: (lambda fn: fn)  # type: ignore[attr-defined]
+    event_mod.filter.platform_adapter_type.side_effect = lambda *args, **kwargs: (
+        lambda fn: fn
+    )  # type: ignore[attr-defined]
+    event_mod.filter.on_llm_request.side_effect = lambda *args, **kwargs: lambda fn: fn  # type: ignore[attr-defined]
+    event_mod.filter.on_llm_response.side_effect = lambda *args, **kwargs: lambda fn: fn  # type: ignore[attr-defined]
+    event_mod.filter.after_message_sent.side_effect = lambda *args, **kwargs: (
+        lambda fn: fn
+    )  # type: ignore[attr-defined]
 
     class _CommandGroup:
         def __call__(self, fn):
@@ -52,7 +54,7 @@ def _load_memora_plugin_class():
 
     filter_submodule = types.ModuleType("astrbot.api.event.filter")
     filter_submodule.PermissionType = types.SimpleNamespace(ADMIN="admin")
-    filter_submodule.permission_type = lambda *args, **kwargs: (lambda fn: fn)
+    filter_submodule.permission_type = lambda *args, **kwargs: lambda fn: fn
     sys.modules["astrbot.api.event.filter"] = filter_submodule
 
     spec = importlib.util.spec_from_file_location(
@@ -182,6 +184,7 @@ class TestDetectAstrbotVersion:
         ):
             # 重新加载模块以再次执行 _detect_astrbot_version()。
             import importlib
+
             import core.version_check
 
             importlib.reload(core.version_check)
@@ -197,6 +200,7 @@ class TestDetectAstrbotVersion:
             return_value="4.24.2",
         ):
             import importlib
+
             import core.version_check
 
             importlib.reload(core.version_check)
@@ -408,12 +412,13 @@ class TestMemoraPluginConfig:
         MemoraPlugin = _load_memora_plugin_class()
         astrbot_config = {"bot_language": "zh"}
 
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), astrbot_config)
 
@@ -423,12 +428,13 @@ class TestMemoraPluginConfig:
     def test_assigns_unique_instance_id_to_each_plugin_instance(self) -> None:
         MemoraPlugin = _load_memora_plugin_class()
 
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             first = MemoraPlugin(MagicMock(), {})
             second = MemoraPlugin(MagicMock(), {})
@@ -445,13 +451,15 @@ class TestMemoraPluginConfig:
         context = MagicMock()
         context.get_config.return_value = {"timezone": "Asia/Shanghai"}
 
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
-        ), patch.object(module, "set_debug_mode") as set_debug_mode:
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
+            patch.object(module, "set_debug_mode") as set_debug_mode,
+        ):
             MemoraPlugin(context, astrbot_config)
 
         set_debug_mode.assert_called_once_with(
@@ -467,12 +475,13 @@ class TestMemoraPluginReloadScheduling:
     @staticmethod
     def _make_plugin(context: MagicMock):
         MemoraPlugin = _load_memora_plugin_class()
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(context, {})
         return plugin
@@ -572,9 +581,10 @@ class TestMemoraPluginReloadScheduling:
             created_tasks.append(task)
             return task
 
-        with patch.object(
-            module.asyncio, "sleep", side_effect=delayed_sleep
-        ), patch.object(module.asyncio, "create_task", side_effect=capture_task):
+        with (
+            patch.object(module.asyncio, "sleep", side_effect=delayed_sleep),
+            patch.object(module.asyncio, "create_task", side_effect=capture_task),
+        ):
             assert plugin.schedule_plugin_reload() is True
             await asyncio.wait_for(sleep_entered.wait(), timeout=1.0)
             plugin._terminating = True
@@ -601,9 +611,10 @@ class TestMemoraPluginReloadScheduling:
         plugin = self._make_plugin(context)
         module = sys.modules[plugin.__class__.__module__]
 
-        with patch.object(module.asyncio, "sleep", side_effect=no_delay), patch.object(
-            module.logger, "warning"
-        ) as warning:
+        with (
+            patch.object(module.asyncio, "sleep", side_effect=no_delay),
+            patch.object(module.logger, "warning") as warning,
+        ):
             assert plugin.schedule_plugin_reload() is True
             await asyncio.wait_for(reload_called.wait(), timeout=1.0)
             await asyncio.sleep(0)
@@ -630,9 +641,10 @@ class TestMemoraPluginReloadScheduling:
         def record_error(*_args, **_kwargs) -> None:
             error_logged.set()
 
-        with patch.object(module.asyncio, "sleep", side_effect=no_delay), patch.object(
-            module.logger, "error", side_effect=record_error
-        ) as error:
+        with (
+            patch.object(module.asyncio, "sleep", side_effect=no_delay),
+            patch.object(module.logger, "error", side_effect=record_error) as error,
+        ):
             assert plugin.schedule_plugin_reload() is True
             await asyncio.wait_for(reload_called.wait(), timeout=1.0)
             await asyncio.wait_for(error_logged.wait(), timeout=1.0)
@@ -647,12 +659,13 @@ class TestMemoraPluginTerminate:
     async def test_terminate_cancels_tracked_background_tasks(self) -> None:
         MemoraPlugin = _load_memora_plugin_class()
 
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), {})
 
@@ -681,12 +694,13 @@ class TestMemoraPluginTerminate:
     async def test_terminate_stops_backfill_scheduler(self) -> None:
         MemoraPlugin = _load_memora_plugin_class()
 
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), {})
 
@@ -709,12 +723,13 @@ class TestMemoraPluginTerminate:
     async def test_terminate_closes_event_handler_and_core_components(self) -> None:
         MemoraPlugin = _load_memora_plugin_class()
 
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), {})
 
@@ -747,12 +762,13 @@ class TestMemoraPluginTerminate:
         MemoraPlugin = _load_memora_plugin_class()
         module = sys.modules[MemoraPlugin.__module__]
 
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), {})
 
@@ -768,8 +784,9 @@ class TestMemoraPluginTerminate:
         plugin._perf_tracker.get_perf_data.return_value = {}
         plugin._backfill_scheduler = None
 
-        with patch.object(module, "report_debug_event") as report, patch.object(
-            module, "report_debug_exception"
+        with (
+            patch.object(module, "report_debug_event") as report,
+            patch.object(module, "report_debug_exception"),
         ):
             await plugin.terminate()
 
@@ -800,12 +817,13 @@ class TestMemoraPluginTerminate:
         MemoraPlugin = _load_memora_plugin_class()
         module = sys.modules[MemoraPlugin.__module__]
 
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), {})
 
@@ -823,8 +841,9 @@ class TestMemoraPluginTerminate:
         plugin._perf_tracker.get_perf_data.return_value = {}
         plugin._backfill_scheduler = None
 
-        with patch.object(module, "report_debug_event") as report, patch.object(
-            module, "report_debug_exception"
+        with (
+            patch.object(module, "report_debug_event") as report,
+            patch.object(module, "report_debug_exception"),
         ):
             await plugin.terminate()
 
@@ -846,12 +865,13 @@ class TestMemoraPluginReady:
     ) -> None:
         MemoraPlugin = _load_memora_plugin_class()
 
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), {})
 
@@ -875,8 +895,8 @@ class TestMemoraPluginReady:
             "agent_tools.enable_expression_tools": False,
         }
         plugin.config_manager = MagicMock()
-        plugin.config_manager.get.side_effect = lambda key, default=None: config_values.get(
-            key, default
+        plugin.config_manager.get.side_effect = lambda key, default=None: (
+            config_values.get(key, default)
         )
 
         plugin.initializer.ensure_initialized = AsyncMock(return_value=True)
@@ -904,15 +924,18 @@ class TestMemoraPluginReady:
         assert plugin._backfill_scheduler is plugin.initializer.backfill_scheduler
 
     @pytest.mark.asyncio
-    async def test_ensure_plugin_ready_registers_agent_tools_on_first_call(self) -> None:
+    async def test_ensure_plugin_ready_registers_agent_tools_on_first_call(
+        self,
+    ) -> None:
         MemoraPlugin = _load_memora_plugin_class()
 
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin,
-            "_create_tracked_task",
-            side_effect=lambda coro: coro.close(),
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), {})
 
@@ -936,8 +959,8 @@ class TestMemoraPluginReady:
             "agent_tools.enable_expression_tools": False,
         }
         plugin.config_manager = MagicMock()
-        plugin.config_manager.get.side_effect = lambda key, default=None: config_values.get(
-            key, default
+        plugin.config_manager.get.side_effect = lambda key, default=None: (
+            config_values.get(key, default)
         )
 
         plugin.initializer.ensure_initialized = AsyncMock(return_value=True)
@@ -979,6 +1002,7 @@ class TestInjectionDecisionLifecycle:
         backup_enabled=None,
     ):
         from astrbot.core.provider.provider import Provider
+
         from core.initializer.component_factory import ComponentFactory
 
         order: list[str] = []
@@ -1025,7 +1049,9 @@ class TestInjectionDecisionLifecycle:
         }
         if backup_enabled is not None:
             config_values["backup_settings.enabled"] = backup_enabled
-        config.get.side_effect = lambda key, default=None: config_values.get(key, default)
+        config.get.side_effect = lambda key, default=None: config_values.get(
+            key, default
+        )
         config.session_manager = {}
         factory = ComponentFactory(MagicMock(), config, str(tmp_path))
         factory._build_injection_components = injection_builder
@@ -1119,7 +1145,8 @@ class TestInjectionDecisionLifecycle:
             "core.initializer.component_factory.InjectionDecisionStore", store_type
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionRecorder", recorder_type
+            "core.initializer.component_factory.InjectionDecisionRecorder",
+            recorder_type,
         )
         config = MagicMock()
         config.get.side_effect = lambda key, default=None: {
@@ -1152,7 +1179,9 @@ class TestInjectionDecisionLifecycle:
         store.close = AsyncMock(side_effect=lambda: order.append("store"))
         recorder = MagicMock()
         recorder.start = AsyncMock(side_effect=RuntimeError("start failed"))
-        recorder.close = AsyncMock(side_effect=lambda **_kwargs: order.append("recorder"))
+        recorder.close = AsyncMock(
+            side_effect=lambda **_kwargs: order.append("recorder")
+        )
         monkeypatch.setattr(
             "core.initializer.component_factory.InjectionDecisionStore",
             MagicMock(return_value=store),
@@ -1238,6 +1267,7 @@ class TestInjectionDecisionLifecycle:
         """工厂应合并注入组件，并把同一身份运行时挂到会话管理器。"""
 
         from astrbot.core.provider.provider import Provider
+
         from core.initializer.component_factory import ComponentFactory
 
         config = MagicMock()
@@ -1286,12 +1316,14 @@ class TestInjectionDecisionLifecycle:
         factory._build_injection_components.assert_awaited_once_with(
             tmp_path / "memora.db"
         )
-        assert components["injection_decision_store"] is injection_components[
-            "injection_decision_store"
-        ]
-        assert components["injection_decision_recorder"] is injection_components[
-            "injection_decision_recorder"
-        ]
+        assert (
+            components["injection_decision_store"]
+            is injection_components["injection_decision_store"]
+        )
+        assert (
+            components["injection_decision_recorder"]
+            is injection_components["injection_decision_recorder"]
+        )
         assert (
             components["conversation_manager"].identity_runtime
             is components["identity_runtime"]
@@ -1312,7 +1344,9 @@ class TestInjectionDecisionLifecycle:
         assert initializer.injection_decision_recorder is None
         order: list[str] = []
         recorder = MagicMock()
-        recorder.close = AsyncMock(side_effect=lambda **_kwargs: order.append("recorder"))
+        recorder.close = AsyncMock(
+            side_effect=lambda **_kwargs: order.append("recorder")
+        )
         store = MagicMock()
         store.close = AsyncMock(side_effect=lambda: order.append("store"))
         initializer.injection_decision_recorder = recorder
@@ -1392,7 +1426,6 @@ class TestInjectionDecisionLifecycle:
         assert initializer.injection_decision_recorder is None
         assert initializer.injection_decision_store is None
 
-
     @pytest.mark.asyncio
     async def test_plugin_initializer_clears_only_successfully_closed_reference(
         self, tmp_path
@@ -1413,13 +1446,14 @@ class TestInjectionDecisionLifecycle:
         assert initializer.injection_decision_recorder is None
         assert initializer.injection_decision_store is store
 
-
     @pytest.mark.asyncio
     async def test_run_full_init_retains_injection_components(self, tmp_path) -> None:
         from core.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
-        initializer._faiss_checker.load_vec_db_class = MagicMock(return_value=MagicMock())
+        initializer._faiss_checker.load_vec_db_class = MagicMock(
+            return_value=MagicMock()
+        )
         store = MagicMock()
         recorder = MagicMock()
         memory_processor = MagicMock()
@@ -1436,7 +1470,9 @@ class TestInjectionDecisionLifecycle:
                 "injection_decision_recorder": recorder,
             }
         )
-        initializer._create_prompt_protection_service = MagicMock(return_value=MagicMock())
+        initializer._create_prompt_protection_service = MagicMock(
+            return_value=MagicMock()
+        )
         initializer._initialize_cognitive_components = AsyncMock()
 
         with patch("core.plugin_initializer.report_debug_event") as report:
@@ -1468,7 +1504,9 @@ class TestInjectionDecisionLifecycle:
         from core.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
-        initializer._faiss_checker.load_vec_db_class = MagicMock(return_value=MagicMock())
+        initializer._faiss_checker.load_vec_db_class = MagicMock(
+            return_value=MagicMock()
+        )
         recorder = MagicMock()
         recorder.close = AsyncMock(side_effect=RuntimeError("cleanup failed"))
         store = MagicMock()
@@ -1487,7 +1525,9 @@ class TestInjectionDecisionLifecycle:
                 "injection_decision_recorder": recorder,
             }
         )
-        initializer._create_prompt_protection_service = MagicMock(return_value=MagicMock())
+        initializer._create_prompt_protection_service = MagicMock(
+            return_value=MagicMock()
+        )
         initializer._initialize_cognitive_components = AsyncMock(
             side_effect=ValueError("cognitive failed")
         )
@@ -1507,7 +1547,9 @@ class TestInjectionDecisionLifecycle:
         from core.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
-        initializer._faiss_checker.load_vec_db_class = MagicMock(return_value=MagicMock())
+        initializer._faiss_checker.load_vec_db_class = MagicMock(
+            return_value=MagicMock()
+        )
         recorder = MagicMock()
         recorder.close = AsyncMock()
         store = MagicMock()
@@ -1526,7 +1568,9 @@ class TestInjectionDecisionLifecycle:
                 "injection_decision_recorder": recorder,
             }
         )
-        initializer._create_prompt_protection_service = MagicMock(return_value=MagicMock())
+        initializer._create_prompt_protection_service = MagicMock(
+            return_value=MagicMock()
+        )
         cognitive_started = asyncio.Event()
 
         async def block_cognitive_initialization() -> None:
@@ -1553,10 +1597,13 @@ class TestMemoraInjectionLifecycle:
         self,
     ) -> None:
         MemoraPlugin = _load_memora_plugin_class()
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin, "_create_tracked_task", side_effect=lambda coro: coro.close()
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), {})
 
@@ -1581,10 +1628,13 @@ class TestMemoraInjectionLifecycle:
         self,
     ) -> None:
         MemoraPlugin = _load_memora_plugin_class()
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin, "_create_tracked_task", side_effect=lambda coro: coro.close()
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), {})
 
@@ -1594,9 +1644,9 @@ class TestMemoraInjectionLifecycle:
         plugin.initializer.conversation_manager = MagicMock()
         plugin.initializer.injection_decision_recorder = MagicMock()
         plugin.config_manager.get = MagicMock(
-            side_effect=lambda key, default=None: True
-            if key == "agent_tools.enable_recall_tool"
-            else default
+            side_effect=lambda key, default=None: (
+                True if key == "agent_tools.enable_recall_tool" else default
+            )
         )
         plugin._register_agent_tools_if_needed = MagicMock(
             side_effect=lambda: setattr(plugin, "_llm_tools_registered", True)
@@ -1606,7 +1656,10 @@ class TestMemoraInjectionLifecycle:
 
         def build_event_handler(**kwargs):
             assert plugin._llm_tools_registered is True
-            assert kwargs["injection_recorder"] is plugin.initializer.injection_decision_recorder
+            assert (
+                kwargs["injection_recorder"]
+                is plugin.initializer.injection_decision_recorder
+            )
             assert kwargs["memory_tool_available"] is True
             return event_handler
 
@@ -1620,10 +1673,13 @@ class TestMemoraInjectionLifecycle:
         self,
     ) -> None:
         MemoraPlugin = _load_memora_plugin_class()
-        with patch.object(
-            MemoraPlugin, "_register_official_page_api_if_available"
-        ), patch.object(
-            MemoraPlugin, "_create_tracked_task", side_effect=lambda coro: coro.close()
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             plugin = MemoraPlugin(MagicMock(), {})
 
@@ -1634,21 +1690,27 @@ class TestMemoraInjectionLifecycle:
         plugin.initializer.injection_decision_recorder = MagicMock()
         plugin._llm_tools_registered = False
         plugin.config_manager.get = MagicMock(
-            side_effect=lambda key, default=None: True
-            if key == "agent_tools.enable_recall_tool"
-            else default
+            side_effect=lambda key, default=None: (
+                True if key == "agent_tools.enable_recall_tool" else default
+            )
         )
         module = sys.modules[MemoraPlugin.__module__]
         event_handler = MagicMock()
         command_handler = MagicMock()
 
-        with patch.object(
-            module, "MemorySearchTool", side_effect=RuntimeError("registration failed")
-        ) as memory_tool_type, patch.object(
-            module, "EventHandler", return_value=event_handler
-        ) as event_handler_type, patch.object(
-            module, "CommandHandler", return_value=command_handler
-        ) as command_handler_type:
+        with (
+            patch.object(
+                module,
+                "MemorySearchTool",
+                side_effect=RuntimeError("registration failed"),
+            ) as memory_tool_type,
+            patch.object(
+                module, "EventHandler", return_value=event_handler
+            ) as event_handler_type,
+            patch.object(
+                module, "CommandHandler", return_value=command_handler
+            ) as command_handler_type,
+        ):
             first_ready = await plugin._ensure_runtime_components()
             second_ready = await plugin._ensure_runtime_components()
 

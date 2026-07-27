@@ -31,11 +31,14 @@ def _mock_request(**args):
     return mock
 
 
-def _make_mixin(*, profile_manager_available: bool = True,
-                profiles_list: list | None = None,
-                profiles_total: int = 0,
-                detail_profile=None,
-                plugin_ready: bool = True):
+def _make_mixin(
+    *,
+    profile_manager_available: bool = True,
+    profiles_list: list | None = None,
+    profiles_total: int = 0,
+    detail_profile=None,
+    plugin_ready: bool = True,
+):
     """Create a ProfileApiMixin stub."""
 
     engine = MagicMock(spec=[])
@@ -43,12 +46,11 @@ def _make_mixin(*, profile_manager_available: bool = True,
     if profile_manager_available:
         profile_manager = MagicMock()
         profile_manager.list_profiles = AsyncMock(
-            return_value=(profiles_list or [], profiles_total))
+            return_value=(profiles_list or [], profiles_total)
+        )
         profile_manager.get_profile = AsyncMock(return_value=detail_profile)
-        profile_manager.create_profile_manual = AsyncMock(
-            return_value=detail_profile)
-        profile_manager.update_profile_manual = AsyncMock(
-            return_value=detail_profile)
+        profile_manager.create_profile_manual = AsyncMock(return_value=detail_profile)
+        profile_manager.update_profile_manual = AsyncMock(return_value=detail_profile)
         profile_manager.delete_profile_manual = AsyncMock(return_value=True)
         profile_manager.revision_for = MagicMock(return_value="rev-profile")
         profile_manager.update_profile_fields = AsyncMock(return_value=detail_profile)
@@ -93,8 +95,12 @@ def _make_profile(
     tags = tags or []
     p = MagicMock()
     p.to_dict.return_value = {
-        "user_id": user_id, "display_name": display_name,
-        "preferences": preferences, "tags": tags, "interests": []}
+        "user_id": user_id,
+        "display_name": display_name,
+        "preferences": preferences,
+        "tags": tags,
+        "interests": [],
+    }
     p.user_id = user_id
     p.display_name = display_name
     p.preferences = preferences
@@ -179,8 +185,9 @@ class TestProfileValidation:
     @pytest.mark.asyncio
     async def test_update_profile_not_found(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u999", "display_name": "New Name"})
+        req.get_json = AsyncMock(
+            return_value={"user_id": "u999", "display_name": "New Name"}
+        )
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=None)
             result = await mixin.update_profile()
@@ -272,8 +279,7 @@ class TestProfileValidation:
     @pytest.mark.asyncio
     async def test_manage_tags_invalid_action(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "action": "invalid"})
+        req.get_json = AsyncMock(return_value={"user_id": "u1", "action": "invalid"})
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.manage_profile_tags()
@@ -282,8 +288,9 @@ class TestProfileValidation:
     @pytest.mark.asyncio
     async def test_manage_tags_requires_tag_object(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "action": "add", "tag": "not_a_dict"})
+        req.get_json = AsyncMock(
+            return_value={"user_id": "u1", "action": "add", "tag": "not_a_dict"}
+        )
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=_make_profile())
             result = await mixin.manage_profile_tags()
@@ -339,7 +346,11 @@ class TestProfileValidation:
             return_value={
                 "user_id": "u1",
                 "action": "add",
-                "tag": {"category": "interest", "value": "reading", "confidence": confidence},
+                "tag": {
+                    "category": "interest",
+                    "value": "reading",
+                    "confidence": confidence,
+                },
             }
         )
         mixin = _make_mixin(detail_profile=_make_profile())
@@ -420,7 +431,9 @@ class TestProfileHappyPath:
     async def test_list_skips_malformed_profile_items(self) -> None:
         req = _mock_request()
         broken = MagicMock()
-        type(broken).to_dict = lambda self: (_ for _ in ()).throw(RuntimeError("broken profile"))
+        type(broken).to_dict = lambda self: (_ for _ in ()).throw(
+            RuntimeError("broken profile")
+        )
         p1 = _make_profile(user_id="u1", display_name="User 1")
         p2 = _make_profile(user_id="u2", display_name="User 2")
         with patch("core.api.profile_api.request", req):
@@ -516,10 +529,13 @@ class TestProfileHappyPath:
     @pytest.mark.asyncio
     async def test_add_tag(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "action": "add",
-            "tag": {"category": "interest", "value": "reading", "confidence": 0.8}
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "action": "add",
+                "tag": {"category": "interest", "value": "reading", "confidence": 0.8},
+            }
+        )
         p = _make_profile()
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=p)
@@ -529,10 +545,13 @@ class TestProfileHappyPath:
     @pytest.mark.asyncio
     async def test_add_tag_returns_error_for_malformed_profile_payload(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "action": "add",
-            "tag": {"category": "interest", "value": "reading", "confidence": 0.8}
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "action": "add",
+                "tag": {"category": "interest", "value": "reading", "confidence": 0.8},
+            }
+        )
         broken = _make_profile()
         broken.to_dict.side_effect = RuntimeError("broken profile")
         with patch("core.api.profile_api.request", req):
@@ -545,10 +564,13 @@ class TestProfileHappyPath:
     @pytest.mark.asyncio
     async def test_remove_tag(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "action": "remove",
-            "tag": {"category": "interest", "value": "reading"}
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "action": "remove",
+                "tag": {"category": "interest", "value": "reading"},
+            }
+        )
         p = _make_profile()
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=p)
@@ -596,9 +618,13 @@ class TestProfileEdgeCases:
     @pytest.mark.asyncio
     async def test_update_with_display_name(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "display_name": "New Name", "preferences": {"reply_style": "formal"}
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "display_name": "New Name",
+                "preferences": {"reply_style": "formal"},
+            }
+        )
         p = _make_profile()
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=p)
@@ -608,9 +634,13 @@ class TestProfileEdgeCases:
     @pytest.mark.asyncio
     async def test_update_returns_error_for_malformed_profile_payload(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "display_name": "New Name", "preferences": {"reply_style": "formal"}
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "display_name": "New Name",
+                "preferences": {"reply_style": "formal"},
+            }
+        )
         broken = _make_profile()
         broken.to_dict.side_effect = RuntimeError("broken profile")
         with patch("core.api.profile_api.request", req):
@@ -661,10 +691,13 @@ class TestProfileEdgeCases:
     @pytest.mark.asyncio
     async def test_manage_tags_missing_category(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "action": "add",
-            "tag": {"category": "", "value": "reading"}
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "action": "add",
+                "tag": {"category": "", "value": "reading"},
+            }
+        )
         p = _make_profile()
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=p)
@@ -674,10 +707,13 @@ class TestProfileEdgeCases:
     @pytest.mark.asyncio
     async def test_manage_tags_no_manager(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u1", "action": "add",
-            "tag": {"category": "interest", "value": "reading"}
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "action": "add",
+                "tag": {"category": "interest", "value": "reading"},
+            }
+        )
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin(profile_manager_available=False)
             result = await mixin.manage_profile_tags()
@@ -686,10 +722,13 @@ class TestProfileEdgeCases:
     @pytest.mark.asyncio
     async def test_manage_tags_profile_not_found(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "user_id": "u999", "action": "add",
-            "tag": {"category": "interest", "value": "reading"}
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "user_id": "u999",
+                "action": "add",
+                "tag": {"category": "interest", "value": "reading"},
+            }
+        )
         with patch("core.api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=None)
             result = await mixin.manage_profile_tags()
@@ -801,7 +840,10 @@ class TestRevisionedProfileApi:
             **_complete_profile_payload()
         )
         rendered_audit = repr(audit.call_args_list)
-        assert "action=%s entity=profile identity=%s result=%s error_code=%s" in rendered_audit
+        assert (
+            "action=%s entity=profile identity=%s result=%s error_code=%s"
+            in rendered_audit
+        )
         assert "'success', 'none'" in rendered_audit
         assert "formal" not in rendered_audit
         assert "graphs" not in rendered_audit
@@ -1202,9 +1244,7 @@ class TestRevisionedProfileApi:
             await mixin.create_profile()
 
         assert not [
-            record
-            for record in caplog.records
-            if "[画像 AUDIT]" in record.getMessage()
+            record for record in caplog.records if "[画像 AUDIT]" in record.getMessage()
         ]
 
     @pytest.mark.asyncio
@@ -1237,7 +1277,6 @@ class TestRevisionedProfileApi:
             assert secret not in rendered
 
 
-
 class TestProfileMutationAuditContract:
     @pytest.mark.asyncio
     async def test_detail_revision_failure_has_no_audit_or_scope_leak(
@@ -1249,9 +1288,7 @@ class TestProfileMutationAuditContract:
             "detail-revision-secret-85bc"
         )
 
-        with patch(
-            "core.api.profile_api.request", _mock_request(user_id="read-user")
-        ):
+        with patch("core.api.profile_api.request", _mock_request(user_id="read-user")):
             read_result = await read_mixin.get_profile_detail()
 
         assert read_result["status"] == "error"
@@ -1269,9 +1306,7 @@ class TestProfileMutationAuditContract:
 
         assert write_result["status"] == "ok"
         assert _profile_audit_messages(caplog) == [
-            _profile_audit(
-                "create", {"user_id": "write-user"}, result="success"
-            )
+            _profile_audit("create", {"user_id": "write-user"}, result="success")
         ]
         assert "detail-revision-secret-85bc" not in caplog.text
 
@@ -1509,9 +1544,9 @@ class TestProfileMutationAuditContract:
     ) -> None:
         caplog.set_level(logging.INFO)
         mixin = _make_mixin(detail_profile=_make_profile())
-        getattr(mixin.profile_manager, manager_method).side_effect = (
-            asyncio.CancelledError()
-        )
+        getattr(
+            mixin.profile_manager, manager_method
+        ).side_effect = asyncio.CancelledError()
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
@@ -1949,9 +1984,9 @@ class TestRevisionedProfileBatch:
         assert mixin.profile_manager.delete_profile_manual.await_args_list[0].args == (
             "u1",
         )
-        assert mixin.profile_manager.delete_profile_manual.await_args_list[1].kwargs == {
-            "expected_revision": "r2"
-        }
+        assert mixin.profile_manager.delete_profile_manual.await_args_list[
+            1
+        ].kwargs == {"expected_revision": "r2"}
         mixin.profile_manager.delete_profile.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -2334,7 +2369,9 @@ class TestRevisionedProfileBatchIntegration:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("display_name", [True, {}, [], 123, "x" * 129])
-async def test_legacy_update_rejects_invalid_display_name_without_mutation(display_name) -> None:
+async def test_legacy_update_rejects_invalid_display_name_without_mutation(
+    display_name,
+) -> None:
     mixin = _make_mixin(detail_profile=_make_profile())
     request_mock = _mock_request()
     request_mock.get_json = AsyncMock(
@@ -2347,15 +2384,20 @@ async def test_legacy_update_rejects_invalid_display_name_without_mutation(displ
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("preferences", [
-    {"unknown": "x"},
-    {"reply_style": True},
-    {"preferred_topics": "graphs"},
-    {"preferred_topics": ["ok", True]},
-    {"active_hours": [9, True]},
-    {"active_hours": [24]},
-])
-async def test_legacy_update_rejects_invalid_nested_preferences_without_mutation(preferences) -> None:
+@pytest.mark.parametrize(
+    "preferences",
+    [
+        {"unknown": "x"},
+        {"reply_style": True},
+        {"preferred_topics": "graphs"},
+        {"preferred_topics": ["ok", True]},
+        {"active_hours": [9, True]},
+        {"active_hours": [24]},
+    ],
+)
+async def test_legacy_update_rejects_invalid_nested_preferences_without_mutation(
+    preferences,
+) -> None:
     mixin = _make_mixin(detail_profile=_make_profile())
     request_mock = _mock_request()
     request_mock.get_json = AsyncMock(
@@ -2368,12 +2410,15 @@ async def test_legacy_update_rejects_invalid_nested_preferences_without_mutation
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tag", [
-    {"category": True, "value": "x", "confidence": 0.5},
-    {"category": "bogus", "value": "x", "confidence": 0.5},
-    {"category": "interest", "value": True, "confidence": 0.5},
-    {"category": " interest ", "value": "   ", "confidence": 0.5},
-])
+@pytest.mark.parametrize(
+    "tag",
+    [
+        {"category": True, "value": "x", "confidence": 0.5},
+        {"category": "bogus", "value": "x", "confidence": 0.5},
+        {"category": "interest", "value": True, "confidence": 0.5},
+        {"category": " interest ", "value": "   ", "confidence": 0.5},
+    ],
+)
 async def test_legacy_tags_reject_invalid_strings_without_mutation(tag) -> None:
     mixin = _make_mixin(detail_profile=_make_profile())
     request_mock = _mock_request()

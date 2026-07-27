@@ -338,7 +338,9 @@ class ProtocolIdentityStore:
                             identity.identity_namespace,
                             identity.stable_user_id,
                             identity.canonical_user_id,
-                            mutation.global_name if mutation.global_name_changed else None,
+                            mutation.global_name
+                            if mutation.global_name_changed
+                            else None,
                             identity.observed_at,
                             identity.observed_at,
                             mutation.global_name_updated_at
@@ -373,7 +375,10 @@ class ProtocolIdentityStore:
                         ),
                     )
                 scope_current = current
-                if scope_current is None or scope_current.scope_type != identity.scope_type:
+                if (
+                    scope_current is None
+                    or scope_current.scope_type != identity.scope_type
+                ):
                     scope_name = (
                         mutation.scope_name if mutation.scope_name_changed else None
                     )

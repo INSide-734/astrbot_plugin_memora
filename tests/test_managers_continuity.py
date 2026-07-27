@@ -1,20 +1,18 @@
 """ContinuityTracker 测试 — 会话连续性和待处理话题。"""
+
 from __future__ import annotations
 
 import json
 import os
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from core.managers.continuity_tracker import ContinuityTracker
-
 
 # ---------------------------------------------------------------------------
 # mark_topics
 # ---------------------------------------------------------------------------
+
 
 class TestMarkTopics:
     """Topic marking and updating."""
@@ -86,6 +84,7 @@ class TestMarkTopics:
 # get_pending_topics
 # ---------------------------------------------------------------------------
 
+
 class TestGetPendingTopics:
     """Pending topic retrieval with TTL decay."""
 
@@ -130,6 +129,7 @@ class TestGetPendingTopics:
 # get_continuity_context
 # ---------------------------------------------------------------------------
 
+
 class TestContinuityContext:
     """Human-readable continuity context generation."""
 
@@ -169,6 +169,7 @@ class TestContinuityContext:
 # clear_session / resolve_session
 # ---------------------------------------------------------------------------
 
+
 class TestClearAndResolve:
     """Session clearing and resolution."""
 
@@ -192,6 +193,7 @@ class TestClearAndResolve:
 # ---------------------------------------------------------------------------
 # save_state / load_state
 # ---------------------------------------------------------------------------
+
 
 class TestPersistence:
     """State persistence to disk."""
@@ -228,7 +230,9 @@ class TestPersistence:
         }
         state = {"sess-old": [old_topic]}
         os.makedirs(data_dir, exist_ok=True)
-        with open(os.path.join(data_dir, "continuity_state.json"), "w", encoding="utf-8") as f:
+        with open(
+            os.path.join(data_dir, "continuity_state.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump(state, f)
         ct = ContinuityTracker(data_dir=data_dir)
         ct.load_state()
@@ -239,6 +243,7 @@ class TestPersistence:
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
+
 
 class TestConstruction:
     """Initialization and parameter clamping."""

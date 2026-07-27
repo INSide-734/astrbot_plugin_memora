@@ -5,12 +5,11 @@ import json
 from dataclasses import field
 from typing import Any
 
-from pydantic.dataclasses import dataclass
-
 from astrbot.api import logger
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
+from pydantic.dataclasses import dataclass
 
 from ..base.config_manager import ConfigManager
 from ..processors.human_like_formatter import HumanLikeMemoryFormatter

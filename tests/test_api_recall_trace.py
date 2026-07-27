@@ -343,9 +343,7 @@ class _FakeOptimizerPath:
                     "initial_score": 0.5,
                     "final_score": 0.75,
                     "source": "optimizer",
-                    "stages": [
-                        {"name": "emotion_boost", "before": 0.5, "after": 0.75}
-                    ],
+                    "stages": [{"name": "emotion_boost", "before": 0.5, "after": 0.75}],
                 }
             )
         return results
@@ -632,7 +630,9 @@ async def test_recall_trace_invalid_k_uses_default(page_api_with_fake_engine):
     )
 
     assert response["status"] == "ok"
-    assert page_api_with_fake_engine.plugin.initializer.memory_engine.calls[-1]["k"] == 5
+    assert (
+        page_api_with_fake_engine.plugin.initializer.memory_engine.calls[-1]["k"] == 5
+    )
     assert response["data"]["metadata"] == {
         "debug_trace_available": True,
         "debug_reporting_enabled": False,

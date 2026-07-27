@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # 枚举类型
 # ---------------------------------------------------------------------------
@@ -85,33 +84,100 @@ _SOURCE_RELEVANCE_WEIGHT: dict[str, float] = {
 # 正向/负向情感词表（中文）
 # ---------------------------------------------------------------------------
 
-_POSITIVE_WORDS: frozenset[str] = frozenset({
-    "开心", "高兴", "喜欢", "爱", "很棒", "优秀", "赞", "好",
-    "满意", "愉快", "幸福", "感谢", "感动", "温暖", "美好",
-    "成功", "厉害", "牛逼", "佩服", "欣赏", "祝福", "期待",
-})
+_POSITIVE_WORDS: frozenset[str] = frozenset(
+    {
+        "开心",
+        "高兴",
+        "喜欢",
+        "爱",
+        "很棒",
+        "优秀",
+        "赞",
+        "好",
+        "满意",
+        "愉快",
+        "幸福",
+        "感谢",
+        "感动",
+        "温暖",
+        "美好",
+        "成功",
+        "厉害",
+        "牛逼",
+        "佩服",
+        "欣赏",
+        "祝福",
+        "期待",
+    }
+)
 
-_NEGATIVE_WORDS: frozenset[str] = frozenset({
-    "伤心", "难过", "生气", "讨厌", "恨", "糟糕", "差", "坏",
-    "不满", "愤怒", "悲哀", "痛苦", "失望", "焦虑", "害怕",
-    "失败", "垃圾", "恶心", "烦", "崩溃", "绝望", "后悔",
-})
+_NEGATIVE_WORDS: frozenset[str] = frozenset(
+    {
+        "伤心",
+        "难过",
+        "生气",
+        "讨厌",
+        "恨",
+        "糟糕",
+        "差",
+        "坏",
+        "不满",
+        "愤怒",
+        "悲哀",
+        "痛苦",
+        "失望",
+        "焦虑",
+        "害怕",
+        "失败",
+        "垃圾",
+        "恶心",
+        "烦",
+        "崩溃",
+        "绝望",
+        "后悔",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # 逻辑连接词标记（连贯性信号）
 # ---------------------------------------------------------------------------
 
-_CAUSAL_CONNECTORS: frozenset[str] = frozenset({
-    "因为", "所以", "因此", "由于", "因而", "结果", "导致",
-})
+_CAUSAL_CONNECTORS: frozenset[str] = frozenset(
+    {
+        "因为",
+        "所以",
+        "因此",
+        "由于",
+        "因而",
+        "结果",
+        "导致",
+    }
+)
 
-_CONTRAST_CONNECTORS: frozenset[str] = frozenset({
-    "但是", "然而", "可是", "不过", "虽然", "尽管", "却",
-})
+_CONTRAST_CONNECTORS: frozenset[str] = frozenset(
+    {
+        "但是",
+        "然而",
+        "可是",
+        "不过",
+        "虽然",
+        "尽管",
+        "却",
+    }
+)
 
-_COORDINATION_CONNECTORS: frozenset[str] = frozenset({
-    "而且", "并且", "同时", "另外", "此外", "还", "也", "以及",
-})
+_COORDINATION_CONNECTORS: frozenset[str] = frozenset(
+    {
+        "而且",
+        "并且",
+        "同时",
+        "另外",
+        "此外",
+        "还",
+        "也",
+        "以及",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +211,9 @@ class MemoryQualityScorer:
         """初始化质量评分器。"""
         self._score_history: deque[QualityScore] = deque(maxlen=window_size)
         self._alert_history: deque[QualityAlert] = deque(maxlen=200)
-        self._thresholds: dict[str, float] = {**self._WEIGHTS}  # 各维度阈值，当前暂未启用，保留给动态调节
+        self._thresholds: dict[str, float] = {
+            **self._WEIGHTS
+        }  # 各维度阈值，当前暂未启用，保留给动态调节
         self._paused: bool = False
         self._pause_reason: str = ""
 
@@ -164,7 +232,6 @@ class MemoryQualityScorer:
         ttl_raw = atom.get("ttl_days") if "ttl_days" in atom else atom.get("ttl")
         ttl = float(ttl_raw) if ttl_raw is not None else 30.0
         verified = bool(atom.get("verified", False))
-        importance = float(atom.get("importance", 0.5))
 
         consistency = self._score_consistency(content, context)
         coherence = self._score_coherence(content)
@@ -196,9 +263,7 @@ class MemoryQualityScorer:
     # 各维度评分函数
     # ------------------------------------------------------------------
 
-    def _score_consistency(
-        self, content: str, context: dict[str, Any] | None
-    ) -> float:
+    def _score_consistency(self, content: str, context: dict[str, Any] | None) -> float:
         """根据与现有原子的最大语义重叠度评估一致性。"""
         if not context or not content.strip():
             return 0.8  # 无上下文时给一个中性基线
@@ -220,9 +285,7 @@ class MemoryQualityScorer:
             # 若存在向量表示，则优先使用余弦相似度
             emb = existing.get("embedding")
             if emb is not None:
-                sim = _cosine_similarity(
-                    _text_to_simple_embedding(content), emb
-                )
+                sim = _cosine_similarity(_text_to_simple_embedding(content), emb)
             else:
                 tokens_existing = set(_tokenize(existing_content))
                 if not tokens_existing:
@@ -300,7 +363,11 @@ class MemoryQualityScorer:
             return base_weight
 
         intersection = len(content_tokens & context_token_set)
-        jaccard = intersection / len(content_tokens | context_token_set) if (content_tokens | context_token_set) else 0.0
+        jaccard = (
+            intersection / len(content_tokens | context_token_set)
+            if (content_tokens | context_token_set)
+            else 0.0
+        )
 
         # 混合：60% 来源先验 + 40% 上下文匹配
         return round(0.6 * base_weight + 0.4 * jaccard, 4)
@@ -324,9 +391,7 @@ class MemoryQualityScorer:
 
         return round(max(0.0, min(1.0, freshness)), 4)
 
-    def _score_accuracy(
-        self, source_type: str, content: str, verified: bool
-    ) -> float:
+    def _score_accuracy(self, source_type: str, content: str, verified: bool) -> float:
         """基于来源可靠性表和附加信号评估准确性。
 
         加分项：
@@ -439,7 +504,7 @@ class MemoryQualityScorer:
         """
         # 条件 1：综合分连续过低
         if len(self._score_history) >= self._PAUSE_CONSECUTIVE_LOW:
-            recent_scores = list(self._score_history)[-self._PAUSE_CONSECUTIVE_LOW:]
+            recent_scores = list(self._score_history)[-self._PAUSE_CONSECUTIVE_LOW :]
             if all(s.overall < self._CRITICAL_THRESHOLD for s in recent_scores):
                 self._paused = True
                 self._pause_reason = (
@@ -455,11 +520,9 @@ class MemoryQualityScorer:
             if a.level == AlertLevel.CRITICAL and a.timestamp >= one_hour_ago
         ]
         if len(critical_alerts) >= self._PAUSE_CRITICAL_COUNT:
-                self._paused = True
-                self._pause_reason = (
-                    f"1 小时内出现 {len(critical_alerts)} 次严重告警"
-                )
-                return True, self._pause_reason
+            self._paused = True
+            self._pause_reason = f"1 小时内出现 {len(critical_alerts)} 次严重告警"
+            return True, self._pause_reason
 
         self._paused = False
         self._pause_reason = ""

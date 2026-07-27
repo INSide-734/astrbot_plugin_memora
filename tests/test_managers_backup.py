@@ -1,23 +1,23 @@
 """BackupManager 测试 — 版本检测、备份创建、恢复待处理。"""
+
 from __future__ import annotations
 
 import json
 import os
 import sqlite3
-import shutil
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from core.managers.backup_manager import (
-    PLUGIN_VERSION,
-    _VERSION_FILE,
     _BACKUP_INFO_FILE,
     _BACKUP_NAME_RE,
     _BACKUP_PATTERNS,
+    _VERSION_FILE,
+    PLUGIN_VERSION,
     BackupManager,
 )
 
@@ -38,6 +38,7 @@ def _db_bytes(label: str) -> bytes:
 # ---------------------------------------------------------------------------
 # Version tracking tests
 # ---------------------------------------------------------------------------
+
 
 class TestVersionTracking:
     """get_stored_version, write_current_version, needs_backup."""
@@ -81,6 +82,7 @@ class TestVersionTracking:
 # ---------------------------------------------------------------------------
 # Backup creation tests
 # ---------------------------------------------------------------------------
+
 
 class TestBackupCreation:
     """backup_if_needed — version-change driven backup."""
@@ -130,7 +132,11 @@ class TestBackupCreation:
         result = mgr.backup_if_needed()
         backup_path = Path(result["directory"])
         # Only matching files should be copied
-        copied_files = [p.name for p in backup_path.iterdir() if p.is_file() and p.name != _BACKUP_INFO_FILE]
+        copied_files = [
+            p.name
+            for p in backup_path.iterdir()
+            if p.is_file() and p.name != _BACKUP_INFO_FILE
+        ]
         assert "memora.db" in copied_files
         assert "conversations.db" in copied_files
         assert "some_log.txt" not in copied_files
@@ -139,6 +145,7 @@ class TestBackupCreation:
 # ---------------------------------------------------------------------------
 # Manual/Create backup tests
 # ---------------------------------------------------------------------------
+
 
 class TestCreateBackup:
     """create_backup — always creates, timestamp-based directory."""
@@ -212,6 +219,7 @@ class TestBackupRetention:
 # Delete backup tests
 # ---------------------------------------------------------------------------
 
+
 class TestDeleteBackup:
     """delete_backup."""
 
@@ -230,7 +238,15 @@ class TestDeleteBackup:
 
     @pytest.mark.parametrize(
         "name",
-        ["../outside", "..\\outside", "/tmp/x", "C:\\tmp\\x", ".", "bad name", "backup:1"],
+        [
+            "../outside",
+            "..\\outside",
+            "/tmp/x",
+            "C:\\tmp\\x",
+            ".",
+            "bad name",
+            "backup:1",
+        ],
     )
     def test_rejects_path_like_backup_names(self, tmp_path: Path, name: str) -> None:
         mgr = BackupManager(data_dir=str(tmp_path))
@@ -272,6 +288,7 @@ class TestDeleteBackup:
 # List backups tests
 # ---------------------------------------------------------------------------
 
+
 class TestListBackups:
     """list_backups static method."""
 
@@ -312,6 +329,7 @@ class TestListBackups:
 # Apply pending restores
 # ---------------------------------------------------------------------------
 
+
 class TestApplyPendingRestores:
     """apply_pending_restores."""
 
@@ -334,10 +352,14 @@ class TestApplyPendingRestores:
 
     def test_applies_restore_overwrites_existing(self, tmp_path: Path) -> None:
         (tmp_path / "decay_state.json").write_text("old content", encoding="utf-8")
-        (tmp_path / "decay_state.json.restore").write_text("restored content", encoding="utf-8")
+        (tmp_path / "decay_state.json.restore").write_text(
+            "restored content", encoding="utf-8"
+        )
         mgr = BackupManager(data_dir=str(tmp_path))
         mgr.apply_pending_restores()
-        assert (tmp_path / "decay_state.json").read_text(encoding="utf-8") == "restored content"
+        assert (tmp_path / "decay_state.json").read_text(
+            encoding="utf-8"
+        ) == "restored content"
 
 
 class TestStageRestore:
@@ -373,13 +395,19 @@ class TestStageRestore:
             mgr.stage_restore("../outside")
         assert not (tmp_path / "memora.db.restore").exists()
 
-    @pytest.mark.parametrize("name", ["manual_20260628_120000", "v2.3.0", "backup.test-1"])
-    def test_validate_backup_name_accepts_expected_names(self, tmp_path: Path, name: str) -> None:
+    @pytest.mark.parametrize(
+        "name", ["manual_20260628_120000", "v2.3.0", "backup.test-1"]
+    )
+    def test_validate_backup_name_accepts_expected_names(
+        self, tmp_path: Path, name: str
+    ) -> None:
         mgr = BackupManager(data_dir=str(tmp_path))
         assert mgr.validate_backup_name(name) == name
 
     @pytest.mark.asyncio
-    async def test_stage_restore_writes_single_plan_and_payload(self, tmp_path: Path) -> None:
+    async def test_stage_restore_writes_single_plan_and_payload(
+        self, tmp_path: Path
+    ) -> None:
         (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
         manager = BackupManager(str(tmp_path))
         backup = await manager.create_backup()
@@ -390,12 +418,16 @@ class TestStageRestore:
         operation_id = str(result["operation_id"])
         plan_path = tmp_path / ".restore" / operation_id / "restore_plan.json"
         assert result["restore_status"] == "staged"
-        assert json.loads(plan_path.read_text(encoding="utf-8"))["apply_mode"] == "restart"
+        assert (
+            json.loads(plan_path.read_text(encoding="utf-8"))["apply_mode"] == "restart"
+        )
         assert (plan_path.parent / "payload" / "memora.db").exists()
         assert manager.has_pending_restores() is True
 
     @pytest.mark.asyncio
-    async def test_stage_restore_rejects_tampered_manifest(self, tmp_path: Path) -> None:
+    async def test_stage_restore_rejects_tampered_manifest(
+        self, tmp_path: Path
+    ) -> None:
         (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
         manager = BackupManager(str(tmp_path))
         backup = await manager.create_backup()
@@ -406,7 +438,9 @@ class TestStageRestore:
             manager.stage_restore(str(backup["name"]))
 
     @pytest.mark.asyncio
-    async def test_apply_restore_creates_pre_restore_and_validates(self, tmp_path: Path) -> None:
+    async def test_apply_restore_creates_pre_restore_and_validates(
+        self, tmp_path: Path
+    ) -> None:
         (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
         manager = BackupManager(str(tmp_path))
         backup = await manager.create_backup()
@@ -421,10 +455,15 @@ class TestStageRestore:
         assert restored.execute("SELECT value FROM marker").fetchone() == ("source",)
         restored.close()
         manager.mark_restore_succeeded(str(staged["operation_id"]))
-        assert manager.get_restore_status(str(staged["operation_id"]))["restore_status"] == "succeeded"
+        assert (
+            manager.get_restore_status(str(staged["operation_id"]))["restore_status"]
+            == "succeeded"
+        )
 
     @pytest.mark.asyncio
-    async def test_cancel_staged_restore_removes_payload_and_unblocks(self, tmp_path: Path) -> None:
+    async def test_cancel_staged_restore_removes_payload_and_unblocks(
+        self, tmp_path: Path
+    ) -> None:
         (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
         manager = BackupManager(str(tmp_path))
         backup = await manager.create_backup()
@@ -434,10 +473,14 @@ class TestStageRestore:
 
         assert cancelled["restore_status"] == "cancelled"
         assert manager.has_pending_restores() is False
-        assert not (tmp_path / ".restore" / str(staged["operation_id"]) / "payload").exists()
+        assert not (
+            tmp_path / ".restore" / str(staged["operation_id"]) / "payload"
+        ).exists()
 
     @pytest.mark.asyncio
-    async def test_apply_restore_rolls_back_when_later_file_fails(self, tmp_path: Path) -> None:
+    async def test_apply_restore_rolls_back_when_later_file_fails(
+        self, tmp_path: Path
+    ) -> None:
         (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
         (tmp_path / "decay_state.json").write_text("source-state", encoding="utf-8")
         manager = BackupManager(str(tmp_path))
@@ -462,12 +505,15 @@ class TestStageRestore:
         restored = sqlite3.connect(tmp_path / "memora.db")
         assert restored.execute("SELECT value FROM marker").fetchone() == ("live",)
         restored.close()
-        assert (tmp_path / "decay_state.json").read_text(encoding="utf-8") == "live-state"
+        assert (tmp_path / "decay_state.json").read_text(
+            encoding="utf-8"
+        ) == "live-state"
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
 
 class TestConstants:
     """Verify constant values are sensible."""

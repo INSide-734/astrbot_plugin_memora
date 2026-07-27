@@ -69,7 +69,9 @@ class ConversationFormatter:
             if message_max_chars > 0 and len(content_text) > message_max_chars:
                 content_text = content_text[:message_max_chars] + "…"
 
-            is_bot = msg.metadata.get("is_bot_message", False) or msg.role == "assistant"
+            is_bot = (
+                msg.metadata.get("is_bot_message", False) or msg.role == "assistant"
+            )
             current_role = "bot" if is_bot else "user"
             display_name = msg.sender_name or msg.sender_id or "未知"
             is_group = bool(msg.group_id)

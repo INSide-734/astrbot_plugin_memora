@@ -155,7 +155,7 @@ class SemanticCompressor:
 
     @staticmethod
     def _cluster_by_topics(
-            memories: list[dict[str, Any]],
+        memories: list[dict[str, Any]],
     ) -> list[list[dict[str, Any]]]:
         clusters: list[list[dict[str, Any]]] = []
         used: set[int] = set()

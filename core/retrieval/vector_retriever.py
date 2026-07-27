@@ -4,9 +4,9 @@
 """
 
 import asyncio
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import math
 from typing import Any
 
 from astrbot.core.db.vec_db.faiss_impl.vec_db import FaissVecDB
@@ -22,6 +22,7 @@ from ..adapter_capabilities import (
 )
 
 _TRUNCATED_CONTENT_MARKER = "\n...[中间内容已截断]...\n"
+
 
 @dataclass
 class VectorResult:
@@ -474,8 +475,8 @@ class VectorRetriever:
             return False
 
         import json
-        import numpy as np
 
+        import numpy as np
         from astrbot.api import logger
 
         doc_storage = self.faiss_db.document_storage

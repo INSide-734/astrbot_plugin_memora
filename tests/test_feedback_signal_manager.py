@@ -42,14 +42,18 @@ def _event(
 def _manager(tmp_path, **policy_overrides):
     """构造已初始化隔离 Store 和 Manager。"""
 
-    store = FeedbackSignalStore(tmp_path / f"feedback-{len(list(tmp_path.iterdir()))}.db")
+    store = FeedbackSignalStore(
+        tmp_path / f"feedback-{len(list(tmp_path.iterdir()))}.db"
+    )
     store.initialize()
     manager = FeedbackSignalManager(store, FeedbackSignalPolicy(**policy_overrides))
     manager.register_adapter(FeedbackAdapterKind.RETRIEVAL_RESULT)
     return store, manager
 
 
-def test_manager_rejects_untrusted_scope_time_duplicate_and_rate_limit(tmp_path) -> None:
+def test_manager_rejects_untrusted_scope_time_duplicate_and_rate_limit(
+    tmp_path,
+) -> None:
     """来源、作用域、时间、去重和窗口限流必须使用稳定 reason。"""
 
     store, manager = _manager(tmp_path, max_events_per_window=1)

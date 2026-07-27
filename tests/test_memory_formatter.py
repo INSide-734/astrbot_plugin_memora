@@ -7,7 +7,6 @@ import pytest
 
 from core.injection.models import ContentLevel
 from core.utils.injection_budget import InjectionBudget, InjectionStats
-
 from core.utils.memory_formatter import (
     format_memories_for_fake_tool_call,
     format_memories_for_fake_tool_call_deepseek_v4,
@@ -182,7 +181,9 @@ class TestFormatMemoriesForInjection:
         """异常 during formatting of one memory skips it (covers lines 137-143)."""
         mem_obj = MagicMock()
         # Make content access raise an exception
-        type(mem_obj).content = property(lambda self: (_ for _ in ()).throw(ValueError("boom")))
+        type(mem_obj).content = property(
+            lambda self: (_ for _ in ()).throw(ValueError("boom"))
+        )
         mem_obj.score = 0.5
         mem_obj.metadata = {}
         mem_obj.timestamp = None
@@ -199,7 +200,9 @@ class TestFormatMemoriesForInjection:
     def test_all_memories_fail_formatting(self):
         """当 all memories fail formatting, returns empty string (covers lines 146-147)."""
         mem_obj = MagicMock()
-        type(mem_obj).content = property(lambda self: (_ for _ in ()).throw(RuntimeError("fail")))
+        type(mem_obj).content = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("fail"))
+        )
 
         result = format_memories_for_injection([mem_obj])
         assert result == ""
@@ -236,7 +239,10 @@ class TestFormatMemoriesForInjection:
             content_level=ContentLevel.COMPACT,
         )
 
-        assert "Projection: [episode_summary, confidence=0.86] 先迁移，再灰度发布。" in text
+        assert (
+            "Projection: [episode_summary, confidence=0.86] 先迁移，再灰度发布。"
+            in text
+        )
         assert "projection_id" not in text
         assert "source_memory_ids" not in text
         assert stats.chars == len(text)
@@ -248,7 +254,11 @@ class TestFormatMemoriesForInjection:
                     "content": "canonical",
                     "metadata": {
                         "derived_projections": [
-                            {"type": "episode_summary", "summary": "不应出现", "confidence": 0.9}
+                            {
+                                "type": "episode_summary",
+                                "summary": "不应出现",
+                                "confidence": 0.9,
+                            }
                         ]
                     },
                 }
@@ -427,7 +437,6 @@ class TestFormatMemoriesForFakeToolCallDeepSeekV4:
         assert "[DeepSeekV4-FakeToolCall-Replay]" in result
         assert "recall_long_term_memory" in result
         assert "deepseek query" in result
-
 
 
 def _rich_memory(index: int) -> dict:
@@ -672,6 +681,7 @@ class TestBudgetedInjectionFormatting:
         assert stats.header_chars == 0
         assert stats.footer_chars == 0
         assert stats.dropped_by_budget == 1
+
     def test_hard_cap_counts_every_wrapper_and_separator_character(self):
         complete, _ = format_memories_for_injection(
             [_rich_memory(0)],

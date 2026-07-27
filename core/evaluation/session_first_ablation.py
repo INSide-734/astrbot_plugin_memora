@@ -15,10 +15,10 @@ from typing import Any
 
 from .retrieval_quality import (
     EvaluationCase,
+    make_memory_engine_retriever,
     ndcg_at_k,
     recall_at_k,
     reciprocal_rank,
-    make_memory_engine_retriever,
 )
 
 SESSION_SCENARIOS = frozenset({"session_hit", "session_no_hit", "mixed"})
@@ -49,9 +49,15 @@ class SessionFirstPreset:
     def __post_init__(self) -> None:
         """拒绝非有限或越界阈值，保持实验结果可复现。"""
 
-        if not math.isfinite(self.minimum_score) or not 0.0 <= self.minimum_score <= 1.0:
+        if (
+            not math.isfinite(self.minimum_score)
+            or not 0.0 <= self.minimum_score <= 1.0
+        ):
             raise ValueError("session_score_threshold_invalid")
-        if not math.isfinite(self.minimum_margin) or not 0.0 <= self.minimum_margin <= 1.0:
+        if (
+            not math.isfinite(self.minimum_margin)
+            or not 0.0 <= self.minimum_margin <= 1.0
+        ):
             raise ValueError("session_margin_threshold_invalid")
 
 
@@ -182,7 +188,9 @@ async def run_session_first(
 
         session_candidates = _normalize_candidates(session_raw)
         baseline_candidates = _normalize_candidates(baseline_raw)
-        session_rows.append(_branch_row(case, session_candidates, session_latency, "session"))
+        session_rows.append(
+            _branch_row(case, session_candidates, session_latency, "session")
+        )
         baseline_rows.append(
             _branch_row(case, baseline_candidates, baseline_latency, "baseline")
         )
@@ -190,7 +198,9 @@ async def run_session_first(
         if session_error:
             decision = SessionFirstDecision("would_fallback", "session_stage_failed")
         else:
-            decision = _decide(case, session_candidates, baseline_candidates, active_preset)
+            decision = _decide(
+                case, session_candidates, baseline_candidates, active_preset
+            )
         decisions.append(decision)
         scenario = str(case.metadata.get("scenario") or "unknown")
         scenario_stats[scenario][decision.reason_code] += 1
@@ -214,7 +224,9 @@ async def run_session_first(
     wrong_short_circuits = _count_wrong_short_circuits(cases, session_rows, decisions)
     status = "completed"
     reason_code = "available"
-    if decisions and all(item.reason_code == "equivalent_to_baseline" for item in decisions):
+    if decisions and all(
+        item.reason_code == "equivalent_to_baseline" for item in decisions
+    ):
         status = "skipped"
         reason_code = "equivalent_to_baseline"
     return SessionFirstReport(
@@ -227,7 +239,8 @@ async def run_session_first(
         effective=effective_metrics,
         reason_code_aggregates=dict(sorted(reason_counts.items())),
         scenario_breakdown={
-            name: dict(sorted(counts.items())) for name, counts in sorted(scenario_stats.items())
+            name: dict(sorted(counts.items()))
+            for name, counts in sorted(scenario_stats.items())
         },
         would_short_circuit=short_circuits,
         wrong_short_circuit=wrong_short_circuits,
@@ -243,7 +256,9 @@ def load_session_first_cases(path: str | Path) -> list[EvaluationCase]:
 
     cases: list[EvaluationCase] = []
     source = Path(path)
-    for line_number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(
+        source.read_text(encoding="utf-8").splitlines(), 1
+    ):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         try:
@@ -266,7 +281,9 @@ def load_session_first_cases(path: str | Path) -> list[EvaluationCase]:
         if any(not isinstance(item, str) or not item.strip() for item in relevant):
             raise ValueError(f"session_fixture_doc_id_invalid:{line_number}")
         critical = metadata.get("critical_long_term_doc_ids", [])
-        if not isinstance(critical, list) or any(item not in relevant for item in critical):
+        if not isinstance(critical, list) or any(
+            item not in relevant for item in critical
+        ):
             raise ValueError(f"session_fixture_critical_ids_invalid:{line_number}")
         if scenario == "mixed" and not critical:
             raise ValueError(f"session_fixture_critical_ids_invalid:{line_number}")
@@ -345,7 +362,10 @@ def _decide(
     """执行 fail-closed 会话证据门。"""
 
     metadata = case.metadata or {}
-    if not bool(metadata.get("trusted_session")) or not str(metadata.get("session_id") or "").strip():
+    if (
+        not bool(metadata.get("trusted_session"))
+        or not str(metadata.get("session_id") or "").strip()
+    ):
         return SessionFirstDecision("would_fallback", "missing_trusted_session")
     intent = str(metadata.get("intent") or metadata.get("query_intent") or "").lower()
     if intent not in SIMPLE_INTENTS:
@@ -397,7 +417,9 @@ def _decide(
     )
 
 
-def _candidates_authorized(case: EvaluationCase, candidates: Sequence[_Candidate]) -> bool:
+def _candidates_authorized(
+    case: EvaluationCase, candidates: Sequence[_Candidate]
+) -> bool:
     """校验 Session、作用域、隐私、角色、revision、validity 和冲突状态。"""
 
     expected_keys = (
@@ -458,16 +480,12 @@ def _count_wrong_short_circuits(
     for case, row, decision in zip(cases, session_rows, decisions, strict=True):
         if decision.decision != "would_short_circuit":
             continue
-        if not _critical_ids(case).issubset(
-            {item.doc_id for item in row.candidates}
-        ):
+        if not _critical_ids(case).issubset({item.doc_id for item in row.candidates}):
             wrong += 1
     return wrong
 
 
-def _branch_metrics(
-    rows: Sequence[_BranchRow], k: int
-) -> SessionFirstBranchMetrics:
+def _branch_metrics(rows: Sequence[_BranchRow], k: int) -> SessionFirstBranchMetrics:
     """使用现有 Recall@K、MRR、nDCG 定义聚合分支质量。"""
 
     recalls: list[float] = []
@@ -520,9 +538,7 @@ def _branch_row(
         provider_calls=_non_negative_number(
             case.metadata.get(f"{branch}_provider_calls", 0.0)
         ),
-        token_cost=_non_negative_number(
-            case.metadata.get(f"{branch}_token_cost", 0.0)
-        ),
+        token_cost=_non_negative_number(case.metadata.get(f"{branch}_token_cost", 0.0)),
     )
 
 

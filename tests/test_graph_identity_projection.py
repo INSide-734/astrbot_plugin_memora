@@ -55,7 +55,9 @@ def _projection_harness():
 
 
 @pytest.mark.asyncio
-async def test_graph_identity_projection_uses_latest_name_without_mutating_snapshot() -> None:
+async def test_graph_identity_projection_uses_latest_name_without_mutating_snapshot() -> (
+    None
+):
     """同一 QQ 改名后仅更新响应展示，原节点、节点 ID 与 QQ 保持不变。"""
 
     harness = _projection_harness()
@@ -83,11 +85,15 @@ async def test_graph_identity_projection_uses_latest_name_without_mutating_snaps
 
 
 @pytest.mark.asyncio
-async def test_graph_identity_projection_rejects_legacy_and_inconsistent_nodes() -> None:
+async def test_graph_identity_projection_rejects_legacy_and_inconsistent_nodes() -> (
+    None
+):
     """旧名称、非人物及稳定字段不一致的节点不得猜测身份。"""
 
     harness = _projection_harness()
-    runtime = SimpleNamespace(get_identity=AsyncMock(return_value=_stored_identity("昵称")))
+    runtime = SimpleNamespace(
+        get_identity=AsyncMock(return_value=_stored_identity("昵称"))
+    )
     nodes = [
         {"id": 1, "type": "person", "label": "昵称"},
         {
@@ -121,7 +127,9 @@ async def test_graph_identity_projection_rejects_legacy_and_inconsistent_nodes()
 
 
 @pytest.mark.asyncio
-async def test_graph_identity_projection_degrades_errors_and_propagates_cancellation() -> None:
+async def test_graph_identity_projection_degrades_errors_and_propagates_cancellation() -> (
+    None
+):
     """身份读取普通失败保留图节点，任务取消不能被降级吞掉。"""
 
     harness = _projection_harness()

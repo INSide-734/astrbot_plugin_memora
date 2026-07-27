@@ -12,7 +12,6 @@ from typing import Any
 
 import aiosqlite
 
-
 _EVENT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _SAFE_EXCEPTION_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9.]{0,127}$")
 _DOMAINS = frozenset(
@@ -46,7 +45,12 @@ _SOURCES = frozenset(
 )
 _TEXT_PAYLOAD_CHOICES = {
     "action": frozenset(
-        {"clear_completed_events", "rebuild_index", "refresh_metrics", "restart_backfill"}
+        {
+            "clear_completed_events",
+            "rebuild_index",
+            "refresh_metrics",
+            "restart_backfill",
+        }
     ),
     "capability": frozenset(
         {
@@ -72,7 +76,14 @@ _TEXT_PAYLOAD_CHOICES = {
         }
     ),
     "delivery": frozenset(
-        {"auto", "extra_user_content", "fake_tool_call", "none", "user_message_after", "user_message_before"}
+        {
+            "auto",
+            "extra_user_content",
+            "fake_tool_call",
+            "none",
+            "user_message_after",
+            "user_message_before",
+        }
     ),
     "mode": frozenset(
         {"active", "auto", "disabled", "hybrid", "manual", "readonly", "shadow"}
@@ -116,7 +127,17 @@ _TEXT_PAYLOAD_CHOICES = {
         }
     ),
     "status": frozenset(
-        {"cancelled", "completed", "degraded", "failed", "info", "ready", "running", "skipped", "waiting"}
+        {
+            "cancelled",
+            "completed",
+            "degraded",
+            "failed",
+            "info",
+            "ready",
+            "running",
+            "skipped",
+            "waiting",
+        }
     ),
     "task_type": frozenset(
         {"cleanup", "evolution", "index", "maintenance", "storage", "summary"}

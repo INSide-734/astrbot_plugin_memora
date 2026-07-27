@@ -15,7 +15,6 @@ from core.models.note_models import Note
 from core.storage.knowledge_store import KnowledgeStore
 from core.storage.note_store import NoteStore
 
-
 _OCCURRED_AT = datetime(2026, 7, 21, tzinfo=timezone.utc)
 
 

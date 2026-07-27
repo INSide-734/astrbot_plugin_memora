@@ -10,19 +10,16 @@ from datetime import datetime
 from typing import Any
 
 from astrbot.api import logger
-from ..injection.models import ContentLevel
 
+from ..injection.models import ContentLevel
 from .data_helpers import safe_parse_metadata, validate_timestamp
 from .injection_budget import (
     InjectionBudget,
     InjectionStats,
     format_compact_footer,
     format_compact_header,
-    format_full_footer,
-    format_full_header,
     truncate_preserving_sentence,
 )
-
 
 _PROJECTION_TYPES = frozenset(
     {"episode_summary", "preference_state", "relationship_state", "conflict_set"}
@@ -72,9 +69,7 @@ def _safe_projection_objects(
     return safe
 
 
-def _format_projection_lines(
-    metadata: dict[str, Any], *, max_chars: int
-) -> list[str]:
+def _format_projection_lines(metadata: dict[str, Any], *, max_chars: int) -> list[str]:
     """将 projection 转为受 metadata 字符预算约束的注释行。"""
 
     safe = _safe_projection_objects(metadata, max_chars=max_chars)
@@ -213,15 +208,17 @@ def format_memories_for_injection(
                     logger.debug(f"记忆时间戳格式化失败 (timestamp={timestamp})")
 
             was_truncated = False
-            if use_budget and budget.memory_max_chars > 0 and len(content) > budget.memory_max_chars:
+            if (
+                use_budget
+                and budget.memory_max_chars > 0
+                and len(content) > budget.memory_max_chars
+            ):
                 content = truncate_preserving_sentence(content, budget.memory_max_chars)
                 was_truncated = True
 
             include_time = not use_budget or content_level is ContentLevel.DETAILED
             time_part = (
-                f", Memory write time: {time_str}"
-                if include_time and time_str
-                else ""
+                f", Memory write time: {time_str}" if include_time and time_str else ""
             )
             entry_parts = [
                 f"记忆 #{idx} / Memory #{idx} (Importance: {importance:.2f}){time_part}"
@@ -236,7 +233,10 @@ def format_memories_for_injection(
                 nonlocal metadata_chars
                 if use_budget and budget.metadata_max_chars > 0:
                     separator_chars = 3 if metadata_parts else 0
-                    if metadata_chars + separator_chars + len(line) > budget.metadata_max_chars:
+                    if (
+                        metadata_chars + separator_chars + len(line)
+                        > budget.metadata_max_chars
+                    ):
                         return
                     metadata_chars += separator_chars
                 metadata_parts.append(line)
@@ -278,7 +278,9 @@ def format_memories_for_injection(
                     participants = metadata.get("participants", [])
                     if isinstance(participants, list):
                         participants_text = "、".join(
-                            str(participant) for participant in participants if participant
+                            str(participant)
+                            for participant in participants
+                            if participant
                         )
                         if participants_text:
                             append_metadata(f"Participants: {participants_text}")
@@ -288,9 +290,7 @@ def format_memories_for_injection(
 
                 entry_parts.append(content)
 
-            projection_cap = (
-                budget.metadata_max_chars if use_budget else 1_200
-            )
+            projection_cap = budget.metadata_max_chars if use_budget else 1_200
             for projection_line in _format_projection_lines(
                 metadata,
                 max_chars=max(0, projection_cap - metadata_chars),

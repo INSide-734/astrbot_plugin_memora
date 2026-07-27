@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 
 def _make_graph_kw_result(doc_id: int, score: float, content: str = "") -> Any:
     from core.retrieval.graph_keyword_retriever import GraphKeywordResult
+
     return GraphKeywordResult(
-        doc_id=doc_id, score=score,
+        doc_id=doc_id,
+        score=score,
         content=content or f"content_{doc_id}",
         metadata={"importance": 0.7, "create_time": 1000000.0},
     )
@@ -19,23 +21,26 @@ def _make_graph_kw_result(doc_id: int, score: float, content: str = "") -> Any:
 
 def _make_graph_vec_result(doc_id: int, score: float, content: str = "") -> Any:
     from core.retrieval.graph_vector_retriever import GraphVectorResult
+
     return GraphVectorResult(
-        doc_id=doc_id, score=score,
+        doc_id=doc_id,
+        score=score,
         content=content or f"content_{doc_id}",
         metadata={"importance": 0.7, "create_time": 1000000.0},
     )
 
 
 class TestGraphRetriever:
-
     @pytest.fixture
     def rrf_fusion(self) -> Any:
         from core.retrieval.rrf_fusion import RRFFusion
+
         return RRFFusion(k=60)
 
     @pytest.fixture
     def retriever(self, rrf_fusion: Any) -> Any:
         from core.retrieval.graph_retriever import GraphRetriever
+
         keyword = AsyncMock()
         keyword.search = AsyncMock(return_value=[])
         vector = AsyncMock()
@@ -104,11 +109,15 @@ class TestGraphRetriever:
             _make_graph_kw_result(3, 0.7, "relational memory"),
         ]
         # Set metadata with graph_relation_type to trigger boost
-        retriever.keyword_retriever.search.return_value[0].metadata["graph_relation_type"] = "friend"
+        retriever.keyword_retriever.search.return_value[0].metadata[
+            "graph_relation_type"
+        ] = "friend"
         retriever.vector_retriever.search.return_value = [
             _make_graph_vec_result(3, 0.6, "relational memory"),
         ]
-        retriever.vector_retriever.search.return_value[0].metadata["graph_relation_type"] = "friend"
+        retriever.vector_retriever.search.return_value[0].metadata[
+            "graph_relation_type"
+        ] = "friend"
 
         results = await retriever.search("test", k=5, memory_types=["relational"])
         assert len(results) >= 1

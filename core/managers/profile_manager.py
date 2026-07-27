@@ -9,14 +9,14 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..base.list_sorting import SortQuery
 from ..base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
     compute_entity_revision,
 )
-from ..models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
+from ..base.list_sorting import SortQuery
 from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ..models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
 from ..storage.profile_store import ProfileStore
 
 _EDITABLE_PREFERENCE_FIELDS = frozenset(
@@ -326,9 +326,7 @@ class ProfileManager:
         """规范化 0 到 23 的去重小时数组。"""
 
         if not isinstance(value, list):
-            raise EntityValidationError(
-                {"preferences.active_hours": "必须为整数数组"}
-            )
+            raise EntityValidationError({"preferences.active_hours": "必须为整数数组"})
         normalized: list[int] = []
         for index, hour in enumerate(value):
             field = "preferences.active_hours." + str(index)
@@ -385,9 +383,7 @@ class ProfileManager:
             raise EntityValidationError({prefix + ".confidence": "必须为数字"})
         normalized_confidence = float(confidence)
         if not math.isfinite(normalized_confidence):
-            raise EntityValidationError(
-                {prefix + ".confidence": "必须为有限数字"}
-            )
+            raise EntityValidationError({prefix + ".confidence": "必须为有限数字"})
         if not 0.0 <= normalized_confidence <= 1.0:
             raise EntityValidationError(
                 {prefix + ".confidence": "必须在 0.0 到 1.0 之间"}
@@ -398,9 +394,7 @@ class ProfileManager:
                 "value": tag_value,
                 "confidence": normalized_confidence,
                 "source": "manual",
-                "provenance": DomainProvenance(
-                    DomainObjectOrigin.MANUAL
-                ).to_dict(),
+                "provenance": DomainProvenance(DomainObjectOrigin.MANUAL).to_dict(),
             }
         )
 
@@ -443,10 +437,7 @@ class ProfileManager:
     ) -> DomainProvenance:
         """要求自动写入携带完整 derived provenance。"""
 
-        if (
-            provenance is None
-            or provenance.origin is not DomainObjectOrigin.DERIVED
-        ):
+        if provenance is None or provenance.origin is not DomainObjectOrigin.DERIVED:
             raise ValueError("source_provenance_required")
         return provenance
 

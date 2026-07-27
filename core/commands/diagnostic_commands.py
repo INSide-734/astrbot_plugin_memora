@@ -14,7 +14,6 @@ from astrbot.api.platform import MessageType
 
 from ..i18n_backend import t
 
-
 DiagnosticProvider = Callable[..., Awaitable[Mapping[str, Any]]]
 
 _TRACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,64}$")
@@ -227,10 +226,13 @@ class DiagnosticCommandMixin:
                 action_keys.append(action_key)
         if not action_keys:
             return []
-        return [t("command_diagnostics.health.actions_header"), *(
-            t("command_diagnostics.health.action_item", action=t(key))
-            for key in action_keys
-        )]
+        return [
+            t("command_diagnostics.health.actions_header"),
+            *(
+                t("command_diagnostics.health.action_item", action=t(key))
+                for key in action_keys
+            ),
+        ]
 
     @classmethod
     def _format_diagnostics(cls, payload: Mapping[str, Any]) -> str:
@@ -274,7 +276,9 @@ class DiagnosticCommandMixin:
                     retries=cls._safe_int(write.get("lock_retries_total")),
                     failures=cls._safe_int(write.get("failures_total")),
                     fatal=cls._safe_int(write.get("fatal_failures_total")),
-                    non_retryable=cls._safe_int(write.get("non_retryable_failures_total")),
+                    non_retryable=cls._safe_int(
+                        write.get("non_retryable_failures_total")
+                    ),
                 ),
                 t(
                     "command_diagnostics.snapshot.prometheus",
@@ -286,9 +290,7 @@ class DiagnosticCommandMixin:
 
     @classmethod
     def _format_snapshot_provider(cls, provider: Mapping[str, Any]) -> str:
-        status = cls._safe_choice(
-            provider.get("status"), _PROVIDER_STATUSES, "unknown"
-        )
+        status = cls._safe_choice(provider.get("status"), _PROVIDER_STATUSES, "unknown")
         return t(
             "command_diagnostics.snapshot.provider",
             status=t(f"command_diagnostics.snapshot.provider_status.{status}"),
@@ -352,7 +354,9 @@ class DiagnosticCommandMixin:
     def _format_trace_route(cls, value: Any) -> str:
         """格式化固定枚举的路由预览，不透传任意 metadata。"""
         metadata = cls._safe_mapping(value)
-        routing_mode = cls._safe_choice(metadata.get("routing_mode"), _ROUTING_MODES, "")
+        routing_mode = cls._safe_choice(
+            metadata.get("routing_mode"), _ROUTING_MODES, ""
+        )
         preset = cls._safe_choice(metadata.get("resolved_preset"), _PRESETS, "")
         reason_code = cls._safe_reason_code(metadata.get("reason_code"))
         return t(

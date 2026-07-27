@@ -12,7 +12,6 @@ from typing import Any
 
 from .retrieval_quality import EvaluationCase
 
-
 MAX_DATASET_BYTES = 1024 * 1024
 MAX_DATASET_CASES = 500
 MAX_REFERENCES_PER_CASE = 50

@@ -118,7 +118,9 @@ def test_dashboard_frontend_endpoints_are_registered() -> None:
     frontend_endpoints = _extract_frontend_endpoints()
     backend_routes = _collect_registered_routes()
 
-    assert frontend_endpoints, "No dashboard endpoints were extracted from frontend source"
+    assert frontend_endpoints, (
+        "No dashboard endpoints were extracted from frontend source"
+    )
 
     missing = sorted(frontend_endpoints - backend_routes)
     assert not missing, (
@@ -151,7 +153,9 @@ def test_dashboard_critical_system_endpoints_are_covered() -> None:
     )
 
 
-def test_backup_restore_status_and_cancel_routes_are_registered_under_both_prefixes() -> None:
+def test_backup_restore_status_and_cancel_routes_are_registered_under_both_prefixes() -> (
+    None
+):
     plugin = MagicMock()
     api = PluginPageApi(plugin)
     api.register_routes()
@@ -234,7 +238,9 @@ def test_jargon_write_contract_is_post_only_under_every_page_prefix() -> None:
         assert callable(getattr(api, method_name))
 
 
-def test_affection_editing_contract_uses_read_only_history_and_post_only_mutations() -> None:
+def test_affection_editing_contract_uses_read_only_history_and_post_only_mutations() -> (
+    None
+):
     plugin = MagicMock()
     api = PluginPageApi(plugin)
     api.register_routes()

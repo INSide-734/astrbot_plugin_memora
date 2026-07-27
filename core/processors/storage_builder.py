@@ -8,7 +8,7 @@ class StorageBuilder:
 
     @staticmethod
     def build_storage_format(
-            fallback_excerpt: str,
+        fallback_excerpt: str,
         structured_data: dict[str, Any],
         is_group_chat: bool,
         persona_interpretations: dict[str, str] | None = None,

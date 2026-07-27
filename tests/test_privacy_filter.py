@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parent.parent / "core" / "models" / "memory_atom.py"
+_MODULE_PATH = (
+    Path(__file__).resolve().parent.parent / "core" / "models" / "memory_atom.py"
+)
 _spec = importlib.util.spec_from_file_location("memory_atom", _MODULE_PATH)
 assert _spec is not None
 _memory_atom = importlib.util.module_from_spec(_spec)
@@ -21,6 +23,7 @@ PrivacyLevel = _memory_atom.PrivacyLevel
 # ============================================================================
 # PrivacyLevel enum
 # ============================================================================
+
 
 class TestPrivacyLevel:
     """PrivacyLevel enum values and semantics."""
@@ -41,6 +44,7 @@ class TestPrivacyLevel:
 # Privacy filter simulation (mirrors _filter_by_privacy logic)
 # ============================================================================
 
+
 def _filter_by_privacy(results: list[dict], chat_type: str) -> list[dict]:
     """Simulate dual_route_retriever._filter_by_privacy().
 
@@ -50,8 +54,7 @@ def _filter_by_privacy(results: list[dict], chat_type: str) -> list[dict]:
     """
     if chat_type == "group":
         return [
-            r for r in results
-            if r.get("privacy_level", "shared") != "confidential"
+            r for r in results if r.get("privacy_level", "shared") != "confidential"
         ]
     return list(results)
 
@@ -68,13 +71,17 @@ class TestPrivacyFilter:
             {"id": 4, "content": "无等级记忆", "privacy_level": None},
         ]
 
-    def test_confidential_filtered_in_group_chat(self, mixed_results: list[dict]) -> None:
+    def test_confidential_filtered_in_group_chat(
+        self, mixed_results: list[dict]
+    ) -> None:
         filtered = _filter_by_privacy(mixed_results, "group")
         ids = {r["id"] for r in filtered}
         assert 2 not in ids, "CONFIDENTIAL should be filtered in group chat"
         assert 1 in ids and 3 in ids
 
-    def test_confidential_visible_in_private_chat(self, mixed_results: list[dict]) -> None:
+    def test_confidential_visible_in_private_chat(
+        self, mixed_results: list[dict]
+    ) -> None:
         filtered = _filter_by_privacy(mixed_results, "private")
         ids = {r["id"] for r in filtered}
         assert 2 in ids, "CONFIDENTIAL should be visible in private chat"

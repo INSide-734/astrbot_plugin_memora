@@ -141,9 +141,13 @@ class ExpressionApiMixin:
 
         # 既有 learner 路径仅支持权重降序；其他排序必须由 store 在 LIMIT 前完成。
         learner = self._get_expression_learner()
-        if sort == SortQuery("weight", "desc") and learner is not None and hasattr(
-            learner,
-            "get_patterns_for_injection",
+        if (
+            sort == SortQuery("weight", "desc")
+            and learner is not None
+            and hasattr(
+                learner,
+                "get_patterns_for_injection",
+            )
         ):
             try:
                 patterns = await learner.get_patterns_for_injection(
@@ -159,14 +163,18 @@ class ExpressionApiMixin:
                         for item in (_safe_pattern_to_dict(p) for p in patterns)
                         if item is not None
                     ]
-                    return ok_response({
-                        "patterns": serialized_patterns,
-                        "total": len(patterns),
-                        "group_patterns": len(patterns),
-                        "group_id": group_id or "default",
-                    })
+                    return ok_response(
+                        {
+                            "patterns": serialized_patterns,
+                            "total": len(patterns),
+                            "group_patterns": len(patterns),
+                            "group_id": group_id or "default",
+                        }
+                    )
             except Exception as e:
-                logger.warning(f"[ExpressionApi] 调用 learner.get_patterns_for_injection 失败: {e}")
+                logger.warning(
+                    f"[ExpressionApi] 调用 learner.get_patterns_for_injection 失败: {e}"
+                )
 
         store = self._get_expression_store()
         if store is None:
@@ -196,12 +204,14 @@ class ExpressionApiMixin:
                 if hasattr(store, "count_by_scope")
                 else len(patterns)
             )
-            return ok_response({
-                "patterns": serialized_patterns,
-                "total": total,
-                "group_patterns": len(patterns),
-                "group_id": group_id or "default",
-            })
+            return ok_response(
+                {
+                    "patterns": serialized_patterns,
+                    "total": total,
+                    "group_patterns": len(patterns),
+                    "group_id": group_id or "default",
+                }
+            )
         except Exception as e:
             logger.error(f"[ExpressionApi] 获取表达模式失败: {e}", exc_info=True)
             return error_response(f"获取表达模式失败: {e}")

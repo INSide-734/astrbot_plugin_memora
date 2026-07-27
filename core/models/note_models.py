@@ -9,6 +9,7 @@ from typing import Any
 
 from .domain_provenance import DomainObjectOrigin, DomainProvenance
 
+
 class NoteStatus(str, Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"

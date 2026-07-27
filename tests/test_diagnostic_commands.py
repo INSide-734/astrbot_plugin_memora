@@ -13,7 +13,6 @@ from core import i18n_backend
 from core.commands.diagnostic_commands import DiagnosticCommandMixin
 from core.i18n_backend import init as i18n_init
 
-
 _SENTINEL = "PRIVATE_SENTINEL_NEVER_EXPOSE"
 
 
@@ -243,7 +242,9 @@ class TestTraceCommand:
         )
 
     @pytest.mark.asyncio
-    async def test_outputs_scores_and_stage_summary_without_ids_or_content(self) -> None:
+    async def test_outputs_scores_and_stage_summary_without_ids_or_content(
+        self,
+    ) -> None:
         """命令输出应保留排名和分数，但隐藏 memory ID 与敏感正文。"""
         provider = AsyncMock(
             return_value={
@@ -300,9 +301,7 @@ class TestTraceCommand:
 
     @pytest.mark.asyncio
     async def test_error_envelope_does_not_expose_provider_message(self) -> None:
-        provider = AsyncMock(
-            return_value={"status": "error", "message": _SENTINEL}
-        )
+        provider = AsyncMock(return_value={"status": "error", "message": _SENTINEL})
         handler = _Handler(trace_provider=provider)
 
         results = await _collect(handler.handle_trace(_event(), "coffee"))

@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-
 TIME_SOURCES = frozenset({"explicit", "metadata", "ingested", "derived", "unknown"})
 TIME_PRECISIONS = frozenset({"instant", "day", "unknown"})
 
@@ -119,7 +118,11 @@ def canonical_visible_at(metadata: Any, reference_time: datetime | None) -> bool
     ingested = parse_datetime(metadata.get("create_time"))
     if occurred is not None and occurred > normalize_datetime(reference_time):
         return False
-    if occurred is None and ingested is not None and ingested > normalize_datetime(reference_time):
+    if (
+        occurred is None
+        and ingested is not None
+        and ingested > normalize_datetime(reference_time)
+    ):
         return False
     return True
 

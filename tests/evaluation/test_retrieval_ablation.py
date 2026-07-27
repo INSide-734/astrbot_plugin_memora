@@ -8,7 +8,9 @@ from types import SimpleNamespace
 import pytest
 
 
-def _engine(*, hop: int = 1, reranker: object | None = None, vector_access: bool = True):
+def _engine(
+    *, hop: int = 1, reranker: object | None = None, vector_access: bool = True
+):
     """构造覆盖 config、retriever、cache 和向量能力的轻量引擎。"""
 
     config = {
@@ -120,8 +122,7 @@ def test_descriptors_reject_config_and_reranker_no_ops() -> None:
     engine = _engine(reranker=MMRReranker(0.7))
     engine.config["recall_engine.chain_graph_expansion_enabled"] = False
     descriptors = {
-        item["name"]: item
-        for item in RetrievalAblationController(engine).descriptors()
+        item["name"]: item for item in RetrievalAblationController(engine).descriptors()
     }
 
     assert descriptors["graph_expansion_off"]["reason_code"] == (
@@ -160,8 +161,7 @@ def test_embedding_variant_rejects_unknown_adapter_with_matching_methods() -> No
         get_vector=lambda _doc_id: [1.0],
     )
     descriptor = {
-        item["name"]: item
-        for item in RetrievalAblationController(engine).descriptors()
+        item["name"]: item for item in RetrievalAblationController(engine).descriptors()
     }["final_reranker_embedding_similarity"]
 
     assert descriptor["available"] is False
@@ -194,7 +194,9 @@ def test_prepare_config_variant_does_not_mutate_live_engine() -> None:
     live = _engine()
     prepared = RetrievalAblationController(live).prepare("graph_expansion_off")
 
-    assert prepared.engine.config["recall_engine.chain_graph_expansion_enabled"] is False
+    assert (
+        prepared.engine.config["recall_engine.chain_graph_expansion_enabled"] is False
+    )
     assert live.config["recall_engine.chain_graph_expansion_enabled"] is True
     assert prepared.effective_settings == {
         "chain_graph_expansion_enabled": False,
@@ -303,9 +305,10 @@ def test_descriptors_reject_noop_config_and_reranker_variants() -> None:
         item["name"]: item
         for item in RetrievalAblationController(embedding_engine).descriptors()
     }
-    assert embedding_descriptors[
-        "final_reranker_embedding_similarity"
-    ]["reason_code"] == "equivalent_to_baseline"
+    assert (
+        embedding_descriptors["final_reranker_embedding_similarity"]["reason_code"]
+        == "equivalent_to_baseline"
+    )
 
 
 def test_embedding_variant_does_not_silently_fallback_on_vector_failure() -> None:
@@ -403,9 +406,10 @@ async def test_snapshot_shallow_copies_real_memory_evolution_store_config(
     try:
         assert prepared.available is True
         assert prepared.engine.config is not live.config
-        assert prepared.engine.config["memory_evolution"] is not live.config[
-            "memory_evolution"
-        ]
+        assert (
+            prepared.engine.config["memory_evolution"]
+            is not live.config["memory_evolution"]
+        )
         assert prepared.engine.config["memory_evolution"]["store"] is store
     finally:
         await store.close()

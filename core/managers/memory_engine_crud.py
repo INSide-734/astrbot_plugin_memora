@@ -272,10 +272,12 @@ class MemoryEngineCRUDMixin:
     ) -> list[HybridResult]:
         """执行受 scope、privacy 与时间边界约束的多路召回。"""
 
-        requested_reference_time = normalize_datetime(reference_time) or resolve_reference_time(
-            query_intent
+        requested_reference_time = normalize_datetime(
+            reference_time
+        ) or resolve_reference_time(query_intent)
+        effective_reference_time = requested_reference_time or datetime.now(
+            timezone.utc
         )
-        effective_reference_time = requested_reference_time or datetime.now(timezone.utc)
         trace_requested = trace_debug or debug_trace is not None
         active_debug_trace = (
             debug_trace if debug_trace is not None else ([] if trace_debug else None)
@@ -362,7 +364,9 @@ class MemoryEngineCRUDMixin:
                 self._maintenance.migrate_session_if_needed(session_id)
             )
         # 自适应候选规模：根据查询意图调整 fetch_k
-        intent_str = getattr(query_intent, "intent", "default") if query_intent else "default"
+        intent_str = (
+            getattr(query_intent, "intent", "default") if query_intent else "default"
+        )
         if intent_str in ("factual", "preference"):
             fetch_k = max(k * 2, 8)
         elif intent_str in ("relationship", "temporal"):
@@ -486,7 +490,7 @@ class MemoryEngineCRUDMixin:
             "cache_lookup_ms": (_t_cache_end - _t_cache) * 1000.0,
             "total_search_ms": (_t_search_end - _t_search_start) * 1000.0,
             "bm25_ms": _t_doc_route,  # 文档路含 BM25+Vector
-            "vector_ms": 0.0,          # 包含在 document_route_ms 中
+            "vector_ms": 0.0,  # 包含在 document_route_ms 中
             "graph_ms": _t_graph_route,
             "rerank_ms": _t_rerank,
             "merge_ms": _t_merge,

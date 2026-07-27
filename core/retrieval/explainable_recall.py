@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import time
 import math
+import time
 import uuid
 from collections.abc import Mapping
 from typing import Any
+
 from ..injection.models import RequestSignals
 from ..injection.router import InjectionRoutingConfig, InjectionStrategyRouter
-
 from .trace_models import (
     FilteredCandidate,
     RecallTrace,
@@ -134,10 +134,13 @@ def _candidate_signals(
     scores = sorted(normalized_scores, reverse=True)
     top_confidence = scores[0] if scores else 0.0
     score_gap = top_confidence - scores[1] if len(scores) > 1 else top_confidence
-    token_sets = [set(str(_result_value(item, "content") or "").casefold().split()) for item in raw_results]
+    token_sets = [
+        set(str(_result_value(item, "content") or "").casefold().split())
+        for item in raw_results
+    ]
     similarities: list[float] = []
     for index, first in enumerate(token_sets):
-        for second in token_sets[index + 1:]:
+        for second in token_sets[index + 1 :]:
             union = first | second
             similarities.append(len(first & second) / len(union) if union else 0.0)
     redundancy = sum(similarities) / len(similarities) if similarities else 0.0
@@ -149,7 +152,8 @@ def _candidate_signals(
     intent = str(request_params.get("query_intent") or "default")
     return RequestSignals(
         query_intent=intent,
-        explicit_history_request=intent in {
+        explicit_history_request=intent
+        in {
             "relationship",
             "relational",
             "temporal",

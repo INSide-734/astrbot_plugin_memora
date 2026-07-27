@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, cast
 
 import aiosqlite
-
 from astrbot.api import logger
 
 from ..storage.base import apply_perf_pragmas
@@ -306,7 +305,9 @@ class PersistenceHealthValidator:
         """读取固定内部表列的去重 ID 集合。"""
 
         clause = f" WHERE {where}" if where else ""
-        cursor = await db.execute(f"SELECT DISTINCT {column_name} FROM {table_name}{clause}")
+        cursor = await db.execute(
+            f"SELECT DISTINCT {column_name} FROM {table_name}{clause}"
+        )
         values = {row[0] for row in await cursor.fetchall() if row[0] is not None}
         if not normalize:
             return values

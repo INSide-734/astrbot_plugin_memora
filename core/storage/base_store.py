@@ -10,7 +10,6 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import aiosqlite
-
 from astrbot.api import logger
 
 from .base import apply_perf_pragmas
@@ -81,17 +80,23 @@ class BaseStore:
             RuntimeError: 若未调用 ``initialize()``。
         """
         if not self.connection:
-            raise RuntimeError(f"{self.__class__.__name__} 未初始化 -- 先调用 initialize()")
+            raise RuntimeError(
+                f"{self.__class__.__name__} 未初始化 -- 先调用 initialize()"
+            )
         return await self.connection.execute(sql, params)
 
-    async def _execute_many(self, sql: str, params_list: list[tuple]) -> aiosqlite.Cursor:
+    async def _execute_many(
+        self, sql: str, params_list: list[tuple]
+    ) -> aiosqlite.Cursor:
         """批量执行写查询。
 
         Raises:
             RuntimeError: 若未调用 ``initialize()``。
         """
         if not self.connection:
-            raise RuntimeError(f"{self.__class__.__name__} 未初始化 -- 先调用 initialize()")
+            raise RuntimeError(
+                f"{self.__class__.__name__} 未初始化 -- 先调用 initialize()"
+            )
         return await self.connection.executemany(sql, params_list)
 
     async def _fetch_all(self, sql: str, params: tuple = ()) -> list[dict]:
@@ -101,7 +106,9 @@ class BaseStore:
             RuntimeError: 若未调用 ``initialize()``。
         """
         if not self.connection:
-            raise RuntimeError(f"{self.__class__.__name__} 未初始化 -- 先调用 initialize()")
+            raise RuntimeError(
+                f"{self.__class__.__name__} 未初始化 -- 先调用 initialize()"
+            )
         cursor = await self.connection.execute(sql, params)
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -113,7 +120,9 @@ class BaseStore:
             RuntimeError: 若未调用 ``initialize()``。
         """
         if not self.connection:
-            raise RuntimeError(f"{self.__class__.__name__} 未初始化 -- 先调用 initialize()")
+            raise RuntimeError(
+                f"{self.__class__.__name__} 未初始化 -- 先调用 initialize()"
+            )
         cursor = await self.connection.execute(sql, params)
         row = await cursor.fetchone()
         return dict(row) if row else None
@@ -125,7 +134,9 @@ class BaseStore:
             RuntimeError: 若未调用 ``initialize()``。
         """
         if not self.connection:
-            raise RuntimeError(f"{self.__class__.__name__} 未初始化 -- 先调用 initialize()")
+            raise RuntimeError(
+                f"{self.__class__.__name__} 未初始化 -- 先调用 initialize()"
+            )
         cursor = await self.connection.execute(sql, params)
         row = await cursor.fetchone()
         return row[0] if row else None

@@ -71,7 +71,7 @@ class PromptBuilder:
 
     @staticmethod
     async def build_system_prompt_with_persona(
-            context,
+        context,
         persona_id: str | None,
         continuity_context: str | None = None,
         interest_profile: list[str] | None = None,
@@ -152,7 +152,7 @@ class PromptBuilder:
             # 人格提示词预算控制（默认 800 字符）
             persona_budget = 800
             if len(persona_prompt) > persona_budget:
-                persona_prompt = persona_prompt[:persona_budget - 3] + "..."
+                persona_prompt = persona_prompt[: persona_budget - 3] + "..."
 
             logger.info(
                 f"[MemoryProcessor] 成功加载人格 '{persona_id}' 的提示词 "

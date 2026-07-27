@@ -73,9 +73,7 @@ async def test_newer_name_wins_and_old_name_becomes_alias(identity_service) -> N
     assert current.scope_name == "新群名片"
     assert current.display_name == "新群名片"
     assert await store.find_aliases("qq", "10001", "global", "") == ["昵称甲"]
-    assert await store.find_aliases("qq", "10001", "group", "20001") == [
-        "群名片甲"
-    ]
+    assert await store.find_aliases("qq", "10001", "group", "20001") == ["群名片甲"]
 
 
 @pytest.mark.asyncio
@@ -85,17 +83,19 @@ async def test_older_observation_adds_alias_without_rolling_back_current_name(
     """较旧事件只能补充历史别名，不得回滚当前昵称或群名片。"""
 
     service, store = identity_service
-    await service.observe(_identity(global_name="当前昵称", scope_name="当前群名片", observed_at=200.0))
-    await service.observe(_identity(global_name="旧昵称", scope_name="旧群名片", observed_at=100.0))
+    await service.observe(
+        _identity(global_name="当前昵称", scope_name="当前群名片", observed_at=200.0)
+    )
+    await service.observe(
+        _identity(global_name="旧昵称", scope_name="旧群名片", observed_at=100.0)
+    )
 
     current = await store.get_identity("qq", "10001", "group", "20001")
     assert current is not None
     assert current.global_name == "当前昵称"
     assert current.scope_name == "当前群名片"
     assert await store.find_aliases("qq", "10001", "global", "") == ["旧昵称"]
-    assert await store.find_aliases("qq", "10001", "group", "20001") == [
-        "旧群名片"
-    ]
+    assert await store.find_aliases("qq", "10001", "group", "20001") == ["旧群名片"]
 
 
 @pytest.mark.asyncio
@@ -103,8 +103,12 @@ async def test_same_observation_time_latest_arrival_wins(identity_service) -> No
     """观察时间相同应按到达顺序采用最新名称并保留旧别名。"""
 
     service, store = identity_service
-    await service.observe(_identity(global_name="第一次", scope_name="第一次", observed_at=100.0))
-    await service.observe(_identity(global_name="第二次", scope_name="第二次", observed_at=100.0))
+    await service.observe(
+        _identity(global_name="第一次", scope_name="第一次", observed_at=100.0)
+    )
+    await service.observe(
+        _identity(global_name="第二次", scope_name="第二次", observed_at=100.0)
+    )
 
     current = await store.get_identity("qq", "10001", "group", "20001")
     assert current is not None
@@ -155,7 +159,9 @@ async def test_explicit_empty_card_clears_current_card_and_preserves_alias(
 
 
 @pytest.mark.asyncio
-async def test_missing_or_invalid_card_preserves_previous_card(identity_service) -> None:
+async def test_missing_or_invalid_card_preserves_previous_card(
+    identity_service,
+) -> None:
     """缺失或非法 card 不得误删已有群名片。"""
 
     service, store = identity_service
@@ -179,7 +185,9 @@ async def test_empty_nickname_preserves_previous_global_name(identity_service) -
     service, store = identity_service
     await service.observe(_identity(global_name="有效昵称", observed_at=100.0))
     await service.observe(
-        _identity(global_name=None, nickname_state=NameFieldState.EMPTY, observed_at=200.0)
+        _identity(
+            global_name=None, nickname_state=NameFieldState.EMPTY, observed_at=200.0
+        )
     )
 
     current = await store.get_identity("qq", "10001", "group", "20001")
@@ -188,13 +196,21 @@ async def test_empty_nickname_preserves_previous_global_name(identity_service) -
 
 
 @pytest.mark.asyncio
-async def test_reobserving_same_names_blocks_intermediate_replay(identity_service) -> None:
+async def test_reobserving_same_names_blocks_intermediate_replay(
+    identity_service,
+) -> None:
     """较晚重复观察同名时也应推进时间，阻止中间时间旧名回滚。"""
 
     service, store = identity_service
-    await service.observe(_identity(global_name="当前昵称", scope_name="当前名片", observed_at=100.0))
-    await service.observe(_identity(global_name="当前昵称", scope_name="当前名片", observed_at=300.0))
-    await service.observe(_identity(global_name="旧昵称", scope_name="旧名片", observed_at=200.0))
+    await service.observe(
+        _identity(global_name="当前昵称", scope_name="当前名片", observed_at=100.0)
+    )
+    await service.observe(
+        _identity(global_name="当前昵称", scope_name="当前名片", observed_at=300.0)
+    )
+    await service.observe(
+        _identity(global_name="旧昵称", scope_name="旧名片", observed_at=200.0)
+    )
 
     current = await store.get_identity("qq", "10001", "group", "20001")
     assert current is not None
@@ -207,7 +223,9 @@ async def test_reobserving_same_names_blocks_intermediate_replay(identity_servic
 
 
 @pytest.mark.asyncio
-async def test_older_card_cannot_restore_explicitly_cleared_card(identity_service) -> None:
+async def test_older_card_cannot_restore_explicitly_cleared_card(
+    identity_service,
+) -> None:
     """显式清空群名片后，更旧的有效名片只能成为别名。"""
 
     service, store = identity_service
@@ -228,7 +246,9 @@ async def test_older_card_cannot_restore_explicitly_cleared_card(identity_servic
 
 
 @pytest.mark.asyncio
-async def test_admin_display_name_has_priority_and_is_read_only(identity_service) -> None:
+async def test_admin_display_name_has_priority_and_is_read_only(
+    identity_service,
+) -> None:
     """管理员画像备注应优先展示且不被协议观察覆盖。"""
 
     service, store = identity_service
@@ -243,7 +263,9 @@ async def test_admin_display_name_has_priority_and_is_read_only(identity_service
         await connection.commit()
 
     await service.observe(_identity(global_name="昵称甲", scope_name="群名片甲"))
-    await service.observe(_identity(global_name="新昵称", scope_name="新群名片", observed_at=200.0))
+    await service.observe(
+        _identity(global_name="新昵称", scope_name="新群名片", observed_at=200.0)
+    )
 
     current = await store.get_identity("qq", "10001", "group", "20001")
     assert current is not None
@@ -279,7 +301,9 @@ async def test_untrusted_identity_is_ignored(identity_service) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancelled_error_propagates_from_store(identity_service, monkeypatch) -> None:
+async def test_cancelled_error_propagates_from_store(
+    identity_service, monkeypatch
+) -> None:
     """身份观察不能吞掉底层 Store 的取消信号。"""
 
     service, _store = identity_service

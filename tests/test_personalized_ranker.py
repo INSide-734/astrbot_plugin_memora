@@ -7,8 +7,11 @@ from typing import Any
 import pytest
 
 
-def _make_result(doc_id: int, final_score: float, content: str = "", metadata: dict | None = None) -> Any:
+def _make_result(
+    doc_id: int, final_score: float, content: str = "", metadata: dict | None = None
+) -> Any:
     from core.retrieval.rrf_fusion import HybridResult
+
     return HybridResult(
         doc_id=doc_id,
         final_score=final_score,
@@ -21,10 +24,10 @@ def _make_result(doc_id: int, final_score: float, content: str = "", metadata: d
 
 
 class TestPersonalizedRanker:
-
     @pytest.fixture
     def ranker(self) -> Any:
         from core.retrieval.personalized_ranker import PersonalizedRanker
+
         return PersonalizedRanker(boost_strength=0.15)
 
     def test_apply_empty_tag_weights(self, ranker: Any) -> None:
@@ -133,6 +136,7 @@ class TestPersonalizedRanker:
     def test_boost_strength_clamped(self) -> None:
         """Constructor clamps boost_strength to [0, 0.5]."""
         from core.retrieval.personalized_ranker import PersonalizedRanker
+
         r1 = PersonalizedRanker(boost_strength=1.0)
         assert r1._boost_strength == 0.5  # type: ignore[attr-defined]
         r2 = PersonalizedRanker(boost_strength=-0.1)

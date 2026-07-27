@@ -19,7 +19,6 @@ from core.models.memory_evolution import MemorySourceRef
 from core.models.user_profile import TagCategory, UserPreferences, UserTag
 from core.storage.profile_store import ProfileStore
 
-
 _DERIVED_PROVENANCE = DomainProvenance(
     DomainObjectOrigin.DERIVED,
     (

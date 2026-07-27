@@ -91,6 +91,7 @@ class TestGraphDelete:
 
         await self._setup_graph_data(store)
         vector_doc_ids = await store.delete_memory(100)
+        assert vector_doc_ids == []
         # Verify entries/edges cleaned up
         stats = await store.get_memory_entry_stats()
         assert stats["graph_entries"] == 0
@@ -113,8 +114,12 @@ class TestGraphDelete:
         # Create data for memory 200 and 201
         for mem_id in [200, 201]:
             nodes = [
-                GraphNode(node_type="entity", value=f"X{mem_id}", canonical_value=f"x{mem_id}"),
-                GraphNode(node_type="entity", value=f"Y{mem_id}", canonical_value=f"y{mem_id}"),
+                GraphNode(
+                    node_type="entity", value=f"X{mem_id}", canonical_value=f"x{mem_id}"
+                ),
+                GraphNode(
+                    node_type="entity", value=f"Y{mem_id}", canonical_value=f"y{mem_id}"
+                ),
             ]
             node_map = await store.upsert_nodes(nodes)
             edge = GraphEdge(
@@ -125,7 +130,7 @@ class TestGraphDelete:
             )
             await store.add_edge(edge, node_map)
 
-        result = await store.batch_delete_memories([200, 201])
+        await store.batch_delete_memories([200, 201])
         stats = await store.get_memory_entry_stats()
         assert stats["graph_edges"] == 0
 
@@ -237,9 +242,7 @@ class TestGraphQuery:
         )
         await store.add_edge(edge, node_map)
 
-        neighbors = await store.get_neighbor_node_ids(
-            [node_map["entity:a"]], limit=10
-        )
+        neighbors = await store.get_neighbor_node_ids([node_map["entity:a"]], limit=10)
         assert node_map["entity:b"] in neighbors
         assert node_map["entity:a"] not in neighbors  # not in own neighbors
 
@@ -332,4 +335,3 @@ class TestGraphSubgraph:
         snapshot = await store.get_graph_snapshot(limit_memories=5)
         assert "nodes" in snapshot
         assert "memories" in snapshot
-

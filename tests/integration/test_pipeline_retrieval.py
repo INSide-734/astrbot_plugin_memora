@@ -87,12 +87,8 @@ class TestPipelineRetrieval:
         # Act & Assert — 不应抛异常
         results = await engine.search_memories("", k=5)
 
-        assert isinstance(results, list), (
-            f"空查询应返回列表，实际返回 {type(results)}"
-        )
-        assert results == [], (
-            f"空查询应返回空列表，实际返回 {len(results)} 条结果"
-        )
+        assert isinstance(results, list), f"空查询应返回列表，实际返回 {type(results)}"
+        assert results == [], f"空查询应返回空列表，实际返回 {len(results)} 条结果"
 
     # ------------------------------------------------------------------
     # test_retrieval_results_match_preloaded_data
@@ -167,18 +163,14 @@ class TestPipelineRetrieval:
         engine = integration_engine
 
         # Assert — reranker 属性存在（即使 disabled，实例可为 None）
-        assert hasattr(engine, "reranker"), (
-            "Engine should have 'reranker' attribute"
-        )
+        assert hasattr(engine, "reranker"), "Engine should have 'reranker' attribute"
 
         # 如果有 reranker 实例，验证其接口
         if engine.reranker is not None:
             assert hasattr(engine.reranker, "rerank"), (
                 "Reranker should have 'rerank' method"
             )
-            assert callable(engine.reranker.rerank), (
-                "rerank should be callable"
-            )
+            assert callable(engine.reranker.rerank), "rerank should be callable"
         else:
             # reranker 为 None 是预期行为（config 中 disabled）
             pass
@@ -211,9 +203,7 @@ class TestPipelineRetrieval:
             # 验证 document_retriever (HybridRetriever)
             if hasattr(engine.dual_route_retriever, "document_retriever"):
                 doc_ret = engine.dual_route_retriever.document_retriever
-                assert hasattr(doc_ret, "search"), (
-                    "HybridRetriever 应有 'search' 方法"
-                )
+                assert hasattr(doc_ret, "search"), "HybridRetriever 应有 'search' 方法"
 
             # 验证 graph_retriever
             if hasattr(engine.dual_route_retriever, "graph_retriever"):

@@ -9,6 +9,7 @@ from typing import Any
 
 from .domain_provenance import DomainObjectOrigin, DomainProvenance
 
+
 class KnowledgeType(str, Enum):
     FACT = "fact"
     CONCEPT = "concept"

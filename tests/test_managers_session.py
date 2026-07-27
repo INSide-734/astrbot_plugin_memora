@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from collections import OrderedDict
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,7 +9,6 @@ import pytest
 
 from core.managers.session_cache import SessionCacheMixin
 from core.managers.session_lifecycle import SessionLifecycleMixin
-
 
 # ---------------------------------------------------------------------------
 # Concrete test class combining both mixins
@@ -58,8 +56,14 @@ class TestSessionCacheMixin:
         from core.models.conversation_models import Message
 
         msgs = [
-            Message(id=1, session_id="s1", role="user", content="hello",
-                    sender_id="u1", platform="test")
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="hello",
+                sender_id="u1",
+                platform="test",
+            )
         ]
         await mgr._update_cache("s1", msgs)
         assert "s1" in mgr._cache
@@ -70,12 +74,36 @@ class TestSessionCacheMixin:
         mgr = _TestSessionManager()
         from core.models.conversation_models import Message
 
-        msgs1 = [Message(id=1, session_id="s1", role="user", content="a",
-                         sender_id="u1", platform="test")]
-        msgs2 = [Message(id=2, session_id="s2", role="user", content="b",
-                         sender_id="u2", platform="test")]
-        msgs3 = [Message(id=3, session_id="s1", role="user", content="c",
-                         sender_id="u1", platform="test")]
+        msgs1 = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="a",
+                sender_id="u1",
+                platform="test",
+            )
+        ]
+        msgs2 = [
+            Message(
+                id=2,
+                session_id="s2",
+                role="user",
+                content="b",
+                sender_id="u2",
+                platform="test",
+            )
+        ]
+        msgs3 = [
+            Message(
+                id=3,
+                session_id="s1",
+                role="user",
+                content="c",
+                sender_id="u1",
+                platform="test",
+            )
+        ]
 
         await mgr._update_cache("s1", msgs1)
         await mgr._update_cache("s2", msgs2)
@@ -90,8 +118,16 @@ class TestSessionCacheMixin:
         mgr = _TestSessionManager()
         from core.models.conversation_models import Message
 
-        msgs = [Message(id=1, session_id="s1", role="user", content="test",
-                        sender_id="u1", platform="test")]
+        msgs = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="test",
+                sender_id="u1",
+                platform="test",
+            )
+        ]
         await mgr._update_cache("s1", msgs)
         result = await mgr._get_from_cache("s1")
         assert result is not None
@@ -104,10 +140,26 @@ class TestSessionCacheMixin:
         mgr = _TestSessionManager()
         from core.models.conversation_models import Message
 
-        msgs1 = [Message(id=1, session_id="s1", role="user", content="a",
-                         sender_id="u1", platform="test")]
-        msgs2 = [Message(id=2, session_id="s2", role="user", content="b",
-                         sender_id="u2", platform="test")]
+        msgs1 = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="a",
+                sender_id="u1",
+                platform="test",
+            )
+        ]
+        msgs2 = [
+            Message(
+                id=2,
+                session_id="s2",
+                role="user",
+                content="b",
+                sender_id="u2",
+                platform="test",
+            )
+        ]
 
         await mgr._update_cache("s1", msgs1)
         await mgr._update_cache("s2", msgs2)
@@ -130,8 +182,16 @@ class TestSessionCacheMixin:
         mgr = _TestSessionManager()
         from core.models.conversation_models import Message
 
-        msgs = [Message(id=1, session_id="s1", role="user", content="x",
-                        sender_id="u1", platform="test")]
+        msgs = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="x",
+                sender_id="u1",
+                platform="test",
+            )
+        ]
         await mgr._update_cache("s1", msgs)
         assert "s1" in mgr._cache
 
@@ -152,8 +212,16 @@ class TestSessionCacheMixin:
         from core.models.conversation_models import Message
 
         for i in range(5):
-            msgs = [Message(id=i, session_id=f"s{i}", role="user",
-                            content=str(i), sender_id="u", platform="test")]
+            msgs = [
+                Message(
+                    id=i,
+                    session_id=f"s{i}",
+                    role="user",
+                    content=str(i),
+                    sender_id="u",
+                    platform="test",
+                )
+            ]
             await mgr._update_cache(f"s{i}", msgs)
 
         assert len(mgr._cache) <= 3
@@ -255,8 +323,16 @@ class TestSessionLifecycleMixin:
         # Pre-populate cache
         from core.models.conversation_models import Message
 
-        msgs = [Message(id=1, session_id="s1", role="user", content="x",
-                        sender_id="u1", platform="test")]
+        msgs = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="x",
+                sender_id="u1",
+                platform="test",
+            )
+        ]
         await mgr._update_cache("s1", msgs)
 
         result = await mgr.cleanup_expired_sessions()

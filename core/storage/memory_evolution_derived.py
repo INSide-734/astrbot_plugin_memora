@@ -9,9 +9,9 @@ from typing import Iterable
 from ..models.memory_evolution import (
     DerivedApplyPlan,
     DerivedState,
-    ProjectionType,
     ProjectionBundle,
     ProjectionSourceView,
+    ProjectionType,
     ProjectionView,
     RelationView,
 )
@@ -151,7 +151,9 @@ class MemoryEvolutionDerivedMixin:
                 if not _privacy_allowed(actual_privacy, requested_privacy):
                     raise ValueError("source_privacy_mismatch")
 
-    async def active_relations_for_seeds(self, seed_ids: Iterable[int], scope_key: str | None = None, limit: int = 100) -> list[RelationView]:
+    async def active_relations_for_seeds(
+        self, seed_ids: Iterable[int], scope_key: str | None = None, limit: int = 100
+    ) -> list[RelationView]:
         ids = tuple(seed_ids)
         if not ids:
             return []
@@ -163,11 +165,17 @@ class MemoryEvolutionDerivedMixin:
         )
         params.append(DerivedState.ACTIVE.value)
         if scope_key:
-            clause += " AND scope_key=?"; params.append(scope_key)
-        rows = await self._fetch_all(f"SELECT * FROM memory_relations WHERE {clause} ORDER BY confidence DESC LIMIT ?", (*params, limit))
+            clause += " AND scope_key=?"
+            params.append(scope_key)
+        rows = await self._fetch_all(
+            f"SELECT * FROM memory_relations WHERE {clause} ORDER BY confidence DESC LIMIT ?",
+            (*params, limit),
+        )
         return [_relation(r) for r in rows]
 
-    async def active_projections_for_seeds(self, seed_ids: Iterable[int], scope_key: str | None = None, limit: int = 100) -> list[ProjectionView]:
+    async def active_projections_for_seeds(
+        self, seed_ids: Iterable[int], scope_key: str | None = None, limit: int = 100
+    ) -> list[ProjectionView]:
         bundles = await self.active_projection_bundles_for_seeds(
             seed_ids,
             scope_key=scope_key,
@@ -260,7 +268,9 @@ class MemoryEvolutionDerivedMixin:
         return bundles
 
     @_serialized_write
-    async def invalidate_for_source_revision(self, memory_id: int, revision_token: str) -> int:
+    async def invalidate_for_source_revision(
+        self, memory_id: int, revision_token: str
+    ) -> int:
         if not self.connection:
             raise RuntimeError("MemoryEvolutionStore 未初始化 -- 先调用 initialize()")
         now = _dt(datetime.now(timezone.utc))
@@ -593,7 +603,9 @@ class MemoryEvolutionDerivedMixin:
             )
             mappings_by_projection: dict[str, list[dict]] = {}
             for row in mapping_rows:
-                mappings_by_projection.setdefault(str(row["projection_id"]), []).append(row)
+                mappings_by_projection.setdefault(str(row["projection_id"]), []).append(
+                    row
+                )
             removed_mapping_count = 0
             for projection in projection_rows:
                 projection_id = str(projection["projection_id"])

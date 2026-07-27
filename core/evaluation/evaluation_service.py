@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import hashlib
+import inspect
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from .report_store import EvaluationReportStore
-from .retrieval_ablation import RETRIEVAL_VARIANT_NAMES, PreparedVariant, RetrievalAblationController
+from .retrieval_ablation import (
+    RETRIEVAL_VARIANT_NAMES,
+    PreparedVariant,
+    RetrievalAblationController,
+)
 from .retrieval_quality import (
     EvaluationCase,
     EvaluationReport,
@@ -19,7 +23,6 @@ from .retrieval_quality import (
     load_fixture_dir,
     make_memory_engine_retriever,
 )
-
 
 _SUPPORTED_VARIANTS = frozenset(RETRIEVAL_VARIANT_NAMES)
 _METRICS = ("recall_at_k", "mrr", "ndcg_at_k", "p95_latency_ms")
@@ -257,11 +260,7 @@ class EvaluationService:
             available[str(name)] = list(cases)
         if not requested:
             return available
-        selected = {
-            name: available[name]
-            for name in requested
-            if name in available
-        }
+        selected = {name: available[name] for name in requested if name in available}
         return selected
 
     @staticmethod
@@ -405,7 +404,10 @@ class EvaluationService:
         redacted: dict[str, Any] = {}
         for key, value in config.items():
             key_text = str(key)
-            if any(token in key_text.lower() for token in ("key", "token", "secret", "password")):
+            if any(
+                token in key_text.lower()
+                for token in ("key", "token", "secret", "password")
+            ):
                 redacted[key_text] = "<已隐藏>"
             elif isinstance(value, Mapping):
                 redacted[key_text] = cls._redact_config(value)
@@ -446,7 +448,9 @@ class EvaluationService:
         return deltas
 
     @staticmethod
-    def _metric_value(report_or_summary: Mapping[str, Any], metric: str) -> float | None:
+    def _metric_value(
+        report_or_summary: Mapping[str, Any], metric: str
+    ) -> float | None:
         """将可选指标安全转换为浮点数。"""
 
         value = report_or_summary.get(metric)

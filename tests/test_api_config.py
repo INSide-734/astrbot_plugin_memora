@@ -78,7 +78,9 @@ def _make_api(
         get_all_embedding_providers=lambda: list(embedding_providers or []),
     )
     plugin = SimpleNamespace(
-        astrbot_config=_SchemaConfig(schema if schema is not None else {"field": {"type": "string"}}),
+        astrbot_config=_SchemaConfig(
+            schema if schema is not None else {"field": {"type": "string"}}
+        ),
         config_manager=config_manager or MagicMock(),
         context=context,
         instance_id="instance-123",
@@ -93,7 +95,9 @@ def _make_api(
 
 class TestConfigSchemaApi:
     @pytest.mark.asyncio
-    async def test_preserves_schema_metadata_and_returns_deeply_isolated_copy(self) -> None:
+    async def test_preserves_schema_metadata_and_returns_deeply_isolated_copy(
+        self,
+    ) -> None:
         schema = {
             "provider_settings": {
                 "type": "object",
@@ -137,9 +141,9 @@ class TestConfigSchemaApi:
             == 3
         )
         assert (
-            second["data"]["schema"]["provider_settings"]["items"][
-                "llm_provider_id"
-            ]["custom_ui"]["order"]
+            second["data"]["schema"]["provider_settings"]["items"]["llm_provider_id"][
+                "custom_ui"
+            ]["order"]
             == 3
         )
 
@@ -156,9 +160,7 @@ class TestConfigSchemaApi:
 
         assert result["data"]["provider_options"] == {
             "llm": [{"id": "llm-primary", "label": "gpt-5"}],
-            "embedding": [
-                {"id": "embed-primary", "label": "text-embedding-3-large"}
-            ],
+            "embedding": [{"id": "embed-primary", "label": "text-embedding-3-large"}],
         }
 
     @pytest.mark.asyncio
@@ -206,7 +208,9 @@ class TestConfigSchemaApi:
         plugin._ensure_plugin_ready.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_uses_plugin_schema_when_host_config_has_no_schema_attribute(self) -> None:
+    async def test_uses_plugin_schema_when_host_config_has_no_schema_attribute(
+        self,
+    ) -> None:
         api, plugin = _make_api()
         plugin.astrbot_config = {"bot_language": "zh"}
 
@@ -275,7 +279,9 @@ class TestConfigStateApi:
         }
 
     @pytest.mark.asyncio
-    async def test_reconciles_external_source_change_before_returning_state(self) -> None:
+    async def test_reconciles_external_source_change_before_returning_state(
+        self,
+    ) -> None:
         from core.base.config_manager import ConfigManager
 
         source = {"recall_engine": {"top_k": 5}}
@@ -404,7 +410,9 @@ class TestConfigApplyApi:
             side_effect=ConfigConflictError("rev-old", "rev-current")
         )
         api, _ = _make_api(
-            request=_Request(body={"base_revision": "rev-old", "changes": {"debug": True}}),
+            request=_Request(
+                body={"base_revision": "rev-old", "changes": {"debug": True}}
+            ),
             config_manager=manager,
         )
 
@@ -433,9 +441,7 @@ class TestConfigApplyApi:
             request=_Request(
                 body={
                     "base_revision": "rev-1",
-                    "changes": {
-                        "recall_engine.injection_decision_retention_days": 13
-                    },
+                    "changes": {"recall_engine.injection_decision_retention_days": 13},
                 }
             ),
             config_manager=manager,
@@ -467,7 +473,9 @@ class TestConfigApplyApi:
             side_effect=ConfigPersistenceError("disk write failed")
         )
         api, plugin = _make_api(
-            request=_Request(body={"base_revision": "rev-1", "changes": {"debug": True}}),
+            request=_Request(
+                body={"base_revision": "rev-1", "changes": {"debug": True}}
+            ),
             config_manager=manager,
         )
         recorder = MagicMock()
@@ -501,9 +509,7 @@ class TestConfigApplyApi:
             "recall_engine.injection_decision_max_rows": 200_000,
         }.get(path, default)
         api, plugin = _make_api(
-            request=_Request(
-                body={"base_revision": "rev-old", "changes": changes}
-            ),
+            request=_Request(body={"base_revision": "rev-old", "changes": changes}),
             config_manager=manager,
         )
         recorder = MagicMock()
@@ -544,7 +550,9 @@ class TestConfigApplyApi:
         recorder.schedule_cleanup.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_success_applies_exact_transaction_and_never_logs_values(self) -> None:
+    async def test_success_applies_exact_transaction_and_never_logs_values(
+        self,
+    ) -> None:
         secret_value = "never-log-this-secret"
         changes = {
             "provider_settings.llm_provider_id": secret_value,
@@ -596,7 +604,9 @@ class TestConfigApplyApi:
             return_value=ConfigApplyResult("rev-new", ("debug",))
         )
         api, _ = _make_api(
-            request=_Request(body={"base_revision": "rev-old", "changes": {"debug": True}}),
+            request=_Request(
+                body={"base_revision": "rev-old", "changes": {"debug": True}}
+            ),
             config_manager=manager,
             hot_reload=False,
         )
@@ -630,9 +640,10 @@ class TestConfigApplyApi:
         plugin.initializer = SimpleNamespace(data_dir=str(tmp_path))
         plugin.context.get_config = lambda: {"timezone": "Asia/Shanghai"}
 
-        with patch("core.api.config_api.set_debug_mode") as set_debug_mode, patch(
-            "core.api.config_api.report_debug_event"
-        ) as report_debug_event:
+        with (
+            patch("core.api.config_api.set_debug_mode") as set_debug_mode,
+            patch("core.api.config_api.report_debug_event") as report_debug_event,
+        ):
             result = await api.apply_config()
 
         assert result["status"] == "ok"

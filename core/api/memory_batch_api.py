@@ -2,9 +2,8 @@
 
 from typing import Any
 
-from quart import request
-
 from astrbot.api import logger
+from quart import request
 
 
 def _coerce_importance_value(raw_value: Any) -> float:
@@ -50,9 +49,7 @@ class MemoryBatchApiMixin:
             deleted_count = MemoryBatchApiMixin._safe_int(
                 result.get("deleted_count", 0)
             )
-            failed_ids = MemoryBatchApiMixin._safe_list(
-                result.get("failed_ids", [])
-            )
+            failed_ids = MemoryBatchApiMixin._safe_list(result.get("failed_ids", []))
             not_found_ids = MemoryBatchApiMixin._safe_list(
                 result.get("not_found_ids", [])
             )
@@ -69,7 +66,9 @@ class MemoryBatchApiMixin:
             "errors": [],
         }
 
-    async def _delete_valid_memory_ids(self, memory_engine, valid_ids: list[int]) -> dict:
+    async def _delete_valid_memory_ids(
+        self, memory_engine, valid_ids: list[int]
+    ) -> dict:
         if not valid_ids:
             return self._normalize_delete_result(0)
         detailed_delete = getattr(memory_engine, "batch_delete_memories_detailed", None)

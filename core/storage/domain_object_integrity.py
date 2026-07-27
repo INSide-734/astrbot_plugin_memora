@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from copy import copy
+from datetime import datetime, timezone
 from typing import Any, Iterable, TypeVar
 
 import aiosqlite
@@ -87,9 +87,7 @@ async def filter_current_domain_objects(
             continue
         if len(valid_sources) != len(provenance.sources):
             valid_sources = tuple(
-                source
-                if source.source_role == "primary"
-                else source
+                source if source.source_role == "primary" else source
                 for source in valid_sources
             )
             refreshed = copy(item)

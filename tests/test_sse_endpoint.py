@@ -11,7 +11,11 @@ class TestSSEEndpoint:
     def test_event_payload_format(self) -> None:
         """Published events must have event, data, ts fields."""
         payload = json.dumps(
-            {"event": "memory_created", "data": {"doc_id": 42, "content": "test"}, "ts": time.time()},
+            {
+                "event": "memory_created",
+                "data": {"doc_id": 42, "content": "test"},
+                "ts": time.time(),
+            },
             ensure_ascii=False,
             default=str,
         )

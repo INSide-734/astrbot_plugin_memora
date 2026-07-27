@@ -119,9 +119,7 @@ class JargonQueryService:
             self._cache.set(cache_key, formatted)
             return formatted
 
-    async def check_and_explain(
-        self, text: str, group_id: str
-    ) -> str | None:
+    async def check_and_explain(self, text: str, group_id: str) -> str | None:
         """检查文本中的黑话并返回解释文本。
 
         该方法检查给定文本中是否包含群组黑话并生成解释，
@@ -153,9 +151,7 @@ class JargonQueryService:
                 return cached
 
             # 获取群组所有已确认黑话
-            all_jargon = await self._store.list_by_group(
-                group_id, confirmed_only=True
-            )
+            all_jargon = await self._store.list_by_group(group_id, confirmed_only=True)
 
             # 只保留 is_jargon=True 的条目
             jargon_entries = [j for j in all_jargon if j.is_jargon]
@@ -201,9 +197,7 @@ class JargonQueryService:
                 if cached is not None:
                     return cached
 
-            results = await self._store.list_by_group(
-                group_id, confirmed_only=True
-            )
+            results = await self._store.list_by_group(group_id, confirmed_only=True)
             formatted = [self._meaning_to_dict(m) for m in results]
 
             self._cache.set(cache_key, formatted)
@@ -260,7 +254,6 @@ class JargonQueryService:
         if not text or not entries:
             return []
 
-        text_lower = text.lower()
         matched: dict[str, JargonMeaning] = {}  # term -> JargonMeaning（去重）
 
         # 按 term 长度降序排序，避免短词先匹配

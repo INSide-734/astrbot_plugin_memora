@@ -135,7 +135,9 @@ class AblationReport:
             recall_at_k=round(float(recall_at_k), 4),
             mrr=round(float(mrr), 4),
             ndcg_at_k=round(float(ndcg_at_k), 4),
-            p95_latency_ms=None if p95_latency_ms is None else round(float(p95_latency_ms), 4),
+            p95_latency_ms=None
+            if p95_latency_ms is None
+            else round(float(p95_latency_ms), 4),
         )
 
     @classmethod
@@ -234,15 +236,21 @@ def load_jsonl_cases(path: str | Path) -> list[EvaluationCase]:
     """从 JSONL 文件加载检索评测样本。"""
     file_path = Path(path)
     cases: list[EvaluationCase] = []
-    for line_number, line in enumerate(file_path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, line in enumerate(
+        file_path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
         try:
             payload = json.loads(stripped)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid JSONL at {file_path}:{line_number}: {exc}") from exc
-        cases.append(_case_from_payload(payload, file_path=file_path, line_number=line_number))
+            raise ValueError(
+                f"Invalid JSONL at {file_path}:{line_number}: {exc}"
+            ) from exc
+        cases.append(
+            _case_from_payload(payload, file_path=file_path, line_number=line_number)
+        )
     return cases
 
 
@@ -451,7 +459,9 @@ def _normalize_doc_id(value: Any) -> str:
 
 
 def _normalize_doc_id_set(values: Iterable[Any]) -> set[str]:
-    return {doc_id for doc_id in (_normalize_doc_id(value) for value in values) if doc_id}
+    return {
+        doc_id for doc_id in (_normalize_doc_id(value) for value in values) if doc_id
+    }
 
 
 def _optional_string(value: Any) -> str | None:
@@ -518,7 +528,9 @@ def _latency_from_case(case: EvaluationCase, measured_latency_ms: float) -> floa
     return max(latency, 0.0)
 
 
-def _score_case(case: EvaluationCase, ranked_doc_ids: Sequence[str], *, k: int) -> dict[str, float]:
+def _score_case(
+    case: EvaluationCase, ranked_doc_ids: Sequence[str], *, k: int
+) -> dict[str, float]:
     if case.metadata.get("expected_no_hit") is True:
         score = 1.0 if not ranked_doc_ids[:k] else 0.0
         return {
@@ -554,7 +566,9 @@ def _advanced_case_metrics(
     top_k = [_normalize_doc_id(item) for item in ranked_doc_ids[:k]]
     ranked = set(top_k)
     hit = recall_at_k(top_k, case.relevant_doc_ids, k=k)
-    group = str(metadata.get("evaluation_group") or metadata.get("scenario") or "").lower()
+    group = str(
+        metadata.get("evaluation_group") or metadata.get("scenario") or ""
+    ).lower()
     metrics: dict[str, float] = {}
     if group in {"multi_hop", "多跳"} or metadata.get("requires_relation") is True:
         metrics["multi_hop_recall"] = hit
@@ -580,7 +594,9 @@ def _advanced_case_metrics(
     elif temporal_ids:
         metrics["temporal_consistency"] = 1.0 if ranked & temporal_ids else 0.0
     elif "temporal_consistency" in metadata:
-        metrics["temporal_consistency"] = _bounded_metric(metadata["temporal_consistency"])
+        metrics["temporal_consistency"] = _bounded_metric(
+            metadata["temporal_consistency"]
+        )
 
     conflict_expected = _normalize_doc_id_set(
         metadata.get("conflict_expected_doc_ids", [])
@@ -593,11 +609,13 @@ def _advanced_case_metrics(
     elif "conflict_accuracy" in metadata:
         metrics["conflict_accuracy"] = _bounded_metric(metadata["conflict_accuracy"])
 
-    projection_sources = _normalize_doc_id_set(metadata.get("projection_source_ids", []))
+    projection_sources = _normalize_doc_id_set(
+        metadata.get("projection_source_ids", [])
+    )
     if projection_sources:
-        metrics["source_supported_projection_rate"] = (
-            len(projection_sources & ranked) / len(projection_sources)
-        )
+        metrics["source_supported_projection_rate"] = len(
+            projection_sources & ranked
+        ) / len(projection_sources)
     elif "source_supported_projection_rate" in metadata:
         metrics["source_supported_projection_rate"] = _bounded_metric(
             metadata["source_supported_projection_rate"]
@@ -613,7 +631,9 @@ def _advanced_case_metrics(
     return {key: round(value, 4) for key, value in metrics.items()}
 
 
-def _aggregate_advanced_metrics(results: Sequence[EvaluationResult]) -> dict[str, float]:
+def _aggregate_advanced_metrics(
+    results: Sequence[EvaluationResult],
+) -> dict[str, float]:
     names = (
         "multi_hop_recall",
         "single_hop_recall",
@@ -698,8 +718,7 @@ def _percentile(values: Sequence[float], p: float) -> float | None:
     if lower == upper:
         return round(sorted_values[int(index)], 4)
     return round(
-        sorted_values[lower] * (upper - index)
-        + sorted_values[upper] * (index - lower),
+        sorted_values[lower] * (upper - index) + sorted_values[upper] * (index - lower),
         4,
     )
 
@@ -713,7 +732,9 @@ def _nullable_delta(
     return round(float(variant) - float(baseline), 4)
 
 
-def _dataset_breakdown(results: Sequence[EvaluationResult]) -> dict[str, dict[str, float | int]]:
+def _dataset_breakdown(
+    results: Sequence[EvaluationResult],
+) -> dict[str, dict[str, float | int]]:
     grouped: dict[str, list[EvaluationResult]] = defaultdict(list)
     for result in results:
         dataset = str(result.metadata.get("dataset") or "default")
@@ -726,6 +747,7 @@ def _dataset_breakdown(results: Sequence[EvaluationResult]) -> dict[str, dict[st
             "recall_at_k": _mean(item.recall_at_k for item in items),
             "mrr": _mean(item.reciprocal_rank for item in items),
             "ndcg_at_k": _mean(item.ndcg_at_k for item in items),
-            "p95_latency_ms": _percentile([item.latency_ms for item in items], 95) or 0.0,
+            "p95_latency_ms": _percentile([item.latency_ms for item in items], 95)
+            or 0.0,
         }
     return breakdown

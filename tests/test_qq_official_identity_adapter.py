@@ -15,7 +15,6 @@ from core.identity import (
     QQOfficialIdentityAdapter,
 )
 
-
 _OPENID = "00A1B2C3D4E5F60718293A4B5C6D7E8F"
 _OTHER_OPENID = "11A1B2C3D4E5F60718293A4B5C6D7E8F"
 _PLATFORM_ID = "official-bot-1"

@@ -143,9 +143,7 @@ async def test_derived_tag_does_not_replace_manual_authority(tmp_path) -> None:
     assert profile is not None
     assert profile.tags[0].confidence == 0.9
     assert profile.tags[0].source == "manual"
-    assert profile.tags[0].provenance == DomainProvenance(
-        DomainObjectOrigin.MANUAL
-    )
+    assert profile.tags[0].provenance == DomainProvenance(DomainObjectOrigin.MANUAL)
 
 
 @pytest.mark.asyncio
@@ -217,12 +215,8 @@ async def test_manual_profile_fields_receive_manual_origin(tmp_path) -> None:
         ],
     )
 
-    assert profile.preferences.provenance == DomainProvenance(
-        DomainObjectOrigin.MANUAL
-    )
-    assert profile.tags[0].provenance == DomainProvenance(
-        DomainObjectOrigin.MANUAL
-    )
+    assert profile.preferences.provenance == DomainProvenance(DomainObjectOrigin.MANUAL)
+    assert profile.tags[0].provenance == DomainProvenance(DomainObjectOrigin.MANUAL)
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 """测试 RRFFusion — k parameter and score normalization."""
 
 import pytest
+
 from core.retrieval.rrf_fusion import BM25Result, FusedResult, RRFFusion, VectorResult
 
 
@@ -13,7 +14,6 @@ def _vec(doc_id: int, score: float, content: str = "") -> VectorResult:
 
 
 class TestRRFFusion:
-
     @pytest.fixture
     def fusion(self):
         return RRFFusion(k=60)

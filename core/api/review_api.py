@@ -9,14 +9,12 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
-from quart import request
-
 from astrbot.api import logger
+from quart import request
 
 from ..review import ReviewAction, ReviewDetector, ReviewStore
 from ..review.models import ReviewStatus
 from ..storage.base import apply_perf_pragmas
-
 
 _ACTION_STATUS = {
     "approve": ReviewStatus.APPROVED.value,
@@ -83,7 +81,9 @@ class ReviewApiMixin:
         if error:
             return error
         try:
-            limit = min(500, max(1, self._safe_int(request.args.get("limit", 200), 200)))
+            limit = min(
+                500, max(1, self._safe_int(request.args.get("limit", 200), 200))
+            )
             memory_engine = ready["memory_engine"]
             memories = await self._load_review_candidate_memories(memory_engine, limit)
             quality_stats = self._load_review_quality_stats()
@@ -138,7 +138,9 @@ class ReviewApiMixin:
             if action == "delete" and payload.get("confirmed") is not True:
                 return self._error("confirmation_required")
         except Exception as exc:
-            logger.error("[ReviewAPI] action request parse failed: %s", exc, exc_info=True)
+            logger.error(
+                "[ReviewAPI] action request parse failed: %s", exc, exc_info=True
+            )
             return self._error(str(exc))
 
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
@@ -230,7 +232,9 @@ class ReviewApiMixin:
         before = await self._get_engine_memory(memory_engine, memory_id)
         before_content = self._memory_content(before)
 
-        result = await self._update_memory_content(memory_engine, memory_id, new_content)
+        result = await self._update_memory_content(
+            memory_engine, memory_id, new_content
+        )
         if result is False:
             raise ValueError("memory update failed")
         replacement = await self._detect_replacement_memory_id(
@@ -309,11 +313,17 @@ class ReviewApiMixin:
             "target_memory_id": target_memory_id,
         }
         if replacement_target_memory_id is not None:
-            action_payload["replacement_target_memory_id"] = str(replacement_target_memory_id)
+            action_payload["replacement_target_memory_id"] = str(
+                replacement_target_memory_id
+            )
             response_payload["replacement_target_memory_id"] = str(
                 replacement_target_memory_id
             )
-        elif source_content and source_content not in target_content and self._content_update_may_replace(memory_engine):
+        elif (
+            source_content
+            and source_content not in target_content
+            and self._content_update_may_replace(memory_engine)
+        ):
             action_payload["replacement_target_unknown"] = True
             response_payload["replacement_target_unknown"] = True
         return {
@@ -334,7 +344,9 @@ class ReviewApiMixin:
             if inspect.isawaitable(result):
                 result = await result
             return result
-        return await self._update_memory(memory_engine, memory_id, {"content": new_content})
+        return await self._update_memory(
+            memory_engine, memory_id, {"content": new_content}
+        )
 
     async def _detect_replacement_memory_id(
         self,
@@ -355,7 +367,9 @@ class ReviewApiMixin:
             return from_list
         db_path = getattr(memory_engine, "db_path", None)
         if db_path:
-            return await self._find_replacement_in_db(db_path, old_memory_id, new_content)
+            return await self._find_replacement_in_db(
+                db_path, old_memory_id, new_content
+            )
         return None
 
     async def _find_replacement_in_engine_lists(
@@ -378,9 +392,13 @@ class ReviewApiMixin:
             values = getattr(memory_engine, "memories", None)
             if isinstance(values, Mapping):
                 memories = list(values.values())
-            elif isinstance(values, Sequence) and not isinstance(values, str | bytes | bytearray):
+            elif isinstance(values, Sequence) and not isinstance(
+                values, str | bytes | bytearray
+            ):
                 memories = list(values)
-        return self._find_replacement_in_memory_items(memories, old_memory_id, new_content)
+        return self._find_replacement_in_memory_items(
+            memories, old_memory_id, new_content
+        )
 
     async def _find_replacement_in_db(
         self,
@@ -585,7 +603,9 @@ class ReviewApiMixin:
     def _extract_memory_sequence(result: Any) -> list[Any]:
         if isinstance(result, Mapping):
             result = result.get("items") or result.get("memories") or []
-        if isinstance(result, Sequence) and not isinstance(result, str | bytes | bytearray):
+        if isinstance(result, Sequence) and not isinstance(
+            result, str | bytes | bytearray
+        ):
             return list(result)
         return []
 
@@ -635,7 +655,11 @@ class ReviewApiMixin:
 
     @staticmethod
     def _memory_metadata(memory: Any) -> dict[str, Any] | None:
-        metadata = memory.get("metadata") if isinstance(memory, Mapping) else getattr(memory, "metadata", None)
+        metadata = (
+            memory.get("metadata")
+            if isinstance(memory, Mapping)
+            else getattr(memory, "metadata", None)
+        )
         if isinstance(metadata, str):
             try:
                 metadata = json.loads(metadata)
@@ -645,7 +669,11 @@ class ReviewApiMixin:
 
     @staticmethod
     def _memory_importance(memory: Any, metadata: Mapping[str, Any]) -> float:
-        raw = memory.get("importance") if isinstance(memory, Mapping) else getattr(memory, "importance", None)
+        raw = (
+            memory.get("importance")
+            if isinstance(memory, Mapping)
+            else getattr(memory, "importance", None)
+        )
         if raw is None:
             raw = metadata.get("importance", 0.5)
         try:

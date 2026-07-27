@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.page_api import PAGE_API_PREFIX, PluginPageApi
-from core.review import ReviewAction, ReviewItem, ReviewReason, ReviewSeverity, ReviewStore
+from core.review import (
+    ReviewAction,
+    ReviewItem,
+    ReviewReason,
+    ReviewSeverity,
+)
 
 
 def _mock_request(**args):
@@ -125,11 +130,13 @@ class ReplacementMemoryEngine(FakeMemoryEngine):
         was_forbidden = self.direct_add_forbidden
         self.direct_add_forbidden = False
         try:
-            new_id = await self.add_memory(
+            await self.add_memory(
                 content=new_content,
                 session_id=metadata.get("session_id"),
                 persona_id=metadata.get("persona_id"),
-                importance=float(memory.get("importance", metadata.get("importance", 0.5))),
+                importance=float(
+                    memory.get("importance", metadata.get("importance", 0.5))
+                ),
                 metadata=metadata,
             )
         finally:
@@ -415,11 +422,13 @@ async def test_mark_safe_pages_through_open_review_items(tmp_path) -> None:
 
     assert result["status"] == "ok"
     assert cursors_seen == [None, "rev-safe-anchor", "rev-safe-page-two"]
-    assert (await original_list_items(status="safe", reason="duplicate", limit=10))
+    assert await original_list_items(status="safe", reason="duplicate", limit=10)
 
 
 @pytest.mark.asyncio
-async def test_edit_replaces_memory_when_engine_exposes_add_and_delete(tmp_path) -> None:
+async def test_edit_replaces_memory_when_engine_exposes_add_and_delete(
+    tmp_path,
+) -> None:
     api, engine = _api_with_store(tmp_path, ReplacementMemoryEngine())
     engine.direct_add_forbidden = True
     store = await api._get_review_store()
@@ -485,9 +494,14 @@ async def test_merge_replaces_target_and_archives_source_with_replacement_engine
     assert result["data"]["memory_id"] == "2"
     assert result["data"]["replacement_target_memory_id"] == "10"
     assert "3" not in engine.memories
-    assert engine.memories["10"]["content"] == "old maybe useful fact\nsame durable fact"
+    assert (
+        engine.memories["10"]["content"] == "old maybe useful fact\nsame durable fact"
+    )
     assert engine.memories["2"]["metadata"]["status"] == "archived"
-    assert ("3", {"content": "old maybe useful fact\nsame durable fact"}) in engine.update_calls
+    assert (
+        "3",
+        {"content": "old maybe useful fact\nsame durable fact"},
+    ) in engine.update_calls
     assert ("2", {"metadata": {"status": "archived"}}) in engine.update_calls
     actions = await store.list_actions("rev-merge-replace")
     assert actions[-1]["payload"]["source_memory_id"] == "2"

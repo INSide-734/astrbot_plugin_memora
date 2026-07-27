@@ -146,8 +146,8 @@ class ReflectionTrigger:
             return None
 
         # sessions 表的计数可能延迟，窗口边界始终以 messages 表实际行数为准。
-        actual_message_count = (
-            await self._conversation_manager.store.get_message_count(session_id)
+        actual_message_count = await self._conversation_manager.store.get_message_count(
+            session_id
         )
         if session_info.message_count != actual_message_count:
             logger.warning(
@@ -160,12 +160,10 @@ class ReflectionTrigger:
         trigger_rounds = self._config_manager.get(
             "reflection_engine.summary_trigger_rounds", 10
         )
-        last_summarized_index = (
-            await self._conversation_manager.get_session_metadata(
-                session_id,
-                "last_summarized_index",
-                0,
-            )
+        last_summarized_index = await self._conversation_manager.get_session_metadata(
+            session_id,
+            "last_summarized_index",
+            0,
         )
 
         if last_summarized_index > total_messages:

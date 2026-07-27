@@ -24,7 +24,6 @@ from astrbot.api import logger
 from ..utils.number_utils import clamp_float, safe_float
 from .decay_operations import _normalize_batch_metadata
 
-
 _TREND_DAYS = 90
 _MILLISECOND_TIMESTAMP_THRESHOLD = 100_000_000_000
 
@@ -318,7 +317,9 @@ class StatsOperationsMixin:
                     )
 
             await self._db.commit()
-            checkpoint_cursor = await self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            checkpoint_cursor = await self._db.execute(
+                "PRAGMA wal_checkpoint(TRUNCATE)"
+            )
             checkpoint_row = await checkpoint_cursor.fetchone()
             await _close_cursor(checkpoint_cursor)
             checkpoint = {

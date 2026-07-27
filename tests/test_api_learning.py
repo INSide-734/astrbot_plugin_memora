@@ -28,7 +28,9 @@ def _make_mixin(*, auto_learning_available: bool = True, plugin_ready: bool = Tr
             engine = MagicMock(spec=[])
             if auto_learning_available:
                 optimizer = MagicMock()
-                optimizer.get_history.return_value = [{"param": "alpha", "old": 0.1, "new": 0.2}]
+                optimizer.get_history.return_value = [
+                    {"param": "alpha", "old": 0.1, "new": 0.2}
+                ]
                 auto_learning = MagicMock()
                 auto_learning.get_stats.return_value = {
                     "enabled": True,
@@ -39,7 +41,9 @@ def _make_mixin(*, auto_learning_available: bool = True, plugin_ready: bool = Tr
                         "total_corrections": 1,
                     },
                     "params": {"alpha": 0.2},
-                    "history": [{"timestamp": "t1", "param": "alpha", "old": 0.1, "new": 0.2}],
+                    "history": [
+                        {"timestamp": "t1", "param": "alpha", "old": 0.1, "new": 0.2}
+                    ],
                 }
                 auto_learning._optimizer = optimizer
                 auto_learning.reset = AsyncMock()
@@ -68,7 +72,9 @@ class TestLearningValidation:
     async def test_get_learning_history_requires_auto_learning(self) -> None:
         req = _mock_request()
         with patch("core.api.learning_api.request", req):
-            result = await _make_mixin(auto_learning_available=False).get_learning_history()
+            result = await _make_mixin(
+                auto_learning_available=False
+            ).get_learning_history()
         assert result["status"] == "error"
 
 
@@ -139,7 +145,9 @@ class TestLearningHappyPath:
         assert result["data"]["enabled"] is True
 
     @pytest.mark.asyncio
-    async def test_get_learning_status_tolerates_non_mapping_stats_payload(self) -> None:
+    async def test_get_learning_status_tolerates_non_mapping_stats_payload(
+        self,
+    ) -> None:
         req = _mock_request()
         with patch("core.api.learning_api.request", req):
             mixin = _make_mixin()
@@ -223,7 +231,9 @@ class TestLearningHappyPath:
         assert result["data"]["history"] == [{"param": "alpha", "old": 0.1, "new": 0.2}]
 
     @pytest.mark.asyncio
-    async def test_get_learning_history_tolerates_non_list_history_payload(self) -> None:
+    async def test_get_learning_history_tolerates_non_list_history_payload(
+        self,
+    ) -> None:
         req = _mock_request(limit="5")
         with patch("core.api.learning_api.request", req):
             mixin = _make_mixin()

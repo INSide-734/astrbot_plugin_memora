@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -70,7 +69,11 @@ class DerivedMetadataSourceRef:
     def __post_init__(self) -> None:
         """校验 source identity、可见性边界和固定版本字段。"""
 
-        if isinstance(self.memory_id, bool) or not isinstance(self.memory_id, int) or self.memory_id <= 0:
+        if (
+            isinstance(self.memory_id, bool)
+            or not isinstance(self.memory_id, int)
+            or self.memory_id <= 0
+        ):
             raise ValueError("source_memory_id_invalid")
         for value, reason in (
             (self.revision_token, "source_revision_invalid"),
@@ -165,16 +168,33 @@ def validate_derived_metadata_proposal(
     normalized: dict[str, tuple[str, ...]] = {}
     try:
         for field_name, values, item_limit, char_limit in (
-            ("keywords", candidate.keywords, active_budget.max_keywords, active_budget.max_item_chars),
-            ("topic_tags", candidate.topic_tags, active_budget.max_topic_tags, active_budget.max_topic_chars),
+            (
+                "keywords",
+                candidate.keywords,
+                active_budget.max_keywords,
+                active_budget.max_item_chars,
+            ),
+            (
+                "topic_tags",
+                candidate.topic_tags,
+                active_budget.max_topic_tags,
+                active_budget.max_topic_chars,
+            ),
         ):
             if not isinstance(values, (tuple, list)):
-                return DerivedMetadataValidationResult(False, "annotation_schema_rejected")
+                return DerivedMetadataValidationResult(
+                    False, "annotation_schema_rejected"
+                )
             if len(values) > item_limit:
-                return DerivedMetadataValidationResult(False, "annotation_budget_rejected")
+                return DerivedMetadataValidationResult(
+                    False, "annotation_budget_rejected"
+                )
             normalized[field_name] = _normalize_terms(values, char_limit)
         labels = candidate.context_labels
-        if not isinstance(labels, (tuple, list)) or len(labels) > active_budget.max_context_labels:
+        if (
+            not isinstance(labels, (tuple, list))
+            or len(labels) > active_budget.max_context_labels
+        ):
             return DerivedMetadataValidationResult(False, "annotation_budget_rejected")
         normalized["context_labels"] = _normalize_labels(labels)
     except _PromptLikeValue:
@@ -191,7 +211,9 @@ def validate_derived_metadata_proposal(
         "topic_tags": normalized["topic_tags"],
         "context_labels": normalized["context_labels"],
     }
-    json_bytes = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    json_bytes = len(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
     if (
         total_items > active_budget.max_total_items
         or total_chars > active_budget.max_total_chars
@@ -247,7 +269,9 @@ def _coerce_proposal(
     )
 
 
-def _normalize_terms(values: tuple[str, ...] | list[str], item_limit: int) -> tuple[str, ...]:
+def _normalize_terms(
+    values: tuple[str, ...] | list[str], item_limit: int
+) -> tuple[str, ...]:
     """规范化词法字段并按跨字段比较键稳定去重。"""
 
     result: list[str] = []
@@ -283,7 +307,10 @@ def _normalize_value(value: Any, max_chars: int) -> str:
 
     if not isinstance(value, str):
         raise TypeError("metadata_value_type_invalid")
-    if any(unicodedata.category(char).startswith("C") or char in _BIDI_CONTROLS for char in value):
+    if any(
+        unicodedata.category(char).startswith("C") or char in _BIDI_CONTROLS
+        for char in value
+    ):
         raise _PromptLikeValue("metadata_control_character")
     normalized = " ".join(unicodedata.normalize("NFKC", value).split())
     if not normalized or len(normalized) > max_chars:

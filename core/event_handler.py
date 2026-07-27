@@ -34,6 +34,7 @@ from .utils.injection_adapter import InjectionAdapter
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import LLMResponse, ProviderRequest
+
     from .injection.recorder import InjectionDecisionRecorder
 
 
@@ -406,9 +407,7 @@ class EventHandler:
                 stage="event_handler",
                 status="cancelled",
                 reason_code="event_handler_shutdown_cancelled",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - shutdown_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - shutdown_started) * 1000.0),
                 queue_depth=len(self._maintenance_tasks),
             )
             raise
@@ -420,9 +419,7 @@ class EventHandler:
                 stage="event_handler",
                 status="failed",
                 reason_code="event_handler_shutdown_error",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - shutdown_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - shutdown_started) * 1000.0),
                 queue_depth=len(self._maintenance_tasks),
             )
             raise
@@ -434,9 +431,7 @@ class EventHandler:
             stage="event_handler",
             status="completed",
             reason_code="event_handler_closed",
-            duration_ms=max(
-                0.0, (time.perf_counter() - shutdown_started) * 1000.0
-            ),
+            duration_ms=max(0.0, (time.perf_counter() - shutdown_started) * 1000.0),
             queue_depth=0,
             count=queue_depth,
         )

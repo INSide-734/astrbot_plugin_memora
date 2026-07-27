@@ -20,16 +20,19 @@ def _mock_request(**args):
     return mock
 
 
-def _make_mixin(*, store_available: bool = True,
-                notes_list: list | None = None,
-                notes_total: int = 0,
-                search_notes: list | None = None,
-                search_total: int = 0,
-                detail_note: Note | None = None,
-                versions_list: list | None = None,
-                create_id: int = 1,
-                delete_result: bool = True,
-                manager_available: bool = False):
+def _make_mixin(
+    *,
+    store_available: bool = True,
+    notes_list: list | None = None,
+    notes_total: int = 0,
+    search_notes: list | None = None,
+    search_total: int = 0,
+    detail_note: Note | None = None,
+    versions_list: list | None = None,
+    create_id: int = 1,
+    delete_result: bool = True,
+    manager_available: bool = False,
+):
     """Create a NoteApiMixin stub."""
 
     class Stub:
@@ -51,19 +54,24 @@ def _make_mixin(*, store_available: bool = True,
             if store_available:
                 engine.note_store = MagicMock()
                 engine.note_store.list_notes = AsyncMock(
-                    return_value=(notes_list or [], notes_total))
+                    return_value=(notes_list or [], notes_total)
+                )
                 engine.note_store.search = AsyncMock(
-                    return_value=(search_notes or [], search_total))
+                    return_value=(search_notes or [], search_total)
+                )
                 engine.note_store.get = AsyncMock(return_value=detail_note)
                 engine.note_store.get_versions = AsyncMock(
-                    return_value=versions_list or [])
+                    return_value=versions_list or []
+                )
                 engine.note_store.create = AsyncMock(return_value=create_id)
                 engine.note_store.update = AsyncMock(return_value=None)
                 engine.note_store.delete = AsyncMock(return_value=delete_result)
                 if manager_available:
                     engine.note_manager = MagicMock()
                     engine.note_manager.get_note = AsyncMock(return_value=detail_note)
-                    engine.note_manager.update_note = AsyncMock(return_value=detail_note)
+                    engine.note_manager.update_note = AsyncMock(
+                        return_value=detail_note
+                    )
             self.engine = engine
             return {"memory_engine": engine}, None
 
@@ -211,8 +219,9 @@ class TestNoteValidation:
     @pytest.mark.asyncio
     async def test_update_note_not_found(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "note_id": 999, "title": "new", "content": "body"})
+        req.get_json = AsyncMock(
+            return_value={"note_id": 999, "title": "new", "content": "body"}
+        )
         with patch("core.api.note_api.request", req):
             mixin = _make_mixin(detail_note=None)
             result = await mixin.update_note()
@@ -244,12 +253,12 @@ class TestNoteValidation:
         assert updated.status == NoteStatus.ARCHIVED
 
     @pytest.mark.asyncio
-    async def test_update_changes_rejects_read_only_field_before_store_write(self) -> None:
+    async def test_update_changes_rejects_read_only_field_before_store_write(
+        self,
+    ) -> None:
         note = _make_note(title="old", content="body", note_id_val=2)
         req = _mock_request()
-        req.get_json = AsyncMock(
-            return_value={"note_id": 2, "changes": {"note_id": 3}}
-        )
+        req.get_json = AsyncMock(return_value={"note_id": 2, "changes": {"note_id": 3}})
         with patch("core.api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.update_note()
@@ -291,12 +300,12 @@ class TestNoteValidation:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("field", ["title", "content"])
-    async def test_update_changes_rejects_blank_text_without_mutating_note(self, field) -> None:
+    async def test_update_changes_rejects_blank_text_without_mutating_note(
+        self, field
+    ) -> None:
         note = _make_note(title="old", content="body", note_id_val=2)
         req = _mock_request()
-        req.get_json = AsyncMock(
-            return_value={"note_id": 2, "changes": {field: "   "}}
-        )
+        req.get_json = AsyncMock(return_value={"note_id": 2, "changes": {field: "   "}})
         with patch("core.api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.update_note()
@@ -306,7 +315,9 @@ class TestNoteValidation:
         mixin.engine.note_store.update.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_update_changes_rejects_malformed_tags_without_mutating_note(self) -> None:
+    async def test_update_changes_rejects_malformed_tags_without_mutating_note(
+        self,
+    ) -> None:
         note = _make_note(title="old", content="body", note_id_val=2)
         req = _mock_request()
         req.get_json = AsyncMock(
@@ -320,7 +331,9 @@ class TestNoteValidation:
         mixin.engine.note_store.update.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_update_changes_uses_manager_path_with_detached_candidate(self) -> None:
+    async def test_update_changes_uses_manager_path_with_detached_candidate(
+        self,
+    ) -> None:
         note = _make_note(title="old", content="body", note_id_val=2)
         req = _mock_request()
         req.get_json = AsyncMock(
@@ -408,8 +421,7 @@ class TestNoteValidation:
     @pytest.mark.asyncio
     async def test_batch_unsupported_action(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "note_ids": [1], "action": "invalid"})
+        req.get_json = AsyncMock(return_value={"note_ids": [1], "action": "invalid"})
         with patch("core.api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_notes()
@@ -452,7 +464,9 @@ class TestNoteHappyPath:
     async def test_list_skips_malformed_note_items(self) -> None:
         req = _mock_request(limit="10", offset="0")
         broken = MagicMock()
-        type(broken).to_dict = lambda self: (_ for _ in ()).throw(RuntimeError("broken note"))
+        type(broken).to_dict = lambda self: (_ for _ in ()).throw(
+            RuntimeError("broken note")
+        )
         good_1 = _make_note(title="A", content="body-a", note_id_val=1)
         good_2 = _make_note(title="B", content="body-b", note_id_val=2)
         with patch("core.api.note_api.request", req):
@@ -477,7 +491,9 @@ class TestNoteHappyPath:
     async def test_search_skips_malformed_note_items(self) -> None:
         req = _mock_request(query="topic", limit="10")
         broken = MagicMock()
-        type(broken).to_dict = lambda self: (_ for _ in ()).throw(RuntimeError("broken note"))
+        type(broken).to_dict = lambda self: (_ for _ in ()).throw(
+            RuntimeError("broken note")
+        )
         good = _make_note(title="A", content="body-a", note_id_val=1)
         with patch("core.api.note_api.request", req):
             mixin = _make_mixin(search_notes=[good, broken], search_total=2)
@@ -500,10 +516,14 @@ class TestNoteHappyPath:
     @pytest.mark.asyncio
     async def test_create_returns_note_id(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "title": "New Note", "content": "Some content",
-            "tags": ["tag1"], "user_id": "u1"
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "title": "New Note",
+                "content": "Some content",
+                "tags": ["tag1"],
+                "user_id": "u1",
+            }
+        )
         with patch("core.api.note_api.request", req):
             mixin = _make_mixin(create_id=42)
             result = await mixin.create_note()
@@ -555,9 +575,9 @@ class TestNoteHappyPath:
     @pytest.mark.asyncio
     async def test_batch_delete_notes(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "note_ids": [1, 2, 3], "action": "delete"
-        })
+        req.get_json = AsyncMock(
+            return_value={"note_ids": [1, 2, 3], "action": "delete"}
+        )
         with patch("core.api.note_api.request", req):
             mixin = _make_mixin(delete_result=True)
             result = await mixin.batch_notes()
@@ -566,7 +586,9 @@ class TestNoteHappyPath:
         assert result["data"]["total"] == 3
 
     @pytest.mark.asyncio
-    async def test_batch_archive_rejects_boolean_ids_and_processes_valid_ones(self) -> None:
+    async def test_batch_archive_rejects_boolean_ids_and_processes_valid_ones(
+        self,
+    ) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(
             return_value={"note_ids": [True, 2], "action": "archive"}
@@ -811,9 +833,7 @@ async def test_full_form_update_backend_failure_is_redacted() -> None:
         return_value=({"memory_engine": engine}, None)
     )
     request_mock = _mock_request()
-    request_mock.get_json = AsyncMock(
-        return_value={"note_id": 7, "title": "After"}
-    )
+    request_mock.get_json = AsyncMock(return_value={"note_id": 7, "title": "After"})
     with patch("core.api.note_api.request", request_mock):
         result = await mixin.update_note()
     assert result["code"] == "internal_error"

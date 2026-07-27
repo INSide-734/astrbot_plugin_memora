@@ -4,7 +4,6 @@ import pytest
 
 from core.base.list_sorting import SortQuery, order_by_clause, parse_sort_query
 
-
 ALLOWED = {"title": "title COLLATE NOCASE", "updated_at": "updated_at"}
 SQL_COLUMNS = {**ALLOWED, "id": "id"}
 

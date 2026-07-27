@@ -70,10 +70,7 @@ def _flatten_learning_stats(raw: dict) -> dict:
                     else str(item.get("reason", ""))
                 ),
             }
-            for item in (
-                entry if isinstance(entry, dict) else {}
-                for entry in history
-            )
+            for item in (entry if isinstance(entry, dict) else {} for entry in history)
         ],
         "enabled": bool(raw.get("enabled", True)),
     }

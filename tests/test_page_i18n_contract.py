@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PAGE_I18N_DIR = ROOT / ".astrbot-plugin" / "i18n"
 RUNTIME_NOTICE_KEYS = (
@@ -44,9 +43,7 @@ def test_page_runtime_notice_keys_exist_in_production_i18n(locale: str) -> None:
     missing = [
         key
         for key in RUNTIME_NOTICE_KEYS
-        if not isinstance(
-            _get_nested(data, f"dashboard.runtime.notice.{key}"), str
-        )
+        if not isinstance(_get_nested(data, f"dashboard.runtime.notice.{key}"), str)
     ]
 
     assert missing == [], f"{locale} 缺少生产 Page i18n 键: {missing}"

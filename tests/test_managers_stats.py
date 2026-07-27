@@ -10,11 +10,9 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.managers.maintenance_operations import MaintenanceOperations
 from core.managers import stats_operations
-from core.managers.stats_operations import StatsOperationsMixin
+from core.managers.maintenance_operations import MaintenanceOperations
 from core.validators.index_validator import IndexValidator
-
 
 # ---------------------------------------------------------------------------
 # MaintenanceOperations: combined class for real method testing
@@ -97,11 +95,13 @@ class TestGetSessionMemories:
         ops = self._make_ops()
         docs = [
             {
-                "id": 1, "text": "older",
+                "id": 1,
+                "text": "older",
                 "metadata": {"create_time": 100.0, "session_id": "s1"},
             },
             {
-                "id": 2, "text": "newer",
+                "id": 2,
+                "text": "newer",
                 "metadata": {"create_time": 200.0, "session_id": "s1"},
             },
         ]
@@ -273,7 +273,9 @@ class TestGetStatistics:
                 "text": f"doc-{i}",
                 "metadata": {"importance": imp, "session_id": "s1"},
             }
-            for i, imp in enumerate([0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95])
+            for i, imp in enumerate(
+                [0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95]
+            )
         ]
         ops._faiss_db.document_storage.count_documents = AsyncMock(
             return_value=len(docs)
@@ -285,7 +287,7 @@ class TestGetStatistics:
         # Each importance maps to bucket scaled*10 → floor
         # 0.05*10=0.5→0; 0.15*10=1.5→1; 0.25*10=2.5→2; 0.35→3; 0.45→4; 0.55→5; 0.65→6; 0.75→7; 0.85→8; 0.95→9
         for i in range(10):
-            assert dist[f"{i}-{i+1}"] == 1
+            assert dist[f"{i}-{i + 1}"] == 1
 
     @pytest.mark.asyncio
     async def test_unknown_status_defaults_to_active(self) -> None:
@@ -554,9 +556,7 @@ class TestRebuildGraphIndex:
         ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
         ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
         await ops.rebuild_graph_index()
-        ops._graph_memory_manager.index_memory.assert_called_once_with(
-            1, "hello", {}
-        )
+        ops._graph_memory_manager.index_memory.assert_called_once_with(1, "hello", {})
 
     @pytest.mark.asyncio
     async def test_non_dict_metadata_fallback(self) -> None:
@@ -568,9 +568,7 @@ class TestRebuildGraphIndex:
         ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
         ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
         await ops.rebuild_graph_index()
-        ops._graph_memory_manager.index_memory.assert_called_once_with(
-            1, "hello", {}
-        )
+        ops._graph_memory_manager.index_memory.assert_called_once_with(1, "hello", {})
 
     @pytest.mark.asyncio
     async def test_missing_metadata_fallback(self) -> None:
@@ -582,9 +580,7 @@ class TestRebuildGraphIndex:
         ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
         ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
         await ops.rebuild_graph_index()
-        ops._graph_memory_manager.index_memory.assert_called_once_with(
-            1, "hello", {}
-        )
+        ops._graph_memory_manager.index_memory.assert_called_once_with(1, "hello", {})
 
     @pytest.mark.asyncio
     async def test_invalidate_cache_called(self) -> None:

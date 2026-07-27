@@ -26,12 +26,15 @@ from core.models.temporal import (
     parse_datetime,
     visible_at,
 )
-from core.retrieval.query_rewriter import QueryIntent, resolve_reference_time
 from core.retrieval.derived_relation_expander import DerivedRelationExpander
-from core.retrieval.projection_reader import ProjectionBudget, ProjectionReader, ProjectionScope
+from core.retrieval.projection_reader import (
+    ProjectionBudget,
+    ProjectionReader,
+    ProjectionScope,
+)
+from core.retrieval.query_rewriter import QueryIntent, resolve_reference_time
 from core.retrieval.rrf_fusion import HybridResult
 from core.storage.memory_evolution_store import MemoryEvolutionStore
-
 
 UTC = timezone.utc
 AS_OF = datetime(2026, 3, 1, tzinfo=UTC)
@@ -68,7 +71,9 @@ def _source(
     )
 
 
-def _bundle(*, source_time: datetime, valid_to: datetime | None = None) -> ProjectionBundle:
+def _bundle(
+    *, source_time: datetime, valid_to: datetime | None = None
+) -> ProjectionBundle:
     projection_id = "p:17:18"
     return ProjectionBundle(
         ProjectionView(
@@ -84,8 +89,12 @@ def _bundle(*, source_time: datetime, valid_to: datetime | None = None) -> Proje
             valid_to,
         ),
         (
-            ProjectionSourceView(projection_id, 17, "rev-17", "primary", 0, source_time),
-            ProjectionSourceView(projection_id, 18, "rev-18", "supporting", 1, source_time),
+            ProjectionSourceView(
+                projection_id, 17, "rev-17", "primary", 0, source_time
+            ),
+            ProjectionSourceView(
+                projection_id, 18, "rev-18", "supporting", 1, source_time
+            ),
         ),
     )
 
@@ -119,7 +128,10 @@ async def test_projection_uses_reference_time_and_rejects_future_source() -> Non
     bundle = _bundle(source_time=datetime(2026, 6, 1, tzinfo=UTC))
     store = _ProjectionStore(
         bundle,
-        {17: _source(17, bundle.sources[0].occurred_at), 18: _source(18, bundle.sources[0].occurred_at)},
+        {
+            17: _source(17, bundle.sources[0].occurred_at),
+            18: _source(18, bundle.sources[0].occurred_at),
+        },
     )
     reader = ProjectionReader(store)
     stats = await reader.attach_with_stats(
@@ -177,7 +189,9 @@ def test_cache_key_separates_historical_reference_times() -> None:
 
     optimizer = RetrievalOptimizer({})
     old = optimizer.cache_key("q", 5, "s", None, reference_time=AS_OF)
-    new = optimizer.cache_key("q", 5, "s", None, reference_time=datetime(2026, 7, 1, tzinfo=UTC))
+    new = optimizer.cache_key(
+        "q", 5, "s", None, reference_time=datetime(2026, 7, 1, tzinfo=UTC)
+    )
     assert old != new
 
 
@@ -256,12 +270,20 @@ async def test_store_migrates_legacy_derived_time_columns(tmp_path) -> None:
     async with aiosqlite.connect(path) as db:
         cursor = await db.execute("PRAGMA table_info(memory_relations)")
         columns = {str(row[1]) for row in await cursor.fetchall()}
-    assert {"reference_at", "discovered_at", "invalid_at", "time_source", "time_precision"} <= columns
+    assert {
+        "reference_at",
+        "discovered_at",
+        "invalid_at",
+        "time_source",
+        "time_precision",
+    } <= columns
     await store.close()
 
 
 @pytest.mark.asyncio
-async def test_deleting_supporting_source_preserves_primary_projection(tmp_path) -> None:
+async def test_deleting_supporting_source_preserves_primary_projection(
+    tmp_path,
+) -> None:
     store = MemoryEvolutionStore(str(tmp_path / "multi-source.db"))
     await store.initialize()
     projection = ProjectionView(
@@ -337,7 +359,9 @@ def test_conflict_projection_model_keeps_source_roles_and_time() -> None:
 
 
 @pytest.mark.asyncio
-async def test_conflict_reader_marks_equal_times_unresolved_without_leaking_fields() -> None:
+async def test_conflict_reader_marks_equal_times_unresolved_without_leaking_fields() -> (
+    None
+):
     projection_id = "conflict:17:18:19"
     projection = ProjectionView(
         projection_id,
@@ -388,15 +412,25 @@ async def test_conflict_reader_orders_exact_source_times_internally() -> None:
     )
     mappings = (
         ProjectionSourceView(projection_id, 17, "rev-17", "primary", 0, left_time),
-        ProjectionSourceView(projection_id, 18, "rev-18", "conflict_left", 1, left_time),
-        ProjectionSourceView(projection_id, 19, "rev-19", "conflict_right", 2, right_time),
+        ProjectionSourceView(
+            projection_id, 18, "rev-18", "conflict_left", 1, left_time
+        ),
+        ProjectionSourceView(
+            projection_id, 19, "rev-19", "conflict_right", 2, right_time
+        ),
     )
     store = _ProjectionStore(
         ProjectionBundle(projection, mappings),
         {
-            17: _source(17, left_time, time_precision="instant", time_source="explicit"),
-            18: _source(18, left_time, time_precision="instant", time_source="explicit"),
-            19: _source(19, right_time, time_precision="instant", time_source="explicit"),
+            17: _source(
+                17, left_time, time_precision="instant", time_source="explicit"
+            ),
+            18: _source(
+                18, left_time, time_precision="instant", time_source="explicit"
+            ),
+            19: _source(
+                19, right_time, time_precision="instant", time_source="explicit"
+            ),
         },
     )
     reader = ProjectionReader(store)

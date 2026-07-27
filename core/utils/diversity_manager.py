@@ -5,11 +5,9 @@ from __future__ import annotations
 import random
 import re
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from astrbot.api import logger
-
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -281,9 +279,7 @@ class ResponseDiversityManager:
             lines.append(f"- 避免用以下结尾: {quoted}")
 
         if report.is_homogeneous:
-            lines.append(
-                "- 整体风格过于单一，请尝试不同的句式和表达方式"
-            )
+            lines.append("- 整体风格过于单一，请尝试不同的句式和表达方式")
 
         lines.append("[/ANTI_REPETITION]")
         return "\n".join(lines)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from core.api.response_utils import error_response, ok_response
 
 

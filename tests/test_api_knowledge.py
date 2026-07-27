@@ -22,15 +22,18 @@ def _make_mock_request(**args):
     return mock
 
 
-def _make_mixin(*, store_available: bool = True,
-                entries_list: list | None = None,
-                entries_total: int = 0,
-                search_entries: list | None = None,
-                search_total: int = 0,
-                detail_entry: KnowledgeEntry | None = None,
-                insert_id: int = 1,
-                delete_result: bool = True,
-                plugin_ready: bool = True):
+def _make_mixin(
+    *,
+    store_available: bool = True,
+    entries_list: list | None = None,
+    entries_total: int = 0,
+    search_entries: list | None = None,
+    search_total: int = 0,
+    detail_entry: KnowledgeEntry | None = None,
+    insert_id: int = 1,
+    delete_result: bool = True,
+    plugin_ready: bool = True,
+):
     """Create a KnowledgeApiMixin stub with mocked MemoryEngine."""
 
     class Stub:
@@ -52,15 +55,19 @@ def _make_mixin(*, store_available: bool = True,
                 engine = MagicMock()
                 engine.knowledge_manager = MagicMock()
                 engine.knowledge_manager.list_entries = AsyncMock(
-                    return_value=(entries_list or [], entries_total))
+                    return_value=(entries_list or [], entries_total)
+                )
                 engine.knowledge_manager.search = AsyncMock(
-                    return_value=(search_entries or [], search_total))
+                    return_value=(search_entries or [], search_total)
+                )
                 engine.knowledge_manager.get_entry = AsyncMock(
-                    return_value=detail_entry)
+                    return_value=detail_entry
+                )
                 engine.knowledge_manager.add_entry = AsyncMock(return_value=insert_id)
                 engine.knowledge_manager.update_entry = AsyncMock(return_value=True)
                 engine.knowledge_manager.delete_entry = AsyncMock(
-                    return_value=delete_result)
+                    return_value=delete_result
+                )
             else:
                 engine = MagicMock(spec=[])
             self.engine = engine
@@ -165,8 +172,7 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_update_requires_entry_id(self) -> None:
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "entry_id": 0, "title": "new"})
+        mock_req.get_json = AsyncMock(return_value={"entry_id": 0, "title": "new"})
         with patch("core.api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.update_knowledge_entry()
@@ -185,8 +191,7 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_update_rejects_non_numeric_entry_id(self) -> None:
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "entry_id": "abc", "title": "new"})
+        mock_req.get_json = AsyncMock(return_value={"entry_id": "abc", "title": "new"})
         with patch("core.api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.update_knowledge_entry()
@@ -215,8 +220,9 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_update_entry_not_found(self) -> None:
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "entry_id": 999, "title": "new", "content": "body"})
+        mock_req.get_json = AsyncMock(
+            return_value={"entry_id": 999, "title": "new", "content": "body"}
+        )
         with patch("core.api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=None)
             result = await mixin.update_knowledge_entry()
@@ -256,7 +262,9 @@ class TestKnowledgeValidation:
         assert updated.tags == ["new"]
 
     @pytest.mark.asyncio
-    async def test_update_changes_rejects_read_only_field_before_manager_write(self) -> None:
+    async def test_update_changes_rejects_read_only_field_before_manager_write(
+        self,
+    ) -> None:
         entry = KnowledgeEntry(
             title="old",
             content="body",
@@ -291,14 +299,21 @@ class TestKnowledgeValidation:
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "ok"
-        assert mixin.engine.knowledge_manager.update_entry.await_args.args[0].title == "new title"
+        assert (
+            mixin.engine.knowledge_manager.update_entry.await_args.args[0].title
+            == "new title"
+        )
 
     @pytest.mark.asyncio
     async def test_update_changes_valid_title_and_invalid_category_keeps_entry_unchanged(
         self,
     ) -> None:
         entry = KnowledgeEntry(
-            title="old", content="body", category=KnowledgeType.FACT, confidence=0.8, tags=["old"]
+            title="old",
+            content="body",
+            category=KnowledgeType.FACT,
+            confidence=0.8,
+            tags=["old"],
         )
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(
@@ -316,12 +331,18 @@ class TestKnowledgeValidation:
         mixin.engine.knowledge_manager.update_entry.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("confidence", [True, float("nan"), float("inf"), -0.1, 1.1])
+    @pytest.mark.parametrize(
+        "confidence", [True, float("nan"), float("inf"), -0.1, 1.1]
+    )
     async def test_update_changes_rejects_invalid_confidence_without_mutating_entry(
         self, confidence
     ) -> None:
         entry = KnowledgeEntry(
-            title="old", content="body", category=KnowledgeType.FACT, confidence=0.8, tags=["old"]
+            title="old",
+            content="body",
+            category=KnowledgeType.FACT,
+            confidence=0.8,
+            tags=["old"],
         )
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(
@@ -335,9 +356,15 @@ class TestKnowledgeValidation:
         mixin.engine.knowledge_manager.update_entry.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_update_changes_rejects_malformed_tags_without_mutating_entry(self) -> None:
+    async def test_update_changes_rejects_malformed_tags_without_mutating_entry(
+        self,
+    ) -> None:
         entry = KnowledgeEntry(
-            title="old", content="body", category=KnowledgeType.FACT, confidence=0.8, tags=["old"]
+            title="old",
+            content="body",
+            category=KnowledgeType.FACT,
+            confidence=0.8,
+            tags=["old"],
         )
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(
@@ -353,8 +380,9 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_batch_requires_ids(self) -> None:
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "entry_ids": [], "action": "delete"})
+        mock_req.get_json = AsyncMock(
+            return_value={"entry_ids": [], "action": "delete"}
+        )
         with patch("core.api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.batch_knowledge()
@@ -381,8 +409,9 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_batch_unsupported_action(self) -> None:
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "entry_ids": [1, 2], "action": "invalid"})
+        mock_req.get_json = AsyncMock(
+            return_value={"entry_ids": [1, 2], "action": "invalid"}
+        )
         with patch("core.api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.batch_knowledge()
@@ -431,7 +460,9 @@ class TestKnowledgeHappyPath:
     async def test_list_skips_malformed_entry_items(self) -> None:
         mock_req = _make_mock_request(limit="10", offset="0")
         broken = MagicMock()
-        type(broken).to_dict = lambda self: (_ for _ in ()).throw(RuntimeError("broken knowledge entry"))
+        type(broken).to_dict = lambda self: (_ for _ in ()).throw(
+            RuntimeError("broken knowledge entry")
+        )
         good_1 = KnowledgeEntry(
             title="a",
             content="body-a",
@@ -484,7 +515,9 @@ class TestKnowledgeHappyPath:
     async def test_search_skips_malformed_entry_items(self) -> None:
         mock_req = _make_mock_request(query="topic", limit="10")
         broken = MagicMock()
-        type(broken).to_dict = lambda self: (_ for _ in ()).throw(RuntimeError("broken knowledge entry"))
+        type(broken).to_dict = lambda self: (_ for _ in ()).throw(
+            RuntimeError("broken knowledge entry")
+        )
         good = KnowledgeEntry(
             title="a",
             content="body-a",
@@ -502,8 +535,13 @@ class TestKnowledgeHappyPath:
     @pytest.mark.asyncio
     async def test_search_with_query(self) -> None:
         mock_req = _make_mock_request(query="test")
-        e = KnowledgeEntry(title="test", content="body", category=KnowledgeType.FACT,
-                           confidence=0.8, tags=["a"])
+        e = KnowledgeEntry(
+            title="test",
+            content="body",
+            category=KnowledgeType.FACT,
+            confidence=0.8,
+            tags=["a"],
+        )
         with patch("core.api.knowledge_api.request", mock_req):
             mixin = _make_mixin(search_entries=[e], search_total=1)
             result = await mixin.search_knowledge()
@@ -512,10 +550,15 @@ class TestKnowledgeHappyPath:
     @pytest.mark.asyncio
     async def test_create_inserts_and_returns_id(self) -> None:
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "title": "New Knowledge", "content": "Some content",
-            "category": "fact", "confidence": 0.9, "tags": ["tag1"]
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "title": "New Knowledge",
+                "content": "Some content",
+                "category": "fact",
+                "confidence": 0.9,
+                "tags": ["tag1"],
+            }
+        )
         with patch("core.api.knowledge_api.request", mock_req):
             mixin = _make_mixin(insert_id=42)
             result = await mixin.create_knowledge_entry()
@@ -525,10 +568,15 @@ class TestKnowledgeHappyPath:
     @pytest.mark.asyncio
     async def test_create_treats_boolean_confidence_as_default(self) -> None:
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "title": "New Knowledge", "content": "Some content",
-            "category": "fact", "confidence": True, "tags": ["tag1"]
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={
+                "title": "New Knowledge",
+                "content": "Some content",
+                "category": "fact",
+                "confidence": True,
+                "tags": ["tag1"],
+            }
+        )
         with patch("core.api.knowledge_api.request", mock_req):
             mixin = _make_mixin(insert_id=42)
             result = await mixin.create_knowledge_entry()
@@ -568,9 +616,9 @@ class TestKnowledgeHappyPath:
     @pytest.mark.asyncio
     async def test_batch_delete_knowledge(self) -> None:
         mock_req = _make_mock_request()
-        mock_req.get_json = AsyncMock(return_value={
-            "entry_ids": [1, 2, 3], "action": "delete"
-        })
+        mock_req.get_json = AsyncMock(
+            return_value={"entry_ids": [1, 2, 3], "action": "delete"}
+        )
         with patch("core.api.knowledge_api.request", mock_req):
             mixin = _make_mixin(delete_result=True)
             result = await mixin.batch_knowledge()
@@ -749,16 +797,12 @@ async def test_full_form_update_backend_failure_is_redacted() -> None:
     engine = MagicMock()
     engine.knowledge_manager = MagicMock()
     engine.knowledge_manager.get_entry = AsyncMock(return_value=entry)
-    engine.knowledge_manager.update_entry = AsyncMock(
-        side_effect=RuntimeError(secret)
-    )
+    engine.knowledge_manager.update_entry = AsyncMock(side_effect=RuntimeError(secret))
     mixin._ensure_plugin_ready = AsyncMock(
         return_value=({"memory_engine": engine}, None)
     )
     request_mock = _make_mock_request()
-    request_mock.get_json = AsyncMock(
-        return_value={"entry_id": 7, "title": "After"}
-    )
+    request_mock.get_json = AsyncMock(return_value={"entry_id": 7, "title": "After"})
     with patch("core.api.knowledge_api.request", request_mock):
         result = await mixin.update_knowledge_entry()
     assert result["code"] == "internal_error"
