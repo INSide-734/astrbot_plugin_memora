@@ -134,6 +134,7 @@ pip install -r requirements.txt
 | `/lmem summarize` | 立即触发当前会话的记忆总结。 |
 | `/lmem reset` | 重置当前会话的长期记忆上下文。 |
 | `/lmem cleanup [preview|exec]` | 清理历史消息中的记忆注入片段；默认 `preview` 为预演。 |
+| `/lmem update [check|download|apply]` | 检查、下载或安装经 SHA-256 校验的 runtime 更新包；默认执行 `check`。 |
 | `/lmem help` | 查看帮助。 |
 
 例如：
@@ -144,6 +145,7 @@ pip install -r requirements.txt
 /lmem diagnostics
 /lmem search 喜欢的音乐 5
 /lmem trace 喜欢的音乐 5
+/lmem update check
 ```
 
 ## Dashboard、工具与 API
@@ -157,6 +159,10 @@ Dashboard 使用 React、Vite、Tailwind CSS 和 Base UI-backed shadcn 组件构
 - **Learning / Intelligence / Jargon**：观察学习、评测、诊断、复核与黑话候选。
 - **Affection / Social**：查看好感度、Bot 情绪与社交关系。
 - **Injection / System / Config / Preview**：配置注入策略、查看运行状态、编辑配置和预览数据。
+
+系统概览会在后台检查 GitHub Release。发现新版本时可展开发布说明、忽略当前版本，或在宿主支持时确认一键安装 runtime；安装流程按插件配置的镜像地址优先、GitHub 官方地址回退，并复用 AstrBot 的 HTTP、HTTPS 或 SOCKS5 代理。安装包只有在 `SHA256SUMS.txt` 校验通过后才会进入插件数据目录的 `updates/` 暂存区，随后由安装器严格校验 ZIP 内容、切换插件目录并请求 AstrBot 单插件重载。新版本重载失败时会自动恢复旧目录；若宿主不提供单插件重载能力，页面会降级为仅下载，仍可按 AstrBot 插件管理流程手动安装。
+
+相关配置位于 `update_settings`：`enabled` 控制网络检查，`mirror_url` 接受普通镜像前缀或带 `{url}` 的模板，`timeout_seconds` 控制单次请求超时。忽略版本的状态也保存在插件数据目录中，升级到更高版本后仍会再次提示。
 
 测评页不读取仓库测试夹具。安装后会自动选择“当前记忆”，从当前库中最近最多 20 条活跃记忆临时生成自身召回样本，点击“运行”即可直接评测且不会落盘保存样本正文。该模式衡量现有记忆能否召回自身；若要评测真实业务问句的相关性，可点击“导入数据集”选择人工标注 `.jsonl`。每行至少包含 `case_id`、`query` 和 `relevant_doc_ids`，相关 ID 必须是当前记忆库中存在的 canonical 整数 ID：
 

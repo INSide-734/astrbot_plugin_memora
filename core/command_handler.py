@@ -12,6 +12,7 @@ from .base.config_manager import ConfigManager
 from .commands.diagnostic_commands import DiagnosticCommandMixin, DiagnosticProvider
 from .commands.maintenance_commands import MaintenanceCommandMixin
 from .commands.query_commands import QueryCommandMixin
+from .commands.update_commands import UpdateCommandMixin
 from .i18n_backend import t, t_list
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
@@ -22,6 +23,7 @@ class CommandHandler(
     DiagnosticCommandMixin,
     QueryCommandMixin,
     MaintenanceCommandMixin,
+    UpdateCommandMixin,
 ):
     """命令处理器"""
 
@@ -39,6 +41,8 @@ class CommandHandler(
         diagnostics_health_provider: DiagnosticProvider | None = None,
         diagnostics_metrics_provider: DiagnosticProvider | None = None,
         recall_trace_provider: DiagnosticProvider | None = None,
+        update_manager=None,
+        update_installer=None,
     ):
         """
         初始化命令处理器
@@ -54,6 +58,8 @@ class CommandHandler(
             diagnostics_health_provider: 健康评分异步提供器
             diagnostics_metrics_provider: 实时指标异步提供器
             recall_trace_provider: 召回追踪异步提供器
+            update_manager: runtime 更新服务
+            update_installer: runtime 安装、重载与回滚服务
         """
         self.context = context
         self.config_manager = config_manager
@@ -67,6 +73,8 @@ class CommandHandler(
         self._diagnostics_health_provider = diagnostics_health_provider
         self._diagnostics_metrics_provider = diagnostics_metrics_provider
         self._recall_trace_provider = recall_trace_provider
+        self._update_manager = update_manager
+        self._update_installer = update_installer
 
     def _maintenance_write_guard_message(self) -> str | None:
         if self._write_guard_cb is None:

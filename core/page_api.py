@@ -37,6 +37,7 @@ from .api.response_utils import error_response, ok_response
 from .api.review_api import ReviewApiMixin
 from .api.social_api import SocialApiMixin
 from .api.topic_segmentation_api import TopicSegmentationApiMixin
+from .api.update_api import UpdateApiMixin
 from .monitoring.debug_reporter import report_debug_exception
 from .utils.number_utils import safe_float
 
@@ -72,6 +73,7 @@ class PluginPageApi(
     AffectionApiMixin,
     SocialApiMixin,
     ExpressionApiMixin,
+    UpdateApiMixin,
 ):
     """记忆插件的官方页面接口集合。"""
 
@@ -115,6 +117,36 @@ class PluginPageApi(
             self.get_metrics_summary,
             ["GET"],
             "页面接口：运行观测摘要",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/update/check",
+            self.check_update,
+            ["GET"],
+            "页面接口：检查插件更新",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/update/ignore",
+            self.ignore_update,
+            ["POST"],
+            "页面接口：忽略插件更新",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/update/download",
+            self.download_update,
+            ["POST"],
+            "页面接口：下载插件更新",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/update/apply",
+            self.apply_update,
+            ["POST"],
+            "页面接口：安装并重载插件更新",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/update/status",
+            self.get_update_status,
+            ["GET"],
+            "页面接口：插件更新操作状态",
         )
         register(
             f"{PAGE_API_PREFIX}/diagnostics/health",
@@ -916,6 +948,8 @@ class PluginPageApi(
                 or path.endswith("/config/schema")
                 or path.endswith("/config/state")
                 or path.endswith("/config/apply")
+                or path.endswith("/update/check")
+                or path.endswith("/update/status")
             ),
             "write_guard": risk
             in {
@@ -947,6 +981,7 @@ class PluginPageApi(
                 "/config/",
                 "/quality/reset",
                 "/system/",
+                "/update/",
             )
         ):
             return "maintenance"

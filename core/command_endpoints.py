@@ -22,6 +22,7 @@ _COMMAND_ENDPOINT_HANDLER_NAMES = frozenset(
         "summarize",
         "reset",
         "cleanup",
+        "update",
         "help",
     }
 )
@@ -319,6 +320,25 @@ class CommandEndpointsMixin:
         async for message in self.command_handler.handle_cleanup(
             event, dry_run=dry_run
         ):
+            yield message
+
+    @permission_type(PermissionType.ADMIN)
+    @lmem.command("update")
+    @_bind_to_plugin_entrypoint
+    async def update(
+        self, event: AstrMessageEvent, action: str = "check"
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        """[管理员] 检查、安装或下载插件 runtime 更新包。"""
+        ready, message = await self._ensure_plugin_ready(wait=False)
+        if not ready:
+            yield event.plain_result(message)
+            return
+
+        if not self.command_handler:
+            yield event.plain_result(self._command_handler_not_ready_message())
+            return
+
+        async for message in self.command_handler.handle_update(event, action):
             yield message
 
     @permission_type(PermissionType.ADMIN)

@@ -31,7 +31,7 @@ flowchart TD
 - `register_routes()` 是实际路由清单的唯一事实来源；主前缀下注册后，包装器同步注册兼容前缀。兼容别名不会额外进入 `_route_metadata`。
 - `get_route_metadata()` 返回主路由的 `path`、handler、methods、risk、auth、`requires_ready` 和 `write_guard` 审计元数据副本。
 - 元数据把含 POST 的路由标记为 `admin`，纯 GET 标记为 `host`；这是插件侧审计分类。handler 本身没有权限装饰器，实际认证仍由 AstrBot `register_web_api` 承载层负责，不能把元数据当成独立鉴权实现。
-- 除 delegation 与通用 config 三个端点外，元数据默认 `requires_ready=True`；具体 handler 仍应显式调用 `_ensure_plugin_ready()`，元数据不会自动门控。
+- 除 delegation、通用 config 三个端点和只读更新检查外，元数据默认 `requires_ready=True`；具体 handler 仍应显式调用 `_ensure_plugin_ready()`，元数据不会自动门控。
 
 ## 功能域与稳定入口
 
@@ -46,6 +46,7 @@ flowchart TD
 | 诊断/评测/指标 | `DiagnosticsApiMixin`、`EvaluationApiMixin`、`MetricsApiMixin` | `/diagnostics/*`、`/evaluation/*`、`/metrics/summary` |
 | 运维/备份 | `MaintenanceApiMixin`、`BackupApiMixin` | `/maintenance/*`、`/health/persistence*`、`/backup/list|create|restore|status|restore/cancel|delete|batch-delete`、`/system/*` 兼容路径、`/dashboard/install|build` |
 | 配置/回填 | `ConfigApiMixin`、`TopicSegmentationApiMixin` | `/config/schema`、`/config/state`、`/config/apply`、`/config/topic-segmentation`、`/backfill/*` |
+| 插件更新 | `UpdateApiMixin` | `/update/check`、`/update/ignore`、`/update/download`、`/update/apply`、`/update/status` |
 | 运行状态 | `DelegationApiMixin`、SSE、群组聚合 | `/delegation/*`、`/realtime/stream`、`/groups`、`/export/memories` |
 
 `core/api/__init__.py` 仅公开常用 mixin、`HistoryTracker` 与响应函数，并非 `PluginPageApi` 的完整基类清单；调用方通常应使用 `PluginPageApi` 而不是自己重组 mixin。

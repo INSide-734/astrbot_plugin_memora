@@ -23,6 +23,11 @@ import {
 } from "./evaluationServer";
 import { createSafeRecallTraceResponse } from "./recallTrace";
 import type { MockProfile, MockProfilePreferences, MockProfileTag, MockProfileTagCategory } from "./data";
+import {
+  handleUpdateGet,
+  handleUpdatePost,
+  resetUpdateMockState,
+} from "./updateServer";
 
 type ApiResponse = { status: string; data?: unknown; message?: string; code?: string; field_errors?: Record<string, string> };
 
@@ -135,6 +140,7 @@ export function resetMockServerState(): void {
   nextEntityRevision = 1;
   mockRestoreStatus = null;
   mockRestorePollCount = 0;
+  resetUpdateMockState();
   moodHistory.splice(0);
   configServer.controls.reset();
   _topicSegConfig = structuredClone(INITIAL_TOPIC_SEG_CONFIG);
@@ -1589,6 +1595,8 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   const p = path.replace(/^page\/?/, "");
   const configResponse = configServer.handleGet(p, params);
   if (configResponse) return configResponse;
+  const updateResponse = handleUpdateGet(p, params);
+  if (updateResponse) return updateResponse;
 
   if (p === "injection-strategy/catalog") return handleInjectionCatalog();
   if (p === "injection-strategy/summary" || p.startsWith("injection-strategy/summary?")) {
@@ -1697,6 +1705,8 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   const configResponse = configServer.handlePost(p, body);
   if (configResponse) return configResponse;
   const data = body as Record<string, unknown>;
+  const updateResponse = handleUpdatePost(p, data);
+  if (updateResponse) return updateResponse;
 
   if (p === "recall/test") return handleRecallTest(data);
   if (p === "recall/trace") return ok(createSafeRecallTraceResponse(RECALL_TRACE_SAMPLE, data));
