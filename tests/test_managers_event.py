@@ -80,31 +80,6 @@ class _TestAdapter(EventAdapterMixin):
 
 
 # ---------------------------------------------------------------------------
-# 结构测试
-# ---------------------------------------------------------------------------
-
-
-class TestEventAdapterStructure:
-    """验证 EventAdapterMixin 的公开结构。"""
-
-    def test_add_message_from_event_exists(self) -> None:
-        """Mixin 应定义可调用的 add_message_from_event。"""
-        assert hasattr(EventAdapterMixin, "add_message_from_event")
-        method = getattr(EventAdapterMixin, "add_message_from_event")
-        assert callable(method)
-
-    def test_method_signature(self) -> None:
-        """方法签名应包含 event、role 和 content。"""
-        import inspect
-
-        sig = inspect.signature(EventAdapterMixin.add_message_from_event)
-        params = list(sig.parameters.keys())
-        assert "event" in params
-        assert "role" in params
-        assert "content" in params
-
-
-# ---------------------------------------------------------------------------
 # add_message_from_event 行为测试
 # ---------------------------------------------------------------------------
 

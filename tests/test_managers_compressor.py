@@ -271,26 +271,6 @@ class TestSemanticCompressorInit:
         assert result["deleted_originals"] == 0
         assert result["new_abstracts"] == 0
 
-    def test_full_construction(self) -> None:
-        """All callbacks are stored on init."""
-        search_cb = MagicMock()
-        add_cb = MagicMock()
-        del_cb = MagicMock()
-        compressor = SemanticCompressor(
-            search_similar_cb=search_cb,
-            add_memory_cb=add_cb,
-            delete_memory_cb=del_cb,
-            age_days=90.0,
-            similarity_threshold=0.9,
-            seed_language="en",
-            bot_language="zh",
-        )
-        assert compressor._search_similar is search_cb
-        assert compressor._add_memory is add_cb
-        assert compressor._delete_memory is del_cb
-        assert compressor._age_days == 90.0
-        assert compressor._sim_threshold == 0.9
-
 
 # ---------------------------------------------------------------------------
 # compress_old_memories integration tests

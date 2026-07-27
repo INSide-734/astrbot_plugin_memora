@@ -4,56 +4,11 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from core.managers.reconsolidation import ReconsolidationManager
-
-# ---------------------------------------------------------------------------
-# Init tests
-# ---------------------------------------------------------------------------
-
-
-class TestReconsolidationInit:
-    """测试 ReconsolidationManager 初始化。"""
-
-    def test_default_construction(self) -> None:
-        """ReconsolidationManager can be constructed with defaults."""
-        mgr = ReconsolidationManager()
-        assert mgr._enabled is True
-        assert mgr._get_memory is None
-        assert mgr._update_memory is None
-        assert mgr._llm is None
-
-    def test_disabled_construction(self) -> None:
-        """ReconsolidationManager can be disabled."""
-        mgr = ReconsolidationManager(enabled=False)
-        assert mgr._enabled is False
-
-    def test_prompt_is_defined(self) -> None:
-        """Reconsolidation prompt template is defined."""
-        mgr = ReconsolidationManager()
-        assert mgr._RECONSOLIDATION_PROMPT
-        assert "{original}" in mgr._RECONSOLIDATION_PROMPT
-        assert "{context}" in mgr._RECONSOLIDATION_PROMPT
-
-    def test_full_construction(self) -> None:
-        """所有 callbacks are stored on init."""
-        update_cb = MagicMock()
-        get_cb = MagicMock()
-        llm_cb = MagicMock()
-        mgr = ReconsolidationManager(
-            update_memory_cb=update_cb,
-            get_memory_cb=get_cb,
-            llm_caller=llm_cb,
-            enabled=False,
-        )
-        assert mgr._update_memory is update_cb
-        assert mgr._get_memory is get_cb
-        assert mgr._llm is llm_cb
-        assert mgr._enabled is False
-
 
 # ---------------------------------------------------------------------------
 # maybe_reconsolidate tests

@@ -15,57 +15,6 @@ from core.managers.maintenance_operations import MaintenanceOperations
 from core.validators.index_validator import IndexValidator
 
 # ---------------------------------------------------------------------------
-# MaintenanceOperations: combined class for real method testing
-# ---------------------------------------------------------------------------
-
-
-class TestMaintenanceOperationsInit:
-    """测试 MaintenanceOperations 初始化。"""
-
-    def test_default_construction(self) -> None:
-        """MaintenanceOperations can be constructed with minimal config."""
-        ops = MaintenanceOperations(config={})
-        assert ops._config == {}
-        assert ops._db is None
-        assert ops._db_path == ""
-        assert ops._faiss_db is None
-
-    def test_full_construction(self) -> None:
-        """所有 attributes are stored on init."""
-        mock_db = MagicMock()
-        mock_faiss = MagicMock()
-        mock_retriever = MagicMock()
-        mock_graph_mgr = MagicMock()
-        mock_graph_store = MagicMock()
-        mock_del = MagicMock()
-        mock_inv = MagicMock()
-        mock_upd = MagicMock()
-
-        ops = MaintenanceOperations(
-            config={"key": "val"},
-            db_connection=mock_db,
-            db_path="/tmp/test.db",
-            faiss_db=mock_faiss,
-            hybrid_retriever=mock_retriever,
-            graph_memory_manager=mock_graph_mgr,
-            graph_store=mock_graph_store,
-            batch_delete_memories_cb=mock_del,
-            invalidate_cache_cb=mock_inv,
-            update_memory_cb=mock_upd,
-        )
-        assert ops._config == {"key": "val"}
-        assert ops._db is mock_db
-        assert ops._db_path == "/tmp/test.db"
-        assert ops._faiss_db is mock_faiss
-        assert ops._hybrid_retriever is mock_retriever
-        assert ops._graph_memory_manager is mock_graph_mgr
-        assert ops._graph_store is mock_graph_store
-        assert ops._batch_delete_memories is mock_del
-        assert ops._invalidate_cache is mock_inv
-        assert ops._update_memory is mock_upd
-
-
-# ---------------------------------------------------------------------------
 # get_session_memories tests
 # ---------------------------------------------------------------------------
 

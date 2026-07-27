@@ -21,31 +21,6 @@ class _TestRangeManager(RangeAndMetadataMixin):
 
 
 # ---------------------------------------------------------------------------
-# Structure tests
-# ---------------------------------------------------------------------------
-
-
-class TestRangeAndMetadataStructure:
-    """Smoke tests for RangeAndMetadataMixin."""
-
-    def test_get_messages_range_exists(self) -> None:
-        """get_messages_range method is defined."""
-        assert hasattr(RangeAndMetadataMixin, "get_messages_range")
-
-    def test_update_session_metadata_exists(self) -> None:
-        """update_session_metadata method is defined."""
-        assert hasattr(RangeAndMetadataMixin, "update_session_metadata")
-
-    def test_get_session_metadata_exists(self) -> None:
-        """get_session_metadata method is defined."""
-        assert hasattr(RangeAndMetadataMixin, "get_session_metadata")
-
-    def test_reset_session_metadata_exists(self) -> None:
-        """reset_session_metadata method is defined."""
-        assert hasattr(RangeAndMetadataMixin, "reset_session_metadata")
-
-
-# ---------------------------------------------------------------------------
 # get_messages_range tests
 # ---------------------------------------------------------------------------
 

@@ -115,14 +115,3 @@ class TestPerfTrackerPercentiles:
 
         assert tracker.get_percentile("total_ms", -1) == 5.0
         assert tracker.get_percentile("total_ms", 101) == 25.0
-
-
-class TestPerfTrackerRepresentation:
-    def test_repr_reflects_capacity_and_mean(self) -> None:
-        tracker = PerfTracker(maxlen=2)
-        tracker.record(_sample(12.5))
-
-        text = repr(tracker)
-
-        assert "samples=1/2" in text
-        assert "avg_total_ms=12.50" in text

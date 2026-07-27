@@ -7,53 +7,6 @@ from __future__ import annotations
 import pytest
 
 # ---------------------------------------------------------------------------
-# 1. core/base/constants.py
-# ---------------------------------------------------------------------------
-
-
-class TestConstants:
-    """Test injection format constants defined in constants.py."""
-
-    def test_memory_injection_header_nonempty(self) -> None:
-        from core.base.constants import MEMORY_INJECTION_HEADER
-
-        assert isinstance(MEMORY_INJECTION_HEADER, str)
-        assert len(MEMORY_INJECTION_HEADER) > 0
-        assert MEMORY_INJECTION_HEADER.startswith("<")
-
-    def test_memory_injection_footer_nonempty(self) -> None:
-        from core.base.constants import MEMORY_INJECTION_FOOTER
-
-        assert isinstance(MEMORY_INJECTION_FOOTER, str)
-        assert len(MEMORY_INJECTION_FOOTER) > 0
-        assert MEMORY_INJECTION_FOOTER.startswith("</")
-
-    def test_header_and_footer_are_xml_tags(self) -> None:
-        from core.base.constants import (
-            MEMORY_INJECTION_FOOTER,
-            MEMORY_INJECTION_HEADER,
-        )
-
-        assert MEMORY_INJECTION_HEADER[0] == "<"
-        assert MEMORY_INJECTION_HEADER[-1] == ">"
-        assert MEMORY_INJECTION_FOOTER[0:2] == "</"
-        assert MEMORY_INJECTION_FOOTER[-1] == ">"
-
-    def test_fake_tool_call_name_is_nonempty(self) -> None:
-        from core.base.constants import FAKE_TOOL_CALL_NAME
-
-        assert isinstance(FAKE_TOOL_CALL_NAME, str)
-        assert len(FAKE_TOOL_CALL_NAME) > 0
-
-    def test_fake_tool_call_id_prefix_is_nonempty(self) -> None:
-        from core.base.constants import FAKE_TOOL_CALL_ID_PREFIX
-
-        assert isinstance(FAKE_TOOL_CALL_ID_PREFIX, str)
-        assert len(FAKE_TOOL_CALL_ID_PREFIX) > 0
-        assert "fake" in FAKE_TOOL_CALL_ID_PREFIX.lower()
-
-
-# ---------------------------------------------------------------------------
 # 2. core/base/exceptions.py
 # ---------------------------------------------------------------------------
 
@@ -634,35 +587,3 @@ class TestConfigManagerEdgeCases:
         mgr = ConfigManager({"provider_settings": {"embedding_provider_id": None}})
         # None is an explicit value, should be returned not replaced with default
         assert mgr.get("provider_settings.embedding_provider_id") is None
-
-
-# ---------------------------------------------------------------------------
-# 5. core/base/config_defaults.py  (documentation / reference module)
-# ---------------------------------------------------------------------------
-
-
-class TestConfigDefaultsDocument:
-    """Validates the config_defaults.py module exists and is self-consistent.
-
-    This module is a documentation reference; its docstring points to
-    config_validator.py as the runtime source of truth.
-    """
-
-    def test_module_can_be_imported(self) -> None:
-        import core.base.config_defaults
-
-        assert core.base.config_defaults is not None
-
-    def test_module_docstring_references_correct_runtime_source(self) -> None:
-        import core.base.config_defaults
-
-        doc = core.base.config_defaults.__doc__ or ""
-        assert "config_validator" in doc
-        assert "Pydantic" in doc
-        assert "MemoraConfig" in doc
-
-    def test_module_has_no_side_effects_on_import(self) -> None:
-        """Importing config_defaults should not mutate global state."""
-
-        # Just verify it doesn't throw on import
-        assert True

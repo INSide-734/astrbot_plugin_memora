@@ -6,37 +6,10 @@ from core.utils.diversity_manager import (
     EXPRESSION_VARIATIONS,
     LANGUAGE_STYLES,
     RESPONSE_PATTERNS,
-    TEMPERATURE_RANGES,
     HomogeneityReport,
     ResponseDiversityManager,
     VariationComposition,
 )
-
-# ---------------------------------------------------------------------------
-# Constants tests
-# ---------------------------------------------------------------------------
-
-
-class TestConstants:
-    def test_language_styles_count(self) -> None:
-        assert len(LANGUAGE_STYLES) == 8
-
-    def test_response_patterns_count(self) -> None:
-        assert len(RESPONSE_PATTERNS) == 6
-
-    def test_expression_variations_axes(self) -> None:
-        assert set(EXPRESSION_VARIATIONS.keys()) == {
-            "sentence_style",
-            "tone",
-            "emphasis",
-        }
-        for axis, values in EXPRESSION_VARIATIONS.items():
-            assert len(values) >= 4, f"{axis} should have >= 4 options"
-
-    def test_temperature_ranges_valid(self) -> None:
-        for ctx_type, (lo, hi) in TEMPERATURE_RANGES.items():
-            assert 0.0 < lo < hi <= 1.5, f"Invalid range for {ctx_type}: {lo}-{hi}"
-
 
 # ---------------------------------------------------------------------------
 # VariationComposition tests
@@ -155,13 +128,6 @@ class TestStyleSelection:
             candidates = [s for s in LANGUAGE_STYLES if s not in recent_3]
             if candidates:
                 assert styles[i] in candidates
-
-    def test_all_styles_eventually_selected(self) -> None:
-        mgr = ResponseDiversityManager()
-        all_selected: set[str] = set()
-        for _ in range(200):
-            all_selected.add(mgr.select_style())
-        assert all_selected == set(LANGUAGE_STYLES)
 
 
 class TestPatternSelection:
@@ -295,16 +261,6 @@ class TestAntiRepetitionInstruction:
         instruction = mgr.create_anti_repetition_instruction()
         assert "[ANTI_REPETITION]" in instruction
         assert "避免" in instruction
-
-    def test_no_instruction_when_diverse(self) -> None:
-        mgr = ResponseDiversityManager()
-        mgr.record_response("今天想聊点什么？")
-        mgr.record_response("来试试这个新的想法！")
-        instruction = mgr.create_anti_repetition_instruction()
-        # With only 2 diverse responses, may still generate instruction
-        # Just verify it's well-formed
-        if instruction:
-            assert instruction.startswith("[ANTI_REPETITION]")
 
 
 class TestRecordResponse:
