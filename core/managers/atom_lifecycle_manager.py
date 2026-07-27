@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 from typing import Any
 
 from astrbot.api import logger
@@ -193,8 +194,17 @@ class AtomLifecycleManager:
             existing = await self.atom_store.search_fts(
                 search_query,
                 limit=5,
+                session_id=getattr(new_atom, "session_id", None),
+                persona_id=getattr(new_atom, "persona_id", None),
                 include_expired=False,
             )
+            source_filter = getattr(self.atom_store, "filter_current_sources", None)
+            if callable(source_filter):
+                filtered = source_filter(existing)
+                if inspect.isawaitable(filtered):
+                    filtered = await filtered
+                if isinstance(filtered, list):
+                    existing = filtered
             for ex in existing:
                 ex_content = ex.content.lower()
                 ex_tokens = set(ex_content.split())

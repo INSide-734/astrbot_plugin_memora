@@ -29,10 +29,11 @@ class AtomStore(BaseStore, AtomFTSMixin):
 
     _SQLITE_BATCH_SIZE = 500
 
-    def __init__(self, db_path: str):
-        """保存 SQLite 路径。"""
+    def __init__(self, db_path: str, config: dict[str, Any] | None = None):
+        """保存 SQLite 路径与原子生命周期配置。"""
 
         self.db_path = db_path
+        self.config = config or {}
 
     async def initialize(self) -> None:
         """创建记忆原子相关数据表。"""
@@ -155,22 +156,30 @@ class AtomStore(BaseStore, AtomFTSMixin):
                 atom_ids.extend(batch_atom_ids)
         return atom_ids
 
-    @staticmethod
-    def _prepare_atom_for_insert(atom: MemoryAtom) -> None:
+    def _prepare_atom_for_insert(self, atom: MemoryAtom) -> None:
         """在持久化前补齐基于时间推导的字段。"""
         now = time.time()
         atom.created_at = now
         atom.last_accessed_at = now
-        # 人格调制遗忘率：从 metadata 读取 persona_decay_modifier
-        persona_modifier = float(
-            (atom.metadata or {}).get("persona_decay_modifier", 1.0)
+        metadata = dict(atom.metadata or {})
+        metadata.setdefault("emotion_tags", list(atom.emotion_tags))
+        atom.metadata = metadata
+        persona_modifier = float(metadata.get("persona_decay_modifier", 1.0))
+        emotional_intensity = max(
+            0.0,
+            min(1.0, float(metadata.get("emotional_intensity", 0.5))),
         )
         ttl, decay = compute_ttl(
             atom.atom_type,
             atom.importance,
             atom.reinforcement_count,
             atom.event_time,
+            emotional_intensity=emotional_intensity,
             persona_decay_modifier=persona_modifier,
+            allow_probationary=bool(self.config.get("atom_probationary_enabled", True)),
+            probationary_ttl_days=float(
+                self.config.get("atom_probationary_ttl_days", 3.0)
+            ),
         )
         atom.ttl_days = ttl
         atom.decay_type = decay
@@ -293,6 +302,20 @@ class AtomStore(BaseStore, AtomFTSMixin):
             )
             await db.commit()
 
+    async def touch_many(self, atom_ids: list[int]) -> None:
+        """在单个事务中更新多条原子的访问时间，并忽略重复或非法 ID。"""
+
+        normalized_ids = sorted({int(atom_id) for atom_id in atom_ids if atom_id > 0})
+        if not normalized_ids:
+            return
+        now = time.time()
+        async with self._connect() as db:
+            await db.executemany(
+                "UPDATE memory_atoms SET last_accessed_at = ? WHERE id = ?",
+                [(now, atom_id) for atom_id in normalized_ids],
+            )
+            await db.commit()
+
     async def reinforce(
         self, atom_id: int, new_confidence: float | None = None
     ) -> None:
@@ -316,12 +339,23 @@ class AtomStore(BaseStore, AtomFTSMixin):
             raw_meta = row["metadata"]
             meta_dict = self._from_json(raw_meta) if raw_meta else {}
             persona_mod = float(meta_dict.get("persona_decay_modifier", 1.0))
+            emotional_intensity = max(
+                0.0,
+                min(1.0, float(meta_dict.get("emotional_intensity", 0.5))),
+            )
             new_ttl, decay = compute_ttl(
                 atom_type,
                 importance,
                 new_count,
                 event_time,
+                emotional_intensity=emotional_intensity,
                 persona_decay_modifier=persona_mod,
+                allow_probationary=bool(
+                    self.config.get("atom_probationary_enabled", True)
+                ),
+                probationary_ttl_days=float(
+                    self.config.get("atom_probationary_ttl_days", 3.0)
+                ),
             )
 
             confidence = (
@@ -433,7 +467,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
     ) -> int:
         """v2.6: 将长期未被访问的低重要性原子迁移到冷存储 (COLD 状态)。
 
-        COLD 原子不参与常规 FTS 检索，仅精确匹配时返回。
+        COLD 原子不参与常规 FTS 检索；当前不提供自动复活路径。
 
         Args:
             cold_days_threshold: 最后一次访问距今超过此天数触发迁移（默认 14 天）。
@@ -643,6 +677,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
 
     def _row_to_atom(self, row: aiosqlite.Row) -> MemoryAtom:
         """将数据库行映射为 ``MemoryAtom`` 实例。"""
+        metadata = self._from_json(row["metadata"])
         return MemoryAtom(
             atom_id=int(row["id"]),
             parent_memory_id=int(row["parent_memory_id"]),
@@ -652,6 +687,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
             atom_type=AtomType(row["atom_type"]),
             content=row["content"],
             entities=json.loads(row["entities"]) if row["entities"] else [],
+            emotion_tags=list(metadata.get("emotion_tags", [])),
             importance=float(row["importance"]),
             confidence=float(row["confidence"]),
             created_at=float(row["created_at"]),
@@ -667,7 +703,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
             decay_type=DecayType(row["decay_type"]),
             session_id=row["session_id"],
             persona_id=row["persona_id"],
-            metadata=self._from_json(row["metadata"]),
+            metadata=metadata,
         )
 
 

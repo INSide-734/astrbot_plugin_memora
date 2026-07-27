@@ -2,7 +2,7 @@
 
 import pytest
 
-# Import the module-level classify functions
+# 导入模块级分类函数。
 from core.processors.atom_classifier import (
     _has_minimal_information,
     classify_atoms,
@@ -10,14 +10,14 @@ from core.processors.atom_classifier import (
     reset_filter_stats,
 )
 
-# ---- v2.6 quality filter tests ----
+# ---- v2.6 质量过滤测试 ----
 
 
 class TestQualityFilter:
     """验证置信度、长度、重要性阈值和信息量预检。"""
 
     def test_min_confidence_filters_unknown(self):
-        """UNKNOWN 类型置信度 0.60，默认 min_confidence=0.65 应被过滤."""
+        """低信息 UNKNOWN 内容应被默认质量门过滤。"""
         result = classify_atoms(["嗯"], enable_quality_filter=True, min_confidence=0.65)
         assert len(result) == 0
 
@@ -77,18 +77,20 @@ class TestQualityFilter:
         assert not _has_minimal_information("。。。")
 
 
-# ---- pre-existing tests (v2.5 compatible) ----
+# ---- 基础分类兼容测试 ----
 
 
 class TestNegationDetection:
-    """Negation patterns should prevent false-positive classification."""
+    """否定表达应保留语义类型，并通过 polarity 区分正负方向。"""
 
     def test_not_like_is_not_preference(self):
+        """中文负偏好仍是偏好证据，并标记为 negative。"""
+
         result = classify_atoms(["我不喜欢咖啡"], enable_quality_filter=False)
         assert len(result) == 1
-        # Should NOT be PREFERENCE (missing negation detection would make it so)
         atom = result[0]
-        assert atom.atom_type.value != "preference"
+        assert atom.atom_type.value == "preference"
+        assert atom.metadata["polarity"] == "negative"
 
     def test_no_longer_want_is_not_preference(self):
         result = classify_atoms(["不再想打游戏了"], enable_quality_filter=False)
@@ -101,9 +103,12 @@ class TestNegationDetection:
         assert result[0].atom_type.value == "preference"
 
     def test_english_negation_not_preference(self):
+        """英文负偏好仍是偏好证据，并标记为 negative。"""
+
         result = classify_atoms(["I don't like coffee"], enable_quality_filter=False)
         atom = result[0]
-        assert atom.atom_type.value != "preference"
+        assert atom.atom_type.value == "preference"
+        assert atom.metadata["polarity"] == "negative"
 
     def test_never_like_is_not_preference(self):
         result = classify_atoms(["从不吃辣"], enable_quality_filter=False)
@@ -111,6 +116,8 @@ class TestNegationDetection:
         assert result[0].atom_type.value != "preference"
 
     def test_multiple_facts_with_mixed_negation(self):
+        """同批正负偏好应分别保留，且负项携带极性。"""
+
         results = classify_atoms(
             [
                 "我喜欢跑步",
@@ -121,13 +128,12 @@ class TestNegationDetection:
             enable_quality_filter=False,
         )
         types = [r.atom_type.value for r in results]
-        # "不喜欢游泳" should NOT be PREFERENCE
-        assert "preference" in types  # from "我喜欢跑步"
-        assert types.count("preference") == 1  # only one genuine preference
+        assert types.count("preference") == 2
+        assert results[1].metadata["polarity"] == "negative"
 
 
 class TestAtomClassification:
-    """6 atom types classification correctness."""
+    """验证六类 Atom 的分类结果。"""
 
     def test_planned_classification(self):
         # 注："评审"+"会议" 均不在 _ACTION_VERBS 中 → 实际分类为 UNKNOWN
@@ -144,8 +150,9 @@ class TestAtomClassification:
         assert result[0].atom_type.value == "relational"
 
     def test_episodic_classification(self):
-        # 注："去了" 含时间"今天"+动作"去" → 实际分类为 PLANNED
-        # 使用不含时间指示词的动作句测试 EPISODIC
+        """无未来时间信号的已发生动作应分类为情景记忆。"""
+
+        # 使用不含时间指示词的动作句测试 EPISODIC。
         result = classify_atoms(["去了图书馆看书"], enable_quality_filter=False)
         assert result[0].atom_type.value == "episodic"
 
@@ -176,7 +183,15 @@ class TestAtomClassification:
 
 
 class TestNegationDetectionExtended:
-    """Extended: 20 negation sentences (zh + en) to validate _NEGATION_RE."""
+    """用中英文否定句验证语义保留与取消计划处理。"""
+
+    PRESERVED_NEGATIVE_TYPES = {
+        "我不喜欢吃辣": "preference",
+        "不是他的朋友": "relational",
+        "不喜欢和她聊天": "preference",
+        "She is not my colleague": "relational",
+        "He doesn't like spicy food": "preference",
+    }
 
     ZH_NEG = [
         ("我不喜欢吃辣", "preference"),
@@ -192,7 +207,6 @@ class TestNegationDetectionExtended:
         ("没打算买新车", "planned"),
         ("并非如此简单", "factual"),
         ("不要叫我早起", "preference"),
-        # 注：PLANNED 分类未检查 is_negated（已知局限），此类句子仍会被归为 planned
         ("没法参加明天的聚会", "preference"),
         ("从不熬夜工作", "preference"),
     ]
@@ -209,19 +223,29 @@ class TestNegationDetectionExtended:
 
     @pytest.mark.parametrize("content,excluded_type", ZH_NEG)
     def test_zh_negation_not_classified_as(self, content, excluded_type):
+        """中文负偏好/关系保留类型，其他否定句避免旧误判。"""
+
         result = classify_atoms([content], enable_quality_filter=False)
         assert len(result) == 1
-        assert result[0].atom_type.value != excluded_type, (
-            f"'{content}' should NOT be {excluded_type}"
-        )
+        expected = self.PRESERVED_NEGATIVE_TYPES.get(content)
+        if expected:
+            assert result[0].atom_type.value == expected
+            assert result[0].metadata["polarity"] == "negative"
+        else:
+            assert result[0].atom_type.value != excluded_type
 
     @pytest.mark.parametrize("content,excluded_type", EN_NEG)
     def test_en_negation_not_classified_as(self, content, excluded_type):
+        """英文负偏好/关系保留类型，取消的未来动作不得成为计划。"""
+
         result = classify_atoms([content], enable_quality_filter=False)
         assert len(result) == 1
-        assert result[0].atom_type.value != excluded_type, (
-            f"'{content}' should NOT be {excluded_type}"
-        )
+        expected = self.PRESERVED_NEGATIVE_TYPES.get(content)
+        if expected:
+            assert result[0].atom_type.value == expected
+            assert result[0].metadata["polarity"] == "negative"
+        else:
+            assert result[0].atom_type.value != excluded_type
 
     def test_all_negations_produce_valid_atoms(self):
         all_s = [

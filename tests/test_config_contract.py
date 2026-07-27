@@ -5,58 +5,16 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import threading
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.config_contract_support import BlockingSavingConfig, SavingConfig
+
 ROOT = Path(__file__).resolve().parents[1]
 _MISSING = object()
-
-
-class SavingConfig(dict[str, Any]):
-    """模拟 AstrBot 同步保存边界的可变配置对象。"""
-
-    def __init__(self, *args: Any, fail_save: bool = False, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.fail_save = fail_save
-        self.saved_snapshots: list[dict[str, Any]] = []
-        self.save_thread_id: int | None = None
-
-    def save_config(self) -> None:
-        self.save_thread_id = threading.get_ident()
-        self.saved_snapshots.append(copy.deepcopy(dict(self)))
-        if self.fail_save:
-            raise OSError("simulated atomic save failure")
-
-
-class BlockingSavingConfig(SavingConfig):
-    """暴露确定性线程边界的持久化模拟对象。"""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.save_entered = threading.Event()
-        self.release_save = threading.Event()
-        self.save_finished = threading.Event()
-        self.clear_calls = 0
-
-    def clear(self) -> None:
-        self.clear_calls += 1
-        super().clear()
-
-    def save_config(self) -> None:
-        self.save_thread_id = threading.get_ident()
-        self.save_entered.set()
-        try:
-            if not self.release_save.wait(timeout=5):
-                raise TimeoutError("test did not release save_config")
-            if self.fail_save:
-                raise OSError("simulated atomic save failure")
-            self.saved_snapshots.append(copy.deepcopy(dict(self)))
-        finally:
-            self.save_finished.set()
 
 
 def _iter_schema_defaults(
@@ -386,12 +344,14 @@ async def test_apply_rejects_invalid_hybrid_preset_order() -> None:
 
 
 def test_schema_numeric_bounds_match_every_pydantic_constraint() -> None:
+    """Schema 数值边界必须逐项覆盖全部 Pydantic 约束。"""
+
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
 
     model_bounds = _model_numeric_bounds()
     schema_bounds = _schema_numeric_bounds(schema)
 
-    assert len(model_bounds) == 86
+    assert len(model_bounds) == 93
     assert schema_bounds == model_bounds
 
 
@@ -742,214 +702,3 @@ async def test_schema_options_use_exact_json_scalar_equality() -> None:
     assert "recall_engine.top_k" in exc_info.value.field_errors
     assert manager.get_config_snapshot() == snapshot_before
     assert source.saved_snapshots == []
-
-
-@pytest.mark.asyncio
-async def test_apply_updates_source_and_saves_before_publishing() -> None:
-    from core.base.config_manager import ConfigManager
-
-    source = SavingConfig({"recall_engine": {"top_k": 5}})
-    manager = ConfigManager(source)
-    _, revision = manager.get_config_snapshot()
-    event_loop_thread = threading.get_ident()
-
-    result = await manager.apply_config_changes(
-        {"recall_engine.top_k": 8},
-        expected_revision=revision,
-    )
-
-    assert result.changed_paths == ("recall_engine.top_k",)
-    assert source["recall_engine"]["top_k"] == 8
-    assert source.saved_snapshots[-1]["recall_engine"]["top_k"] == 8
-    assert source.save_thread_id != event_loop_thread
-    assert manager.get_config_snapshot()[1] == result.revision
-
-
-@pytest.mark.asyncio
-async def test_apply_rolls_back_source_and_snapshot_when_save_fails() -> None:
-    from core.base.config_manager import ConfigManager, ConfigPersistenceError
-
-    source = SavingConfig({"recall_engine": {"top_k": 5}}, fail_save=True)
-    manager = ConfigManager(source)
-    source_before = copy.deepcopy(dict(source))
-    snapshot_before = manager.get_config_snapshot()
-
-    with pytest.raises(ConfigPersistenceError):
-        await manager.apply_config_changes(
-            {"recall_engine.top_k": 9},
-            expected_revision=snapshot_before[1],
-        )
-
-    assert dict(source) == source_before
-    assert manager.get_config_snapshot() == snapshot_before
-
-
-@pytest.mark.asyncio
-async def test_failed_save_preserves_concurrent_external_source_change() -> None:
-    from core.base.config_manager import ConfigManager, ConfigPersistenceError
-
-    source = BlockingSavingConfig(
-        {"recall_engine": {"top_k": 5}},
-        fail_save=True,
-    )
-    manager = ConfigManager(source)
-    _, original_revision = manager.get_config_snapshot()
-    apply_task = asyncio.create_task(
-        manager.apply_config_changes(
-            {"recall_engine.top_k": 6},
-            expected_revision=original_revision,
-        )
-    )
-
-    assert await asyncio.to_thread(source.save_entered.wait, 2)
-    source["recall_engine"]["top_k"] = 9
-    source.release_save.set()
-
-    with pytest.raises(ConfigPersistenceError):
-        await apply_task
-
-    snapshot, reconciled_revision = await manager.get_config_snapshot_async()
-    assert reconciled_revision != original_revision
-    assert snapshot["recall_engine"]["top_k"] == 9
-    assert source["recall_engine"]["top_k"] == 9
-
-
-@pytest.mark.asyncio
-async def test_cancelled_apply_publishes_successful_save_before_propagating() -> None:
-    from core.base.config_manager import ConfigManager
-
-    source = BlockingSavingConfig({"recall_engine": {"top_k": 5}})
-    manager = ConfigManager(source)
-    _, original_revision = manager.get_config_snapshot()
-    apply_task = asyncio.create_task(
-        manager.apply_config_changes(
-            {"recall_engine.top_k": 9},
-            expected_revision=original_revision,
-        )
-    )
-
-    assert await asyncio.to_thread(source.save_entered.wait, 2)
-    apply_task.cancel()
-    await asyncio.sleep(0)
-    assert not apply_task.done()
-    apply_task.cancel()
-    await asyncio.sleep(0)
-    assert not apply_task.done()
-    source.release_save.set()
-    assert await asyncio.to_thread(source.save_finished.wait, 2)
-
-    with pytest.raises(asyncio.CancelledError):
-        await apply_task
-
-    snapshot, revision = manager.get_config_snapshot()
-    assert source.saved_snapshots == [snapshot]
-    assert dict(source) == snapshot
-    assert snapshot["recall_engine"]["top_k"] == 9
-    assert revision != original_revision
-
-
-@pytest.mark.asyncio
-async def test_cancelled_apply_rolls_back_after_failed_save() -> None:
-    from core.base.config_manager import ConfigManager
-
-    source = BlockingSavingConfig(
-        {"recall_engine": {"top_k": 5}},
-        fail_save=True,
-    )
-    manager = ConfigManager(source)
-    source_before = copy.deepcopy(dict(source))
-    snapshot_before = manager.get_config_snapshot()
-    apply_task = asyncio.create_task(
-        manager.apply_config_changes(
-            {"recall_engine.top_k": 9},
-            expected_revision=snapshot_before[1],
-        )
-    )
-
-    assert await asyncio.to_thread(source.save_entered.wait, 2)
-    apply_task.cancel()
-    await asyncio.sleep(0)
-    source.release_save.set()
-    assert await asyncio.to_thread(source.save_finished.wait, 2)
-
-    with pytest.raises(asyncio.CancelledError):
-        await apply_task
-
-    assert source.saved_snapshots == []
-    assert dict(source) == source_before
-    assert manager.get_config_snapshot() == snapshot_before
-
-
-@pytest.mark.asyncio
-async def test_concurrent_writes_with_same_revision_are_serialized() -> None:
-    from core.base.config_manager import (
-        ConfigApplyResult,
-        ConfigConflictError,
-        ConfigManager,
-    )
-
-    source = BlockingSavingConfig({"recall_engine": {"top_k": 5}})
-    manager = ConfigManager(source)
-    _, revision = manager.get_config_snapshot()
-
-    async def write(value: int) -> ConfigApplyResult | ConfigConflictError:
-        try:
-            return await manager.apply_config_changes(
-                {"recall_engine.top_k": value},
-                expected_revision=revision,
-            )
-        except ConfigConflictError as exc:
-            return exc
-
-    first_write = asyncio.create_task(write(6))
-    assert await asyncio.to_thread(source.save_entered.wait, 2)
-    second_write = asyncio.create_task(write(7))
-    await asyncio.sleep(0)
-    replacements_before_release = source.clear_calls
-    source.release_save.set()
-    outcomes = await asyncio.gather(first_write, second_write)
-
-    assert replacements_before_release == 1
-    assert sum(isinstance(item, ConfigApplyResult) for item in outcomes) == 1
-    assert sum(isinstance(item, ConfigConflictError) for item in outcomes) == 1
-    assert len(source.saved_snapshots) == 1
-    assert source["recall_engine"]["top_k"] == 6
-    assert manager.get("recall_engine.top_k") == 6
-
-
-@pytest.mark.asyncio
-async def test_persist_false_changes_only_runtime_snapshot() -> None:
-    from core.base.config_manager import ConfigManager
-
-    source = SavingConfig({"recall_engine": {"top_k": 5}})
-    manager = ConfigManager(source)
-    source_before = copy.deepcopy(dict(source))
-    _, revision = manager.get_config_snapshot()
-
-    result = await manager.apply_config_changes(
-        {"recall_engine.top_k": 9},
-        expected_revision=revision,
-        persist=False,
-    )
-
-    assert dict(source) == source_before
-    assert source.saved_snapshots == []
-    assert manager.get("recall_engine.top_k") == 9
-    assert manager.get_config_snapshot()[1] == result.revision
-
-
-@pytest.mark.asyncio
-async def test_update_runtime_config_wraps_apply_contract() -> None:
-    from core.base.config_manager import ConfigManager
-
-    source: dict[str, Any] = {"recall_engine": {"top_k": 5}}
-    manager = ConfigManager(source)
-
-    assert await manager.update_runtime_config(
-        {"recall_engine.top_k": 10}, persist=True
-    )
-    assert source["recall_engine"]["top_k"] == 10
-    assert not await manager.update_runtime_config(
-        {"recall_engine.top_k": 51}, persist=True
-    )
-    assert manager.get("recall_engine.top_k") == 10

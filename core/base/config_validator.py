@@ -8,6 +8,7 @@ from typing import Any, Literal
 from astrbot.api import logger
 from pydantic import BaseModel, Field, model_validator
 
+from .atom_quality_config import AtomQualityFilterConfig
 from .feature_config import (
     AgentToolsConfig,
     DashboardConfig,
@@ -387,7 +388,7 @@ class GraphMemoryConfig(BaseModel):
     max_facts_per_memory: int = Field(
         default=8, ge=1, le=30, description="单条记忆最多索引事实数"
     )
-    # Atom-level memory configuration
+    # 原子级记忆配置
     atom_enabled: bool = Field(
         default=True, description="是否启用记忆原子化（细化粒度+时间衰减）"
     )
@@ -642,6 +643,9 @@ class MemoraConfig(BaseModel):
         default_factory=IndexRebuildSettings
     )
     graph_memory: GraphMemoryConfig = Field(default_factory=GraphMemoryConfig)
+    atom_quality_filter: AtomQualityFilterConfig = Field(
+        default_factory=AtomQualityFilterConfig
+    )
     fusion_strategy: FusionStrategyConfig = Field(
         default_factory=FusionStrategyConfig, description="结果融合策略配置"
     )

@@ -9,6 +9,8 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from astrbot.api import logger
+
 from ..adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
@@ -57,7 +59,10 @@ class DualRouteRetriever:
         reranker=None,
         derived_expander=None,
         projection_reader=None,
+        atom_retriever=None,
     ):
+        """装配文档、图与可选 Atom 证据路及后续排序组件。"""
+
         self.document_retriever = document_retriever
         self.graph_retriever = graph_retriever
         self.memory_loader = memory_loader
@@ -77,6 +82,7 @@ class DualRouteRetriever:
         self.reranker = reranker
         self.derived_expander = derived_expander
         self.projection_reader = projection_reader
+        self.atom_retriever = atom_retriever
         self._reranker_strategy = self.config.get("reranker.strategy", "mmr")
         # 阶段计时存储（每次 search() 后更新）
         self.last_search_timing: dict[str, float] = {}
@@ -97,9 +103,9 @@ class DualRouteRetriever:
         """同时运行两条检索路由，并合并候选记忆。
 
         参数:
-            chat_type: "private" or "group" — 用于隐私过滤。
-            query_intent: R1 查询改写结果，优先使用 LLM 意图做权重调整。
-            user_id: v2.5 用户 ID，用于个性化排序。
+            chat_type: 私聊或群聊场景，用于隐私过滤。
+            query_intent: 查询改写结果，优先使用 LLM 意图做权重调整。
+            user_id: 用户 ID，用于个性化排序。
         """
         reference_time = normalize_datetime(reference_time) or datetime.now(
             timezone.utc
@@ -118,17 +124,25 @@ class DualRouteRetriever:
             session_id,
             persona_id,
             memory_types=memory_types,
+            reference_time=reference_time,
         )
         _t_doc_start = time.perf_counter()
         doc_results = await doc_task
         _t_doc_end = time.perf_counter()
         graph_results = await graph_task
         _t_graph_end = time.perf_counter()
+        atom_results = await self._search_atom_evidence(
+            query,
+            k=max(k * 2, k),
+            session_id=session_id,
+            persona_id=persona_id,
+        )
+        atom_scores, atom_ids_by_parent = self._aggregate_atom_evidence(atom_results)
         document_route_ms = (_t_doc_end - _t_doc_start) * 1000.0
         graph_route_ms = (_t_graph_end - _t_doc_end) * 1000.0
 
         _t_merge_start = time.perf_counter()
-        if not graph_results:
+        if not graph_results and not atom_scores:
             merged = list(doc_results)
         else:
             merged = await self._merge_dual_results(
@@ -137,6 +151,7 @@ class DualRouteRetriever:
                 query,
                 strategy=strategy,
                 query_intent=query_intent,
+                atom_scores=atom_scores,
             )
         merge_ms = (time.perf_counter() - _t_merge_start) * 1000.0
 
@@ -260,7 +275,89 @@ class DualRouteRetriever:
             "rerank_ms": rerank_ms,
         }
 
-        return self._filter_by_privacy(merged[:k], chat_type)
+        visible = self._filter_by_privacy(merged[:k], chat_type)
+        await self._touch_atom_evidence(visible, atom_ids_by_parent)
+        return visible
+
+    async def _search_atom_evidence(
+        self,
+        query: str,
+        *,
+        k: int,
+        session_id: str | None,
+        persona_id: str | None,
+    ) -> list[Any]:
+        """查询内部 Atom 证据；普通故障返回空信号，取消异常向上传播。"""
+
+        if self.atom_retriever is None:
+            return []
+        try:
+            return await self.atom_retriever.search(
+                query,
+                k=k,
+                session_id=session_id,
+                persona_id=persona_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[DualRouteRetriever] Atom 证据路降级，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return []
+
+    @staticmethod
+    def _aggregate_atom_evidence(
+        atom_results: list[Any],
+    ) -> tuple[dict[int, float], dict[int, list[int]]]:
+        """按父 canonical 聚合 Atom 分数，并把内部 ID 留在请求局部。"""
+
+        scores_by_parent: dict[int, list[float]] = {}
+        ids_by_parent: dict[int, list[int]] = {}
+        for result in atom_results:
+            parent_id = int(getattr(result, "parent_memory_id", 0) or 0)
+            atom_id = int(getattr(result, "atom_id", 0) or 0)
+            if parent_id <= 0 or atom_id <= 0:
+                continue
+            score = max(0.0, min(1.0, float(getattr(result, "final_score", 0.0))))
+            scores_by_parent.setdefault(parent_id, []).append(score)
+            ids_by_parent.setdefault(parent_id, []).append(atom_id)
+
+        aggregated: dict[int, float] = {}
+        for parent_id, scores in scores_by_parent.items():
+            ranked = sorted(scores, reverse=True)
+            secondary_bonus = min(0.15, sum(ranked[1:]) * 0.05)
+            aggregated[parent_id] = min(1.0, ranked[0] + secondary_bonus)
+        return aggregated, ids_by_parent
+
+    async def _touch_atom_evidence(
+        self,
+        results: list[HybridResult],
+        ids_by_parent: dict[int, list[int]],
+    ) -> None:
+        """只更新最终可见 canonical 结果实际贡献的内部 Atom。"""
+
+        if self.atom_retriever is None or not ids_by_parent:
+            return
+        atom_ids = sorted(
+            {
+                atom_id
+                for result in results
+                for atom_id in ids_by_parent.get(result.doc_id, [])
+            }
+        )
+        if not atom_ids:
+            return
+        try:
+            await self.atom_retriever.touch_many(atom_ids)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[DualRouteRetriever] Atom 访问反馈失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
 
     async def _apply_reranker(
         self,
@@ -322,7 +419,11 @@ class DualRouteRetriever:
         query: str,
         strategy: RecallStrategy | None = None,
         query_intent: QueryIntent | None = None,
+        atom_scores: dict[int, float] | None = None,
     ) -> list[HybridResult]:
+        """把文档、图与 Atom 父级证据统一融合为 canonical 结果。"""
+
+        atom_scores = atom_scores or {}
         if strategy is not None:
             document_weight, graph_weight = self._compute_strategy_weights(strategy)
             intent = "strategy"
@@ -340,10 +441,19 @@ class DualRouteRetriever:
         graph_max = (
             max((item.final_score for item in graph_results), default=1.0) or 1.0
         )
+        atom_max = max(atom_scores.values(), default=1.0) or 1.0
+        atom_weight = (
+            max(0.0, min(0.5, float(self.config.get("atom_route_weight", 0.25))))
+            if atom_scores
+            else 0.0
+        )
+        base_route_scale = 1.0 - atom_weight
+        document_weight *= base_route_scale
+        graph_weight *= base_route_scale
 
         doc_map = {item.doc_id: item for item in doc_results}
         graph_map = {item.doc_id: item for item in graph_results}
-        all_doc_ids = set(doc_map) | set(graph_map)
+        all_doc_ids = set(doc_map) | set(graph_map) | set(atom_scores)
 
         # 阶段 1：找出需要通过 memory_loader 回填的 doc_id
         need_load_ids: list[int] = []
@@ -385,6 +495,7 @@ class DualRouteRetriever:
                 if graph_result is not None
                 else 0.0
             )
+            atom_signal = atom_scores.get(doc_id, 0.0) / atom_max
             route_bonus = (
                 self.cross_route_bonus
                 if doc_result is not None and graph_result is not None
@@ -410,6 +521,7 @@ class DualRouteRetriever:
                 1.0,
                 document_weight * doc_signal
                 + graph_weight * graph_signal
+                + atom_weight * atom_signal
                 + route_bonus,
             )
 

@@ -13,33 +13,48 @@ from astrbot.api import logger
 
 from ..models.memory_atom import AtomType, DecayType, MemoryAtom, compute_ttl
 
-# ---------- 分类模式（面向中文，可扩展） ----------
+# ---------- 分类模式 ----------
 
 _TIME_INDICATORS = re.compile(
-    r"明天|后天|大后天|昨天|前天|今天|"
+    r"大后天|明天|后天|昨天|前天|今天|"
     r"(?:上周|本周|下下周|下周)?周[一二三四五六日天]|"
     r"上周|本周|下下周|下周|"
     r"下个?月|上个?月|明年|后年|去年|前年|"
-    r"\d{1,2}月\d{1,2}[日号]|\d{4}年\d{1,2}月|"
+    r"\d{1,2}月\d{1,2}[日号]|\d{4}年\d{1,2}月\d{1,2}[日号]?|"
+    r"\d{4}[-/]\d{1,2}[-/]\d{1,2}|"
     r"上午|下午|晚上|凌晨|早上|中午|傍晚|"
-    r"\d{1,2}[点时：:]\d{1,2}"
+    r"\d{1,2}[点时：:]\d{1,2}|"
+    r"\b(?:today|tomorrow|yesterday|next\s+week|last\s+week)\b",
+    re.IGNORECASE,
 )
 
 _ACTION_VERBS = re.compile(
     r"开会|讨论|参加|组织|安排|举办|进行|执行|完成|提交|发送|发布|"
-    r"去|来|到|做|要|准备|计划|打算"
+    r"去|来|到|做|要|准备|计划|打算|"
+    r"\b(?:go|went|come|came|attend|join|plan|prepare|submit|send|do|did)\b",
+    re.IGNORECASE,
 )
 
-_STATIVE_PATTERNS = re.compile(r"是|有|属于|等于|代表|意味|包含|包括|位于")
+_STATIVE_PATTERNS = re.compile(
+    r"是|有|属于|等于|代表|意味|包含|包括|位于|"
+    r"\b(?:is|are|was|were|has|have|belongs?\s+to|means?|contains?)\b",
+    re.IGNORECASE,
+)
 
 _RELATION_PATTERNS = re.compile(
     r"同事|朋友|同学|家人|亲戚|队友|搭档|伙伴|老板|上司|下属|"
-    r"合作|合伙|夫妻|情侣|邻居|室友|老乡"
+    r"合作|合伙|夫妻|情侣|邻居|室友|老乡|"
+    r"\b(?:colleague|coworker|friend|classmate|family|relative|partner|"
+    r"boss|manager|neighbor|roommate|spouse)\b",
+    re.IGNORECASE,
 )
 
 _PREFERENCE_PATTERNS = re.compile(
     r"喜欢|讨厌|爱|不爱|偏好|最爱|不喜欢|热衷于|沉迷|"
-    r"爱吃|爱喝|喜欢喝|喜欢去|讨厌吃|讨厌去"
+    r"爱吃|爱喝|喜欢喝|喜欢去|讨厌吃|讨厌去|"
+    r"\b(?:like|likes|love|loves|prefer|prefers|dislike|dislikes|"
+    r"hate|hates|favorite)\b",
+    re.IGNORECASE,
 )
 
 _PERSON_PATTERNS = re.compile(
@@ -50,7 +65,8 @@ _PERSON_PATTERNS = re.compile(
 _NEGATION_RE = re.compile(
     r"(?:不|没|别|未|非|否)(?:是|会|想|喜欢|爱|愿意|觉得|吃|喝|去|再)|"
     r"从(?:不|没|未)|绝不|决不|完全不|"
-    r"\b(?:don'?t|doesn'?t|won'?t|can'?t|never|not)\s+\w+",
+    r"\b(?:don'?t|doesn'?t|won'?t|can'?t|never|not)\s+\w+|"
+    r"\b(?:dislike|dislikes|hate|hates)\b",
     re.IGNORECASE,
 )
 
@@ -71,6 +87,19 @@ _FILTERED_STATS: dict[str, int] = {
     "low_confidence": 0,
     "low_importance": 0,
     "low_information": 0,
+}
+
+_ATOM_TYPE_HINTS: dict[str, AtomType] = {
+    "fact": AtomType.FACTUAL,
+    "knowledge": AtomType.FACTUAL,
+    "factual": AtomType.FACTUAL,
+    "event": AtomType.EPISODIC,
+    "episodic": AtomType.EPISODIC,
+    "relational": AtomType.RELATIONAL,
+    "preference": AtomType.PREFERENCE,
+    "planned": AtomType.PLANNED,
+    "reflection": AtomType.UNKNOWN,
+    "unknown": AtomType.UNKNOWN,
 }
 
 
@@ -136,17 +165,37 @@ def _parse_event_time(text: str) -> float | None:
     now = time.time()
     day_sec = 86400.0
 
-    mapping: dict[str, float] = {
-        "前天": -2 * day_sec,
-        "昨天": -1 * day_sec,
-        "今天": 0,
-        "明天": 1 * day_sec,
-        "后天": 2 * day_sec,
-        "大后天": 3 * day_sec,
-    }
-    for word, offset in mapping.items():
-        if word in text:
+    mapping: tuple[tuple[str, float], ...] = (
+        ("大后天", 3 * day_sec),
+        ("前天", -2 * day_sec),
+        ("昨天", -1 * day_sec),
+        ("今天", 0),
+        ("明天", 1 * day_sec),
+        ("后天", 2 * day_sec),
+        ("tomorrow", 1 * day_sec),
+        ("yesterday", -1 * day_sec),
+        ("today", 0),
+    )
+    normalized_text = text.casefold()
+    for word, offset in mapping:
+        if word in normalized_text:
             return now + offset
+
+    absolute_match = re.search(
+        r"(?P<year>\d{4})(?:年|[-/])(?P<month>\d{1,2})(?:月|[-/])"
+        r"(?P<day>\d{1,2})(?:[日号])?",
+        text,
+    )
+    if absolute_match:
+        try:
+            target = datetime(
+                int(absolute_match.group("year")),
+                int(absolute_match.group("month")),
+                int(absolute_match.group("day")),
+            )
+        except ValueError:
+            return None
+        return target.timestamp()
 
     weekday_time = _parse_weekday_time(text, now)
     if weekday_time is not None:
@@ -211,6 +260,7 @@ def classify_atoms(
     min_content_length: int = 5,
     enable_info_check: bool = True,
     enable_quality_filter: bool = True,
+    atom_type_hint: str | None = None,
 ) -> list[MemoryAtom]:
     """将一组 `key_fact` 字符串分类为 `MemoryAtom` 实例。
 
@@ -230,6 +280,7 @@ def classify_atoms(
         min_content_length: 最小内容长度（字符），过短的原子不保存（默认 5）。
         enable_info_check: 是否启用信息量预检（默认 True）。
         enable_quality_filter: 质量过滤总开关，False 时跳过所有过滤（默认 True）。
+        atom_type_hint: 结构化抽取显式提供的可选类型，仅在规则无法判定时使用。
 
     返回:
         通过筛选的 `MemoryAtom` 列表；每条事实都会计算 TTL 与衰减类型。
@@ -241,6 +292,7 @@ def classify_atoms(
         entities.extend(participants)
 
     _emotion_tags = list(emotion_tags or [])
+    normalized_intensity = max(0.0, min(1.0, emotional_intensity))
 
     atoms: list[MemoryAtom] = []
     for fact in key_facts:
@@ -261,7 +313,7 @@ def classify_atoms(
                 continue
 
         # ---- 分类 ----
-        atom_type, confidence, event_time = _classify_single(fact)
+        atom_type, confidence, event_time = _classify_single(fact, atom_type_hint)
 
         # ---- 质量过滤（分类后） ----
         if enable_quality_filter:
@@ -276,9 +328,15 @@ def classify_atoms(
                 continue
 
         ttl, decay = compute_ttl(
-            atom_type, parent_importance, 0, event_time, emotional_intensity
+            atom_type, parent_importance, 0, event_time, normalized_intensity
         )
         now = time.time()
+        atom_metadata: dict[str, object] = {
+            "emotion_tags": list(_emotion_tags),
+            "emotional_intensity": normalized_intensity,
+        }
+        if _NEGATION_RE.search(fact):
+            atom_metadata["polarity"] = "negative"
 
         atom = MemoryAtom(
             parent_memory_id=0,
@@ -294,6 +352,7 @@ def classify_atoms(
             expires_at=now + ttl * 86400.0,
             session_id=session_id,
             persona_id=persona_id,
+            metadata=atom_metadata,
         )
         atoms.append(atom)
 
@@ -307,28 +366,32 @@ def classify_atoms(
     return atoms
 
 
-def _classify_single(text: str) -> tuple[AtomType, float, float | None]:
-    """对单条事实字符串分类，并返回 `(type, confidence, event_time)`。"""
+def _classify_single(
+    text: str,
+    atom_type_hint: str | None = None,
+) -> tuple[AtomType, float, float | None]:
+    """按强规则优先、结构提示兜底分类并返回类型、置信度与事件时间。"""
     has_time = bool(_TIME_INDICATORS.search(text))
     has_action = bool(_ACTION_VERBS.search(text))
-    has_stative = bool(_STATIVE_PATTERNS.search(text))
     has_relation = bool(_RELATION_PATTERNS.search(text))
     has_preference = bool(_PREFERENCE_PATTERNS.search(text))
+    has_stative = bool(_STATIVE_PATTERNS.search(text))
 
     event_time = _parse_event_time(text) if has_time else None
-
-    # PLANNED：时间指示词 + 动作动词 -> 未来事件
-    if has_time and has_action:
-        return AtomType.PLANNED, 0.85, event_time
-
+    now = time.time()
     is_negated = bool(_NEGATION_RE.search(text))
 
-    # PREFERENCE：偏好关键词优先（除非被否定）
-    if has_preference and not is_negated:
+    # 时间和动作同时出现时，必须先区分过去事件与未来计划。
+    if has_time and has_action:
+        if not is_negated and event_time is not None and event_time > now + 60.0:
+            return AtomType.PLANNED, 0.85, event_time
+        return AtomType.EPISODIC, 0.84, event_time
+
+    # 否定只表达极性，不能抹掉偏好或关系的语义类型。
+    if has_preference:
         return AtomType.PREFERENCE, 0.82, None
 
-    # RELATIONAL：人物模式 + 关系关键词（除非被否定）
-    if has_relation and not is_negated:
+    if has_relation:
         return AtomType.RELATIONAL, 0.80, None
 
     # FACTUAL：状态/定义类模式
@@ -339,8 +402,12 @@ def _classify_single(text: str) -> tuple[AtomType, float, float | None]:
     if has_action:
         return AtomType.EPISODIC, 0.75, None
 
+    normalized_hint = str(atom_type_hint or "").strip().lower()
+    if normalized_hint in _ATOM_TYPE_HINTS:
+        return _ATOM_TYPE_HINTS[normalized_hint], 0.76, None
+
     # UNKNOWN：兜底分类
-    return AtomType.UNKNOWN, 0.60, None
+    return AtomType.UNKNOWN, 0.68, None
 
 
 __all__ = [

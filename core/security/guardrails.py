@@ -39,7 +39,9 @@ class MemoryAtomSchema(BaseModel):
     )
     atom_type: str = Field(
         default="fact",
-        description="记忆类型: fact, event, preference, knowledge, reflection",
+        description=(
+            "可选记忆类型提示，兼容领域类型和历史 fact/event/knowledge/reflection"
+        ),
     )
     importance: float = Field(
         default=0.5,
@@ -95,10 +97,24 @@ class MemoryAtomSchema(BaseModel):
     @field_validator("atom_type")
     @classmethod
     def _valid_atom_type(cls, v: str) -> str:
-        allowed = {"fact", "event", "preference", "knowledge", "reflection"}
-        if v not in allowed:
+        """规范可选类型提示，并兼容历史与领域枚举词表。"""
+
+        normalized = v.strip().lower()
+        allowed = {
+            "fact",
+            "event",
+            "knowledge",
+            "reflection",
+            "factual",
+            "episodic",
+            "relational",
+            "preference",
+            "planned",
+            "unknown",
+        }
+        if normalized not in allowed:
             raise ValueError(f"atom_type 必须是 {allowed} 之一，收到: {v!r}")
-        return v
+        return normalized
 
     @field_validator("sentiment")
     @classmethod

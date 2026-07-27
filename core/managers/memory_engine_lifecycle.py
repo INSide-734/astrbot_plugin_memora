@@ -71,6 +71,12 @@ class MemoryEngineLifecycleMixin:
         self.sse = None
 
     async def initialize(self):
+        """初始化 canonical 数据库、检索器及可重建 Atom/图派生组件。
+
+        该方法会建立 SQLite 连接并把同一个请求级时钟与文本处理器装配到
+        文档、图和 Atom 召回路径；任一必要初始化异常由调用方处理。
+        """
+
         self.db_connection = await aiosqlite.connect(self.db_path)
         self.db_connection.row_factory = aiosqlite.Row
         # ---- SQLite 写性能优化 PRAGMA ----
@@ -108,13 +114,17 @@ class MemoryEngineLifecycleMixin:
         if self.graph_enabled and self.graph_vector_db is not None:
             self.graph_store = GraphStore(self.db_path)
             await self.graph_store.initialize()
-            self.atom_store = AtomStore(self.db_path)
+            self.atom_store = AtomStore(self.db_path, self.config)
             await self.atom_store.initialize()
             if self.atom_enabled:
                 self.atom_lifecycle_manager = AtomLifecycleManager(
                     self.atom_store, self.config
                 )
-                self.atom_retriever = AtomRetriever(self.atom_store, self.config)
+                self.atom_retriever = AtomRetriever(
+                    self.atom_store,
+                    self.config,
+                    text_processor=self.text_processor,
+                )
                 await self.atom_lifecycle_manager.start()
             self.graph_extractor = GraphExtractor(self.config)
             from ..storage.hierarchy_store import EntityHierarchyStore
@@ -311,6 +321,7 @@ class MemoryEngineLifecycleMixin:
                 reranker=reranker,
                 derived_expander=self.config.get("derived_expander"),
                 projection_reader=self.config.get("projection_reader"),
+                atom_retriever=self.atom_retriever,
             )
 
         # D4：实时 SSE 事件流。

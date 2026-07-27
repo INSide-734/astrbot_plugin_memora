@@ -17,6 +17,12 @@ from ..retrieval.rrf_fusion import HybridResult
 from ..utils.number_utils import clamp_float
 from .atom_source_binding import bind_atoms_to_canonical_source
 from .canonical_memory_reader import load_canonical_memory
+from .memory_engine_atom_support import (
+    prepare_atoms_for_write,
+    record_quality_samples,
+    reinforce_existing_atoms,
+    successful_atoms,
+)
 from .memory_engine_evolution_hooks import memory_revision
 from .write_op_serialization import serialize_atom_for_repair
 
@@ -39,6 +45,12 @@ class MemoryEngineCRUDMixin:
 
         if not content or not content.strip():
             raise ValueError("记忆内容不能为空")
+        prepared_atoms = prepare_atoms_for_write(
+            atoms or [],
+            session_id=session_id,
+            persona_id=persona_id,
+            config=self.config,
+        )
         write_started = time.perf_counter()
         op_id = await self._write_journal.start_op(
             "add",
@@ -48,7 +60,7 @@ class MemoryEngineCRUDMixin:
                 "persona_id": persona_id,
                 "importance": importance,
                 "metadata": metadata or {},
-                "atoms": [serialize_atom_for_repair(a) for a in (atoms or [])],
+                "atoms": [serialize_atom_for_repair(a) for a in prepared_atoms],
             },
         )
         current_time = time.time()
@@ -83,11 +95,7 @@ class MemoryEngineCRUDMixin:
             self._record_add_memory_failure("document")
             raise
         atom_write_failed = False
-        if atoms and self.atom_store is not None and self.atom_enabled:
-            prepared_atoms = list(atoms)
-            for atom in atoms:
-                atom.session_id = atom.session_id or session_id
-                atom.persona_id = atom.persona_id or persona_id
+        if prepared_atoms and self.atom_store is not None and self.atom_enabled:
             sources_bound = False
             try:
                 canonical_memory = await self.get_memory(doc_id)
@@ -97,6 +105,10 @@ class MemoryEngineCRUDMixin:
                     fallback_metadata=full_metadata,
                 )
                 sources_bound = True
+                await reinforce_existing_atoms(
+                    self.atom_lifecycle_manager,
+                    prepared_atoms,
+                )
                 await self.atom_store.insert_many(prepared_atoms)
                 await self._write_journal.advance_op(
                     op_id, "atoms_indexed", memory_id=doc_id
@@ -139,11 +151,15 @@ class MemoryEngineCRUDMixin:
             await self._write_journal.advance_op(
                 op_id, "atoms_skipped", memory_id=doc_id
             )
+        persisted_atoms = successful_atoms(prepared_atoms)
         needs_repair = atom_write_failed
         if self.graph_memory_manager is not None:
             try:
                 await self.graph_memory_manager.index_memory(
-                    doc_id, content, full_metadata, atoms
+                    doc_id,
+                    content,
+                    full_metadata,
+                    persisted_atoms or None,
                 )
                 await self._write_journal.advance_op(
                     op_id,
@@ -191,7 +207,7 @@ class MemoryEngineCRUDMixin:
             doc_id=doc_id,
             content=content,
             metadata=full_metadata,
-            atoms=atoms,
+            atoms=persisted_atoms,
             duration_s=time.perf_counter() - write_started,
         )
         await self._schedule_evolution_after_write(doc_id)
@@ -233,22 +249,13 @@ class MemoryEngineCRUDMixin:
         if scorer is None:
             return
         try:
-            payload = {
-                "id": doc_id,
-                "atom_id": doc_id,
-                "content": content,
-                "source_type": metadata.get("source_type")
-                or metadata.get("chat_type")
-                or "group_chat",
-                "created_at": metadata.get("create_time", time.time()),
-                "ttl_days": metadata.get("ttl_days", metadata.get("ttl", 30.0)),
-                "verified": metadata.get("verified", False),
-                "importance": metadata.get("importance", 0.5),
-            }
-            score = scorer.score_atom(payload, context={"metadata": metadata})
-            check_alerts = getattr(scorer, "check_alerts", None)
-            if callable(check_alerts):
-                check_alerts(score)
+            record_quality_samples(
+                scorer,
+                doc_id=doc_id,
+                content=content,
+                metadata=metadata,
+                atoms=list(atoms or []),
+            )
         except Exception:
             logger.warning("[MemoryEngine] 质量评分记录失败", exc_info=True)
 

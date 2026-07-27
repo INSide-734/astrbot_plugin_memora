@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from ..adapter_capabilities import (
@@ -18,6 +18,7 @@ from ..adapter_capabilities import (
     ScoreSemantics,
 )
 from ..models.memory_atom import compute_decay_score
+from ..models.temporal import normalize_datetime
 from ..utils.number_utils import clamp_float, safe_float
 from .graph_keyword_retriever import GraphKeywordRetriever
 from .graph_vector_retriever import GraphVectorRetriever
@@ -48,6 +49,7 @@ class GraphRetriever:
                 AdapterCapability.FILTERING,
                 AdapterCapability.SCORING,
                 AdapterCapability.CANCELLATION,
+                AdapterCapability.REFERENCE_TIME,
             }
         ),
         score=ScoreSemantics(
@@ -84,9 +86,20 @@ class GraphRetriever:
         memory_types: list[str] | None = None,
         **kwargs: Any,
     ) -> list[GraphResult]:
-        """并行执行图关键词检索和图向量检索。"""
+        """按请求级参考时间并行执行图关键词检索和图向量检索。"""
         if not query or not query.strip():
             return []
+
+        requested_time = kwargs.get("reference_time")
+        if isinstance(requested_time, (int, float)) and not isinstance(
+            requested_time, bool
+        ):
+            current_time = float(requested_time)
+        else:
+            normalized_time = normalize_datetime(
+                requested_time if isinstance(requested_time, datetime) else None
+            ) or datetime.now(timezone.utc)
+            current_time = normalized_time.timestamp()
 
         keyword_results, vector_results = await asyncio.gather(
             self.keyword_retriever.search(query, k, session_id, persona_id),
@@ -127,7 +140,6 @@ class GraphRetriever:
         vector_score_map = {item.doc_id: item.score for item in vector_results}
 
         max_rrf = max(item.rrf_score for item in fused) or 1.0
-        current_time = time.time()
         results: list[GraphResult] = []
 
         # 预计算 RELATIONAL 加权条件
@@ -148,26 +160,30 @@ class GraphRetriever:
             importance = clamp_float(metadata.get("importance"), default=0.5)
             create_time = safe_float(metadata.get("create_time"), current_time)
             last_access_time = safe_float(metadata.get("last_access_time"), 0.0)
-            reference_time = max(create_time, last_access_time)
-            days_old = max(0.0, (current_time - reference_time) / 86400)
+            freshness_time = max(create_time, last_access_time)
+            days_old = max(0.0, (current_time - freshness_time) / 86400)
             recency_weight = math.exp(-self.decay_rate * days_old)
             graph_confidence = clamp_float(
                 metadata.get("graph_confidence"), default=0.7
             )
             rrf_normalized = item.rrf_score / max_rrf
 
-            # Temporal decay: use atom-level TTL when available
+            # Atom 图条目使用创建与过期快照，避免把缺失访问时间解释为 Unix 纪元。
             atom_ttl = safe_float(metadata.get("ttl_days"), 0.0)
+            expires_at = safe_float(metadata.get("expires_at"), 0.0)
+            if expires_at > 0 and current_time >= expires_at:
+                continue
             temporal_factor = 1.0
             decay_type = str(metadata.get("decay_type", ""))
             if atom_ttl > 0:
-                days_since_access = max(
-                    0.0, (current_time - last_access_time) / 86400.0
+                days_since_creation = max(
+                    0.0,
+                    (current_time - create_time) / 86400.0,
                 )
                 temporal_factor = compute_decay_score(
                     decay_type,
                     atom_ttl,
-                    days_since_access,
+                    days_since_creation,
                 )
 
             final_score = (

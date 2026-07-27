@@ -363,15 +363,26 @@ def _extract_causal_edges(
     return edges
 
 
-def _atom_time_metadata(atom: Any) -> dict[str, float]:
-    """提取原子的创建时间与业务事件时间。"""
-    metadata: dict[str, float] = {}
+def _atom_time_metadata(atom: Any) -> dict[str, Any]:
+    """提取原子的创建、过期、衰减与业务事件时间快照。"""
+    metadata: dict[str, Any] = {}
     create_time = _optional_float(getattr(atom, "created_at", None))
     event_time = _optional_float(getattr(atom, "event_time", None))
+    expires_at = _optional_float(getattr(atom, "expires_at", None))
+    decay_type = getattr(atom, "decay_type", None)
+    decay_value = getattr(decay_type, "value", decay_type)
     if create_time is not None:
         metadata["create_time"] = create_time
     if event_time is not None:
         metadata["event_time"] = event_time
+    if expires_at is not None:
+        metadata["expires_at"] = expires_at
+    if isinstance(decay_value, str) and decay_value in {
+        "linear",
+        "exponential",
+        "step",
+    }:
+        metadata["decay_type"] = decay_value
     return metadata
 
 

@@ -183,6 +183,20 @@ class ComponentFactory:
             llm_provider=llm_id if llm_id else None,
             config={
                 "atom_enabled": engine_config["atom_enabled"],
+                **{
+                    key: engine_config[key]
+                    for key in (
+                        "atom_quality_filter_enabled",
+                        "atom_min_confidence",
+                        "atom_min_importance",
+                        "atom_min_content_length",
+                        "atom_info_check_enabled",
+                        "atom_probationary_enabled",
+                        "atom_probationary_ttl_days",
+                        "atom_dedup_enabled",
+                        "atom_dedup_threshold",
+                    )
+                },
                 "group_chat_template": self.config_manager.get(
                     "prompt_templates.group_chat_template", ""
                 ),
@@ -434,6 +448,16 @@ class ComponentFactory:
     def _build_engine_config(
         self, stopwords_dir: Path, graph_memory_enabled: bool
     ) -> dict:
+        """把已校验配置投影为 MemoryEngine 使用的扁平运行时字典。
+
+        参数:
+            stopwords_dir: 文本处理器加载停用词的目录。
+            graph_memory_enabled: 本次装配是否启用图记忆能力。
+
+        返回:
+            包含召回、Atom 生命周期、图与演化设置的引擎配置副本。
+        """
+
         cm = self.config_manager
         return {
             "data_dir": self.data_dir,
@@ -488,6 +512,42 @@ class ComponentFactory:
                 "graph_memory.atom_forget_delay_days", 7.0
             ),
             "atom_purge_delay_days": cm.get("graph_memory.atom_purge_delay_days", 30.0),
+            "atom_quality_filter_enabled": cm.get(
+                "atom_quality_filter.atom_quality_filter_enabled", True
+            ),
+            "atom_min_confidence": cm.get(
+                "atom_quality_filter.atom_min_confidence", 0.65
+            ),
+            "atom_min_importance": cm.get(
+                "atom_quality_filter.atom_min_importance", 0.3
+            ),
+            "atom_min_content_length": cm.get(
+                "atom_quality_filter.atom_min_content_length", 5
+            ),
+            "atom_info_check_enabled": cm.get(
+                "atom_quality_filter.atom_info_check_enabled", True
+            ),
+            "atom_probationary_enabled": cm.get(
+                "atom_quality_filter.atom_probationary_enabled", True
+            ),
+            "atom_probationary_ttl_days": cm.get(
+                "atom_quality_filter.atom_probationary_ttl_days", 3.0
+            ),
+            "atom_dedup_enabled": cm.get(
+                "atom_quality_filter.atom_dedup_enabled", True
+            ),
+            "atom_dedup_threshold": cm.get(
+                "atom_quality_filter.atom_dedup_threshold", 0.7
+            ),
+            "atom_cold_storage_enabled": cm.get(
+                "atom_quality_filter.atom_cold_storage_enabled", True
+            ),
+            "atom_cold_days_threshold": cm.get(
+                "atom_quality_filter.atom_cold_days_threshold", 14.0
+            ),
+            "atom_cold_max_importance": cm.get(
+                "atom_quality_filter.atom_cold_max_importance", 0.4
+            ),
             "index_rebuild_batch_size": cm.get("index_rebuild_settings.batch_size", 50),
             "index_rebuild_embedding_batch_size": cm.get(
                 "index_rebuild_settings.embedding_batch_size", 8

@@ -256,10 +256,15 @@ class MemoryProcessor:
                     mem_metadata["guardrail_fallback"] = True
                 mem_metadata["source_snippet"] = snippet[:150].strip()
                 mem_metadata["schema_version"] = "v3"
+                mem_metadata["emotional_intensity"] = intensity
                 if mem_emotion_tags:
                     mem_metadata["emotion_tags"] = [
                         t for t in mem_emotion_tags if isinstance(t, str) and t.strip()
                     ][:3]
+                if mem.get("atom_type"):
+                    mem_metadata["atom_type"] = str(mem["atom_type"])
+                if mem.get("confidence") is not None:
+                    mem_metadata["atom_confidence"] = float(mem["confidence"])
                 causal = (mem.get("causal_relations") or [])[:3]
                 if causal:
                     mem_metadata["causal_relations"] = [
@@ -371,7 +376,9 @@ class MemoryProcessor:
                     "participants": list(atom.participants),
                     "causal_relations": list(atom.causal_relations),
                     "confidence": atom.confidence,
-                    "atom_type": atom.atom_type,
+                    "atom_type": (
+                        atom.atom_type if "atom_type" in atom.model_fields_set else None
+                    ),
                 }
             )
 
@@ -406,6 +413,12 @@ class MemoryProcessor:
         )
         metadata["summary_quality"] = quality
         metadata["schema_version"] = "v3"
+        metadata["emotional_intensity"] = max(
+            0.0,
+            min(1.0, float(structured_data.get("emotional_intensity", 0.5))),
+        )
+        if structured_data.get("atom_type"):
+            metadata["atom_type"] = str(structured_data["atom_type"])
         if fallback_excerpt and fallback_excerpt.strip():
             metadata["source_snippet"] = fallback_excerpt.strip()[:150]
 
@@ -428,6 +441,8 @@ class MemoryProcessor:
         session_id: str | None = None,
         persona_id: str | None = None,
     ) -> list[MemoryAtom]:
+        """按父记忆 metadata 和运行时质量配置生成 MemoryAtom 列表。"""
+
         if not self.config.get("atom_enabled", True):
             return []
         key_facts: list[str] = metadata.get("key_facts", [])
@@ -446,6 +461,14 @@ class MemoryProcessor:
             persona_id=persona_id,
             emotion_tags=emotion_tags,
             emotional_intensity=emotional_intensity,
+            min_confidence=float(self.config.get("atom_min_confidence", 0.65)),
+            min_importance=float(self.config.get("atom_min_importance", 0.3)),
+            min_content_length=int(self.config.get("atom_min_content_length", 5)),
+            enable_info_check=bool(self.config.get("atom_info_check_enabled", True)),
+            enable_quality_filter=bool(
+                self.config.get("atom_quality_filter_enabled", True)
+            ),
+            atom_type_hint=metadata.get("atom_type"),
         )
 
     async def generate_persona_interpretations(
