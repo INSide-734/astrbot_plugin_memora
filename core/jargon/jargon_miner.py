@@ -213,6 +213,7 @@ class JargonMiner:
             if inference_timeout is not None and inference_timeout > 0
             else None
         )
+        self._inflight_candidates: set[tuple[str, str]] = set()
 
     # ------------------------------------------------------------------
     # 公开 API
@@ -224,9 +225,9 @@ class JargonMiner:
         """执行一轮黑话推断。
 
         1. 从统计过滤器获取候选词（get_candidates）
-        2. 取 top-N 未完成的候选
+        2. 取前 N 个未完成且达到下一渐进阈值的候选
         3. 对每个候选异步执行三步推断
-        4. 更新 store
+        4. 更新持久化存储
 
         参数:
             group_id: 群组 ID。
@@ -244,12 +245,18 @@ class JargonMiner:
             logger.debug(f"[黑话挖掘器] 群 {group_id} 无候选词")
             return []
 
-        # 过滤：只处理达到阈值且未完成的候选
+        # 过滤：只处理未完成且跨过下一渐进阈值的候选
         eligible: list[JargonCandidate] = []
         for cand in candidates:
             if len(eligible) >= limit:
                 break
-            if self._should_infer(cand):
+            existing = await self._store.get_by_term(cand.term, cand.group_id)
+            last_inference_count = (
+                existing.last_inference_count if existing is not None else 0
+            )
+            if (
+                existing is None or not existing.is_complete
+            ) and self._should_infer(cand, last_inference_count):
                 eligible.append(cand)
 
         if not eligible:
@@ -458,16 +465,19 @@ class JargonMiner:
             logger.error(f"[黑话挖掘器] LLM 调用失败：{exc}")
             return None
 
-    def _should_infer(self, candidate: JargonCandidate) -> bool:
+    def _should_infer(
+        self, candidate: JargonCandidate, last_inference_count: int = 0
+    ) -> bool:
         """判断候选词是否需要在此轮触发推断。
 
         逻辑：
         1. count < 第一个阈值 → 不触发
-        2. 找到 count 到达的下一个阈值
-        3. 如果 count >= 该阈值 → 触发
+        2. 找到当前 count 已达到的最高阈值
+        3. 仅当该阈值高于上次推断记录时触发
 
         参数:
             candidate: 候选词（其 frequency 字段用作 count）。
+            last_inference_count: 已持久化的上次推断触发频次。
 
         返回:
             是否需要触发推断。
@@ -476,10 +486,10 @@ class JargonMiner:
         if count < INFERENCE_THRESHOLDS[0]:
             return False
 
-        # 找到当前 count 对应应触发的下一个阈值
-        for threshold in INFERENCE_THRESHOLDS:
+        # 只在越过新的阈值时触发，避免同一频次循环调用 LLM。
+        for threshold in reversed(INFERENCE_THRESHOLDS):
             if count >= threshold:
-                return True
+                return last_inference_count < threshold
         return False
 
     @staticmethod
@@ -555,39 +565,68 @@ class JargonMiner:
         返回:
             JargonMeaning 实例，推断失败或信息不足时返回 None。
         """
-        # 先检查存储层中是否已经存在且标记为完成
-        existing = await self._store.get_by_term(
-            candidate.term, candidate.group_id
-        )
-        if existing and existing.is_complete:
+        candidate_key = (candidate.group_id, candidate.term)
+        if candidate_key in self._inflight_candidates:
             logger.debug(
-                    f"[黑话挖掘器] 候选词={candidate.term} 已完成，跳过重新推断"
+                f"[黑话挖掘器] 候选词={candidate.term} 正在推断，跳过重复任务"
             )
-            return existing
-
-        meaning = await self.infer_meaning(candidate)
-        if meaning is None:
             return None
 
-        # 持久化
-        await self._store.upsert(meaning)
-
-        if meaning.is_jargon:
-            logger.info(
-                f"[黑话挖掘器] 识别到黑话：{meaning.term} -> {meaning.meaning[:80]}"
-                f" (置信度={meaning.confidence:.2f})"
+        self._inflight_candidates.add(candidate_key)
+        try:
+            # 任务排队期间可能已有其他调用完成推断，需在这里再次确认。
+            existing = await self._store.get_by_term(
+                candidate.term, candidate.group_id
             )
-        else:
-            logger.info(
-                f"[黑话挖掘器] {meaning.term} 判定为非黑话"
-                f" (置信度={meaning.confidence:.2f})"
-            )
+            if existing and existing.is_complete:
+                logger.debug(
+                    f"[黑话挖掘器] 候选词={candidate.term} 已完成，跳过重新推断"
+                )
+                return existing
+            if existing and not self._should_infer(
+                candidate, existing.last_inference_count
+            ):
+                logger.debug(
+                    f"[黑话挖掘器] 候选词={candidate.term} 未达到下一推断阈值，跳过"
+                )
+                return None
 
-        return meaning
+            meaning = await self.infer_meaning(candidate)
+            if meaning is None:
+                return None
+
+            # 持久化
+            await self._store.upsert(meaning)
+
+            if meaning.is_jargon:
+                logger.info(
+                    f"[黑话挖掘器] 识别到黑话：{meaning.term} -> {meaning.meaning[:80]}"
+                    f" (置信度={meaning.confidence:.2f})"
+                )
+            else:
+                logger.info(
+                    f"[黑话挖掘器] {meaning.term} 判定为非黑话"
+                    f" (置信度={meaning.confidence:.2f})"
+                )
+
+            return meaning
+        finally:
+            self._inflight_candidates.discard(candidate_key)
 
     async def _infer_and_store_with_timeout(
         self, candidate: JargonCandidate
     ) -> JargonMeaning | None:
+        """在配置的时限内推断并持久化单个候选词。
+
+        参数:
+            candidate: 需要推断的候选词。
+
+        返回:
+            持久化后的推断结果；超时、重复任务或无结果时返回 None。
+
+        异常:
+            asyncio.CancelledError: 调用方取消时继续向上传播。
+        """
         if self._inference_timeout is None:
             return await self._infer_and_store(candidate)
         try:

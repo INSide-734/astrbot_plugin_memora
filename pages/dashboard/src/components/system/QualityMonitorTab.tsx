@@ -13,6 +13,12 @@ interface QualityMonitorTabProps {
   resetPending?: boolean;
 }
 
+/**
+ * 展示当前插件进程内的记忆质量统计、告警和最近评分记录。
+ *
+ * @param props 用于请求刷新、触发重置与显示操作反馈的页面属性。
+ * @returns 质量监控标签页内容。
+ */
 export function QualityMonitorTab({ showToast, onResetRequested, refreshToken = 0, resetPending = false }: QualityMonitorTabProps) {
   const { t, currentLang } = useI18n();
   const [stats, setStats] = useState<QualityStats | null>(null);
@@ -21,6 +27,7 @@ export function QualityMonitorTab({ showToast, onResetRequested, refreshToken = 
   const [loading, setLoading] = useState(false);
   const locale = dashboardLocale(currentLang());
 
+  /** 获取三组质量监控数据，并在任一请求失败时保留已展示的数据。 */
   const fetchQuality = useCallback(async () => {
     setLoading(true);
     try {
@@ -35,7 +42,7 @@ export function QualityMonitorTab({ showToast, onResetRequested, refreshToken = 
       const alertsData = unwrapApiData(alertsRes);
       setAlerts(((alertsData as Record<string, unknown>)?.alerts ?? []) as QualityAlertEntry[]);
     } catch {
-      // silently keep stale data on fetch failure
+      // 请求失败时保留已展示的旧数据，避免操作期间闪烁为空态。
     } finally {
       setLoading(false);
     }
@@ -43,6 +50,7 @@ export function QualityMonitorTab({ showToast, onResetRequested, refreshToken = 
 
   useEffect(() => { fetchQuality(); }, [fetchQuality, refreshToken]);
 
+  /** 请求父级确认重置，或在独立使用时直接重置后刷新数据。 */
   const resetQuality = async () => {
     if (onResetRequested) {
       onResetRequested();
@@ -60,13 +68,13 @@ export function QualityMonitorTab({ showToast, onResetRequested, refreshToken = 
   if (loading) {
     return <p className="text-center text-sm text-[var(--text-tertiary)] py-12">{t("table.loading")}</p>;
   }
-  if (!stats) {
+  if (!stats || stats.total_scored === 0) {
     return <p className="text-center text-sm text-[var(--text-tertiary)] py-12">{t("quality.noData")}</p>;
   }
 
   return (
     <>
-      {/* Paused banner */}
+      {/* 暂停状态提示。 */}
       {stats.paused && (
         <div className="flex items-center gap-2 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 px-4 py-2.5 text-sm text-[var(--text-primary)]">
           <AlertTriangle size={16} className="text-[var(--color-warning)]" />
@@ -74,7 +82,7 @@ export function QualityMonitorTab({ showToast, onResetRequested, refreshToken = 
         </div>
       )}
 
-      {/* Quality overview cards */}
+      {/* 质量概览卡片。 */}
       <div className="grid grid-cols-3 gap-4">
         {[
           { label: t("quality.dim.consistency"), value: stats.avg_consistency },
@@ -93,7 +101,7 @@ export function QualityMonitorTab({ showToast, onResetRequested, refreshToken = 
         ))}
       </div>
 
-      {/* Alerts */}
+      {/* 告警列表。 */}
       {alerts.length > 0 && (
       <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
           <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-5 py-3">
@@ -134,7 +142,7 @@ export function QualityMonitorTab({ showToast, onResetRequested, refreshToken = 
         </div>
       )}
 
-      {/* Recent scores table */}
+      {/* 最近评分记录。 */}
       {scores.length > 0 && (
       <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
           <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-5 py-3">

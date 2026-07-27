@@ -13,6 +13,7 @@ from astrbot.core.provider.provider import EmbeddingProvider, Provider
 
 from .base.config_manager import ConfigManager
 from .base.exceptions import InitializationError
+from .base.feature_config import is_jargon_discovery_enabled
 from .initializer.component_factory import ComponentFactory
 from .identity.runtime import ProtocolIdentityRuntime
 from .initializer.db_setup import DatabaseSetup
@@ -29,6 +30,7 @@ from .storage.injection_decision_store import InjectionDecisionStore
 from .security import PromptProtectionService
 from .validators.index_validator import IndexValidator
 from .monitoring import report_debug_event, report_debug_exception
+from .monitoring.quality_scorer import MemoryQualityScorer
 
 
 class PluginInitializer:
@@ -39,6 +41,14 @@ class PluginInitializer:
     TASK_CANCEL_TIMEOUT: float = 3.0
 
     def __init__(self, context: Context, config_manager: ConfigManager, data_dir: str):
+        """初始化插件共享组件的占位引用和质量评分器。
+
+        参数:
+            context: AstrBot 运行时上下文。
+            config_manager: 已加载的插件配置管理器。
+            data_dir: 插件持久化数据目录。
+        """
+
         self.context = context
         self.config_manager = config_manager
         self.data_dir = data_dir
@@ -49,6 +59,7 @@ class PluginInitializer:
         self.db: Any | None = None
         self.graph_db: Any | None = None
         self.memory_engine: MemoryEngine | None = None
+        self.quality_scorer: MemoryQualityScorer = MemoryQualityScorer(window_size=100)
         self.memory_processor: MemoryProcessor | None = None
         self.conversation_manager: ConversationManager | None = None
         self.index_validator: IndexValidator | None = None
@@ -196,7 +207,11 @@ class PluginInitializer:
             self._initialization_error = str(e)
 
     async def _run_full_init(self):
-        """执行完整初始化流程"""
+        """构建组件并发布共享运行时引用。
+
+        质量评分器在此与 ``MemoryEngine`` 绑定，确保写入链、质量接口和
+        指标摘要读取同一个进程内历史窗口。
+        """
         logger.info("开始完整初始化流程...")
         initialization_started = time.perf_counter()
         current_stage = "component_build"
@@ -243,6 +258,7 @@ class PluginInitializer:
             self.db = components["db"]
             self.graph_db = components["graph_db"]
             self.memory_engine = components["memory_engine"]
+            self.memory_engine._quality_scorer = self.quality_scorer
             self.memory_processor = components["memory_processor"]
             self.conversation_manager = components["conversation_manager"]
             self.index_validator = components["index_validator"]
@@ -494,51 +510,58 @@ class PluginInitializer:
             self.expression_store = None
             self.expression_learner = None
 
-        component_started = time.perf_counter()
-        try:
-            from .jargon import JargonMiner, JargonQueryService, JargonStatisticalFilter, JargonStore
-
-            self.jargon_filter = JargonStatisticalFilter()
-            self.jargon_store = JargonStore(db_path)
-            await self.jargon_store.initialize()
-            self.jargon_query_service = JargonQueryService(self.jargon_store)
-            self.jargon_miner = JargonMiner(
-                self.llm_provider,
-                self.jargon_filter,
-                self.jargon_store,
-            )
-            success_count += 1
-            report_debug_event(
-                "plugin_initialized",
-                component="initializer",
-                stage="cognitive_components",
-                status="completed",
-                reason_code="cognitive_component_ready",
-                capability="jargon",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - component_started) * 1000.0
-                ),
-            )
-            logger.info("黑话组件已初始化")
-        except Exception as exc:
-            failed_count += 1
-            report_debug_exception(
-                "plugin_initialized",
-                exc,
-                component="initializer",
-                stage="cognitive_components",
-                status="degraded",
-                reason_code="cognitive_component_unavailable",
-                capability="jargon",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - component_started) * 1000.0
-                ),
-            )
-            logger.warning("黑话组件初始化失败，已跳过: %s", exc, exc_info=True)
+        if not is_jargon_discovery_enabled(self.config_manager):
             self.jargon_filter = None
             self.jargon_store = None
             self.jargon_query_service = None
             self.jargon_miner = None
+            logger.info("黑话自动发现功能已禁用")
+        else:
+            component_started = time.perf_counter()
+            try:
+                from .jargon import JargonMiner, JargonQueryService, JargonStatisticalFilter, JargonStore
+
+                self.jargon_filter = JargonStatisticalFilter()
+                self.jargon_store = JargonStore(db_path)
+                await self.jargon_store.initialize()
+                self.jargon_query_service = JargonQueryService(self.jargon_store)
+                self.jargon_miner = JargonMiner(
+                    self.llm_provider,
+                    self.jargon_filter,
+                    self.jargon_store,
+                )
+                success_count += 1
+                report_debug_event(
+                    "plugin_initialized",
+                    component="initializer",
+                    stage="cognitive_components",
+                    status="completed",
+                    reason_code="cognitive_component_ready",
+                    capability="jargon",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - component_started) * 1000.0
+                    ),
+                )
+                logger.info("黑话组件已初始化")
+            except Exception as exc:
+                failed_count += 1
+                report_debug_exception(
+                    "plugin_initialized",
+                    exc,
+                    component="initializer",
+                    stage="cognitive_components",
+                    status="degraded",
+                    reason_code="cognitive_component_unavailable",
+                    capability="jargon",
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - component_started) * 1000.0
+                    ),
+                )
+                logger.warning("黑话组件初始化失败，已跳过: %s", exc, exc_info=True)
+                self.jargon_filter = None
+                self.jargon_store = None
+                self.jargon_query_service = None
+                self.jargon_miner = None
 
         component_started = time.perf_counter()
         try:

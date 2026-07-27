@@ -8,6 +8,8 @@
 
 `core/jargon/` 实现“统计发现 → LLM 语义推断 → 人工确认/编辑 → 群内查询与解释”的独立术语管线。它面向群组黑话、缩写和俚语，不负责通用关键词检索、消息安全审查或自动授权。组件由 `core/plugin_initializer.py` 初始化；控制台管理经 `core/api/jargon_api.py` 与 `JargonAdminService`，Agent 查询经 `core/tools/jargon_tools.py`。
 
+`jargon.enabled` 默认关闭。关闭时初始化器不创建本模块组件，消息旁路不会累计候选或调用 LLM，页面 API 也不得惰性创建 `JargonMiner`；已有 SQLite 词条数据不删除。
+
 ## 架构与数据流
 
 ```mermaid
@@ -29,7 +31,7 @@ flowchart LR
 - `JargonStatisticalFilter.update(text, group_id, sender_id)`：在内存中累计群词频、全局词频、用户集中度、首次出现时间和最多 10 条上下文。
 - `get_candidates(group_id, limit=20, exclude_terms=None)`：以跨群 IDF `0.4`、爆发度 `0.3`、用户集中度 `0.3` 组合评分；频次至少 3、综合分至少 `0.35`。
 - `get_stats` / `reset_group`：统计摘要与群内存状态清理。
-- `JargonMiner.run_once(group_id, limit=5)`：选择候选并并发运行短生命周期推断任务；取消时取消并消费所有子任务，单候选默认 120 秒超时。
+- `JargonMiner.run_once(group_id, limit=5)`：仅在候选频次跨过持久化 `last_inference_count` 之后的下一渐进阈值时触发；同群同词的并发调用在进程内去重，并发运行其他候选的短生命周期推断任务；取消时取消并消费所有子任务，单候选默认 120 秒超时。
 - `infer_meaning(candidate)`：上下文推断、仅词面推断、两者对比三步流程；步骤 2 失败时以低置信度保守降级，信息不足时不建记录。
 - `JargonQueryService.query`、`get_group_jargon`、`check_and_explain`：查询、列出已确认术语、生成可注入解释；ASCII 词使用单词边界，非 ASCII 使用子串匹配。
 - `invalidate_cache` / `invalidate_group`：写后必须清理对应群缓存。

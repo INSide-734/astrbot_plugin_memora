@@ -1274,6 +1274,19 @@
             "enable_expression_tools": {"description": "启用表达模式工具", "hint": "向 Agent 注册 expression_recall 工具。self_learning 伴侣插件活跃时可能委托并跳过本地注册。", "type": "bool", "default": true}
         }
     },
+    "jargon": {
+        "description": "黑话发现",
+        "hint": "控制群消息统计与 LLM 黑话推断；关闭后保留已有词条数据，但不再收集候选或调用 LLM。",
+        "type": "object",
+        "items": {
+            "enabled": {
+                "description": "启用黑话自动发现",
+                "hint": "默认关闭。开启后会统计群消息候选词，并在达到渐进阈值时调用 LLM 推断。修改后需重载插件生效。",
+                "type": "bool",
+                "default": false
+            }
+        }
+    },
     "dashboard": {
         "description": "Dashboard 运行时构建",
         "hint": "控制是否允许通过 Web API 在运行时执行 dashboard 依赖安装和构建。",
