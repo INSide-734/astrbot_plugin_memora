@@ -9,6 +9,7 @@ import secrets
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
@@ -25,6 +26,8 @@ from .core.i18n_backend import init as i18n_init
 from .core.i18n_backend import t
 from .core.managers.backup_manager import BackupManager
 from .core.managers.backup_models import BackupOperationError
+from .core.managers.update_installer import RuntimeUpdateInstaller
+from .core.managers.update_manager import UpdateManager
 from .core.monitoring import (
     PerfTracker,
     close_debug_reporting,
@@ -69,6 +72,17 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         # 保留 AstrBot 注入对象，配置变更通过其原子保存能力持久化
         self.astrbot_config = config
         self.config_manager = ConfigManager(self.astrbot_config)
+        self._update_manager = UpdateManager(
+            data_dir,
+            self.config_manager,
+            host_config_source=getattr(self.context, "get_config", None),
+        )
+        self._update_installer = RuntimeUpdateInstaller(
+            context=self.context,
+            data_dir=data_dir,
+            plugin_root=Path(__file__).resolve().parent,
+            update_manager=self._update_manager,
+        )
 
         # 初始化后端 i18n
         i18n_init(self.astrbot_config.get("bot_language", "zh"))
@@ -511,6 +525,8 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                         "test_recall_with_trace_payload",
                         None,
                     ),
+                    update_manager=self._update_manager,
+                    update_installer=self._update_installer,
                 )
 
         report_debug_event(

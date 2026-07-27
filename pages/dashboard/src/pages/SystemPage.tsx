@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { TopicSegmentationConfig } from "@/components/TopicSegmentationConfig";
 import { QualityMonitorTab } from "@/components/system/QualityMonitorTab";
 import { DelegationTab } from "@/components/system/DelegationTab";
+import { UpdateNotice } from "@/components/system/UpdateNotice";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -664,6 +665,8 @@ export function SystemPage({ showToast }: SystemPageProps) {
             </div>
           ))}
         </div>
+
+        <UpdateNotice showToast={showToast} />
 
         {/* Runtime observability */}
           <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">

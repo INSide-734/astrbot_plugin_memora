@@ -1316,6 +1316,33 @@
             }
         }
     },
+    "update_settings": {
+        "description": "插件 runtime 更新",
+        "hint": "管理员可通过 /memora update 检查、下载或安装已发布的 runtime 包。下载会优先使用镜像地址，并在 SHA-256 校验通过后保存到插件数据目录；宿主支持时 Dashboard 可自动切换目录、单插件重载并在失败时恢复旧版本。",
+        "type": "object",
+        "items": {
+            "enabled": {
+                "description": "启用插件更新",
+                "hint": "关闭后 /memora update 不会访问网络。",
+                "type": "bool",
+                "default": true
+            },
+            "mirror_url": {
+                "description": "GitHub 下载镜像前缀",
+                "hint": "留空使用官方地址；例如 https://ghproxy.net/ 或 https://mirror.example/，也可使用包含 {url} 占位符的地址。仅允许 HTTP(S)，不支持本地文件路径。",
+                "type": "string",
+                "default": ""
+            },
+            "timeout_seconds": {
+                "description": "更新请求超时（秒）",
+                "hint": "单次 Release 元数据或安装包请求的超时时间。",
+                "type": "int",
+                "default": 30,
+                "min": 5,
+                "max": 120
+            }
+        }
+    },
     "security": {
         "description": "安全防护",
         "hint": "控制记忆注入提示词保护、LLM 回复清洗和结构化输出护栏。",

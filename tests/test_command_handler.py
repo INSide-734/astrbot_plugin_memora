@@ -292,6 +292,62 @@ class TestMaintenanceWriteGuard:
 
         assert results == ["备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。"]
 
+
+class TestHandleUpdate:
+    """更新命令的安装与降级路径测试。"""
+
+    @pytest.mark.asyncio
+    async def test_apply_delegates_to_runtime_installer(self) -> None:
+        """``apply`` 应启动安装器并返回安排重载的提示。"""
+        from core.command_handler import CommandHandler
+
+        manager = MagicMock()
+        manager.is_enabled.return_value = True
+        installer = MagicMock()
+        installer.apply_latest = AsyncMock(
+            return_value={"version": "1.1.0", "status": "reload_scheduled"}
+        )
+        handler = CommandHandler(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            memory_engine=None,
+            conversation_manager=None,
+            index_validator=None,
+            update_manager=manager,
+            update_installer=installer,
+        )
+        event = MagicMock()
+        event.plain_result = MagicMock(side_effect=lambda message: message)
+
+        results = [result async for result in handler.handle_update(event, "apply")]
+
+        installer.apply_latest.assert_awaited_once_with()
+        assert len(results) == 2
+        assert results == ["update.applying", "update.apply_scheduled"]
+
+    @pytest.mark.asyncio
+    async def test_apply_reports_unavailable_without_installer(self) -> None:
+        """宿主不支持单插件安装时，命令应返回不可用提示。"""
+        from core.command_handler import CommandHandler
+
+        manager = MagicMock()
+        manager.is_enabled.return_value = True
+        handler = CommandHandler(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            memory_engine=None,
+            conversation_manager=None,
+            index_validator=None,
+            update_manager=manager,
+        )
+        event = MagicMock()
+        event.plain_result = MagicMock(side_effect=lambda message: message)
+
+        results = [result async for result in handler.handle_update(event, "apply")]
+
+        assert len(results) == 1
+        assert results == ["update.unavailable"]
+
     @pytest.mark.asyncio
     async def test_blocks_rebuild_index_when_guard_active(self) -> None:
         from core.command_handler import CommandHandler

@@ -15,7 +15,8 @@ interface BridgeMock {
   t?: ReturnType<typeof vi.fn>;
 }
 
-function ok<T>(data: T) {
+/** 构造保留成功状态字面量类型的桥接响应。 */
+function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
 }
 

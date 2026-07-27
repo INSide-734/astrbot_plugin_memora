@@ -779,6 +779,7 @@ def test_runtime_dependency_imports_are_declared_or_allowlisted() -> None:
         "shlex",
         "shutil",
         "sqlite3",
+        "stat",
         "statistics",
         "string",
         "subprocess",
@@ -796,6 +797,7 @@ def test_runtime_dependency_imports_are_declared_or_allowlisted() -> None:
         "uuid",
         "warnings",
         "weakref",
+        "zipfile",
         "xml",
         "zoneinfo",
     }

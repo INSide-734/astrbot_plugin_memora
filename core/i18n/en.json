@@ -87,6 +87,23 @@
     "notice_preview": "This is preview mode, no actual data was modified. Use /memora cleanup exec to perform actual cleanup.",
     "notice_exec": "AstrBot conversation history has been updated, memory injection fragments have been cleaned."
   },
+  "update": {
+    "checking": "Checking for Memora runtime updates...",
+    "downloading": "A new version is available. Downloading and verifying the runtime package...",
+    "up_to_date": "Memora is already up to date ({version}).",
+    "available": "Memora {latest} is available (current {current}).\nSource: {source}\nPackage: {filename}\n\nWhen supported by the host, use /memora update apply to install, reload, and roll back on failure. Otherwise use /memora update download to save the verified package to the staging directory and install it through AstrBot.",
+    "downloaded": "Runtime update {version} was downloaded and passed SHA-256 verification.\nSource: {source}\nSize: {size}\nSHA-256: {sha256}\nStaged at: {path}\n\nThe running plugin directory was not overwritten. Install this package through AstrBot or restart AstrBot to finish the update.",
+    "disabled": "Plugin updates are disabled in configuration.",
+    "unavailable": "The update service is not ready yet. Please try again later.",
+    "invalid_action": "Invalid update action. Use /memora update check, /memora update download, or /memora update apply.",
+    "applying": "Downloading, installing, and reloading the latest runtime...",
+    "apply_scheduled": "Runtime update {version} has been scheduled for installation and reload. The plugin will reconcile its status after reload.",
+    "failed": "Plugin update failed: {reason}",
+    "sources": {
+      "mirror": "mirror",
+      "official": "GitHub official"
+    }
+  },
   "command_diagnostics": {
     "component": "runtime diagnostics provider",
     "health": {
@@ -159,7 +176,7 @@
     }
   },
   "help": {
-    "text": "Memora User Guide\n\nCore commands:\n/memora status              View system status\n/memora health              View the runtime health score\n/memora diagnostics         View the live diagnostics snapshot\n/memora search <keyword> [count]  Search memories (default 5)\n/memora trace <query> [count] Run a recall trace for the current session (default 5)\n/memora forget <ID>          Delete specified memory\n/memora rebuild-index       Rebuild index (fix inconsistency)\n/memora rebuild-graph       Rebuild graph memory index (backfill old data)\n/memora webui               Show WebUI management interface entry\n/memora summarize           Immediately trigger memory summarization for current session\n/memora reset               Reset current session memory context\n/memora cleanup [preview|exec] Clean up memory injection fragments in historical messages (default preview)\n/memora help                Show this help\n\nUsage tips:\n• Use search command for daily queries\n• Start with health and diagnostics when runtime problems occur\n• Use trace to inspect recall stages and scores for the current session\n• For complex management, go to Plugins -> Memora -> Pages -> dashboard in AstrBot Dashboard\n• Memories are automatically saved from conversations\n• Use forget to delete sensitive information\n• Execute rebuild-index when index is inconsistent\n• After enabling graph memory, execute rebuild-graph to backfill old data\n• After plugin update, execute cleanup to clean old data\n\ncleanup command examples:\n  /memora cleanup          # Preview mode, shows statistics only\n  /memora cleanup preview  # Same as above\n  /memora cleanup exec     # Perform actual cleanup\n\nMore info: https://github.com/INSide-734/astrbot_plugin_memora"
+    "text": "Memora User Guide\n\nCore commands:\n/memora status              View system status\n/memora health              View the runtime health score\n/memora diagnostics         View the live diagnostics snapshot\n/memora search <keyword> [count]  Search memories (default 5)\n/memora trace <query> [count] Run a recall trace for the current session (default 5)\n/memora forget <ID>          Delete specified memory\n/memora rebuild-index       Rebuild index (fix inconsistency)\n/memora rebuild-graph       Rebuild graph memory index (backfill old data)\n/memora webui               Show WebUI management interface entry\n/memora summarize           Immediately trigger memory summarization for current session\n/memora reset               Reset current session memory context\n/memora cleanup [preview|exec] Clean up memory injection fragments in historical messages (default preview)\n/memora update [check|download|apply] Check, download, or install a runtime update\n/memora help                Show this help\n\nUsage tips:\n• Use search command for daily queries\n• Start with health and diagnostics when runtime problems occur\n• Use trace to inspect recall stages and scores for the current session\n• For complex management, go to Plugins -> Memora -> Pages -> dashboard in AstrBot Dashboard\n• Memories are automatically saved from conversations\n• Use forget to delete sensitive information\n• Execute rebuild-index when index is inconsistent\n• After enabling graph memory, execute rebuild-graph to backfill old data\n• After plugin update, prefer Dashboard one-click install; use download for manual installation when the host does not support reload\n\nupdate command examples:\n  /memora update check      # Check the latest version\n  /memora update download   # Download and verify the runtime package\n  /memora update apply      # Install, reload, and roll back on failure\n\ncleanup command examples:\n  /memora cleanup          # Preview mode, shows statistics only\n  /memora cleanup preview  # Same as above\n  /memora cleanup exec     # Perform actual cleanup\n\nMore info: https://github.com/INSide-734/astrbot_plugin_memora"
   },
   "init": {
     "ready": "Plugin is ready. Use /memora help to view available commands.",

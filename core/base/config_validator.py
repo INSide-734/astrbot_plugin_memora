@@ -8,7 +8,12 @@ from typing import Any, Literal
 from astrbot.api import logger
 from pydantic import BaseModel, Field, model_validator
 
-from .feature_config import AgentToolsConfig, DashboardConfig, JargonConfig
+from .feature_config import (
+    AgentToolsConfig,
+    DashboardConfig,
+    JargonConfig,
+    UpdateSettings,
+)
 
 PresetName = Literal["tool_first", "low_cost", "balanced", "quality"]
 
@@ -625,6 +630,7 @@ class MemoraConfig(BaseModel):
     agent_tools: AgentToolsConfig = Field(default_factory=AgentToolsConfig)
     jargon: JargonConfig = Field(default_factory=JargonConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    update_settings: UpdateSettings = Field(default_factory=UpdateSettings)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     forgetting_agent: ForgettingAgentConfig = Field(
         default_factory=ForgettingAgentConfig
