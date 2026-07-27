@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from core.models.memory_atom import AtomStatus, AtomType, DecayType, MemoryAtom
+from core.models.memory_atom import AtomStatus, AtomType, MemoryAtom
 from core.storage.atom_store import AtomStore
 
 
@@ -58,8 +58,7 @@ class TestAtomStoreCRUD:
         await store.initialize()
 
         atoms = [
-            _make_atom(content=f"记忆_{i}", parent_memory_id=10 + i)
-            for i in range(5)
+            _make_atom(content=f"记忆_{i}", parent_memory_id=10 + i) for i in range(5)
         ]
         ids = await store.insert_many(atoms)
         assert len(ids) == 5
@@ -247,7 +246,9 @@ class TestAtomStoreLifecycle:
             )
             await db.commit()
 
-        count = await store.migrate_to_cold(cold_days_threshold=14.0, max_importance=0.4)
+        count = await store.migrate_to_cold(
+            cold_days_threshold=14.0, max_importance=0.4
+        )
         assert count >= 1
 
         fetched = await store.get(atom_id)

@@ -100,9 +100,7 @@ def extract_graph_from_atoms(
         for entity in entities:
             entity_value = str(entity)
             canonical_value = EntityResolver.canonicalize(entity_value)
-            node_type = (
-                "person" if canonical_value in participant_values else "topic"
-            )
+            node_type = "person" if canonical_value in participant_values else "topic"
             entity_key = _add_node(node_type, entity_value)
             if not entity_key or entity_key in seen_entity_keys:
                 continue
@@ -167,9 +165,7 @@ def extract_graph_from_atoms(
                     session_id=session_id,
                     persona_id=persona_id,
                     entry_type="edge",
-                    content=(
-                        f"{entity_label} {entity_key} 关联到事实：{atom.content}"
-                    ),
+                    content=(f"{entity_label} {entity_key} 关联到事实：{atom.content}"),
                     metadata={
                         **entry_metadata,
                         "graph_confidence": edge_confidence,
@@ -182,9 +178,7 @@ def extract_graph_from_atoms(
     graph.nodes = list(node_map.values())
 
     if temporal_edges_enabled:
-        graph.edges.extend(
-            _extract_temporal_edges(atoms, source_memory_id, node_map)
-        )
+        graph.edges.extend(_extract_temporal_edges(atoms, source_memory_id, node_map))
 
     if causal_edges_enabled:
         graph.edges.extend(_extract_causal_edges(atoms, source_memory_id, node_map))
@@ -206,9 +200,7 @@ def extract_graph_from_atoms(
                     entry_type="summary",
                     content=f"记忆原子：{atom.content}",
                     metadata={
-                        "graph_confidence": float(
-                            getattr(atom, "confidence", 0.6)
-                        )
+                        "graph_confidence": float(getattr(atom, "confidence", 0.6))
                     },
                     node_keys=[summary_key],
                     relation_type="summary",
@@ -265,9 +257,7 @@ def _extract_temporal_edges(
         _, key_b, time_b = timed_atoms[index + 1]
         time_diff = time_b - time_a
         relation_type = (
-            TEMPORAL_DURING
-            if time_diff <= _DURING_WINDOW_SEC
-            else TEMPORAL_BEFORE
+            TEMPORAL_DURING if time_diff <= _DURING_WINDOW_SEC else TEMPORAL_BEFORE
         )
 
         edges.append(

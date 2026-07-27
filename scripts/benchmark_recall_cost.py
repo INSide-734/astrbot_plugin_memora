@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Deterministic benchmark for adaptive injection routing and execution."""
+"""自适应注入路由与执行的确定性基准。"""
+
 from __future__ import annotations
 
 import argparse
@@ -30,14 +31,25 @@ ENTRYPOINT_ROOT = Path(__file__).resolve().parent.parent
 if str(ENTRYPOINT_ROOT) not in sys.path:
     sys.path.append(str(ENTRYPOINT_ROOT))
 
-from scripts.recall_total_path_benchmark import (
+# 命令行可指定源码根目录，因此相关模块必须在路径解析完成后导入。
+from scripts.recall_total_path_benchmark import (  # noqa: E402
     TOTAL_RECALL_BASELINE_PATH,
-    TOTAL_RECALL_REGRESSION_LIMIT,
-    evaluate_total_path_regression,
     handler_worker_main,
-    load_total_path_baseline,
     record_total_path_baseline,
-    run_handler_worker,
+)
+from scripts.recall_total_path_benchmark import (  # noqa: E402
+    TOTAL_RECALL_REGRESSION_LIMIT as TOTAL_RECALL_REGRESSION_LIMIT,
+)
+from scripts.recall_total_path_benchmark import (  # noqa: E402
+    evaluate_total_path_regression as evaluate_total_path_regression,
+)
+from scripts.recall_total_path_benchmark import (  # noqa: E402
+    load_total_path_baseline as load_total_path_baseline,
+)
+from scripts.recall_total_path_benchmark import (  # noqa: E402
+    run_handler_worker as run_handler_worker,
+)
+from scripts.recall_total_path_benchmark import (  # noqa: E402
     run_total_path_benchmark as _run_total_path_benchmark,
 )
 
@@ -54,19 +66,19 @@ if not _HANDLER_WORKER_MODE:
     )
     from core.injection.presets import PRESETS
     from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
+    from core.utils.injection_adapter import InjectionAdapter
     from core.utils.injection_budget import (
         InjectionBudget,
         select_memories_with_budget,
     )
-    from core.utils.injection_adapter import InjectionAdapter
 
 
 if not _HANDLER_WORKER_MODE:
+
     @dataclass(frozen=True, slots=True)
     class RoutingCase:
         expected: PresetName
         signals: RequestSignals
-
 
     class CountingProvider:
         """Provider spy whose inference boundaries count actual LLM calls."""
@@ -85,7 +97,6 @@ if not _HANDLER_WORKER_MODE:
         async def completion(self, *_args: Any, **_kwargs: Any) -> str:
             self.inference_calls += 1
             return ""
-
 
     PROFILES = {
         name.value: {
@@ -197,8 +208,8 @@ async def _profile_metrics(
         tools_supported=True,
         memory_tool_available=True,
         candidate_count=len(_CANDIDATES),
-        top_confidence=.94,
-        score_gap=.11,
+        top_confidence=0.94,
+        score_gap=0.11,
         estimated_payload_chars=sum(len(item["content"]) for item in _CANDIDATES),
     )
     config = InjectionRoutingConfig(
@@ -225,7 +236,9 @@ async def _profile_metrics(
 
     for case in _ROUTING_CASES:
         started = time.perf_counter()
-        routed = router.route_final(InjectionRoutingConfig(mode=RoutingMode.AUTO), case.signals)
+        routed = router.route_final(
+            InjectionRoutingConfig(mode=RoutingMode.AUTO), case.signals
+        )
         latencies.append((time.perf_counter() - started) * 1000)
         auto_correct += int(routed.resolved_preset is case.expected)
         started = time.perf_counter()
@@ -234,7 +247,9 @@ async def _profile_metrics(
         hybrid_correct += int(hybrid.resolved_preset is PresetName.BALANCED)
 
     preflight = router.route_preflight(
-        InjectionRoutingConfig(mode=RoutingMode.MANUAL, manual_preset=PresetName.TOOL_FIRST),
+        InjectionRoutingConfig(
+            mode=RoutingMode.MANUAL, manual_preset=PresetName.TOOL_FIRST
+        ),
         signals,
     )
     passive_rate = float(not preflight.skip_passive_recall)
@@ -259,13 +274,17 @@ async def _profile_metrics(
     )
     effective_budget = result.effective_budget_chars
     overflow = max(0, result.actual_payload_chars - effective_budget)
-    content_chars = sum(len(item["content"]) for item in _CANDIDATES[: result.selected_count])
+    content_chars = sum(
+        len(item["content"]) for item in _CANDIDATES[: result.selected_count]
+    )
     useful_chars = sum(
         len(item["content"])
         for item in _CANDIDATES[: result.selected_count]
         if item["useful"]
     )
-    selected_content = [item["content"] for item in _CANDIDATES[: result.selected_count]]
+    selected_content = [
+        item["content"] for item in _CANDIDATES[: result.selected_count]
+    ]
     redundant = len(selected_content) - len(set(selected_content))
     useful_candidate_count = sum(bool(item["useful"]) for item in _CANDIDATES)
     injection_hit = (
@@ -333,8 +352,7 @@ def run_benchmark(profile_name: str) -> dict[str, Any]:
         )
         and (
             preset is not PresetName.BALANCED
-            or metrics["InjectionHit@Budget"]
-            >= metrics["FixedBudgetInjectionHit"]
+            or metrics["InjectionHit@Budget"] >= metrics["FixedBudgetInjectionHit"]
         )
         and metrics["BudgetOverflowRate"] == 0.0
         and metrics["ToolFirstPassiveRecallRate"] == 0.0
@@ -342,8 +360,7 @@ def run_benchmark(profile_name: str) -> dict[str, Any]:
         and metrics["StrategyDecisionLatency"] < 10.0
         and diagnostics["execution_outcome"] == expected_outcome
         and diagnostics["error_code"] is None
-        and diagnostics["actual_payload_chars"]
-        <= diagnostics["effective_budget_chars"]
+        and diagnostics["actual_payload_chars"] <= diagnostics["effective_budget_chars"]
     )
     report = {
         "profile": profile_name,
@@ -362,8 +379,12 @@ def run_benchmark(profile_name: str) -> dict[str, Any]:
 
 
 def validate_cross_profile_metrics(reports: dict[str, dict[str, Any]]) -> bool:
-    low_cost = float(reports[PresetName.LOW_COST.value]["metrics"]["OrdinaryMemoryCharsP95"])
-    balanced = float(reports[PresetName.BALANCED.value]["metrics"]["OrdinaryMemoryCharsP95"])
+    low_cost = float(
+        reports[PresetName.LOW_COST.value]["metrics"]["OrdinaryMemoryCharsP95"]
+    )
+    balanced = float(
+        reports[PresetName.BALANCED.value]["metrics"]["OrdinaryMemoryCharsP95"]
+    )
     reduction = 1.0 - (low_cost / balanced) if balanced > 0 else 0.0
     balanced_metrics = reports[PresetName.BALANCED.value]["metrics"]
     balanced_hit = float(balanced_metrics["InjectionHit@Budget"])
@@ -371,10 +392,7 @@ def validate_cross_profile_metrics(reports: dict[str, dict[str, Any]]) -> bool:
     hit_delta = balanced_hit - fixed_budget_hit
     passed = balanced > 0 and reduction >= 0.30 and hit_delta >= 0.0
     print(f"\n  LowCostPayloadReduction: {reduction:.6f} (required >= 0.300000)")
-    print(
-        "  BalancedInjectionHitDelta: "
-        f"{hit_delta:.6f} (required >= 0.000000)"
-    )
+    print(f"  BalancedInjectionHitDelta: {hit_delta:.6f} (required >= 0.000000)")
     print("  Cross-profile result: " + ("ALL PASSED" if passed else "FAILED"))
     return passed
 

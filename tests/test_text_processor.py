@@ -130,6 +130,7 @@ class TestCreateTextProcessor:
 # TextProcessor — additional edge cases and async methods
 # ---------------------------------------------------------------------------
 
+
 class TestTextProcessorAsync:
     @pytest.fixture
     def processor(self) -> TextProcessor:
@@ -144,7 +145,9 @@ class TestTextProcessorAsync:
     async def test_async_init_with_dir(self, tmp_path) -> None:
         stopwords_dir = tmp_path / "stopwords"
         stopwords_dir.mkdir()
-        (stopwords_dir / "stopwords_hit.txt").write_text("测试词1\n测试词2\n", encoding="utf-8")
+        (stopwords_dir / "stopwords_hit.txt").write_text(
+            "测试词1\n测试词2\n", encoding="utf-8"
+        )
         proc = TextProcessor(stopwords_dir=str(stopwords_dir))
         await proc.async_init()
         # Should load additional stopwords
@@ -155,7 +158,9 @@ class TestTextProcessorAsync:
         assert isinstance(tokens, list)
 
     @pytest.mark.asyncio
-    async def test_load_stopwords_from_file(self, processor: TextProcessor, tmp_path) -> None:
+    async def test_load_stopwords_from_file(
+        self, processor: TextProcessor, tmp_path
+    ) -> None:
         sw_file = tmp_path / "custom_sw.txt"
         sw_file.write_text("# comment\nword1\nword2\n", encoding="utf-8")
         result = await processor.load_stopwords(str(sw_file))
@@ -163,12 +168,16 @@ class TestTextProcessorAsync:
         assert "word2" in result
 
     @pytest.mark.asyncio
-    async def test_load_stopwords_file_not_found(self, processor: TextProcessor) -> None:
+    async def test_load_stopwords_file_not_found(
+        self, processor: TextProcessor
+    ) -> None:
         with pytest.raises(FileNotFoundError):
             await processor.load_stopwords("/nonexistent/stopwords.txt")
 
     @pytest.mark.asyncio
-    async def test_load_stopwords_io_error(self, processor: TextProcessor, tmp_path) -> None:
+    async def test_load_stopwords_io_error(
+        self, processor: TextProcessor, tmp_path
+    ) -> None:
         sw_file = tmp_path / "bad.txt"
         sw_file.write_text("test", encoding="utf-8")
         with patch("aiofiles.open", side_effect=OSError("disk error")):
@@ -242,6 +251,7 @@ class TestTextProcessorEdgeCases:
 
     def test_add_custom_words_jieba_unavailable(self) -> None:
         import core.processors.text_processor as tp
+
         original = tp.JIEBA_AVAILABLE
         tp.JIEBA_AVAILABLE = False
         try:
@@ -253,11 +263,12 @@ class TestTextProcessorEdgeCases:
             tp.JIEBA_AVAILABLE = original
 
     def test_segment_jieba_fallback_on_error(self) -> None:
-        import core.processors.text_processor as tp
         # Simulate jieba.cut_for_search raising an exception
         with patch("core.processors.text_processor.JIEBA_AVAILABLE", True):
             with patch("core.processors.text_processor.JIEBA_RUNTIME_DISABLED", False):
-                with patch("jieba.cut_for_search", side_effect=RuntimeError("jieba crash")):
+                with patch(
+                    "jieba.cut_for_search", side_effect=RuntimeError("jieba crash")
+                ):
                     with pytest.warns(UserWarning):
                         proc = TextProcessor()
                         result = proc._segment("你好世界")
@@ -265,6 +276,7 @@ class TestTextProcessorEdgeCases:
 
     def test_disable_jieba_runtime(self) -> None:
         import core.processors.text_processor as tp
+
         tp.JIEBA_RUNTIME_DISABLED = False
         TextProcessor._disable_jieba_runtime()
         assert tp.JIEBA_RUNTIME_DISABLED is True
@@ -288,6 +300,7 @@ class TestTextProcessorEdgeCases:
 
     def test_add_custom_words_with_failures(self) -> None:
         import core.processors.text_processor as tp
+
         original = tp.JIEBA_AVAILABLE
         tp.JIEBA_AVAILABLE = True
         try:
@@ -301,6 +314,7 @@ class TestTextProcessorEdgeCases:
 
     def test_add_custom_words_filter_invalid(self) -> None:
         import core.processors.text_processor as tp
+
         original = tp.JIEBA_AVAILABLE
         tp.JIEBA_AVAILABLE = True
         try:

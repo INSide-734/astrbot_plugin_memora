@@ -15,8 +15,8 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
 from ..models.temporal import normalize_datetime, parse_datetime
+from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
 
 
 @dataclass

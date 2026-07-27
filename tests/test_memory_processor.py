@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -56,12 +56,16 @@ class TestClassifyAtomsFromMetadata:
         atoms = proc.classify_atoms_from_metadata(metadata)
         assert atoms == []
 
-    def test_classify_no_key_facts_returns_empty(self, processor: MemoryProcessor) -> None:
+    def test_classify_no_key_facts_returns_empty(
+        self, processor: MemoryProcessor
+    ) -> None:
         metadata = {"key_facts": []}
         atoms = processor.classify_atoms_from_metadata(metadata)
         assert atoms == []
 
-    def test_classify_with_all_metadata_fields(self, processor: MemoryProcessor) -> None:
+    def test_classify_with_all_metadata_fields(
+        self, processor: MemoryProcessor
+    ) -> None:
         metadata = {
             "key_facts": ["fact1"],
             "topics": ["topic1"],
@@ -127,7 +131,9 @@ class TestBuildMemoryFromStructuredData:
 class TestProcessConversation:
     @pytest.fixture
     def make_processor(self) -> callable:
-        def _make(llm_response: str = "", config: dict | None = None) -> MemoryProcessor:
+        def _make(
+            llm_response: str = "", config: dict | None = None
+        ) -> MemoryProcessor:
             ctx = MagicMock()
             ctx.get_using_provider.return_value = None
             ctx.persona_manager = None
@@ -147,6 +153,7 @@ class TestProcessConversation:
                 config=config or {},
             )
             return proc
+
         return _make
 
     @pytest.fixture
@@ -178,6 +185,7 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         proc = make_processor()
         results = asyncio.run(
             proc.process_conversation(sample_messages, is_group_chat=False)
@@ -190,6 +198,7 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         response = (
             '{"summary": "群聊摘要", "topics": ["测试"], "key_facts": ["fact1"], '
             '"sentiment": "neutral", "importance": 0.5, "participants": ["Alice", "Bob"]}'
@@ -324,6 +333,7 @@ class TestProcessConversation:
 
     def test_process_empty_messages_raises(self) -> None:
         import asyncio
+
         proc = MemoryProcessor()
         with pytest.raises(ValueError, match="不能为空"):
             asyncio.run(proc.process_conversation([]))
@@ -332,6 +342,7 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         proc = make_processor()
         results = asyncio.run(
             proc.process_conversation(
@@ -347,6 +358,7 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         response = (
             '{"summary": "咖啡讨论", "topics": ["咖啡", "饮食"], "key_facts": ["fact1"], '
             '"sentiment": "positive", "importance": 0.6}'
@@ -364,14 +376,13 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         response = (
             '{"summary": "s", "topics": ["t"], "key_facts": ["f"], '
             '"sentiment": "positive", "importance": 0.5, "emotion_tags": ["joy", "excited"]}'
         )
         proc = make_processor(llm_response=response)
-        results = asyncio.run(
-            proc.process_conversation(sample_messages)
-        )
+        results = asyncio.run(proc.process_conversation(sample_messages))
         assert len(results) >= 1
         assert "emotion_tags" in results[0]["metadata"]
 
@@ -379,37 +390,34 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         response = (
             '{"summary": "s", "topics": ["t"], "key_facts": ["f"], '
             '"sentiment": "neutral", "importance": 0.5, '
             '"causal_relations": [{"cause": "下雨", "effect": "没去公园"}]}'
         )
         proc = make_processor(llm_response=response)
-        results = asyncio.run(
-            proc.process_conversation(sample_messages)
-        )
+        results = asyncio.run(proc.process_conversation(sample_messages))
         assert len(results) >= 1
 
     def test_process_with_memories_array(
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         response = (
             '{"memories": ['
             '{"summary": "话题1", "topics": ["t1"], "key_facts": ["f1"], "importance": 0.7},'
             '{"summary": "话题2", "topics": ["t2"], "key_facts": ["f2"], "importance": 0.5}'
-            ']}'
+            "]}"
         )
         proc = make_processor(llm_response=response)
-        results = asyncio.run(
-            proc.process_conversation(sample_messages)
-        )
+        results = asyncio.run(proc.process_conversation(sample_messages))
         assert len(results) >= 2
 
-    def test_process_llm_failure_raises(
-        self, sample_messages: list[Message]
-    ) -> None:
+    def test_process_llm_failure_raises(self, sample_messages: list[Message]) -> None:
         import asyncio
+
         ctx = MagicMock()
         provider = MagicMock()
         provider.text_chat = AsyncMock(side_effect=RuntimeError("LLM down"))
@@ -422,38 +430,37 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         response = (
             '{"memories": ['
             '"a string entry that should be skipped",'
             '{"summary": "valid", "topics": ["t"], "key_facts": ["f"], "importance": 0.5}'
-            ']}'
+            "]}"
         )
         proc = make_processor(llm_response=response)
-        results = asyncio.run(
-            proc.process_conversation(sample_messages)
-        )
+        results = asyncio.run(proc.process_conversation(sample_messages))
         assert len(results) >= 1
 
     def test_process_memories_empty_summary_and_facts_skipped(
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         response = (
             '{"memories": ['
             '{"summary": "", "key_facts": [], "topics": []},'
             '{"summary": "valid", "topics": ["t"], "key_facts": ["f"], "importance": 0.5}'
-            ']}'
+            "]}"
         )
         proc = make_processor(llm_response=response)
-        results = asyncio.run(
-            proc.process_conversation(sample_messages)
-        )
+        results = asyncio.run(proc.process_conversation(sample_messages))
         assert len(results) >= 1
 
     def test_process_with_emotional_intensity_boost(
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         proc = make_processor()
         results = asyncio.run(
             proc.process_conversation(
@@ -469,6 +476,7 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         proc = make_processor()
         results = asyncio.run(
             proc.process_conversation(sample_messages, persona_id="persona_1")
@@ -479,6 +487,7 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         proc = make_processor()
         results = asyncio.run(
             proc.process_conversation(
@@ -492,6 +501,7 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         proc = make_processor()
         results = asyncio.run(
             proc.process_conversation(
@@ -506,6 +516,7 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         response = (
             '{"summary": "s", "topics": ["t"], "key_facts": ["f"], '
             '"sentiment": "neutral", "importance": 0.5, '
@@ -526,12 +537,11 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         # Need at least one key_fact for the memory to be created, even with low quality
         response = '{"summary": "low quality", "topics": [], "key_facts": ["minimal fact"], "sentiment": "neutral", "importance": 0.1}'
         proc = make_processor(llm_response=response)
-        results = asyncio.run(
-            proc.process_conversation(sample_messages)
-        )
+        results = asyncio.run(proc.process_conversation(sample_messages))
         # Low quality still produces results (at least 1 since we have a key_fact)
         assert len(results) >= 1
 
@@ -539,6 +549,7 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         response = (
             '{"memories": ['
             '{"content": "用户喜欢深烘咖啡", "atom_type": "preference", '
@@ -579,6 +590,7 @@ class TestProcessConversation:
         self, make_processor: callable, sample_messages: list[Message]
     ) -> None:
         import asyncio
+
         response = (
             '{"summary": "旧格式摘要", "topics": ["旧格式"], '
             '"key_facts": ["旧格式事实"], "sentiment": "neutral", "importance": 0.6}'
@@ -592,7 +604,6 @@ class TestProcessConversation:
 
 class TestMemoryProcessorTopicGuidance:
     def test_load_topic_guidance_empty_dir(self) -> None:
-        from pathlib import Path
         result = MemoryProcessor._load_topic_guidance(None)
         assert result == ""
 
@@ -628,8 +639,11 @@ class TestGeneratePersonaInterpretations:
     async def test_missing_persona_context_skips(self) -> None:
         proc = MemoryProcessor(config={"persona_interpretation.enabled": True})
         result = await proc.generate_persona_interpretations(
-            "content", "conv_text", "primary", ["no_context_persona"],
-            {}  # no context for this persona
+            "content",
+            "conv_text",
+            "primary",
+            ["no_context_persona"],
+            {},  # no context for this persona
         )
         assert result == {}
 
@@ -670,7 +684,9 @@ class TestGeneratePersonaInterpretations:
             config={"persona_interpretation.enabled": True},
         )
         result = await proc.generate_persona_interpretations(
-            "content", "conv", "primary",
+            "content",
+            "conv",
+            "primary",
             ["secondary"],
             {"secondary": "desc"},
         )
@@ -689,7 +705,9 @@ class TestGeneratePersonaInterpretations:
             config={"persona_interpretation.enabled": True},
         )
         result = await proc.generate_persona_interpretations(
-            "content", "conv", "primary",
+            "content",
+            "conv",
+            "primary",
             ["secondary"],
             {"secondary": "desc"},
         )

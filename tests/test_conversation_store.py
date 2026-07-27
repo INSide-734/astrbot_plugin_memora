@@ -203,10 +203,20 @@ class TestMessageStore:
         await store.initialize()
         try:
             await store.create_session("sess-filter", "qq")
-            await store.add_message(self._make_msg(session_id="sess-filter", sender_id="alice", content="hi from alice"))
-            await store.add_message(self._make_msg(session_id="sess-filter", sender_id="bob", content="hi from bob"))
+            await store.add_message(
+                self._make_msg(
+                    session_id="sess-filter", sender_id="alice", content="hi from alice"
+                )
+            )
+            await store.add_message(
+                self._make_msg(
+                    session_id="sess-filter", sender_id="bob", content="hi from bob"
+                )
+            )
 
-            alice_msgs = await store.get_messages("sess-filter", sender_id="alice", limit=10)
+            alice_msgs = await store.get_messages(
+                "sess-filter", sender_id="alice", limit=10
+            )
             assert len(alice_msgs) == 1
             assert alice_msgs[0].sender_id == "alice"
         finally:
@@ -266,8 +276,12 @@ class TestMessageQueryMixin:
         await store.initialize()
         try:
             # Messages are stored correctly (verified via get_messages)
-            await store.add_message(self._make_msg(session_id="sess-count", content="msg1"))
-            await store.add_message(self._make_msg(session_id="sess-count", content="msg2"))
+            await store.add_message(
+                self._make_msg(session_id="sess-count", content="msg1")
+            )
+            await store.add_message(
+                self._make_msg(session_id="sess-count", content="msg2")
+            )
             messages = await store.get_messages("sess-count")
             assert len(messages) == 2
 
@@ -288,9 +302,15 @@ class TestMessageQueryMixin:
         store = ConversationStore(tmp_db_path)
         await store.initialize()
         try:
-            await store.add_message(self._make_msg(session_id="sess-stats", sender_id="alice"))
-            await store.add_message(self._make_msg(session_id="sess-stats", sender_id="alice"))
-            await store.add_message(self._make_msg(session_id="sess-stats", sender_id="bob"))
+            await store.add_message(
+                self._make_msg(session_id="sess-stats", sender_id="alice")
+            )
+            await store.add_message(
+                self._make_msg(session_id="sess-stats", sender_id="alice")
+            )
+            await store.add_message(
+                self._make_msg(session_id="sess-stats", sender_id="bob")
+            )
 
             stats = await store.get_user_message_stats("sess-stats")
             assert stats["alice"] == 2
@@ -304,8 +324,12 @@ class TestMessageQueryMixin:
         store = ConversationStore(tmp_db_path)
         await store.initialize()
         try:
-            await store.add_message(self._make_msg(session_id="sess-search", content="关于西湖的讨论"))
-            await store.add_message(self._make_msg(session_id="sess-search", content="无关内容"))
+            await store.add_message(
+                self._make_msg(session_id="sess-search", content="关于西湖的讨论")
+            )
+            await store.add_message(
+                self._make_msg(session_id="sess-search", content="无关内容")
+            )
 
             results = await store.search_messages("sess-search", "西湖")
             assert len(results) == 1
@@ -322,7 +346,9 @@ class TestMessageQueryMixin:
             t0 = time.time()
             for i in range(5):
                 await store.add_message(
-                    self._make_msg(session_id="sess-range", content=f"msg{i}", timestamp=t0 + i)
+                    self._make_msg(
+                        session_id="sess-range", content=f"msg{i}", timestamp=t0 + i
+                    )
                 )
 
             page = await store.get_messages_range("sess-range", offset=1, limit=2)
@@ -424,7 +450,9 @@ class TestMessageStoreTrim:
             t0 = time.time()
             for i in range(5):
                 await store.add_message(
-                    self._make_msg(session_id="sess-trim", content=f"msg{i}", timestamp=t0 + i)
+                    self._make_msg(
+                        session_id="sess-trim", content=f"msg{i}", timestamp=t0 + i
+                    )
                 )
 
             # Set last_summarized_index to allow trimming
@@ -474,4 +502,5 @@ class TestMessageStoreTrim:
 async def asyncio_import_sleep(seconds: float) -> None:
     """Thin wrapper to avoid import overhead in test bodies."""
     import asyncio as _a
+
     await _a.sleep(seconds)

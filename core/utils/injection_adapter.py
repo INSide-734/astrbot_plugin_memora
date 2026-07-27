@@ -64,9 +64,7 @@ class InjectionAdapter:
         snapshot = self.describe_capabilities(provider)
         provider_type = snapshot.provider_type
         model_name = snapshot.model_name
-        tools_supported = snapshot.contract.supports(
-            AdapterCapability.TOOL_DELIVERY
-        )
+        tools_supported = snapshot.contract.supports(AdapterCapability.TOOL_DELIVERY)
         if self._is_gemini(provider_type, model_name):
             return (
                 DeliveryMode.USER_MESSAGE_BEFORE,
@@ -127,9 +125,7 @@ class InjectionAdapter:
         if provider is None:
             return "", ""
         config = getattr(provider, "provider_config", {})
-        provider_type = (
-            str(config.get("type", "")) if isinstance(config, dict) else ""
-        )
+        provider_type = str(config.get("type", "")) if isinstance(config, dict) else ""
         get_model = getattr(provider, "get_model", None)
         raw_model = get_model() if callable(get_model) else ""
         model_name = str(raw_model) if raw_model is not None else ""

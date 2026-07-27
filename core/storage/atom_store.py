@@ -7,7 +7,6 @@ import time
 from typing import Any
 
 import aiosqlite
-
 from astrbot.api import logger
 
 from ..models.memory_atom import (
@@ -18,11 +17,11 @@ from ..models.memory_atom import (
     compute_ttl,
 )
 from .atom_fts import AtomFTSMixin
-from .base import BaseStore
 from .atom_source_integrity import (
     filter_atoms_by_current_sources,
     validate_atom_parent_sources,
 )
+from .base import BaseStore
 
 
 class AtomStore(BaseStore, AtomFTSMixin):
@@ -420,8 +419,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
                     atom_ids,
                 )
                 await db.execute(
-                    "UPDATE memory_atoms SET status = ? "
-                    f"WHERE id IN ({placeholders})",
+                    f"UPDATE memory_atoms SET status = ? WHERE id IN ({placeholders})",
                     (AtomStatus.FORGOTTEN.value, *atom_ids),
                 )
                 total_forgotten += len(atom_ids)
@@ -601,9 +599,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
                     page_conditions.append(
                         "(event_time > ? OR (event_time = ? AND id > ?))"
                     )
-                    page_params.extend(
-                        [last_event_time, last_event_time, last_atom_id]
-                    )
+                    page_params.extend([last_event_time, last_event_time, last_atom_id])
                 page_clause = " AND ".join(page_conditions)
                 cursor = await db.execute(
                     f"SELECT * FROM memory_atoms WHERE {page_clause} "

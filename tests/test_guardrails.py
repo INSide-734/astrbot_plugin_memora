@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
-# Ensure plugin root on path
+import pytest
+from pydantic import ValidationError
+
+# 支持直接运行本测试文件时从仓库根目录导入插件模块。
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-import pytest
-from pydantic import ValidationError
-from core.security.guardrails import (
+from core.security.guardrails import (  # noqa: E402
     GraphExtractionResult,
     MemoryAtomSchema,
     MemoryExtractionResult,
@@ -21,10 +22,10 @@ from core.security.guardrails import (
     validate_llm_response,
 )
 
-
 # =============================================================================
 # MemoryAtomSchema
 # =============================================================================
+
 
 class TestMemoryAtomSchema:
     """记忆原子 schema 测试"""
@@ -82,6 +83,7 @@ class TestMemoryAtomSchema:
 # =============================================================================
 # MemoryExtractionResult
 # =============================================================================
+
 
 class TestMemoryExtractionResult:
     """记忆抽取结果测试"""
@@ -142,6 +144,7 @@ class TestMemoryExtractionResult:
 # GraphExtractionResult
 # =============================================================================
 
+
 class TestGraphExtractionResult:
     """图抽取结果测试"""
 
@@ -193,6 +196,7 @@ class TestGraphExtractionResult:
 # JSON Cleaning Pipeline
 # =============================================================================
 
+
 class TestValidateAndCleanJson:
     """JSON 清洗管道测试"""
 
@@ -221,7 +225,9 @@ class TestValidateAndCleanJson:
         assert result == {"key": "value"}
 
     def test_repair_python_bool(self):
-        result = validate_and_clean_json('{"active": True, "deleted": False, "data": None}')
+        result = validate_and_clean_json(
+            '{"active": True, "deleted": False, "data": None}'
+        )
         assert result == {"active": True, "deleted": False, "data": None}
 
     def test_empty_input_raises(self):
@@ -237,9 +243,7 @@ class TestValidateAndCleanJson:
             validate_and_clean_json("这不是 JSON)}}")
 
     def test_unrepairable_json_fallback_none(self):
-        result = validate_and_clean_json(
-            "这不是 JSON)}}", fallback_return_none=True
-        )
+        result = validate_and_clean_json("这不是 JSON)}}", fallback_return_none=True)
         assert result is None
 
     def test_array_json(self):
@@ -251,6 +255,7 @@ class TestValidateAndCleanJson:
 # =============================================================================
 # validate_llm_response & safe_validate
 # =============================================================================
+
 
 class TestValidateLlmResponse:
     """LLM 响应验证测试"""

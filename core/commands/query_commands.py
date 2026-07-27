@@ -195,7 +195,7 @@ class QueryCommandMixin:
 
     @staticmethod
     async def handle_webui(
-            event: AstrMessageEvent
+        event: AstrMessageEvent,
     ) -> AsyncGenerator[MessageEventResult, None]:
         """处理 /lmem webui 命令"""
         yield event.plain_result(t("webui.guide"))

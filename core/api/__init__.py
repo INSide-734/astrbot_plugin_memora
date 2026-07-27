@@ -15,8 +15,8 @@ from .memory_write_api import MemoryWriteApiMixin
 from .metrics_api import MetricsApiMixin
 from .quality_api import QualityApiMixin
 from .recall_trace_api import RecallTraceApiMixin
-from .review_api import ReviewApiMixin
 from .response_utils import error_response, ok_response
+from .review_api import ReviewApiMixin
 from .social_api import SocialApiMixin
 
 __all__ = [

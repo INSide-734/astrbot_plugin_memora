@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
@@ -21,7 +20,9 @@ from core.managers.write_coordinator import (
 )
 
 
-def _metric_sample_value(sample_name: str, labels: dict[str, str] | None = None) -> float:
+def _metric_sample_value(
+    sample_name: str, labels: dict[str, str] | None = None
+) -> float:
     labels = labels or {}
     for metric in monitoring_metrics.REGISTRY.collect():
         for sample in metric.samples:
@@ -42,7 +43,10 @@ class TestIsConnectionFatal:
         assert is_connection_fatal(Exception("database is not initialized")) is True
 
     def test_detects_closed_database(self) -> None:
-        assert is_connection_fatal(Exception("cannot operate on a closed database")) is True
+        assert (
+            is_connection_fatal(Exception("cannot operate on a closed database"))
+            is True
+        )
 
     def test_case_insensitive(self) -> None:
         assert is_connection_fatal(Exception("No Active Connection")) is True
@@ -77,7 +81,9 @@ class TestCheckDbAlive:
 
     def test_value_error_treated_as_dead(self) -> None:
         db = MagicMock()
-        type(db)._conn = property(lambda self: (_ for _ in ()).throw(ValueError("boom")))
+        type(db)._conn = property(
+            lambda self: (_ for _ in ()).throw(ValueError("boom"))
+        )
         assert check_db_alive(db) is False
 
 
@@ -213,7 +219,10 @@ class TestWriteWithRetry:
                 raise Exception("database is locked")
             return "ok"
 
-        assert await write_with_retry(eventually_ok, max_retries=3, base_delay=0.001) == "ok"
+        assert (
+            await write_with_retry(eventually_ok, max_retries=3, base_delay=0.001)
+            == "ok"
+        )
 
         async def always_locked() -> str:
             raise Exception("database is locked")

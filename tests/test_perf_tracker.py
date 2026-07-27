@@ -61,7 +61,9 @@ class TestPerfTrackerRollingStats:
 
         assert stats["recent"] == [_sample(1.0), _sample(2.0)]
 
-    def test_rebuild_preserves_per_key_counts_for_partial_retained_samples(self) -> None:
+    def test_rebuild_preserves_per_key_counts_for_partial_retained_samples(
+        self,
+    ) -> None:
         tracker = PerfTracker(maxlen=2)
 
         tracker.record(_sample(20.0))

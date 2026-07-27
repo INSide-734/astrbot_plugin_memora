@@ -59,9 +59,7 @@ async def test_health_reports_atom_parent_provenance_counts_only(
 
     store = AtomStore(tmp_db_path)
     await store.initialize()
-    atom_ids = await store.insert_many(
-        [_atom(f"原子-{index}") for index in range(5)]
-    )
+    atom_ids = await store.insert_many([_atom(f"原子-{index}") for index in range(5)])
     async with aiosqlite.connect(tmp_db_path) as db:
         await db.execute(
             "UPDATE memory_atoms SET parent_revision = ? WHERE id = ?",

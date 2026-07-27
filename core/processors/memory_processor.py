@@ -140,9 +140,7 @@ class MemoryProcessor:
                 f"[MemoryProcessor] LLM 响应成功，响应长度={len(llm_response_text)}"
             )
 
-            structured_data = self._parse_llm_response(
-                llm_response_text, is_group_chat
-            )
+            structured_data = self._parse_llm_response(llm_response_text, is_group_chat)
 
             quality = self.quality.validate_summary_quality(structured_data)
             if quality == "low":

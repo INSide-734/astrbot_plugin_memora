@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from astrbot.api import logger
@@ -18,7 +18,6 @@ from ..base.entity_editing import (
 )
 from ..base.list_sorting import SortQuery, order_by_clause
 from ..storage.base_store import BaseStore
-
 
 AFFECTION_USER_SORT_COLUMNS = {
     "user_id": "user_id COLLATE NOCASE",
@@ -185,8 +184,13 @@ class AffectionStore(BaseStore):
                    last_interaction = ?
                 """,
                 (
-                    user_id, group_id, max(min_score, min(max_score, score_delta)), now,
-                    min_score, max_score, score_delta,
+                    user_id,
+                    group_id,
+                    max(min_score, min(max_score, score_delta)),
+                    now,
+                    min_score,
+                    max_score,
+                    score_delta,
                     now,
                 ),
             )
@@ -329,9 +333,7 @@ class AffectionStore(BaseStore):
             )
             return True
 
-    async def get_top_users(
-        self, group_id: str, limit: int = 10
-    ) -> list[dict]:
+    async def get_top_users(self, group_id: str, limit: int = 10) -> list[dict]:
         """按好感度分数降序返回用户列表。"""
         return await self._fetch_all(
             "SELECT * FROM user_affection WHERE group_id = ? ORDER BY affection_score DESC LIMIT ?",
@@ -361,9 +363,7 @@ class AffectionStore(BaseStore):
         )
         return int(result) if result is not None else 0
 
-    async def get_users_above_score(
-        self, group_id: str, threshold: int
-    ) -> list[dict]:
+    async def get_users_above_score(self, group_id: str, threshold: int) -> list[dict]:
         """获取好感度分数高于指定阈值的全部用户。"""
         return await self._fetch_all(
             "SELECT * FROM user_affection WHERE group_id = ? AND affection_score > ? ORDER BY affection_score DESC",
@@ -447,9 +447,7 @@ class AffectionStore(BaseStore):
             await self._execute(
                 "DELETE FROM user_affection WHERE group_id = ?", (group_id,)
             )
-            await self._execute(
-                "DELETE FROM bot_mood WHERE group_id = ?", (group_id,)
-            )
+            await self._execute("DELETE FROM bot_mood WHERE group_id = ?", (group_id,))
         # 两张表的删除行数不易精确汇总，这里返回 0，由调用方按需自行前后比对
         return 0
 

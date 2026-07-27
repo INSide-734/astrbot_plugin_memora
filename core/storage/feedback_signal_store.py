@@ -192,7 +192,9 @@ class FeedbackSignalStore:
         except sqlite3.Error as exc:
             raise RuntimeError("feedback_store_aggregate_failed") from exc
 
-    def list_aggregates(self, *, policy_version: int | None = None) -> list[sqlite3.Row]:
+    def list_aggregates(
+        self, *, policy_version: int | None = None
+    ) -> list[sqlite3.Row]:
         """读取内部聚合行供 Manager 重放，不返回原始事件内容。"""
 
         self._ensure_initialized()
@@ -222,7 +224,10 @@ class FeedbackSignalStore:
         aggregate_count = self._connection.execute(
             "SELECT COUNT(*) FROM feedback_aggregates"
         ).fetchone()[0]
-        return {"event_count": int(event_count), "aggregate_count": int(aggregate_count)}
+        return {
+            "event_count": int(event_count),
+            "aggregate_count": int(aggregate_count),
+        }
 
     def close(self) -> None:
         """关闭隔离 SQLite 连接。"""

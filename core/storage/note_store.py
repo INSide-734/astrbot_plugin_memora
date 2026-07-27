@@ -79,27 +79,27 @@ class NoteStore(BaseStore):
                     note.provenance,
                 )
                 cursor = await db.execute(
-                """INSERT INTO notes (title, content, tags, status, version,
+                    """INSERT INTO notes (title, content, tags, status, version,
                    created_at, updated_at, user_id, source_memory_ids,
                    origin, provenance_json)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    note.title,
-                    note.content,
-                    json.dumps(note.tags),
-                    note.status.value,
-                    1,
-                    now,
-                    now,
-                    note.user_id,
-                    json.dumps(note.source_memory_ids),
-                    note.origin.value,
                     (
-                        self._to_json(note.provenance.to_dict())
-                        if note.provenance is not None
-                        else None
+                        note.title,
+                        note.content,
+                        json.dumps(note.tags),
+                        note.status.value,
+                        1,
+                        now,
+                        now,
+                        note.user_id,
+                        json.dumps(note.source_memory_ids),
+                        note.origin.value,
+                        (
+                            self._to_json(note.provenance.to_dict())
+                            if note.provenance is not None
+                            else None
+                        ),
                     ),
-                ),
                 )
                 note_id = cursor.lastrowid
                 await db.execute(
@@ -140,26 +140,26 @@ class NoteStore(BaseStore):
                     note.provenance,
                 )
                 cursor = await db.execute(
-                """UPDATE notes SET title=?, content=?, tags=?, status=?,
+                    """UPDATE notes SET title=?, content=?, tags=?, status=?,
                    version=?, updated_at=?, source_memory_ids=?, origin=?,
                    provenance_json=? WHERE id=? AND version=?""",
-                (
-                    note.title,
-                    note.content,
-                    json.dumps(note.tags),
-                    note.status.value,
-                    next_version,
-                    note.updated_at,
-                    json.dumps(note.source_memory_ids),
-                    note.origin.value,
                     (
-                        self._to_json(note.provenance.to_dict())
-                        if note.provenance is not None
-                        else None
+                        note.title,
+                        note.content,
+                        json.dumps(note.tags),
+                        note.status.value,
+                        next_version,
+                        note.updated_at,
+                        json.dumps(note.source_memory_ids),
+                        note.origin.value,
+                        (
+                            self._to_json(note.provenance.to_dict())
+                            if note.provenance is not None
+                            else None
+                        ),
+                        note.note_id,
+                        previous_version,
                     ),
-                    note.note_id,
-                    previous_version,
-                ),
                 )
                 if cursor.rowcount <= 0:
                     await db.rollback()
@@ -182,7 +182,12 @@ class NoteStore(BaseStore):
             cursor = await db.execute(
                 """UPDATE notes SET status = ?, updated_at = ?
                    WHERE id = ? AND status != ?""",
-                (NoteStatus.DELETED.value, time.time(), note_id, NoteStatus.DELETED.value),
+                (
+                    NoteStatus.DELETED.value,
+                    time.time(),
+                    note_id,
+                    NoteStatus.DELETED.value,
+                ),
             )
             await db.commit()
             return cursor.rowcount > 0

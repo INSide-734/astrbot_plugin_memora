@@ -63,7 +63,9 @@ class DerivedMetadataIndexSummary:
 class RunLocalDerivedMetadataIndex:
     """绑定单次评测生命周期的 source-backed 倒排索引。"""
 
-    def __init__(self, source_loader: Callable[[int], Mapping[str, Any] | None]) -> None:
+    def __init__(
+        self, source_loader: Callable[[int], Mapping[str, Any] | None]
+    ) -> None:
         """保存只读 source loader，不持有数据库连接或生产 Store。"""
 
         self._source_loader = source_loader
@@ -161,7 +163,9 @@ class RunLocalDerivedMetadataIndex:
                     signal,
                     field_hits,
                 )
-        ordered = sorted(matches.values(), key=lambda item: (-item.signal, item.memory_id))
+        ordered = sorted(
+            matches.values(), key=lambda item: (-item.signal, item.memory_id)
+        )
         self._matched_source_count += len(ordered)
         if ordered:
             self._successful_match_count += 1
@@ -248,7 +252,9 @@ async def run_derived_metadata_ablation(
     }
     expected_keys = expected_annotation_keys or accepted_keys
     true_positive = len(accepted_keys & expected_keys)
-    macro_precision = round(true_positive / len(accepted_keys), 4) if accepted_keys else 0.0
+    macro_precision = (
+        round(true_positive / len(accepted_keys), 4) if accepted_keys else 0.0
+    )
     baseline_rows: list[_BranchRow] = []
     variant_rows: list[_BranchRow] = []
     reason_counts: Counter[str] = Counter()
@@ -264,7 +270,9 @@ async def run_derived_metadata_ablation(
             raise
         baseline_latency = _latency(case, started, "baseline")
         baseline_candidates = _normalize_candidates(raw)
-        baseline_rows.append(_BranchRow(case, baseline_candidates, baseline_latency, "baseline"))
+        baseline_rows.append(
+            _BranchRow(case, baseline_candidates, baseline_latency, "baseline")
+        )
         try:
             matches = index.match(case.query, case.metadata)
             variant_candidates = _augment_candidates(
@@ -281,7 +289,9 @@ async def run_derived_metadata_ablation(
             reason_counts["variant_execution_failed"] += 1
             variant_candidates = list(baseline_candidates)
         variant_latency = _latency(case, started, "variant")
-        variant_rows.append(_BranchRow(case, variant_candidates, variant_latency, "variant"))
+        variant_rows.append(
+            _BranchRow(case, variant_candidates, variant_latency, "variant")
+        )
         if case.metadata.get("metadata_dependent") is True:
             dependent_baseline.append(_case_recall(case, baseline_candidates, safe_k))
             dependent_variant.append(_case_recall(case, variant_candidates, safe_k))
@@ -373,7 +383,11 @@ def _augment_candidates(
         doc_id = str(source.get("doc_id") or match.memory_id)
         base = candidates.get(doc_id)
         if base is None:
-            base = _Candidate(doc_id, _finite_score(source.get("score", 0.0)), dict(source.get("metadata") or {}))
+            base = _Candidate(
+                doc_id,
+                _finite_score(source.get("score", 0.0)),
+                dict(source.get("metadata") or {}),
+            )
         candidates[doc_id] = _Candidate(
             doc_id,
             min(1.0, max(0.0, base.score + match.signal)),
@@ -399,7 +413,8 @@ def _source_visible(
         ("source_role", annotation.source.source_role, "role"),
     ):
         if source.get(source_key) != ref_value or (
-            context.get(context_key) is not None and context.get(context_key) != ref_value
+            context.get(context_key) is not None
+            and context.get(context_key) != ref_value
         ):
             return False, "source_visibility_mismatch"
     if source.get("valid") is False:
@@ -418,7 +433,11 @@ def _field_hits(
     """计算跨字段去重后的 exact token/phrase 命中数。"""
 
     hits = 0
-    for value in (*annotation.keywords, *annotation.topic_tags, *annotation.context_labels):
+    for value in (
+        *annotation.keywords,
+        *annotation.topic_tags,
+        *annotation.context_labels,
+    ):
         normalized = value.casefold()
         if normalized in query or normalized in query_terms:
             hits += 1
@@ -447,14 +466,22 @@ def _parse_time(value: Any) -> datetime | None:
     """解析评测所需的 UTC ISO 时间，非法值按未知处理。"""
 
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return (
+            value.astimezone(timezone.utc)
+            if value.tzinfo
+            else value.replace(tzinfo=timezone.utc)
+        )
     if not isinstance(value, str) or not value.strip():
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return (
+        parsed.astimezone(timezone.utc)
+        if parsed.tzinfo
+        else parsed.replace(tzinfo=timezone.utc)
+    )
 
 
 def _budget_utilization(result: DerivedMetadataValidationResult) -> float:
@@ -497,7 +524,9 @@ def _branch_metrics(rows: Sequence[_BranchRow], k: int) -> DerivedMetadataBranch
     )
 
 
-def _case_recall(case: EvaluationCase, candidates: Sequence[_Candidate], k: int) -> float:
+def _case_recall(
+    case: EvaluationCase, candidates: Sequence[_Candidate], k: int
+) -> float:
     """计算单用例 Recall@K。"""
 
     return recall_at_k([item.doc_id for item in candidates], case.relevant_doc_ids, k=k)

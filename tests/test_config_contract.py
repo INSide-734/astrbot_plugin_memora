@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 _MISSING = object()
 
@@ -155,7 +154,9 @@ def test_schema_uses_astrbot_supported_config_types() -> None:
                 visit(field_schema.get("items", {}), path)
 
     visit(schema)
-    assert not unsupported, "Schema 含有 AstrBot 不支持的配置类型: " + ", ".join(unsupported)
+    assert not unsupported, "Schema 含有 AstrBot 不支持的配置类型: " + ", ".join(
+        unsupported
+    )
 
 
 def _get_path(config: Mapping[str, Any], path: tuple[str, ...]) -> Any:
@@ -219,9 +220,7 @@ def _schema_numeric_bounds(
             )
             continue
         bounds = {
-            name: field_schema[name]
-            for name in ("min", "max")
-            if name in field_schema
+            name: field_schema[name] for name in ("min", "max") if name in field_schema
         }
         if bounds:
             bounds_by_path[".".join(path)] = bounds
@@ -431,11 +430,7 @@ def test_config_snapshots_are_deeply_isolated() -> None:
     from core.base.config_manager import ConfigManager
 
     manager = ConfigManager(
-        {
-            "topic_segmentation": {
-                "strategy_b": {"similarity_threshold": 0.75}
-            }
-        }
+        {"topic_segmentation": {"strategy_b": {"similarity_threshold": 0.75}}}
     )
 
     snapshot, _ = manager.get_config_snapshot()
@@ -452,11 +447,7 @@ def test_get_mutable_value_cannot_bypass_config_revision() -> None:
     from core.base.config_manager import ConfigManager
 
     manager = ConfigManager(
-        {
-            "topic_segmentation": {
-                "strategy_b": {"similarity_threshold": 0.75}
-            }
-        }
+        {"topic_segmentation": {"strategy_b": {"similarity_threshold": 0.75}}}
     )
     snapshot_before, revision_before = manager.get_config_snapshot()
 
@@ -625,9 +616,7 @@ async def test_persistent_source_fails_closed_when_schemas_are_malformed(
     from core.base.config_manager import ConfigManager, ConfigValidationError
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
-    source.schema = {
-        "recall_engine": {"type": "object", "items": "not-an-object"}
-    }
+    source.schema = {"recall_engine": {"type": "object", "items": "not-an-object"}}
     monkeypatch.setattr(
         Path,
         "read_text",
@@ -696,8 +685,7 @@ async def test_apply_enforces_every_schema_options_list(
 
     assert default is not _MISSING
     assert any(
-        type(default) is type(option) and default == option
-        for option in options
+        type(default) is type(option) and default == option for option in options
     )
     assert options
     invalid_value = _value_outside_options(options)

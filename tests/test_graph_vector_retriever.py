@@ -28,6 +28,7 @@ class TestGraphVectorRetriever:
         """使用固定 FAISS 替身构造图向量检索器。"""
 
         from core.retrieval.graph_vector_retriever import GraphVectorRetriever
+
         return GraphVectorRetriever(faiss_db=faiss_db)
 
     @pytest.mark.asyncio
@@ -37,11 +38,14 @@ class TestGraphVectorRetriever:
         assert await retriever.search("   ") == []
 
     @pytest.mark.asyncio
-    async def test_search_with_results(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_search_with_results(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """有效查询返回带分数的图向量结果。"""
         fake_result = MagicMock()
         fake_result.data = {
-            "id": 10, "text": "graph memory content",
+            "id": 10,
+            "text": "graph memory content",
             "metadata": {"source_memory_id": 42},
         }
         fake_result.similarity = 0.85
@@ -54,11 +58,14 @@ class TestGraphVectorRetriever:
         assert results[0].content == "graph memory content"
 
     @pytest.mark.asyncio
-    async def test_search_skips_missing_source_memory_id(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_search_skips_missing_source_memory_id(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """缺少 source_memory_id 的结果必须被跳过。"""
         fake_result = MagicMock()
         fake_result.data = {
-            "id": 1, "text": "orphan entry",
+            "id": 1,
+            "text": "orphan entry",
             "metadata": {},  # 未提供 source_memory_id
         }
         fake_result.similarity = 0.9
@@ -68,11 +75,14 @@ class TestGraphVectorRetriever:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_with_filters(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_search_with_filters(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """session_id 和 persona_id 会作为元数据过滤条件传递并复核。"""
         fake_result = MagicMock()
         fake_result.data = {
-            "id": 5, "text": "filtered entry",
+            "id": 5,
+            "text": "filtered entry",
             "metadata": {
                 "source_memory_id": 1,
                 "session_id": "s1",
@@ -95,7 +105,9 @@ class TestGraphVectorRetriever:
         faiss_db.insert.return_value = 7
         result = await retriever.add_entry("new entry", {"key": "val"})
         assert result == 7
-        faiss_db.insert.assert_called_once_with(content="new entry", metadata={"key": "val"})
+        faiss_db.insert.assert_called_once_with(
+            content="new entry", metadata={"key": "val"}
+        )
 
     def test_coerce_metadata_string(self, retriever: Any) -> None:
         """_coerce_metadata 能解析 JSON 字符串。"""
@@ -124,7 +136,9 @@ class TestGraphVectorRetriever:
         assert retriever._coerce_metadata("[1, 2, 3]") == {}
 
     @pytest.mark.asyncio
-    async def test_get_uuid_from_id_found(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_get_uuid_from_id_found(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """_get_uuid_from_id 能从文档存储解析 UUID。"""
         mock_doc = {"doc_id": "uuid-12345", "text": "content"}
         faiss_db.document_storage.get_documents.return_value = [mock_doc]
@@ -132,14 +146,18 @@ class TestGraphVectorRetriever:
         assert result == "uuid-12345"
 
     @pytest.mark.asyncio
-    async def test_get_uuid_from_id_not_found(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_get_uuid_from_id_not_found(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """未找到文档时 _get_uuid_from_id 返回 None。"""
         faiss_db.document_storage.get_documents.return_value = []
         result = await retriever._get_uuid_from_id(999)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_delete_entry_not_found(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_delete_entry_not_found(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """无法解析 UUID 时 delete_entry 返回 False。"""
         faiss_db.document_storage.get_documents.return_value = []
         result = await retriever.delete_entry(999)
@@ -147,7 +165,9 @@ class TestGraphVectorRetriever:
         faiss_db.delete.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_delete_entry_success(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_delete_entry_success(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """UUID 可解析时 delete_entry 通过 faiss_db 删除。"""
         faiss_db.document_storage.get_documents.return_value = [{"doc_id": "uuid-abc"}]
         result = await retriever.delete_entry(5)
@@ -155,7 +175,9 @@ class TestGraphVectorRetriever:
         faiss_db.delete.assert_called_once_with("uuid-abc")
 
     @pytest.mark.asyncio
-    async def test_update_metadata_not_found(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_update_metadata_not_found(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """文档不存在时 update_metadata 返回 False。"""
         faiss_db.document_storage.get_documents.return_value = []
         result = await retriever.update_metadata(999, {"key": "val"})

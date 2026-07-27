@@ -14,8 +14,10 @@ from ..models.memory_evolution import (
     DerivedApplyPlan,
     DerivedState,
     EvolutionProposal,
+    EvolutionSignal,
+    JobClaim,
+    JobSpec,
     MemoryProjectionProposal,
-    MemoryRelationProposal,
     MemorySourceRef,
     ProjectionSourceView,
     ProjectionType,
@@ -23,9 +25,6 @@ from ..models.memory_evolution import (
     RelationType,
     RelationView,
     RetrySpec,
-    EvolutionSignal,
-    JobClaim,
-    JobSpec,
 )
 
 
@@ -61,7 +60,9 @@ class MemoryEvolutionManager:
         }
     )
 
-    def __init__(self, store, gate, consolidator, config: Mapping[str, Any] | None = None):
+    def __init__(
+        self, store, gate, consolidator, config: Mapping[str, Any] | None = None
+    ):
         self.store = store
         self.gate = gate
         self.consolidator = consolidator
@@ -445,9 +446,10 @@ class MemoryEvolutionManager:
 
         if not isinstance(proposal, EvolutionProposal):
             raise EvolutionProposalRejected("proposal_schema_invalid")
-        if len(proposal.relations) > self.candidate_limit or len(
-            proposal.projections
-        ) > self.candidate_limit:
+        if (
+            len(proposal.relations) > self.candidate_limit
+            or len(proposal.projections) > self.candidate_limit
+        ):
             raise EvolutionProposalRejected("proposal_limit_exceeded")
         if len({source.memory_id for source in sources}) != len(sources):
             raise EvolutionProposalRejected("duplicate_source")
@@ -465,8 +467,10 @@ class MemoryEvolutionManager:
             _ensure_compatible(source, target)
             edge = (source.memory_id, target.memory_id)
             reverse = (target.memory_id, source.memory_id)
-            if edge in seen_edges or reverse in seen_edges or _path_exists(
-                seen_edges, target.memory_id, source.memory_id
+            if (
+                edge in seen_edges
+                or reverse in seen_edges
+                or _path_exists(seen_edges, target.memory_id, source.memory_id)
             ):
                 raise EvolutionProposalRejected("duplicate_or_cycle")
             seen_edges.add(edge)
@@ -507,8 +511,12 @@ class MemoryEvolutionManager:
             )
 
         for item in proposal.projections[: self.candidate_limit]:
-            projection_sources_for_item = [_alias(aliases, alias) for alias in item.source_aliases]
-            if len({source.memory_id for source in projection_sources_for_item}) != len(projection_sources_for_item):
+            projection_sources_for_item = [
+                _alias(aliases, alias) for alias in item.source_aliases
+            ]
+            if len({source.memory_id for source in projection_sources_for_item}) != len(
+                projection_sources_for_item
+            ):
                 raise EvolutionProposalRejected("duplicate_projection_source")
             _ensure_scope_compatible(*projection_sources_for_item)
             if (
@@ -560,7 +568,9 @@ class MemoryEvolutionManager:
             relations=tuple(relations),
             projections=tuple(projections),
             projection_sources=tuple(projection_sources),
-            source_revisions={source.memory_id: source.revision_token for source in sources},
+            source_revisions={
+                source.memory_id: source.revision_token for source in sources
+            },
         )
 
 
@@ -632,9 +642,7 @@ def _same_source_revisions(
     previous_revisions = {
         source.memory_id: source.revision_token for source in previous
     }
-    current_revisions = {
-        source.memory_id: source.revision_token for source in current
-    }
+    current_revisions = {source.memory_id: source.revision_token for source in current}
     return previous_revisions == current_revisions and len(previous) == len(current)
 
 

@@ -86,9 +86,12 @@ class ProtocolIdentityService:
         state = identity.name_field_states.get("nickname", NameFieldState.MISSING)
         candidate = identity.global_name
         if state is not NameFieldState.VALID or not candidate:
-            return False, current.global_name if current else None, (
-                current.global_name_updated_at if current else None
-            ), []
+            return (
+                False,
+                current.global_name if current else None,
+                (current.global_name_updated_at if current else None),
+                [],
+            )
         if current is None or current.global_name is None:
             return True, candidate, identity.observed_at, []
         if current.global_name == candidate:
@@ -122,12 +125,18 @@ class ProtocolIdentityService:
         if state is NameFieldState.VALID and identity.scope_name:
             candidate = identity.scope_name
             if current_name is None:
-                if current_updated_at is None or identity.observed_at >= current_updated_at:
+                if (
+                    current_updated_at is None
+                    or identity.observed_at >= current_updated_at
+                ):
                     return True, candidate, identity.observed_at, []
                 aliases = [("group", identity.scope_id or "", candidate)]
                 return False, current_name, current_updated_at, aliases
             if current_name == candidate:
-                if current_updated_at is None or identity.observed_at > current_updated_at:
+                if (
+                    current_updated_at is None
+                    or identity.observed_at > current_updated_at
+                ):
                     return True, candidate, identity.observed_at, []
                 return False, current_name, current_updated_at, []
             if current_updated_at is None or identity.observed_at >= current_updated_at:

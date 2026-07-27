@@ -69,36 +69,43 @@ class TopicSegmentationApiMixin:
         if err:
             return err
         c = self.plugin.config_manager
-        cfg = {"enabled": c.get("topic_segmentation.enabled"), "strategy": c.get("topic_segmentation.strategy"),
-               "strategy_b": {
-                   "similarity_threshold": c.get(
-                       "topic_segmentation.strategy_b.similarity_threshold"
-                   ),
-                   "min_cluster_size": c.get(
-                       "topic_segmentation.strategy_b.min_cluster_size"
-                   ),
-                   "max_clusters": c.get("topic_segmentation.strategy_b.max_clusters"),
-               }, "strategy_c": {
+        cfg = {
+            "enabled": c.get("topic_segmentation.enabled"),
+            "strategy": c.get("topic_segmentation.strategy"),
+            "strategy_b": {
+                "similarity_threshold": c.get(
+                    "topic_segmentation.strategy_b.similarity_threshold"
+                ),
+                "min_cluster_size": c.get(
+                    "topic_segmentation.strategy_b.min_cluster_size"
+                ),
+                "max_clusters": c.get("topic_segmentation.strategy_b.max_clusters"),
+            },
+            "strategy_c": {
                 "topic_shift_threshold": c.get(
                     "topic_segmentation.strategy_c.topic_shift_threshold"
                 ),
                 "min_chunk_size": c.get("topic_segmentation.strategy_c.min_chunk_size"),
-            }, "strategy_d": {
+            },
+            "strategy_d": {
                 "stage1_max_topics": c.get(
                     "topic_segmentation.strategy_d.stage1_max_topics"
                 ),
                 "enable_parallel_stage2": c.get(
                     "topic_segmentation.strategy_d.enable_parallel_stage2"
                 ),
-            }, "hybrid_fallback_fact_threshold": c.get(
+            },
+            "hybrid_fallback_fact_threshold": c.get(
                 "topic_segmentation.hybrid_fallback_fact_threshold"
-            ), "legacy_backfill": {
+            ),
+            "legacy_backfill": {
                 "enabled": c.get("topic_segmentation.legacy_backfill.enabled"),
                 "batch_size": c.get("topic_segmentation.legacy_backfill.batch_size"),
                 "max_backfill_per_run": c.get(
                     "topic_segmentation.legacy_backfill.max_backfill_per_run"
                 ),
-            }, "available_strategies": [
+            },
+            "available_strategies": [
                 {
                     "key": "a_b_hybrid",
                     "label": "A+B 混合模式",
@@ -124,7 +131,8 @@ class TopicSegmentationApiMixin:
                     "label": "方案 D — 两阶段 LLM",
                     "desc": "先识别话题范围再分别抽取",
                 },
-            ]}
+            ],
+        }
         return ok_response(cfg)
 
     async def update_topic_segmentation_config(self):

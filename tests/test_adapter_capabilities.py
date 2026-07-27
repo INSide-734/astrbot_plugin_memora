@@ -56,10 +56,7 @@ def test_capability_contract_is_immutable_and_uses_three_levels() -> None:
     )
 
     assert contract.level(AdapterCapability.SCORING) is SupportLevel.NATIVE
-    assert (
-        contract.level(AdapterCapability.FILTERING)
-        is SupportLevel.CALLER_ENFORCED
-    )
+    assert contract.level(AdapterCapability.FILTERING) is SupportLevel.CALLER_ENFORCED
     assert contract.level(AdapterCapability.DELETE) is SupportLevel.UNSUPPORTED
     with pytest.raises(FrozenInstanceError):
         contract.kind = "other"
@@ -198,7 +195,9 @@ async def test_embedding_adapter_supports_native_batch_and_single_emulation() ->
 
 
 @pytest.mark.asyncio
-async def test_embedding_batch_internal_type_error_is_not_retried_as_signature() -> None:
+async def test_embedding_batch_internal_type_error_is_not_retried_as_signature() -> (
+    None
+):
     """Provider 内部 TypeError 不得被误判为另一种 batch 签名。"""
 
     from core.provider_adapters import EmbeddingProviderAdapter
@@ -240,7 +239,9 @@ async def test_embedding_adapter_rejects_invalid_result(vectors, reason) -> None
 
 
 @pytest.mark.asyncio
-async def test_embedding_retry_wraps_invalid_count_without_leaking_provider_error() -> None:
+async def test_embedding_retry_wraps_invalid_count_without_leaking_provider_error() -> (
+    None
+):
     """重试边界必须保留安全原因链，并隐藏 Provider 原始错误正文。"""
 
     from core.validators.embedding_retry import EmbeddingRetryMixin
@@ -423,7 +424,9 @@ def test_current_adapter_snapshots_state_real_filter_and_score_semantics() -> No
     )
 
 
-def test_current_faiss_backend_exposes_vector_access_after_fixed_adapter_setup() -> None:
+def test_current_faiss_backend_exposes_vector_access_after_fixed_adapter_setup() -> (
+    None
+):
     """固定 AstrBot FAISS 装配后必须向重排工厂公开向量访问能力。"""
 
     from core.adapter_capabilities import AdapterCapability, adapter_contract

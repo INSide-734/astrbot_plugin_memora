@@ -17,15 +17,15 @@ from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..monitoring import report_debug_event, report_debug_exception
 from ..processors.memory_processor import MemoryProcessor
-from ..utils import OperationContext, get_persona_id
-from .reflection_trigger import ReflectionTrigger
-from .topic_batch_preparer import TopicBatchPreparer
 from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
     PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
     PROMPT_PROTECTION_SCOPE_ATTR,
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
+from ..utils import OperationContext, get_persona_id
+from .reflection_trigger import ReflectionTrigger
+from .topic_batch_preparer import TopicBatchPreparer
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -95,9 +95,7 @@ class ReflectionHandler:
             status="started",
             reason_code="response_received",
         )
-        logger.debug(
-            f"[反思处理] 进入 handle_memory_reflection，resp.role={resp.role}"
-        )
+        logger.debug(f"[反思处理] 进入 handle_memory_reflection，resp.role={resp.role}")
 
         scope_id, protection_required, scope_lookup_failed = (
             self._get_prompt_protection_context(event)
@@ -210,9 +208,7 @@ class ReflectionHandler:
                     status="skipped",
                     reason_code="empty_response_after_sanitization",
                 )
-                logger.warning(
-                    f"[{session_id}] 模型回复经安全清洗后为空，跳过记录"
-                )
+                logger.warning(f"[{session_id}] 模型回复经安全清洗后为空，跳过记录")
                 return
             error_indicators = [
                 "api error",
@@ -404,9 +400,8 @@ class ReflectionHandler:
                 if callable(has_scope) and not has_scope(scope_id):
                     self._discard_prompt_protection_scope(scope_id)
                     return ""
-            if (
-                not protection_required
-                and not self._config_manager.get("security.sanitize_llm_response", True)
+            if not protection_required and not self._config_manager.get(
+                "security.sanitize_llm_response", True
             ):
                 self._discard_prompt_protection_scope(scope_id)
                 return response_text
@@ -452,6 +447,7 @@ class ReflectionHandler:
                 discard(scope_id)
             except Exception:
                 logger.warning("[反思处理] 请求安全关联清理失败", exc_info=True)
+
     def _clear_prompt_protection_context(
         self,
         event: AstrMessageEvent,
@@ -535,7 +531,9 @@ class ReflectionHandler:
             else None
         )
         required = official_required is True or private_required is True
-        lookup_failed = official_failed and scope_id is None and private_required is not True
+        lookup_failed = (
+            official_failed and scope_id is None and private_required is not True
+        )
         return scope_id, required, lookup_failed
 
     def _writes_blocked(self) -> bool:
@@ -585,7 +583,10 @@ class ReflectionHandler:
             logger.debug("[认知模块] 好感度更新失败", exc_info=True)
 
         try:
-            if self._jargon_miner is not None and event.get_message_type() == MessageType.GROUP_MESSAGE:
+            if (
+                self._jargon_miner is not None
+                and event.get_message_type() == MessageType.GROUP_MESSAGE
+            ):
                 await self._jargon_miner.run_once(session_id, limit=2)
         except Exception:
             logger.debug("[认知模块] 基于助手回复触发黑话挖掘失败", exc_info=True)
@@ -810,7 +811,9 @@ class ReflectionHandler:
                         status="completed",
                         reason_code="batches_prepared",
                         task_type="storage",
-                        duration_ms=max(0.0, (time.perf_counter() - batch_started) * 1000.0),
+                        duration_ms=max(
+                            0.0, (time.perf_counter() - batch_started) * 1000.0
+                        ),
                         message_count=len(history_messages),
                         batch_count=len(batches),
                     )
@@ -864,7 +867,9 @@ class ReflectionHandler:
                             status="failed",
                             reason_code="batch_extraction_failed",
                             task_type="storage",
-                            duration_ms=max(0.0, (time.perf_counter() - extraction_started) * 1000.0),
+                            duration_ms=max(
+                                0.0, (time.perf_counter() - extraction_started) * 1000.0
+                            ),
                             batch_count=len(batches),
                             failed_count=failed_batch_count,
                             success_count=max(0, len(batches) - failed_batch_count),
@@ -886,7 +891,9 @@ class ReflectionHandler:
                         status="completed",
                         reason_code="memories_extracted",
                         task_type="storage",
-                        duration_ms=max(0.0, (time.perf_counter() - extraction_started) * 1000.0),
+                        duration_ms=max(
+                            0.0, (time.perf_counter() - extraction_started) * 1000.0
+                        ),
                         batch_count=len(batches),
                         count=len(memories),
                     )
@@ -933,9 +940,7 @@ class ReflectionHandler:
                     stored_count = 0
                     successful_keys = set(completed_idempotency_keys)
                     skipped_memory_count = sum(
-                        str(
-                            memory.get("metadata", {}).get("idempotency_key") or ""
-                        )
+                        str(memory.get("metadata", {}).get("idempotency_key") or "")
                         in completed_idempotency_keys
                         for memory in memories
                     )
@@ -1010,13 +1015,17 @@ class ReflectionHandler:
                         "storage_task",
                         component="reflection",
                         stage="memory_write",
-                        status="completed" if stored_count == len(memories) else "degraded",
-                        reason_code="memory_write_completed" if stored_count == len(memories) else "memory_write_partial",
+                        status="completed"
+                        if stored_count == len(memories)
+                        else "degraded",
+                        reason_code="memory_write_completed"
+                        if stored_count == len(memories)
+                        else "memory_write_partial",
                         task_type="storage",
-                        duration_ms=max(0.0, (time.perf_counter() - write_started) * 1000.0),
-                        success_count=max(
-                            0, int(stored_count - skipped_memory_count)
+                        duration_ms=max(
+                            0.0, (time.perf_counter() - write_started) * 1000.0
                         ),
+                        success_count=max(0, int(stored_count - skipped_memory_count)),
                         failed_count=max(0, int(len(memories) - stored_count)),
                         skipped_count=skipped_memory_count,
                     )
@@ -1073,7 +1082,9 @@ class ReflectionHandler:
                             status="completed",
                             reason_code="summary_metadata_committed",
                             task_type="storage",
-                            duration_ms=max(0.0, (time.perf_counter() - metadata_started) * 1000.0),
+                            duration_ms=max(
+                                0.0, (time.perf_counter() - metadata_started) * 1000.0
+                            ),
                         )
                     except Exception as meta_err:
                         report_debug_exception(
@@ -1109,7 +1120,10 @@ class ReflectionHandler:
                                 status="failed",
                                 reason_code="summary_metadata_failed",
                                 task_type="storage",
-                                duration_ms=max(0.0, (time.perf_counter() - metadata_started) * 1000.0),
+                                duration_ms=max(
+                                    0.0,
+                                    (time.perf_counter() - metadata_started) * 1000.0,
+                                ),
                             )
                             logger.error(
                                 f"[{session_id}] 重试元数据更新仍然失败，"
@@ -1125,7 +1139,9 @@ class ReflectionHandler:
                     reason_code="memories_stored",
                     task_type="storage",
                     count=max(0, int(stored_count)),
-                    duration_ms=max(0.0, (time.perf_counter() - storage_started) * 1000.0),
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - storage_started) * 1000.0
+                    ),
                 )
 
             except asyncio.CancelledError:
@@ -1136,7 +1152,9 @@ class ReflectionHandler:
                     status="cancelled",
                     reason_code="storage_cancelled",
                     task_type="storage",
-                    duration_ms=max(0.0, (time.perf_counter() - storage_started) * 1000.0),
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - storage_started) * 1000.0
+                    ),
                 )
                 raise
             except Exception as e:
@@ -1148,7 +1166,9 @@ class ReflectionHandler:
                     status="failed",
                     reason_code="storage_error",
                     task_type="storage",
-                    duration_ms=max(0.0, (time.perf_counter() - storage_started) * 1000.0),
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - storage_started) * 1000.0
+                    ),
                 )
                 logger.error(f"[{session_id}] 存储记忆失败：{e}", exc_info=True)
                 await self._record_pending_summary(

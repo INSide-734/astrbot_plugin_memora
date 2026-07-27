@@ -12,8 +12,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 import pytest
 
@@ -232,9 +230,9 @@ class TestPipelineGraph:
         # 用剩余向量重建索引（FAISS 不支持按 ID 删除）
         new_index = faiss.IndexFlatIP(vector_dim)
         if nodes_to_keep:
-            remaining = np.vstack([
-                vectors[nid].reshape(1, -1) for nid in nodes_to_keep
-            ]).astype(np.float32)
+            remaining = np.vstack(
+                [vectors[nid].reshape(1, -1) for nid in nodes_to_keep]
+            ).astype(np.float32)
             new_index.add(remaining)
 
         # 验证 FAISS 计数正确减少

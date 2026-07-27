@@ -29,6 +29,7 @@ if str(_PLUGIN_ROOT) not in sys.path:
 # 必须在任何 core.* 导入之前运行 —— Pytest 最先加载 conftest.py。
 # ---------------------------------------------------------------------------
 
+
 def _install_astrbot_mocks() -> None:
     """将 AstrBot 的最小 Mock 模块注入 sys.modules。
 
@@ -146,7 +147,9 @@ def _install_astrbot_mocks() -> None:
     # astrbot.core.agent.message — TextPart
     _agent_msg = _mkmod("astrbot.core.agent.message")
     _text_part = MagicMock()
-    _text_part.return_value.mark_as_temp = MagicMock(return_value=_text_part.return_value)
+    _text_part.return_value.mark_as_temp = MagicMock(
+        return_value=_text_part.return_value
+    )
     _agent_msg.TextPart = _text_part  # type: ignore[attr-defined]
     sys.modules["astrbot.core.agent.message"] = _agent_msg
 
@@ -222,22 +225,24 @@ _install_astrbot_mocks()
 # LLM / Provider Mock
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_llm_caller() -> AsyncMock:
     """异步可调用对象，返回预设的 JSON 摘要响应。
 
     在测试中覆盖 ``mock_llm_caller.return_value`` 以自定义输出。
     """
-    default_response = json.dumps({
-        "summary": "用户和小明讨论了周末去西湖游玩的计划",
-        "key_facts": [
-            "周末计划去西湖", "小明想去划船", "用户想爬山"
-        ],
-        "topics": ["周末计划", "西湖", "游玩"],
-        "sentiment": "positive",
-        "importance": 0.7,
-        "emotional_intensity": 0.65,
-    }, ensure_ascii=False)
+    default_response = json.dumps(
+        {
+            "summary": "用户和小明讨论了周末去西湖游玩的计划",
+            "key_facts": ["周末计划去西湖", "小明想去划船", "用户想爬山"],
+            "topics": ["周末计划", "西湖", "游玩"],
+            "sentiment": "positive",
+            "importance": 0.7,
+            "emotional_intensity": 0.65,
+        },
+        ensure_ascii=False,
+    )
     mock = AsyncMock(return_value=default_response)
     return mock
 
@@ -253,6 +258,7 @@ def mock_llm_provider() -> MagicMock:
 # ---------------------------------------------------------------------------
 # 配置 Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def test_config_dict() -> dict[str, Any]:
@@ -353,6 +359,7 @@ def test_config(test_config_dict: dict[str, Any]) -> Any:
     返回一个简单包装器，使得测试不需要完整的 Pydantic
     验证链，除非它们专门测试配置验证。
     """
+
     class _TestConfig:
         def __init__(self, data: dict[str, Any]) -> None:
             self._data = data
@@ -378,6 +385,7 @@ def test_config(test_config_dict: dict[str, Any]) -> Any:
 # 数据库 Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def tmp_db_path() -> str:
     """临时 SQLite 数据库路径（基于文件，而非 :memory:）。
@@ -396,6 +404,7 @@ def tmp_db_path() -> str:
 # ---------------------------------------------------------------------------
 # MemoryAtom / 模型辅助
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def sample_atoms() -> list[dict[str, Any]]:
@@ -461,14 +470,13 @@ def sample_atoms() -> list[dict[str, Any]]:
 # 事件 / 上下文 Mock（用于处理器测试）
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_event() -> MagicMock:
     """模拟 AstrBot 的 ``AstrMessageEvent``。"""
     event = MagicMock()
     event.unified_msg_origin = "test-session-001"
-    event.get_message_type.return_value = MagicMock(
-        value="GROUP_MESSAGE"
-    )  # type: ignore[union-attr]
+    event.get_message_type.return_value = MagicMock(value="GROUP_MESSAGE")  # type: ignore[union-attr]
     event.session_id = "test-session-001"
     return event
 
@@ -485,6 +493,7 @@ def mock_context() -> MagicMock:
 # ---------------------------------------------------------------------------
 # 性能 / 功能委托 Mock
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_perf_tracker() -> MagicMock:
@@ -586,6 +595,7 @@ def mock_feature_delegation_with_chatplus() -> MagicMock:
 def mock_monitored_context():
     """在测试期间启用调试监控，然后恢复默认设置。"""
     from core.monitoring.instrumentation import set_debug_mode, set_trace_enabled
+
     set_debug_mode(True)
     set_trace_enabled(True)
     yield

@@ -1,14 +1,14 @@
 """测试笔记存储 — CRUD + prune_versions."""
+
 import pytest
+
 from core.models.note_models import Note, NoteStatus
 from core.storage.note_store import NoteStore
 
 
 class TestNoteStore:
-
     @staticmethod
-    async def _create_note(store, title="test", content="hello",
-                           tags=None):
+    async def _create_note(store, title="test", content="hello", tags=None):
         note = Note(title=title, content=content, tags=tags or [])
         note_id = await store.create(note)
         note.note_id = note_id
@@ -33,7 +33,9 @@ class TestNoteStore:
         assert len(await s.get_versions(note.note_id)) == 2
 
     @pytest.mark.asyncio
-    async def test_stale_note_update_is_rejected_without_duplicate_version(self, tmp_db_path):
+    async def test_stale_note_update_is_rejected_without_duplicate_version(
+        self, tmp_db_path
+    ):
         s = NoteStore(tmp_db_path)
         await s.init_table()
         note = await self._create_note(s, "Concurrent", "v1")
@@ -63,7 +65,7 @@ class TestNoteStore:
         await s.init_table()
         note = await self._create_note(s, "prune", "v1")
         for i in range(25):
-            note.content = f"v{i+2}"
+            note.content = f"v{i + 2}"
             await s.update(note)
         assert len(await s.get_versions(note.note_id)) == 26
         removed = await s.prune_versions(max_versions=20)
@@ -77,7 +79,7 @@ class TestNoteStore:
         await s.init_table()
         note = await self._create_note(s, "stress", "v1")
         for i in range(30):
-            note.content = f"version_{i+2}"
+            note.content = f"version_{i + 2}"
             await s.update(note)
         versions_before = await s.get_versions(note.note_id)
         assert len(versions_before) == 31
@@ -114,7 +116,9 @@ class TestNoteStore:
         assert await s.delete(note.note_id)
 
     @pytest.mark.asyncio
-    async def test_soft_delete_preserves_versions_and_hides_from_default_list(self, tmp_db_path):
+    async def test_soft_delete_preserves_versions_and_hides_from_default_list(
+        self, tmp_db_path
+    ):
         s = NoteStore(tmp_db_path)
         await s.init_table()
         note = await self._create_note(s, "soft-del", "v1")

@@ -1,17 +1,18 @@
 """测试 NoteManager — 基于 Mock NoteStore 的笔记 CRUD 操作。"""
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from core.managers.note_manager import NoteManager
 from core.models.note_models import Note, NoteStatus, NoteVersion
 
-
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
+
 
 class TestNoteManagerInit:
     """Construction."""
@@ -26,6 +27,7 @@ class TestNoteManagerInit:
 # create_note
 # ---------------------------------------------------------------------------
 
+
 class TestCreateNote:
     """create_note."""
 
@@ -34,7 +36,9 @@ class TestCreateNote:
         store = MagicMock()
         store.create = AsyncMock(return_value=42)
         mgr = NoteManager(store=store)
-        note_id = await mgr.create_note("Title", "Content", tags=["tag1"], user_id="user1")
+        note_id = await mgr.create_note(
+            "Title", "Content", tags=["tag1"], user_id="user1"
+        )
         assert note_id == 42
         store.create.assert_called_once()
         created_note = store.create.call_args[0][0]
@@ -59,6 +63,7 @@ class TestCreateNote:
 # ---------------------------------------------------------------------------
 # get_note
 # ---------------------------------------------------------------------------
+
 
 class TestGetNote:
     """get_note."""
@@ -85,6 +90,7 @@ class TestGetNote:
 # ---------------------------------------------------------------------------
 # update_note
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateNote:
     """update_note."""
@@ -147,6 +153,7 @@ class TestUpdateNote:
 # delete_note
 # ---------------------------------------------------------------------------
 
+
 class TestDeleteNote:
     """delete_note."""
 
@@ -169,6 +176,7 @@ class TestDeleteNote:
 # search
 # ---------------------------------------------------------------------------
 
+
 class TestSearch:
     """search."""
 
@@ -188,6 +196,7 @@ class TestSearch:
 # list_notes
 # ---------------------------------------------------------------------------
 
+
 class TestListNotes:
     """list_notes."""
 
@@ -203,6 +212,7 @@ class TestListNotes:
 # ---------------------------------------------------------------------------
 # get_versions
 # ---------------------------------------------------------------------------
+
 
 class TestGetVersions:
     """get_versions."""
@@ -220,6 +230,7 @@ class TestGetVersions:
 # ---------------------------------------------------------------------------
 # count / prune_versions
 # ---------------------------------------------------------------------------
+
 
 class TestCountAndPrune:
     """count and prune_versions."""
@@ -243,6 +254,7 @@ class TestCountAndPrune:
 # ---------------------------------------------------------------------------
 # auto_create_from_memory
 # ---------------------------------------------------------------------------
+
 
 class TestAutoCreateFromMemory:
     """auto_create_from_memory logic."""

@@ -12,7 +12,9 @@ class TestGraphQueryFilters:
     async def _setup_filtered_data(self, store):
         """Create entries with different session/persona values."""
         nodes = [
-            GraphNode(node_type="entity", value="FilterTest", canonical_value="filtertest"),
+            GraphNode(
+                node_type="entity", value="FilterTest", canonical_value="filtertest"
+            ),
             GraphNode(node_type="entity", value="Target", canonical_value="target"),
         ]
         node_map = await store.upsert_nodes(nodes)

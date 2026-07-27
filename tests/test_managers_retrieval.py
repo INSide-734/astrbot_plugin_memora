@@ -240,8 +240,11 @@ class TestArrangeNarrative:
         """Very old memories separated by topic show topic_switch (not time_jump for first segment)."""
         opt = RetrievalOptimizer(config={})
         import time
+
         now = time.time()
-        r1 = self._make_result(1, "Python memory", topics=["python"], create_time=now - 86400 * 10)
+        r1 = self._make_result(
+            1, "Python memory", topics=["python"], create_time=now - 86400 * 10
+        )
         r2 = self._make_result(2, "Cooking memory", topics=["cooking"], create_time=now)
         narrative = opt.arrange_narrative([r1, r2])
         # Different topics produce topic_switch
@@ -258,7 +261,9 @@ class TestArrangeNarrative:
         """Three results with large time gap produces time_jump transition."""
         opt = RetrievalOptimizer(config={})
         r1 = self._make_result(1, "Old", topics=["a"], create_time=100)
-        r2 = self._make_result(2, "Mid", topics=["a"], create_time=200)  # same topic group
+        r2 = self._make_result(
+            2, "Mid", topics=["a"], create_time=200
+        )  # same topic group
         r3 = self._make_result(3, "New", topics=["b"], create_time=100 + 86400 * 10)
         narrative = opt.arrange_narrative([r1, r2, r3])
         # The time_jump detection uses sorted_results[i] for both prev and first_ts;
@@ -323,20 +328,38 @@ class TestCacheOperations:
 
     def test_get_cached_expired(self) -> None:
         """过期 cache returns None."""
-        opt = RetrievalOptimizer(config={"search_cache_enabled": True, "search_cache_ttl_seconds": -1.0, "search_cache_max_size": 256})
+        opt = RetrievalOptimizer(
+            config={
+                "search_cache_enabled": True,
+                "search_cache_ttl_seconds": -1.0,
+                "search_cache_max_size": 256,
+            }
+        )
 
         opt.set_cached(("key2",), [_make_hr(1, "test")])
         assert opt.get_cached(("key2",)) is None
 
     def test_cache_disabled(self) -> None:
         """get_cached/set_cached no-op when cache disabled."""
-        opt = RetrievalOptimizer(config={"search_cache_enabled": False, "search_cache_ttl_seconds": 45.0, "search_cache_max_size": 256})
+        opt = RetrievalOptimizer(
+            config={
+                "search_cache_enabled": False,
+                "search_cache_ttl_seconds": 45.0,
+                "search_cache_max_size": 256,
+            }
+        )
         opt.set_cached(("key3",), [])
         assert opt.get_cached(("key3",)) is None
 
     def test_cache_eviction_on_max_size(self) -> None:
         """Oldest entry evicted when cache exceeds max_size."""
-        opt = RetrievalOptimizer(config={"search_cache_enabled": True, "search_cache_ttl_seconds": 3600, "search_cache_max_size": 2})
+        opt = RetrievalOptimizer(
+            config={
+                "search_cache_enabled": True,
+                "search_cache_ttl_seconds": 3600,
+                "search_cache_max_size": 2,
+            }
+        )
         for i in range(5):
             opt.set_cached((f"k{i}",), [_make_hr(i, f"r{i}")])
         assert len(opt._cache) == 2
@@ -377,9 +400,7 @@ class TestSessionCache:
             memory_types=["FACTUAL"],
         )
         assert (
-            opt.get_session_cached(
-                "same", 5, "s1", "p1", memory_types=["RELATIONAL"]
-            )
+            opt.get_session_cached("same", 5, "s1", "p1", memory_types=["RELATIONAL"])
             is None
         )
 
@@ -398,13 +419,17 @@ class TestSessionCache:
 
     def test_get_session_cached_expired(self) -> None:
         """过期 session cache returns None."""
-        opt = RetrievalOptimizer(config={"session_cache_enabled": True, "session_cache_ttl_seconds": -1.0})
+        opt = RetrievalOptimizer(
+            config={"session_cache_enabled": True, "session_cache_ttl_seconds": -1.0}
+        )
         opt.set_session_cached("query", 5, "s2", "p2", [_make_hr(1, "t")])
         assert opt.get_session_cached("query", 5, "s2", "p2") is None
 
     def test_session_cache_disabled(self) -> None:
         """get/set_session_cached no-op when disabled."""
-        opt = RetrievalOptimizer(config={"session_cache_enabled": False, "session_cache_ttl_seconds": 10.0})
+        opt = RetrievalOptimizer(
+            config={"session_cache_enabled": False, "session_cache_ttl_seconds": 10.0}
+        )
         opt.set_session_cached("query", 5, "s3", "p3", [])
         assert opt.get_session_cached("query", 5, "s3", "p3") is None
 
@@ -414,29 +439,30 @@ class TestEmotionBoost:
 
     def test_no_emotion_context(self) -> None:
         """results returned unchanged when no emotion_context."""
-        from core.retrieval.rrf_fusion import HybridResult
         r = _make_hr(1, "test", score=0.8)
         result = RetrievalOptimizer._apply_emotion_boost([r], None)
         assert result[0].final_score == 0.8
 
     def test_empty_emotion_context(self) -> None:
         """空 emotion_context list returns unchanged results."""
-        from core.retrieval.rrf_fusion import HybridResult
         r = _make_hr(1, "test", score=0.8)
         result = RetrievalOptimizer._apply_emotion_boost([r], [])
         assert result[0].final_score == 0.8
 
     def test_with_emotion_tags_string(self) -> None:
         """emotion_tags as JSON string is parsed correctly."""
-        from core.retrieval.rrf_fusion import HybridResult
-        r = _make_hr(1, "test", score=1.0, metadata={"emotion_tags": '["joy", "excited"]', "emotional_intensity": 0.8})
+        r = _make_hr(
+            1,
+            "test",
+            score=1.0,
+            metadata={"emotion_tags": '["joy", "excited"]', "emotional_intensity": 0.8},
+        )
         result = RetrievalOptimizer._apply_emotion_boost([r], ["joy"])
         # Score should be boosted (joy matches)
         assert result[0].final_score > 1.0
 
     def test_with_bad_json_emotion_tags(self) -> None:
         """Bad JSON in emotion_tags falls back to empty list."""
-        from core.retrieval.rrf_fusion import HybridResult
         r = _make_hr(1, "test", score=1.0, metadata={"emotion_tags": "{bad json}"})
         result = RetrievalOptimizer._apply_emotion_boost([r], ["joy"])
         # No boost since tags are empty after bad parse
@@ -448,7 +474,6 @@ class TestSeasonalBoost:
 
     def test_seasonal_with_event_time(self) -> None:
         """Boost applied using event_time."""
-        from core.retrieval.rrf_fusion import HybridResult
         r = _make_hr(1, "test", score=1.0, metadata={"event_time": 1000000.0})
         result = RetrievalOptimizer._apply_seasonal_boost([r])
         # Score changes (exact value depends on time math)
@@ -456,21 +481,18 @@ class TestSeasonalBoost:
 
     def test_seasonal_with_create_time_fallback(self) -> None:
         """Boost applied using create_time when event_time missing."""
-        from core.retrieval.rrf_fusion import HybridResult
         r = _make_hr(1, "test", score=1.0, metadata={"create_time": 1000000.0})
         result = RetrievalOptimizer._apply_seasonal_boost([r])
         assert isinstance(result[0].final_score, float)
 
     def test_seasonal_with_timestamp_fallback(self) -> None:
         """Boost applied using timestamp when event_time and create_time missing."""
-        from core.retrieval.rrf_fusion import HybridResult
         r = _make_hr(1, "test", score=1.0, metadata={"timestamp": 1000000.0})
         result = RetrievalOptimizer._apply_seasonal_boost([r])
         assert isinstance(result[0].final_score, float)
 
     def test_seasonal_no_timestamp(self) -> None:
         """没有 boost when no timestamp fields present."""
-        from core.retrieval.rrf_fusion import HybridResult
         r = _make_hr(1, "test", score=1.0, metadata={})
         result = RetrievalOptimizer._apply_seasonal_boost([r])
         assert result[0].final_score == 1.0
@@ -559,9 +581,10 @@ class TestCollectMoodDelta:
 
     def test_collect_mood_delta_basic(self) -> None:
         """_collect_mood_delta aggregates emotion tags into mood delta."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
-        r1 = _make_hr(1, "joyful", score=0.9, metadata={"emotion_tags": ["joy", "excited"]})
+        r1 = _make_hr(
+            1, "joyful", score=0.9, metadata={"emotion_tags": ["joy", "excited"]}
+        )
         r2 = _make_hr(2, "sad", score=0.5, metadata={"emotion_tags": ["sad"]})
         opt._collect_mood_delta([r1, r2])
         # joy has valence 0.15, excited 0.20, sad -0.15
@@ -571,15 +594,15 @@ class TestCollectMoodDelta:
 
     def test_collect_mood_delta_string_tags(self) -> None:
         """emotion_tags as JSON string is parsed."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
-        r = _make_hr(1, "test", score=0.9, metadata={"emotion_tags": '["joy", "happy"]'})
+        r = _make_hr(
+            1, "test", score=0.9, metadata={"emotion_tags": '["joy", "happy"]'}
+        )
         opt._collect_mood_delta([r])
         assert len(opt.last_mood_tags) == 2
 
     def test_collect_mood_delta_empty_tags(self) -> None:
         """空 results produce neutral mood."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
         # Set some previous state to ensure it resets
         opt._last_mood_delta = 0.5
@@ -590,7 +613,6 @@ class TestCollectMoodDelta:
 
     def test_collect_mood_delta_weighted_tags(self) -> None:
         """weighted_tags are populated with score weights."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
         results = [
             _make_hr(i, f"r{i}", score=0.9, metadata={"emotion_tags": ["joy"]})
@@ -602,7 +624,6 @@ class TestCollectMoodDelta:
 
     def test_collect_mood_delta_bad_json_tags(self) -> None:
         """Bad JSON emotion_tags string is safely handled."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
         r = _make_hr(1, "test", score=0.9, metadata={"emotion_tags": "{not valid}"})
         opt._collect_mood_delta([r])
@@ -611,15 +632,15 @@ class TestCollectMoodDelta:
 
     def test_collect_mood_delta_non_list_tags(self) -> None:
         """Non-list/non-string emotion_tags ignored."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
-        r = _make_hr(1, "test", score=0.9, metadata={"emotion_tags": 12345})  # int, not list
+        r = _make_hr(
+            1, "test", score=0.9, metadata={"emotion_tags": 12345}
+        )  # int, not list
         opt._collect_mood_delta([r])
         assert opt.last_mood_delta == 0.0
 
     def test_collect_mood_delta_dominant_emotion(self) -> None:
         """主导情绪是权重最高的标签。"""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
         r1 = _make_hr(1, "t", score=0.9, metadata={"emotion_tags": ["joy"]})
         r2 = _make_hr(2, "t", score=0.8, metadata={"emotion_tags": ["joy"]})
@@ -651,16 +672,16 @@ class TestTestingEffect:
     @pytest.mark.asyncio
     async def test_testing_effect_no_update_callback(self) -> None:
         """No-op when _update_memory is None."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
-        r = _make_hr(1, "test", score=0.9, metadata={"reinforcement_count": 0, "ttl_days": 30.0})
+        r = _make_hr(
+            1, "test", score=0.9, metadata={"reinforcement_count": 0, "ttl_days": 30.0}
+        )
         # Should not raise
         await opt._apply_testing_effect([r])
 
     @pytest.mark.asyncio
     async def test_testing_effect_sync_mode(self) -> None:
         """同步 mode updates memory directly."""
-        from core.retrieval.rrf_fusion import HybridResult
         update_called = []
 
         async def _update_memory(doc_id, updates, skip_graph_reindex=False):
@@ -671,7 +692,9 @@ class TestTestingEffect:
             config={"testing_effect_async": False, "testing_effect_top_k": 5},
             update_memory_cb=_update_memory,
         )
-        r = _make_hr(1, "test", score=0.9, metadata={"reinforcement_count": 0, "ttl_days": 30.0})
+        r = _make_hr(
+            1, "test", score=0.9, metadata={"reinforcement_count": 0, "ttl_days": 30.0}
+        )
         await opt._apply_testing_effect([r])
         assert len(update_called) == 1
         assert update_called[0][1]["metadata"]["reinforcement_count"] == 1
@@ -679,7 +702,6 @@ class TestTestingEffect:
     @pytest.mark.asyncio
     async def test_testing_effect_async_mode(self) -> None:
         """Async mode uses create_tracked_task."""
-        from core.retrieval.rrf_fusion import HybridResult
         tracked: list = []
 
         async def _update_memory(doc_id, updates, skip_graph_reindex=False):
@@ -693,7 +715,9 @@ class TestTestingEffect:
             update_memory_cb=_update_memory,
             create_tracked_task_cb=_create_tracked_task,
         )
-        r = _make_hr(1, "test", score=0.9, metadata={"reinforcement_count": 0, "ttl_days": 30.0})
+        r = _make_hr(
+            1, "test", score=0.9, metadata={"reinforcement_count": 0, "ttl_days": 30.0}
+        )
         await opt._apply_testing_effect([r])
         assert len(tracked) == 1
         await tracked[0]
@@ -701,7 +725,6 @@ class TestTestingEffect:
     @pytest.mark.asyncio
     async def test_testing_effect_ttl_capped(self) -> None:
         """TTL is capped at 2x original (MAX_REINFORCEMENT_MULTIPLIER)."""
-        from core.retrieval.rrf_fusion import HybridResult
         update_called = []
 
         async def _update_memory(doc_id, updates, skip_graph_reindex=False):
@@ -712,7 +735,12 @@ class TestTestingEffect:
             config={"testing_effect_async": False, "testing_effect_top_k": 5},
             update_memory_cb=_update_memory,
         )
-        r = _make_hr(1, "test", score=0.9, metadata={"reinforcement_count": 100, "ttl_days": 30.0})
+        r = _make_hr(
+            1,
+            "test",
+            score=0.9,
+            metadata={"reinforcement_count": 100, "ttl_days": 30.0},
+        )
         await opt._apply_testing_effect([r])
         meta = update_called[0]["metadata"]
         # Capped at 2x original = 60.0
@@ -721,7 +749,6 @@ class TestTestingEffect:
     @pytest.mark.asyncio
     async def test_testing_effect_top_k_limit(self) -> None:
         """Only top-K results are reinforced."""
-        from core.retrieval.rrf_fusion import HybridResult
         update_called = []
 
         async def _update_memory(doc_id, updates, skip_graph_reindex=False):
@@ -733,7 +760,12 @@ class TestTestingEffect:
             update_memory_cb=_update_memory,
         )
         results = [
-            _make_hr(i, f"r{i}", score=0.9, metadata={"reinforcement_count": 0, "ttl_days": 30.0})
+            _make_hr(
+                i,
+                f"r{i}",
+                score=0.9,
+                metadata={"reinforcement_count": 0, "ttl_days": 30.0},
+            )
             for i in range(5)
         ]
         await opt._apply_testing_effect(results)
@@ -746,10 +778,13 @@ class TestFilteringInApplyBoosts:
     @pytest.mark.asyncio
     async def test_dormant_filtered_out(self) -> None:
         """Results with memory_status='dormant' are filtered."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
-        r_dormant = _make_hr(1, "dormant", score=0.9, metadata={"memory_status": "dormant"})
-        r_active = _make_hr(2, "active", score=0.5, metadata={"memory_status": "active"})
+        r_dormant = _make_hr(
+            1, "dormant", score=0.9, metadata={"memory_status": "dormant"}
+        )
+        r_active = _make_hr(
+            2, "active", score=0.5, metadata={"memory_status": "active"}
+        )
         results = await opt.apply_boosts([r_dormant, r_active], None)
         assert len(results) == 1
         assert results[0].doc_id == 2
@@ -757,7 +792,6 @@ class TestFilteringInApplyBoosts:
     @pytest.mark.asyncio
     async def test_archived_filtered_out(self) -> None:
         """Results with memory_status='archived' are filtered."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
         r = _make_hr(1, "archived", score=0.9, metadata={"memory_status": "archived"})
         results = await opt.apply_boosts([r], None)
@@ -766,9 +800,10 @@ class TestFilteringInApplyBoosts:
     @pytest.mark.asyncio
     async def test_apply_boosts_mood_delta_collected(self) -> None:
         """apply_boosts collects mood delta from results."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
-        r = _make_hr(1, "happy memory", score=0.9, metadata={"emotion_tags": ["joy", "happy"]})
+        r = _make_hr(
+            1, "happy memory", score=0.9, metadata={"emotion_tags": ["joy", "happy"]}
+        )
         await opt.apply_boosts([r], None)
         # Mood delta should be non-zero since joy/happy have positive valence
         assert opt.last_mood_delta != 0.0
@@ -777,15 +812,21 @@ class TestFilteringInApplyBoosts:
     @pytest.mark.asyncio
     async def test_apply_boosts_with_emotion_context(self) -> None:
         """apply_boosts passes emotion_context to emotion_boost."""
-        from core.retrieval.rrf_fusion import HybridResult
         opt = RetrievalOptimizer(config={})
-        r = _make_hr(1, "joyful", score=1.0, metadata={"emotion_tags": ["joy"], "emotional_intensity": 0.8})
+        r = _make_hr(
+            1,
+            "joyful",
+            score=1.0,
+            metadata={"emotion_tags": ["joy"], "emotional_intensity": 0.8},
+        )
         results = await opt.apply_boosts([r], ["joy"])
         # Should be boosted by emotion similarity
         assert results[0].final_score > 1.0
 
     @pytest.mark.asyncio
-    async def test_apply_boosts_records_debug_trace_for_score_contributions(self) -> None:
+    async def test_apply_boosts_records_debug_trace_for_score_contributions(
+        self,
+    ) -> None:
         """Optional debug trace records per-stage score changes."""
         opt = RetrievalOptimizer(config={})
         r = _make_hr(
@@ -853,7 +894,11 @@ class TestChainExpansionAblation:
         opt._expand_via_graph_edges = no_graph
 
         results = await opt.chain_expand_multi_hop(
-            [_make_hr(1, "seed", metadata={"topics": ["咖啡"], "emotion_tags": ["joy"]})],
+            [
+                _make_hr(
+                    1, "seed", metadata={"topics": ["咖啡"], "emotion_tags": ["joy"]}
+                )
+            ],
             k=3,
             session_id="s1",
             persona_id=None,

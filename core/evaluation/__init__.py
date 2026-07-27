@@ -1,5 +1,6 @@
 """Evaluation helpers for Memora quality baselines."""
 
+from .report_store import EvaluationReportStore
 from .retrieval_quality import (
     AblationReport,
     EvaluationCase,
@@ -17,7 +18,6 @@ from .retrieval_quality import (
     recall_at_k,
     reciprocal_rank,
 )
-from .report_store import EvaluationReportStore
 
 __all__ = [
     "EvaluationCase",

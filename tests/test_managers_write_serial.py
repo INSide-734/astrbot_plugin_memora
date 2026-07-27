@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any
-
-import pytest
 
 from core.managers.write_op_serialization import (
     _deserialize_atom_from_repair,
@@ -156,7 +153,9 @@ class TestDeserializeAtomFromRepair:
             "session_id": "my_session",
             "persona_id": "my_persona",
         }
-        atom = _deserialize_atom_from_repair(payload, 42, "fallback_sess", "fallback_pers")
+        atom = _deserialize_atom_from_repair(
+            payload, 42, "fallback_sess", "fallback_pers"
+        )
         assert atom is not None
         assert atom.parent_memory_id == 42
         assert atom.content == "deserialized content"

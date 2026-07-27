@@ -157,9 +157,7 @@ class WriteOpRepairMixin:
                     atoms.append(atom)
 
         if atoms and not any(
-            atom.parent_revision
-            or atom.parent_scope_key
-            or atom.parent_privacy_level
+            atom.parent_revision or atom.parent_scope_key or atom.parent_privacy_level
             for atom in atoms
         ):
             atoms = bind_atoms_to_canonical_source(
@@ -185,7 +183,9 @@ class WriteOpRepairMixin:
             return False
 
         if self._atom_store is not None and atoms and self._atom_enabled:
-            raw_parent_loader = getattr(type(self._atom_store), "get_by_parent_raw", None)
+            raw_parent_loader = getattr(
+                type(self._atom_store), "get_by_parent_raw", None
+            )
             if callable(raw_parent_loader):
                 existing_atoms = await self._atom_store.get_by_parent_raw(
                     int(memory_id)

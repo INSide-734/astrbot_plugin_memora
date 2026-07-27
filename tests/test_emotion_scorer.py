@@ -4,7 +4,6 @@ from core.retrieval.emotion_scorer import compute_emotion_boost, emotion_similar
 
 
 class TestEmotionSimilarity:
-
     def test_exact_tag_match(self):
         score = emotion_similarity(["joy", "excited"], ["joy", "excited"], 0.8)
         assert score > 0.5
@@ -30,17 +29,29 @@ class TestEmotionSimilarity:
     def test_score_bounds_zero_to_one(self):
         for _ in range(50):
             import random
-            tags = random.sample(["joy","sad","anger","fear","surprise",
-                                  "disgust","neutral","excited","calm","happy"],
-                                 k=random.randint(0, 5))
-            mood = random.sample(["joy","sad","neutral"], k=random.randint(0, 3))
+
+            tags = random.sample(
+                [
+                    "joy",
+                    "sad",
+                    "anger",
+                    "fear",
+                    "surprise",
+                    "disgust",
+                    "neutral",
+                    "excited",
+                    "calm",
+                    "happy",
+                ],
+                k=random.randint(0, 5),
+            )
+            mood = random.sample(["joy", "sad", "neutral"], k=random.randint(0, 3))
             intensity = random.uniform(0, 1)
             score = emotion_similarity(tags, mood, intensity)
             assert 0.0 <= score <= 1.0
 
 
 class TestComputeEmotionBoost:
-
     def test_default_multiplier(self):
         boost = compute_emotion_boost(0.5)
         assert boost == 1.0 + 0.3 * 0.5

@@ -3,14 +3,20 @@
 from unittest.mock import AsyncMock
 
 import pytest
+
 from core.retrieval.query_rewriter import QueryIntent, QueryRewriter
 
-
-VALID_INTENTS = {"default", "factual", "relational", "temporal", "preference", "contextual"}
+VALID_INTENTS = {
+    "default",
+    "factual",
+    "relational",
+    "temporal",
+    "preference",
+    "contextual",
+}
 
 
 class TestQueryIntent:
-
     def test_all_intents_exist(self):
         """所有 expected intent string values should be representable via QueryIntent."""
         for intent_name in VALID_INTENTS:
@@ -31,7 +37,6 @@ class TestQueryIntent:
 
 
 class TestQueryRewriter:
-
     @pytest.fixture
     def llm_client(self):
         return AsyncMock()
@@ -76,13 +81,16 @@ class TestQueryRewriter:
     async def test_llm_rewrite_with_mock(self, llm_client):
         """在 LLM client, should parse JSON response into QueryIntent."""
         import json
-        llm_client.return_value = json.dumps({
-            "intent": "temporal",
-            "extracted_entities": ["那个事"],
-            "time_reference": "recent",
-            "rewritten_queries": ["最近对话", "之前提到的话题"],
-            "memory_types": ["EPISODIC"],
-        })
+
+        llm_client.return_value = json.dumps(
+            {
+                "intent": "temporal",
+                "extracted_entities": ["那个事"],
+                "time_reference": "recent",
+                "rewritten_queries": ["最近对话", "之前提到的话题"],
+                "memory_types": ["EPISODIC"],
+            }
+        )
         rw = QueryRewriter(llm_caller=llm_client)
         result = await rw.rewrite("上次那个事")
         assert isinstance(result, QueryIntent)
@@ -109,10 +117,13 @@ class TestQueryRewriter:
     def test_parse_llm_response_valid(self) -> None:
         """_parse_llm_response parses valid JSON."""
         import json
-        raw = json.dumps({
-            "intent": "relational",
-            "rewritten_queries": ["query1", "query2"],
-        })
+
+        raw = json.dumps(
+            {
+                "intent": "relational",
+                "rewritten_queries": ["query1", "query2"],
+            }
+        )
         result = QueryRewriter._parse_llm_response(raw, "fallback")
         assert result is not None
         assert result.intent == "relational"

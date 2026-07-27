@@ -10,7 +10,6 @@ import pytest
 
 from core.managers.reconsolidation import ReconsolidationManager
 
-
 # ---------------------------------------------------------------------------
 # Init tests
 # ---------------------------------------------------------------------------
@@ -124,10 +123,12 @@ class TestMaybeReconsolidate:
         """当 last reconsolidation was < 24h ago, returns None."""
         # Set last_reconsolidated_at to now
         recent_time = time.time()
-        get_cb = AsyncMock(return_value={
-            "text": "some memory",
-            "metadata": {"last_reconsolidated_at": recent_time},
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "text": "some memory",
+                "metadata": {"last_reconsolidated_at": recent_time},
+            }
+        )
         update_cb = AsyncMock()
         mgr = ReconsolidationManager(
             get_memory_cb=get_cb,
@@ -140,10 +141,12 @@ class TestMaybeReconsolidate:
     @pytest.mark.asyncio
     async def test_no_llm_no_context_returns_unchanged(self) -> None:
         """当 no LLM caller or empty context, returns unchanged."""
-        get_cb = AsyncMock(return_value={
-            "text": "some memory text here",
-            "metadata": {},
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "text": "some memory text here",
+                "metadata": {},
+            }
+        )
         update_cb = AsyncMock()
         mgr = ReconsolidationManager(
             get_memory_cb=get_cb,
@@ -158,10 +161,12 @@ class TestMaybeReconsolidate:
     @pytest.mark.asyncio
     async def test_llm_revision_no_change_returns_unchanged(self) -> None:
         """当 LLM returns the same text, returns unchanged."""
-        get_cb = AsyncMock(return_value={
-            "text": "original memory text",
-            "metadata": {},
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "text": "original memory text",
+                "metadata": {},
+            }
+        )
         update_cb = AsyncMock()
         # LLM returns same text
         llm_cb = AsyncMock(return_value="original memory text")
@@ -178,10 +183,12 @@ class TestMaybeReconsolidate:
     @pytest.mark.asyncio
     async def test_llm_revision_applied(self) -> None:
         """当 LLM returns different text, revision is applied."""
-        get_cb = AsyncMock(return_value={
-            "text": "original memory text hello world",
-            "metadata": {},
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "text": "original memory text hello world",
+                "metadata": {},
+            }
+        )
         update_cb = AsyncMock()
         llm_cb = AsyncMock(return_value="revised memory text hello world")
         mgr = ReconsolidationManager(
@@ -204,12 +211,16 @@ class TestMaybeReconsolidate:
     @pytest.mark.asyncio
     async def test_reconsolidation_count_increments(self) -> None:
         """Reconsolidation count is incremented on each revision."""
-        get_cb = AsyncMock(return_value={
-            "text": "original text that is quite long for reconsolidation",
-            "metadata": {"reconsolidation_count": 3},
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "text": "original text that is quite long for reconsolidation",
+                "metadata": {"reconsolidation_count": 3},
+            }
+        )
         update_cb = AsyncMock()
-        llm_cb = AsyncMock(return_value="revised text that is quite long for reconsolidation")
+        llm_cb = AsyncMock(
+            return_value="revised text that is quite long for reconsolidation"
+        )
         mgr = ReconsolidationManager(
             get_memory_cb=get_cb,
             update_memory_cb=update_cb,
@@ -223,10 +234,12 @@ class TestMaybeReconsolidate:
     async def test_string_metadata_parsed(self) -> None:
         """JSON-string metadata is parsed before processing."""
         metadata = json.dumps({"reconsolidation_count": 1})
-        get_cb = AsyncMock(return_value={
-            "text": "original text for reconsolidation test here",
-            "metadata": metadata,
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "text": "original text for reconsolidation test here",
+                "metadata": metadata,
+            }
+        )
         update_cb = AsyncMock()
         llm_cb = AsyncMock(return_value="revised text for reconsolidation test here")
         mgr = ReconsolidationManager(
@@ -241,10 +254,12 @@ class TestMaybeReconsolidate:
     @pytest.mark.asyncio
     async def test_llm_exception_returns_none(self) -> None:
         """当 LLM call raises, returns None (graceful degradation)."""
-        get_cb = AsyncMock(return_value={
-            "text": "original text for reconsolidation test here",
-            "metadata": {},
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "text": "original text for reconsolidation test here",
+                "metadata": {},
+            }
+        )
         update_cb = AsyncMock()
         llm_cb = AsyncMock(side_effect=RuntimeError("LLM timeout"))
         mgr = ReconsolidationManager(
@@ -261,10 +276,12 @@ class TestMaybeReconsolidate:
     @pytest.mark.asyncio
     async def test_short_llm_result_ignored(self) -> None:
         """LLM result shorter than 10 chars is ignored (unchanged)."""
-        get_cb = AsyncMock(return_value={
-            "text": "original text",
-            "metadata": {},
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "text": "original text",
+                "metadata": {},
+            }
+        )
         update_cb = AsyncMock()
         llm_cb = AsyncMock(return_value="short")  # < 10 chars
         mgr = ReconsolidationManager(
@@ -293,10 +310,12 @@ class TestMaybeReconsolidate:
     @pytest.mark.asyncio
     async def test_original_content_preserved_on_first_revision(self) -> None:
         """The original text is saved as original_content on first reconsolidation."""
-        get_cb = AsyncMock(return_value={
-            "text": "very first original memory content here",
-            "metadata": {},
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "text": "very first original memory content here",
+                "metadata": {},
+            }
+        )
         update_cb = AsyncMock()
         llm_cb = AsyncMock(return_value="revised memory content here after update")
         mgr = ReconsolidationManager(
@@ -313,12 +332,14 @@ class TestMaybeReconsolidate:
     @pytest.mark.asyncio
     async def test_original_content_not_overwritten_on_second_revision(self) -> None:
         """original_content is preserved even on subsequent reconsolidations."""
-        get_cb = AsyncMock(return_value={
-            "text": "already revised memory content here",
-            "metadata": {
-                "original_content": "initial original content",
-            },
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "text": "already revised memory content here",
+                "metadata": {
+                    "original_content": "initial original content",
+                },
+            }
+        )
         update_cb = AsyncMock()
         llm_cb = AsyncMock(return_value="further revised memory content here")
         mgr = ReconsolidationManager(
@@ -334,10 +355,12 @@ class TestMaybeReconsolidate:
     @pytest.mark.asyncio
     async def test_use_content_field_fallback(self) -> None:
         """Memory using 'content' instead of 'text' field works."""
-        get_cb = AsyncMock(return_value={
-            "content": "content field memory here that works fine",
-            "metadata": {},
-        })
+        get_cb = AsyncMock(
+            return_value={
+                "content": "content field memory here that works fine",
+                "metadata": {},
+            }
+        )
         update_cb = AsyncMock()
         llm_cb = AsyncMock(return_value="revised content field memory here")
         mgr = ReconsolidationManager(

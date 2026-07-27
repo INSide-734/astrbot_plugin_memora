@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
 
 from astrbot.api import logger
-
 
 # ---------------------------------------------------------------------------
 # 阶段辅助函数 —— 每个阶段返回清理后的文本

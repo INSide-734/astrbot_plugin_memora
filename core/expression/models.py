@@ -10,13 +10,13 @@ from dataclasses import dataclass, field
 class ExpressionPattern:
     """一条已学习到的表达模式：由触发情境与 Bot 回复构成。"""
 
-    situation: str          # 触发情境（用户消息，截断到 50 字符）
-    expression: str          # Bot 回复表达（截断到 100 字符）
-    group_id: str            # 来源群组 ID
-    persona_id: str          # Bot 人设 ID
+    situation: str  # 触发情境（用户消息，截断到 50 字符）
+    expression: str  # Bot 回复表达（截断到 100 字符）
+    group_id: str  # 来源群组 ID
+    persona_id: str  # Bot 人设 ID
     user_id: str | None = None  # 可选用户级作用域；None 表示群组级模式
-    weight: float = 1.0      # 权重（重复出现时递增）
-    usage_count: int = 0     # 该模式被使用的次数
+    weight: float = 1.0  # 权重（重复出现时递增）
+    usage_count: int = 0  # 该模式被使用的次数
     created_at: float = field(default_factory=time.time)
     last_used_at: float = field(default_factory=time.time)
     decayed_at: float = field(default_factory=time.time)

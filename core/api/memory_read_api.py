@@ -3,9 +3,8 @@
 from typing import Any
 
 import aiosqlite
-from quart import request
-
 from astrbot.api import logger
+from quart import request
 
 from ..storage.base import apply_perf_pragmas
 from ..utils.number_utils import clamp_float
@@ -193,7 +192,9 @@ class MemoryReadApiMixin:
             "topics": topics if isinstance(topics, list) else [],
             "create_time": metadata.get("create_time"),
             "last_access_time": metadata.get("last_access_time"),
-            "update_history": update_history if isinstance(update_history, list) else [],
+            "update_history": update_history
+            if isinstance(update_history, list)
+            else [],
         }
 
         graph_store = self._get_graph_store(ready["memory_engine"])

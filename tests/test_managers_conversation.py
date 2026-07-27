@@ -1,4 +1,5 @@
 """ConversationManager 及其工厂函数测试。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,10 +13,10 @@ from core.managers.conversation_manager import (
     create_conversation_manager,
 )
 
-
 # ---------------------------------------------------------------------------
 # Pure unit tests — no database needed
 # ---------------------------------------------------------------------------
+
 
 class TestConversationManagerInit:
     """Construction and defaults."""
@@ -108,9 +109,9 @@ class TestConversationManagerMixinInheritance:
     def test_mro_includes_mixins(self) -> None:
         from core.managers.event_adapter import EventAdapterMixin
         from core.managers.message_operations import MessageOperationsMixin
-        from core.managers.session_lifecycle import SessionLifecycleMixin
         from core.managers.range_and_metadata import RangeAndMetadataMixin
         from core.managers.session_cache import SessionCacheMixin
+        from core.managers.session_lifecycle import SessionLifecycleMixin
 
         mro = ConversationManager.__mro__
         assert EventAdapterMixin in mro
@@ -161,6 +162,7 @@ class TestEventAdapterMixin:
 # Async context window building (mocked store)
 # ---------------------------------------------------------------------------
 
+
 class TestContextWindowBuilding:
     """Test context window builder with a mocked ConversationStore."""
 
@@ -168,14 +170,12 @@ class TestContextWindowBuilding:
     async def test_build_context_empty_store(self) -> None:
         store = MagicMock()
         store.get_messages = AsyncMock(return_value=[])
-        mgr = ConversationManager(
+        _manager = ConversationManager(
             store=store,
             context_window_size=20,
         )
         # Simulate what get_recent_context does (mixin method)
-        result = await store.get_messages(
-            session_id="test", limit=20, before_id=None
-        )
+        result = await store.get_messages(session_id="test", limit=20, before_id=None)
         assert result == []
 
     @pytest.mark.asyncio
@@ -186,13 +186,11 @@ class TestContextWindowBuilding:
             MagicMock(id=2, text="World", timestamp=1001.0),
         ]
         store.get_messages = AsyncMock(return_value=messages)
-        mgr = ConversationManager(
+        _manager = ConversationManager(
             store=store,
             context_window_size=50,
         )
-        result = await store.get_messages(
-            session_id="test", limit=50, before_id=None
-        )
+        result = await store.get_messages(session_id="test", limit=50, before_id=None)
         assert len(result) == 2
         assert result[0].text == "Hello"
 
@@ -200,6 +198,7 @@ class TestContextWindowBuilding:
 # ---------------------------------------------------------------------------
 # Session ID normalization (pure function patterns)
 # ---------------------------------------------------------------------------
+
 
 class TestSessionIdHelpers:
     """Session ID resolution and extraction patterns."""
@@ -211,9 +210,7 @@ class TestSessionIdHelpers:
             ("", ""),
         ],
     )
-    def test_session_id_from_event(
-        self, event_session_id: str, expected: str
-    ) -> None:
+    def test_session_id_from_event(self, event_session_id: str, expected: str) -> None:
         event = MagicMock()
         event.session_id = event_session_id
         assert event.session_id == expected

@@ -12,17 +12,16 @@ from astrbot.api import logger
 
 from ..base.entity_editing import EntityValidationError, compute_entity_revision
 from ..base.list_sorting import SortQuery
+from .affection_store import AffectionStore
 from .models import (
+    INTERACTION_RULES,
     AffectionLevel,
     BotMood,
-    INTERACTION_RULES,
     InteractionType,
     MoodType,
     UserAffection,
     classify_by_keywords,
 )
-from .affection_store import AffectionStore
-
 
 # ---- LLM 适配器协议 --------------------------------------------------------------
 
@@ -208,7 +207,9 @@ class AffectionManager:
 
             # 5. 持久化写入
             record = await self._store.upsert_affection(
-                group_id, user_id, delta,
+                group_id,
+                user_id,
+                delta,
                 max_score=self._max_affection,
                 min_score=self._min_affection,
             )
@@ -235,7 +236,9 @@ class AffectionManager:
             }
 
         except Exception:
-            logger.exception(f"[好感度管理] process_interaction 失败: {group_id}/{user_id}")
+            logger.exception(
+                f"[好感度管理] process_interaction 失败: {group_id}/{user_id}"
+            )
             return {
                 "success": False,
                 "interaction_type": "unknown",
@@ -420,7 +423,9 @@ class AffectionManager:
             },
         }
 
-    async def get_user_affection(self, group_id: str, user_id: str) -> UserAffection | None:
+    async def get_user_affection(
+        self, group_id: str, user_id: str
+    ) -> UserAffection | None:
         """获取单个用户的好感度记录。"""
         record = await self._store.get_affection(group_id, user_id)
         if record is None:
@@ -624,7 +629,7 @@ class AffectionManager:
                 continue
         return save_task.result()
 
-# ---- 内部：交互分类 ------------------------------------------------------
+    # ---- 内部：交互分类 ------------------------------------------------------
 
     async def _classify(
         self, message: str, bot_response: str, mood: BotMood
@@ -657,7 +662,7 @@ class AffectionManager:
         # 最终默认值
         return InteractionType.CHAT
 
-# ---- 内部：情绪门控 ---------------------------------------------------------
+    # ---- 内部：情绪门控 ---------------------------------------------------------
 
     @staticmethod
     def _check_mood_gate(
@@ -678,7 +683,7 @@ class AffectionManager:
             return True, ""
         return False, f"当前心情({mood.mood_type.value})不适合{itype.value}交互"
 
-# ---- 内部：变化量计算 ---------------------------------------------------
+    # ---- 内部：变化量计算 ---------------------------------------------------
 
     def _calculate_delta(
         self,
@@ -698,7 +703,7 @@ class AffectionManager:
 
         return round(base * modifier)
 
-# ---- 内部：重分配 ------------------------------------------------------
+    # ---- 内部：重分配 ------------------------------------------------------
 
     async def _maybe_redistribute(self, group_id: str, exclude_user: str) -> None:
         """当总好感度超过软上限时，削减高分用户的好感度。"""
@@ -709,7 +714,8 @@ class AffectionManager:
         overhead = total - self._max_total_affection
         all_users = await self._store.get_all_affections(group_id)
         other_users = [
-            u for u in all_users
+            u
+            for u in all_users
             if u["user_id"] != exclude_user and u["affection_score"] > 0
         ]
         if not other_users:
@@ -749,7 +755,7 @@ class AffectionManager:
                     u["affection_score"] = new_score
                     overhead -= cut
 
-# ---- 内部：情绪级联 --------------------------------------------------------
+    # ---- 内部：情绪级联 --------------------------------------------------------
 
     async def _apply_mood_cascade(
         self,
@@ -806,10 +812,18 @@ class AffectionManager:
                 ],
             ),
         }
-        mood_type, descriptions = mapping.get(itype, (MoodType.SAD, ["心情有些低落..."]))
+        mood_type, descriptions = mapping.get(
+            itype, (MoodType.SAD, ["心情有些低落..."])
+        )
         intensity = min(0.9, abs(effect))
         description = random.choice(descriptions)
-        await self.set_mood(group_id, mood_type, intensity, duration_hours=2)
+        await self.set_mood(
+            group_id,
+            mood_type,
+            intensity,
+            duration_hours=2,
+            description=description,
+        )
         logger.info(
             f"[好感度管理] 群 {group_id} 触发负面情绪: {mood_type.value} ({intensity:.2f})"
         )
@@ -842,7 +856,13 @@ class AffectionManager:
 
         intensity = min(0.8, effect)
         description = random.choice(pool)
-        await self.set_mood(group_id, mood_type, intensity, duration_hours=4)
+        await self.set_mood(
+            group_id,
+            mood_type,
+            intensity,
+            duration_hours=4,
+            description=description,
+        )
         logger.info(
             f"[好感度管理] 群 {group_id} 触发积极情绪: {mood_type.value} ({intensity:.2f})"
         )
@@ -857,10 +877,13 @@ class AffectionManager:
         if abs(new_intensity - mood.intensity) < 0.1:
             return
         await self.set_mood(
-            group_id, mood.mood_type, new_intensity, duration_hours=1,
+            group_id,
+            mood.mood_type,
+            new_intensity,
+            duration_hours=1,
         )
 
-# ---- 内部：辅助方法 -------------------------------------------------------------
+    # ---- 内部：辅助方法 -------------------------------------------------------------
 
     def _build_result(
         self, itype: InteractionType, mood: BotMood, delta: int

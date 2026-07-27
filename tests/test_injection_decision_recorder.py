@@ -70,7 +70,9 @@ async def test_flushes_partial_batch_after_interval(store, make_record) -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_batch_retries_before_later_rows_and_record_is_sync(store, make_record) -> None:
+async def test_failed_batch_retries_before_later_rows_and_record_is_sync(
+    store, make_record
+) -> None:
     calls: list[list[str]] = []
 
     async def insert(rows):
@@ -131,7 +133,9 @@ async def test_schedule_cleanup_accepts_zero_retention_days(store) -> None:
 
 
 @pytest.mark.asyncio
-async def test_thousand_persisted_rows_schedule_rate_limited_cleanup(store, make_record) -> None:
+async def test_thousand_persisted_rows_schedule_rate_limited_cleanup(
+    store, make_record
+) -> None:
     recorder = InjectionDecisionRecorder(store, batch_size=1000, queue_capacity=1001)
     await recorder.start()
     for index in range(1000):
@@ -261,7 +265,9 @@ async def test_restarting_cancelled_worker_flushes_existing_partial_batch(
 
 
 @pytest.mark.asyncio
-async def test_close_wakes_long_interval_flush_and_is_idempotent(store, make_record) -> None:
+async def test_close_wakes_long_interval_flush_and_is_idempotent(
+    store, make_record
+) -> None:
     recorder = InjectionDecisionRecorder(store, flush_interval=60.0)
     await recorder.start()
     recorder.record(make_record("shutdown"))
@@ -323,7 +329,6 @@ async def test_close_timeout_cancels_stuck_worker(store, make_record) -> None:
     await asyncio.sleep(0)
     await recorder.close(timeout=0.01)
     assert recorder._worker is None
-
 
 
 @pytest.mark.asyncio
@@ -400,6 +405,7 @@ async def test_active_insert_is_outside_pending_capacity_and_never_counted_dropp
     assert recorder.snapshot()["dropped_total"] == 1
     await asyncio.wait_for(recorder._queue.join(), timeout=1.0)
 
+
 @pytest.mark.asyncio
 async def test_record_during_blocked_cleanup_is_flushed_without_lost_wake(
     store, make_record
@@ -427,7 +433,9 @@ async def test_record_during_blocked_cleanup_is_flushed_without_lost_wake(
 
 
 @pytest.mark.asyncio
-async def test_cleanup_scheduled_during_active_cleanup_preserves_new_limits(store) -> None:
+async def test_cleanup_scheduled_during_active_cleanup_preserves_new_limits(
+    store,
+) -> None:
     cleanup_started = asyncio.Event()
     release_cleanup = asyncio.Event()
     calls: list[tuple[int, int]] = []

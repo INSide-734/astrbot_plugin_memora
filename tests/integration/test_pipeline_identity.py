@@ -216,9 +216,7 @@ async def test_qq_official_rename_keeps_openid_and_updates_memory_prompt(
         ]
         assert memory_identity.participant_ids == (canonical,)
         assert memory_identity.participant_labels == (label,)
-        assert memory_identity.participant_name_snapshots == {
-            canonical: "官方新名称"
-        }
+        assert memory_identity.participant_name_snapshots == {canonical: "官方新名称"}
         assert metadata["participant_identity_sources"][canonical] == {
             "protocol": "qq_official",
             "identity_namespace": namespace,

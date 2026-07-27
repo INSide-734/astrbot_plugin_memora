@@ -101,23 +101,17 @@ class DecayOperationsMixin:
                         continue
                     importance = clamp_float(metadata.get("importance"), default=0.5)
                     access_count = safe_float(metadata.get("access_count"), 0.0)
-                    last_access_time = safe_float(
-                        metadata.get("last_access_time"), 0.0
-                    )
+                    last_access_time = safe_float(metadata.get("last_access_time"), 0.0)
 
                     if flashbulb_enabled:
-                        intensity = safe_float(
-                            metadata.get("emotional_intensity"), 0.0
-                        )
+                        intensity = safe_float(metadata.get("emotional_intensity"), 0.0)
                         if intensity >= flashbulb_threshold:
                             continue
 
                     recent_access_factor = (
                         1.0 if last_access_time >= access_window_start else 0.5
                     )
-                    access_factor = min(
-                        1.0, access_count / max(1.0, max_access_count)
-                    )
+                    access_factor = min(1.0, access_count / max(1.0, max_access_count))
                     effective_decay_rate = decay_rate * (
                         1 - 0.5 * access_factor * recent_access_factor
                     )

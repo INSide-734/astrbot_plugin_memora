@@ -15,7 +15,6 @@ from core.page_api import PluginPageApi
 from core.retrieval.explainable_recall import capture_explainable_recall
 from core.retrieval.trace_store import RecallTraceStore
 
-
 _SENTINEL = "PRIVATE_SENTINEL_NEVER_EXPOSE"
 _FORBIDDEN_TRACE_KEYS = {
     "query",
@@ -107,7 +106,9 @@ async def test_diagnostic_event_store_keeps_only_safe_scalar_allowlist(
         "candidate_count": 3,
     }
     assert _SENTINEL not in _serialized(event)
-    assert all(not isinstance(value, (dict, list)) for value in event["payload"].values())
+    assert all(
+        not isinstance(value, (dict, list)) for value in event["payload"].values()
+    )
 
 
 @pytest.mark.asyncio
@@ -241,7 +242,9 @@ async def test_recall_trace_store_sanitizes_new_and_legacy_payloads(
 
 
 @pytest.mark.asyncio
-async def test_capture_explainable_recall_returns_no_sensitive_observation_fields() -> None:
+async def test_capture_explainable_recall_returns_no_sensitive_observation_fields() -> (
+    None
+):
     """在线追踪返回值不得包含查询、正文、身份或 canonical memory ID。"""
 
     class SensitiveEngine:
@@ -302,9 +305,7 @@ async def test_diagnostics_api_returns_stable_codes_without_exception_text(
         initializer=SimpleNamespace(memory_engine=object(), data_dir=tmp_path),
     )
     api = PluginPageApi(plugin)
-    api._get_diagnostic_event_store = AsyncMock(
-        side_effect=RuntimeError(_SENTINEL)
-    )
+    api._get_diagnostic_event_store = AsyncMock(side_effect=RuntimeError(_SENTINEL))
 
     listed = await api.get_diagnostics_events_payload({})
     detail = await api.get_diagnostics_event_detail_payload({"event_id": "safe-event"})

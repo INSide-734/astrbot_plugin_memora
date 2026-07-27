@@ -9,7 +9,6 @@ import pytest
 
 
 class TestGraphKeywordRetriever:
-
     @pytest.fixture
     def graph_store(self) -> AsyncMock:
         store = AsyncMock()
@@ -28,6 +27,7 @@ class TestGraphKeywordRetriever:
     @pytest.fixture
     def retriever(self, graph_store: AsyncMock, text_processor: MagicMock) -> Any:
         from core.retrieval.graph_keyword_retriever import GraphKeywordRetriever
+
         return GraphKeywordRetriever(
             graph_store=graph_store,
             text_processor=text_processor,
@@ -40,20 +40,28 @@ class TestGraphKeywordRetriever:
         assert await retriever.search("   ") == []
 
     @pytest.mark.asyncio
-    async def test_search_no_tokens(self, retriever: Any, text_processor: MagicMock) -> None:
+    async def test_search_no_tokens(
+        self, retriever: Any, text_processor: MagicMock
+    ) -> None:
         """When tokenizer returns empty, return empty."""
         text_processor.tokenize_async.return_value = []
         results = await retriever.search("...")
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_direct_hits_only(self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock) -> None:
+    async def test_search_direct_hits_only(
+        self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock
+    ) -> None:
         """Direct BM25 hits are aggregated with weight 1.0."""
         text_processor.tokenize_async.return_value = ["test"]
         graph_store.search_entries_by_bm25.return_value = [
             {
-                "source_memory_id": 1, "score": 0.9, "content": "test memory",
-                "metadata": {}, "entry_type": "fact", "relation_type": None,
+                "source_memory_id": 1,
+                "score": 0.9,
+                "content": "test memory",
+                "metadata": {},
+                "entry_type": "fact",
+                "relation_type": None,
             },
         ]
         graph_store.search_nodes_by_tokens.return_value = []
@@ -65,17 +73,25 @@ class TestGraphKeywordRetriever:
         assert results[0].metadata["graph_match_source"] == "graph_keyword"
 
     @pytest.mark.asyncio
-    async def test_search_with_expansion(self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock) -> None:
+    async def test_search_with_expansion(
+        self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock
+    ) -> None:
         """Neighbor expansion hits are aggregated with lower weight."""
         text_processor.tokenize_async.return_value = ["test"]
         graph_store.search_entries_by_bm25.return_value = []
-        graph_store.search_nodes_by_tokens.return_value = [{"id": 1, "node_value": "test"}]
+        graph_store.search_nodes_by_tokens.return_value = [
+            {"id": 1, "node_value": "test"}
+        ]
         # First call (expansion_hits) returns neighbor entries, second (edge_neighbor) returns empty
         graph_store.get_entries_for_node_ids.side_effect = [
             [
                 {
-                    "source_memory_id": 2, "score": 0.8, "content": "neighbor memory",
-                    "metadata": {}, "entry_type": "relation", "relation_type": "friend",
+                    "source_memory_id": 2,
+                    "score": 0.8,
+                    "content": "neighbor memory",
+                    "metadata": {},
+                    "entry_type": "relation",
+                    "relation_type": "friend",
                 },
             ],
             [],  # edge_neighbor_hits — empty since no neighbor node IDs
@@ -89,20 +105,30 @@ class TestGraphKeywordRetriever:
         assert "graph_neighbor" in results[0].metadata["graph_match_source"]
 
     @pytest.mark.asyncio
-    async def test_search_aggregates_same_doc(self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock) -> None:
+    async def test_search_aggregates_same_doc(
+        self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock
+    ) -> None:
         """Same doc hit from multiple sources takes max score."""
         text_processor.tokenize_async.return_value = ["test"]
         graph_store.search_entries_by_bm25.return_value = [
             {
-                "source_memory_id": 1, "score": 0.7, "content": "shared memory",
-                "metadata": {}, "entry_type": "fact", "relation_type": None,
+                "source_memory_id": 1,
+                "score": 0.7,
+                "content": "shared memory",
+                "metadata": {},
+                "entry_type": "fact",
+                "relation_type": None,
             },
         ]
         graph_store.search_nodes_by_tokens.return_value = [{"id": 10}]
         graph_store.get_entries_for_node_ids.return_value = [
             {
-                "source_memory_id": 1, "score": 0.5, "content": "shared memory",
-                "metadata": {}, "entry_type": "relation", "relation_type": "friend",
+                "source_memory_id": 1,
+                "score": 0.5,
+                "content": "shared memory",
+                "metadata": {},
+                "entry_type": "relation",
+                "relation_type": "friend",
             },
         ]
         graph_store.get_neighbor_node_ids.return_value = []
@@ -114,7 +140,9 @@ class TestGraphKeywordRetriever:
         assert results[0].score > 0.35
 
     @pytest.mark.asyncio
-    async def test_search_edge_expansion(self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock) -> None:
+    async def test_search_edge_expansion(
+        self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock
+    ) -> None:
         """Edge-neighbor expansion returns edge hits with lowest weight (lines 125-135)."""
         text_processor.tokenize_async.return_value = ["edge"]
         graph_store.search_entries_by_bm25.return_value = []
@@ -123,8 +151,12 @@ class TestGraphKeywordRetriever:
             [],  # neighbor hits empty
             [
                 {
-                    "source_memory_id": 3, "score": 0.6, "content": "edge memory",
-                    "metadata": {}, "entry_type": "relation", "relation_type": "colleague",
+                    "source_memory_id": 3,
+                    "score": 0.6,
+                    "content": "edge memory",
+                    "metadata": {},
+                    "entry_type": "relation",
+                    "relation_type": "colleague",
                 },
             ],
         ]
@@ -137,7 +169,9 @@ class TestGraphKeywordRetriever:
         assert "graph_edge_neighbor" in results[0].metadata["graph_match_source"]
 
     @pytest.mark.asyncio
-    async def test_search_only_keyword_hits(self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock) -> None:
+    async def test_search_only_keyword_hits(
+        self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock
+    ) -> None:
         """When only keyword-only results exist (no BM25, no expansion)."""
         text_processor.tokenize_async.return_value = ["only"]
         graph_store.search_entries_by_bm25.return_value = []
@@ -148,13 +182,19 @@ class TestGraphKeywordRetriever:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_with_session_id(self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock) -> None:
+    async def test_search_with_session_id(
+        self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock
+    ) -> None:
         """session_id is passed through to graph_store methods."""
         text_processor.tokenize_async.return_value = ["test"]
         graph_store.search_entries_by_bm25.return_value = [
             {
-                "source_memory_id": 1, "score": 0.9, "content": "memory with session",
-                "metadata": {}, "entry_type": "fact", "relation_type": None,
+                "source_memory_id": 1,
+                "score": 0.9,
+                "content": "memory with session",
+                "metadata": {},
+                "entry_type": "fact",
+                "relation_type": None,
             },
         ]
         graph_store.search_nodes_by_tokens.return_value = []

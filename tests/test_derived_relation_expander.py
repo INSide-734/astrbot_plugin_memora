@@ -13,7 +13,6 @@ from core.models.memory_evolution import (
 )
 from core.retrieval.rrf_fusion import HybridResult
 
-
 UTC = timezone.utc
 NOW = datetime.now(UTC)
 

@@ -8,8 +8,8 @@ import time
 import aiosqlite
 import pytest
 
-from core.models.memory_atom import AtomType, MemoryAtom
 from core.managers.atom_source_binding import bind_atoms_to_canonical_source
+from core.models.memory_atom import AtomType, MemoryAtom
 from core.retrieval.atom_retriever import AtomRetriever
 from core.storage.atom_store import AtomStore
 

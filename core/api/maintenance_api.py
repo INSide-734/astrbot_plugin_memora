@@ -11,9 +11,9 @@ from collections.abc import Mapping
 
 from astrbot.api import logger
 
+from ..validators.persistence_health_validator import PersistenceHealthValidator
 from .backup_api import BackupApiMixin
 from .response_utils import error_response, ok_response
-from ..validators.persistence_health_validator import PersistenceHealthValidator
 
 
 class MaintenanceApiMixin:
@@ -144,7 +144,9 @@ class MaintenanceApiMixin:
             )
             return ok_response({"message": "索引重建完成", "result": result})
         except Exception as e:
-            elapsed = time.perf_counter() - started_at if "started_at" in locals() else 0.0
+            elapsed = (
+                time.perf_counter() - started_at if "started_at" in locals() else 0.0
+            )
             self._record_index_rebuild_observability({}, elapsed, error=e)
             logger.error(f"索引重建失败: {e}")
             return error_response(f"索引重建失败：{e}")
@@ -196,9 +198,7 @@ class MaintenanceApiMixin:
             if not hasattr(engine, "rebuild_graph_index"):
                 return error_response("图索引重建能力不可用")
             result = await engine.rebuild_graph_index()
-            return ok_response(
-                {"message": "图索引重建完成", "result": result}
-            )
+            return ok_response({"message": "图索引重建完成", "result": result})
         except Exception as e:
             logger.error(f"图索引重建失败: {e}")
             return error_response(f"图索引重建失败：{e}")
@@ -211,16 +211,14 @@ class MaintenanceApiMixin:
         try:
             initializer = getattr(self.plugin, "initializer", None)
             index_validator = getattr(initializer, "index_validator", None)
-            db_path = (
-                getattr(index_validator, "db_path", None)
-                or getattr(engine, "db_path", None)
+            db_path = getattr(index_validator, "db_path", None) or getattr(
+                engine, "db_path", None
             )
             if not db_path:
                 return error_response("数据库路径不可用")
             graph_manager = getattr(engine, "graph_memory_manager", None)
-            graph_faiss_db = (
-                getattr(graph_manager, "faiss_db", None)
-                or getattr(graph_manager, "graph_faiss_db", None)
+            graph_faiss_db = getattr(graph_manager, "faiss_db", None) or getattr(
+                graph_manager, "graph_faiss_db", None
             )
             validator = PersistenceHealthValidator(
                 db_path,
@@ -347,7 +345,6 @@ class MaintenanceApiMixin:
             logger.error(f"导出记忆失败: {e}")
             return error_response(f"导出记忆失败：{e}")
 
-
     # ---- Dashboard 管理（npm install / build） ----
 
     async def _run_npm_command(
@@ -363,7 +360,8 @@ class MaintenanceApiMixin:
         try:
             resolved_node = self._resolve_command_executable("node")
             node_check = await asyncio.create_subprocess_exec(
-                resolved_node, "--version",
+                resolved_node,
+                "--version",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -413,8 +411,16 @@ class MaintenanceApiMixin:
             except asyncio.TimeoutError:
                 proc.kill()
                 stdout_bytes, stderr_bytes = await proc.communicate()
-                stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
-                stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+                stdout = (
+                    stdout_bytes.decode("utf-8", errors="replace")
+                    if stdout_bytes
+                    else ""
+                )
+                stderr = (
+                    stderr_bytes.decode("utf-8", errors="replace")
+                    if stderr_bytes
+                    else ""
+                )
                 return {
                     "stdout": self._truncate_command_output(stdout, max_output_chars),
                     "stderr": self._truncate_command_output(
@@ -425,8 +431,12 @@ class MaintenanceApiMixin:
                     "success": False,
                     "timed_out": True,
                 }
-            stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
-            stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+            stdout = (
+                stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+            )
+            stderr = (
+                stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+            )
             exit_code = proc.returncode or 0
             return {
                 "stdout": self._truncate_command_output(stdout, max_output_chars),
@@ -457,7 +467,9 @@ class MaintenanceApiMixin:
             if not allow_runtime_build:
                 return self._dashboard_runtime_build_disabled_response()
             dashboard_dir = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "..", "pages", "dashboard")
+                os.path.join(
+                    os.path.dirname(__file__), "..", "..", "pages", "dashboard"
+                )
             )
             pkg_json = os.path.join(dashboard_dir, "package.json")
             if not os.path.isfile(pkg_json):
@@ -471,9 +483,7 @@ class MaintenanceApiMixin:
                     timeout_seconds=timeout_seconds,
                     max_output_chars=max_output_chars,
                 )
-            logger.info(
-                f"[控制台页面] npm ci 执行完成（退出码={result['exit_code']}）"
-            )
+            logger.info(f"[控制台页面] npm ci 执行完成（退出码={result['exit_code']}）")
             return ok_response({"command": "npm ci", **result})
         except Exception as e:
             logger.error(f"安装控制台页面依赖失败: {e}")
@@ -491,7 +501,9 @@ class MaintenanceApiMixin:
             if not allow_runtime_build:
                 return self._dashboard_runtime_build_disabled_response()
             dashboard_dir = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "..", "pages", "dashboard")
+                os.path.join(
+                    os.path.dirname(__file__), "..", "..", "pages", "dashboard"
+                )
             )
             pkg_json = os.path.join(dashboard_dir, "package.json")
             if not os.path.isfile(pkg_json):

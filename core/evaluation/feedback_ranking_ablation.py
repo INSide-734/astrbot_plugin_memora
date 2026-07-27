@@ -82,9 +82,7 @@ async def run_feedback_ranking_ablation(
             raise
         baseline_candidates = _normalize_candidates(raw)
         baseline_latency = _latency(case, started, "baseline")
-        baseline_rows.append(
-            _Row(case, baseline_candidates, baseline_latency)
-        )
+        baseline_rows.append(_Row(case, baseline_candidates, baseline_latency))
         if top_reason == "accepted" and aggregate is not None:
             shadow_candidates = _apply_shadow_weights(
                 baseline_candidates,
@@ -99,13 +97,13 @@ async def run_feedback_ranking_ablation(
             if top_reason == "accepted"
             else baseline_latency
         )
-        shadow_rows.append(
-            _Row(case, shadow_candidates, shadow_latency)
-        )
+        shadow_rows.append(_Row(case, shadow_candidates, shadow_latency))
 
     baseline_metrics = _metrics(baseline_rows, safe_k)
     shadow_metrics = _metrics(shadow_rows, safe_k)
-    delta = aggregate.delta_from_baseline if aggregate and top_reason == "accepted" else 0.0
+    delta = (
+        aggregate.delta_from_baseline if aggregate and top_reason == "accepted" else 0.0
+    )
     return FeedbackRankingReport(
         status="completed" if top_reason == "accepted" else "skipped",
         reason_code=top_reason,
@@ -146,13 +144,19 @@ def _normalize_candidates(items: Sequence[Any] | None) -> list[_Candidate]:
         if isinstance(item, Mapping):
             doc_id = item.get("doc_id") or item.get("id") or item.get("memory_id")
             score = item.get("final_score", item.get("score", 0.0))
-            metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+            metadata = (
+                item.get("metadata")
+                if isinstance(item.get("metadata"), Mapping)
+                else {}
+            )
             route = str(item.get("route") or metadata.get("route") or "document")
         else:
             doc_id = getattr(item, "doc_id", item)
             score = getattr(item, "final_score", getattr(item, "score", 0.0))
             metadata = getattr(item, "metadata", {}) or {}
-            route = str(getattr(item, "route", None) or metadata.get("route") or "document")
+            route = str(
+                getattr(item, "route", None) or metadata.get("route") or "document"
+            )
         try:
             number = float(score)
         except (TypeError, ValueError):
@@ -172,7 +176,9 @@ def _apply_shadow_weights(
 ) -> list[_Candidate]:
     """只在内存中应用文档/图路权重比，不修改候选或 live retriever。"""
 
-    document_ratio = aggregate.proposed_document_weight / policy.baseline_document_weight
+    document_ratio = (
+        aggregate.proposed_document_weight / policy.baseline_document_weight
+    )
     graph_ratio = aggregate.proposed_graph_weight / policy.baseline_graph_weight
     adjusted = [
         _Candidate(

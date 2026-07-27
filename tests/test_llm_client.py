@@ -31,19 +31,25 @@ class TestLLMClient:
         result = client.get_current_llm_provider()
         assert result is mock_provider
 
-    def test_get_provider_from_context(self, mock_context: MagicMock, mock_provider: MagicMock) -> None:
+    def test_get_provider_from_context(
+        self, mock_context: MagicMock, mock_provider: MagicMock
+    ) -> None:
         mock_context.get_using_provider.return_value = mock_provider
         client = LLMClient(context=mock_context)
         result = client.get_current_llm_provider()
         assert result is mock_provider
 
-    def test_get_provider_by_id_string(self, mock_context: MagicMock, mock_provider: MagicMock) -> None:
+    def test_get_provider_by_id_string(
+        self, mock_context: MagicMock, mock_provider: MagicMock
+    ) -> None:
         mock_context.get_provider_by_id.return_value = mock_provider
         client = LLMClient(context=mock_context, llm_provider="provider-123")
         result = client.get_current_llm_provider()
         assert result is mock_provider
 
-    def test_get_provider_fallback_to_using_provider(self, mock_context: MagicMock, mock_provider: MagicMock) -> None:
+    def test_get_provider_fallback_to_using_provider(
+        self, mock_context: MagicMock, mock_provider: MagicMock
+    ) -> None:
         # get_provider_by_id returns None, fallback to get_using_provider
         mock_context.get_provider_by_id.return_value = None
         mock_context.get_using_provider.return_value = mock_provider
@@ -65,9 +71,7 @@ class TestLLMClient:
 
     def test_call_llm_success(self, mock_provider: MagicMock) -> None:
         client = LLMClient(context=None, llm_provider=mock_provider)
-        result = asyncio.run(
-            client.call_llm_with_retry("test prompt", "system prompt")
-        )
+        result = asyncio.run(client.call_llm_with_retry("test prompt", "system prompt"))
         assert result == "test response"
         mock_provider.text_chat.assert_called_once()
 
@@ -97,12 +101,12 @@ class TestLLMClient:
         mock_provider.text_chat = AsyncMock(side_effect=RuntimeError("always fails"))
         client = LLMClient(context=None, llm_provider=mock_provider)
         with pytest.raises(RuntimeError):
-            asyncio.run(
-                client.call_llm_with_retry("prompt", "system", max_retries=2)
-            )
+            asyncio.run(client.call_llm_with_retry("prompt", "system", max_retries=2))
         assert mock_provider.text_chat.call_count == 2
 
-    def test_get_provider_with_context_exception(self, mock_context: MagicMock, mock_provider: MagicMock) -> None:
+    def test_get_provider_with_context_exception(
+        self, mock_context: MagicMock, mock_provider: MagicMock
+    ) -> None:
         # get_provider_by_id raises, but fallback works
         mock_context.get_provider_by_id.side_effect = RuntimeError("not found")
         mock_context.get_using_provider.return_value = mock_provider

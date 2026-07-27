@@ -338,7 +338,8 @@ def test_auto_and_hybrid_tool_first_preflight_requires_both_tool_flags(
         ),
         (
             make_signals(
-                context_headroom_chars=PRESETS[PresetName.BALANCED].memory_budget_chars - 1,
+                context_headroom_chars=PRESETS[PresetName.BALANCED].memory_budget_chars
+                - 1,
                 tools_supported=True,
                 memory_tool_available=True,
             ),

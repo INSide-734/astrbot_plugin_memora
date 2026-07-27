@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -93,8 +93,7 @@ def _delete_payload(**overrides):
 def _batch_payload(action="delete", *, items=None, params=None):
     return {
         "action": action,
-        "items": items
-        or [{"identity": _identity(), "expected_revision": "rev-old"}],
+        "items": items or [{"identity": _identity(), "expected_revision": "rev-old"}],
         "params": params or {},
     }
 
@@ -325,7 +324,9 @@ class TestSocialRelations:
             result = await stub.get_social_relations()
 
         assert result["status"] == "ok"
-        assert [(item["from_user"], item["to_user"]) for item in result["data"]["relations"]] == [
+        assert [
+            (item["from_user"], item["to_user"]) for item in result["data"]["relations"]
+        ] == [
             ("u1", "u2"),
             ("u3", "u4"),
         ]
@@ -416,11 +417,17 @@ class TestSocialRelationWrites:
         assert result["data"]["entity"]["frequency"] == 0
         assert result["data"]["entity"]["last_interaction"] == 0.0
         assert result["data"]["revision"] == "rev-result"
-        assert stub.plugin._relation_manager.create_manual_relation.await_args.kwargs[
-            "group_id"
-        ] == ""
+        assert (
+            stub.plugin._relation_manager.create_manual_relation.await_args.kwargs[
+                "group_id"
+            ]
+            == ""
+        )
         rendered_audit = repr(audit.call_args_list)
-        assert "action=%s entity=social_relation identity=%s result=%s error_code=%s" in rendered_audit
+        assert (
+            "action=%s entity=social_relation identity=%s result=%s error_code=%s"
+            in rendered_audit
+        )
         assert "'success', 'none'" in rendered_audit
         assert "work" not in rendered_audit
 
@@ -453,9 +460,7 @@ class TestSocialRelationWrites:
     async def test_partial_update_preserves_omitted_editable_values(self) -> None:
         stub = _make_write_stub()
         request_mock = _mock_request()
-        request_mock.get_json.return_value = _update_payload(
-            changes={"strength": 0.8}
-        )
+        request_mock.get_json.return_value = _update_payload(changes={"strength": 0.8})
 
         with patch("core.api.social_api.request", request_mock):
             result = await stub.update_social_relation()
@@ -551,7 +556,11 @@ class TestSocialRelationWrites:
                 _update_payload(identity=_identity(to_user=True)),
                 "identity.to_user",
             ),
-            ("create_social_relation", _create_payload(strength=float("inf")), "strength"),
+            (
+                "create_social_relation",
+                _create_payload(strength=float("inf")),
+                "strength",
+            ),
             (
                 "update_social_relation",
                 _update_payload(changes={"strength": float("nan")}),
@@ -902,6 +911,7 @@ class TestSocialRelationWrites:
                 failure_secret
             )
         else:
+
             class BrokenSerializedRelation:
                 from_user = returned_identity["from_user"]
                 to_user = returned_identity["to_user"]
@@ -1066,7 +1076,9 @@ class TestSocialRelationBatch:
         stub.plugin._relation_manager.delete_manual_relation.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_batch_reports_malformed_items_without_aborting_valid_items(self) -> None:
+    async def test_batch_reports_malformed_items_without_aborting_valid_items(
+        self,
+    ) -> None:
         stub = _make_write_stub()
         request_mock = _mock_request()
         request_mock.get_json.return_value = _batch_payload(

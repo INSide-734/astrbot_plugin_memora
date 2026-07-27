@@ -279,10 +279,7 @@ def _make_decision(
         if config.delivery_override is DeliveryMode.AUTO
         else config.delivery_override
     )
-    if (
-        config.invalid_config_fallback
-        and "INVALID_CONFIG_FALLBACK" not in reasons
-    ):
+    if config.invalid_config_fallback and "INVALID_CONFIG_FALLBACK" not in reasons:
         reasons += ("INVALID_CONFIG_FALLBACK",)
 
     return InjectionDecision(

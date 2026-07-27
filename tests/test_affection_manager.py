@@ -15,6 +15,17 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
+from core.affection.affection_manager import AffectionManager
+from core.affection.affection_store import AffectionStore
+from core.affection.models import (
+    INTERACTION_RULES,
+    AffectionLevel,
+    BotMood,
+    InteractionType,
+    MoodType,
+    UserAffection,
+    classify_by_keywords,
+)
 from core.base.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
@@ -22,18 +33,6 @@ from core.base.entity_editing import (
     EntityValidationError,
 )
 from core.base.list_sorting import SortQuery
-from core.affection.models import (
-    AffectionLevel,
-    BotMood,
-    INTERACTION_RULES,
-    InteractionType,
-    MoodType,
-    UserAffection,
-    classify_by_keywords,
-)
-from core.affection.affection_store import AffectionStore
-from core.affection.affection_manager import AffectionManager
-
 
 # ============================================================================
 # 管理员好感度与情绪操作测试
@@ -60,7 +59,9 @@ class TestAffectionAdminOperations:
             await store.close()
 
     @pytest.mark.asyncio
-    async def test_manual_affection_create_rejects_duplicate_identity(self, tmp_db_path):
+    async def test_manual_affection_create_rejects_duplicate_identity(
+        self, tmp_db_path
+    ):
         store = AffectionStore(tmp_db_path)
         await store.initialize()
         try:
@@ -140,7 +141,9 @@ class TestAffectionAdminOperations:
                     "g1", "alice", expected_revision=revision
                 )
             assert exc_info.value.current_entity["affection_score"] == 20
-            assert exc_info.value.current_revision == manager.revision_for_affection(updated)
+            assert exc_info.value.current_revision == manager.revision_for_affection(
+                updated
+            )
 
             assert await manager.delete_user_affection_manual(
                 "g1", "alice", expected_revision=exc_info.value.current_revision
@@ -153,7 +156,9 @@ class TestAffectionAdminOperations:
             await store.close()
 
     @pytest.mark.asyncio
-    async def test_list_user_affections_is_paginated_and_deterministic(self, tmp_db_path):
+    async def test_list_user_affections_is_paginated_and_deterministic(
+        self, tmp_db_path
+    ):
         store = AffectionStore(tmp_db_path)
         await store.initialize()
         try:
@@ -224,7 +229,9 @@ class TestAffectionAdminOperations:
             await store.close()
 
     @pytest.mark.asyncio
-    async def test_same_revision_concurrent_admin_updates_have_one_winner(self, tmp_db_path):
+    async def test_same_revision_concurrent_admin_updates_have_one_winner(
+        self, tmp_db_path
+    ):
         store = AffectionStore(tmp_db_path)
         await store.initialize()
         try:
@@ -344,7 +351,11 @@ class TestMoodAdminOperations:
         try:
             manager = AffectionManager(store)
             mood = await manager.set_mood(
-                "g1", MoodType.HAPPY, intensity=9, duration_hours=0, description="  Happy  "
+                "g1",
+                MoodType.HAPPY,
+                intensity=9,
+                duration_hours=0,
+                description="  Happy  ",
             )
             assert mood.intensity == 1.0
             assert mood.duration_hours == 0.25
@@ -390,23 +401,32 @@ class TestMoodAdminOperations:
                 store_clock,
             )
             manager = AffectionManager(store)
-            await manager.set_mood("g1", MoodType.HAPPY, intensity=0.8, description="Happy")
+            await manager.set_mood(
+                "g1", MoodType.HAPPY, intensity=0.8, description="Happy"
+            )
             reset = await manager.reset_mood("g1")
             history = await manager.get_mood_history("g1", limit=10)
             assert reset.mood_type is MoodType.CALM
             assert reset.intensity == manager.DEFAULT_INTENSITY
             assert len(history) == 2
-            assert [mood.mood_type for mood in history] == [MoodType.CALM, MoodType.HAPPY]
+            assert [mood.mood_type for mood in history] == [
+                MoodType.CALM,
+                MoodType.HAPPY,
+            ]
         finally:
             await store.close()
 
     @pytest.mark.asyncio
-    async def test_failed_mood_persist_does_not_change_cache(self, tmp_db_path, monkeypatch):
+    async def test_failed_mood_persist_does_not_change_cache(
+        self, tmp_db_path, monkeypatch
+    ):
         store = AffectionStore(tmp_db_path)
         await store.initialize()
         try:
             manager = AffectionManager(store)
-            initial = await manager.set_mood("g1", MoodType.HAPPY, description="Initial")
+            initial = await manager.set_mood(
+                "g1", MoodType.HAPPY, description="Initial"
+            )
 
             async def fail_save(*args, **kwargs):
                 raise RuntimeError("storage unavailable")
@@ -616,7 +636,9 @@ class TestAffectionQualityReviewRegressions:
             await reader.close()
 
     @pytest.mark.asyncio
-    async def test_two_stores_strict_create_duplicate_is_domain_conflict(self, tmp_db_path):
+    async def test_two_stores_strict_create_duplicate_is_domain_conflict(
+        self, tmp_db_path
+    ):
         first = AffectionStore(tmp_db_path)
         second = AffectionStore(tmp_db_path)
         await first.initialize()
@@ -628,7 +650,10 @@ class TestAffectionQualityReviewRegressions:
                 return_exceptions=True,
             )
             assert sum(isinstance(result, dict) for result in results) == 1
-            assert sum(isinstance(result, EntityAlreadyExistsError) for result in results) == 1
+            assert (
+                sum(isinstance(result, EntityAlreadyExistsError) for result in results)
+                == 1
+            )
         finally:
             await second.close()
             await first.close()
@@ -716,7 +741,9 @@ class TestAffectionLifecycleRegressions:
     """事务清理和管理器关闭必须等待其已启动的异步生命周期。"""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("transaction_name", ["_write_transaction", "_read_snapshot"])
+    @pytest.mark.parametrize(
+        "transaction_name", ["_write_transaction", "_read_snapshot"]
+    )
     async def test_transaction_rollback_completes_after_repeated_cancellation(
         self, tmp_db_path, monkeypatch, transaction_name
     ):
@@ -818,7 +845,9 @@ class TestAffectionLifecycleRegressions:
                 await original_close()
 
     @pytest.mark.asyncio
-    async def test_close_waits_for_cancelled_mood_setter_cleanup(self, tmp_db_path, monkeypatch):
+    async def test_close_waits_for_cancelled_mood_setter_cleanup(
+        self, tmp_db_path, monkeypatch
+    ):
         store = AffectionStore(tmp_db_path)
         await store.initialize()
         manager = AffectionManager(store)
@@ -888,7 +917,9 @@ class TestAffectionLevel:
     def test_from_score_boundaries(self):
         # Minimum-threshold semantics: score must reach threshold to qualify
         assert AffectionLevel.from_score(-76) == AffectionLevel.HOSTILE
-        assert AffectionLevel.from_score(-74) == AffectionLevel.HOSTILE  # not yet DISLIKED
+        assert (
+            AffectionLevel.from_score(-74) == AffectionLevel.HOSTILE
+        )  # not yet DISLIKED
         assert AffectionLevel.from_score(-50) == AffectionLevel.DISLIKED
         assert AffectionLevel.from_score(-25) == AffectionLevel.COLD
         assert AffectionLevel.from_score(0) == AffectionLevel.NEUTRAL
@@ -961,9 +992,23 @@ class TestInteractionType:
 
     def test_all_17_types_present(self):
         expected = {
-            "chat", "compliment", "flirt", "comfort", "help", "thanks",
-            "apology", "tease", "care", "gift", "praise", "encourage",
-            "support", "insult", "harassment", "abuse", "threat",
+            "chat",
+            "compliment",
+            "flirt",
+            "comfort",
+            "help",
+            "thanks",
+            "apology",
+            "tease",
+            "care",
+            "gift",
+            "praise",
+            "encourage",
+            "support",
+            "insult",
+            "harassment",
+            "abuse",
+            "threat",
         }
         actual = {e.value for e in InteractionType}
         assert actual == expected
@@ -993,8 +1038,12 @@ class TestInteractionType:
         assert MoodType.ANXIOUS in rule.mood_requirements
 
     def test_negative_types_have_negative_change(self):
-        for itype in (InteractionType.INSULT, InteractionType.HARASSMENT,
-                        InteractionType.ABUSE, InteractionType.THREAT):
+        for itype in (
+            InteractionType.INSULT,
+            InteractionType.HARASSMENT,
+            InteractionType.ABUSE,
+            InteractionType.THREAT,
+        ):
             assert INTERACTION_RULES[itype].base_change < 0
 
     def test_positive_types_have_positive_change(self):
@@ -1221,7 +1270,9 @@ class TestAffectionStore:
             await store.close()
 
     @pytest.mark.asyncio
-    async def test_mood_history_sorts_before_limit_with_stable_id_ties(self, tmp_db_path):
+    async def test_mood_history_sorts_before_limit_with_stable_id_ties(
+        self, tmp_db_path
+    ):
         store = AffectionStore(tmp_db_path)
         await store.initialize()
         try:
@@ -1577,7 +1628,9 @@ class TestRedistribution:
             await store.upsert_affection("g1", "u2", 90)
             await store.upsert_affection("g1", "u3", 90)
 
-            mgr = AffectionManager(store, max_total_affection=200, affection_decay_rate=0.8)
+            mgr = AffectionManager(
+                store, max_total_affection=200, affection_decay_rate=0.8
+            )
             await mgr.process_interaction("u_new", "g1", "你好棒！", "谢谢~")
 
             total = await store.get_total_affection("g1")

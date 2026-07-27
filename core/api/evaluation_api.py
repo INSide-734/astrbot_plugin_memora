@@ -20,7 +20,6 @@ from ..evaluation.retrieval_quality import EvaluationCase
 from ..storage.base import apply_perf_pragmas
 from .response_utils import error_response, ok_response
 
-
 _CURRENT_MEMORY_DATASET = "current_memories"
 _CURRENT_MEMORY_CASE_LIMIT = 20
 
@@ -109,7 +108,9 @@ class EvaluationApiMixin:
                 )
             return ok_response(catalog)
         except Exception as exc:
-            logger.error("[评测接口] 获取数据集失败，异常类型=%s", exc.__class__.__name__)
+            logger.error(
+                "[评测接口] 获取数据集失败，异常类型=%s", exc.__class__.__name__
+            )
             return error_response(
                 "获取评测数据集失败",
                 code="evaluation_datasets_failed",
@@ -138,13 +139,10 @@ class EvaluationApiMixin:
                 else []
             )
             runtime_datasets = (
-                {_CURRENT_MEMORY_DATASET: current_cases}
-                if current_cases
-                else {}
+                {_CURRENT_MEMORY_DATASET: current_cases} if current_cases else {}
             )
             known_datasets = {
-                item["name"]
-                for item in service.list_datasets().get("datasets", [])
+                item["name"] for item in service.list_datasets().get("datasets", [])
             }
             known_datasets.update(runtime_datasets)
             selected_datasets = [
@@ -217,11 +215,15 @@ class EvaluationApiMixin:
         service = self._build_evaluation_service(require_engine=False)
         try:
             await service.initialize()
-            limit = self._parse_positive_int(payload.get("limit"), default=20, maximum=100)
+            limit = self._parse_positive_int(
+                payload.get("limit"), default=20, maximum=100
+            )
             reports = await service.list_reports(limit=limit)
             return ok_response({"reports": reports, "total": len(reports)})
         except Exception as exc:
-            logger.error("[评测接口] 获取报告列表失败，异常类型=%s", exc.__class__.__name__)
+            logger.error(
+                "[评测接口] 获取报告列表失败，异常类型=%s", exc.__class__.__name__
+            )
             return error_response(
                 "获取评测报告列表失败",
                 code="evaluation_reports_list_failed",
@@ -244,7 +246,9 @@ class EvaluationApiMixin:
                 return error_response("评测报告不存在")
             return ok_response({"report": report})
         except Exception as exc:
-            logger.error("[评测接口] 获取报告详情失败，异常类型=%s", exc.__class__.__name__)
+            logger.error(
+                "[评测接口] 获取报告详情失败，异常类型=%s", exc.__class__.__name__
+            )
             return error_response(
                 "获取评测报告详情失败",
                 code="evaluation_report_get_failed",

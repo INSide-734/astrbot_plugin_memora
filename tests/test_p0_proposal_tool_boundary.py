@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -97,9 +97,12 @@ async def test_high_impact_candidate_is_not_visible_to_active_reader(tmp_path) -
             )
         )
 
-        assert await store.active_relations_for_seeds(
-            [17, 18],
-            scope_key="private:user-a",
-        ) == []
+        assert (
+            await store.active_relations_for_seeds(
+                [17, 18],
+                scope_key="private:user-a",
+            )
+            == []
+        )
     finally:
         await store.close()

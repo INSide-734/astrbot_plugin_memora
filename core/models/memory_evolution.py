@@ -111,7 +111,9 @@ class MemorySourceRef:
         if self.reference_at is None:
             object.__setattr__(self, "reference_at", self.occurred_at)
         else:
-            object.__setattr__(self, "reference_at", normalize_datetime(self.reference_at))
+            object.__setattr__(
+                self, "reference_at", normalize_datetime(self.reference_at)
+            )
         object.__setattr__(self, "ingested_at", normalize_datetime(self.ingested_at))
         _check_interval(self.valid_from, self.valid_to)
         object.__setattr__(self, "valid_from", normalize_datetime(self.valid_from))
@@ -161,7 +163,9 @@ class MemoryRelationProposal:
         _require_text(self.target_alias, "target_alias")
         if not isinstance(self.relation_type, RelationType):
             try:
-                object.__setattr__(self, "relation_type", RelationType(self.relation_type))
+                object.__setattr__(
+                    self, "relation_type", RelationType(self.relation_type)
+                )
             except (TypeError, ValueError) as exc:
                 raise ValueError("unknown relation_type") from exc
         _check_confidence(self.confidence)
@@ -181,11 +185,15 @@ class MemoryProjectionProposal:
     def __post_init__(self) -> None:
         if not isinstance(self.projection_type, ProjectionType):
             try:
-                object.__setattr__(self, "projection_type", ProjectionType(self.projection_type))
+                object.__setattr__(
+                    self, "projection_type", ProjectionType(self.projection_type)
+                )
             except (TypeError, ValueError) as exc:
                 raise ValueError("unknown projection_type") from exc
         aliases = tuple(self.source_aliases)
-        if not aliases or any(not isinstance(alias, str) or not alias.strip() for alias in aliases):
+        if not aliases or any(
+            not isinstance(alias, str) or not alias.strip() for alias in aliases
+        ):
             raise ValueError("source_aliases must contain non-empty aliases")
         object.__setattr__(self, "source_aliases", aliases)
         _require_text(self.summary, "summary")
@@ -358,7 +366,9 @@ class RelationView:
         _require_text(self.relation_id, "relation_id")
         if not isinstance(self.relation_type, RelationType):
             try:
-                object.__setattr__(self, "relation_type", RelationType(self.relation_type))
+                object.__setattr__(
+                    self, "relation_type", RelationType(self.relation_type)
+                )
             except (TypeError, ValueError) as exc:
                 raise ValueError("unknown relation_type") from exc
         if not isinstance(self.state, DerivedState):
@@ -373,7 +383,9 @@ class RelationView:
         object.__setattr__(self, "valid_from", normalize_datetime(self.valid_from))
         object.__setattr__(self, "valid_to", normalize_datetime(self.valid_to))
         object.__setattr__(self, "reference_at", normalize_datetime(self.reference_at))
-        object.__setattr__(self, "discovered_at", normalize_datetime(self.discovered_at))
+        object.__setattr__(
+            self, "discovered_at", normalize_datetime(self.discovered_at)
+        )
         object.__setattr__(self, "invalid_at", normalize_datetime(self.invalid_at))
         validate_time_labels(self.time_source, self.time_precision)
 
@@ -404,7 +416,9 @@ class ProjectionView:
             raise ValueError("projection must have at least one source")
         if not isinstance(self.projection_type, ProjectionType):
             try:
-                object.__setattr__(self, "projection_type", ProjectionType(self.projection_type))
+                object.__setattr__(
+                    self, "projection_type", ProjectionType(self.projection_type)
+                )
             except (TypeError, ValueError) as exc:
                 raise ValueError("unknown projection_type") from exc
         if not isinstance(self.state, DerivedState):
@@ -419,7 +433,9 @@ class ProjectionView:
         object.__setattr__(self, "valid_from", normalize_datetime(self.valid_from))
         object.__setattr__(self, "valid_to", normalize_datetime(self.valid_to))
         object.__setattr__(self, "reference_at", normalize_datetime(self.reference_at))
-        object.__setattr__(self, "discovered_at", normalize_datetime(self.discovered_at))
+        object.__setattr__(
+            self, "discovered_at", normalize_datetime(self.discovered_at)
+        )
         object.__setattr__(self, "invalid_at", normalize_datetime(self.invalid_at))
         validate_time_labels(self.time_source, self.time_precision)
 
@@ -454,7 +470,12 @@ class ProjectionSourceView:
     def __post_init__(self) -> None:
         _require_text(self.projection_id, "projection_id")
         _require_text(self.revision_token, "revision_token")
-        if self.role not in {"primary", "supporting", "conflict_left", "conflict_right"}:
+        if self.role not in {
+            "primary",
+            "supporting",
+            "conflict_left",
+            "conflict_right",
+        }:
             raise ValueError("unknown projection source role")
         if self.ordinal < 0:
             raise ValueError("ordinal must be non-negative")

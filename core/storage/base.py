@@ -10,7 +10,6 @@ from typing import Any
 
 import aiosqlite
 
-
 # ---------------------------------------------------------------------------
 # 共享 SQLite 性能 PRAGMA —— 单一事实来源
 # ---------------------------------------------------------------------------
@@ -20,9 +19,9 @@ _PERF_PRAGMAS: tuple[tuple[str, str], ...] = (
     ("journal_mode", "WAL"),
     ("synchronous", "NORMAL"),
     ("busy_timeout", "30000"),
-    ("cache_size", "-65536"),       # 64 MB page cache
+    ("cache_size", "-65536"),  # 64 MB page cache
     ("temp_store", "MEMORY"),
-    ("mmap_size", "268435456"),     # 256 MB memory-mapped I/O
+    ("mmap_size", "268435456"),  # 256 MB memory-mapped I/O
 )
 
 

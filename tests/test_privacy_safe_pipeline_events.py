@@ -144,7 +144,9 @@ def test_injection_and_recall_events_exclude_sensitive_request_signals(
 
     assert sentinel not in content
     assert sentinel not in caplog.text
-    injection = next(record for record in records if record["event"] == "injection_completed")
+    injection = next(
+        record for record in records if record["event"] == "injection_completed"
+    )
     assert injection["route"] == "quality"
     assert injection["delivery"] == "extra_user_content"
     assert injection["candidate_count"] == 7

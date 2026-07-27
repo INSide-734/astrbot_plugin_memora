@@ -4,9 +4,8 @@ import asyncio
 import time
 from typing import Any
 
-from quart import request
-
 from astrbot.api import logger
+from quart import request
 
 from ..utils.number_utils import clamp_float
 from .history_tracker import HistoryTracker
@@ -73,9 +72,7 @@ class MemoryWriteApiMixin:
         if not isinstance(payload, dict):
             return self._error("请求体必须是 JSON 对象")
         try:
-            memory_id = MemoryWriteApiMixin._coerce_memory_id(
-                payload.get("memory_id")
-            )
+            memory_id = MemoryWriteApiMixin._coerce_memory_id(payload.get("memory_id"))
         except (TypeError, ValueError):
             return self._error("memory_id 必须是整数")
 
@@ -110,7 +107,9 @@ class MemoryWriteApiMixin:
 
         if field == "content":
             try:
-                new_content = _required_string(value, message="记忆内容必须是非空字符串")
+                new_content = _required_string(
+                    value, message="记忆内容必须是非空字符串"
+                )
             except (TypeError, ValueError):
                 return self._error("记忆内容必须是非空字符串")
 
@@ -329,9 +328,7 @@ class MemoryWriteApiMixin:
                 )
             else:
                 try:
-                    type_value = _required_string(
-                        value, message="类型必须是非空字符串"
-                    )
+                    type_value = _required_string(value, message="类型必须是非空字符串")
                 except (TypeError, ValueError):
                     return self._error("类型必须是非空字符串")
                 final_metadata["memory_type"] = type_value
@@ -589,9 +586,7 @@ class MemoryWriteApiMixin:
         )
         if caller_cancelled:
             raise asyncio.CancelledError
-        return _replacement_error(
-            "记忆替换状态待修复，请稍后检查", "repair_required"
-        )
+        return _replacement_error("记忆替换状态待修复，请稍后检查", "repair_required")
 
     @staticmethod
     def _log_cleanup_failure(

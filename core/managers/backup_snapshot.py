@@ -35,9 +35,7 @@ def snapshot_sqlite(source: Path, target: Path) -> SnapshotResult:
     try:
         source_connection.backup(target_connection)
         target_connection.commit()
-        quick_check = str(
-            target_connection.execute("PRAGMA quick_check").fetchone()[0]
-        )
+        quick_check = str(target_connection.execute("PRAGMA quick_check").fetchone()[0])
         if quick_check.lower() != "ok":
             raise sqlite3.DatabaseError("sqlite quick_check failed")
     finally:

@@ -41,10 +41,7 @@ class TestProactiveReminder:
         lookahead = 86400
 
         # "upcoming" means between now and now+lookahead
-        upcoming = [
-            ts for ts in timestamps
-            if now <= ts <= now + lookahead
-        ]
+        upcoming = [ts for ts in timestamps if now <= ts <= now + lookahead]
         assert len(upcoming) == 0
 
     def test_mixed_window_filters_correctly(self) -> None:
@@ -58,10 +55,7 @@ class TestProactiveReminder:
         timestamps = [past, soon, tomorrow, far]
         lookahead = 86400
 
-        upcoming = [
-            ts for ts in timestamps
-            if now <= ts <= now + lookahead
-        ]
+        upcoming = [ts for ts in timestamps if now <= ts <= now + lookahead]
         assert len(upcoming) == 2
         assert soon in upcoming
         assert tomorrow in upcoming
@@ -72,10 +66,7 @@ class TestProactiveReminder:
         exactly_24h = now + 86400
 
         lookahead = 86400
-        upcoming = [
-            ts for ts in [exactly_24h]
-            if now <= ts <= now + lookahead
-        ]
+        upcoming = [ts for ts in [exactly_24h] if now <= ts <= now + lookahead]
         assert len(upcoming) == 1
 
     def test_boundary_just_over_24h_excluded(self) -> None:
@@ -84,8 +75,5 @@ class TestProactiveReminder:
         just_over = now + 86401
 
         lookahead = 86400
-        upcoming = [
-            ts for ts in [just_over]
-            if now <= ts <= now + lookahead
-        ]
+        upcoming = [ts for ts in [just_over] if now <= ts <= now + lookahead]
         assert len(upcoming) == 0

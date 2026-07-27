@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,7 +13,6 @@ from core.utils.cache_manager import (
     _TTLCache,
     get_cache_manager,
 )
-
 
 # ---------------------------------------------------------------------------
 # _LRUCache

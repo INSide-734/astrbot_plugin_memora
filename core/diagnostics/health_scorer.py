@@ -37,7 +37,9 @@ class HealthScorer:
                     "Provider is failed.",
                 )
             )
-            recommended_actions.append("Restore or reconfigure the provider, then retry initialization.")
+            recommended_actions.append(
+                "Restore or reconfigure the provider, then retry initialization."
+            )
         elif provider_status == "waiting" and (
             retry_active or self._retry_active(attempts, max_attempts)
         ):
@@ -50,7 +52,9 @@ class HealthScorer:
                     "Provider is waiting and retry attempts remain active.",
                 )
             )
-            recommended_actions.append("Monitor provider startup and verify upstream availability.")
+            recommended_actions.append(
+                "Monitor provider startup and verify upstream availability."
+            )
 
         recall = self._as_dict(data.get("recall"))
         p95_total_ms = self._to_number(recall.get("p95_total_ms"))
@@ -64,7 +68,9 @@ class HealthScorer:
                     "Recall p95 latency is above 1000 ms.",
                 )
             )
-            recommended_actions.append("Inspect retrieval latency, reranking, and provider response time.")
+            recommended_actions.append(
+                "Inspect retrieval latency, reranking, and provider response time."
+            )
 
         write = self._as_dict(data.get("write_coordinator"))
         failures_total = self._to_int(write.get("failures_total"))
@@ -74,7 +80,10 @@ class HealthScorer:
                 if previous_write_failures_total is not None
                 else self._last_write_failures_total
             )
-            if prior_failures_total is not None and failures_total > prior_failures_total:
+            if (
+                prior_failures_total is not None
+                and failures_total > prior_failures_total
+            ):
                 score -= 15
                 domains.append(
                     self._domain(
@@ -84,7 +93,9 @@ class HealthScorer:
                         "Write failures increased since the last health event.",
                     )
                 )
-                recommended_actions.append("Review write coordinator errors and storage availability.")
+                recommended_actions.append(
+                    "Review write coordinator errors and storage availability."
+                )
             self._last_write_failures_total = failures_total
 
         background_tasks = self._as_dict(data.get("background_tasks"))
@@ -99,7 +110,9 @@ class HealthScorer:
                     "Background tasks have recorded failures.",
                 )
             )
-            recommended_actions.append("Check scheduler failure details and rerun failed maintenance jobs.")
+            recommended_actions.append(
+                "Check scheduler failure details and rerun failed maintenance jobs."
+            )
 
         index = self._as_dict(data.get("index"))
         rebuild_errors = self._to_number(index.get("last_rebuild_errors"))
@@ -119,7 +132,9 @@ class HealthScorer:
                     "Index rebuild error ratio is above 10 percent.",
                 )
             )
-            recommended_actions.append("Inspect index validation output and rebuild failed entries.")
+            recommended_actions.append(
+                "Inspect index validation output and rebuild failed entries."
+            )
 
         prometheus = self._as_dict(data.get("prometheus"))
         if prometheus and prometheus.get("available") is False:

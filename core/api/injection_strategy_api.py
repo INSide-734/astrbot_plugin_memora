@@ -276,8 +276,13 @@ class InjectionStrategyApiMixin:
         )
         sort_by = str(payload.get("sort_by", "created_at_ms"))
         if sort_by not in {
-            "created_at_ms", "routing_mode", "resolved_preset", "provider_type",
-            "outcome", "actual_payload_chars", "decision_ms",
+            "created_at_ms",
+            "routing_mode",
+            "resolved_preset",
+            "provider_type",
+            "outcome",
+            "actual_payload_chars",
+            "decision_ms",
         }:
             raise ValueError("sort_by is invalid")
         sort_order = payload.get("sort_order", "desc")
@@ -300,12 +305,8 @@ class InjectionStrategyApiMixin:
 
     @staticmethod
     def _pagination(payload: dict[str, Any]) -> tuple[int, int]:
-        offset = InjectionStrategyApiMixin._integer(
-            payload.get("offset", 0), "offset"
-        )
-        limit = InjectionStrategyApiMixin._integer(
-            payload.get("limit", 50), "limit"
-        )
+        offset = InjectionStrategyApiMixin._integer(payload.get("offset", 0), "offset")
+        limit = InjectionStrategyApiMixin._integer(payload.get("limit", 50), "limit")
         if offset < 0:
             raise ValueError("offset must be non-negative")
         if not 1 <= limit <= 100:

@@ -53,9 +53,7 @@ def validate_bound_atoms_match_canonical_source(
     if not atom_list:
         return
     has_any_source = any(
-        atom.parent_revision
-        or atom.parent_scope_key
-        or atom.parent_privacy_level
+        atom.parent_revision or atom.parent_scope_key or atom.parent_privacy_level
         for atom in atom_list
     )
     if not has_any_source:
@@ -73,9 +71,7 @@ def validate_bound_atoms_match_canonical_source(
     )
     for atom in atom_list:
         if not (
-            atom.parent_revision
-            and atom.parent_scope_key
-            and atom.parent_privacy_level
+            atom.parent_revision and atom.parent_scope_key and atom.parent_privacy_level
         ):
             raise ValueError("source_provenance_required")
         if atom.parent_memory_id != memory_id:

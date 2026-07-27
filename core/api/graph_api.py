@@ -4,10 +4,8 @@ import asyncio
 import re
 from typing import Any
 
-from quart import request
-
 from astrbot.api import logger
-
+from quart import request
 
 _ONEBOT11_PERSON_LABEL = re.compile(r"QQ:([1-9][0-9]{0,18})", re.ASCII)
 _POSITIVE_INT64_MAX = 9_223_372_036_854_775_807
@@ -58,7 +56,9 @@ class GraphApiMixin:
             return None
 
     @staticmethod
-    def _canvas_response_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    def _canvas_response_snapshot(
+        snapshot: dict[str, Any],
+    ) -> dict[str, list[dict[str, Any]]]:
         """移除画布渲染不需要的内部字段、条目与记忆详情。"""
         node_fields = (
             "id",
@@ -258,8 +258,7 @@ class GraphApiMixin:
                 ready.get("conversation_manager"), "identity_runtime", None
             )
             snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
-                self,
-                snapshot, identity_runtime
+                self, snapshot, identity_runtime
             )
             return self._ok(
                 self._build_graph_view_payload(
@@ -333,8 +332,7 @@ class GraphApiMixin:
                     ready.get("conversation_manager"), "identity_runtime", None
                 )
                 snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
-                    self,
-                    snapshot, identity_runtime
+                    self, snapshot, identity_runtime
                 )
                 return self._ok(
                     self._build_graph_view_payload(
@@ -372,8 +370,7 @@ class GraphApiMixin:
                     ready.get("conversation_manager"), "identity_runtime", None
                 )
                 snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
-                    self,
-                    snapshot, identity_runtime
+                    self, snapshot, identity_runtime
                 )
                 if canvas_view and not has_explicit_limits:
                     snapshot = GraphApiMixin._canvas_response_snapshot(snapshot)
@@ -462,8 +459,7 @@ class GraphApiMixin:
                 ready.get("conversation_manager"), "identity_runtime", None
             )
             snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
-                self,
-                snapshot, identity_runtime
+                self, snapshot, identity_runtime
             )
             return self._ok(
                 self._build_graph_view_payload(

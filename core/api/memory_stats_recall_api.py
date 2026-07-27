@@ -2,9 +2,8 @@
 
 import time
 
-from quart import request
-
 from astrbot.api import logger
+from quart import request
 
 
 def _coerce_count(value, default: int = 0) -> int:

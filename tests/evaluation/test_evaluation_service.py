@@ -222,7 +222,9 @@ def test_evaluation_service_lists_fixture_metadata() -> None:
 
     result = service.list_datasets()
 
-    private = next(item for item in result["datasets"] if item["name"] == "private_basic")
+    private = next(
+        item for item in result["datasets"] if item["name"] == "private_basic"
+    )
     assert private["case_count"] >= 10
     assert private["path"].endswith("private_basic.jsonl")
     assert "preference" in private["intents"]
@@ -522,7 +524,9 @@ async def test_evaluation_service_isolates_single_variant_failure(tmp_path) -> N
                 return [{"doc_id": "mem-graph-off", "score": 1.0}]
             return [{"doc_id": "mem-baseline", "score": 1.0}]
 
-    service = EvaluationService(engine=PartiallyFailingEngine(), fixture_dir=fixture_dir)
+    service = EvaluationService(
+        engine=PartiallyFailingEngine(), fixture_dir=fixture_dir
+    )
     result = await service.run_evaluation(
         datasets=["ablation"],
         k=1,

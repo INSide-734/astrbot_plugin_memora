@@ -66,21 +66,26 @@ class TestStoreRound:
         return msg
 
     def test_store_round_success(
-        self, mock_engine: MagicMock, mock_user_msg: MagicMock, mock_assistant_msg: MagicMock
+        self,
+        mock_engine: MagicMock,
+        mock_user_msg: MagicMock,
+        mock_assistant_msg: MagicMock,
     ) -> None:
         success, error = asyncio.run(
             store_round_with_length_check(
-                mock_engine, mock_user_msg, mock_assistant_msg,
-                session_id="s1", persona_id="p1", round_index=1,
+                mock_engine,
+                mock_user_msg,
+                mock_assistant_msg,
+                session_id="s1",
+                persona_id="p1",
+                round_index=1,
             )
         )
         assert success is True
         assert error == ""
         mock_engine.add_memory.assert_called_once()
 
-    def test_store_round_truncates_long_messages(
-        self, mock_engine: MagicMock
-    ) -> None:
+    def test_store_round_truncates_long_messages(self, mock_engine: MagicMock) -> None:
         user_msg = MagicMock()
         user_msg.content = "x" * (MAX_SINGLE_MESSAGE_LENGTH + 500)
         user_msg.role = "user"
@@ -90,8 +95,12 @@ class TestStoreRound:
 
         success, _ = asyncio.run(
             store_round_with_length_check(
-                mock_engine, user_msg, assistant_msg,
-                session_id="s1", persona_id="p1", round_index=1,
+                mock_engine,
+                user_msg,
+                assistant_msg,
+                session_id="s1",
+                persona_id="p1",
+                round_index=1,
             )
         )
         assert success is True
@@ -99,9 +108,7 @@ class TestStoreRound:
         metadata = call_args[1]["metadata"]
         assert metadata["truncated"] is True
 
-    def test_store_round_exceeds_double_limit(
-        self, mock_engine: MagicMock
-    ) -> None:
+    def test_store_round_exceeds_double_limit(self, mock_engine: MagicMock) -> None:
         huge = "x" * (MAX_SINGLE_MESSAGE_LENGTH + 10)
         user_msg = MagicMock()
         user_msg.content = huge
@@ -112,8 +119,12 @@ class TestStoreRound:
 
         success, error = asyncio.run(
             store_round_with_length_check(
-                mock_engine, user_msg, assistant_msg,
-                session_id="s1", persona_id="p1", round_index=5,
+                mock_engine,
+                user_msg,
+                assistant_msg,
+                session_id="s1",
+                persona_id="p1",
+                round_index=5,
             )
         )
         assert success is False
@@ -125,21 +136,32 @@ class TestStoreRound:
     ) -> None:
         success, error = asyncio.run(
             store_round_with_length_check(
-                None, mock_user_msg, mock_assistant_msg,
-                session_id="s1", persona_id="p1", round_index=1,
+                None,
+                mock_user_msg,
+                mock_assistant_msg,
+                session_id="s1",
+                persona_id="p1",
+                round_index=1,
             )
         )
         assert success is False
         assert "None" in error
 
     def test_store_round_add_memory_exception(
-        self, mock_engine: MagicMock, mock_user_msg: MagicMock, mock_assistant_msg: MagicMock
+        self,
+        mock_engine: MagicMock,
+        mock_user_msg: MagicMock,
+        mock_assistant_msg: MagicMock,
     ) -> None:
         mock_engine.add_memory = AsyncMock(side_effect=RuntimeError("db error"))
         success, error = asyncio.run(
             store_round_with_length_check(
-                mock_engine, mock_user_msg, mock_assistant_msg,
-                session_id="s1", persona_id="p1", round_index=1,
+                mock_engine,
+                mock_user_msg,
+                mock_assistant_msg,
+                session_id="s1",
+                persona_id="p1",
+                round_index=1,
             )
         )
         assert success is False

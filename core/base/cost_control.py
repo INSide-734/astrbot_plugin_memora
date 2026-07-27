@@ -16,8 +16,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from astrbot.api import logger
-
 
 @dataclass
 class CostControl:
@@ -60,7 +58,6 @@ class CostControl:
         """检查是否超出每轮调用上限。"""
         if self.max_extra_llm_calls_per_turn <= 0:
             return False
-        count = self._call_counts.get(feature, 0)
         total = sum(self._call_counts.values())
         if total >= self.max_extra_llm_calls_per_turn:
             return False
@@ -110,9 +107,7 @@ def build_cost_control_from_config(config: dict[str, Any]) -> CostControl:
             llm_reranker_min_candidates=cc_config.get(
                 "llm_reranker_min_candidates", 12
             ),
-            llm_reranker_prompt_chars=cc_config.get(
-                "llm_reranker_prompt_chars", 3000
-            ),
+            llm_reranker_prompt_chars=cc_config.get("llm_reranker_prompt_chars", 3000),
         )
     # 向后兼容：无 cost_control 配置时默认 balanced
     return CostControl(mode="balanced")

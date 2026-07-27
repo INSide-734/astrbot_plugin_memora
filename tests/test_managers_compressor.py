@@ -8,7 +8,6 @@ import pytest
 
 from core.managers.semantic_compressor import SemanticCompressor, _resolve_seeds
 
-
 # ---------------------------------------------------------------------------
 # _resolve_seeds
 # ---------------------------------------------------------------------------
@@ -25,13 +24,21 @@ class TestResolveSeeds:
             ("ru", "ru", ["итоги", "обзор", "опыт", "повседневное", "общение"]),
         ],
     )
-    def test_explicit_language(self, seed_lang: str, bot_lang: str, expected: list[str]) -> None:
+    def test_explicit_language(
+        self, seed_lang: str, bot_lang: str, expected: list[str]
+    ) -> None:
         """Explicit language selection returns correct seeds."""
         assert _resolve_seeds(seed_lang, bot_lang) == expected
 
     def test_auto_falls_back(self) -> None:
         """Auto falls back to bot_language or zh."""
-        assert _resolve_seeds("auto", "en") == ["summary", "review", "experience", "daily", "chat"]
+        assert _resolve_seeds("auto", "en") == [
+            "summary",
+            "review",
+            "experience",
+            "daily",
+            "chat",
+        ]
         assert _resolve_seeds("auto", "zh") == ["总结", "回顾", "经历", "日常", "聊天"]
 
     def test_unknown_language_falls_back_to_zh(self) -> None:
@@ -72,7 +79,11 @@ class TestClusterByTopics:
         """Memories with overlapping topics form a cluster."""
         memories = [
             {"doc_id": 1, "content": "a", "metadata": {"topics": ["python", "coding"]}},
-            {"doc_id": 2, "content": "b", "metadata": {"topics": ["python", "testing"]}},
+            {
+                "doc_id": 2,
+                "content": "b",
+                "metadata": {"topics": ["python", "testing"]},
+            },
         ]
         result = SemanticCompressor._cluster_by_topics(memories)
         # Jaccard = 1/3 = 0.33 < 0.5 → not clustered
@@ -81,7 +92,11 @@ class TestClusterByTopics:
     def test_high_overlap_clustered(self) -> None:
         """Memories with high topic overlap (>= 50%) are clustered."""
         memories = [
-            {"doc_id": 1, "content": "a", "metadata": {"topics": ["python", "ai", "ml"]}},
+            {
+                "doc_id": 1,
+                "content": "a",
+                "metadata": {"topics": ["python", "ai", "ml"]},
+            },
             {"doc_id": 2, "content": "b", "metadata": {"topics": ["python", "ai"]}},
         ]
         # intersection=2, union=3, jaccard=2/3=0.67 >= 0.5
@@ -111,7 +126,11 @@ class TestClusterByTopics:
         """Topic comparison is case-insensitive."""
         memories = [
             {"doc_id": 1, "content": "a", "metadata": {"topics": ["Python", "AI"]}},
-            {"doc_id": 2, "content": "b", "metadata": {"topics": ["python", "ai", "ml"]}},
+            {
+                "doc_id": 2,
+                "content": "b",
+                "metadata": {"topics": ["python", "ai", "ml"]},
+            },
         ]
         result = SemanticCompressor._cluster_by_topics(memories)
         assert len(result) >= 1
@@ -159,7 +178,9 @@ class TestSynthesizeAbstract:
 
     def test_two_contents_merged(self) -> None:
         """Two contents are merged with sentence-ending punctuation."""
-        result = SemanticCompressor._synthesize_abstract(["First content", "Second supplement"])
+        result = SemanticCompressor._synthesize_abstract(
+            ["First content", "Second supplement"]
+        )
         assert "。" in result
         assert "First content" in result
 
@@ -204,7 +225,9 @@ class TestSynthesizeAbstract:
         """Third and beyond ignored, middle may be included if short enough."""
         base = "A very long base content to establish length for the threshold comparison to work as intended here"
         short = "s"
-        long = "This one is definitely too long to be considered a short supplement here"
+        long = (
+            "This one is definitely too long to be considered a short supplement here"
+        )
         result = SemanticCompressor._synthesize_abstract([base, long, short])
         # long is at index 1, won't meet threshold
         # short is at index 2 (content[2]) included since content[1:3]
@@ -242,6 +265,7 @@ class TestSemanticCompressorInit:
         """compress_old_memories returns zeros when callbacks are None."""
         compressor = SemanticCompressor()
         import asyncio
+
         result = asyncio.run(compressor.compress_old_memories())
         assert result["merged_groups"] == 0
         assert result["deleted_originals"] == 0
@@ -296,6 +320,7 @@ class TestCompressOldMemories:
         """Memories newer than age_days are skipped."""
         compressor = self._make_compressor()
         import time
+
         recent_time = time.time()  # now — not old
 
         search_result = MagicMock()
@@ -313,18 +338,27 @@ class TestCompressOldMemories:
         """Old memories with overlapping topics are compressed."""
         compressor = self._make_compressor()
         import time
+
         long_ago = time.time() - 120 * 86400.0  # 120 days ago
 
         m1 = MagicMock()
         m1.doc_id = 1
         m1.content = "Python is great"
-        m1.metadata = {"create_time": long_ago, "importance": 0.7, "topics": ["python", "ai"]}
+        m1.metadata = {
+            "create_time": long_ago,
+            "importance": 0.7,
+            "topics": ["python", "ai"],
+        }
         m1.final_score = 0.9
 
         m2 = MagicMock()
         m2.doc_id = 2
         m2.content = "AI tools for coding"
-        m2.metadata = {"create_time": long_ago + 1, "importance": 0.6, "topics": ["python", "ai", "ml"]}
+        m2.metadata = {
+            "create_time": long_ago + 1,
+            "importance": 0.6,
+            "topics": ["python", "ai", "ml"],
+        }
         m2.final_score = 0.85
 
         compressor._search_similar = AsyncMock(return_value=[m1, m2])
@@ -338,6 +372,7 @@ class TestCompressOldMemories:
         """Single old memory cannot be compressed (needs >=2 per group)."""
         compressor = self._make_compressor()
         import time
+
         long_ago = time.time() - 120 * 86400.0
 
         m1 = MagicMock()
@@ -365,6 +400,7 @@ class TestCompressOldMemories:
         """Duplicate doc_ids across seeds are only processed once."""
         compressor = self._make_compressor()
         import time
+
         long_ago = time.time() - 120 * 86400.0
 
         m1 = MagicMock()

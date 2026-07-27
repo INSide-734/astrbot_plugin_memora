@@ -7,12 +7,6 @@
 
 from __future__ import annotations
 
-from .prompt_sanitizer import (
-    DoubleCheckValidator,
-    MetaInstructionWrapper,
-    PromptProtectionService,
-    ResponseSanitizer,
-)
 from .guardrails import (
     GraphExtractionResult,
     MemoryAtomSchema,
@@ -20,6 +14,12 @@ from .guardrails import (
     safe_validate,
     validate_and_clean_json,
     validate_llm_response,
+)
+from .prompt_sanitizer import (
+    DoubleCheckValidator,
+    MetaInstructionWrapper,
+    PromptProtectionService,
+    ResponseSanitizer,
 )
 
 __all__ = [

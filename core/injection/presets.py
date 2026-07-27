@@ -113,9 +113,7 @@ def resolve_preset(
 
     resolved_budget = base.memory_budget_chars if budget_chars == 0 else budget_chars
     resolved_participants = (
-        False
-        if base.content_level is ContentLevel.FACTS
-        else include_participants
+        False if base.content_level is ContentLevel.FACTS else include_participants
     )
     return replace(
         base,

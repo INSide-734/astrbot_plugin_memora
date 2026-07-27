@@ -31,9 +31,13 @@ class AgentToolsConfig(BaseModel):
     enable_knowledge_tools: bool = Field(default=True, description="是否启用知识库工具")
     enable_profile_tools: bool = Field(default=True, description="是否启用用户画像工具")
     enable_jargon_tools: bool = Field(default=True, description="是否启用黑话查询工具")
-    enable_affection_tools: bool = Field(default=True, description="是否启用好感度/情绪工具")
+    enable_affection_tools: bool = Field(
+        default=True, description="是否启用好感度/情绪工具"
+    )
     enable_social_tools: bool = Field(default=True, description="是否启用社交关系工具")
-    enable_expression_tools: bool = Field(default=True, description="是否启用表达模式工具")
+    enable_expression_tools: bool = Field(
+        default=True, description="是否启用表达模式工具"
+    )
 
 
 class JargonConfig(BaseModel):

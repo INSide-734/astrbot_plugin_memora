@@ -6,11 +6,10 @@ import json
 from dataclasses import field
 from typing import Any
 
-from pydantic.dataclasses import dataclass
-
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
+from pydantic.dataclasses import dataclass
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -138,9 +137,7 @@ class RelationLookupTool(FunctionTool[AstrAgentContext]):
 
         if not group_id:
             try:
-                group_id = str(
-                    getattr(context.context.event, "unified_msg_origin", "")
-                )
+                group_id = str(getattr(context.context.event, "unified_msg_origin", ""))
             except Exception:
                 pass
 
@@ -257,9 +254,7 @@ class RelationGraphTool(FunctionTool[AstrAgentContext]):
         # 自动从事件上下文解析 group_id
         if not group_id:
             try:
-                group_id = str(
-                    getattr(context.context.event, "unified_msg_origin", "")
-                )
+                group_id = str(getattr(context.context.event, "unified_msg_origin", ""))
             except Exception:
                 pass
 
@@ -314,7 +309,6 @@ class RelationGraphTool(FunctionTool[AstrAgentContext]):
 
         # 按关系类型统计
         type_breakdown: dict[str, int] = {}
-        category_breakdown: dict[str, int] = {}
         for r in relations:
             rt = getattr(r, "relation_type", "unknown")
             type_breakdown[rt] = type_breakdown.get(rt, 0) + 1

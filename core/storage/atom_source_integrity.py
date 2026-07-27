@@ -24,9 +24,7 @@ async def validate_atom_parent_sources(
     for atom in atoms:
         state = states.get(atom.parent_memory_id)
         has_provenance = bool(
-            atom.parent_revision
-            and atom.parent_scope_key
-            and atom.parent_privacy_level
+            atom.parent_revision and atom.parent_scope_key and atom.parent_privacy_level
         )
         if not has_provenance:
             # 允许旧工具向不存在或尚未建立的父 ID 写入 legacy 行；

@@ -27,7 +27,8 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     plugin_root = Path(__file__).resolve().parents[1]
     missing = [
-        target for target in SMOKE_TARGETS
+        target
+        for target in SMOKE_TARGETS
         if not (plugin_root / target.split("::", 1)[0]).exists()
     ]
     if missing:

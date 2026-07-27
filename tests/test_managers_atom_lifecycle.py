@@ -1,7 +1,8 @@
 """AtomLifecycleManager 和 dedup_atoms_batch 测试。"""
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -10,10 +11,10 @@ from core.managers.atom_lifecycle_manager import (
     dedup_atoms_batch,
 )
 
-
 # ---------------------------------------------------------------------------
 # dedup_atoms_batch — pure function
 # ---------------------------------------------------------------------------
+
 
 class TestDedupAtomsBatch:
     """Test the standalone dedup_atoms_batch function."""
@@ -112,6 +113,7 @@ class TestDedupAtomsBatch:
 # AtomLifecycleManager — construction
 # ---------------------------------------------------------------------------
 
+
 class TestAtomLifecycleManagerInit:
     """Construction and configuration parsing."""
 
@@ -158,6 +160,7 @@ class TestAtomLifecycleManagerInit:
 # AtomLifecycleManager — lifecycle control (start / stop)
 # ---------------------------------------------------------------------------
 
+
 class TestAtomLifecycleManagerStartStop:
     """start / stop methods with mocked asyncio tasks."""
 
@@ -195,6 +198,7 @@ class TestAtomLifecycleManagerStartStop:
 # AtomLifecycleManager — run_maintenance
 # ---------------------------------------------------------------------------
 
+
 class TestRunMaintenance:
     """run_maintenance exercises atom store methods."""
 
@@ -206,11 +210,14 @@ class TestRunMaintenance:
         store.cleanup_forgotten = AsyncMock(return_value=2)
         store.migrate_to_cold = AsyncMock(return_value=4)
 
-        mgr = AtomLifecycleManager(atom_store=store, config={
-            "atom_cold_storage_enabled": True,
-            "atom_cold_days_threshold": 14.0,
-            "atom_cold_max_importance": 0.4,
-        })
+        mgr = AtomLifecycleManager(
+            atom_store=store,
+            config={
+                "atom_cold_storage_enabled": True,
+                "atom_cold_days_threshold": 14.0,
+                "atom_cold_max_importance": 0.4,
+            },
+        )
         result = await mgr.run_maintenance()
         assert result["expired"] == 5
         assert result["forgotten"] == 3
@@ -228,9 +235,12 @@ class TestRunMaintenance:
         store.forget_expired_atoms = AsyncMock(return_value=0)
         store.cleanup_forgotten = AsyncMock(return_value=0)
 
-        mgr = AtomLifecycleManager(atom_store=store, config={
-            "atom_cold_storage_enabled": False,
-        })
+        mgr = AtomLifecycleManager(
+            atom_store=store,
+            config={
+                "atom_cold_storage_enabled": False,
+            },
+        )
         result = await mgr.run_maintenance()
         assert "cold_migrated" not in result
         store.migrate_to_cold.assert_not_called()
@@ -239,6 +249,7 @@ class TestRunMaintenance:
 # ---------------------------------------------------------------------------
 # AtomLifecycleManager — run_manual_reinforcement
 # ---------------------------------------------------------------------------
+
 
 class TestManualReinforcement:
     """run_manual_reinforcement — find and reinforce similar atoms."""
@@ -263,7 +274,9 @@ class TestManualReinforcement:
         new_atom.confidence = 0.8
 
         mgr = AtomLifecycleManager(atom_store=store)
-        result = await mgr.run_manual_reinforcement([new_atom], similarity_threshold=0.5)
+        result = await mgr.run_manual_reinforcement(
+            [new_atom], similarity_threshold=0.5
+        )
         assert result == 1
         store.reinforce.assert_called_once_with(42, new_confidence=0.8)
 
@@ -280,7 +293,9 @@ class TestManualReinforcement:
         new_atom.confidence = 0.7
 
         mgr = AtomLifecycleManager(atom_store=store)
-        result = await mgr.run_manual_reinforcement([new_atom], similarity_threshold=0.9)
+        result = await mgr.run_manual_reinforcement(
+            [new_atom], similarity_threshold=0.9
+        )
         assert result == 0  # too different, no match
         store.reinforce.assert_not_called()
 
@@ -298,5 +313,7 @@ class TestManualReinforcement:
         new_atom.confidence = 0.6
 
         mgr = AtomLifecycleManager(atom_store=store)
-        result = await mgr.run_manual_reinforcement([new_atom], similarity_threshold=0.6)
+        result = await mgr.run_manual_reinforcement(
+            [new_atom], similarity_threshold=0.6
+        )
         assert result >= 0  # may or may not match depending on tokens

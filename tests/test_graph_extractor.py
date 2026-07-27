@@ -7,8 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.models.graph_models import ExtractedGraph, GraphEdge, GraphEntry, GraphNode
-from core.processors.entity_resolver import EntityResolver
+from core.models.graph_models import ExtractedGraph
 from core.processors.graph_extractor import (
     CAUSAL_CAUSED_BY,
     CAUSAL_PREVENTS,
@@ -224,8 +223,7 @@ class TestGraphExtractorLegacy:
         assert any(node.value == "fallback-topic" for node in graph.nodes)
         assert any(node.value == "fallback fact" for node in graph.nodes)
         assert not any(
-            entry.metadata.get("graph_guardrails_validated")
-            for entry in graph.entries
+            entry.metadata.get("graph_guardrails_validated") for entry in graph.entries
         )
 
 
@@ -266,7 +264,9 @@ class TestGraphExtractorAtoms:
 
         return [atom_a, atom_b]
 
-    def test_extract_from_atoms(self, extractor: GraphExtractor, sample_atoms: list) -> None:
+    def test_extract_from_atoms(
+        self, extractor: GraphExtractor, sample_atoms: list
+    ) -> None:
         graph = extractor.extract(
             source_memory_id=1,
             content="",
@@ -277,7 +277,9 @@ class TestGraphExtractorAtoms:
         assert len(graph.entries) > 0
         assert len(graph.edges) > 0
 
-    def test_atom_entries_preserve_business_time_metadata(self, extractor: GraphExtractor) -> None:
+    def test_atom_entries_preserve_business_time_metadata(
+        self, extractor: GraphExtractor
+    ) -> None:
         atom = MagicMock()
         atom.content = "用户上周开始学习图谱筛选"
         atom.confidence = 0.8
@@ -290,12 +292,20 @@ class TestGraphExtractorAtoms:
         atom.created_at = 1700000000.0
         atom.event_time = 1699900000.0
 
-        graph = extractor.extract(source_memory_id=1, content="", metadata=None, atoms=[atom])
+        graph = extractor.extract(
+            source_memory_id=1, content="", metadata=None, atoms=[atom]
+        )
 
-        timed_entries = [entry for entry in graph.entries if entry.metadata.get("event_time")]
+        timed_entries = [
+            entry for entry in graph.entries if entry.metadata.get("event_time")
+        ]
         assert timed_entries
-        assert all(entry.metadata["event_time"] == 1699900000.0 for entry in timed_entries)
-        assert all(entry.metadata["create_time"] == 1700000000.0 for entry in timed_entries)
+        assert all(
+            entry.metadata["event_time"] == 1699900000.0 for entry in timed_entries
+        )
+        assert all(
+            entry.metadata["create_time"] == 1700000000.0 for entry in timed_entries
+        )
 
     def test_atom_without_content_skipped(self, extractor: GraphExtractor) -> None:
         atom = MagicMock()
@@ -309,7 +319,9 @@ class TestGraphExtractorAtoms:
         atom.importance = 0.5
         atom.ttl_days = 1.0
 
-        graph = extractor.extract(source_memory_id=1, content="", metadata=None, atoms=[atom])
+        graph = extractor.extract(
+            source_memory_id=1, content="", metadata=None, atoms=[atom]
+        )
         assert len(graph.entries) == 0
 
     def test_atom_with_entities(self, extractor: GraphExtractor) -> None:
@@ -324,7 +336,9 @@ class TestGraphExtractorAtoms:
         atom.importance = 0.5
         atom.ttl_days = 30.0
 
-        graph = extractor.extract(source_memory_id=1, content="", metadata=None, atoms=[atom])
+        graph = extractor.extract(
+            source_memory_id=1, content="", metadata=None, atoms=[atom]
+        )
         topic_nodes = [n for n in graph.nodes if n.node_type == "topic"]
         assert len(topic_nodes) >= 2
 
@@ -368,11 +382,15 @@ class TestGraphExtractorAtoms:
         atom.importance = 0.3
         atom.ttl_days = 1.0
 
-        graph = extractor.extract(source_memory_id=1, content="", metadata=None, atoms=[atom])
+        graph = extractor.extract(
+            source_memory_id=1, content="", metadata=None, atoms=[atom]
+        )
         # The atom content should be used; fallback creates summary if no entries
         summary_nodes = [n for n in graph.nodes if n.node_type == "summary"]
         # The fallback path creates summary nodes when entries are empty
-        assert len(summary_nodes) >= 0  # May or may not trigger depending on canonicalize
+        assert (
+            len(summary_nodes) >= 0
+        )  # May or may not trigger depending on canonicalize
 
 
 class TestTemporalEdges:
@@ -399,7 +417,9 @@ class TestTemporalEdges:
             atoms=[atom_a, atom_b],
         )
         temporal_edges = [
-            e for e in graph.edges if e.relation_type in (TEMPORAL_BEFORE, TEMPORAL_AFTER, TEMPORAL_DURING)
+            e
+            for e in graph.edges
+            if e.relation_type in (TEMPORAL_BEFORE, TEMPORAL_AFTER, TEMPORAL_DURING)
         ]
         assert len(temporal_edges) >= 1  # A before B
 
@@ -435,7 +455,9 @@ class TestTemporalEdges:
             atoms=[atom],
         )
         temporal_edges = [
-            e for e in graph.edges if e.relation_type in (TEMPORAL_BEFORE, TEMPORAL_AFTER, TEMPORAL_DURING)
+            e
+            for e in graph.edges
+            if e.relation_type in (TEMPORAL_BEFORE, TEMPORAL_AFTER, TEMPORAL_DURING)
         ]
         assert len(temporal_edges) == 0
 
@@ -448,7 +470,9 @@ class TestTemporalEdges:
         atom_b.content = "Event B"
         atom_b.event_time = now
 
-        extractor = GraphExtractor(config={"graph_memory.temporal_edges_enabled": False})
+        extractor = GraphExtractor(
+            config={"graph_memory.temporal_edges_enabled": False}
+        )
         graph = extractor.extract(
             source_memory_id=1,
             content="",
@@ -456,7 +480,9 @@ class TestTemporalEdges:
             atoms=[atom_a, atom_b],
         )
         temporal_edges = [
-            e for e in graph.edges if e.relation_type in (TEMPORAL_BEFORE, TEMPORAL_AFTER, TEMPORAL_DURING)
+            e
+            for e in graph.edges
+            if e.relation_type in (TEMPORAL_BEFORE, TEMPORAL_AFTER, TEMPORAL_DURING)
         ]
         assert len(temporal_edges) == 0
 
@@ -481,7 +507,8 @@ class TestCausalEdges:
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
-            e for e in graph.edges
+            e
+            for e in graph.edges
             if e.relation_type in (CAUSAL_CAUSED_BY, CAUSAL_RESULTS_IN, CAUSAL_PREVENTS)
         ]
         assert len(causal_edges) >= 1
@@ -499,7 +526,8 @@ class TestCausalEdges:
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
-            e for e in graph.edges
+            e
+            for e in graph.edges
             if e.relation_type in (CAUSAL_CAUSED_BY, CAUSAL_RESULTS_IN, CAUSAL_PREVENTS)
         ]
         assert len(causal_edges) >= 1
@@ -517,7 +545,8 @@ class TestCausalEdges:
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
-            e for e in graph.edges
+            e
+            for e in graph.edges
             if e.relation_type in (CAUSAL_CAUSED_BY, CAUSAL_RESULTS_IN, CAUSAL_PREVENTS)
         ]
         assert len(causal_edges) >= 1
@@ -533,7 +562,8 @@ class TestCausalEdges:
             atoms=[atom],
         )
         causal_edges = [
-            e for e in graph.edges
+            e
+            for e in graph.edges
             if e.relation_type in (CAUSAL_CAUSED_BY, CAUSAL_RESULTS_IN, CAUSAL_PREVENTS)
         ]
         assert len(causal_edges) == 0  # Need at least 2 causal atoms
@@ -552,7 +582,8 @@ class TestCausalEdges:
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
-            e for e in graph.edges
+            e
+            for e in graph.edges
             if e.relation_type in (CAUSAL_CAUSED_BY, CAUSAL_RESULTS_IN, CAUSAL_PREVENTS)
         ]
         assert len(causal_edges) == 0

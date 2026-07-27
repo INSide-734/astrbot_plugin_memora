@@ -6,11 +6,10 @@ import json
 from dataclasses import field
 from typing import Any
 
-from pydantic.dataclasses import dataclass
-
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
+from pydantic.dataclasses import dataclass
 
 from ..expression.models import ExpressionPattern
 from ..expression.pattern_learner import ExpressionPatternLearner
@@ -104,7 +103,9 @@ class ExpressionRecallTool(FunctionTool[AstrAgentContext]):
             )
 
         try:
-            patterns: list[ExpressionPattern] = await learner.get_patterns_for_injection(
+            patterns: list[
+                ExpressionPattern
+            ] = await learner.get_patterns_for_injection(
                 group_id, persona_id="default", user_id=None, limit=max(limit, 1)
             )
         except asyncio.CancelledError:
@@ -120,11 +121,8 @@ class ExpressionRecallTool(FunctionTool[AstrAgentContext]):
 
         # Filter by situation keyword if provided
         if situation:
-            patterns = [
-                p for p in patterns
-                if situation.lower() in p.situation.lower()
-            ]
-            patterns = patterns[:max(limit, 1)]
+            patterns = [p for p in patterns if situation.lower() in p.situation.lower()]
+            patterns = patterns[: max(limit, 1)]
 
         if not patterns:
             return _json_result(

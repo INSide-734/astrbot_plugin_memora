@@ -43,7 +43,9 @@ class TestEndpointReadinessGate:
     @pytest.mark.asyncio
     async def test_status_returns_not_ready_message_when_plugin_not_ready(self) -> None:
         plugin = _Plugin()
-        plugin._ensure_plugin_ready = AsyncMock(return_value=(False, "plugin warming up"))
+        plugin._ensure_plugin_ready = AsyncMock(
+            return_value=(False, "plugin warming up")
+        )
 
         results = await _collect(plugin.status(_event()))
 
@@ -63,7 +65,9 @@ class TestEndpointReadinessGate:
     @pytest.mark.asyncio
     async def test_webui_uses_nonblocking_ready_check(self) -> None:
         plugin = _Plugin()
-        plugin._ensure_plugin_ready = AsyncMock(return_value=(False, "plugin warming up"))
+        plugin._ensure_plugin_ready = AsyncMock(
+            return_value=(False, "plugin warming up")
+        )
 
         results = await _collect(plugin.webui(_event()))
 
@@ -73,7 +77,9 @@ class TestEndpointReadinessGate:
     @pytest.mark.asyncio
     async def test_search_keeps_blocking_ready_check(self) -> None:
         plugin = _Plugin()
-        plugin._ensure_plugin_ready = AsyncMock(return_value=(False, "plugin warming up"))
+        plugin._ensure_plugin_ready = AsyncMock(
+            return_value=(False, "plugin warming up")
+        )
 
         results = await _collect(plugin.search(_event(), "query"))
 
@@ -87,7 +93,9 @@ class TestEndpointReadinessGate:
         method_name: str,
     ) -> None:
         plugin = _Plugin()
-        plugin._ensure_plugin_ready = AsyncMock(return_value=(False, "plugin warming up"))
+        plugin._ensure_plugin_ready = AsyncMock(
+            return_value=(False, "plugin warming up")
+        )
 
         results = await _collect(getattr(plugin, method_name)(_event()))
 
@@ -97,7 +105,9 @@ class TestEndpointReadinessGate:
     @pytest.mark.asyncio
     async def test_trace_keeps_blocking_ready_check(self) -> None:
         plugin = _Plugin()
-        plugin._ensure_plugin_ready = AsyncMock(return_value=(False, "plugin warming up"))
+        plugin._ensure_plugin_ready = AsyncMock(
+            return_value=(False, "plugin warming up")
+        )
 
         results = await _collect(plugin.trace(_event(), "query"))
 

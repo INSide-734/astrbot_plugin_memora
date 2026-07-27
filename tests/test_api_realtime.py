@@ -40,7 +40,9 @@ class TestRealtimeSSE:
         sse.HEARTBEAT_SEC = 0.01
 
         async def fake_make_response(generator, headers):
-            return SimpleNamespace(response=generator, headers=headers, timeout="preset")
+            return SimpleNamespace(
+                response=generator, headers=headers, timeout="preset"
+            )
 
         with patch("core.api.realtime_api.make_response", fake_make_response):
             response = await sse.stream()

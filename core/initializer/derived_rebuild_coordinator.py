@@ -121,7 +121,9 @@ class DerivedRebuildCoordinator:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.error("重建前读取 canonical 计数失败，reason_code=canonical_unavailable")
+            logger.error(
+                "重建前读取 canonical 计数失败，reason_code=canonical_unavailable"
+            )
             return {
                 "status": "failed",
                 "success": False,

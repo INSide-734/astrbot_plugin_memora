@@ -102,7 +102,9 @@ class TestExpressionPatterns:
         store.get_top_by_weight = AsyncMock(return_value=[_make_pattern(pattern_id=23)])
         store.count_by_scope = AsyncMock(return_value=1)
         learner = MagicMock()
-        learner.get_patterns_for_injection = AsyncMock(return_value=[_make_pattern(pattern_id=99)])
+        learner.get_patterns_for_injection = AsyncMock(
+            return_value=[_make_pattern(pattern_id=99)]
+        )
 
         class Stub:
             get_expression_patterns = ExpressionApiMixin.get_expression_patterns
@@ -180,9 +182,15 @@ class TestExpressionPatterns:
     async def test_learner_skips_malformed_pattern_items(self) -> None:
         learner = MagicMock()
         broken = MagicMock()
-        type(broken).pattern_id = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken pattern")))
+        type(broken).pattern_id = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("broken pattern"))
+        )
         learner.get_patterns_for_injection = AsyncMock(
-            return_value=[_make_pattern(pattern_id=11), broken, _make_pattern(pattern_id=12)]
+            return_value=[
+                _make_pattern(pattern_id=11),
+                broken,
+                _make_pattern(pattern_id=12),
+            ]
         )
 
         class Stub:
@@ -209,9 +217,15 @@ class TestExpressionPatterns:
     async def test_store_skips_malformed_pattern_items(self) -> None:
         store = MagicMock()
         broken = MagicMock()
-        type(broken).pattern_id = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken pattern")))
+        type(broken).pattern_id = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("broken pattern"))
+        )
         store.get_top_by_weight = AsyncMock(
-            return_value=[_make_pattern(pattern_id=21), broken, _make_pattern(pattern_id=22)]
+            return_value=[
+                _make_pattern(pattern_id=21),
+                broken,
+                _make_pattern(pattern_id=22),
+            ]
         )
         store.count_by_scope = AsyncMock(return_value=3)
 

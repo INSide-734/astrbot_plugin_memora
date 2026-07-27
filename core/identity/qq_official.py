@@ -109,7 +109,9 @@ def _platform_instance_key(platform_id: object) -> str | None:
     )
     if normalized is None:
         return None
-    return hashlib.sha256(normalized.encode("ascii")).hexdigest()[:_INSTANCE_KEY_HEX_CHARS]
+    return hashlib.sha256(normalized.encode("ascii")).hexdigest()[
+        :_INSTANCE_KEY_HEX_CHARS
+    ]
 
 
 def _empty_identity(
@@ -277,9 +279,7 @@ class QQOfficialIdentityAdapter:
         if scope_type == "private":
             scope_id = canonical_user_id
 
-        global_name, nickname_state = _normalize_name(
-            _read_field(author, "username")
-        )
+        global_name, nickname_state = _normalize_name(_read_field(author, "username"))
         if scene_name == "channel":
             member = raw_data.get("member")
             scope_name, card_state = _normalize_name(_read_field(member, "nick"))

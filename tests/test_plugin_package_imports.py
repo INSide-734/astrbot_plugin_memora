@@ -33,11 +33,7 @@ def test_feature_modules_import_under_astrbot_package_name(monkeypatch):
     monkeypatch.setattr(
         sys,
         "path",
-        [
-            path
-            for path in sys.path
-            if Path(path or ".").resolve() != plugin_root
-        ],
+        [path for path in sys.path if Path(path or ".").resolve() != plugin_root],
     )
     for module_name in saved_modules:
         sys.modules.pop(module_name, None)

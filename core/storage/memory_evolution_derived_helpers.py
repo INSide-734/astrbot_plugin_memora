@@ -64,8 +64,12 @@ def _relation(row) -> RelationView:
         _parse(row["reference_at"] if "reference_at" in row.keys() else None),
         _parse(row["discovered_at"] if "discovered_at" in row.keys() else None),
         _parse(row["invalid_at"] if "invalid_at" in row.keys() else None),
-        str(row["time_source"] or "unknown") if "time_source" in row.keys() else "unknown",
-        str(row["time_precision"] or "unknown") if "time_precision" in row.keys() else "unknown",
+        str(row["time_source"] or "unknown")
+        if "time_source" in row.keys()
+        else "unknown",
+        str(row["time_precision"] or "unknown")
+        if "time_precision" in row.keys()
+        else "unknown",
     )
 
 
@@ -86,8 +90,12 @@ def _projection(row, source_ids: tuple[int, ...]) -> ProjectionView:
         _parse(row["reference_at"] if "reference_at" in row.keys() else None),
         _parse(row["discovered_at"] if "discovered_at" in row.keys() else None),
         _parse(row["invalid_at"] if "invalid_at" in row.keys() else None),
-        str(row["time_source"] or "unknown") if "time_source" in row.keys() else "unknown",
-        str(row["time_precision"] or "unknown") if "time_precision" in row.keys() else "unknown",
+        str(row["time_source"] or "unknown")
+        if "time_source" in row.keys()
+        else "unknown",
+        str(row["time_precision"] or "unknown")
+        if "time_precision" in row.keys()
+        else "unknown",
     )
 
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from core.utils.diversity_manager import (
     EXPRESSION_VARIATIONS,
     LANGUAGE_STYLES,
@@ -13,7 +11,6 @@ from core.utils.diversity_manager import (
     ResponseDiversityManager,
     VariationComposition,
 )
-
 
 # ---------------------------------------------------------------------------
 # Constants tests
@@ -29,7 +26,9 @@ class TestConstants:
 
     def test_expression_variations_axes(self) -> None:
         assert set(EXPRESSION_VARIATIONS.keys()) == {
-            "sentence_style", "tone", "emphasis",
+            "sentence_style",
+            "tone",
+            "emphasis",
         }
         for axis, values in EXPRESSION_VARIATIONS.items():
             assert len(values) >= 4, f"{axis} should have >= 4 options"
@@ -47,7 +46,9 @@ class TestConstants:
 class TestVariationComposition:
     def test_to_dict(self) -> None:
         vc = VariationComposition(
-            sentence_style="陈述句", tone="肯定", emphasis="结论",
+            sentence_style="陈述句",
+            tone="肯定",
+            emphasis="结论",
         )
         assert vc.to_dict() == {
             "sentence_style": "陈述句",
@@ -147,7 +148,7 @@ class TestStyleSelection:
             styles.append(mgr.select_style())
         # After 4 selections, the 5th must be different from last 3
         for i in range(3, len(styles)):
-            recent_3 = set(styles[max(0, i - 3):i])
+            recent_3 = set(styles[max(0, i - 3) : i])
             # May be in recent_3 only if all styles were exhausted
             # but with 8 styles, last 3 should normally be avoided
             # Only check if there are enough candidates to choose from
@@ -176,13 +177,13 @@ class TestPatternSelection:
         for _ in range(6):
             patterns.append(mgr.select_pattern())
         for i in range(2, len(patterns)):
-            recent_2 = set(patterns[max(0, i - 2):i])
+            recent_2 = set(patterns[max(0, i - 2) : i])
             candidates = [p for p in RESPONSE_PATTERNS if p not in recent_2]
             if candidates:
                 assert patterns[i] in candidates
 
 
-class TestVariationComposition:
+class TestComposeVariation:
     def test_compose_variation_all_valid(self) -> None:
         mgr = ResponseDiversityManager()
         for _ in range(30):
@@ -227,7 +228,9 @@ class TestSanitizeLLMResponse:
 
     def test_removes_anti_repetition_tags(self) -> None:
         mgr = ResponseDiversityManager()
-        raw = "[ANTI_REPETITION]\n- 避免用以下开头: 你好\n[/ANTI_REPETITION]\n正确回复。"
+        raw = (
+            "[ANTI_REPETITION]\n- 避免用以下开头: 你好\n[/ANTI_REPETITION]\n正确回复。"
+        )
         cleaned = mgr.sanitize_llm_response(raw)
         assert "[ANTI_REPETITION]" not in cleaned
         assert "正确回复。" in cleaned

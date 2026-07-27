@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING, Any
 from ..monitoring.metrics import (
     INJECTION_BUDGET_DROP_RATIO,
     INJECTION_CANDIDATE_RETENTION_RATIO,
-    INJECTION_DECISIONS_TOTAL,
     INJECTION_DECISION_QUEUE_SECONDS,
     INJECTION_DECISION_RECORD_DROPPED_TOTAL,
     INJECTION_DECISION_RECORD_FAILURES_TOTAL,
+    INJECTION_DECISIONS_TOTAL,
     INJECTION_HYBRID_CLAMP_TOTAL,
     INJECTION_PAYLOAD_CHARS,
     INJECTION_PRESET_TRANSITIONS_TOTAL,
@@ -72,7 +72,9 @@ class InjectionDecisionRecorder:
         if flush_interval <= 0 or retry_base_delay <= 0:
             raise ValueError("intervals must be positive")
         self.store = store
-        self._queue: asyncio.Queue[InjectionDecisionRecord] = asyncio.Queue(queue_capacity)
+        self._queue: asyncio.Queue[InjectionDecisionRecord] = asyncio.Queue(
+            queue_capacity
+        )
         self._queue_capacity = queue_capacity
         self._batch_size = batch_size
         self._flush_interval = flush_interval
@@ -142,7 +144,9 @@ class InjectionDecisionRecorder:
             self._failures_total += 1
             self._safe_failure("closed")
             return
-        new_retention = self._retention_days if retention_days is None else retention_days
+        new_retention = (
+            self._retention_days if retention_days is None else retention_days
+        )
         new_max_rows = self._max_rows if max_rows is None else max_rows
         if new_retention < 0:
             raise ValueError("retention_days must be non-negative")
@@ -207,9 +211,7 @@ class InjectionDecisionRecorder:
                 observed_wake_generation = self._wake_generation
                 now = self._monotonic()
                 self._schedule_periodic_cleanup(state, now)
-                cleanup_due = (
-                    self._cleanup_pending() and now >= state.cleanup_retry_at
-                )
+                cleanup_due = self._cleanup_pending() and now >= state.cleanup_retry_at
                 self._fill_retained_batch(state, now, cleanup_due)
                 if await self._flush_retained_if_due(state, now):
                     continue
@@ -222,7 +224,11 @@ class InjectionDecisionRecorder:
                 delay = self._next_worker_delay(state)
                 await self._wait_for_wake(delay, observed_wake_generation)
         finally:
-            if not state.retained and self._queue.empty() and not self._cleanup_pending():
+            if (
+                not state.retained
+                and self._queue.empty()
+                and not self._cleanup_pending()
+            ):
                 self._idle.set()
             else:
                 self._idle.clear()

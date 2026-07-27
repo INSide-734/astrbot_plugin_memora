@@ -9,7 +9,6 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-
 _TRACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 _STAGE_NAMES = frozenset(
     {

@@ -19,9 +19,7 @@ from core.models.memory_evolution import (
     MemoryRelationProposal,
     MemorySourceRef,
 )
-from core.processors.memory_consolidator import MemoryConsolidator
 from core.storage.memory_evolution_store import MemoryEvolutionStore
-
 
 UTC = timezone.utc
 
@@ -66,7 +64,9 @@ async def manager(tmp_path):
     await store.close()
 
 
-async def seed_documents(store: MemoryEvolutionStore, *sources: MemorySourceRef) -> None:
+async def seed_documents(
+    store: MemoryEvolutionStore, *sources: MemorySourceRef
+) -> None:
     async with aiosqlite.connect(store.db_path) as db:
         await db.execute(
             "CREATE TABLE IF NOT EXISTS documents "
@@ -102,17 +102,26 @@ async def test_disabled_mode_does_not_enqueue(manager):
 @pytest.mark.asyncio
 async def test_schedule_and_low_impact_relation_become_active(manager):
     manager.consolidator.propose.return_value = EvolutionProposal(
-        relations=(MemoryRelationProposal("M1", "M2", "same_episode", 0.8, None, None, None),)
+        relations=(
+            MemoryRelationProposal("M1", "M2", "same_episode", 0.8, None, None, None),
+        )
     )
     await seed_documents(manager.store, source(17), source(18))
     await manager.schedule_consider(source(17))
     scheduled = await manager.store.claim_job(datetime.now(UTC), 30)
     assert scheduled is not None
-    await manager.store.reject_job(scheduled.job_id, scheduled.worker_token, "test_cleanup")
+    await manager.store.reject_job(
+        scheduled.job_id, scheduled.worker_token, "test_cleanup"
+    )
     from core.models.memory_evolution import JobSpec
-    await manager.store.enqueue_job(JobSpec("private:user-a", "bucket", (17, 18), "manual", datetime.now(UTC)))
+
+    await manager.store.enqueue_job(
+        JobSpec("private:user-a", "bucket", (17, 18), "manual", datetime.now(UTC))
+    )
     assert await manager.run_once() is True
-    assert (await manager.store.active_relations_for_seeds([17]))[0].relation_type.value == "same_episode"
+    assert (await manager.store.active_relations_for_seeds([17]))[
+        0
+    ].relation_type.value == "same_episode"
 
 
 @pytest.mark.asyncio
@@ -130,11 +139,16 @@ async def test_schedule_deduplicates_same_revision_but_keeps_new_revision(manage
 @pytest.mark.asyncio
 async def test_unknown_alias_is_rejected(manager):
     manager.consolidator.propose.return_value = EvolutionProposal(
-        relations=(MemoryRelationProposal("M99", "M1", "related", 0.8, None, None, None),)
+        relations=(
+            MemoryRelationProposal("M99", "M1", "related", 0.8, None, None, None),
+        )
     )
     await seed_documents(manager.store, source(17))
     from core.models.memory_evolution import JobSpec
-    job = await manager.store.enqueue_job(JobSpec("private:user-a", "bucket", (17,), "unknown-alias", datetime.now(UTC)))
+
+    job = await manager.store.enqueue_job(
+        JobSpec("private:user-a", "bucket", (17,), "unknown-alias", datetime.now(UTC))
+    )
     await manager.run_once()
     assert (await manager.store.get_job(job.job_id)).state.value == "rejected"
 
@@ -181,7 +195,10 @@ async def test_cancelled_proposal_propagates_and_restores_pending(manager):
     manager.consolidator.propose.side_effect = asyncio.CancelledError()
     await seed_documents(manager.store, source(17))
     from core.models.memory_evolution import JobSpec
-    await manager.store.enqueue_job(JobSpec("private:user-a", "bucket", (17,), "cancelled", datetime.now(UTC)))
+
+    await manager.store.enqueue_job(
+        JobSpec("private:user-a", "bucket", (17,), "cancelled", datetime.now(UTC))
+    )
     with pytest.raises(asyncio.CancelledError):
         await manager.run_once()
     assert await manager.store.pending_count() == 1
@@ -620,7 +637,12 @@ async def test_direct_process_claim_cancel_restores_pending(manager):
     manager.consolidator.propose.side_effect = asyncio.CancelledError()
     await seed_documents(manager.store, source(17))
     from core.models.memory_evolution import JobSpec
-    await manager.store.enqueue_job(JobSpec("private:user-a", "bucket", (17,), "direct-cancelled", datetime.now(UTC)))
+
+    await manager.store.enqueue_job(
+        JobSpec(
+            "private:user-a", "bucket", (17,), "direct-cancelled", datetime.now(UTC)
+        )
+    )
     claim = await manager.store.claim_job(datetime.now(UTC), 30)
     assert claim is not None
     with pytest.raises(asyncio.CancelledError):
@@ -637,11 +659,19 @@ async def test_cancel_restore_failure_does_not_replace_cancelled_error(manager):
     manager.consolidator.propose.side_effect = asyncio.CancelledError()
     await seed_documents(manager.store, source(17))
     await manager.store.enqueue_job(
-        JobSpec("private:user-a", "bucket", (17,), "cancel-restore-failed", datetime.now(UTC))
+        JobSpec(
+            "private:user-a",
+            "bucket",
+            (17,),
+            "cancel-restore-failed",
+            datetime.now(UTC),
+        )
     )
     claim = await manager.store.claim_job(datetime.now(UTC), 30)
     assert claim is not None
-    manager.store.restore_pending = AsyncMock(side_effect=RuntimeError("database locked"))
+    manager.store.restore_pending = AsyncMock(
+        side_effect=RuntimeError("database locked")
+    )
 
     with pytest.raises(asyncio.CancelledError):
         await manager.process_claim(claim)
@@ -666,7 +696,10 @@ async def test_projection_sources_pass_scope_validation(manager):
     )
     await seed_documents(manager.store, source(17), source(18))
     from core.models.memory_evolution import JobSpec
-    await manager.store.enqueue_job(JobSpec("private:user-a", "bucket", (17, 18), "projection", datetime.now(UTC)))
+
+    await manager.store.enqueue_job(
+        JobSpec("private:user-a", "bucket", (17, 18), "projection", datetime.now(UTC))
+    )
     assert await manager.run_once() is True
     projections = await manager.store.active_projections_for_seeds([17])
     assert projections[0].summary == "两条证据属于同一事件。"

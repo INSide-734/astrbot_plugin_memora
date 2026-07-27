@@ -1,7 +1,6 @@
 """4.5.4: Test multi-persona memory interpretation."""
 
 
-
 class TestPersonaInterpretation:
     """Same memory should yield different interpretations for different personas."""
 
@@ -56,10 +55,7 @@ class TestPersonaInterpretation:
         }
         secondary_ids = ["persona_detective", "persona_chef"]
 
-        valid = [
-            pid for pid in secondary_ids
-            if persona_contexts.get(pid, "")
-        ]
+        valid = [pid for pid in secondary_ids if persona_contexts.get(pid, "")]
         assert len(valid) == 1
         assert "persona_detective" in valid
         assert "persona_chef" not in valid

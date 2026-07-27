@@ -6,7 +6,6 @@ from typing import Any, TypeVar
 from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
 from astrbot.api.event.filter import PermissionType, permission_type
 
-
 _HandlerT = TypeVar("_HandlerT", bound=Callable[..., object])
 _COMMAND_ENDPOINT_HANDLER_NAMES = frozenset(
     {

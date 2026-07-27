@@ -141,10 +141,7 @@ class ConfigManager:
             fallback_applied = True
 
         max_rows = recall.get("injection_decision_max_rows", 100_000)
-        if (
-            type(max_rows) is not int
-            or not 1_000 <= max_rows <= 1_000_000
-        ):
+        if type(max_rows) is not int or not 1_000 <= max_rows <= 1_000_000:
             recall["injection_decision_max_rows"] = 100_000
             fallback_applied = True
 
@@ -171,8 +168,7 @@ class ConfigManager:
             and delivery_value in _INJECTION_DELIVERY_METHODS
         )
         override_numbers_valid = all(
-            type(recall.get(path, 0)) is int
-            and 0 <= recall.get(path, 0) <= maximum
+            type(recall.get(path, 0)) is int and 0 <= recall.get(path, 0) <= maximum
             for path, maximum in (
                 ("injection_budget_chars", 10_000),
                 ("injection_memory_max_chars", 2_000),
@@ -363,10 +359,7 @@ class ConfigManager:
             return None
         paths: set[str] = set()
         options: dict[str, tuple[Any, ...]] = {}
-        if (
-            not cls._collect_schema_contract(schema, (), paths, options)
-            or not paths
-        ):
+        if not cls._collect_schema_contract(schema, (), paths, options) or not paths:
             return None
         return frozenset(paths), options
 
@@ -399,8 +392,7 @@ class ConfigManager:
                 if "options" in field_schema:
                     raw_options = field_schema["options"]
                     if not isinstance(raw_options, list) or any(
-                        not cls._is_json_scalar(option)
-                        for option in raw_options
+                        not cls._is_json_scalar(option) for option in raw_options
                     ):
                         return False
                     options[dotted_path] = tuple(copy.deepcopy(raw_options))
@@ -419,8 +411,7 @@ class ConfigManager:
         options: tuple[Any, ...],
     ) -> bool:
         return cls._is_json_scalar(value) and any(
-            type(value) is type(option) and value == option
-            for option in options
+            type(value) is type(option) and value == option for option in options
         )
 
     def get_config_snapshot(self) -> tuple[dict[str, Any], str]:
@@ -443,10 +434,7 @@ class ConfigManager:
         """串行校验并应用点号路径配置变更。"""
         async with self._apply_lock:
             self._reconcile_source_locked()
-            if (
-                expected_revision is not None
-                and expected_revision != self._revision
-            ):
+            if expected_revision is not None and expected_revision != self._revision:
                 raise ConfigConflictError(expected_revision, self._revision)
 
             normalized_changes = dict(changes)
@@ -464,9 +452,7 @@ class ConfigManager:
             try:
                 candidate_obj = MemoraConfig(**candidate)
             except PydanticValidationError as exc:
-                raise ConfigValidationError(
-                    self._pydantic_field_errors(exc)
-                ) from exc
+                raise ConfigValidationError(self._pydantic_field_errors(exc)) from exc
             except Exception as exc:
                 raise ConfigValidationError({"*": str(exc)}) from exc
 
@@ -477,12 +463,8 @@ class ConfigManager:
             persistence_cancelled = False
             persistence_conflict_revision: str | None = None
             if persist:
-                persistence_cancelled = await self._persist_source(
-                    candidate_snapshot
-                )
-                source_obj, source_snapshot, source_revision = (
-                    self._read_source_state()
-                )
+                persistence_cancelled = await self._persist_source(candidate_snapshot)
+                source_obj, source_snapshot, source_revision = self._read_source_state()
                 if source_revision != candidate_revision:
                     self._config_obj = source_obj
                     self._config = source_snapshot

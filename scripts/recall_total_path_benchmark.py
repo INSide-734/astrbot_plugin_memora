@@ -16,7 +16,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
-
 TOTAL_RECALL_REGRESSION_LIMIT = 0.05
 TOTAL_RECALL_WARMUP_RUNS = 20
 TOTAL_RECALL_MEASURED_RUNS = 160
@@ -25,9 +24,7 @@ TOTAL_RECALL_BASELINE_PATH = (
     Path(__file__).resolve().parent / "baselines" / "recall_total_path.json"
 )
 TOTAL_RECALL_BASELINE_DISPLAY_PATH = "scripts/baselines/recall_total_path.json"
-BENCHMARK_ENTRYPOINT = Path(__file__).resolve().with_name(
-    "benchmark_recall_cost.py"
-)
+BENCHMARK_ENTRYPOINT = Path(__file__).resolve().with_name("benchmark_recall_cost.py")
 _METRIC = "RecallHandler.handle_memory_recall total-path p95"
 _SCENARIO = "balanced_full_path_with_fixed_retrieval"
 _SOURCE_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
@@ -193,9 +190,7 @@ def build_handler(retrieval_delay_ms: float) -> tuple[Any, HandlerBenchmarkProvi
     constructor_values: dict[str, Any] = {
         "context": HandlerBenchmarkContext(provider),
         "config_manager": HandlerBenchmarkConfig(),
-        "memory_engine": HandlerBenchmarkEngine(
-            build_memories(), retrieval_delay_ms
-        ),
+        "memory_engine": HandlerBenchmarkEngine(build_memories(), retrieval_delay_ms),
         "conversation_manager": HandlerBenchmarkConversation(),
         "injection_adapter": InjectionAdapter(),
         "enforce_limit_cb": noop_async,
@@ -262,9 +257,7 @@ def build_private_event() -> HandlerBenchmarkEvent:
 
 def is_temporary_extra_user_content(request: Any) -> bool:
     parts = list(getattr(request, "extra_user_content_parts", []) or [])
-    return bool(parts) and all(
-        bool(getattr(part, "_no_save", False)) for part in parts
-    )
+    return bool(parts) and all(bool(getattr(part, "_no_save", False)) for part in parts)
 
 
 async def run_handler_samples(
@@ -337,14 +330,10 @@ def handler_worker_main(argument_value: Callable[[str, str], str]) -> int:
     result = asyncio.run(
         measure_handler_total_path(
             warmup_runs=int(
-                argument_value(
-                    "--warmup-runs", str(TOTAL_RECALL_WARMUP_RUNS)
-                )
+                argument_value("--warmup-runs", str(TOTAL_RECALL_WARMUP_RUNS))
             ),
             measured_runs=int(
-                argument_value(
-                    "--measured-runs", str(TOTAL_RECALL_MEASURED_RUNS)
-                )
+                argument_value("--measured-runs", str(TOTAL_RECALL_MEASURED_RUNS))
             ),
             retrieval_delay_ms=float(
                 argument_value(
@@ -408,9 +397,7 @@ def load_total_path_baseline(
         and _integer_at_least(baseline.get("measured_runs"), 100)
         and _integer_at_least(baseline.get("warmup_runs"), 10)
         and _positive_number(baseline.get("retrieval_delay_ms"))
-        and _SOURCE_COMMIT_PATTERN.fullmatch(
-            str(baseline.get("source_commit", ""))
-        )
+        and _SOURCE_COMMIT_PATTERN.fullmatch(str(baseline.get("source_commit", "")))
         is not None
         and baseline.get("injected_runs") == baseline.get("measured_runs")
         and baseline.get("system_prompt_mutations") == 0
@@ -465,9 +452,7 @@ def source_checkout_commit(source_root: Path) -> str:
 def ensure_clean_source_checkout(source_root: Path, source_commit: str) -> None:
     actual_commit = source_checkout_commit(source_root)
     if actual_commit != source_commit:
-        raise ValueError(
-            "source commit does not match the benchmark source checkout"
-        )
+        raise ValueError("source commit does not match the benchmark source checkout")
     completed = subprocess.run(
         ["git", "-C", str(source_root.resolve()), "status", "--porcelain"],
         check=True,
@@ -550,8 +535,7 @@ def run_total_path_benchmark(project_root: Path) -> dict[str, Any]:
         f"{regression:.6f} (required <= {TOTAL_RECALL_REGRESSION_LIMIT:.6f})"
     )
     print(
-        "  TotalRecallPathContract: "
-        + ("ALL PASSED" if contract_passed else "FAILED")
+        "  TotalRecallPathContract: " + ("ALL PASSED" if contract_passed else "FAILED")
     )
     print("  Total-path result: " + ("ALL PASSED" if passed else "FAILED"))
     return {

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from contextvars import ContextVar
-from functools import wraps
 import inspect
 from collections.abc import Mapping
+from contextvars import ContextVar
+from functools import wraps
 from typing import Any
 
 from astrbot.api import logger
@@ -29,7 +29,6 @@ from .editing_utils import (
     required_text,
 )
 from .response_utils import error_response, ok_response
-
 
 _CREATE_FIELDS = frozenset(
     {"from_user", "to_user", "group_id", "relation_type", "strength", "tags"}
@@ -159,9 +158,7 @@ def _audit_boundary(action: str):
                     _audit_event(
                         result="failure",
                         error_code=(
-                            code
-                            if isinstance(code, str) and code
-                            else "request_error"
+                            code if isinstance(code, str) and code else "request_error"
                         ),
                     )
                 return response
@@ -278,9 +275,7 @@ def _parse_identity(
             "from_user": required_text(
                 identity.get("from_user"), field="identity.from_user"
             ),
-            "to_user": required_text(
-                identity.get("to_user"), field="identity.to_user"
-            ),
+            "to_user": required_text(identity.get("to_user"), field="identity.to_user"),
             "group_id": _optional_bounded_text(
                 identity.get("group_id"), field="identity.group_id"
             ),
@@ -301,7 +296,9 @@ def _parse_identity(
 
 def _parse_batch_item(
     value: Any,
-) -> tuple[dict[str, str] | None, tuple[str, str, str, str] | None, str | None, dict | None]:
+) -> tuple[
+    dict[str, str] | None, tuple[str, str, str, str] | None, str | None, dict | None
+]:
     item, error = require_object(value)
     if error:
         return None, None, None, error
@@ -446,9 +443,7 @@ class SocialApiMixin:
         rel = await manager.create_manual_relation(
             from_user=required_text(payload.get("from_user"), field="from_user"),
             to_user=required_text(payload.get("to_user"), field="to_user"),
-            group_id=_optional_bounded_text(
-                payload.get("group_id"), field="group_id"
-            ),
+            group_id=_optional_bounded_text(payload.get("group_id"), field="group_id"),
             relation_type=required_text(
                 payload.get("relation_type"), field="relation_type"
             ),
@@ -515,9 +510,7 @@ class SocialApiMixin:
             relation_type=normalized_changes.get(
                 "relation_type", getattr(current, "relation_type")
             ),
-            strength=normalized_changes.get(
-                "strength", getattr(current, "strength")
-            ),
+            strength=normalized_changes.get("strength", getattr(current, "strength")),
             tags=normalized_changes.get(
                 "tags", list(getattr(current, "tags", []) or [])
             ),
@@ -607,9 +600,7 @@ class SocialApiMixin:
         if action in {"add_tags", "remove_tags"}:
             if "tags" not in params:
                 raise EntityValidationError({"params.tags": "不能为空"})
-            tag_params = normalized_string_list(
-                params["tags"], field="params.tags"
-            )
+            tag_params = normalized_string_list(params["tags"], field="params.tags")
 
         manager = self._get_relation_manager()
         if manager is None:

@@ -5,25 +5,21 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
-import uuid
 import random
-from dataclasses import dataclass, replace
 import time
+import uuid
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
-from ..base.constants import FAKE_TOOL_CALL_NAME
 from ..base.config_manager import ConfigManager
+from ..base.constants import FAKE_TOOL_CALL_NAME
 from ..cleaners.injection_cleaner import InjectionCleaner
 from ..extractors.message_content_extractor import MessageContentExtractor
 from ..identity.models import IdentityTrust, ResolvedIdentity
-from ..managers.conversation_manager import ConversationManager
-from ..managers.memory_engine import MemoryEngine
-from ..monitoring import monitored, report_debug_event, report_debug_exception
-from ..retrieval.query_rewriter import QueryRewriter, resolve_reference_time
 from ..injection.executor import InjectionExecutionContext, InjectionExecutor
 from ..injection.headroom import estimate_context_headroom_chars
 from ..injection.models import (
@@ -37,6 +33,10 @@ from ..injection.models import (
     RoutingMode,
 )
 from ..injection.router import InjectionRoutingConfig, InjectionStrategyRouter
+from ..managers.conversation_manager import ConversationManager
+from ..managers.memory_engine import MemoryEngine
+from ..monitoring import monitored, report_debug_event, report_debug_exception
+from ..retrieval.query_rewriter import QueryRewriter, resolve_reference_time
 from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
     PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
@@ -48,10 +48,11 @@ from ..utils import OperationContext, get_persona_id
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import ProviderRequest
+
+    from ..identity.memory import MemoryIdentityEnricher
     from ..injection.recorder import InjectionDecisionRecorder
     from ..security.prompt_sanitizer import PromptProtectionService
     from ..utils.injection_adapter import InjectionAdapter
-    from ..identity.memory import MemoryIdentityEnricher
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,7 +201,9 @@ class RecallHandler:
                     component="recall",
                     stage="query",
                     status="completed" if actual_query else "degraded",
-                    reason_code="message_query_ready" if actual_query else "message_query_empty",
+                    reason_code="message_query_ready"
+                    if actual_query
+                    else "message_query_empty",
                     count=1 if actual_query else 0,
                 )
 
@@ -354,7 +357,9 @@ class RecallHandler:
                     component="recall",
                     stage="provider",
                     status="completed" if provider is not None else "degraded",
-                    reason_code="provider_available" if provider is not None else "provider_unavailable",
+                    reason_code="provider_available"
+                    if provider is not None
+                    else "provider_unavailable",
                     count=1 if provider is not None else 0,
                 )
 
@@ -372,7 +377,9 @@ class RecallHandler:
                     component="recall",
                     stage="preflight",
                     status="skipped" if preflight.skip_passive_recall else "completed",
-                    reason_code="passive_recall_skipped" if preflight.skip_passive_recall else "preflight_completed",
+                    reason_code="passive_recall_skipped"
+                    if preflight.skip_passive_recall
+                    else "preflight_completed",
                     duration_ms=max(0.0, preflight_ms),
                     route=preflight.resolved_preset.value,
                     delivery=preflight.resolved_delivery.value,
@@ -384,21 +391,23 @@ class RecallHandler:
                         persona_id=recall_persona_id,
                         chat_type=chat_type,
                     )
-                    result = await self._execute_and_record(_RecallExecutionInput(
-                        req=req,
-                        decision=preflight,
-                        signals=preflight_signals,
-                        memories=[],
-                        prospective=prospective,
-                        cognitive_context="",
-                        query=actual_query,
-                        session_filtered=use_session_filtering,
-                        persona_filtered=use_persona_filtering,
-                        decision_ms=preflight_ms,
-                        provider=provider,
-                        preflight_short_circuit=True,
-                        event=event,
-                    ))
+                    result = await self._execute_and_record(
+                        _RecallExecutionInput(
+                            req=req,
+                            decision=preflight,
+                            signals=preflight_signals,
+                            memories=[],
+                            prospective=prospective,
+                            cognitive_context="",
+                            query=actual_query,
+                            session_filtered=use_session_filtering,
+                            persona_filtered=use_persona_filtering,
+                            decision_ms=preflight_ms,
+                            provider=provider,
+                            preflight_short_circuit=True,
+                            event=event,
+                        )
+                    )
                     injected_count = result.selected_count
                     recall_reason = "passive_recall_only"
                     return
@@ -422,7 +431,9 @@ class RecallHandler:
                     stage="retrieval",
                     status="completed",
                     reason_code="memory_search_completed",
-                    duration_ms=max(0.0, (time.perf_counter() - retrieval_started) * 1000.0),
+                    duration_ms=max(
+                        0.0, (time.perf_counter() - retrieval_started) * 1000.0
+                    ),
                     count=len(recalled_memories or []),
                 )
 
@@ -472,8 +483,7 @@ class RecallHandler:
                 decision_started = time.perf_counter()
                 decision = self._router.route_final(routing_config, final_signals)
                 decision_ms = (
-                    preflight_ms
-                    + (time.perf_counter() - decision_started) * 1000.0
+                    preflight_ms + (time.perf_counter() - decision_started) * 1000.0
                 )
                 report_debug_event(
                     "recall_stage",
@@ -502,22 +512,24 @@ class RecallHandler:
                     duration_ms=max(0.0, format_ms),
                     payload_chars=len(cognitive_context),
                 )
-                result = await self._execute_and_record(_RecallExecutionInput(
-                    req=req,
-                    decision=decision,
-                    signals=final_signals,
-                    memories=memories,
-                    prospective=prospective,
-                    cognitive_context=cognitive_context,
-                    query=actual_query,
-                    session_filtered=use_session_filtering,
-                    persona_filtered=use_persona_filtering,
-                    decision_ms=decision_ms,
-                    provider=provider,
-                    preflight_short_circuit=False,
-                    event=event,
-                    cognitive_format_ms=format_ms,
-                ))
+                result = await self._execute_and_record(
+                    _RecallExecutionInput(
+                        req=req,
+                        decision=decision,
+                        signals=final_signals,
+                        memories=memories,
+                        prospective=prospective,
+                        cognitive_context=cognitive_context,
+                        query=actual_query,
+                        session_filtered=use_session_filtering,
+                        persona_filtered=use_persona_filtering,
+                        decision_ms=decision_ms,
+                        provider=provider,
+                        preflight_short_circuit=False,
+                        event=event,
+                        cognitive_format_ms=format_ms,
+                    )
+                )
                 injected_count = result.selected_count
 
         except asyncio.CancelledError:
@@ -557,19 +569,39 @@ class RecallHandler:
         get = self._config_manager.get
         return InjectionRoutingConfig(
             mode=RoutingMode(get("recall_engine.injection_routing_mode", "manual")),
-            manual_preset=PresetName(get("recall_engine.injection_manual_preset", "balanced")),
-            auto_fallback=PresetName(get("recall_engine.injection_auto_fallback_preset", "balanced")),
-            hybrid_base=PresetName(get("recall_engine.injection_hybrid_base_preset", "balanced")),
-            hybrid_min=PresetName(get("recall_engine.injection_hybrid_min_preset", "low_cost")),
-            hybrid_max=PresetName(get("recall_engine.injection_hybrid_max_preset", "quality")),
-            delivery_override=DeliveryMode(get("recall_engine.injection_delivery_override", "auto")),
-            preset_overrides_enabled=bool(get("recall_engine.injection_preset_overrides_enabled", False)),
+            manual_preset=PresetName(
+                get("recall_engine.injection_manual_preset", "balanced")
+            ),
+            auto_fallback=PresetName(
+                get("recall_engine.injection_auto_fallback_preset", "balanced")
+            ),
+            hybrid_base=PresetName(
+                get("recall_engine.injection_hybrid_base_preset", "balanced")
+            ),
+            hybrid_min=PresetName(
+                get("recall_engine.injection_hybrid_min_preset", "low_cost")
+            ),
+            hybrid_max=PresetName(
+                get("recall_engine.injection_hybrid_max_preset", "quality")
+            ),
+            delivery_override=DeliveryMode(
+                get("recall_engine.injection_delivery_override", "auto")
+            ),
+            preset_overrides_enabled=bool(
+                get("recall_engine.injection_preset_overrides_enabled", False)
+            ),
             budget_chars=int(get("recall_engine.injection_budget_chars", 0)),
             memory_max_chars=int(get("recall_engine.injection_memory_max_chars", 0)),
-            metadata_max_chars=int(get("recall_engine.injection_metadata_max_chars", 0)),
-            include_key_facts=bool(get("recall_engine.injection_include_key_facts", True)),
+            metadata_max_chars=int(
+                get("recall_engine.injection_metadata_max_chars", 0)
+            ),
+            include_key_facts=bool(
+                get("recall_engine.injection_include_key_facts", True)
+            ),
             include_topics=bool(get("recall_engine.injection_include_topics", True)),
-            include_participants=bool(get("recall_engine.injection_include_participants", False)),
+            include_participants=bool(
+                get("recall_engine.injection_include_participants", False)
+            ),
             compact_header=bool(get("recall_engine.injection_compact_header", True)),
             invalid_config_fallback=bool(
                 getattr(self._config_manager, "runtime_injection_fallback", False)
@@ -593,7 +625,11 @@ class RecallHandler:
             )
         intent = str(getattr(query_intent, "intent", "default") or "default")
         explicit = intent in {
-            "relationship", "relational", "temporal", "preference", "contextual"
+            "relationship",
+            "relational",
+            "temporal",
+            "preference",
+            "contextual",
         }
         return RequestSignals(
             query_intent=intent,
@@ -713,7 +749,7 @@ class RecallHandler:
         ]
         similarities: list[float] = []
         for index, first in enumerate(token_sets):
-            for second in token_sets[index + 1:]:
+            for second in token_sets[index + 1 :]:
                 union = first | second
                 similarities.append(len(first & second) / len(union) if union else 0.0)
         redundancy = sum(similarities) / len(similarities) if similarities else 0.0
@@ -754,12 +790,14 @@ class RecallHandler:
     ) -> InjectionExecutionResult:
         decision = execution.decision
         signals = execution.signals
-        cognitive_budget = int(self._config_manager.get(
-            "recall_engine.cognitive_context_budget_chars", 300
-        ))
-        prospective_budget = int(self._config_manager.get(
-            "recall_engine.proactive_plan_budget_chars", 240
-        ))
+        cognitive_budget = int(
+            self._config_manager.get(
+                "recall_engine.cognitive_context_budget_chars", 300
+            )
+        )
+        prospective_budget = int(
+            self._config_manager.get("recall_engine.proactive_plan_budget_chars", 240)
+        )
         prospective_context = self._prospective_context(execution.prospective)
         if execution.preflight_short_circuit and not prospective_context:
             configured_budget = (
@@ -835,9 +873,7 @@ class RecallHandler:
         result: InjectionExecutionResult,
     ) -> None:
         """记录不含 Provider 或记忆内容的注入结果摘要。"""
-        actual_delivery = (
-            result.actual_resolved_delivery or decision.resolved_delivery
-        )
+        actual_delivery = result.actual_resolved_delivery or decision.resolved_delivery
         outcome = result.outcome.value
         report_debug_event(
             "injection_completed",
@@ -874,9 +910,7 @@ class RecallHandler:
     ) -> None:
         if self._injection_recorder is None:
             return
-        actual_delivery = (
-            result.actual_resolved_delivery or decision.resolved_delivery
-        )
+        actual_delivery = result.actual_resolved_delivery or decision.resolved_delivery
         reason_codes = decision.reason_codes
         if (
             result.fallback_applied
@@ -896,7 +930,8 @@ class RecallHandler:
             outcome=result.outcome.value,
             primary_reason=(
                 decision.reason_codes[0]
-                if decision.reason_codes else "NO_USEFUL_CANDIDATES"
+                if decision.reason_codes
+                else "NO_USEFUL_CANDIDATES"
             ),
             reason_codes=reason_codes,
             trace_id=None,
@@ -956,20 +991,22 @@ class RecallHandler:
         # 从 MemoryEngine 读取实际阶段耗时
         timing = getattr(self._memory_engine, "_last_search_timing", None) or {}
         try:
-            self._perf_tracker.record({
-                "total_ms": max(0.0, total_ms),
-                "cache_hit": timing.get("cache_hit", False),
-                "cache_lookup_ms": timing.get("cache_lookup_ms", 0.0),
-                "bm25_ms": timing.get("bm25_ms", 0.0),
-                "vector_ms": timing.get("vector_ms", 0.0),
-                "graph_ms": timing.get("graph_ms", 0.0),
-                "rerank_ms": timing.get("rerank_ms", 0.0),
-                "merge_ms": timing.get("merge_ms", 0.0),
-                "boost_ms": timing.get("boost_ms", 0.0),
-                "chain_expand_ms": timing.get("chain_expand_ms", 0.0),
-                "injected_count": float(injected_count),
-                "filtered_count": float(filtered_count),
-            })
+            self._perf_tracker.record(
+                {
+                    "total_ms": max(0.0, total_ms),
+                    "cache_hit": timing.get("cache_hit", False),
+                    "cache_lookup_ms": timing.get("cache_lookup_ms", 0.0),
+                    "bm25_ms": timing.get("bm25_ms", 0.0),
+                    "vector_ms": timing.get("vector_ms", 0.0),
+                    "graph_ms": timing.get("graph_ms", 0.0),
+                    "rerank_ms": timing.get("rerank_ms", 0.0),
+                    "merge_ms": timing.get("merge_ms", 0.0),
+                    "boost_ms": timing.get("boost_ms", 0.0),
+                    "chain_expand_ms": timing.get("chain_expand_ms", 0.0),
+                    "injected_count": float(injected_count),
+                    "filtered_count": float(filtered_count),
+                }
+            )
         except Exception:
             logger.debug("[召回流程] 性能样本记录失败", exc_info=True)
 
@@ -1068,7 +1105,6 @@ class RecallHandler:
         sender_id = str(sender_id).strip()
         return sender_id or None
 
-
     @staticmethod
     def _finalize_recall_candidates(
         candidates: list[Any],
@@ -1112,7 +1148,6 @@ class RecallHandler:
         finalized = list(deduped.values())
         finalized.sort(key=rank_tuple, reverse=True)
         return finalized[:top_k]
-
 
     async def _build_cognitive_context(
         self,

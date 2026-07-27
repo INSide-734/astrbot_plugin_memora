@@ -1,10 +1,9 @@
 """MemoryExporter 和 MemoryImporter 测试 — JSONL / Markdown 导出和导入。"""
+
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,10 +11,10 @@ import pytest
 
 from core.managers.memory_exporter import MemoryExporter, MemoryImporter
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _sample_memories() -> list[dict]:
     return [
@@ -47,6 +46,7 @@ def _sample_memories() -> list[dict]:
 # ---------------------------------------------------------------------------
 # MemoryExporter - JSONL
 # ---------------------------------------------------------------------------
+
 
 class TestExporterJsonl:
     """JSONL export format and output validation."""
@@ -109,6 +109,7 @@ class TestExporterJsonl:
 # MemoryExporter - Markdown
 # ---------------------------------------------------------------------------
 
+
 class TestExporterMarkdown:
     """Markdown export format and output validation."""
 
@@ -151,6 +152,7 @@ class TestExporterMarkdown:
 # ---------------------------------------------------------------------------
 # MemoryExporter - edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestExporterEdgeCases:
     """Edge cases for exporter."""
@@ -202,6 +204,7 @@ class TestExporterEdgeCases:
 # MemoryImporter - content hash
 # ---------------------------------------------------------------------------
 
+
 class TestImporterContentHash:
     """Content hashing for dedup."""
 
@@ -228,6 +231,7 @@ class TestImporterContentHash:
 # ---------------------------------------------------------------------------
 # MemoryImporter - import_jsonl
 # ---------------------------------------------------------------------------
+
 
 class TestImporterImportJsonl:
     """JSONL import with dry run, dedup, and error handling."""
@@ -331,7 +335,9 @@ class TestImporterImportJsonl:
             "\n".join(json.dumps(r, ensure_ascii=False) for r in records),
             encoding="utf-8",
         )
-        result = await imp.import_jsonl(str(input_path), session_id="sess", persona_id="pers")
+        result = await imp.import_jsonl(
+            str(input_path), session_id="sess", persona_id="pers"
+        )
         assert result["imported"] == 1
         add_mock.assert_called_once()
 

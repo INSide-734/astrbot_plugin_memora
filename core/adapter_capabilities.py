@@ -148,7 +148,10 @@ class AdapterCapabilityContract:
             score = ScoreSemantics(**dict(score))
         if score is not None and not isinstance(score, ScoreSemantics):
             raise ValueError("score_semantics_invalid")
-        if score is not None and AdapterCapability.SCORING not in native | caller_enforced:
+        if (
+            score is not None
+            and AdapterCapability.SCORING not in native | caller_enforced
+        ):
             raise ValueError("score_capability_missing")
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "native", native)

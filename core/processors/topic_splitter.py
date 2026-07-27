@@ -69,14 +69,10 @@ class PromptSegmentationStrategy(TopicSegmentationStrategy):
     ) -> list[MemorySegment]:
         if "memories" in structured_data:
             raw_list: list[dict[str, Any]] = structured_data["memories"]
-            logger.debug(
-                f"[提示词分割] LLM 返回了 {len(raw_list)} 条独立记忆"
-            )
+            logger.debug(f"[提示词分割] LLM 返回了 {len(raw_list)} 条独立记忆")
         else:
             raw_list = [structured_data]
-            logger.debug(
-                "[提示词分割] 检测到旧格式，已包装为单条记忆"
-            )
+            logger.debug("[提示词分割] 检测到旧格式，已包装为单条记忆")
 
         segments: list[MemorySegment] = []
         for mem in raw_list:
@@ -290,7 +286,9 @@ class TopicChunkingStrategy(TopicSegmentationStrategy):
 
         # 生成分块
         chunks: list[list] = []
-        for start, end in zip(boundaries, boundaries[1:] + [len(messages)], strict=False):
+        for start, end in zip(
+            boundaries, boundaries[1:] + [len(messages)], strict=False
+        ):
             if end - start >= self._min_chunk_size:
                 chunks.append(list(messages[start:end]))
             elif chunks:
@@ -300,7 +298,7 @@ class TopicChunkingStrategy(TopicSegmentationStrategy):
                 chunks.append(list(messages[start:end]))
 
         logger.debug(
-                "[话题切块] %d 条消息 -> %d 个分块（阈值=%.2f）",
+            "[话题切块] %d 条消息 -> %d 个分块（阈值=%.2f）",
             len(messages),
             len(chunks),
             self._threshold,
@@ -324,9 +322,7 @@ class TopicChunkingStrategy(TopicSegmentationStrategy):
             if vectors and len(vectors) == len(texts):
                 return [list(v) for v in vectors]
         except Exception:
-            logger.warning(
-                "[话题切块] 向量计算失败，改用伪造向量", exc_info=True
-            )
+            logger.warning("[话题切块] 向量计算失败，改用伪造向量", exc_info=True)
         return _dummy_embeddings(texts)
 
 
@@ -380,9 +376,7 @@ class TwoStageLLMStrategy(TopicSegmentationStrategy):
                 line_count=line_count,
             )
         except Exception:
-            logger.warning(
-                "[两阶段分割] 第一阶段话题识别失败", exc_info=True
-            )
+            logger.warning("[两阶段分割] 第一阶段话题识别失败", exc_info=True)
         return []
 
     async def segment(
@@ -554,7 +548,11 @@ def _parse_topic_identification_response(
             continue
         topic = str(item.get("topic") or "").strip()
         line_range = item.get("line_range")
-        if not topic or not isinstance(line_range, (list, tuple)) or len(line_range) != 2:
+        if (
+            not topic
+            or not isinstance(line_range, (list, tuple))
+            or len(line_range) != 2
+        ):
             continue
         try:
             start = int(line_range[0])

@@ -11,13 +11,12 @@ import pytest
 
 from core.schedulers.backfill_scheduler import BackfillScheduler
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-class TestBackfillScheduler:
 
+class TestBackfillScheduler:
     @staticmethod
     def _make_scheduler(engine=None, config=None, embed_fn=None):
         return BackfillScheduler(
@@ -61,11 +60,13 @@ class TestBackfillScheduler:
 
     def test_config_overrides(self):
         """Config dict values override defaults."""
-        s = self._make_scheduler(config={
-            "enabled": False,
-            "batch_size": 10,
-            "max_backfill_per_run": 100,
-        })
+        s = self._make_scheduler(
+            config={
+                "enabled": False,
+                "batch_size": 10,
+                "max_backfill_per_run": 100,
+            }
+        )
         assert s._enabled is False
         assert s._batch_size == 10
         assert s._max_per_run == 100
@@ -254,13 +255,24 @@ class TestBackfillScheduler:
     async def test_fetch_legacy_batch_filters_by_schema_version(self):
         """Only docs with schema_version < v3 and >1 key_facts are returned."""
         engine = MagicMock()
-        ds = self._make_doc_storage([
-            {"id": 1, "metadata": self._legacy_meta("v2", ["a", "b", "c"])},
-            {"id": 2, "metadata": self._legacy_meta("v3", ["d", "e", "f"])},  # v3, skip
-            {"id": 3, "metadata": self._legacy_meta("v1", ["g"])},             # only 1 fact, skip
-            {"id": 4, "metadata": self._legacy_meta("v2", ["h", "i", "j"])},
-            {"id": 5, "metadata": self._legacy_meta("", ["k", "l"])},           # no version, keep
-        ])
+        ds = self._make_doc_storage(
+            [
+                {"id": 1, "metadata": self._legacy_meta("v2", ["a", "b", "c"])},
+                {
+                    "id": 2,
+                    "metadata": self._legacy_meta("v3", ["d", "e", "f"]),
+                },  # v3, skip
+                {
+                    "id": 3,
+                    "metadata": self._legacy_meta("v1", ["g"]),
+                },  # only 1 fact, skip
+                {"id": 4, "metadata": self._legacy_meta("v2", ["h", "i", "j"])},
+                {
+                    "id": 5,
+                    "metadata": self._legacy_meta("", ["k", "l"]),
+                },  # no version, keep
+            ]
+        )
         engine.faiss_db = MagicMock()
         engine.faiss_db.document_storage = ds
 
@@ -276,11 +288,13 @@ class TestBackfillScheduler:
     async def test_fetch_legacy_batch_respects_checkpoint(self):
         """Documents with id <= checkpoint are skipped."""
         engine = MagicMock()
-        ds = self._make_doc_storage([
-            {"id": 5, "metadata": self._legacy_meta("v2", ["a", "b", "c"])},
-            {"id": 10, "metadata": self._legacy_meta("v2", ["d", "e", "f"])},
-            {"id": 15, "metadata": self._legacy_meta("v2", ["g", "h", "i"])},
-        ])
+        ds = self._make_doc_storage(
+            [
+                {"id": 5, "metadata": self._legacy_meta("v2", ["a", "b", "c"])},
+                {"id": 10, "metadata": self._legacy_meta("v2", ["d", "e", "f"])},
+                {"id": 15, "metadata": self._legacy_meta("v2", ["g", "h", "i"])},
+            ]
+        )
         engine.faiss_db = MagicMock()
         engine.faiss_db.document_storage = ds
 
@@ -297,9 +311,11 @@ class TestBackfillScheduler:
     async def test_fetch_legacy_batch_uses_document_storage_after_id(self):
         engine = MagicMock()
         ds = MagicMock()
-        ds.get_documents_after_id = AsyncMock(return_value=[
-            {"id": 12, "metadata": self._legacy_meta("v2", ["a", "b", "c"])},
-        ])
+        ds.get_documents_after_id = AsyncMock(
+            return_value=[
+                {"id": 12, "metadata": self._legacy_meta("v2", ["a", "b", "c"])},
+            ]
+        )
         engine.faiss_db = MagicMock()
         engine.faiss_db.document_storage = ds
         engine.db_connection = None
@@ -371,11 +387,19 @@ class TestBackfillScheduler:
     async def test_fetch_legacy_batch_handles_string_metadata(self):
         """String metadata is JSON-parsed before inspection."""
         engine = MagicMock()
-        ds = self._make_doc_storage([
-            {"id": 1, "metadata": json.dumps(self._legacy_meta("v2", ["a", "b", "c"]))},
-            {"id": 2, "metadata": json.dumps(self._legacy_meta("v3", ["d", "e", "f"]))},
-            {"id": 3, "metadata": json.dumps(self._legacy_meta("v1", ["g", "h"]))},
-        ])
+        ds = self._make_doc_storage(
+            [
+                {
+                    "id": 1,
+                    "metadata": json.dumps(self._legacy_meta("v2", ["a", "b", "c"])),
+                },
+                {
+                    "id": 2,
+                    "metadata": json.dumps(self._legacy_meta("v3", ["d", "e", "f"])),
+                },
+                {"id": 3, "metadata": json.dumps(self._legacy_meta("v1", ["g", "h"]))},
+            ]
+        )
         engine.faiss_db = MagicMock()
         engine.faiss_db.document_storage = ds
 
@@ -390,9 +414,11 @@ class TestBackfillScheduler:
     async def test_fetch_legacy_batch_handles_invalid_json_metadata(self):
         """Invalid JSON metadata defaults to empty dict and is skipped."""
         engine = MagicMock()
-        ds = self._make_doc_storage([
-            {"id": 1, "metadata": "not valid json {{{"},
-        ])
+        ds = self._make_doc_storage(
+            [
+                {"id": 1, "metadata": "not valid json {{{"},
+            ]
+        )
         engine.faiss_db = MagicMock()
         engine.faiss_db.document_storage = ds
 
@@ -436,10 +462,18 @@ class TestBackfillScheduler:
 
         s = self._make_scheduler(engine=engine)
         s._cluster_strategy = MagicMock()
-        s._cluster_strategy.segment = AsyncMock(return_value=[
-            MagicMock(content="same", importance=0.5, metadata={}, key_facts=["a", "b"],
-                      topics=[], atoms=[])
-        ])
+        s._cluster_strategy.segment = AsyncMock(
+            return_value=[
+                MagicMock(
+                    content="same",
+                    importance=0.5,
+                    metadata={},
+                    key_facts=["a", "b"],
+                    topics=[],
+                    atoms=[],
+                )
+            ]
+        )
 
         meta = self._legacy_meta(key_facts=["a", "b"])
         await s._backfill_one(1, meta)
@@ -458,12 +492,14 @@ class TestBackfillScheduler:
         engine.delete_memory = AsyncMock()
 
         seg1 = MemorySegment(
-            content="topic A", importance=0.6, metadata={},
-            key_facts=["a1", "a2"], topics=[]
+            content="topic A",
+            importance=0.6,
+            metadata={},
+            key_facts=["a1", "a2"],
+            topics=[],
         )
         seg2 = MemorySegment(
-            content="topic B", importance=0.8, metadata={},
-            key_facts=["b1"], topics=[]
+            content="topic B", importance=0.8, metadata={}, key_facts=["b1"], topics=[]
         )
 
         s = self._make_scheduler(engine=engine)
@@ -483,10 +519,22 @@ class TestBackfillScheduler:
         engine.add_memory = AsyncMock(side_effect=[101, Exception("write failed")])
         engine.delete_memory = AsyncMock()
 
-        seg1 = MagicMock(content="good", importance=0.5, metadata={}, key_facts=[],
-                         topics=[], atoms=[])
-        seg2 = MagicMock(content="bad", importance=0.5, metadata={}, key_facts=[],
-                         topics=[], atoms=[])
+        seg1 = MagicMock(
+            content="good",
+            importance=0.5,
+            metadata={},
+            key_facts=[],
+            topics=[],
+            atoms=[],
+        )
+        seg2 = MagicMock(
+            content="bad",
+            importance=0.5,
+            metadata={},
+            key_facts=[],
+            topics=[],
+            atoms=[],
+        )
 
         s = self._make_scheduler(engine=engine)
         s._cluster_strategy = MagicMock()
@@ -507,16 +555,31 @@ class TestBackfillScheduler:
         engine.add_memory = AsyncMock(return_value=999)
         engine.delete_memory = AsyncMock()
 
-        seg = MemorySegment(content="new", importance=0.5, metadata={"existing": "val"},
-                            key_facts=["x"], topics=[], atoms=[])
+        seg = MemorySegment(
+            content="new",
+            importance=0.5,
+            metadata={"existing": "val"},
+            key_facts=["x"],
+            topics=[],
+            atoms=[],
+        )
 
         s = self._make_scheduler(engine=engine)
         s._cluster_strategy = MagicMock()
         # Return 2 segments so it takes the delete+insert path (not update_metadata)
-        s._cluster_strategy.segment = AsyncMock(return_value=[seg, MagicMock(
-            content="other", importance=0.3, metadata={}, key_facts=["y"],
-            topics=[], atoms=[]
-        )])
+        s._cluster_strategy.segment = AsyncMock(
+            return_value=[
+                seg,
+                MagicMock(
+                    content="other",
+                    importance=0.3,
+                    metadata={},
+                    key_facts=["y"],
+                    topics=[],
+                    atoms=[],
+                ),
+            ]
+        )
 
         meta = self._legacy_meta(key_facts=["x", "y"])
         await s._backfill_one(42, meta)
@@ -537,10 +600,22 @@ class TestBackfillScheduler:
         engine.hybrid_retriever = MagicMock()
         engine.hybrid_retriever.update_metadata = AsyncMock(return_value=True)
 
-        seg = MemorySegment(content="x", importance=0.5, metadata={},
-                            key_facts=["a"], topics=[], atoms=[])
-        seg2 = MagicMock(content="y", importance=0.5, metadata={}, key_facts=["b"],
-                         topics=[], atoms=[])
+        seg = MemorySegment(
+            content="x",
+            importance=0.5,
+            metadata={},
+            key_facts=["a"],
+            topics=[],
+            atoms=[],
+        )
+        seg2 = MagicMock(
+            content="y",
+            importance=0.5,
+            metadata={},
+            key_facts=["b"],
+            topics=[],
+            atoms=[],
+        )
 
         s = self._make_scheduler(engine=engine)
         s._cluster_strategy = MagicMock()
@@ -570,10 +645,22 @@ class TestBackfillScheduler:
         engine.add_memory = AsyncMock(return_value=1)
         engine.delete_memory = AsyncMock()
 
-        seg = MemorySegment(content="x", importance=0.5, metadata={},
-                            key_facts=["a"], topics=[], atoms=[])
-        seg2 = MagicMock(content="y", importance=0.5, metadata={}, key_facts=["b"],
-                         topics=[], atoms=[])
+        seg = MemorySegment(
+            content="x",
+            importance=0.5,
+            metadata={},
+            key_facts=["a"],
+            topics=[],
+            atoms=[],
+        )
+        seg2 = MagicMock(
+            content="y",
+            importance=0.5,
+            metadata={},
+            key_facts=["b"],
+            topics=[],
+            atoms=[],
+        )
 
         s = self._make_scheduler(engine=engine)
         s._cluster_strategy = MagicMock()
@@ -597,10 +684,22 @@ class TestBackfillScheduler:
         engine.add_memory = AsyncMock(return_value=1)
         engine.delete_memory = AsyncMock()
 
-        seg = MemorySegment(content="x", importance=0.5, metadata={},
-                            key_facts=["a"], topics=[], atoms=[])
-        seg2 = MagicMock(content="y", importance=0.5, metadata={}, key_facts=["b"],
-                         topics=[], atoms=[])
+        seg = MemorySegment(
+            content="x",
+            importance=0.5,
+            metadata={},
+            key_facts=["a"],
+            topics=[],
+            atoms=[],
+        )
+        seg2 = MagicMock(
+            content="y",
+            importance=0.5,
+            metadata={},
+            key_facts=["b"],
+            topics=[],
+            atoms=[],
+        )
 
         s = self._make_scheduler(engine=engine)
         s._cluster_strategy = MagicMock()
@@ -622,10 +721,12 @@ class TestBackfillScheduler:
     async def test_fetch_batch_null_doc_id_skipped(self):
         """Documents with id=None are skipped."""
         engine = MagicMock()
-        ds = self._make_doc_storage([
-            {"id": None, "metadata": self._legacy_meta("v2", ["a", "b", "c"])},
-            {"id": 5, "metadata": self._legacy_meta("v2", ["d", "e", "f"])},
-        ])
+        ds = self._make_doc_storage(
+            [
+                {"id": None, "metadata": self._legacy_meta("v2", ["a", "b", "c"])},
+                {"id": 5, "metadata": self._legacy_meta("v2", ["d", "e", "f"])},
+            ]
+        )
         engine.faiss_db = MagicMock()
         engine.faiss_db.document_storage = ds
 

@@ -52,9 +52,7 @@ async def test_runtime_write_and_quality_api_share_one_scorer(
             "injection_decision_recorder": MagicMock(),
         }
     )
-    initializer._create_prompt_protection_service = MagicMock(
-        return_value=MagicMock()
-    )
+    initializer._create_prompt_protection_service = MagicMock(return_value=MagicMock())
     initializer._initialize_cognitive_components = AsyncMock()
 
     with patch("core.plugin_initializer.report_debug_event"):

@@ -9,7 +9,6 @@ from typing import Any
 
 from .models import ReviewItem, ReviewReason, ReviewSeverity
 
-
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+|[\u3400-\u9fff]")
 _VISIBLE_RE = re.compile(r"\S")
@@ -89,7 +88,9 @@ class ReviewDetector:
         if quality_stats is None:
             return []
         value = quality_stats.get(key, [])
-        if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        if isinstance(value, Sequence) and not isinstance(
+            value, str | bytes | bytearray
+        ):
             return value
         return []
 
@@ -151,7 +152,9 @@ class ReviewDetector:
 
     def _is_sensitive(self, content: str) -> bool:
         folded_content = content.casefold()
-        return any(marker.casefold() in folded_content for marker in self.sensitive_markers)
+        return any(
+            marker.casefold() in folded_content for marker in self.sensitive_markers
+        )
 
     @staticmethod
     def _is_noisy(content: str) -> bool:

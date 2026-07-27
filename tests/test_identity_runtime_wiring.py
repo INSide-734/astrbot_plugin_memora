@@ -92,6 +92,7 @@ def recall_case() -> SimpleNamespace:
     """构造可执行完整召回入口的最小隔离场景。"""
 
     from astrbot.api.platform import MessageType
+
     from core.handlers.recall_handler import RecallHandler
 
     config = MagicMock()
@@ -231,6 +232,7 @@ async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> No
     """群捕获的去重、消息写入和用户级认知投喂使用 QQ canonical ID。"""
 
     from astrbot.api.platform import MessageType
+
     from core.event_handler import EventHandler
     from core.identity.runtime import ProtocolIdentityRuntime
 
@@ -268,13 +270,23 @@ async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> No
     await handler.handle_all_group_messages(event)
 
     runtime.prepare.assert_awaited_once()
-    assert handler._dedup.build_dedup_key.await_args.kwargs["sender_id_override"] == "10001"
-    assert conversation.add_message_from_event.await_args.kwargs["identity"].canonical_user_id == "10001"
+    assert (
+        handler._dedup.build_dedup_key.await_args.kwargs["sender_id_override"]
+        == "10001"
+    )
+    assert (
+        conversation.add_message_from_event.await_args.kwargs[
+            "identity"
+        ].canonical_user_id
+        == "10001"
+    )
     assert relation.apply_delta.await_args.kwargs["from_user"] == "10001"
 
 
 @pytest.mark.asyncio
-async def test_conflict_recall_skips_private_user_write_but_searches_without_user_id() -> None:
+async def test_conflict_recall_skips_private_user_write_but_searches_without_user_id() -> (
+    None
+):
     """冲突身份不写私聊用户消息，但召回仍执行且不带用户级过滤。"""
 
     case = recall_case()
@@ -303,7 +315,10 @@ async def test_trusted_recall_uses_canonical_id_and_persists_identity() -> None:
         identity=identity,
     )
 
-    assert case.conversation.add_message_from_event.await_args.kwargs["identity"] is identity
+    assert (
+        case.conversation.add_message_from_event.await_args.kwargs["identity"]
+        is identity
+    )
     assert case.engine.search_memories.await_args.kwargs["user_id"] == "10001"
 
 
@@ -320,7 +335,10 @@ async def test_unsupported_recall_preserves_generic_sender_behavior() -> None:
         identity=identity,
     )
 
-    assert case.conversation.add_message_from_event.await_args.kwargs["identity"] is identity
+    assert (
+        case.conversation.add_message_from_event.await_args.kwargs["identity"]
+        is identity
+    )
     assert case.engine.search_memories.await_args.kwargs["user_id"] == "legacy-name"
 
 
@@ -342,6 +360,7 @@ async def test_conflict_group_capture_skips_user_message_and_cognitive_state() -
     """冲突群身份不写用户消息，也不会更新用户级认知状态。"""
 
     from astrbot.api.platform import MessageType
+
     from core.event_handler import EventHandler
     from core.identity.runtime import ProtocolIdentityRuntime
 
@@ -377,7 +396,9 @@ async def test_conflict_group_capture_skips_user_message_and_cognitive_state() -
 
 
 @pytest.mark.asyncio
-async def test_reflection_passes_identity_and_uses_canonical_affection_user(monkeypatch) -> None:
+async def test_reflection_passes_identity_and_uses_canonical_affection_user(
+    monkeypatch,
+) -> None:
     """助手写入保留身份作用域，用户级好感度只使用可信 canonical QQ。"""
 
     from core.handlers.reflection_handler import ReflectionHandler
@@ -423,7 +444,9 @@ async def test_reflection_passes_identity_and_uses_canonical_affection_user(monk
 
 
 @pytest.mark.asyncio
-async def test_factory_identity_store_failure_returns_resolver_only_runtime(monkeypatch, tmp_path) -> None:
+async def test_factory_identity_store_failure_returns_resolver_only_runtime(
+    monkeypatch, tmp_path
+) -> None:
     """身份表初始化普通失败时工厂继续启动并返回解析器降级运行时。"""
 
     from core.identity.runtime import ProtocolIdentityRuntime
@@ -433,7 +456,10 @@ async def test_factory_identity_store_failure_returns_resolver_only_runtime(monk
     store = MagicMock()
     store.initialize = AsyncMock(side_effect=RuntimeError("private"))
     store.close = AsyncMock()
-    monkeypatch.setattr("core.initializer.component_factory.ProtocolIdentityStore", MagicMock(return_value=store))
+    monkeypatch.setattr(
+        "core.initializer.component_factory.ProtocolIdentityStore",
+        MagicMock(return_value=store),
+    )
 
     manager = MagicMock()
     runtime = await factory._build_identity_runtime(manager)
@@ -446,7 +472,9 @@ async def test_factory_identity_store_failure_returns_resolver_only_runtime(monk
 
 
 @pytest.mark.asyncio
-async def test_identity_store_partial_initialization_remains_closable(monkeypatch, tmp_path) -> None:
+async def test_identity_store_partial_initialization_remains_closable(
+    monkeypatch, tmp_path
+) -> None:
     """连接成功但建表准备失败时，Store 仍能释放部分初始化连接。"""
 
     from core.storage.protocol_identity_store import ProtocolIdentityStore
@@ -471,7 +499,9 @@ async def test_identity_store_partial_initialization_remains_closable(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_factory_identity_runtime_propagates_initialization_cancellation(monkeypatch, tmp_path) -> None:
+async def test_factory_identity_runtime_propagates_initialization_cancellation(
+    monkeypatch, tmp_path
+) -> None:
     """工厂不能把身份 Store 初始化取消误降级为普通解析模式。"""
 
     from core.initializer.component_factory import ComponentFactory
@@ -492,7 +522,9 @@ async def test_factory_identity_runtime_propagates_initialization_cancellation(m
 
 
 @pytest.mark.asyncio
-async def test_factory_identity_runtime_builds_service_and_closes_owned_store(monkeypatch, tmp_path) -> None:
+async def test_factory_identity_runtime_builds_service_and_closes_owned_store(
+    monkeypatch, tmp_path
+) -> None:
     """正常工厂运行时绑定服务和同步器，并由运行时负责关闭 Store。"""
 
     from core.initializer.component_factory import ComponentFactory
@@ -518,7 +550,9 @@ async def test_factory_identity_runtime_builds_service_and_closes_owned_store(mo
 
 
 @pytest.mark.asyncio
-async def test_initializer_closes_identity_runtime_without_event_handler(tmp_path) -> None:
+async def test_initializer_closes_identity_runtime_without_event_handler(
+    tmp_path,
+) -> None:
     """未创建事件处理器时，初始化器关闭链仍释放身份 Store。"""
 
     from core.identity.runtime import ProtocolIdentityRuntime

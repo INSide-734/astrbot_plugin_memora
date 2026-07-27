@@ -7,8 +7,6 @@ import importlib
 import sys
 from types import ModuleType
 
-import pytest
-
 
 def test_metrics_registry_and_well_known_collectors_exist() -> None:
     import core.monitoring.metrics as metrics
@@ -109,6 +107,7 @@ def test_injection_payload_chars_uses_character_buckets_without_labels() -> None
     assert bucket_bounds[0] == 0.0
     assert bucket_bounds[-1] == 12000.0
     assert labelnames == ()
+
 
 def test_stub_metrics_degrade_gracefully_without_prometheus() -> None:
     module_name = "core.monitoring.metrics"

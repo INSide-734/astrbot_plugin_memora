@@ -69,9 +69,7 @@ def test_conflicting_sources_for_same_canonical_participant_are_rejected() -> No
         "identity_label": "Forged:member-7",
     }
 
-    context = build_memory_identity_context(
-        [_message(first), _message(conflicting)]
-    )
+    context = build_memory_identity_context([_message(first), _message(conflicting)])
 
     assert context.metadata() == {}
     assert context.prompt_constraint() == ""

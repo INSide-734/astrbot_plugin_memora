@@ -68,6 +68,7 @@ RELATION_DIFFICULTY: dict[str, float] = {
 # 辅助方法
 # ---------------------------------------------------------------------------
 
+
 def get_relation_category(relation_type: str) -> str | None:
     """返回 *relation_type* 对应的分类名；未知时返回 *None*。"""
     for cat, members in RELATION_CATEGORIES.items():

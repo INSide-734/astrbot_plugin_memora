@@ -21,7 +21,6 @@ from ..base.entity_editing import (
 from .jargon_store import JargonStore, _meaning_revision_payload
 from .models import JargonMeaning
 
-
 _CREATE_FIELDS = frozenset(
     {
         "term",
@@ -227,9 +226,7 @@ class JargonAdminService:
         if "confidence" in changes:
             confidence = finite_float(changes["confidence"], field="confidence")
             if not 0.0 <= confidence <= 1.0:
-                raise EntityValidationError(
-                    {"confidence": "必须在 0.0 到 1.0 之间"}
-                )
+                raise EntityValidationError({"confidence": "必须在 0.0 到 1.0 之间"})
             normalized["confidence"] = confidence
         for field in ("is_jargon", "is_confirmed", "is_global"):
             if field in changes:
@@ -311,12 +308,8 @@ class JargonAdminService:
             raise EntityValidationError({name: "字段不可写" for name in unknown})
 
         term = required_text(fields.get("term"), field="term", maximum=128)
-        group_id = required_text(
-            fields.get("group_id"), field="group_id", maximum=128
-        )
-        meaning = required_text(
-            fields.get("meaning"), field="meaning", maximum=4096
-        )
+        group_id = required_text(fields.get("group_id"), field="group_id", maximum=128)
+        meaning = required_text(fields.get("meaning"), field="meaning", maximum=4096)
         confidence = finite_float(fields.get("confidence"), field="confidence")
         if not 0.0 <= confidence <= 1.0:
             raise EntityValidationError({"confidence": "必须在 0.0 到 1.0 之间"})

@@ -9,7 +9,6 @@ from typing import Any
 
 from ..adapter_capabilities import AdapterCapability, adapter_contract
 
-
 RETRIEVAL_VARIANT_NAMES = (
     "baseline",
     "A",
@@ -133,7 +132,9 @@ class RetrievalAblationController:
                 else "available"
             )
         if name in _EVOLUTION_MODES:
-            evolution = config.get("memory_evolution") if isinstance(config, dict) else None
+            evolution = (
+                config.get("memory_evolution") if isinstance(config, dict) else None
+            )
             if not isinstance(evolution, dict):
                 return "missing_engine_config"
             current_mode = str(evolution.get("mode", "disabled"))
@@ -336,10 +337,9 @@ class _EmbeddingSimilarityAblationReranker:
             self._record_failure("missing_document_vector_access")
             return fallback[:k]
         for result, similarity in similarities:
-            result.final_score = (
-                self._weight * similarity
-                + (1.0 - self._weight) * float(result.final_score)
-            )
+            result.final_score = self._weight * similarity + (
+                1.0 - self._weight
+            ) * float(result.final_score)
         self._success_count += 1
         results.sort(key=lambda item: item.final_score, reverse=True)
         return results[:k]
@@ -391,6 +391,7 @@ def _same_integer(value: Any, expected: int) -> bool:
         return int(value) == expected
     except (TypeError, ValueError):
         return False
+
 
 def _snapshot_engine(engine: Any) -> Any:
     """复制评测会修改的组件，并共享只读 Store/索引后端。"""

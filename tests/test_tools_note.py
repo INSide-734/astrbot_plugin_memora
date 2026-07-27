@@ -8,7 +8,6 @@ import pytest
 
 from core.tools.note_tools import NoteReadTool, NoteSearchTool, NoteWriteTool
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -56,8 +55,12 @@ class TestNoteSearchTool:
     @pytest.mark.asyncio
     async def test_search_happy_path_returns_formatted_list(self):
         """当 note_manager.search() returns notes, tool should format them as text."""
-        note1 = _make_mock_note(1, "Shopping List", "Buy milk, eggs, bread.", version=2, tags=["shopping"])
-        note2 = _make_mock_note(2, "Meeting Notes", "Discussed Q3 roadmap.", version=1, tags=["work"])
+        note1 = _make_mock_note(
+            1, "Shopping List", "Buy milk, eggs, bread.", version=2, tags=["shopping"]
+        )
+        note2 = _make_mock_note(
+            2, "Meeting Notes", "Discussed Q3 roadmap.", version=1, tags=["work"]
+        )
 
         mock_mgr = MagicMock()
         mock_mgr.search = AsyncMock(return_value=([note1, note2], 2))
@@ -122,7 +125,9 @@ class TestNoteReadTool:
     @pytest.mark.asyncio
     async def test_read_happy_path_returns_full_note(self):
         """当 note_manager.get_note() returns a note, tool should format as markdown-like."""
-        note = _make_mock_note(3, "My Note", "Full content\nLine 2.", version=3, tags=["a", "b"])
+        note = _make_mock_note(
+            3, "My Note", "Full content\nLine 2.", version=3, tags=["a", "b"]
+        )
 
         mock_mgr = MagicMock()
         mock_mgr.get_note = AsyncMock(return_value=note)
@@ -198,7 +203,9 @@ class TestNoteWriteTool:
     @pytest.mark.asyncio
     async def test_write_update_existing_note(self):
         """当 note_id is provided, tool should update the existing note."""
-        updated_note = _make_mock_note(7, "Updated Title", "New content", version=4, tags=["updated"])
+        updated_note = _make_mock_note(
+            7, "Updated Title", "New content", version=4, tags=["updated"]
+        )
 
         mock_mgr = MagicMock()
         mock_mgr.update_note = AsyncMock(return_value=updated_note)

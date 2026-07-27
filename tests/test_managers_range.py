@@ -8,7 +8,6 @@ import pytest
 
 from core.managers.range_and_metadata import RangeAndMetadataMixin
 
-
 # ---------------------------------------------------------------------------
 # Concrete test class
 # ---------------------------------------------------------------------------

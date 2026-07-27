@@ -16,12 +16,11 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
+from ..models.temporal import canonical_visible_at, reference_time_key
 from ..retrieval.emotion_scorer import compute_emotion_boost, emotion_similarity
 from ..retrieval.rrf_fusion import HybridResult
 from ..retrieval.seasonal_recall import seasonal_boost
 from ..utils.number_utils import safe_float
-from ..models.temporal import reference_time_key
-from ..models.temporal import canonical_visible_at
 
 if TYPE_CHECKING:
     pass
@@ -114,10 +113,14 @@ class RetrievalOptimizer:
         return str(value or "").casefold().strip()
 
     @classmethod
-    def _normalize_sequence(cls, values: list[Any] | tuple[Any, ...] | None) -> tuple[str, ...]:
+    def _normalize_sequence(
+        cls, values: list[Any] | tuple[Any, ...] | None
+    ) -> tuple[str, ...]:
         if not values:
             return ()
-        return tuple(sorted(cls._normalize_string(v) for v in values if str(v or "").strip()))
+        return tuple(
+            sorted(cls._normalize_string(v) for v in values if str(v or "").strip())
+        )
 
     @classmethod
     def _query_intent_cache_key(cls, query_intent: Any | None) -> tuple[Any, ...]:
@@ -125,7 +128,9 @@ class RetrievalOptimizer:
             return ()
         entities = getattr(query_intent, "entities", None)
         try:
-            entities_key = json.dumps(entities or {}, sort_keys=True, ensure_ascii=False)
+            entities_key = json.dumps(
+                entities or {}, sort_keys=True, ensure_ascii=False
+            )
         except (TypeError, ValueError):
             entities_key = str(entities or "")
         return (
@@ -354,11 +359,15 @@ class RetrievalOptimizer:
 
         before_scores = self._score_snapshot(filtered)
         filtered = self._apply_emotion_boost(filtered, emotion_context)
-        self._append_boost_trace_stage(trace_by_id, "emotion_boost", before_scores, filtered)
+        self._append_boost_trace_stage(
+            trace_by_id, "emotion_boost", before_scores, filtered
+        )
 
         before_scores = self._score_snapshot(filtered)
         filtered = self._apply_seasonal_boost(filtered)
-        self._append_boost_trace_stage(trace_by_id, "seasonal_boost", before_scores, filtered)
+        self._append_boost_trace_stage(
+            trace_by_id, "seasonal_boost", before_scores, filtered
+        )
 
         filtered.sort(key=lambda x: x.final_score, reverse=True)
         self._finalize_boost_trace(trace_by_id, filtered)
@@ -542,7 +551,7 @@ class RetrievalOptimizer:
 
     @staticmethod
     def _apply_emotion_boost(
-            results: list[HybridResult],
+        results: list[HybridResult],
         emotion_context: list[str] | None,
     ) -> list[HybridResult]:
         if not emotion_context:
@@ -570,7 +579,7 @@ class RetrievalOptimizer:
 
     @staticmethod
     def _apply_seasonal_boost(
-            results: list[HybridResult],
+        results: list[HybridResult],
     ) -> list[HybridResult]:
         for r in results:
             metadata = r.metadata or {}
@@ -1043,7 +1052,9 @@ class RetrievalOptimizer:
         narrative = "".join(parts)
         if len(narrative) > max_length:
             cutoff = narrative.rfind("。", 0, max_length)
-            narrative = narrative[: cutoff + 1] if cutoff > 0 else narrative[:max_length]
+            narrative = (
+                narrative[: cutoff + 1] if cutoff > 0 else narrative[:max_length]
+            )
 
         return narrative
 

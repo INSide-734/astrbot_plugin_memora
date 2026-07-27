@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import aiosqlite
-
-from astrbot.api import logger
-
 from .graph_canvas import GraphCanvasMixin
 from .graph_crud import GraphCRUDMixin
 from .graph_delete import GraphDeleteMixin

@@ -5,18 +5,19 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_PATH = REPO_ROOT / "scripts" / "benchmark_recall_cost.py"
 
 
 def _load_benchmark_module():
-    spec = importlib.util.spec_from_file_location("benchmark_recall_cost", BENCHMARK_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "benchmark_recall_cost", BENCHMARK_PATH
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -84,9 +85,7 @@ def test_handler_benchmark_does_not_configure_the_removed_legacy_key() -> None:
         support_path.read_text(encoding="utf-8") if support_path.exists() else ""
     )
 
-    assert '"recall_engine.injection_method"' not in (
-        benchmark_source + support_source
-    )
+    assert '"recall_engine.injection_method"' not in (benchmark_source + support_source)
 
 
 def test_recorded_baseline_rejects_a_mismatched_source_commit(

@@ -29,9 +29,8 @@ from core.social.models import (
     get_difficulty,
     get_relation_category,
 )
-from core.social.relation_store import RelationStore
 from core.social.relation_manager import RelationManager
-
+from core.social.relation_store import RelationStore
 
 # ============================================================================
 # Helpers
@@ -58,7 +57,12 @@ class TestRelationCategories:
 
     def test_six_categories_exist(self):
         assert set(RELATION_CATEGORIES) == {
-            "blood", "geographic", "career", "emotional", "interest", "intimacy",
+            "blood",
+            "geographic",
+            "career",
+            "emotional",
+            "interest",
+            "intimacy",
         }
 
     def test_blood_contains_kinship(self):
@@ -114,8 +118,7 @@ class TestRelationDifficulty:
         for cat, members in RELATION_CATEGORIES.items():
             for rel_type in members:
                 assert rel_type in RELATION_DIFFICULTY, (
-                    f"{rel_type} (from {cat}) missing from "
-                    "RELATION_DIFFICULTY"
+                    f"{rel_type} (from {cat}) missing from RELATION_DIFFICULTY"
                 )
 
 
@@ -220,8 +223,12 @@ class TestRelationStoreCRUD:
     async def test_upsert_and_get(self, tmp_db_path):
         store = await _create_store(tmp_db_path)
         rel = SocialRelation(
-            from_user="u1", to_user="u2", relation_type="colleague",
-            strength=0.4, frequency=3, last_interaction=time.time(),
+            from_user="u1",
+            to_user="u2",
+            relation_type="colleague",
+            strength=0.4,
+            frequency=3,
+            last_interaction=time.time(),
             group_id="g1",
         )
         await store.upsert_relation(rel)
@@ -241,8 +248,12 @@ class TestRelationStoreCRUD:
     async def test_upsert_overwrites(self, tmp_db_path):
         store = await _create_store(tmp_db_path)
         rel = SocialRelation(
-            from_user="u1", to_user="u2", relation_type="colleague",
-            strength=0.4, frequency=1, last_interaction=time.time(),
+            from_user="u1",
+            to_user="u2",
+            relation_type="colleague",
+            strength=0.4,
+            frequency=1,
+            last_interaction=time.time(),
             group_id="g1",
         )
         await store.upsert_relation(rel)
@@ -259,13 +270,21 @@ class TestRelationStoreCRUD:
         """相同 user pair in two groups should yield two distinct records."""
         store = await _create_store(tmp_db_path)
         rel_g1 = SocialRelation(
-            from_user="a", to_user="b", relation_type="classmate",
-            strength=0.3, frequency=2, last_interaction=time.time(),
+            from_user="a",
+            to_user="b",
+            relation_type="classmate",
+            strength=0.3,
+            frequency=2,
+            last_interaction=time.time(),
             group_id="group_1",
         )
         rel_g2 = SocialRelation(
-            from_user="a", to_user="b", relation_type="classmate",
-            strength=0.8, frequency=10, last_interaction=time.time(),
+            from_user="a",
+            to_user="b",
+            relation_type="classmate",
+            strength=0.8,
+            frequency=10,
+            last_interaction=time.time(),
             group_id="group_2",
         )
         await store.upsert_relation(rel_g1)
@@ -280,12 +299,17 @@ class TestRelationStoreCRUD:
     async def test_get_group_relations(self, tmp_db_path):
         store = await _create_store(tmp_db_path)
         for i in range(3):
-            await store.upsert_relation(SocialRelation(
-                from_user=f"u{i}", to_user=f"v{i}",
-                relation_type="colleague", strength=0.1 * (i + 1),
-                frequency=i, last_interaction=time.time(),
-                group_id="mygroup",
-            ))
+            await store.upsert_relation(
+                SocialRelation(
+                    from_user=f"u{i}",
+                    to_user=f"v{i}",
+                    relation_type="colleague",
+                    strength=0.1 * (i + 1),
+                    frequency=i,
+                    last_interaction=time.time(),
+                    group_id="mygroup",
+                )
+            )
         results = await store.get_group_relations("mygroup")
         assert len(results) == 3
         # Sorted strongest first
@@ -294,32 +318,56 @@ class TestRelationStoreCRUD:
     @pytest.mark.asyncio
     async def test_get_user_network(self, tmp_db_path):
         store = await _create_store(tmp_db_path)
-        await store.upsert_relation(SocialRelation(
-            from_user="center", to_user="a", relation_type="friend",
-            strength=0.5, frequency=1, last_interaction=time.time(),
-            group_id="g",
-        ))
-        await store.upsert_relation(SocialRelation(
-            from_user="b", to_user="center", relation_type="colleague",
-            strength=0.3, frequency=1, last_interaction=time.time(),
-            group_id="g2",
-        ))
+        await store.upsert_relation(
+            SocialRelation(
+                from_user="center",
+                to_user="a",
+                relation_type="friend",
+                strength=0.5,
+                frequency=1,
+                last_interaction=time.time(),
+                group_id="g",
+            )
+        )
+        await store.upsert_relation(
+            SocialRelation(
+                from_user="b",
+                to_user="center",
+                relation_type="colleague",
+                strength=0.3,
+                frequency=1,
+                last_interaction=time.time(),
+                group_id="g2",
+            )
+        )
         network = await store.get_user_network("center")
         assert len(network) == 2
 
     @pytest.mark.asyncio
     async def test_get_user_relations_in_group(self, tmp_db_path):
         store = await _create_store(tmp_db_path)
-        await store.upsert_relation(SocialRelation(
-            from_user="me", to_user="other", relation_type="friend",
-            strength=0.5, frequency=1, last_interaction=time.time(),
-            group_id="alpha",
-        ))
-        await store.upsert_relation(SocialRelation(
-            from_user="me", to_user="someone", relation_type="colleague",
-            strength=0.3, frequency=1, last_interaction=time.time(),
-            group_id="beta",
-        ))
+        await store.upsert_relation(
+            SocialRelation(
+                from_user="me",
+                to_user="other",
+                relation_type="friend",
+                strength=0.5,
+                frequency=1,
+                last_interaction=time.time(),
+                group_id="alpha",
+            )
+        )
+        await store.upsert_relation(
+            SocialRelation(
+                from_user="me",
+                to_user="someone",
+                relation_type="colleague",
+                strength=0.3,
+                frequency=1,
+                last_interaction=time.time(),
+                group_id="beta",
+            )
+        )
         results = await store.get_user_relations_in_group("me", "alpha")
         assert len(results) == 1
         assert results[0].to_user == "other"
@@ -328,8 +376,12 @@ class TestRelationStoreCRUD:
     async def test_delete_relation(self, tmp_db_path):
         store = await _create_store(tmp_db_path)
         rel = SocialRelation(
-            from_user="d1", to_user="d2", relation_type="rival",
-            strength=0.2, frequency=1, last_interaction=time.time(),
+            from_user="d1",
+            to_user="d2",
+            relation_type="rival",
+            strength=0.2,
+            frequency=1,
+            last_interaction=time.time(),
             group_id="g",
         )
         await store.upsert_relation(rel)
@@ -345,12 +397,17 @@ class TestRelationStoreCRUD:
     async def test_delete_user_relations(self, tmp_db_path):
         store = await _create_store(tmp_db_path)
         for i in range(3):
-            await store.upsert_relation(SocialRelation(
-                from_user="target", to_user=f"peer_{i}",
-                relation_type="colleague", strength=0.2,
-                frequency=1, last_interaction=time.time(),
-                group_id="del_group",
-            ))
+            await store.upsert_relation(
+                SocialRelation(
+                    from_user="target",
+                    to_user=f"peer_{i}",
+                    relation_type="colleague",
+                    strength=0.2,
+                    frequency=1,
+                    last_interaction=time.time(),
+                    group_id="del_group",
+                )
+            )
         removed = await store.delete_user_relations("target", "del_group")
         assert removed == 3
         assert await store.count() == 0
@@ -359,11 +416,17 @@ class TestRelationStoreCRUD:
     async def test_list_all_and_count(self, tmp_db_path):
         store = await _create_store(tmp_db_path)
         assert await store.count() == 0
-        await store.upsert_relation(SocialRelation(
-            from_user="a", to_user="b", relation_type="neighbor",
-            strength=0.5, frequency=1, last_interaction=time.time(),
-            group_id="g",
-        ))
+        await store.upsert_relation(
+            SocialRelation(
+                from_user="a",
+                to_user="b",
+                relation_type="neighbor",
+                strength=0.5,
+                frequency=1,
+                last_interaction=time.time(),
+                group_id="g",
+            )
+        )
         assert await store.count() == 1
         assert len(await store.list_all()) == 1
 
@@ -403,9 +466,7 @@ class TestRelationStoreCRUD:
         ):
             await store.upsert_relation(relation)
 
-        by_frequency = await store.list_all(
-            sort=SortQuery("frequency", "desc")
-        )
+        by_frequency = await store.list_all(sort=SortQuery("frequency", "desc"))
         assert [relation.from_user for relation in by_frequency] == [
             "alice",
             "bob",
@@ -427,7 +488,7 @@ class TestRelationStoreCRUD:
 
     def test_rejects_unapproved_table_identifier(self):
         store = RelationStore(db_path="social.db")
-        store._TABLE = 'social_relations; DROP TABLE social_relations;--'
+        store._TABLE = "social_relations; DROP TABLE social_relations;--"
         with pytest.raises(ValueError, match="Unsupported relation table"):
             _ = store._table_sql
 
@@ -471,12 +532,16 @@ class TestRelationManagerDifficultyGate:
     async def test_parent_child_nearly_immutable(self, tmp_db_path):
         """parent_child difficulty 0.98 → only 2% of delta passes through."""
         manager = await _create_manager(tmp_db_path)
-        rel = await manager.get_or_create("mom", "child", "home",
-                                          relation_type="parent_child")
+        rel = await manager.get_or_create(
+            "mom", "child", "home", relation_type="parent_child"
+        )
         change = RelationChange(
-            from_user="mom", to_user="child",
+            from_user="mom",
+            to_user="child",
             relation_type="parent_child",
-            delta=0.50, new_strength=0.0, reason="test",
+            delta=0.50,
+            new_strength=0.0,
+            reason="test",
         )
         rel = await manager.update_relation(change)
         # actual = 0.50 * (1 - 0.98) = 0.01
@@ -486,12 +551,16 @@ class TestRelationManagerDifficultyGate:
     async def test_fellow_passenger_highly_mutable(self, tmp_db_path):
         """fellow_passenger difficulty 0.05 → 95% of delta passes through."""
         manager = await _create_manager(tmp_db_path)
-        rel = await manager.get_or_create("p1", "p2", "train",
-                                          relation_type="fellow_passenger")
+        rel = await manager.get_or_create(
+            "p1", "p2", "train", relation_type="fellow_passenger"
+        )
         change = RelationChange(
-            from_user="p1", to_user="p2",
+            from_user="p1",
+            to_user="p2",
             relation_type="fellow_passenger",
-            delta=0.30, new_strength=0.0, reason="chat",
+            delta=0.30,
+            new_strength=0.0,
+            reason="chat",
         )
         rel = await manager.update_relation(change)
         # actual = 0.30 * (1 - 0.05) = 0.285
@@ -501,12 +570,14 @@ class TestRelationManagerDifficultyGate:
     async def test_colleague_mid_difficulty(self, tmp_db_path):
         """colleague difficulty 0.60 → 40% of delta passes."""
         manager = await _create_manager(tmp_db_path)
-        rel = await manager.get_or_create("a", "b", "office",
-                                          relation_type="colleague")
+        rel = await manager.get_or_create("a", "b", "office", relation_type="colleague")
         change = RelationChange(
-            from_user="a", to_user="b",
+            from_user="a",
+            to_user="b",
             relation_type="colleague",
-            delta=0.20, new_strength=0.0, reason="meeting",
+            delta=0.20,
+            new_strength=0.0,
+            reason="meeting",
         )
         rel = await manager.update_relation(change)
         # actual = 0.20 * (1 - 0.60) = 0.08
@@ -516,12 +587,14 @@ class TestRelationManagerDifficultyGate:
     async def test_strength_clamps_to_one(self, tmp_db_path):
         """Strength must never exceed 1.0."""
         manager = await _create_manager(tmp_db_path)
-        rel = await manager.get_or_create("a", "b", "g",
-                                          relation_type="stranger")
+        rel = await manager.get_or_create("a", "b", "g", relation_type="stranger")
         change = RelationChange(
-            from_user="a", to_user="b",
+            from_user="a",
+            to_user="b",
             relation_type="stranger",
-            delta=100.0, new_strength=0.0, reason="overflow_test",
+            delta=100.0,
+            new_strength=0.0,
+            reason="overflow_test",
         )
         rel = await manager.update_relation(change)
         assert rel.strength == 1.0
@@ -533,16 +606,23 @@ class TestRelationManagerDifficultyGate:
         # Start with higher base
         store_ = manager._store
         rel = SocialRelation(
-            from_user="a", to_user="b", relation_type="colleague",
-            strength=0.8, frequency=5, last_interaction=time.time(),
+            from_user="a",
+            to_user="b",
+            relation_type="colleague",
+            strength=0.8,
+            frequency=5,
+            last_interaction=time.time(),
             group_id="",
         )
         await store_.upsert_relation(rel)
 
         change = RelationChange(
-            from_user="a", to_user="b",
+            from_user="a",
+            to_user="b",
             relation_type="colleague",
-            delta=-0.30, new_strength=0.0, reason="argument",
+            delta=-0.30,
+            new_strength=0.0,
+            reason="argument",
         )
         rel = await manager.update_relation(change)
         # actual = -0.30 * 0.40 = -0.12
@@ -553,12 +633,14 @@ class TestRelationManagerDifficultyGate:
     async def test_strength_clamps_to_zero(self, tmp_db_path):
         """Strength must never go below 0.0."""
         manager = await _create_manager(tmp_db_path)
-        rel = await manager.get_or_create("a", "b", "g",
-                                          relation_type="stranger")
+        rel = await manager.get_or_create("a", "b", "g", relation_type="stranger")
         change = RelationChange(
-            from_user="a", to_user="b",
+            from_user="a",
+            to_user="b",
             relation_type="stranger",
-            delta=-100.0, new_strength=0.0, reason="underflow_test",
+            delta=-100.0,
+            new_strength=0.0,
+            reason="underflow_test",
         )
         rel = await manager.update_relation(change)
         assert rel.strength == 0.0
@@ -571,13 +653,17 @@ class TestRelationManagerHighFrequency:
     async def test_frequent_interactions_raise_strength(self, tmp_db_path):
         """之后 50 small positive deltas, strength should grow noticeably."""
         manager = await _create_manager(tmp_db_path)
-        rel = await manager.get_or_create("u1", "u2", "g",
-                                          relation_type="fellow_passenger")
+        rel = await manager.get_or_create(
+            "u1", "u2", "g", relation_type="fellow_passenger"
+        )
         for _ in range(50):
             change = RelationChange(
-                from_user="u1", to_user="u2",
+                from_user="u1",
+                to_user="u2",
                 relation_type="fellow_passenger",
-                delta=0.02, new_strength=0.0, reason="chat",
+                delta=0.02,
+                new_strength=0.0,
+                reason="chat",
             )
             rel = await manager.update_relation(change)
 
@@ -594,10 +680,12 @@ class TestRelationManagerTags:
     @pytest.mark.asyncio
     async def test_update_tags(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
-        rel = await manager.get_or_create("u1", "u2", "g",
-                                          relation_type="colleague")
+        await manager.get_or_create("u1", "u2", "g", relation_type="colleague")
         updated = await manager.update_tags(
-            "u1", "u2", "colleague", "g",
+            "u1",
+            "u2",
+            "colleague",
+            "g",
             tags=["office", "lunch_buddy"],
         )
         assert updated is not None
@@ -611,7 +699,11 @@ class TestRelationManagerTags:
     async def test_update_tags_nonexistent(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
         result = await manager.update_tags(
-            "no", "one", "stranger", "g", tags=["test"],
+            "no",
+            "one",
+            "stranger",
+            "g",
+            tags=["test"],
         )
         assert result is None
 
@@ -622,22 +714,30 @@ class TestRelationManagerMultiGroup:
     @pytest.mark.asyncio
     async def test_same_users_different_groups(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
-        _ = await manager.get_or_create("alice", "bob", "group_a",
-                                        relation_type="colleague")
-        _ = await manager.get_or_create("alice", "bob", "group_b",
-                                        relation_type="gaming_teammate")
+        _ = await manager.get_or_create(
+            "alice", "bob", "group_a", relation_type="colleague"
+        )
+        _ = await manager.get_or_create(
+            "alice", "bob", "group_b", relation_type="gaming_teammate"
+        )
 
         # Apply a delta only in group_a
         change = RelationChange(
-            from_user="alice", to_user="bob",
-            relation_type="colleague", delta=0.5,
-            new_strength=0.0, reason="meeting",
+            from_user="alice",
+            to_user="bob",
+            relation_type="colleague",
+            delta=0.5,
+            new_strength=0.0,
+            reason="meeting",
         )
         await manager.update_relation(change)
 
         # group_b should still be at default 0.1
         rel_b = await manager._store.get_relation(
-            "alice", "bob", "gaming_teammate", "group_b",
+            "alice",
+            "bob",
+            "gaming_teammate",
+            "group_b",
         )
         assert rel_b.strength == 0.1
 
@@ -677,8 +777,11 @@ class TestRelationManagerEdgeCases:
         """Calling apply_delta on a non-existent relation creates it first."""
         manager = await _create_manager(tmp_db_path)
         rel = await manager.apply_delta(
-            "new_u1", "new_u2", "any_group",
-            delta=0.2, reason="hello",
+            "new_u1",
+            "new_u2",
+            "any_group",
+            delta=0.2,
+            reason="hello",
             relation_type="classmate",
         )
         assert rel is not None
@@ -692,12 +795,16 @@ class TestRelationManagerEdgeCases:
         manager = await _create_manager(tmp_db_path)
         for cat, members in RELATION_CATEGORIES.items():
             for rt in members:
-                rel = await manager.get_or_create("from", "to", "test_g",
-                                                  relation_type=rt)
+                rel = await manager.get_or_create(
+                    "from", "to", "test_g", relation_type=rt
+                )
                 change = RelationChange(
-                    from_user="from", to_user="to",
-                    relation_type=rt, delta=0.1,
-                    new_strength=0.0, reason="smoke_test",
+                    from_user="from",
+                    to_user="to",
+                    relation_type=rt,
+                    delta=0.1,
+                    new_strength=0.0,
+                    reason="smoke_test",
                 )
                 rel = await manager.update_relation(change)
                 assert 0.0 <= rel.strength <= 1.0, (
@@ -737,9 +844,7 @@ class TestRelationManagerManualCrud:
         assert created.last_interaction == 0.0
 
     @pytest.mark.asyncio
-    async def test_duplicate_manual_create_leaves_existing_unchanged(
-        self, tmp_db_path
-    ):
+    async def test_duplicate_manual_create_leaves_existing_unchanged(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
         created = await manager.create_manual_relation(
             from_user="alice",
@@ -760,15 +865,11 @@ class TestRelationManagerManualCrud:
                 tags=["replacement"],
             )
 
-        current = await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        )
+        current = await manager._store.get_relation("alice", "bob", "colleague", "g1")
         assert current == created
 
     @pytest.mark.asyncio
-    async def test_manual_update_migrates_relation_type_atomically(
-        self, tmp_db_path
-    ):
+    async def test_manual_update_migrates_relation_type_atomically(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
         created = await manager.create_manual_relation(
             from_user="alice",
@@ -792,12 +893,13 @@ class TestRelationManagerManualCrud:
         assert updated.tags == ["trusted"]
         assert updated.frequency == 0
         assert updated.last_interaction == 0.0
-        assert await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        ) is None
-        assert await manager._store.get_relation(
-            "alice", "bob", "best_friend", "g1"
-        ) == updated
+        assert (
+            await manager._store.get_relation("alice", "bob", "colleague", "g1") is None
+        )
+        assert (
+            await manager._store.get_relation("alice", "bob", "best_friend", "g1")
+            == updated
+        )
 
     @pytest.mark.asyncio
     async def test_stale_manual_update_exposes_current_and_preserves_row(
@@ -824,9 +926,7 @@ class TestRelationManagerManualCrud:
 
         assert caught.value.current_entity == created.to_dict()
         assert caught.value.current_revision == manager.revision_for(created)
-        current = await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        )
+        current = await manager._store.get_relation("alice", "bob", "colleague", "g1")
         assert current is not None and current.strength == 0.4
 
     @pytest.mark.asyncio
@@ -860,12 +960,14 @@ class TestRelationManagerManualCrud:
                 expected_revision=manager.revision_for(source),
             )
 
-        assert await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        ) == source
-        assert await manager._store.get_relation(
-            "alice", "bob", "best_friend", "g1"
-        ) == destination
+        assert (
+            await manager._store.get_relation("alice", "bob", "colleague", "g1")
+            == source
+        )
+        assert (
+            await manager._store.get_relation("alice", "bob", "best_friend", "g1")
+            == destination
+        )
 
     @pytest.mark.asyncio
     async def test_revision_checked_delete_removes_relation(self, tmp_db_path):
@@ -885,9 +987,9 @@ class TestRelationManagerManualCrud:
         )
 
         assert deleted is True
-        assert await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        ) is None
+        assert (
+            await manager._store.get_relation("alice", "bob", "colleague", "g1") is None
+        )
 
     @pytest.mark.asyncio
     async def test_stale_delete_leaves_relation_intact(self, tmp_db_path):
@@ -909,14 +1011,13 @@ class TestRelationManagerManualCrud:
 
         assert caught.value.current_entity == created.to_dict()
         assert caught.value.current_revision == manager.revision_for(created)
-        assert await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        ) == created
+        assert (
+            await manager._store.get_relation("alice", "bob", "colleague", "g1")
+            == created
+        )
 
     @pytest.mark.asyncio
-    async def test_missing_manual_update_and_delete_raise_not_found(
-        self, tmp_db_path
-    ):
+    async def test_missing_manual_update_and_delete_raise_not_found(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
         identity = ("missing", "user", "colleague", "g1")
 
@@ -973,9 +1074,7 @@ class TestRelationManagerAutomaticConcurrency:
     """自动学习必须基于锁内最新记录更新，而不是回写陈旧对象。"""
 
     @pytest.mark.asyncio
-    async def test_stale_automatic_delta_uses_latest_admin_values(
-        self, tmp_db_path
-    ):
+    async def test_stale_automatic_delta_uses_latest_admin_values(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
         await manager._store.upsert_relation(
             SocialRelation(
@@ -989,9 +1088,7 @@ class TestRelationManagerAutomaticConcurrency:
                 tags=["stale"],
             )
         )
-        stale = await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        )
+        stale = await manager._store.get_relation("alice", "bob", "colleague", "g1")
         assert stale is not None
 
         await manager._store.upsert_relation(
@@ -1006,9 +1103,7 @@ class TestRelationManagerAutomaticConcurrency:
                 tags=["automatic-latest"],
             )
         )
-        latest = await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        )
+        latest = await manager._store.get_relation("alice", "bob", "colleague", "g1")
         assert latest is not None
         await manager.update_manual_relation(
             identity=("alice", "bob", "colleague", "g1"),
@@ -1020,9 +1115,7 @@ class TestRelationManagerAutomaticConcurrency:
 
         updated = await manager._apply_delta(stale, 0.2, "new-message")
 
-        stored = await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        )
+        stored = await manager._store.get_relation("alice", "bob", "colleague", "g1")
         assert stored is not None
         assert stored.strength == pytest.approx(0.78)
         assert stored.frequency == 8
@@ -1043,9 +1136,7 @@ class TestRelationManagerAutomaticConcurrency:
             strength=0.4,
             tags=["before"],
         )
-        stale = await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        )
+        stale = await manager._store.get_relation("alice", "bob", "colleague", "g1")
         assert stale is not None
         migrated = await manager.update_manual_relation(
             identity=("alice", "bob", "colleague", "g1"),
@@ -1058,12 +1149,13 @@ class TestRelationManagerAutomaticConcurrency:
         result = await manager._apply_delta(stale, 0.2, "late-message")
 
         assert result is stale
-        assert await manager._store.get_relation(
-            "alice", "bob", "colleague", "g1"
-        ) is None
-        assert await manager._store.get_relation(
-            "alice", "bob", "best_friend", "g1"
-        ) == migrated
+        assert (
+            await manager._store.get_relation("alice", "bob", "colleague", "g1") is None
+        )
+        assert (
+            await manager._store.get_relation("alice", "bob", "best_friend", "g1")
+            == migrated
+        )
 
     @pytest.mark.asyncio
     async def test_get_or_create_racing_admin_create_preserves_admin_row(
@@ -1122,9 +1214,7 @@ class TestRelationStorePooledTransactions:
     """连接池复用前必须清理失败写入留下的事务。"""
 
     @pytest.mark.asyncio
-    async def test_duplicate_strict_create_rolls_back_size_one_pool(
-        self, tmp_db_path
-    ):
+    async def test_duplicate_strict_create_rolls_back_size_one_pool(self, tmp_db_path):
         await RelationStore.close_pool()
         store = await _create_store(tmp_db_path)
         await RelationStore.init_pool(tmp_db_path, pool_size=1)
@@ -1208,9 +1298,7 @@ class TestRelationManagerLocatorValidation:
     """已有行 locator 只校验形状，不套用创建阶段的业务限制。"""
 
     @pytest.mark.asyncio
-    async def test_padded_locator_targets_canonical_stripped_row(
-        self, tmp_db_path
-    ):
+    async def test_padded_locator_targets_canonical_stripped_row(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
         created = await manager.create_manual_relation(
             from_user="alice",
@@ -1234,17 +1322,20 @@ class TestRelationManagerLocatorValidation:
         assert updated.to_user == "bob"
         assert updated.group_id == ""
         assert updated.relation_type == "best_friend"
-        assert await manager._store.get_relation(
-            "alice", "bob", "colleague", ""
-        ) is None
+        assert (
+            await manager._store.get_relation("alice", "bob", "colleague", "") is None
+        )
 
-        assert await manager.delete_manual_relation(
-            identity=(" alice ", " bob ", "best_friend", "   "),
-            expected_revision=manager.revision_for(updated),
-        ) is True
-        assert await manager._store.get_relation(
-            "alice", "bob", "best_friend", ""
-        ) is None
+        assert (
+            await manager.delete_manual_relation(
+                identity=(" alice ", " bob ", "best_friend", "   "),
+                expected_revision=manager.revision_for(updated),
+            )
+            is True
+        )
+        assert (
+            await manager._store.get_relation("alice", "bob", "best_friend", "") is None
+        )
 
     @pytest.mark.asyncio
     async def test_manual_create_allows_empty_group_id(self, tmp_db_path):
@@ -1280,18 +1371,19 @@ class TestRelationManagerLocatorValidation:
         assert updated.group_id == ""
         assert updated.relation_type == "best_friend"
 
-        assert await manager.delete_manual_relation(
-            identity=("alice", "bob", "best_friend", ""),
-            expected_revision=manager.revision_for(updated),
-        ) is True
-        assert await manager._store.get_relation(
-            "alice", "bob", "best_friend", ""
-        ) is None
+        assert (
+            await manager.delete_manual_relation(
+                identity=("alice", "bob", "best_friend", ""),
+                expected_revision=manager.revision_for(updated),
+            )
+            is True
+        )
+        assert (
+            await manager._store.get_relation("alice", "bob", "best_friend", "") is None
+        )
 
     @pytest.mark.asyncio
-    async def test_legacy_locator_can_be_revision_checked_deleted(
-        self, tmp_db_path
-    ):
+    async def test_legacy_locator_can_be_revision_checked_deleted(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
         legacy = SocialRelation(
             from_user="legacy",
@@ -1305,18 +1397,20 @@ class TestRelationManagerLocatorValidation:
         )
         await manager._store.upsert_relation(legacy)
 
-        assert await manager.delete_manual_relation(
-            identity=("legacy", "legacy", "legacy_unknown", ""),
-            expected_revision=manager.revision_for(legacy),
-        ) is True
-        assert await manager._store.get_relation(
-            "legacy", "legacy", "legacy_unknown", ""
-        ) is None
+        assert (
+            await manager.delete_manual_relation(
+                identity=("legacy", "legacy", "legacy_unknown", ""),
+                expected_revision=manager.revision_for(legacy),
+            )
+            is True
+        )
+        assert (
+            await manager._store.get_relation("legacy", "legacy", "legacy_unknown", "")
+            is None
+        )
 
     @pytest.mark.asyncio
-    async def test_create_still_rejects_equal_users_and_unknown_type(
-        self, tmp_db_path
-    ):
+    async def test_create_still_rejects_equal_users_and_unknown_type(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
 
         with pytest.raises(EntityValidationError) as equal_error:

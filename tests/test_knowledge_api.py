@@ -102,12 +102,14 @@ class TestKnowledgeValidation:
     async def test_get_detail_not_found(self) -> None:
         req = _mock_request(entry_id="999")
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             manager = MagicMock()
             manager.get_entry = AsyncMock(return_value=None)
             engine.knowledge_manager = manager
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.knowledge_api.request", req):
             r = await mixin.get_knowledge_detail()
@@ -131,7 +133,9 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_create_no_store(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={"title": "T", "content": "C", "category": "fact"})
+        req.get_json = AsyncMock(
+            return_value={"title": "T", "content": "C", "category": "fact"}
+        )
         with patch("core.api.knowledge_api.request", req):
             r = await _make_mixin(has_store=False).create_knowledge_entry()
         assert r["status"] == "error"
@@ -168,10 +172,12 @@ class TestKnowledgeHappyPath:
         mixin = _make_mixin()
         manager = MagicMock()
         manager.list_entries = AsyncMock(return_value=([], 0))
+
         async def _ready():
             engine = MagicMock()
             engine.knowledge_manager = manager
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.knowledge_api.request", req):
             r = await mixin.list_knowledge()
@@ -189,10 +195,12 @@ class TestKnowledgeHappyPath:
         mixin = _make_mixin()
         manager = MagicMock()
         manager.search = AsyncMock(return_value=([], 0))
+
         async def _ready():
             engine = MagicMock()
             engine.knowledge_manager = manager
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.knowledge_api.request", req):
             r = await mixin.search_knowledge()
@@ -207,15 +215,18 @@ class TestKnowledgeHappyPath:
     @pytest.mark.asyncio
     async def test_create_entry(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "title": "知识条目", "content": "内容", "category": "fact"})
+        req.get_json = AsyncMock(
+            return_value={"title": "知识条目", "content": "内容", "category": "fact"}
+        )
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             manager = MagicMock()
             manager.add_entry = AsyncMock(return_value=1)
             engine.knowledge_manager = manager
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.knowledge_api.request", req):
             r = await mixin.create_knowledge_entry()
@@ -224,9 +235,9 @@ class TestKnowledgeHappyPath:
     @pytest.mark.asyncio
     async def test_update_entry(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "entry_id": 1, "title": "更新标题"})
+        req.get_json = AsyncMock(return_value={"entry_id": 1, "title": "更新标题"})
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             manager = MagicMock()
@@ -234,6 +245,7 @@ class TestKnowledgeHappyPath:
             manager.update_entry = AsyncMock(return_value=True)
             engine.knowledge_manager = manager
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.knowledge_api.request", req):
             r = await mixin.update_knowledge_entry()
@@ -244,6 +256,7 @@ class TestKnowledgeHappyPath:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"entry_id": 1})
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             manager = MagicMock()
@@ -251,6 +264,7 @@ class TestKnowledgeHappyPath:
             manager.delete_entry = AsyncMock(return_value=True)
             engine.knowledge_manager = manager
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.knowledge_api.request", req):
             r = await mixin.delete_knowledge_entry()
@@ -261,6 +275,7 @@ class TestKnowledgeHappyPath:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"entry_ids": [1, 2, 3]})
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             manager = MagicMock()
@@ -268,6 +283,7 @@ class TestKnowledgeHappyPath:
             manager.get_entry = AsyncMock(return_value=MagicMock())
             engine.knowledge_manager = manager
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.knowledge_api.request", req):
             r = await mixin.batch_delete_knowledge()
@@ -277,6 +293,7 @@ class TestKnowledgeHappyPath:
     async def test_get_detail(self) -> None:
         req = _mock_request(entry_id="1")
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             manager = MagicMock()
@@ -285,6 +302,7 @@ class TestKnowledgeHappyPath:
             manager.get_entry = AsyncMock(return_value=entry)
             engine.knowledge_manager = manager
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.knowledge_api.request", req):
             r = await mixin.get_knowledge_detail()

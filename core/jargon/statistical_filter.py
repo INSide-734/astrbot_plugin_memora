@@ -13,10 +13,10 @@
 from __future__ import annotations
 
 import math
-from operator import attrgetter
 import re
 import time
 from collections import defaultdict
+from operator import attrgetter
 
 from astrbot.api import logger
 
@@ -39,7 +39,7 @@ _MAX_CONTEXT_EXAMPLES = 10
 # jieba 内置词频阈值
 # jieba.dt.FREQ 中频率 > 此值的词被视为标准词汇，直接排除候选追踪。
 # 常见词（的=318825, 是=796991）频率极高，而新加入 jieba 的网络用语
-#（破防=3, 躺平=3）频率极低。阈值 100 过滤标准词汇的同时保留低频网络用语。
+# （破防=3, 躺平=3）频率极低。阈值 100 过滤标准词汇的同时保留低频网络用语。
 _JIEBA_FREQ_THRESHOLD = 100
 
 # 三个信号的权重
@@ -401,9 +401,7 @@ class JargonStatisticalFilter:
             burst_score = self._calc_burst_score(term, group_id)
 
             # 信号 3：用户集中度 (1 / unique_users)
-            unique_users = len(
-                self._user_term_freq.get(group_id, {}).get(term, {})
-            )
+            unique_users = len(self._user_term_freq.get(group_id, {}).get(term, {}))
             concentration = 1.0 / max(unique_users, 1)
 
             # 综合评分
@@ -418,9 +416,7 @@ class JargonStatisticalFilter:
                 continue
 
             first_seen = self._term_first_seen.get(group_id, {}).get(term, 0.0)
-            ctx_list = (
-                self._term_contexts.get(group_id, {}).get(term, [])[:5]
-            )
+            ctx_list = self._term_contexts.get(group_id, {}).get(term, [])[:5]
 
             candidates.append(
                 JargonCandidate(
@@ -451,13 +447,14 @@ class JargonStatisticalFilter:
         """
         group_freq = self._group_term_freq.get(group_id, {})
         top = self.get_candidates(group_id, limit=10)
-        above_threshold = sum(
-            1 for f in group_freq.values() if f >= _MIN_FREQUENCY
-        )
 
         candidate_count = len(
-            [t for t, f in group_freq.items()
-             if f >= _MIN_FREQUENCY and self._calc_score_for_term(t, group_id) >= _CANDIDATE_SCORE_THRESHOLD]
+            [
+                t
+                for t, f in group_freq.items()
+                if f >= _MIN_FREQUENCY
+                and self._calc_score_for_term(t, group_id) >= _CANDIDATE_SCORE_THRESHOLD
+            ]
         )
 
         return JargonStats(
@@ -538,9 +535,7 @@ class JargonStatisticalFilter:
                     f"（阈值={_JIEBA_FREQ_THRESHOLD}）"
                 )
             except ImportError:
-                logger.warning(
-                    "[黑话过滤器] 未安装 jieba，请执行：pip install jieba"
-                )
+                logger.warning("[黑话过滤器] 未安装 jieba，请执行：pip install jieba")
 
     def _is_standard_vocabulary(self, word: str) -> bool:
         """使用 jieba 词频字典检查是否为标准词汇。
@@ -593,9 +588,7 @@ class JargonStatisticalFilter:
         )
         idf = math.log(num_groups / max(groups_containing, 1))
         burst = self._calc_burst_score(term, group_id)
-        unique_users = len(
-            self._user_term_freq.get(group_id, {}).get(term, {})
-        )
+        unique_users = len(self._user_term_freq.get(group_id, {}).get(term, {}))
         concentration = 1.0 / max(unique_users, 1)
 
         return (

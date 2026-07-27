@@ -103,4 +103,3 @@ export function useRuntimeStatus(pollIntervalMs = 5_000) {
 
   return { ...state, refresh };
 }
-

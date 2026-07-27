@@ -15,7 +15,6 @@ from typing import Any
 
 import aiosqlite
 
-
 _PERF_PRAGMAS: tuple[str, ...] = (
     "PRAGMA foreign_keys = ON",
     "PRAGMA journal_mode = WAL",
@@ -295,11 +294,7 @@ class EvaluationReportStore:
             "reason_code_aggregates",
             "dataset_breakdown",
         )
-        return {
-            key: report[key]
-            for key in summary_fields
-            if key in report
-        }
+        return {key: report[key] for key in summary_fields if key in report}
 
     @classmethod
     def _normalize_json_value(cls, value: Any) -> Any:
@@ -317,15 +312,16 @@ class EvaluationReportStore:
 
         if isinstance(value, Mapping):
             return {
-                str(key): cls._normalize_json_value(item)
-                for key, item in value.items()
+                str(key): cls._normalize_json_value(item) for key, item in value.items()
             }
 
         if isinstance(value, (set, frozenset)):
             normalized_items = [cls._normalize_json_value(item) for item in value]
             return sorted(normalized_items, key=cls._json_sort_key)
 
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
             return [cls._normalize_json_value(item) for item in value]
 
         return str(value)

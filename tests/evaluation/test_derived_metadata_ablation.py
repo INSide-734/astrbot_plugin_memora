@@ -4,21 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import asdict
 from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from core.models.derived_metadata import DerivedMetadataProposal, DerivedMetadataSourceRef
 from core.evaluation.derived_metadata_ablation import (
     RunLocalDerivedMetadataIndex,
     run_derived_metadata_ablation,
 )
 from core.evaluation.retrieval_quality import EvaluationCase
+from core.models.derived_metadata import (
+    DerivedMetadataProposal,
+    DerivedMetadataSourceRef,
+)
 
-FIXTURE_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "retrieval" / "derived_metadata.jsonl"
+FIXTURE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "retrieval"
+    / "derived_metadata.jsonl"
+)
 
 
 def _source_ref(memory_id: int, revision: str = "rev-1") -> DerivedMetadataSourceRef:
@@ -81,7 +89,9 @@ def test_index_accepts_only_valid_annotations_and_rebuilds_idempotently() -> Non
     sources = {7: _source(7, doc_id="mem-coffee")}
     index = RunLocalDerivedMetadataIndex(lambda memory_id: sources.get(memory_id))
     valid = DerivedMetadataProposal(source=_source_ref(7), keywords=("咖啡",))
-    unsafe = DerivedMetadataProposal(source=_source_ref(7), keywords=("https://bad.invalid",))
+    unsafe = DerivedMetadataProposal(
+        source=_source_ref(7), keywords=("https://bad.invalid",)
+    )
 
     first = index.add_proposal(valid)
     replay = index.add_proposal(valid)
@@ -193,11 +203,15 @@ async def test_ablation_improves_metadata_dependent_slice_without_online_cost() 
 
 
 @pytest.mark.asyncio
-async def test_ablation_stale_annotation_preserves_baseline_and_failure_is_stable() -> None:
+async def test_ablation_stale_annotation_preserves_baseline_and_failure_is_stable() -> (
+    None
+):
     """stale 或普通 index 异常不能删除 baseline canonical 命中。"""
 
     case = _case("stale-case", "陈旧内容", "mem-canonical")
-    stale = DerivedMetadataProposal(source=_source_ref(7, "rev-old"), keywords=("陈旧",))
+    stale = DerivedMetadataProposal(
+        source=_source_ref(7, "rev-old"), keywords=("陈旧",)
+    )
 
     async def baseline(_case: EvaluationCase, _k: int) -> list[dict[str, Any]]:
         """返回 canonical baseline 命中。"""

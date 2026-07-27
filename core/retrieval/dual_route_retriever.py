@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import inspect
 import time
 from collections.abc import Awaitable, Callable
@@ -19,8 +18,8 @@ from ..adapter_capabilities import (
     declared_adapter_contract,
 )
 from ..models.memory_evolution import ExpansionBudget, ScopeContext
-from ..models.temporal import normalize_datetime
 from ..models.recall_strategy import RecallStrategy
+from ..models.temporal import normalize_datetime
 from .graph_retriever import GraphRetriever
 from .hybrid_retriever import HybridRetriever
 from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
@@ -102,7 +101,9 @@ class DualRouteRetriever:
             query_intent: R1 查询改写结果，优先使用 LLM 意图做权重调整。
             user_id: v2.5 用户 ID，用于个性化排序。
         """
-        reference_time = normalize_datetime(reference_time) or datetime.now(timezone.utc)
+        reference_time = normalize_datetime(reference_time) or datetime.now(
+            timezone.utc
+        )
         _t_route_start = time.perf_counter()
         doc_task = self.document_retriever.search(
             query,

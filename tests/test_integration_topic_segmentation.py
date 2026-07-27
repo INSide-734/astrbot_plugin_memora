@@ -8,22 +8,19 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from core.processors.topic_splitter import (
     EmbeddingClusteringStrategy,
     HybridSegmentationStrategy,
-    MemorySegment,
     PromptSegmentationStrategy,
     TopicChunkingStrategy,
     TopicSegmentationRouter,
     TwoStageLLMStrategy,
 )
-
 
 # ============================================================================
 # 9.1  E2E: multi-topic conversation → A+B hybrid → independent memory storage
@@ -118,12 +115,14 @@ class TestE2EMultiTopicPipeline:
     @pytest.mark.asyncio
     async def test_e2e_hybrid_fallback_when_llm_fails_to_split(self):
         """When LLM returns single memory with many facts, B splits it."""
-        embed_fn = AsyncMock(return_value=[
-            [1.0, 0.0, 0.0],  # skiing
-            [0.9, 0.1, 0.0],  # skiing-related
-            [0.0, 1.0, 0.0],  # work
-            [0.0, 0.0, 1.0],  # health
-        ])
+        embed_fn = AsyncMock(
+            return_value=[
+                [1.0, 0.0, 0.0],  # skiing
+                [0.9, 0.1, 0.0],  # skiing-related
+                [0.0, 1.0, 0.0],  # work
+                [0.0, 0.0, 1.0],  # health
+            ]
+        )
         strat = HybridSegmentationStrategy(
             {
                 "hybrid_fallback_fact_threshold": 2,
@@ -277,11 +276,13 @@ class TestStrategySwitching:
         assert router.strategy_key == "a"
 
         # Process with A
-        result_a = await router.segment({
-            "memories": [
-                {"summary": "话题1", "key_facts": ["f1", "f2"]},
-            ]
-        })
+        result_a = await router.segment(
+            {
+                "memories": [
+                    {"summary": "话题1", "key_facts": ["f1", "f2"]},
+                ]
+            }
+        )
         assert len(result_a) == 1
 
         # Switch to B
@@ -290,9 +291,12 @@ class TestStrategySwitching:
         assert router_b.strategy_key == "b"
 
         # Process with B
-        result_b = await router_b.segment({
-            "summary": "test", "key_facts": ["f1", "f2"],
-        })
+        result_b = await router_b.segment(
+            {
+                "summary": "test",
+                "key_facts": ["f1", "f2"],
+            }
+        )
         assert len(result_b) >= 1
 
     @pytest.mark.asyncio
@@ -302,39 +306,51 @@ class TestStrategySwitching:
         router_b = TopicSegmentationRouter({"topic_segmentation.strategy": "b"})
         assert router_b.strategy_key == "b"
 
-        result_b = await router_b.segment({
-            "summary": "test", "key_facts": ["a", "b"],
-        })
+        result_b = await router_b.segment(
+            {
+                "summary": "test",
+                "key_facts": ["a", "b"],
+            }
+        )
         assert len(result_b) >= 1
 
         # Switch to C
-        router_c = TopicSegmentationRouter({
-            "topic_segmentation.strategy": "c",
-            "topic_segmentation.topic_shift_threshold": 0.3,
-        })
+        router_c = TopicSegmentationRouter(
+            {
+                "topic_segmentation.strategy": "c",
+                "topic_segmentation.topic_shift_threshold": 0.3,
+            }
+        )
         assert router_c.strategy_key == "c"
         assert isinstance(router_c.strategy, TopicChunkingStrategy)
 
-        result_c = await router_c.segment({
-            "summary": "test", "key_facts": ["a"],
-        })
+        result_c = await router_c.segment(
+            {
+                "summary": "test",
+                "key_facts": ["a"],
+            }
+        )
         assert len(result_c) == 1
 
     @pytest.mark.asyncio
     async def test_switch_c_to_d(self):
         """Switch from TopicChunkingStrategy to TwoStageLLMStrategy."""
-        router_c = TopicSegmentationRouter({
-            "topic_segmentation.strategy": "c",
-            "topic_segmentation.topic_shift_threshold": 0.3,
-        })
+        router_c = TopicSegmentationRouter(
+            {
+                "topic_segmentation.strategy": "c",
+                "topic_segmentation.topic_shift_threshold": 0.3,
+            }
+        )
         assert router_c.strategy_key == "c"
         result_c = await router_c.segment({"summary": "t", "key_facts": ["f"]})
         assert len(result_c) == 1
 
-        router_d = TopicSegmentationRouter({
-            "topic_segmentation.strategy": "d",
-            "topic_segmentation.stage1_max_topics": 3,
-        })
+        router_d = TopicSegmentationRouter(
+            {
+                "topic_segmentation.strategy": "d",
+                "topic_segmentation.stage1_max_topics": 3,
+            }
+        )
         assert router_d.strategy_key == "d"
         assert isinstance(router_d.strategy, TwoStageLLMStrategy)
 
@@ -349,17 +365,21 @@ class TestStrategySwitching:
         result_d = await router_d.segment({"summary": "t", "key_facts": ["f"]})
         assert len(result_d) == 1
 
-        router_hybrid = TopicSegmentationRouter({
-            "topic_segmentation.strategy": "a_b_hybrid",
-        })
+        router_hybrid = TopicSegmentationRouter(
+            {
+                "topic_segmentation.strategy": "a_b_hybrid",
+            }
+        )
         assert router_hybrid.strategy_key == "a_b_hybrid"
         assert isinstance(router_hybrid.strategy, HybridSegmentationStrategy)
 
-        result_h = await router_hybrid.segment({
-            "memories": [
-                {"summary": "测试", "key_facts": ["f1", "f2"]},
-            ]
-        })
+        result_h = await router_hybrid.segment(
+            {
+                "memories": [
+                    {"summary": "测试", "key_facts": ["f1", "f2"]},
+                ]
+            }
+        )
         assert len(result_h) == 1
 
     @pytest.mark.asyncio
@@ -381,27 +401,35 @@ class TestStrategySwitching:
             "b": {"summary": "test", "key_facts": ["f1", "f2"]},
             "c": {"summary": "test", "key_facts": ["f1"]},
             "d": {"summary": "test", "key_facts": ["f1", "f2"]},
-            "a_b_hybrid": {"memories": [{"summary": "test", "key_facts": ["f1", "f2"]}]},
+            "a_b_hybrid": {
+                "memories": [{"summary": "test", "key_facts": ["f1", "f2"]}]
+            },
         }
 
         for key, extra_cfg in configs:
             cfg = {"topic_segmentation.strategy": key, **extra_cfg}
             router = TopicSegmentationRouter(cfg)
-            assert router.strategy_key == key, f"Expected {key}, got {router.strategy_key}"
+            assert router.strategy_key == key, (
+                f"Expected {key}, got {router.strategy_key}"
+            )
 
             segments = await router.segment(data_for_strategy[key])
             assert len(segments) >= 1, f"Strategy {key} returned empty result"
 
     def test_switch_preserves_config_isolation(self):
         """Each router instance is independent — switching doesn't leak config."""
-        router_a = TopicSegmentationRouter({
-            "topic_segmentation.strategy": "a",
-        })
-        router_b = TopicSegmentationRouter({
-            "topic_segmentation.strategy": "b",
-            "topic_segmentation.similarity_threshold": 0.3,
-            "topic_segmentation.max_clusters": 3,
-        })
+        router_a = TopicSegmentationRouter(
+            {
+                "topic_segmentation.strategy": "a",
+            }
+        )
+        router_b = TopicSegmentationRouter(
+            {
+                "topic_segmentation.strategy": "b",
+                "topic_segmentation.similarity_threshold": 0.3,
+                "topic_segmentation.max_clusters": 3,
+            }
+        )
 
         # A remains A, B remains B
         assert router_a.strategy_key == "a"
@@ -432,14 +460,22 @@ class TestStrategySwitching:
     async def test_concurrent_strategy_instances_independent(self):
         """Multiple router instances can coexist without interference."""
         routers_and_data = [
-            (TopicSegmentationRouter({"topic_segmentation.strategy": "a"}),
-             {"memories": [{"summary": "t", "key_facts": ["f1"]}]}),
-            (TopicSegmentationRouter({"topic_segmentation.strategy": "b"}),
-             {"summary": "t", "key_facts": ["f1"]}),
-            (TopicSegmentationRouter({"topic_segmentation.strategy": "c"}),
-             {"summary": "t", "key_facts": ["f1"]}),
-            (TopicSegmentationRouter({"topic_segmentation.strategy": "d"}),
-             {"summary": "t", "key_facts": ["f1", "f2"]}),
+            (
+                TopicSegmentationRouter({"topic_segmentation.strategy": "a"}),
+                {"memories": [{"summary": "t", "key_facts": ["f1"]}]},
+            ),
+            (
+                TopicSegmentationRouter({"topic_segmentation.strategy": "b"}),
+                {"summary": "t", "key_facts": ["f1"]},
+            ),
+            (
+                TopicSegmentationRouter({"topic_segmentation.strategy": "c"}),
+                {"summary": "t", "key_facts": ["f1"]},
+            ),
+            (
+                TopicSegmentationRouter({"topic_segmentation.strategy": "d"}),
+                {"summary": "t", "key_facts": ["f1", "f2"]},
+            ),
         ]
 
         async def process(router, data):
@@ -503,10 +539,11 @@ class TestPerformanceLatency:
     @pytest.mark.asyncio
     async def test_strategy_b_with_mock_embeddings_latency(self):
         """Strategy B with fast mock embeddings stays within bounds."""
-        embed_fn = AsyncMock(return_value=[
-            [float((i + j) % 10) / 10.0 for j in range(32)]
-            for i in range(100)
-        ])
+        embed_fn = AsyncMock(
+            return_value=[
+                [float((i + j) % 10) / 10.0 for j in range(32)] for i in range(100)
+            ]
+        )
         strat = EmbeddingClusteringStrategy(
             {"similarity_threshold": 0.5, "max_clusters": 10},
             embed_fn=embed_fn,
@@ -549,10 +586,9 @@ class TestPerformanceLatency:
     @pytest.mark.asyncio
     async def test_strategy_c_chunking_with_embed_fn_latency(self):
         """Pre-chunking with mock embeddings within latency bound."""
-        embed_fn = AsyncMock(return_value=[
-            [float(i % 7) / 7.0 for _ in range(32)]
-            for i in range(100)
-        ])
+        embed_fn = AsyncMock(
+            return_value=[[float(i % 7) / 7.0 for _ in range(32)] for i in range(100)]
+        )
         strat = TopicChunkingStrategy(
             {"topic_shift_threshold": 0.3, "min_chunk_size": 2},
             embed_fn=embed_fn,
@@ -583,8 +619,7 @@ class TestPerformanceLatency:
 
         dim = 64
         embeddings = [
-            [float((i + d) % 13) / 13.0 for d in range(dim)]
-            for i in range(200)
+            [float((i + d) % 13) / 13.0 for d in range(dim)] for i in range(200)
         ]
 
         start = time.perf_counter()
@@ -600,8 +635,7 @@ class TestPerformanceLatency:
         """A+B hybrid doesn't add significant overhead over plain A."""
         data = {
             "memories": [
-                {"summary": f"topic_{i}", "key_facts": [f"f_{i}"]}
-                for i in range(10)
+                {"summary": f"topic_{i}", "key_facts": [f"f_{i}"]} for i in range(10)
             ]
         }
 
@@ -627,9 +661,18 @@ class TestPerformanceLatency:
         """Router creation is O(1) and fast enough for per-request instantiation."""
         configs = [
             {"topic_segmentation.strategy": "a"},
-            {"topic_segmentation.strategy": "b", "topic_segmentation.similarity_threshold": 0.5},
-            {"topic_segmentation.strategy": "c", "topic_segmentation.topic_shift_threshold": 0.3},
-            {"topic_segmentation.strategy": "d", "topic_segmentation.stage1_max_topics": 3},
+            {
+                "topic_segmentation.strategy": "b",
+                "topic_segmentation.similarity_threshold": 0.5,
+            },
+            {
+                "topic_segmentation.strategy": "c",
+                "topic_segmentation.topic_shift_threshold": 0.3,
+            },
+            {
+                "topic_segmentation.strategy": "d",
+                "topic_segmentation.stage1_max_topics": 3,
+            },
             {"topic_segmentation.strategy": "a_b_hybrid"},
         ]
 
@@ -643,10 +686,12 @@ class TestPerformanceLatency:
     @pytest.mark.asyncio
     async def test_large_key_fact_batch_reasonable(self):
         """200 key_facts processed by Strategy B within latency bounds."""
-        embed_fn = AsyncMock(return_value=[
-            [float((i * 7 + j) % 256) / 256.0 for j in range(64)]
-            for i in range(200)
-        ])
+        embed_fn = AsyncMock(
+            return_value=[
+                [float((i * 7 + j) % 256) / 256.0 for j in range(64)]
+                for i in range(200)
+            ]
+        )
         strat = EmbeddingClusteringStrategy(
             {"similarity_threshold": 0.5, "max_clusters": 20},
             embed_fn=embed_fn,

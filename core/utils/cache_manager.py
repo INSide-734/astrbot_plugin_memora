@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import time
 from collections import OrderedDict, defaultdict
@@ -153,7 +152,9 @@ class CacheManager:
         self._hits: defaultdict[str, int] = defaultdict(int)
         self._misses: defaultdict[str, int] = defaultdict(int)
 
-    def get_cache(self, name: str, maxsize: int = 1000, ttl: float | None = None) -> MutableMapping:
+    def get_cache(
+        self, name: str, maxsize: int = 1000, ttl: float | None = None
+    ) -> MutableMapping:
         """获取或创建命名缓存。
 
         Args:

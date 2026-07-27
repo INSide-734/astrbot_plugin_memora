@@ -15,7 +15,6 @@ from .domain_object_integrity import (
     validate_domain_object_write,
 )
 
-
 KNOWLEDGE_SORT_COLUMNS = {
     "title": "title COLLATE NOCASE",
     "category": "category COLLATE NOCASE",
@@ -82,27 +81,27 @@ class KnowledgeStore(BaseStore):
                     entry.provenance,
                 )
                 cursor = await db.execute(
-                """INSERT INTO knowledge_entries
+                    """INSERT INTO knowledge_entries
                    (title, content, category, confidence, source_ids, tags,
                     created_at, updated_at, expires_at, origin, provenance_json)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    entry.title,
-                    entry.content,
-                    entry.category.value,
-                    entry.confidence,
-                    json.dumps(entry.source_ids),
-                    json.dumps(entry.tags),
-                    now,
-                    now,
-                    entry.expires_at,
-                    entry.origin.value,
                     (
-                        self._to_json(entry.provenance.to_dict())
-                        if entry.provenance is not None
-                        else None
+                        entry.title,
+                        entry.content,
+                        entry.category.value,
+                        entry.confidence,
+                        json.dumps(entry.source_ids),
+                        json.dumps(entry.tags),
+                        now,
+                        now,
+                        entry.expires_at,
+                        entry.origin.value,
+                        (
+                            self._to_json(entry.provenance.to_dict())
+                            if entry.provenance is not None
+                            else None
+                        ),
                     ),
-                ),
                 )
                 await db.commit()
                 return cursor.lastrowid
@@ -231,26 +230,26 @@ class KnowledgeStore(BaseStore):
                     entry.provenance,
                 )
                 await db.execute(
-                """UPDATE knowledge_entries SET title=?, content=?, category=?,
+                    """UPDATE knowledge_entries SET title=?, content=?, category=?,
                    confidence=?, tags=?, source_ids=?, updated_at=?, access_count=?,
                    origin=?, provenance_json=? WHERE id=?""",
-                (
-                    entry.title,
-                    entry.content,
-                    entry.category.value,
-                    entry.confidence,
-                    json.dumps(entry.tags),
-                    json.dumps(entry.source_ids),
-                    entry.updated_at,
-                    entry.access_count,
-                    entry.origin.value,
                     (
-                        self._to_json(entry.provenance.to_dict())
-                        if entry.provenance is not None
-                        else None
+                        entry.title,
+                        entry.content,
+                        entry.category.value,
+                        entry.confidence,
+                        json.dumps(entry.tags),
+                        json.dumps(entry.source_ids),
+                        entry.updated_at,
+                        entry.access_count,
+                        entry.origin.value,
+                        (
+                            self._to_json(entry.provenance.to_dict())
+                            if entry.provenance is not None
+                            else None
+                        ),
+                        entry.entry_id,
                     ),
-                    entry.entry_id,
-                ),
                 )
                 await db.commit()
             except BaseException:

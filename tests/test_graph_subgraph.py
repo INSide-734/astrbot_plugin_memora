@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ── helpers ───────────────────────────────────────────────────────────
+
 
 def _row(values: dict[str, Any]) -> MagicMock:
     """Fake aiosqlite.Row as a MagicMock with __getitem__ and keys()."""
@@ -114,25 +114,90 @@ class TestGraphSubgraphMixin:
 
         # Build rows for 5 nodes across 2 entries → limit_nodes=2 to trigger filtering
         entry_rows = [
-            _row({"id": 1, "source_memory_id": 10, "session_id": "s1",
-                  "persona_id": "p1", "entry_type": "fact", "relation_type": "has",
-                  "content": "entry1", "metadata": "{}", "edge_id": None}),
-            _row({"id": 2, "source_memory_id": 10, "session_id": "s1",
-                  "persona_id": "p1", "entry_type": "summary", "relation_type": None,
-                  "content": "summary1", "metadata": "{}", "edge_id": None}),
+            _row(
+                {
+                    "id": 1,
+                    "source_memory_id": 10,
+                    "session_id": "s1",
+                    "persona_id": "p1",
+                    "entry_type": "fact",
+                    "relation_type": "has",
+                    "content": "entry1",
+                    "metadata": "{}",
+                    "edge_id": None,
+                }
+            ),
+            _row(
+                {
+                    "id": 2,
+                    "source_memory_id": 10,
+                    "session_id": "s1",
+                    "persona_id": "p1",
+                    "entry_type": "summary",
+                    "relation_type": None,
+                    "content": "summary1",
+                    "metadata": "{}",
+                    "edge_id": None,
+                }
+            ),
         ]
 
         node_rows = [
-            _row({"entry_id": 1, "node_id": 101, "node_key": "k1", "node_type": "entity",
-                  "node_value": "NodeA", "canonical_value": "node_a", "metadata": "{}"}),
-            _row({"entry_id": 1, "node_id": 102, "node_key": "k2", "node_type": "entity",
-                  "node_value": "NodeB", "canonical_value": "node_b", "metadata": "{}"}),
-            _row({"entry_id": 2, "node_id": 103, "node_key": "k3", "node_type": "concept",
-                  "node_value": "NodeC", "canonical_value": "node_c", "metadata": "{}"}),
-            _row({"entry_id": 2, "node_id": 104, "node_key": "k4", "node_type": "topic",
-                  "node_value": "NodeD", "canonical_value": "node_d", "metadata": "{}"}),
-            _row({"entry_id": 2, "node_id": 105, "node_key": "k5", "node_type": "event",
-                  "node_value": "NodeE", "canonical_value": "node_e", "metadata": "{}"}),
+            _row(
+                {
+                    "entry_id": 1,
+                    "node_id": 101,
+                    "node_key": "k1",
+                    "node_type": "entity",
+                    "node_value": "NodeA",
+                    "canonical_value": "node_a",
+                    "metadata": "{}",
+                }
+            ),
+            _row(
+                {
+                    "entry_id": 1,
+                    "node_id": 102,
+                    "node_key": "k2",
+                    "node_type": "entity",
+                    "node_value": "NodeB",
+                    "canonical_value": "node_b",
+                    "metadata": "{}",
+                }
+            ),
+            _row(
+                {
+                    "entry_id": 2,
+                    "node_id": 103,
+                    "node_key": "k3",
+                    "node_type": "concept",
+                    "node_value": "NodeC",
+                    "canonical_value": "node_c",
+                    "metadata": "{}",
+                }
+            ),
+            _row(
+                {
+                    "entry_id": 2,
+                    "node_id": 104,
+                    "node_key": "k4",
+                    "node_type": "topic",
+                    "node_value": "NodeD",
+                    "canonical_value": "node_d",
+                    "metadata": "{}",
+                }
+            ),
+            _row(
+                {
+                    "entry_id": 2,
+                    "node_id": 105,
+                    "node_key": "k5",
+                    "node_type": "event",
+                    "node_value": "NodeE",
+                    "canonical_value": "node_e",
+                    "metadata": "{}",
+                }
+            ),
         ]
 
         edge_rows: list[MagicMock] = []
@@ -157,7 +222,8 @@ class TestGraphSubgraphMixin:
         # Patch _from_json to return a dict
         with patch.object(store, "_from_json", return_value={"importance": 0.5}):
             result = await store.get_subgraph_for_memories(
-                [10], limit_nodes=2,
+                [10],
+                limit_nodes=2,
             )
         assert "nodes" in result
         assert "edges" in result
@@ -172,9 +238,19 @@ class TestGraphSubgraphMixin:
         """When a node_id is not in node_map, it's skipped (line 284)."""
         store = _make_graph_store()
         entry_rows = [
-            _row({"id": 1, "source_memory_id": 10, "session_id": "s1",
-                  "persona_id": "p1", "entry_type": "fact", "relation_type": "has",
-                  "content": "test", "metadata": "{}", "edge_id": None}),
+            _row(
+                {
+                    "id": 1,
+                    "source_memory_id": 10,
+                    "session_id": "s1",
+                    "persona_id": "p1",
+                    "entry_type": "fact",
+                    "relation_type": "has",
+                    "content": "test",
+                    "metadata": "{}",
+                    "edge_id": None,
+                }
+            ),
         ]
         # entry_node_map references a node that doesn't exist in node_map
         entry_node_map = {1: [999]}  # node_id 999 not in node_map
@@ -183,7 +259,10 @@ class TestGraphSubgraphMixin:
 
         with patch.object(store, "_from_json", return_value={}):
             entries = store._build_subgraph_entries(
-                entry_rows, entry_node_map, node_map, memory_base,
+                entry_rows,
+                entry_node_map,
+                node_map,
+                memory_base,
             )
         assert len(entries) == 1
         assert entries[0]["node_ids"] == [999]
@@ -193,23 +272,42 @@ class TestGraphSubgraphMixin:
         """Node in node_map gets entry_count incremented and _memory_ids updated."""
         store = _make_graph_store()
         entry_rows = [
-            _row({"id": 1, "source_memory_id": 10, "session_id": "s1",
-                  "persona_id": "p1", "entry_type": "fact", "relation_type": "has",
-                  "content": "test", "metadata": "{}", "edge_id": None}),
+            _row(
+                {
+                    "id": 1,
+                    "source_memory_id": 10,
+                    "session_id": "s1",
+                    "persona_id": "p1",
+                    "entry_type": "fact",
+                    "relation_type": "has",
+                    "content": "test",
+                    "metadata": "{}",
+                    "edge_id": None,
+                }
+            ),
         ]
         entry_node_map = {1: [101]}
         node_map = {
             101: {
-                "id": 101, "key": "k1", "type": "entity",
-                "label": "NodeA", "canonical_value": "node_a",
-                "metadata": {}, "entry_count": 0, "memory_count": 0,
-                "degree": 0, "weight": 0.0, "_memory_ids": set(),
+                "id": 101,
+                "key": "k1",
+                "type": "entity",
+                "label": "NodeA",
+                "canonical_value": "node_a",
+                "metadata": {},
+                "entry_count": 0,
+                "memory_count": 0,
+                "degree": 0,
+                "weight": 0.0,
+                "_memory_ids": set(),
             }
         }
         memory_base: dict[int, dict[str, Any]] = {}
 
         with patch.object(store, "_from_json", return_value={}):
-            store._build_subgraph_entries(entry_rows, entry_node_map, node_map, memory_base)
+            store._build_subgraph_entries(
+                entry_rows, entry_node_map, node_map, memory_base
+            )
 
         assert node_map[101]["entry_count"] == 1
         assert 10 in node_map[101]["_memory_ids"]
@@ -227,7 +325,7 @@ class TestGraphSubgraphMixin:
                 "persona_id": "p1",
                 "importance": 0.7,
                 "entry_count": 5,  # overcounted, will be reset
-                "edge_count": 3,   # overcounted, will be reset
+                "edge_count": 3,  # overcounted, will be reset
                 "node_ids": {101, 102, 103},
                 "entry_types": {"fact", "summary"},
             },
@@ -242,13 +340,16 @@ class TestGraphSubgraphMixin:
         ]
 
         memories = store._build_subgraph_memories(
-            memory_base, entries, edges, nodes_were_limited=True,
+            memory_base,
+            entries,
+            edges,
+            nodes_were_limited=True,
         )
         assert len(memories) == 1
         mem = memories[0]
         assert mem["entry_count"] == 2  # recounted from entries
-        assert mem["edge_count"] == 2   # recounted from edges
-        assert mem["node_count"] == 2   # from node_ids
+        assert mem["edge_count"] == 2  # recounted from edges
+        assert mem["node_count"] == 2  # from node_ids
 
     def test_build_memories_nodes_not_limited(self) -> None:
         """When nodes_were_limited=False, original base counts are preserved."""
@@ -270,7 +371,10 @@ class TestGraphSubgraphMixin:
         edges: list[dict[str, Any]] = []
 
         memories = store._build_subgraph_memories(
-            memory_base, entries, edges, nodes_were_limited=False,
+            memory_base,
+            entries,
+            edges,
+            nodes_were_limited=False,
         )
         assert len(memories) == 1
         mem = memories[0]
@@ -298,7 +402,10 @@ class TestGraphSubgraphMixin:
 
         # Not limited → sees original counts (0,0) → skipped
         memories = store._build_subgraph_memories(
-            memory_base, entries, edges, nodes_were_limited=False,
+            memory_base,
+            entries,
+            edges,
+            nodes_were_limited=False,
         )
         assert memories == []
 
@@ -320,14 +427,21 @@ class TestGraphSubgraphMixin:
         }
         entries = [
             {"memory_id": 10, "node_ids": [101], "entry_type": "fact"},
-            {"memory_id": 999, "node_ids": [999], "entry_type": "unknown"},  # not in memory_base
+            {
+                "memory_id": 999,
+                "node_ids": [999],
+                "entry_type": "unknown",
+            },  # not in memory_base
         ]
         edges = [
             {"memory_id": 10},
         ]
 
         memories = store._build_subgraph_memories(
-            memory_base, entries, edges, nodes_were_limited=True,
+            memory_base,
+            entries,
+            edges,
+            nodes_were_limited=True,
         )
         assert len(memories) == 1
 
@@ -354,7 +468,10 @@ class TestGraphSubgraphMixin:
         ]
 
         memories = store._build_subgraph_memories(
-            memory_base, entries, edges, nodes_were_limited=True,
+            memory_base,
+            entries,
+            edges,
+            nodes_were_limited=True,
         )
         assert len(memories) == 1
         assert memories[0]["edge_count"] == 1  # only the matching edge counted
@@ -365,12 +482,39 @@ class TestGraphSubgraphMixin:
         """_build_subgraph_maps creates entry_node_map and node_map correctly."""
         store = _make_graph_store()
         node_rows = [
-            _row({"entry_id": 1, "node_id": 101, "node_key": "k1", "node_type": "entity",
-                  "node_value": "TestNode", "canonical_value": "test_node", "metadata": "{}"}),
-            _row({"entry_id": 1, "node_id": 102, "node_key": "k2", "node_type": "concept",
-                  "node_value": "TestConcept", "canonical_value": "test_concept", "metadata": "{}"}),
-            _row({"entry_id": 2, "node_id": 101, "node_key": "k1", "node_type": "entity",
-                  "node_value": "TestNode", "canonical_value": "test_node", "metadata": "{}"}),
+            _row(
+                {
+                    "entry_id": 1,
+                    "node_id": 101,
+                    "node_key": "k1",
+                    "node_type": "entity",
+                    "node_value": "TestNode",
+                    "canonical_value": "test_node",
+                    "metadata": "{}",
+                }
+            ),
+            _row(
+                {
+                    "entry_id": 1,
+                    "node_id": 102,
+                    "node_key": "k2",
+                    "node_type": "concept",
+                    "node_value": "TestConcept",
+                    "canonical_value": "test_concept",
+                    "metadata": "{}",
+                }
+            ),
+            _row(
+                {
+                    "entry_id": 2,
+                    "node_id": 101,
+                    "node_key": "k1",
+                    "node_type": "entity",
+                    "node_value": "TestNode",
+                    "canonical_value": "test_node",
+                    "metadata": "{}",
+                }
+            ),
         ]
 
         with patch.object(store, "_from_json", return_value={}):
@@ -388,23 +532,62 @@ class TestGraphSubgraphMixin:
         """_build_subgraph_edges increments node degree and memory edge_count."""
         store = _make_graph_store()
         edge_rows = [
-            _row({"id": 1, "edge_key": "e1", "source_node_id": 101, "target_node_id": 102,
-                  "relation_type": "related_to", "source_memory_id": 10,
-                  "weight": 0.8, "confidence": 0.9, "status": "active", "metadata": "{}",
-                  "created_at": "2026-07-07T12:00:00+00:00"}),
+            _row(
+                {
+                    "id": 1,
+                    "edge_key": "e1",
+                    "source_node_id": 101,
+                    "target_node_id": 102,
+                    "relation_type": "related_to",
+                    "source_memory_id": 10,
+                    "weight": 0.8,
+                    "confidence": 0.9,
+                    "status": "active",
+                    "metadata": "{}",
+                    "created_at": "2026-07-07T12:00:00+00:00",
+                }
+            ),
         ]
         node_map = {
-            101: {"id": 101, "key": "k1", "type": "entity", "label": "A",
-                  "canonical_value": "a", "metadata": {}, "entry_count": 0,
-                  "memory_count": 0, "degree": 0, "weight": 0.0, "_memory_ids": set()},
-            102: {"id": 102, "key": "k2", "type": "entity", "label": "B",
-                  "canonical_value": "b", "metadata": {}, "entry_count": 0,
-                  "memory_count": 0, "degree": 0, "weight": 0.0, "_memory_ids": set()},
+            101: {
+                "id": 101,
+                "key": "k1",
+                "type": "entity",
+                "label": "A",
+                "canonical_value": "a",
+                "metadata": {},
+                "entry_count": 0,
+                "memory_count": 0,
+                "degree": 0,
+                "weight": 0.0,
+                "_memory_ids": set(),
+            },
+            102: {
+                "id": 102,
+                "key": "k2",
+                "type": "entity",
+                "label": "B",
+                "canonical_value": "b",
+                "metadata": {},
+                "entry_count": 0,
+                "memory_count": 0,
+                "degree": 0,
+                "weight": 0.0,
+                "_memory_ids": set(),
+            },
         }
         memory_base: dict[int, dict[str, Any]] = {
-            10: {"memory_id": 10, "summary": "s", "session_id": "s1",
-                 "persona_id": "p1", "importance": 0.5, "entry_count": 1,
-                 "edge_count": 0, "node_ids": set(), "entry_types": set()},
+            10: {
+                "memory_id": 10,
+                "summary": "s",
+                "session_id": "s1",
+                "persona_id": "p1",
+                "importance": 0.5,
+                "entry_count": 1,
+                "edge_count": 0,
+                "node_ids": set(),
+                "entry_types": set(),
+            },
         }
 
         with patch.object(store, "_from_json", return_value={}):
@@ -422,18 +605,49 @@ class TestGraphSubgraphMixin:
         """Edges use memory/entry business time instead of graph insertion time."""
         store = _make_graph_store()
         edge_rows = [
-            _row({"id": 1, "edge_key": "e1", "source_node_id": 101, "target_node_id": 102,
-                  "relation_type": "related_to", "source_memory_id": 10,
-                  "weight": 0.8, "confidence": 0.9, "status": "active", "metadata": "{}",
-                  "created_at": "2026-07-07T12:00:00+00:00"}),
+            _row(
+                {
+                    "id": 1,
+                    "edge_key": "e1",
+                    "source_node_id": 101,
+                    "target_node_id": 102,
+                    "relation_type": "related_to",
+                    "source_memory_id": 10,
+                    "weight": 0.8,
+                    "confidence": 0.9,
+                    "status": "active",
+                    "metadata": "{}",
+                    "created_at": "2026-07-07T12:00:00+00:00",
+                }
+            ),
         ]
         node_map = {
-            101: {"id": 101, "key": "k1", "type": "entity", "label": "A",
-                  "canonical_value": "a", "metadata": {}, "entry_count": 0,
-                  "memory_count": 0, "degree": 0, "weight": 0.0, "_memory_ids": set()},
-            102: {"id": 102, "key": "k2", "type": "entity", "label": "B",
-                  "canonical_value": "b", "metadata": {}, "entry_count": 0,
-                  "memory_count": 0, "degree": 0, "weight": 0.0, "_memory_ids": set()},
+            101: {
+                "id": 101,
+                "key": "k1",
+                "type": "entity",
+                "label": "A",
+                "canonical_value": "a",
+                "metadata": {},
+                "entry_count": 0,
+                "memory_count": 0,
+                "degree": 0,
+                "weight": 0.0,
+                "_memory_ids": set(),
+            },
+            102: {
+                "id": 102,
+                "key": "k2",
+                "type": "entity",
+                "label": "B",
+                "canonical_value": "b",
+                "metadata": {},
+                "entry_count": 0,
+                "memory_count": 0,
+                "degree": 0,
+                "weight": 0.0,
+                "_memory_ids": set(),
+            },
         }
 
         with patch.object(store, "_from_json", return_value={}):
@@ -450,18 +664,45 @@ class TestGraphSubgraphMixin:
         """Millisecond timestamps are normalized to Unix seconds for dashboard filters."""
         store = _make_graph_store()
         edge_rows = [
-            _row({"id": 1, "edge_key": "e1", "source_node_id": 101, "target_node_id": 102,
-                  "relation_type": "related_to", "source_memory_id": 10,
-                  "weight": 0.8, "confidence": 0.9, "status": "active", "metadata": "{}",
-                  "created_at": "2026-07-07T12:00:00+00:00"}),
+            _row(
+                {
+                    "id": 1,
+                    "edge_key": "e1",
+                    "source_node_id": 101,
+                    "target_node_id": 102,
+                    "relation_type": "related_to",
+                    "source_memory_id": 10,
+                    "weight": 0.8,
+                    "confidence": 0.9,
+                    "status": "active",
+                    "metadata": "{}",
+                    "created_at": "2026-07-07T12:00:00+00:00",
+                }
+            ),
         ]
         node_map = {
-            101: {"id": 101, "key": "k1", "type": "entity", "label": "A",
-                  "canonical_value": "a", "metadata": {}, "entry_count": 0,
-                  "memory_count": 0, "degree": 0},
-            102: {"id": 102, "key": "k2", "type": "entity", "label": "B",
-                  "canonical_value": "b", "metadata": {}, "entry_count": 0,
-                  "memory_count": 0, "degree": 0},
+            101: {
+                "id": 101,
+                "key": "k1",
+                "type": "entity",
+                "label": "A",
+                "canonical_value": "a",
+                "metadata": {},
+                "entry_count": 0,
+                "memory_count": 0,
+                "degree": 0,
+            },
+            102: {
+                "id": 102,
+                "key": "k2",
+                "type": "entity",
+                "label": "B",
+                "canonical_value": "b",
+                "metadata": {},
+                "entry_count": 0,
+                "memory_count": 0,
+                "degree": 0,
+            },
         }
 
         edges = store._build_subgraph_edges(
@@ -477,24 +718,64 @@ class TestGraphSubgraphMixin:
         """Temporal BEFORE/AFTER edges use the source-side event time."""
         store = _make_graph_store()
         edge_rows = [
-            _row({"id": 1, "edge_key": "e1", "source_node_id": 101, "target_node_id": 102,
-                  "relation_type": "before", "source_memory_id": 10,
-                  "weight": 1.0, "confidence": 0.9, "status": "active",
-                  "metadata": '{"event_time_a": 1700000000.0, "event_time_b": 1700086400.0}',
-                  "created_at": "2026-07-07T12:00:00+00:00"}),
-            _row({"id": 2, "edge_key": "e2", "source_node_id": 102, "target_node_id": 101,
-                  "relation_type": "after", "source_memory_id": 10,
-                  "weight": 1.0, "confidence": 0.9, "status": "active",
-                  "metadata": '{"event_time_a": 1700000000.0, "event_time_b": 1700086400.0}',
-                  "created_at": "2026-07-07T12:00:00+00:00"}),
+            _row(
+                {
+                    "id": 1,
+                    "edge_key": "e1",
+                    "source_node_id": 101,
+                    "target_node_id": 102,
+                    "relation_type": "before",
+                    "source_memory_id": 10,
+                    "weight": 1.0,
+                    "confidence": 0.9,
+                    "status": "active",
+                    "metadata": '{"event_time_a": 1700000000.0, "event_time_b": 1700086400.0}',
+                    "created_at": "2026-07-07T12:00:00+00:00",
+                }
+            ),
+            _row(
+                {
+                    "id": 2,
+                    "edge_key": "e2",
+                    "source_node_id": 102,
+                    "target_node_id": 101,
+                    "relation_type": "after",
+                    "source_memory_id": 10,
+                    "weight": 1.0,
+                    "confidence": 0.9,
+                    "status": "active",
+                    "metadata": '{"event_time_a": 1700000000.0, "event_time_b": 1700086400.0}',
+                    "created_at": "2026-07-07T12:00:00+00:00",
+                }
+            ),
         ]
         node_map = {
-            101: {"id": 101, "key": "k1", "type": "fact", "label": "A",
-                  "canonical_value": "a", "metadata": {}, "entry_count": 0,
-                  "memory_count": 0, "degree": 0, "weight": 0.0, "_memory_ids": set()},
-            102: {"id": 102, "key": "k2", "type": "fact", "label": "B",
-                  "canonical_value": "b", "metadata": {}, "entry_count": 0,
-                  "memory_count": 0, "degree": 0, "weight": 0.0, "_memory_ids": set()},
+            101: {
+                "id": 101,
+                "key": "k1",
+                "type": "fact",
+                "label": "A",
+                "canonical_value": "a",
+                "metadata": {},
+                "entry_count": 0,
+                "memory_count": 0,
+                "degree": 0,
+                "weight": 0.0,
+                "_memory_ids": set(),
+            },
+            102: {
+                "id": 102,
+                "key": "k2",
+                "type": "fact",
+                "label": "B",
+                "canonical_value": "b",
+                "metadata": {},
+                "entry_count": 0,
+                "memory_count": 0,
+                "degree": 0,
+                "weight": 0.0,
+                "_memory_ids": set(),
+            },
         }
 
         edges = store._build_subgraph_edges(edge_rows, node_map, {})
@@ -505,14 +786,35 @@ class TestGraphSubgraphMixin:
         """Edge with source_node not in map → target degree still updated."""
         store = _make_graph_store()
         edge_rows = [
-            _row({"id": 1, "edge_key": "e1", "source_node_id": 999, "target_node_id": 102,
-                  "relation_type": "related_to", "source_memory_id": 10,
-                  "weight": 0.5, "confidence": 0.5, "status": "active", "metadata": "{}"}),
+            _row(
+                {
+                    "id": 1,
+                    "edge_key": "e1",
+                    "source_node_id": 999,
+                    "target_node_id": 102,
+                    "relation_type": "related_to",
+                    "source_memory_id": 10,
+                    "weight": 0.5,
+                    "confidence": 0.5,
+                    "status": "active",
+                    "metadata": "{}",
+                }
+            ),
         ]
         node_map = {
-            102: {"id": 102, "key": "k2", "type": "entity", "label": "B",
-                  "canonical_value": "b", "metadata": {}, "entry_count": 0,
-                  "memory_count": 0, "degree": 0, "weight": 0.0, "_memory_ids": set()},
+            102: {
+                "id": 102,
+                "key": "k2",
+                "type": "entity",
+                "label": "B",
+                "canonical_value": "b",
+                "metadata": {},
+                "entry_count": 0,
+                "memory_count": 0,
+                "degree": 0,
+                "weight": 0.0,
+                "_memory_ids": set(),
+            },
         }
         memory_base: dict[int, dict[str, Any]] = {}
 
@@ -542,9 +844,15 @@ class TestGraphSubgraphMixin:
         # Values below min are clamped to 1; above max are clamped to upper bound
         # This should not crash
         await store.get_subgraph_for_memories(
-            [1], limit_entries=0, limit_nodes=0, limit_edges=0,
+            [1],
+            limit_entries=0,
+            limit_nodes=0,
+            limit_edges=0,
         )
         # Similarly for oversized values
         await store.get_subgraph_for_memories(
-            [1], limit_entries=9999, limit_nodes=9999, limit_edges=9999,
+            [1],
+            limit_entries=9999,
+            limit_nodes=9999,
+            limit_edges=9999,
         )

@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import copy
-from functools import wraps
 import contextlib
+import copy
 import math
+from functools import wraps
 from typing import Any
 
-from quart import request
-
 from astrbot.api import logger
+from quart import request
 
 from ..base.list_sorting import parse_sort_query
 from ..models.knowledge_models import KnowledgeEntry, KnowledgeType
@@ -164,7 +163,9 @@ def _knowledge_changes_candidate(entry: KnowledgeEntry, changes: Any):
                         values[field] = confidence
         else:
             if isinstance(value, str):
-                values[field] = [item.strip() for item in value.split(",") if item.strip()]
+                values[field] = [
+                    item.strip() for item in value.split(",") if item.strip()
+                ]
             elif isinstance(value, list):
                 normalized_tags: list[str] = []
                 for index, tag in enumerate(value):
@@ -217,7 +218,9 @@ class KnowledgeApiMixin:
         entries = _safe_entry_list(entries)
         total = _safe_total(total, 0)
         serialized_entries = [
-            item for item in (_safe_entry_to_dict(e) for e in entries) if item is not None
+            item
+            for item in (_safe_entry_to_dict(e) for e in entries)
+            if item is not None
         ]
         return ok_response(
             {
@@ -262,7 +265,9 @@ class KnowledgeApiMixin:
         entries = _safe_entry_list(entries)
         total = _safe_total(total, 0)
         serialized_entries = [
-            item for item in (_safe_entry_to_dict(e) for e in entries) if item is not None
+            item
+            for item in (_safe_entry_to_dict(e) for e in entries)
+            if item is not None
         ]
         return ok_response({"entries": serialized_entries, "total": total})
 
@@ -394,9 +399,7 @@ class KnowledgeApiMixin:
                     )
             if "confidence" in payload:
                 with contextlib.suppress(TypeError, ValueError):
-                    entry.confidence = _coerce_confidence_value(
-                        payload["confidence"]
-                    )
+                    entry.confidence = _coerce_confidence_value(payload["confidence"])
             if "tags" in payload:
                 entry.tags = _normalize_tags(payload["tags"])
         if not entry.title or not entry.content:

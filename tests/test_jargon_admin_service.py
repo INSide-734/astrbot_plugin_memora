@@ -311,11 +311,14 @@ async def test_delete_is_revisioned_and_invalidates_once(tmp_db_path: str) -> No
         created = await _create(service)
         invalidated.clear()
 
-        assert await service.delete(
-            term="灰度",
-            group_id="g1",
-            expected_revision=service.revision_for(created),
-        ) is True
+        assert (
+            await service.delete(
+                term="灰度",
+                group_id="g1",
+                expected_revision=service.revision_for(created),
+            )
+            is True
+        )
         assert await store.get_by_term("灰度", "g1") is None
         assert invalidated == ["g1"]
     finally:

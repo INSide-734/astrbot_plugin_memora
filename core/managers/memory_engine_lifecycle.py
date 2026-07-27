@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 
 import aiosqlite
+from astrbot.api import logger
 
 from ..managers.atom_lifecycle_manager import AtomLifecycleManager
 from ..managers.graph_memory_manager import GraphMemoryManager
@@ -211,7 +212,9 @@ class MemoryEngineLifecycleMixin:
                 cost_control = build_cost_control_from_config(self.config)
 
                 # 高成本策略（llm/hybrid）在 balanced/low_cost 下自动降级为 MMR
-                if strategy in ("llm", "hybrid") and not cost_control.allow("llm_reranker"):
+                if strategy in ("llm", "hybrid") and not cost_control.allow(
+                    "llm_reranker"
+                ):
                     logger.info(
                         f"[CostControl] reranker strategy={strategy} 降级为 mmr: "
                         f"{cost_control.deny_reason('llm_reranker')}"

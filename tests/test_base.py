@@ -4,8 +4,6 @@ constants, and exceptions.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -277,10 +275,14 @@ class TestValidateConfig:
     def test_topic_segmentation_strategy_valid_values(self) -> None:
         from core.base.config_validator import validate_config
 
-        for strat in ["a_b_hybrid", "strategy_a", "strategy_b", "strategy_c", "strategy_d"]:
-            result = validate_config(
-                {"topic_segmentation": {"strategy": strat}}
-            )
+        for strat in [
+            "a_b_hybrid",
+            "strategy_a",
+            "strategy_b",
+            "strategy_c",
+            "strategy_d",
+        ]:
+            result = validate_config({"topic_segmentation": {"strategy": strat}})
             assert result.topic_segmentation.strategy == strat
 
 
@@ -298,37 +300,27 @@ class TestMergeConfigWithDefaults:
     def test_user_value_overrides_default(self) -> None:
         from core.base.config_validator import merge_config_with_defaults
 
-        merged = merge_config_with_defaults(
-            {"recall_engine": {"top_k": 20}}
-        )
+        merged = merge_config_with_defaults({"recall_engine": {"top_k": 20}})
         assert merged["recall_engine"]["top_k"] == 20
 
     def test_deep_merge_preserves_nested_defaults(self) -> None:
         from core.base.config_validator import merge_config_with_defaults
 
-        merged = merge_config_with_defaults(
-            {"recall_engine": {"top_k": 20}}
-        )
+        merged = merge_config_with_defaults({"recall_engine": {"top_k": 20}})
         # top_k overridden but importance_weight preserved from defaults
         assert merged["recall_engine"]["importance_weight"] == 1.0
 
     def test_non_dict_user_value_replaces_default(self) -> None:
         from core.base.config_validator import merge_config_with_defaults
 
-        merged = merge_config_with_defaults(
-            {"recall_engine": "not_a_dict"}
-        )
+        merged = merge_config_with_defaults({"recall_engine": "not_a_dict"})
         assert merged["recall_engine"] == "not_a_dict"
 
     def test_deep_nested_merge(self) -> None:
         from core.base.config_validator import merge_config_with_defaults
 
         merged = merge_config_with_defaults(
-            {
-                "topic_segmentation": {
-                    "strategy_b": {"similarity_threshold": 0.8}
-                }
-            }
+            {"topic_segmentation": {"strategy_b": {"similarity_threshold": 0.8}}}
         )
         assert merged["topic_segmentation"]["strategy_b"]["similarity_threshold"] == 0.8
         # Other fields in strategy_b preserved
@@ -345,7 +337,10 @@ class TestValidateRuntimeConfigChanges:
         )
 
         current = MemoraConfig()
-        assert validate_runtime_config_changes(current, {"recall_engine.top_k": 10}) is True
+        assert (
+            validate_runtime_config_changes(current, {"recall_engine.top_k": 10})
+            is True
+        )
 
     def test_valid_nested_change(self) -> None:
         from core.base.config_validator import (
@@ -444,7 +439,10 @@ class TestMemoraConfigBoundaries:
         total = 0.4 + 0.2
         assert cfg.graph_memory.document_route_weight == pytest.approx(0.4 / total)
         assert cfg.graph_memory.graph_route_weight == pytest.approx(0.2 / total)
-        assert cfg.graph_memory.document_route_weight + cfg.graph_memory.graph_route_weight == pytest.approx(1.0)
+        assert (
+            cfg.graph_memory.document_route_weight + cfg.graph_memory.graph_route_weight
+            == pytest.approx(1.0)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -510,9 +508,7 @@ class TestConfigManager:
     def test_get_section_returns_dict(self) -> None:
         from core.base.config_manager import ConfigManager
 
-        mgr = ConfigManager(
-            {"recall_engine": {"top_k": 5, "max_k": 10}}
-        )
+        mgr = ConfigManager({"recall_engine": {"top_k": 5, "max_k": 10}})
         section = mgr.get_section("recall_engine")
         assert isinstance(section, dict)
         assert section["top_k"] == 5
@@ -537,9 +533,7 @@ class TestConfigManager:
     def test_provider_settings_property(self) -> None:
         from core.base.config_manager import ConfigManager
 
-        mgr = ConfigManager(
-            {"provider_settings": {"llm_provider_id": "test-provider"}}
-        )
+        mgr = ConfigManager({"provider_settings": {"llm_provider_id": "test-provider"}})
         ps = mgr.provider_settings
         assert isinstance(ps, dict)
         assert ps["llm_provider_id"] == "test-provider"
@@ -547,18 +541,14 @@ class TestConfigManager:
     def test_session_manager_property(self) -> None:
         from core.base.config_manager import ConfigManager
 
-        mgr = ConfigManager(
-            {"session_manager": {"max_sessions": 200}}
-        )
+        mgr = ConfigManager({"session_manager": {"max_sessions": 200}})
         sm = mgr.session_manager
         assert sm["max_sessions"] == 200
 
     def test_graph_memory_property(self) -> None:
         from core.base.config_manager import ConfigManager
 
-        mgr = ConfigManager(
-            {"graph_memory": {"enabled": False}}
-        )
+        mgr = ConfigManager({"graph_memory": {"enabled": False}})
         gm = mgr.graph_memory
         assert gm["enabled"] is False
 
@@ -594,14 +584,14 @@ class TestConfigManager:
             }
         )
 
-        assert mgr.get("session_manager.max_sessions") == defaults["session_manager"][
-            "max_sessions"
-        ]
+        assert (
+            mgr.get("session_manager.max_sessions")
+            == defaults["session_manager"]["max_sessions"]
+        )
         assert mgr.get("recall_engine.top_k") == 9
         assert mgr.get("graph_memory.enabled") is False
         assert any(
-            err["section"] == "session_manager"
-            and err["action"] == "defaulted"
+            err["section"] == "session_manager" and err["action"] == "defaulted"
             for err in mgr.validation_errors
         )
         # Other defaults still present
@@ -673,8 +663,6 @@ class TestConfigDefaultsDocument:
 
     def test_module_has_no_side_effects_on_import(self) -> None:
         """Importing config_defaults should not mutate global state."""
-        import gc
-        import core.base.config_defaults  # noqa: F811
 
         # Just verify it doesn't throw on import
         assert True

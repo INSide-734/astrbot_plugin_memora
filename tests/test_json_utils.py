@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from core.utils.json_utils import (
     _convert_single_quotes,
     clean_control_characters,
@@ -14,7 +12,6 @@ from core.utils.json_utils import (
     remove_thinking_content,
     safe_parse_llm_json,
 )
-
 
 # ---------------------------------------------------------------------------
 # remove_thinking_content
@@ -115,7 +112,7 @@ class TestCleanMarkdownBlocks:
 
 class TestCleanControlCharacters:
     def test_keeps_newlines_and_tabs(self) -> None:
-        text = "{\n\t\"key\": \"value\"\n}"
+        text = '{\n\t"key": "value"\n}'
         result = clean_control_characters(text)
         assert "\n" in result
         assert "\t" in result
@@ -141,7 +138,7 @@ class TestExtractJsonContent:
         assert result == '{"key": "value"}'
 
     def test_extracts_array(self) -> None:
-        text = 'prefix [1, 2, 3] suffix'
+        text = "prefix [1, 2, 3] suffix"
         result = extract_json_content(text)
         assert result == "[1, 2, 3]"
 
@@ -274,11 +271,11 @@ class TestSafeParseLlmJson:
         assert result == {"key": "value"}
 
     def test_parse_valid_list(self) -> None:
-        result = safe_parse_llm_json('[1, 2, 3]')
+        result = safe_parse_llm_json("[1, 2, 3]")
         assert result == [1, 2, 3]
 
     def test_parse_with_thinking_tag_pass1(self) -> None:
-        text = "<thinking>分析中...</thinking>\n{\"result\": \"ok\"}"
+        text = '<thinking>分析中...</thinking>\n{"result": "ok"}'
         result = safe_parse_llm_json(text)
         assert result == {"result": "ok"}
 

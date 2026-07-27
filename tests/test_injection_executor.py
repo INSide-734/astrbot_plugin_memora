@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from copy import deepcopy
 from dataclasses import replace
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -41,11 +41,13 @@ async def build_executor_case(req):
         decision,
         InjectionExecutionContext(
             query="coffee",
-            memories=[{
-                "content": "prefers espresso",
-                "score": 0.9,
-                "metadata": {},
-            }],
+            memories=[
+                {
+                    "content": "prefers espresso",
+                    "score": 0.9,
+                    "metadata": {},
+                }
+            ],
         ),
     )
 
@@ -221,12 +223,19 @@ async def test_candidates_below_minimum_utility_produce_empty_result() -> None:
 async def test_selection_obeys_max_memories_and_character_budget() -> None:
     req = _request()
     memories = [
-        {"id": str(index), "content": f"MEMORY_{index}_" + "x" * 180, "score": 1.0, "metadata": {}}
+        {
+            "id": str(index),
+            "content": f"MEMORY_{index}_" + "x" * 180,
+            "score": 1.0,
+            "metadata": {},
+        }
         for index in range(5)
     ]
     decision = replace(_decision(), max_memories=2, memory_budget_chars=700)
     result = await InjectionExecutor(InjectionAdapter()).execute(
-        req, decision, _context(memories, cognitive_budget_chars=0, prospective_budget_chars=0)
+        req,
+        decision,
+        _context(memories, cognitive_budget_chars=0, prospective_budget_chars=0),
     )
     assert result.selected_count <= 2
     assert result.dropped_count >= 3
@@ -242,7 +251,9 @@ async def test_executor_never_changes_system_prompt() -> None:
     req.extra_user_content_parts = []
     before = req.system_prompt
     decision = InjectionStrategyRouter().route_final(
-        InjectionRoutingConfig(mode=RoutingMode.MANUAL, manual_preset=PresetName.BALANCED),
+        InjectionRoutingConfig(
+            mode=RoutingMode.MANUAL, manual_preset=PresetName.BALANCED
+        ),
         RequestSignals(candidate_count=1, top_confidence=0.9),
     )
     result = await InjectionExecutor(InjectionAdapter()).execute(
@@ -261,8 +272,15 @@ async def test_executor_never_changes_system_prompt() -> None:
 @pytest.mark.asyncio
 async def test_format_failure_leaves_request_unchanged(monkeypatch) -> None:
     req = MagicMock(prompt="hello", contexts=[], extra_user_content_parts=[])
-    snapshot = (req.prompt, deepcopy(req.contexts), deepcopy(req.extra_user_content_parts))
-    monkeypatch.setattr("core.injection.executor.format_memories_for_injection", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("boom")))
+    snapshot = (
+        req.prompt,
+        deepcopy(req.contexts),
+        deepcopy(req.extra_user_content_parts),
+    )
+    monkeypatch.setattr(
+        "core.injection.executor.format_memories_for_injection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("boom")),
+    )
     result = await build_executor_case(req)
     assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
     assert result.error_code == "FORMAT_FAILED"
@@ -292,7 +310,9 @@ async def test_format_failure_reports_global_budgets(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_executor_builds_complete_payload_before_first_mutation(monkeypatch) -> None:
+async def test_executor_builds_complete_payload_before_first_mutation(
+    monkeypatch,
+) -> None:
     req = _request()
     snapshot = (
         req.prompt,
@@ -321,7 +341,9 @@ class _FailingAssignmentRequest:
     def __init__(self) -> None:
         object.__setattr__(self, "system_prompt", "stable-system-prefix")
         object.__setattr__(self, "prompt", "current user message")
-        object.__setattr__(self, "contexts", [{"role": "user", "content": "older turn"}])
+        object.__setattr__(
+            self, "contexts", [{"role": "user", "content": "older turn"}]
+        )
         object.__setattr__(self, "extra_user_content_parts", [])
         object.__setattr__(self, "provider", None)
         object.__setattr__(self, "_fail_context_assignment", True)
@@ -422,7 +444,9 @@ async def test_negative_layer_caps_contribute_zero_to_configured_budget() -> Non
 
 
 @pytest.mark.asyncio
-async def test_auto_delivery_resolves_with_no_provider_to_temporary_extra_content() -> None:
+async def test_auto_delivery_resolves_with_no_provider_to_temporary_extra_content() -> (
+    None
+):
     req = _request()
     decision = replace(_decision(), resolved_delivery=DeliveryMode.AUTO)
     result = await InjectionExecutor(InjectionAdapter()).execute(
@@ -547,9 +571,7 @@ async def test_formatter_receives_full_ordinary_budget_before_cognitive_allocati
     assert result.outcome is InjectionOutcome.INJECTED
     assert observed_budgets == [1_200]
     payload = _part_payload()
-    assert payload.index("ORDINARY_FROM_SPY") < payload.index(
-        "COGNITIVE_AFTER_MEMORY"
-    )
+    assert payload.index("ORDINARY_FROM_SPY") < payload.index("COGNITIVE_AFTER_MEMORY")
 
 
 @pytest.mark.asyncio
@@ -662,7 +684,8 @@ async def test_all_delivery_modes_mutate_only_their_designated_field(delivery) -
     original_system = req.system_prompt
     provider = (
         _tool_capable_provider()
-        if delivery in {
+        if delivery
+        in {
             DeliveryMode.FAKE_TOOL_CALL,
             DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4,
         }
@@ -734,7 +757,9 @@ async def test_fake_tool_deliveries_consume_verified_payload_not_raw_memories(
     )
 
     def forbidden(*args, **kwargs):
-        raise AssertionError("raw memories must not be reformatted for fake-tool delivery")
+        raise AssertionError(
+            "raw memories must not be reformatted for fake-tool delivery"
+        )
 
     monkeypatch.setattr(
         "core.utils.memory_formatter.format_memories_for_fake_tool_call", forbidden
@@ -892,15 +917,26 @@ async def test_reserved_boundaries_are_escaped_inside_untrusted_layers(
     )
     if delivery is DeliveryMode.EXTRA_USER_CONTENT:
         delivered = req.extra_user_content_parts[-1].text
-    elif delivery in {DeliveryMode.USER_MESSAGE_BEFORE, DeliveryMode.USER_MESSAGE_AFTER}:
+    elif delivery in {
+        DeliveryMode.USER_MESSAGE_BEFORE,
+        DeliveryMode.USER_MESSAGE_AFTER,
+    }:
         delivered = req.prompt
     else:
         delivered = req.contexts[-1]["content"]
     assert delivered.count("<memora-untrusted-memory>") == 1
     assert delivered.count("</memora-untrusted-memory>") == 1
-    expected_replay_boundaries = int(delivery is DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4)
-    assert delivered.count("[DeepSeekV4-FakeToolCall-Replay]") == expected_replay_boundaries
-    assert delivered.count("[/DeepSeekV4-FakeToolCall-Replay]") == expected_replay_boundaries
+    expected_replay_boundaries = int(
+        delivery is DeliveryMode.FAKE_TOOL_CALL_DEEPSEEK_V4
+    )
+    assert (
+        delivered.count("[DeepSeekV4-FakeToolCall-Replay]")
+        == expected_replay_boundaries
+    )
+    assert (
+        delivered.count("[/DeepSeekV4-FakeToolCall-Replay]")
+        == expected_replay_boundaries
+    )
     assert result.actual_payload_chars <= result.effective_budget_chars
 
 
@@ -926,6 +962,7 @@ async def test_fake_tool_call_ids_are_unique_and_prefixed() -> None:
     assert contexts[0].startswith("fake_recall_")
     assert contexts[1].startswith("fake_recall_")
     assert contexts[0] != contexts[1]
+
 
 @pytest.mark.asyncio
 async def test_real_prompt_protection_filters_registered_unique_secret() -> None:
@@ -955,7 +992,11 @@ async def test_prompt_protection_cancellation_is_not_converted_to_error() -> Non
     protection = MagicMock()
     protection.wrap_prompt.side_effect = asyncio.CancelledError()
     req = _request()
-    snapshot = (req.prompt, deepcopy(req.contexts), deepcopy(req.extra_user_content_parts))
+    snapshot = (
+        req.prompt,
+        deepcopy(req.contexts),
+        deepcopy(req.extra_user_content_parts),
+    )
     with pytest.raises(asyncio.CancelledError):
         await InjectionExecutor(InjectionAdapter(), protection).execute(
             req,
@@ -969,21 +1010,29 @@ async def test_prompt_protection_cancellation_is_not_converted_to_error() -> Non
 
 
 @pytest.mark.asyncio
-async def test_registration_failure_after_mutation_rolls_back_and_does_not_filter() -> None:
+async def test_registration_failure_after_mutation_rolls_back_and_does_not_filter() -> (
+    None
+):
     from core.security.prompt_sanitizer import PromptProtectionService
 
     req = _request()
-    snapshot = (req.prompt, deepcopy(req.contexts), deepcopy(req.extra_user_content_parts))
+    snapshot = (
+        req.prompt,
+        deepcopy(req.contexts),
+        deepcopy(req.extra_user_content_parts),
+    )
     secret = "unregistered rollback secret alpha beta gamma delta epsilon"
     protection = PromptProtectionService(enable_double_check=False)
     original_wrap = protection.wrap_prompt
 
     observed_mutation = False
+
     def fail_after_observing_mutation(content, **kwargs):
         nonlocal observed_mutation
         observed_mutation = req.extra_user_content_parts != snapshot[2]
         original_wrap(content, **kwargs)
         raise RuntimeError("registration failed")
+
     protection.wrap_prompt = fail_after_observing_mutation
     result = await InjectionExecutor(InjectionAdapter(), protection).execute(
         req,
@@ -1019,6 +1068,7 @@ async def test_assignment_failure_never_registers_prompt() -> None:
     )
     assert result.error_code == "MUTATION_FAILED"
     protection.wrap_prompt.assert_not_called()
+
 
 class _FailingGetterRequest:
     @property
@@ -1070,7 +1120,11 @@ async def test_successful_execution_registers_only_its_scope() -> None:
 @pytest.mark.asyncio
 async def test_protected_execution_without_scope_fails_before_mutation() -> None:
     req = _request()
-    snapshot = (req.prompt, deepcopy(req.contexts), deepcopy(req.extra_user_content_parts))
+    snapshot = (
+        req.prompt,
+        deepcopy(req.contexts),
+        deepcopy(req.extra_user_content_parts),
+    )
     protection = MagicMock()
     result = await InjectionExecutor(InjectionAdapter(), protection).execute(
         req,

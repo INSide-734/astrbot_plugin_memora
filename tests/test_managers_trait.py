@@ -71,7 +71,8 @@ class TestIngestMemory:
         profile = tracker.get_trait_profile()
         # In English labels this works; Chinese labels should also match
         assert (
-            profile["extraversion"]["positive_count"] + profile["extraversion"]["negative_count"]
+            profile["extraversion"]["positive_count"]
+            + profile["extraversion"]["negative_count"]
         ) > 0
 
 

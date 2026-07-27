@@ -34,8 +34,7 @@ class TestPromptBuilder:
             assert (
                 "示例中的 `QQ:123456` 和 "
                 "`QQ官方:0123456789abcdef01234567:A1B2C3D4` "
-                "仅用于展示协议标签格式，禁止复制到实际结果"
-                in prompt
+                "仅用于展示协议标签格式，禁止复制到实际结果" in prompt
             )
             assert (
                 "实际稳定标识只能使用末尾“稳定参与者身份约束”中明确提供的完整值"
@@ -43,17 +42,12 @@ class TestPromptBuilder:
             )
             assert (
                 "未提供稳定参与者身份约束时，不得根据昵称、消息前缀中的普通账号字段"
-                "或示例自行猜测、构造任何协议身份标识"
-                in prompt
+                "或示例自行猜测、构造任何协议身份标识" in prompt
             )
 
         assert "张三（QQ:123456）提醒我" in builder.private_chat_prompt
-        assert "张三（QQ:123456）安排明天下午3点会议" in (
-            builder.private_chat_prompt
-        )
-        assert "张三（QQ:123456）需要确保会议准备就绪" in (
-            builder.private_chat_prompt
-        )
+        assert "张三（QQ:123456）安排明天下午3点会议" in (builder.private_chat_prompt)
+        assert "张三（QQ:123456）需要确保会议准备就绪" in (builder.private_chat_prompt)
 
         for participant in (
             "张三（QQ:123456）",

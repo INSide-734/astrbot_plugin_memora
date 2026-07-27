@@ -18,7 +18,6 @@ from core.models.memory_evolution import (
 )
 from core.storage.memory_evolution_store import MemoryEvolutionStore
 
-
 UTC = timezone.utc
 
 
@@ -29,9 +28,35 @@ def job_spec(key: str) -> JobSpec:
 
 def valid_plan() -> DerivedApplyPlan:
     return DerivedApplyPlan(
-        relations=(RelationView("r1", 17, 18, RelationType.SAME_EPISODE, .9, "scope", "shared", DerivedState.ACTIVE, "r17", "r18"),),
-        projections=(ProjectionView("p1", ProjectionType.EPISODE_SUMMARY, "episode", (17, 18), "scope", "shared", .8),),
-        projection_sources=(ProjectionSourceView("p1", 17, "r17", "primary", 0), ProjectionSourceView("p1", 18, "r18", "supporting", 1)),
+        relations=(
+            RelationView(
+                "r1",
+                17,
+                18,
+                RelationType.SAME_EPISODE,
+                0.9,
+                "scope",
+                "shared",
+                DerivedState.ACTIVE,
+                "r17",
+                "r18",
+            ),
+        ),
+        projections=(
+            ProjectionView(
+                "p1",
+                ProjectionType.EPISODE_SUMMARY,
+                "episode",
+                (17, 18),
+                "scope",
+                "shared",
+                0.8,
+            ),
+        ),
+        projection_sources=(
+            ProjectionSourceView("p1", 17, "r17", "primary", 0),
+            ProjectionSourceView("p1", 18, "r18", "supporting", 1),
+        ),
     )
 
 
@@ -41,7 +66,9 @@ async def test_initialize_creates_tables(tmp_path):
     store = MemoryEvolutionStore(path)
     await store.initialize()
     async with aiosqlite.connect(path) as db:
-        cur = await db.execute("SELECT name FROM sqlite_master WHERE type IN ('table','index')")
+        cur = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table','index')"
+        )
         names = {row[0] for row in await cur.fetchall()}
     assert {
         "memory_evolution_jobs",
@@ -78,7 +105,9 @@ async def test_projection_bundle_returns_source_mapping_for_supporting_seed(tmp_
     bundle = bundles[0]
     assert bundle.projection.projection_id == "p1"
     assert bundle.projection.source_memory_ids == (17, 18)
-    assert [(source.memory_id, source.role, source.ordinal) for source in bundle.sources] == [
+    assert [
+        (source.memory_id, source.role, source.ordinal) for source in bundle.sources
+    ] == [
         (17, "primary", 0),
         (18, "supporting", 1),
     ]
@@ -94,16 +123,32 @@ async def test_projection_bundle_filters_scope_state_and_orders_ties(tmp_path):
         DerivedApplyPlan(
             projections=(
                 ProjectionView(
-                    "p0", ProjectionType.PREFERENCE_STATE, "preference", (18, 19),
-                    "scope", "shared", .8,
+                    "p0",
+                    ProjectionType.PREFERENCE_STATE,
+                    "preference",
+                    (18, 19),
+                    "scope",
+                    "shared",
+                    0.8,
                 ),
                 ProjectionView(
-                    "p3", ProjectionType.RELATIONSHIP_STATE, "relationship", (18, 20),
-                    "scope", "shared", .8,
+                    "p3",
+                    ProjectionType.RELATIONSHIP_STATE,
+                    "relationship",
+                    (18, 20),
+                    "scope",
+                    "shared",
+                    0.8,
                 ),
                 ProjectionView(
-                    "inactive", ProjectionType.EPISODE_SUMMARY, "inactive", (18, 21),
-                    "scope", "shared", .99, DerivedState.INVALIDATED,
+                    "inactive",
+                    ProjectionType.EPISODE_SUMMARY,
+                    "inactive",
+                    (18, 21),
+                    "scope",
+                    "shared",
+                    0.99,
+                    DerivedState.INVALIDATED,
                 ),
             ),
             projection_sources=(
@@ -120,7 +165,9 @@ async def test_projection_bundle_filters_scope_state_and_orders_ties(tmp_path):
     bundles = await store.active_projection_bundles_for_seeds([18], scope_key="scope")
 
     assert [bundle.projection.projection_id for bundle in bundles] == ["p0", "p1", "p3"]
-    assert await store.active_projection_bundles_for_seeds([18], scope_key="other") == []
+    assert (
+        await store.active_projection_bundles_for_seeds([18], scope_key="other") == []
+    )
     assert await store.active_projection_bundles_for_seeds([18], limit=0) == []
     await store.close()
 
@@ -134,7 +181,10 @@ async def test_idempotent_enqueue_and_expired_lease(tmp_path):
     assert first.job_id == second.job_id
     claim = await store.claim_job(datetime.now(UTC), 1)
     assert claim is not None
-    assert await store.recover_expired_leases(datetime.now(UTC) + timedelta(seconds=2)) == 1
+    assert (
+        await store.recover_expired_leases(datetime.now(UTC) + timedelta(seconds=2))
+        == 1
+    )
     assert (await store.get_job(first.job_id)).state is JobState.PENDING
     await store.close()
 
@@ -198,15 +248,25 @@ async def test_relation_identity_includes_source_revisions(tmp_path):
     second = DerivedApplyPlan(
         relations=(
             RelationView(
-                "r2", 17, 18, RelationType.SAME_EPISODE, .8,
-                "scope", "shared", DerivedState.ACTIVE, "r17-new", "r18",
+                "r2",
+                17,
+                18,
+                RelationType.SAME_EPISODE,
+                0.8,
+                "scope",
+                "shared",
+                DerivedState.ACTIVE,
+                "r17-new",
+                "r18",
             ),
         ),
     )
     await store.apply_derived_plan(first)
     await store.apply_derived_plan(second)
     async with aiosqlite.connect(store.db_path) as db:
-        count = (await (await db.execute("SELECT COUNT(*) FROM memory_relations")).fetchone())[0]
+        count = (
+            await (await db.execute("SELECT COUNT(*) FROM memory_relations")).fetchone()
+        )[0]
     assert count == 2
     await store.close()
 
@@ -218,8 +278,13 @@ async def test_projection_primary_role_and_conflict_roles_are_persisted(tmp_path
     plan = DerivedApplyPlan(
         projections=(
             ProjectionView(
-                "conflict-1", ProjectionType.CONFLICT_SET, "conflicting evidence",
-                (17, 18, 19), "scope", "shared", .8,
+                "conflict-1",
+                ProjectionType.CONFLICT_SET,
+                "conflicting evidence",
+                (17, 18, 19),
+                "scope",
+                "shared",
+                0.8,
             ),
         ),
         projection_sources=(
@@ -231,14 +296,14 @@ async def test_projection_primary_role_and_conflict_roles_are_persisted(tmp_path
     await store.apply_derived_plan(plan)
     async with aiosqlite.connect(store.db_path) as db:
         db.row_factory = aiosqlite.Row
-        projection = await (await db.execute(
-            "SELECT primary_source_memory_id FROM memory_projections"
-        )).fetchone()
+        projection = await (
+            await db.execute("SELECT primary_source_memory_id FROM memory_projections")
+        ).fetchone()
         roles = {
             row["source_role"]
-            for row in await (await db.execute(
-                "SELECT source_role FROM memory_projection_sources"
-            )).fetchall()
+            for row in await (
+                await db.execute("SELECT source_role FROM memory_projection_sources")
+            ).fetchall()
         }
     assert projection["primary_source_memory_id"] == 17
     assert {"primary", "conflict_left", "conflict_right"} == roles
@@ -260,15 +325,17 @@ async def test_apply_plan_rolls_back_relation_when_projection_is_invalid(tmp_pat
     with pytest.raises(ValueError, match="exactly one primary"):
         await store.apply_derived_plan(invalid)
     async with aiosqlite.connect(store.db_path) as db:
-        relation_count = (await (await db.execute(
-            "SELECT COUNT(*) FROM memory_relations"
-        )).fetchone())[0]
+        relation_count = (
+            await (await db.execute("SELECT COUNT(*) FROM memory_relations")).fetchone()
+        )[0]
     assert relation_count == 0
     await store.close()
 
 
 @pytest.mark.asyncio
-async def test_invalidate_source_revision_removes_active_relation_and_projection(tmp_path):
+async def test_invalidate_source_revision_removes_active_relation_and_projection(
+    tmp_path,
+):
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
     await store.apply_derived_plan(valid_plan())

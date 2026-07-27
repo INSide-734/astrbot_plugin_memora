@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 
 class TestVectorRetriever:
-
     @pytest.fixture
     def faiss_db(self) -> MagicMock:
         db = MagicMock()
@@ -35,6 +34,7 @@ class TestVectorRetriever:
     @pytest.fixture
     def retriever(self, faiss_db: MagicMock) -> Any:
         from core.retrieval.vector_retriever import VectorRetriever
+
         return VectorRetriever(faiss_db=faiss_db)
 
     @pytest.mark.asyncio
@@ -44,11 +44,14 @@ class TestVectorRetriever:
         assert await retriever.search("   ") == []
 
     @pytest.mark.asyncio
-    async def test_search_with_results(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_search_with_results(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """有效 search returns scored vector results."""
         fake_result = MagicMock()
         fake_result.data = {
-            "id": 1, "text": "test memory content",
+            "id": 1,
+            "text": "test memory content",
             "metadata": {"importance": 0.7},
         }
         fake_result.similarity = 0.92
@@ -61,7 +64,9 @@ class TestVectorRetriever:
         assert results[0].content == "test memory content"
 
     @pytest.mark.asyncio
-    async def test_search_with_filters(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_search_with_filters(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """session_id and persona_id are passed as metadata_filters."""
         faiss_db.retrieve.return_value = []
 
@@ -73,7 +78,9 @@ class TestVectorRetriever:
         assert call_kwargs["metadata_filters"]["persona_id"] == "p1"
 
     @pytest.mark.asyncio
-    async def test_search_fetch_k_doubled_with_filters(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_search_fetch_k_doubled_with_filters(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """fetch_k is k*2 when filters are present."""
         faiss_db.retrieve.return_value = []
         await retriever.search("query", k=5, session_id="s1")
@@ -81,7 +88,9 @@ class TestVectorRetriever:
         assert call_kwargs["fetch_k"] == 10  # k * 2
 
     @pytest.mark.asyncio
-    async def test_search_fetch_k_normal_without_filters(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_search_fetch_k_normal_without_filters(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """fetch_k equals k when no filters."""
         faiss_db.retrieve.return_value = []
         await retriever.search("query", k=5)
@@ -89,7 +98,9 @@ class TestVectorRetriever:
         assert call_kwargs["fetch_k"] == 5
 
     @pytest.mark.asyncio
-    async def test_add_document_with_defaults(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_add_document_with_defaults(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """add_document injects default metadata values."""
         faiss_db.insert.return_value = 99
         doc_id = await retriever.add_document("test content")
@@ -101,7 +112,9 @@ class TestVectorRetriever:
         assert "last_access_time" in metadata
 
     @pytest.mark.asyncio
-    async def test_add_document_long_content_truncated(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_add_document_long_content_truncated(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """Content longer than 4000 chars is truncated for embedding."""
         faiss_db.insert.return_value = 1
         long_content = "A" * 5000
@@ -111,7 +124,9 @@ class TestVectorRetriever:
         assert len(inserted_content) <= 4001  # with marker
 
     @pytest.mark.asyncio
-    async def test_search_long_query_truncated(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_search_long_query_truncated(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """查询 longer than 2000 chars is truncated."""
         faiss_db.retrieve.return_value = []
         long_query = "B" * 3000
@@ -149,14 +164,18 @@ class TestVectorRetriever:
         assert result == "uuid-cached-1"
 
     @pytest.mark.asyncio
-    async def test_get_uuid_from_id_not_found(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_get_uuid_from_id_not_found(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """_get_uuid_from_id returns None when doc not found."""
         faiss_db.document_storage.get_documents.return_value = []
         result = await retriever._get_uuid_from_id(999)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_uuid_from_id_found(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_get_uuid_from_id_found(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """_get_uuid_from_id returns UUID from DB and caches it."""
         faiss_db.document_storage.get_documents.return_value = [{"doc_id": "uuid-abc"}]
         result = await retriever._get_uuid_from_id(42)
@@ -165,14 +184,18 @@ class TestVectorRetriever:
         assert retriever._id_cache[42] == "uuid-abc"
 
     @pytest.mark.asyncio
-    async def test_update_metadata_doc_not_found(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_update_metadata_doc_not_found(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """update_metadata returns False when doc not found."""
         faiss_db.document_storage.get_documents.return_value = []
         result = await retriever.update_metadata(999, {"importance": 0.8})
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_update_metadata_success(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_update_metadata_success(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """update_metadata merges metadata and returns True with dict metadata."""
         faiss_db.document_storage.get_documents.return_value = [
             {"metadata": {"importance": 0.5}}  # already a dict, not JSON string
@@ -183,7 +206,9 @@ class TestVectorRetriever:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_update_metadata_bad_json_metadata(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_update_metadata_bad_json_metadata(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """update_metadata handles bad JSON metadata gracefully."""
         faiss_db.document_storage.get_documents.return_value = [
             {"metadata": "{bad json!!}"}
@@ -192,7 +217,9 @@ class TestVectorRetriever:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_update_metadata_string_metadata(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_update_metadata_string_metadata(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """update_metadata parses string JSON metadata."""
         faiss_db.document_storage.get_documents.return_value = [
             {"metadata": '{"importance": 0.3}'}
@@ -201,14 +228,18 @@ class TestVectorRetriever:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_delete_document_not_found(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_delete_document_not_found(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """delete_document returns False when _get_uuid_from_id returns None."""
         faiss_db.document_storage.get_documents.return_value = []
         result = await retriever.delete_document(999)
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_delete_document_success(self, retriever: Any, faiss_db: MagicMock) -> None:
+    async def test_delete_document_success(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
         """delete_document deletes from FAISS and removes from cache."""
         retriever._id_cache[1] = "uuid-123"
         faiss_db.document_storage.get_documents.return_value = [{"doc_id": "uuid-123"}]

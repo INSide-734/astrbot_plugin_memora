@@ -26,7 +26,6 @@ from ..models.memory_evolution import (
 from ..models.temporal import normalize_datetime, visible_at
 from .rrf_fusion import HybridResult
 
-
 _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}
 _PROJECTION_TYPES = frozenset(item.value for item in ProjectionType)
 
@@ -51,12 +50,15 @@ class ProjectionBudget:
     max_summary_chars: int = 600
 
     def __post_init__(self) -> None:
-        if min(
-            self.max_chars,
-            self.max_items,
-            self.max_per_candidate,
-            self.max_summary_chars,
-        ) < 0:
+        if (
+            min(
+                self.max_chars,
+                self.max_items,
+                self.max_per_candidate,
+                self.max_summary_chars,
+            )
+            < 0
+        ):
             raise ValueError("projection budget values must be non-negative")
 
 
@@ -159,7 +161,9 @@ class ProjectionReader:
             )
             return ProjectionReadStats(
                 attached,
-                resolved_conflicts=sum(decision != "unresolved" for decision in decisions),
+                resolved_conflicts=sum(
+                    decision != "unresolved" for decision in decisions
+                ),
                 unresolved_conflicts=decisions.count("unresolved"),
                 conflict_decisions=tuple(decisions),
                 projection_count=projection_count,
@@ -280,7 +284,10 @@ class ProjectionReader:
             current = accepted.setdefault(primary_id, [])
             if len(current) >= budget.max_per_candidate:
                 continue
-            if sum(len(item["summary"]) for item in current) + len(summary) > budget.max_chars:
+            if (
+                sum(len(item["summary"]) for item in current) + len(summary)
+                > budget.max_chars
+            ):
                 continue
             current.append(visible)
             projection_count += 1
@@ -326,7 +333,9 @@ def _valid_projection_bundle(projection: Any, mappings: tuple[Any, ...]) -> bool
         return False
     if any(not isinstance(mapping, ProjectionSourceView) for mapping in mappings):
         return False
-    if not mappings or len({mapping.memory_id for mapping in mappings}) != len(mappings):
+    if not mappings or len({mapping.memory_id for mapping in mappings}) != len(
+        mappings
+    ):
         return False
     mapping_ids = {mapping.memory_id for mapping in mappings}
     if mapping_ids != set(projection.source_memory_ids):

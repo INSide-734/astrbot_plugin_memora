@@ -20,10 +20,18 @@ from .core.base.config_manager import ConfigManager
 from .core.command_endpoints import CommandEndpointsMixin
 from .core.command_handler import CommandHandler
 from .core.event_handler import EventHandler
+from .core.feature_delegation import FeatureDelegation
 from .core.i18n_backend import init as i18n_init
 from .core.i18n_backend import t
 from .core.managers.backup_manager import BackupManager
 from .core.managers.backup_models import BackupOperationError
+from .core.monitoring import (
+    PerfTracker,
+    close_debug_reporting,
+    report_debug_event,
+    report_debug_exception,
+    set_debug_mode,
+)
 from .core.plugin_initializer import PluginInitializer
 from .core.tools import MemoryMemorizeTool, MemorySearchTool
 from .core.utils.version import PLUGIN_VERSION
@@ -31,14 +39,6 @@ from .core.version_check import (  # noqa: F401
     _CURRENT_ASTRBOT_VERSION,
     _MIN_ASTRBOT_VERSION,
     _version_lt,
-)
-from .core.feature_delegation import FeatureDelegation
-from .core.monitoring import (
-    PerfTracker,
-    close_debug_reporting,
-    report_debug_event,
-    report_debug_exception,
-    set_debug_mode,
 )
 
 
@@ -232,9 +232,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 status="completed",
                 reason_code="startup_backup_completed",
                 task_type="maintenance",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - backup_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - backup_started) * 1000.0),
             )
 
             startup_stage = "startup_restore"
@@ -256,9 +254,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 status="completed",
                 reason_code="startup_restore_completed",
                 task_type="maintenance",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - restore_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - restore_started) * 1000.0),
             )
 
             startup_stage = "provider_wait"
@@ -304,9 +300,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 stage="startup",
                 status="completed",
                 reason_code="ready",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - startup_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - startup_started) * 1000.0),
             )
         except asyncio.CancelledError:
             report_debug_event(
@@ -315,9 +309,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 stage=startup_stage,
                 status="cancelled",
                 reason_code="initialization_cancelled",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - startup_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - startup_started) * 1000.0),
             )
             raise
         except BackupOperationError as exc:
@@ -329,9 +321,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 status="failed",
                 reason_code="startup_maintenance_error",
                 task_type="maintenance",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - stage_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - stage_started) * 1000.0),
             )
             report_debug_exception(
                 "plugin_failed",
@@ -340,9 +330,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 stage=startup_stage,
                 status="failed",
                 reason_code="backup_restore_error",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - startup_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - startup_started) * 1000.0),
             )
             logger.error("备份保护或恢复应用失败", exc_info=True)
             raise
@@ -368,9 +356,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 stage=startup_stage,
                 status="failed",
                 reason_code="initialization_error",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - startup_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - startup_started) * 1000.0),
             )
             logger.error("插件初始化失败", exc_info=True)
             raise
@@ -462,9 +448,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     )
                 memory_tool_available = bool(
                     self._llm_tools_registered
-                    and self.config_manager.get(
-                        "agent_tools.enable_recall_tool", True
-                    )
+                    and self.config_manager.get("agent_tools.enable_recall_tool", True)
                 )
                 self.event_handler = EventHandler(
                     context=self.context,
@@ -474,11 +458,21 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     conversation_manager=self.initializer.conversation_manager,  # type: ignore[arg-type]
                     jargon_filter=getattr(self.initializer, "jargon_filter", None),
                     jargon_miner=getattr(self.initializer, "jargon_miner", None),
-                    jargon_query_service=getattr(self.initializer, "jargon_query_service", None),
-                    affection_manager=getattr(self.initializer, "affection_manager", None),
-                    expression_learner=getattr(self.initializer, "expression_learner", None),
-                    relation_manager=getattr(self.initializer, "relation_manager", None),
-                    prompt_protection_service=getattr(self.initializer, "prompt_protection", None),
+                    jargon_query_service=getattr(
+                        self.initializer, "jargon_query_service", None
+                    ),
+                    affection_manager=getattr(
+                        self.initializer, "affection_manager", None
+                    ),
+                    expression_learner=getattr(
+                        self.initializer, "expression_learner", None
+                    ),
+                    relation_manager=getattr(
+                        self.initializer, "relation_manager", None
+                    ),
+                    prompt_protection_service=getattr(
+                        self.initializer, "prompt_protection", None
+                    ),
                     write_guard_cb=self._writes_blocked_by_pending_restore,
                     perf_tracker=self._perf_tracker,
                     injection_recorder=self.initializer.injection_decision_recorder,
@@ -525,9 +519,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             stage="runtime_publish",
             status="completed",
             reason_code="runtime_components_published",
-            duration_ms=max(
-                0.0, (time.perf_counter() - publish_started) * 1000.0
-            ),
+            duration_ms=max(0.0, (time.perf_counter() - publish_started) * 1000.0),
             success_count=sum(
                 component is not None
                 for component in (self.event_handler, self.command_handler)
@@ -573,7 +565,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 )
             )
         # v2.5：注册笔记类工具（读写权限拆分）
-        legacy_note_tools = self.config_manager.get("agent_tools.enable_note_tools", None)
+        legacy_note_tools = self.config_manager.get(
+            "agent_tools.enable_note_tools", None
+        )
         note_read_enabled = self.config_manager.get(
             "agent_tools.enable_note_read_tools",
             legacy_note_tools if legacy_note_tools is not None else True,
@@ -590,6 +584,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     NoteSearchTool,
                     NoteWriteTool,
                 )
+
                 if note_read_enabled:
                     tools.append(NoteSearchTool(note_manager=engine.note_manager))
                     tools.append(NoteReadTool(note_manager=engine.note_manager))
@@ -604,58 +599,93 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     KnowledgeReadTool,
                     KnowledgeSearchTool,
                 )
-                tools.append(KnowledgeSearchTool(knowledge_manager=engine.knowledge_manager))
-                tools.append(KnowledgeReadTool(knowledge_manager=engine.knowledge_manager))
+
+                tools.append(
+                    KnowledgeSearchTool(knowledge_manager=engine.knowledge_manager)
+                )
+                tools.append(
+                    KnowledgeReadTool(knowledge_manager=engine.knowledge_manager)
+                )
 
         # v2.5：注册用户画像类工具
         if self.config_manager.get("agent_tools.enable_profile_tools", True):
             engine = self.initializer.memory_engine
             if engine and engine.profile_manager:
                 from .core.tools.profile_tools import ProfileLookupTool
+
                 tools.append(ProfileLookupTool(profile_manager=engine.profile_manager))
 
         # v1.0.0+：注册黑话查询工具
         if self.config_manager.get("agent_tools.enable_jargon_tools", True):
             if self.feature_delegation.should_delegate_jargon():
-                logger.info("[功能融合] 跳过本地黑话工具注册（已委托给 self_learning 插件）")
+                logger.info(
+                    "[功能融合] 跳过本地黑话工具注册（已委托给 self_learning 插件）"
+                )
             else:
-                jargon_query_svc = getattr(self.initializer, "jargon_query_service", None)
+                jargon_query_svc = getattr(
+                    self.initializer, "jargon_query_service", None
+                )
                 if jargon_query_svc is not None:
-                    from .core.tools.jargon_tools import JargonExplainTool, JargonListTool
-                    tools.append(JargonExplainTool(jargon_query_service=jargon_query_svc))
+                    from .core.tools.jargon_tools import (
+                        JargonExplainTool,
+                        JargonListTool,
+                    )
+
+                    tools.append(
+                        JargonExplainTool(jargon_query_service=jargon_query_svc)
+                    )
                     tools.append(JargonListTool(jargon_query_service=jargon_query_svc))
 
         # v1.0.0+：注册好感度/情绪查询工具
         if self.config_manager.get("agent_tools.enable_affection_tools", True):
             if self.feature_delegation.should_delegate_affection():
-                logger.info("[功能融合] 跳过本地好感度工具注册（已委托给 self_learning 插件）")
+                logger.info(
+                    "[功能融合] 跳过本地好感度工具注册（已委托给 self_learning 插件）"
+                )
             else:
                 affection_mgr = getattr(self.initializer, "affection_manager", None)
                 if affection_mgr is not None:
-                    from .core.tools.affection_tools import AffectionCheckTool, BotMoodTool
+                    from .core.tools.affection_tools import (
+                        AffectionCheckTool,
+                        BotMoodTool,
+                    )
+
                     tools.append(AffectionCheckTool(affection_manager=affection_mgr))
                     tools.append(BotMoodTool(affection_manager=affection_mgr))
 
         # v1.0.0+：注册社交关系查询工具
         if self.config_manager.get("agent_tools.enable_social_tools", True):
             if self.feature_delegation.should_skip_persona_processing():
-                logger.info("[功能融合] 跳过本地社交关系工具注册（已委托给 self_learning 插件）")
+                logger.info(
+                    "[功能融合] 跳过本地社交关系工具注册（已委托给 self_learning 插件）"
+                )
             else:
                 relation_mgr = getattr(self.initializer, "relation_manager", None)
                 if relation_mgr is not None:
-                    from .core.tools.social_tools import RelationGraphTool, RelationLookupTool
+                    from .core.tools.social_tools import (
+                        RelationGraphTool,
+                        RelationLookupTool,
+                    )
+
                     tools.append(RelationLookupTool(relation_manager=relation_mgr))
                     tools.append(RelationGraphTool(relation_manager=relation_mgr))
 
         # v1.0.0+：注册表达模式查询工具
         if self.config_manager.get("agent_tools.enable_expression_tools", True):
             if self.feature_delegation.should_delegate_expression():
-                logger.info("[功能融合] 跳过本地表达模式工具注册（已委托给 self_learning 插件）")
+                logger.info(
+                    "[功能融合] 跳过本地表达模式工具注册（已委托给 self_learning 插件）"
+                )
             else:
-                expression_learner = getattr(self.initializer, "expression_learner", None)
+                expression_learner = getattr(
+                    self.initializer, "expression_learner", None
+                )
                 if expression_learner is not None:
                     from .core.tools.expression_tools import ExpressionRecallTool
-                    tools.append(ExpressionRecallTool(expression_learner=expression_learner))
+
+                    tools.append(
+                        ExpressionRecallTool(expression_learner=expression_learner)
+                    )
 
         if tools:
             self.context.add_llm_tools(*tools)
@@ -805,9 +835,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 stage="shutdown",
                 status=shutdown_status,
                 reason_code=f"shutdown_{shutdown_status}",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - shutdown_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - shutdown_started) * 1000.0),
             )
             close_debug_reporting()
 
@@ -838,9 +866,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     stage=stage,
                     status="completed",
                     reason_code="shutdown_step_completed",
-                    duration_ms=max(
-                        0.0, (time.perf_counter() - step_started) * 1000.0
-                    ),
+                    duration_ms=max(0.0, (time.perf_counter() - step_started) * 1000.0),
                 )
                 logger.info(f"  {label} 完成")
             except asyncio.CancelledError:
@@ -850,9 +876,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     stage=stage,
                     status="cancelled",
                     reason_code="shutdown_step_cancelled",
-                    duration_ms=max(
-                        0.0, (time.perf_counter() - step_started) * 1000.0
-                    ),
+                    duration_ms=max(0.0, (time.perf_counter() - step_started) * 1000.0),
                 )
                 raise
             except asyncio.TimeoutError:
@@ -863,9 +887,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     stage=stage,
                     status="degraded",
                     reason_code="shutdown_step_timeout",
-                    duration_ms=max(
-                        0.0, (time.perf_counter() - step_started) * 1000.0
-                    ),
+                    duration_ms=max(0.0, (time.perf_counter() - step_started) * 1000.0),
                 )
                 logger.warning(f"  {label} 超时 ({timeout}s)")
             except Exception as e:
@@ -877,9 +899,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     stage=stage,
                     status="failed",
                     reason_code="shutdown_step_error",
-                    duration_ms=max(
-                        0.0, (time.perf_counter() - step_started) * 1000.0
-                    ),
+                    duration_ms=max(0.0, (time.perf_counter() - step_started) * 1000.0),
                 )
                 logger.error(f"  {label} 失败：{e}")
 

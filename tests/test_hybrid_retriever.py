@@ -11,6 +11,7 @@ import pytest
 class _FakeResult:
     """Minimal result object matching what HybridRetriever expects from
     BM25Retriever.search / VectorRetriever.search return values."""
+
     doc_id: int
     score: float
     content: str = ""
@@ -22,7 +23,6 @@ class _FakeResult:
 
 
 class TestHybridRetriever:
-
     @pytest.fixture
     def hybrid(self, test_config):
         bm25 = AsyncMock()
@@ -37,11 +37,13 @@ class TestHybridRetriever:
         ]
         from core.retrieval.hybrid_retriever import HybridRetriever
         from core.retrieval.rrf_fusion import RRFFusion
+
         return HybridRetriever(bm25, vector, RRFFusion(k=60), test_config)
 
     @pytest.mark.asyncio
     async def test_search_merges_both_routes(self, hybrid):
         from core.retrieval.rrf_fusion import HybridResult
+
         results = await hybrid.search("test query", k=5)
         assert len(results) > 0
         assert all(isinstance(r, HybridResult) for r in results)
@@ -60,6 +62,7 @@ class TestHybridRetriever:
     @pytest.mark.asyncio
     async def test_score_tuple_format(self, hybrid):
         from core.retrieval.rrf_fusion import HybridResult
+
         results = await hybrid.search("test", k=3)
         if results:
             assert isinstance(results[0], HybridResult)
@@ -93,10 +96,14 @@ class TestHybridRetriever:
         """memory_types filter reduces score for non-matching types."""
         # Setup: give results distinct metadata
         hybrid.bm25_retriever.search.return_value = [
-            _FakeResult(doc_id=1, score=0.8, content="doc1", metadata={"atom_type": "EPISODIC"}),
+            _FakeResult(
+                doc_id=1, score=0.8, content="doc1", metadata={"atom_type": "EPISODIC"}
+            ),
         ]
         hybrid.vector_retriever.search.return_value = [
-            _FakeResult(doc_id=2, score=0.9, content="doc2", metadata={"atom_type": "FACTUAL"}),
+            _FakeResult(
+                doc_id=2, score=0.9, content="doc2", metadata={"atom_type": "FACTUAL"}
+            ),
         ]
         results = await hybrid.search("test", k=5, memory_types=["episodic"])
         assert len(results) > 0
@@ -110,6 +117,7 @@ class TestHybridRetriever:
     async def test_search_route_handles_cancelled(self):
         """_search_route re-raises CancelledError."""
         import asyncio
+
         from core.retrieval.hybrid_retriever import HybridRetriever
 
         async def _cancelled():

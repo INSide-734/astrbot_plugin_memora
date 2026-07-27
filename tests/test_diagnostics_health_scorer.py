@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -70,7 +70,9 @@ def test_health_scorer_treats_explicit_retry_active_as_waiting_provider_evidence
 
 
 def test_health_scorer_penalizes_high_recall_p95():
-    result = HealthScorer().score({"recall": {"sample_count": 3, "p95_total_ms": 1200.5}})
+    result = HealthScorer().score(
+        {"recall": {"sample_count": 3, "p95_total_ms": 1200.5}}
+    )
 
     assert result["score"] == 85
     assert result["level"] == "healthy"
@@ -206,33 +208,39 @@ async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload()
             first["event_id"],
         ]
 
-        assert [event["event_id"] for event in await store.list_events(domain="provider")] == [
-            first["event_id"]
-        ]
-        assert [event["event_id"] for event in await store.list_events(severity="warning")] == [
-            "manual-event"
-        ]
+        assert [
+            event["event_id"] for event in await store.list_events(domain="provider")
+        ] == [first["event_id"]]
+        assert [
+            event["event_id"] for event in await store.list_events(severity="warning")
+        ] == ["manual-event"]
         assert len(await store.list_events(limit=1)) == 1
 
         fetched = await store.get_event(first["event_id"])
         assert fetched is not None
         assert fetched["payload"]["attempt_count"] == 60
         fetched["payload"]["attempt_count"] = 0
-        assert (await store.get_event(first["event_id"]))["payload"]["attempt_count"] == 60
+        assert (await store.get_event(first["event_id"]))["payload"][
+            "attempt_count"
+        ] == 60
 
         resolved = await store.resolve_event(first["event_id"])
         assert resolved is not None
         assert resolved["resolved_at"] is not None
-        assert [event["event_id"] for event in await store.list_events(include_resolved=False)] == [
-            "manual-event"
-        ]
+        assert [
+            event["event_id"]
+            for event in await store.list_events(include_resolved=False)
+        ] == ["manual-event"]
         assert await store.resolve_event("missing") is None
         assert await store.get_event("missing") is None
 
         defensive = await store.add_event(None)
         assert defensive["domain"] == "unknown"
         assert defensive["severity"] == "info"
-        assert len(await store.list_events(limit="not-a-number", include_resolved=False)) == 2
+        assert (
+            len(await store.list_events(limit="not-a-number", include_resolved=False))
+            == 2
+        )
     finally:
         for path in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")):
             path.unlink(missing_ok=True)

@@ -8,9 +8,9 @@ from astrbot.core.provider.provider import Provider
 
 from ..base.exceptions import ProviderNotReadyError
 from ..identity.conversation_sync import ConversationIdentitySynchronizer
+from ..identity.memory import MemoryIdentityEnricher
 from ..identity.resolver import ProtocolIdentityResolver
 from ..identity.runtime import ProtocolIdentityRuntime
-from ..identity.memory import MemoryIdentityEnricher
 from ..identity.service import ProtocolIdentityService
 from ..injection.recorder import InjectionDecisionRecorder
 from ..managers.backup_manager import BackupManager
@@ -28,8 +28,8 @@ from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
 from ..storage.memory_evolution_store import MemoryEvolutionStore
 from ..storage.protocol_identity_store import ProtocolIdentityStore
-from .derived_rebuild_coordinator import DerivedRebuildCoordinator
 from ..validators.index_validator import IndexValidator
+from .derived_rebuild_coordinator import DerivedRebuildCoordinator
 
 
 class ComponentFactory:
@@ -119,10 +119,9 @@ class ComponentFactory:
         await memory_evolution_store.initialize()
         derived_expander = None
         projection_reader = None
-        if (
-            bool(evolution_config.get("enabled", False))
-            and str(evolution_config.get("mode", "disabled")) in {"readonly", "active"}
-        ):
+        if bool(evolution_config.get("enabled", False)) and str(
+            evolution_config.get("mode", "disabled")
+        ) in {"readonly", "active"}:
             derived_expander = DerivedRelationExpander(
                 memory_evolution_store,
                 per_seed_limit=max(
@@ -273,9 +272,7 @@ class ComponentFactory:
             logger.info("DecayScheduler 已启动")
 
         try:
-            identity_runtime = await self._build_identity_runtime(
-                conversation_manager
-            )
+            identity_runtime = await self._build_identity_runtime(conversation_manager)
         except BaseException:
             await self._rollback_build_components(
                 decay_scheduler,
@@ -521,9 +518,7 @@ class ComponentFactory:
                 "recall_engine.session_cache_ttl_seconds", 10.0
             ),
             # === 链式扩展（R2 多跳图/话题扩展） ===
-            "recall_engine.max_chain_hops": cm.get(
-                "recall_engine.max_chain_hops", 1
-            ),
+            "recall_engine.max_chain_hops": cm.get("recall_engine.max_chain_hops", 1),
             "recall_engine.chain_hop_decay": cm.get(
                 "recall_engine.chain_hop_decay", 0.65
             ),
@@ -534,12 +529,8 @@ class ComponentFactory:
                 "recall_engine.chain_topic_expansion_enabled", True
             ),
             # === 测试效应（召回成功后的访问时间强化） ===
-            "testing_effect_async": cm.get(
-                "recall_engine.testing_effect_async", True
-            ),
-            "testing_effect_top_k": cm.get(
-                "recall_engine.testing_effect_top_k", 5
-            ),
+            "testing_effect_async": cm.get("recall_engine.testing_effect_async", True),
+            "testing_effect_top_k": cm.get("recall_engine.testing_effect_top_k", 5),
             # === 重排序器 ===
             "reranker.enabled": cm.get("reranker.enabled", True),
             "reranker.strategy": cm.get("reranker.strategy", "mmr"),

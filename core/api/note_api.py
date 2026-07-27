@@ -6,9 +6,8 @@ import copy
 from functools import wraps
 from typing import Any
 
-from quart import request
-
 from astrbot.api import logger
+from quart import request
 
 from ..models.note_models import Note, NoteStatus
 from .response_utils import error_response, ok_response
@@ -313,7 +312,9 @@ class NoteApiMixin:
         if note is None:
             return error_response("not found: 笔记不存在")
         if "changes" in payload:
-            candidate, candidate_error = _note_changes_candidate(note, payload["changes"])
+            candidate, candidate_error = _note_changes_candidate(
+                note, payload["changes"]
+            )
             if candidate_error:
                 return candidate_error
             if manager:
@@ -375,7 +376,9 @@ class NoteApiMixin:
             await store.update(note)
         version = _safe_note_version_value(note)
         if version is None:
-            return error_response("note version serialization failed: 笔记版本序列化失败")
+            return error_response(
+                "note version serialization failed: 笔记版本序列化失败"
+            )
         return ok_response({"note_id": note_id, "version": version})
 
     async def archive_note(self):
@@ -412,7 +415,9 @@ class NoteApiMixin:
             await store.update(note)
         version = _safe_note_version_value(note)
         if version is None:
-            return error_response("note version serialization failed: 笔记版本序列化失败")
+            return error_response(
+                "note version serialization failed: 笔记版本序列化失败"
+            )
         return ok_response(
             {"note_id": note_id, "status": "archived", "version": version}
         )
@@ -446,9 +451,7 @@ class NoteApiMixin:
                 try:
                     nid = _coerce_note_id(raw_id)
                     note = (
-                        await backend.get_note(nid)
-                        if manager
-                        else await store.get(nid)
+                        await backend.get_note(nid) if manager else await store.get(nid)
                     )
                     if note is None:
                         failed_ids.append(raw_id)

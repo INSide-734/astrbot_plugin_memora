@@ -76,7 +76,9 @@ def test_retrieval_fixtures_cover_realistic_routing_metadata() -> None:
     )
 
 
-def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels() -> None:
+def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels() -> (
+    None
+):
     """演化评测夹具必须覆盖 P0 场景且只使用匿名合成标识。"""
 
     cases = load_fixture_dir(FIXTURE_ROOT)["memory_evolution"]
@@ -122,8 +124,12 @@ def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels()
         "retry_recovery",
         "source_backed_projection",
     }
-    assert all(case.metadata["scope"].startswith(("private:", "group:")) for case in cases)
-    assert all(case.metadata["privacy_level"] in {"shared", "confidential"} for case in cases)
+    assert all(
+        case.metadata["scope"].startswith(("private:", "group:")) for case in cases
+    )
+    assert all(
+        case.metadata["privacy_level"] in {"shared", "confidential"} for case in cases
+    )
     assert not any("user-" in case.query or "session-" in case.query for case in cases)
     temporal_cases = [case for case in cases if case.metadata.get("reference_time")]
     assert len(temporal_cases) >= 4
@@ -139,9 +145,15 @@ def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels()
         "no_canonical_winner",
     }
 
-    projection = next(case for case in cases if case.metadata["scenario"] == "projection")
-    assert projection.relevant_doc_ids == set(projection.metadata["projection_source_ids"])
-    assert not any("projection-summary" in doc_id for doc_id in projection.relevant_doc_ids)
+    projection = next(
+        case for case in cases if case.metadata["scenario"] == "projection"
+    )
+    assert projection.relevant_doc_ids == set(
+        projection.metadata["projection_source_ids"]
+    )
+    assert not any(
+        "projection-summary" in doc_id for doc_id in projection.relevant_doc_ids
+    )
 
     negative_scenarios = {
         "canonical_delete",
@@ -150,7 +162,9 @@ def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels()
         "validity_negative",
         "stale_job",
     }
-    negatives = [case for case in cases if case.metadata["scenario"] in negative_scenarios]
+    negatives = [
+        case for case in cases if case.metadata["scenario"] in negative_scenarios
+    ]
     assert all(case.metadata.get("expected_no_hit") is True for case in negatives)
     assert all(case.relevant_doc_ids == {"__no_relevant__"} for case in negatives)
 
@@ -212,7 +226,9 @@ async def test_evaluate_cases_reports_quality_and_latency_metrics() -> None:
 
 
 @pytest.mark.asyncio
-async def test_evaluate_cases_scores_expected_no_hit_when_retriever_returns_nothing() -> None:
+async def test_evaluate_cases_scores_expected_no_hit_when_retriever_returns_nothing() -> (
+    None
+):
     cases = [
         EvaluationCase(
             case_id="noise",
@@ -226,7 +242,9 @@ async def test_evaluate_cases_scores_expected_no_hit_when_retriever_returns_noth
         )
     ]
 
-    async def empty_retriever(_case: EvaluationCase, _k: int) -> list[RetrievedDocument]:
+    async def empty_retriever(
+        _case: EvaluationCase, _k: int
+    ) -> list[RetrievedDocument]:
         return []
 
     report = await evaluate_cases(cases, empty_retriever, k=3)
@@ -249,8 +267,7 @@ async def test_evaluate_cases_reports_evolution_quality_and_cost_metrics() -> No
         if case.metadata.get("expected_no_hit"):
             return []
         return [
-            RetrievedDocument(doc_id, 1.0)
-            for doc_id in sorted(case.relevant_doc_ids)
+            RetrievedDocument(doc_id, 1.0) for doc_id in sorted(case.relevant_doc_ids)
         ]
 
     report = await evaluate_cases(cases, fake_retriever, k=3)
@@ -320,7 +337,9 @@ def test_compare_reports_returns_ablation_deltas() -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_engine_retriever_passes_case_metadata_to_search_memories() -> None:
+async def test_memory_engine_retriever_passes_case_metadata_to_search_memories() -> (
+    None
+):
     class FakeEngine:
         def __init__(self) -> None:
             self.calls: list[dict[str, object]] = []
@@ -387,7 +406,9 @@ async def test_evaluate_variants_returns_reports_and_baseline_deltas() -> None:
     async def baseline(_case: EvaluationCase, _k: int) -> list[RetrievedDocument]:
         return [RetrievedDocument("noise", 0.9)]
 
-    async def graph_expansion(_case: EvaluationCase, _k: int) -> list[RetrievedDocument]:
+    async def graph_expansion(
+        _case: EvaluationCase, _k: int
+    ) -> list[RetrievedDocument]:
         return [RetrievedDocument("mem-graph", 0.95)]
 
     comparison = await evaluate_variants(

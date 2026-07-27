@@ -6,7 +6,6 @@ from core.retrieval.seasonal_recall import seasonal_boost, seasonal_similarity
 
 
 class TestSeasonalSimilarity:
-
     def test_same_day_is_max(self):
         now = time.time()
         sim = seasonal_similarity(now, now)
@@ -33,7 +32,6 @@ class TestSeasonalSimilarity:
 
 
 class TestSeasonalBoost:
-
     def test_boost_at_anniversary(self):
         now = time.time()
         one_year_ago = now - 365 * 86400

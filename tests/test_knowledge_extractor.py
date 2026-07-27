@@ -4,11 +4,11 @@ import json
 from unittest.mock import AsyncMock
 
 import pytest
+
 from core.processors.knowledge_extractor import KnowledgeExtractor
 
 
 class TestKnowledgeExtractor:
-
     @pytest.fixture
     def llm_client(self):
         return AsyncMock()
@@ -20,8 +20,14 @@ class TestKnowledgeExtractor:
     @pytest.mark.asyncio
     async def test_valid_json_response(self, llm_client):
         llm_client.complete.return_value = json.dumps(
-            {"title": "test", "content": "test content",
-             "category": "fact", "confidence": 0.9, "tags": []})
+            {
+                "title": "test",
+                "content": "test content",
+                "category": "fact",
+                "confidence": 0.9,
+                "tags": [],
+            }
+        )
         extractor = self.make_extractor(llm_client)
         result = await extractor.extract("test memory content of enough length")
         assert result is not None
@@ -29,8 +35,14 @@ class TestKnowledgeExtractor:
     @pytest.mark.asyncio
     async def test_json_in_code_block(self, llm_client):
         payload = json.dumps(
-            {"title": "kb", "content": "c", "category": "fact",
-             "confidence": 0.8, "tags": []})
+            {
+                "title": "kb",
+                "content": "c",
+                "category": "fact",
+                "confidence": 0.8,
+                "tags": [],
+            }
+        )
         llm_client.complete.return_value = f"```json\n{payload}\n```"
         extractor = self.make_extractor(llm_client)
         result = await extractor.extract("test memory content x" * 5)

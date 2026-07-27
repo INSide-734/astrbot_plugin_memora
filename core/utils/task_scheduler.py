@@ -215,7 +215,9 @@ class TaskScheduler:
             注册后的任务 ID。
         """
         if not self._available:
-            return self._noop.add_cron_job(func, hour=hour, minute=minute, job_id=job_id)
+            return self._noop.add_cron_job(
+                func, hour=hour, minute=minute, job_id=job_id
+            )
 
         jid = job_id or _make_job_id(func)
         self._scheduler.add_job(

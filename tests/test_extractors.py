@@ -7,11 +7,9 @@ conftest 将每个消息组件 Mock 为不同的 MagicMock
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-
 from astrbot.core.message.components import (
     At,
     AtAll,
@@ -24,15 +22,15 @@ from astrbot.core.message.components import (
     Reply,
     Video,
 )
-from core.extractors.message_content_extractor import MessageContentExtractor
 
+from core.extractors.message_content_extractor import MessageContentExtractor
 
 # ---------------------------------------------------------------------------
 # extract_message_content tests
 # ---------------------------------------------------------------------------
 
-class TestExtractMessageContent:
 
+class TestExtractMessageContent:
     # -- Plain text --
 
     @pytest.mark.asyncio
@@ -109,7 +107,7 @@ class TestExtractMessageContent:
 
         req = MagicMock()
         caption_part = MagicMock()
-        caption_part.text = '<image_caption>A cat sitting on a desk</image_caption>'
+        caption_part.text = "<image_caption>A cat sitting on a desk</image_caption>"
         req.extra_user_content_parts = [caption_part]
 
         result = await MessageContentExtractor.extract_message_content(event, req)
@@ -126,9 +124,9 @@ class TestExtractMessageContent:
 
         req = MagicMock()
         part1 = MagicMock()
-        part1.text = '<image_caption>First image</image_caption>'
+        part1.text = "<image_caption>First image</image_caption>"
         part2 = MagicMock()
-        part2.text = '<image_caption>Second image</image_caption>'
+        part2.text = "<image_caption>Second image</image_caption>"
         req.extra_user_content_parts = [part1, part2]
 
         result = await MessageContentExtractor.extract_message_content(event, req)
@@ -176,7 +174,7 @@ class TestExtractMessageContent:
 
         req = MagicMock()
         part = MagicMock()
-        part.text = '<image_caption>Only one</image_caption>'
+        part.text = "<image_caption>Only one</image_caption>"
         req.extra_user_content_parts = [part]
 
         result = await MessageContentExtractor.extract_message_content(event, req)
@@ -305,9 +303,11 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_unknown_component_skipped(self) -> None:
         event = MagicMock()
+
         # A real type that doesn't match any component isinstance check
         class WeirdComponent:
             pass
+
         unknown = WeirdComponent()
         event.get_messages.return_value = [unknown]
 
@@ -371,8 +371,8 @@ class TestExtractMessageContent:
 # get_event_message_str tests
 # ---------------------------------------------------------------------------
 
-class TestGetEventMessageStr:
 
+class TestGetEventMessageStr:
     @pytest.mark.asyncio
     async def test_uses_get_message_str_callable(self) -> None:
         event = MagicMock()

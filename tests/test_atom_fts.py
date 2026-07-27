@@ -130,11 +130,19 @@ class TestAtomFTS_search_fts:
         store = AtomStore(tmp_db_path)
         await store.initialize()
 
-        await store.insert(_make_atom(content="匹配记忆", session_id="s1", persona_id="p1"))
-        await store.insert(_make_atom(content="不匹配记忆1", session_id="s2", persona_id="p1"))
-        await store.insert(_make_atom(content="不匹配记忆2", session_id="s1", persona_id="p2"))
+        await store.insert(
+            _make_atom(content="匹配记忆", session_id="s1", persona_id="p1")
+        )
+        await store.insert(
+            _make_atom(content="不匹配记忆1", session_id="s2", persona_id="p1")
+        )
+        await store.insert(
+            _make_atom(content="不匹配记忆2", session_id="s1", persona_id="p2")
+        )
 
-        results = await store.search_fts("记忆", session_id="s1", persona_id="p1", limit=10)
+        results = await store.search_fts(
+            "记忆", session_id="s1", persona_id="p1", limit=10
+        )
         assert len(results) == 1
         assert results[0].content == "匹配记忆"
 
@@ -150,7 +158,9 @@ class TestAtomFTS_search_fts_by_type:
 
         await store.insert(_make_atom(content="事实记忆", atom_type=AtomType.FACTUAL))
         await store.insert(_make_atom(content="事件记忆", atom_type=AtomType.EPISODIC))
-        await store.insert(_make_atom(content="偏好记忆", atom_type=AtomType.PREFERENCE))
+        await store.insert(
+            _make_atom(content="偏好记忆", atom_type=AtomType.PREFERENCE)
+        )
 
         results = await store.search_fts_by_type(
             "记忆", atom_types=["factual", "episodic"], limit=10
@@ -169,9 +179,7 @@ class TestAtomFTS_search_fts_by_type:
         await store.insert(_make_atom(content="B", atom_type=AtomType.FACTUAL))
         await store.insert(_make_atom(content="C", atom_type=AtomType.EPISODIC))
 
-        results = await store.search_fts_by_type(
-            "", atom_types=["factual"], limit=10
-        )
+        results = await store.search_fts_by_type("", atom_types=["factual"], limit=10)
         assert all(r.atom_type == AtomType.FACTUAL for r in results)
         assert len(results) >= 1
 
@@ -184,9 +192,7 @@ class TestAtomFTS_search_fts_by_type:
         await store.insert(_make_atom(content="记忆A", session_id="s1"))
         await store.insert(_make_atom(content="记忆B", session_id="s2"))
 
-        results = await store.search_fts_by_type(
-            "记忆", session_id="s1", limit=10
-        )
+        results = await store.search_fts_by_type("记忆", session_id="s1", limit=10)
         assert len(results) >= 1
         assert all(r.session_id == "s1" for r in results)
 
@@ -214,9 +220,7 @@ class TestAtomFTS_search_fts_by_type:
         await store.insert(_make_atom(content="人格A内容", persona_id="pa"))
         await store.insert(_make_atom(content="人格B内容", persona_id="pb"))
 
-        results = await store.search_fts_by_type(
-            "", persona_id="pa", limit=10
-        )
+        results = await store.search_fts_by_type("", persona_id="pa", limit=10)
         assert len(results) >= 1
         assert all(r.persona_id == "pa" for r in results)
 
@@ -226,9 +230,17 @@ class TestAtomFTS_search_fts_by_type:
         store = AtomStore(tmp_db_path)
         await store.initialize()
 
-        await store.insert(_make_atom(content="事实记忆", atom_type=AtomType.FACTUAL, session_id="s1"))
-        await store.insert(_make_atom(content="事件记忆", atom_type=AtomType.EPISODIC, session_id="s1"))
-        await store.insert(_make_atom(content="偏好记忆", atom_type=AtomType.PREFERENCE, session_id="s1"))
+        await store.insert(
+            _make_atom(content="事实记忆", atom_type=AtomType.FACTUAL, session_id="s1")
+        )
+        await store.insert(
+            _make_atom(content="事件记忆", atom_type=AtomType.EPISODIC, session_id="s1")
+        )
+        await store.insert(
+            _make_atom(
+                content="偏好记忆", atom_type=AtomType.PREFERENCE, session_id="s1"
+            )
+        )
 
         results = await store.search_fts_by_type(
             "记忆", atom_types=["factual", "preference"], session_id="s1", limit=10
@@ -242,7 +254,9 @@ class TestAtomFTS_search_fts_by_type:
         store = AtomStore(tmp_db_path)
         await store.initialize()
 
-        aid = await store.insert(_make_atom(content="过期类型记忆", atom_type=AtomType.FACTUAL))
+        aid = await store.insert(
+            _make_atom(content="过期类型记忆", atom_type=AtomType.FACTUAL)
+        )
         async with store._connect() as db:
             await db.execute(
                 "UPDATE memory_atoms SET status = 'expired', expires_at = ? WHERE id = ?",

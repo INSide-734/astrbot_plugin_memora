@@ -49,6 +49,7 @@ def pytest_configure(config: Any) -> None:
 # 函数作用域数据库路径 — 每个测试隔离以防止数据泄漏
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def integration_db_path() -> str:
     """每个测试独立的临时 SQLite 文件，确保测试之间完全隔离。
@@ -69,6 +70,7 @@ def integration_db_path() -> str:
 # FAISS 索引（真实）
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def integration_faiss() -> Any:
     """创建维度为 128 的真实 FAISS IndexFlatIP。
@@ -87,6 +89,7 @@ def integration_faiss() -> Any:
 # Mock Embedding 函数
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_embedding_fn() -> AsyncMock:
     """返回固定 128 维向量的 AsyncMock。
@@ -100,6 +103,7 @@ def mock_embedding_fn() -> AsyncMock:
 # ---------------------------------------------------------------------------
 # 集成测试配置 — 扩展 tests/conftest.py 的 test_config_dict
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def integration_config(test_config_dict: dict[str, Any]) -> dict[str, Any]:
@@ -119,6 +123,7 @@ def integration_config(test_config_dict: dict[str, Any]) -> dict[str, Any]:
 # 真实存储后端
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 async def integration_atom_store(integration_db_path: str) -> Any:
     """创建并初始化由会话数据库支持的真实 AtomStore。"""
@@ -132,6 +137,7 @@ async def integration_atom_store(integration_db_path: str) -> Any:
 # ---------------------------------------------------------------------------
 # 完整 MemoryEngine 组装
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 async def integration_engine(
@@ -157,26 +163,28 @@ async def integration_engine(
 
     # 基于 integration_config 构建引擎配置，包含运行时覆盖
     engine_config: dict[str, Any] = dict(integration_config)
-    engine_config.update({
-        "graph_vector_db": "mock",
-        "user_profile": {"enabled": False},
-        "auto_learning": {"enabled": False},
-        "knowledge_base": {"enabled": False},
-        "notes": {"enabled": False},
-        "reranker": {"enabled": False},
-        "continuity_tracking": {"enabled": False},
-        "relationship_tracking": {"enabled": False},
-        "reconsolidation": {"enabled": False},
-        "anomaly_detection": {"enabled": False},
-        "weight_learning": {"enabled": False},
-        "trait_evolution": {"enabled": False},
-        "export": {"enabled": False},
-        "write_reliability": {"repair_enabled": False, "max_retries": 1},
-        "search_cache_enabled": False,
-        "search_cache_ttl_seconds": 0.0,
-        "search_cache_max_size": 0,
-        "rrf_k": 60,
-    })
+    engine_config.update(
+        {
+            "graph_vector_db": "mock",
+            "user_profile": {"enabled": False},
+            "auto_learning": {"enabled": False},
+            "knowledge_base": {"enabled": False},
+            "notes": {"enabled": False},
+            "reranker": {"enabled": False},
+            "continuity_tracking": {"enabled": False},
+            "relationship_tracking": {"enabled": False},
+            "reconsolidation": {"enabled": False},
+            "anomaly_detection": {"enabled": False},
+            "weight_learning": {"enabled": False},
+            "trait_evolution": {"enabled": False},
+            "export": {"enabled": False},
+            "write_reliability": {"repair_enabled": False, "max_retries": 1},
+            "search_cache_enabled": False,
+            "search_cache_ttl_seconds": 0.0,
+            "search_cache_max_size": 0,
+            "rrf_k": 60,
+        }
+    )
 
     engine = MemoryEngine(
         db_path=integration_db_path,

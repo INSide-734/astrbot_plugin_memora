@@ -10,10 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.response_utils import error_response, ok_response
-
+from core.api.response_utils import error_response
 
 # ── helpers ───────────────────────────────────────────────────────────
+
 
 def _mock_request(**args):
     mock = MagicMock()
@@ -22,9 +22,14 @@ def _mock_request(**args):
     return mock
 
 
-def _make_mixin(*, plugin_ready: bool = True, has_backup: bool = True,
-                has_maint: bool = False, has_exporter: bool = False,
-                backup_path: str = "/tmp/backup.zip"):
+def _make_mixin(
+    *,
+    plugin_ready: bool = True,
+    has_backup: bool = True,
+    has_maint: bool = False,
+    has_exporter: bool = False,
+    backup_path: str = "/tmp/backup.zip",
+):
     from core.api.maintenance_api import MaintenanceApiMixin
 
     class Stub:
@@ -60,9 +65,9 @@ def _make_mixin(*, plugin_ready: bool = True, has_backup: bool = True,
             if has_backup:
                 self.plugin._backup_manager = MagicMock()
                 self.plugin._backup_manager.create_backup = AsyncMock(
-                    return_value=backup_path)
-                self.plugin._backup_manager.delete_backup = MagicMock(
-                    return_value=True)
+                    return_value=backup_path
+                )
+                self.plugin._backup_manager.delete_backup = MagicMock(return_value=True)
                 self.plugin._backup_manager.stage_restore = MagicMock(
                     return_value={
                         "staged": 1,
@@ -106,6 +111,7 @@ def _make_mixin(*, plugin_ready: bool = True, has_backup: bool = True,
 
 
 # ── tests ─────────────────────────────────────────────────────────────
+
 
 class TestMaintenanceValidation:
     """Plugin-not-ready and error path tests."""
@@ -154,7 +160,9 @@ class TestMaintenanceHappyPath:
         mixin.plugin.initializer.index_validator.rebuild_indexes.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_rebuild_index_records_observability_snapshot_on_success(self) -> None:
+    async def test_rebuild_index_records_observability_snapshot_on_success(
+        self,
+    ) -> None:
         mixin = _make_mixin()
         mixin.plugin.initializer.index_validator.rebuild_indexes.return_value = {
             "success": True,
@@ -171,13 +179,19 @@ class TestMaintenanceHappyPath:
         assert observability["last_rebuild_success"] is True
         assert observability["last_rebuild_errors"] == 1
         assert observability["last_rebuild_total"] == 9
-        assert observability["last_rebuild_message"] == "索引已按失败率阈值完成可接受切换"
+        assert (
+            observability["last_rebuild_message"] == "索引已按失败率阈值完成可接受切换"
+        )
         assert observability["last_rebuild_duration_seconds"] >= 0
 
     @pytest.mark.asyncio
-    async def test_rebuild_index_records_observability_snapshot_on_exception(self) -> None:
+    async def test_rebuild_index_records_observability_snapshot_on_exception(
+        self,
+    ) -> None:
         mixin = _make_mixin()
-        mixin.plugin.initializer.index_validator.rebuild_indexes.side_effect = RuntimeError("boom")
+        mixin.plugin.initializer.index_validator.rebuild_indexes.side_effect = (
+            RuntimeError("boom")
+        )
 
         result = await mixin.rebuild_index()
 
@@ -194,7 +208,9 @@ class TestMaintenanceHappyPath:
         mixin = _make_mixin()
         engines, _ = await mixin._ensure_plugin_ready()
         engine = engines["memory_engine"]
-        mixin._ensure_plugin_ready = AsyncMock(return_value=({"memory_engine": engine}, None))
+        mixin._ensure_plugin_ready = AsyncMock(
+            return_value=({"memory_engine": engine}, None)
+        )
 
         result = await mixin.rebuild_index()
 
@@ -207,7 +223,9 @@ class TestMaintenanceHappyPath:
         engines, _ = await mixin._ensure_plugin_ready()
         engine = engines["memory_engine"]
         engine.rebuild_graph_index.return_value = {"rebuilt": 2, "skipped": 1}
-        mixin._ensure_plugin_ready = AsyncMock(return_value=({"memory_engine": engine}, None))
+        mixin._ensure_plugin_ready = AsyncMock(
+            return_value=({"memory_engine": engine}, None)
+        )
 
         result = await mixin.rebuild_graph_index()
 
@@ -546,8 +564,11 @@ class TestRestoreBackup:
     """Restore backup with real temp directories."""
 
     @pytest.mark.asyncio
-    async def test_restore_rejects_legacy_backup_without_canonical_database(self) -> None:
+    async def test_restore_rejects_legacy_backup_without_canonical_database(
+        self,
+    ) -> None:
         import tempfile
+
         req = _mock_request()
         with tempfile.TemporaryDirectory() as tmpdir:
             data_dir = os.path.join(tmpdir, "data")
@@ -606,14 +627,18 @@ class TestExportMemories:
             mixin._ensure_plugin_ready = AsyncMock(
                 return_value=({"memory_engine": engine}, None)
             )
-            with patch("builtins.open", create=True) as mock_open, patch(
-                "tempfile.NamedTemporaryFile"
-            ) as mock_tmp, patch("os.unlink") as mock_unlink:
+            with (
+                patch("builtins.open", create=True) as mock_open,
+                patch("tempfile.NamedTemporaryFile") as mock_tmp,
+                patch("os.unlink") as mock_unlink,
+            ):
                 tmp = MagicMock()
                 tmp.__enter__.return_value.name = "/tmp/export.jsonl"
                 tmp.__exit__.return_value = False
                 mock_tmp.return_value = tmp
-                mock_open.return_value.__enter__.return_value.read.return_value = "line-1\n"
+                mock_open.return_value.__enter__.return_value.read.return_value = (
+                    "line-1\n"
+                )
                 result = await mixin.export_memories()
         assert result["status"] == "ok"
         assert result["data"]["content"] == "line-1\n"
@@ -641,7 +666,9 @@ class TestDashboardMaintenance:
         assert timeout_seconds == 120
         assert max_output_chars == 20000
 
-    def test_dashboard_runtime_config_falls_back_and_clamps_numeric_values(self) -> None:
+    def test_dashboard_runtime_config_falls_back_and_clamps_numeric_values(
+        self,
+    ) -> None:
         mixin = _make_mixin()
         mixin.plugin.config_manager.get.side_effect = lambda key, default=None: {
             "dashboard.allow_runtime_build": "true",
@@ -752,9 +779,12 @@ class TestDashboardMaintenance:
 
     def test_resolve_command_executable_falls_back_to_windows_suffixes(self) -> None:
         mixin = _make_mixin()
-        with patch("sys.platform", "win32"), patch(
-            "shutil.which",
-            side_effect=[None, "C:/nodejs/npm.cmd"],
+        with (
+            patch("sys.platform", "win32"),
+            patch(
+                "shutil.which",
+                side_effect=[None, "C:/nodejs/npm.cmd"],
+            ),
         ):
             resolved = type(mixin)._resolve_command_executable("npm")
         assert resolved == "C:/nodejs/npm.cmd"

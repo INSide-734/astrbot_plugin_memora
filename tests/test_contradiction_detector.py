@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
-from unittest.mock import AsyncMock
 
 from core.processors.contradiction_detector import (
     ContradictionDetector,
-    _tokenize,
-    _jaccard,
     _detect_semantic_contradiction,
+    _jaccard,
+    _tokenize,
 )
 
 
@@ -68,7 +68,10 @@ class TestSemanticContradiction:
         assert _detect_semantic_contradiction("今天天气不错", "昨天去了公园") is False
 
     def test_quit_keyword_triggers_negation(self) -> None:
-        assert _detect_semantic_contradiction("我已经戒咖啡三个月了", "我喜欢喝咖啡") is True
+        assert (
+            _detect_semantic_contradiction("我已经戒咖啡三个月了", "我喜欢喝咖啡")
+            is True
+        )
 
 
 class TestContradictionDetector:
@@ -108,9 +111,11 @@ class TestContradictionDetector:
 
     def test_candidates_with_contradiction_marked(self) -> None:
         # Use short, overlapping tokens to ensure Jaccard >= 0.40
-        search_fn = AsyncMock(return_value=[
-            {"id": 1, "text": "我喜欢喝咖啡", "metadata": {}},
-        ])
+        search_fn = AsyncMock(
+            return_value=[
+                {"id": 1, "text": "我喜欢喝咖啡", "metadata": {}},
+            ]
+        )
         update_fn = AsyncMock(return_value=True)
         detector = ContradictionDetector(search_fn=search_fn, update_fn=update_fn)
 
@@ -121,28 +126,28 @@ class TestContradictionDetector:
         assert update_fn.called
 
     def test_candidates_no_contradiction_not_marked(self) -> None:
-        search_fn = AsyncMock(return_value=[
-            {"id": 1, "text": "我喜欢喝咖啡", "metadata": {}},
-        ])
+        search_fn = AsyncMock(
+            return_value=[
+                {"id": 1, "text": "我喜欢喝咖啡", "metadata": {}},
+            ]
+        )
         update_fn = AsyncMock(return_value=True)
         detector = ContradictionDetector(search_fn=search_fn, update_fn=update_fn)
 
-        result = asyncio.run(
-            detector.check_and_mark("我也喜欢喝咖啡", ["咖啡"])
-        )
+        result = asyncio.run(detector.check_and_mark("我也喜欢喝咖啡", ["咖啡"]))
         assert result == []
         assert not update_fn.called
 
     def test_candidate_without_id_skipped(self) -> None:
-        search_fn = AsyncMock(return_value=[
-            {"text": "我喜欢喝咖啡"},
-        ])
+        search_fn = AsyncMock(
+            return_value=[
+                {"text": "我喜欢喝咖啡"},
+            ]
+        )
         update_fn = AsyncMock(return_value=True)
         detector = ContradictionDetector(search_fn=search_fn, update_fn=update_fn)
 
-        result = asyncio.run(
-            detector.check_and_mark("我不喜欢喝咖啡", ["咖啡"])
-        )
+        result = asyncio.run(detector.check_and_mark("我不喜欢喝咖啡", ["咖啡"]))
         assert result == []
 
     def test_enabled_setter(self) -> None:

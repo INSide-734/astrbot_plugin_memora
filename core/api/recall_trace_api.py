@@ -5,19 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from astrbot.api import logger
 from quart import request
 
-from astrbot.api import logger
 from ..injection.models import DeliveryMode, PresetName, RoutingMode
 from ..injection.router import InjectionRoutingConfig
+from ..models.recall_strategy import RecallStrategy
 from ..monitoring import (
     debug_operation,
     is_debug_reporting_enabled,
     report_debug_event,
     report_debug_exception,
 )
-
-from ..models.recall_strategy import RecallStrategy
 from ..retrieval.explainable_recall import capture_explainable_recall
 from ..retrieval.trace_store import RecallTraceStore
 
@@ -216,9 +215,7 @@ class RecallTraceApiMixin:
             return InjectionRoutingConfig()
         try:
             return InjectionRoutingConfig(
-                mode=RoutingMode(
-                    get("recall_engine.injection_routing_mode", "manual")
-                ),
+                mode=RoutingMode(get("recall_engine.injection_routing_mode", "manual")),
                 manual_preset=PresetName(
                     get("recall_engine.injection_manual_preset", "balanced")
                 ),

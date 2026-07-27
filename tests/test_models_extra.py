@@ -12,10 +12,10 @@ from typing import Any
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # 1. core/models/conversation_models.py
 # ---------------------------------------------------------------------------
+
 
 class TestMessageModel:
     """测试 Message 数据类。"""
@@ -168,7 +168,9 @@ class TestMessageModel:
     def test_content_to_text_dict_with_image_type(self) -> None:
         from core.models.conversation_models import Message
 
-        result = Message.content_to_text({"type": "image", "image_url": "http://example.com/img.png"})
+        result = Message.content_to_text(
+            {"type": "image", "image_url": "http://example.com/img.png"}
+        )
         assert result == "[图片消息]"
 
     def test_content_to_text_list_of_parts(self) -> None:
@@ -469,6 +471,7 @@ class TestSerializationHelpers:
 # 2. core/models/graph_models.py
 # ---------------------------------------------------------------------------
 
+
 class TestGraphNode:
     """测试 GraphNode 数据类。"""
 
@@ -648,6 +651,7 @@ class TestExtractedGraph:
 # 3. core/models/knowledge_models.py
 # ---------------------------------------------------------------------------
 
+
 class TestKnowledgeType:
     """测试 KnowledgeType 枚举。"""
 
@@ -767,6 +771,7 @@ class TestKnowledgeEntry:
 # 4. core/models/note_models.py
 # ---------------------------------------------------------------------------
 
+
 class TestNoteStatus:
     """测试 NoteStatus 枚举。"""
 
@@ -838,7 +843,7 @@ class TestNote:
         assert note.source_memory_ids == [101, 102]
 
     def test_to_dict(self) -> None:
-        from core.models.note_models import Note, NoteStatus
+        from core.models.note_models import Note
 
         note = Note(
             title="笔记标题",
@@ -894,6 +899,7 @@ class TestNote:
 # ---------------------------------------------------------------------------
 # 5. core/models/recall_strategy.py
 # ---------------------------------------------------------------------------
+
 
 class TestRecallStrategy:
     """测试 RecallStrategy 枚举。"""
@@ -980,6 +986,7 @@ class TestRecallRequest:
 # 6. core/models/user_profile.py
 # ---------------------------------------------------------------------------
 
+
 class TestTagCategory:
     """测试 TagCategory 枚举。"""
 
@@ -987,7 +994,15 @@ class TestTagCategory:
         from core.models.user_profile import TagCategory
 
         values = {m.value for m in TagCategory}
-        expected = {"interest", "personality", "habit", "relation", "knowledge", "preference", "custom"}
+        expected = {
+            "interest",
+            "personality",
+            "habit",
+            "relation",
+            "knowledge",
+            "preference",
+            "custom",
+        }
         assert values == expected
 
     def test_is_string_enum(self) -> None:
@@ -1215,9 +1230,15 @@ class TestUserProfile:
         from core.models.user_profile import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
-        profile.upsert_tag(UserTag(category=TagCategory.INTEREST, value="咖啡", confidence=0.9))
-        profile.upsert_tag(UserTag(category=TagCategory.INTEREST, value="编程", confidence=0.5))
-        profile.upsert_tag(UserTag(category=TagCategory.HABIT, value="早起", confidence=0.8))
+        profile.upsert_tag(
+            UserTag(category=TagCategory.INTEREST, value="咖啡", confidence=0.9)
+        )
+        profile.upsert_tag(
+            UserTag(category=TagCategory.INTEREST, value="编程", confidence=0.5)
+        )
+        profile.upsert_tag(
+            UserTag(category=TagCategory.HABIT, value="早起", confidence=0.8)
+        )
 
         interest_tags = profile.get_tags_by_category(TagCategory.INTEREST)
         assert len(interest_tags) == 2
@@ -1252,9 +1273,15 @@ class TestUserProfile:
         from core.models.user_profile import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
-        profile.upsert_tag(UserTag(category=TagCategory.INTEREST, value="咖啡", confidence=0.9))
-        profile.upsert_tag(UserTag(category=TagCategory.INTEREST, value="茶", confidence=0.2))
-        profile.upsert_tag(UserTag(category=TagCategory.HABIT, value="早起", confidence=0.5))
+        profile.upsert_tag(
+            UserTag(category=TagCategory.INTEREST, value="咖啡", confidence=0.9)
+        )
+        profile.upsert_tag(
+            UserTag(category=TagCategory.INTEREST, value="茶", confidence=0.2)
+        )
+        profile.upsert_tag(
+            UserTag(category=TagCategory.HABIT, value="早起", confidence=0.5)
+        )
 
         values = profile.get_tag_values()
         # "茶" has confidence 0.2 < 0.3 threshold, should be excluded
@@ -1328,8 +1355,12 @@ class TestUserProfile:
         from core.models.user_profile import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
-        profile.upsert_tag(UserTag(category=TagCategory.INTEREST, value="strong", confidence=0.8))
-        profile.upsert_tag(UserTag(category=TagCategory.HABIT, value="weak", confidence=0.05))
+        profile.upsert_tag(
+            UserTag(category=TagCategory.INTEREST, value="strong", confidence=0.8)
+        )
+        profile.upsert_tag(
+            UserTag(category=TagCategory.HABIT, value="weak", confidence=0.05)
+        )
 
         removed = profile.remove_stale_tags(min_confidence=0.1)
         assert removed == 1
@@ -1380,6 +1411,7 @@ class TestUserProfile:
 # ---------------------------------------------------------------------------
 # 7. core/models/default_stopwords.py
 # ---------------------------------------------------------------------------
+
 
 class TestDefaultStopwords:
     """测试 DEFAULT_STOPWORDS 冻结集合。"""

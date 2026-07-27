@@ -155,8 +155,7 @@ class RecallTraceStore:
             return [self._from_json(row["payload_json"]) for row in rows]
 
         return [
-            self._json_copy(payload)
-            for payload in reversed(self._traces.values())
+            self._json_copy(payload) for payload in reversed(self._traces.values())
         ][:safe_limit]
 
     def _remember(self, payload: dict[str, Any]) -> None:

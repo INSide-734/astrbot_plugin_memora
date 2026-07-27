@@ -12,7 +12,6 @@ from core.models.memory_evolution import MemorySourceRef
 from core.models.user_profile import UserPreferences
 from core.storage.profile_store import ProfileStore
 
-
 _DERIVED_PREFERENCES = UserPreferences(
     reply_style="formal",
     provenance=DomainProvenance(
@@ -31,7 +30,9 @@ _DERIVED_PREFERENCES = UserPreferences(
 
 
 @pytest.mark.asyncio
-async def test_create_profile_strict_rejects_derived_preferences(tmp_db_path: str) -> None:
+async def test_create_profile_strict_rejects_derived_preferences(
+    tmp_db_path: str,
+) -> None:
     """严格创建只能接收人工偏好。"""
 
     store = ProfileStore(tmp_db_path)

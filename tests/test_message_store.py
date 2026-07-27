@@ -109,6 +109,7 @@ class TestMessageStoreRemaining:
             await store.add_message(self._make_msg(session_id="sess-overflow"))
             # Set last_summarized_index to exceed actual message count
             import json
+
             async with store._write_lock:
                 await store.connection.execute(
                     "UPDATE sessions SET metadata = ? WHERE session_id = ?",

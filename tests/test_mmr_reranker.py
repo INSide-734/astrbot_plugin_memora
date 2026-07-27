@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 
 def _make_result(doc_id: int, final_score: float, content: str = "") -> Any:
     from core.retrieval.rrf_fusion import HybridResult
+
     return HybridResult(
         doc_id=doc_id,
         final_score=final_score,
@@ -21,10 +20,10 @@ def _make_result(doc_id: int, final_score: float, content: str = "") -> Any:
 
 
 class TestMMRReranker:
-
     def test_short_circuit_when_k_ge_results(self) -> None:
         """当 k >= len(results), all results returned unchanged."""
         from core.retrieval.mmr_reranker import apply_mmr
+
         results = [_make_result(1, 0.9), _make_result(2, 0.8)]
         output = apply_mmr(results, k=3, mmr_lambda=0.7)
         assert len(output) == 2
@@ -33,12 +32,14 @@ class TestMMRReranker:
     def test_empty_results(self) -> None:
         """空 input returns empty output."""
         from core.retrieval.mmr_reranker import apply_mmr
+
         output = apply_mmr([], k=3, mmr_lambda=0.7)
         assert output == []
 
     def test_deduplicates_similar_content(self) -> None:
         """MMR removes near-duplicate content from top-k."""
         from core.retrieval.mmr_reranker import apply_mmr
+
         results = [
             _make_result(1, 0.95, "user likes coffee and tea"),
             _make_result(2, 0.9, "user likes coffee and tea very much"),  # very similar
@@ -54,6 +55,7 @@ class TestMMRReranker:
     def test_high_lambda_favors_relevance(self) -> None:
         """lambda=1.0 means pure relevance ordering (no diversity penalty)."""
         from core.retrieval.mmr_reranker import apply_mmr
+
         results = [
             _make_result(1, 0.9, "aaa bbb"),
             _make_result(2, 0.8, "aaa bbb ccc"),
@@ -64,6 +66,7 @@ class TestMMRReranker:
     def test_low_lambda_favors_diversity(self) -> None:
         """lambda=0.0 means pure diversity (ignore relevance)."""
         from core.retrieval.mmr_reranker import apply_mmr
+
         results = [
             _make_result(1, 0.9, "aaa bbb ccc"),
             _make_result(2, 0.8, "aaa bbb ccc"),  # identical content
@@ -79,6 +82,7 @@ class TestMMRReranker:
     def test_identical_content_deduplicated(self) -> None:
         """多个 results with identical content — MMR picks the most diverse one for second slot."""
         from core.retrieval.mmr_reranker import apply_mmr
+
         results = [
             _make_result(1, 0.9, "the same exact content"),
             _make_result(2, 0.85, "the same exact content"),
@@ -93,6 +97,7 @@ class TestMMRReranker:
     def test_single_result_unaffected(self) -> None:
         """单个 result always returned as-is."""
         from core.retrieval.mmr_reranker import apply_mmr
+
         results = [_make_result(1, 0.5, "only one")]
         output = apply_mmr(results, k=1, mmr_lambda=0.5)
         assert output == results

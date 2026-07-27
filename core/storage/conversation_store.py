@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 import aiosqlite
-
 from astrbot.api import logger
 
 from ..models.conversation_models import Session, serialize_to_json

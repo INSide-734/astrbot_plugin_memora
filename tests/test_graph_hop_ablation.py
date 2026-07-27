@@ -19,9 +19,7 @@ def _retriever(*, hops: int) -> tuple[GraphKeywordRetriever, AsyncMock]:
 
     store = AsyncMock()
     store.search_entries_by_bm25.return_value = []
-    store.search_nodes_by_tokens.return_value = [
-        {"id": 1, "canonical_value": "项目"}
-    ]
+    store.search_nodes_by_tokens.return_value = [{"id": 1, "canonical_value": "项目"}]
     store.get_entries_for_node_ids.return_value = []
     store.get_neighbor_node_ids.return_value = []
     processor = AsyncMock()

@@ -66,7 +66,9 @@ class TestNormalizeParsedData:
         assert result["summary"] == "测试摘要"
         assert result["importance"] == 0.8
 
-    def test_normalize_group_chat_adds_participants(self, validator: QualityValidator) -> None:
+    def test_normalize_group_chat_adds_participants(
+        self, validator: QualityValidator
+    ) -> None:
         data = {
             "summary": "群聊摘要",
             "topics": ["讨论"],

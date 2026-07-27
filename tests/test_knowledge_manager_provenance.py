@@ -15,7 +15,6 @@ from core.models.knowledge_models import KnowledgeEntry
 from core.models.memory_evolution import MemorySourceRef
 from core.storage.knowledge_store import KnowledgeStore
 
-
 _OCCURRED_AT = datetime(2026, 7, 21, tzinfo=timezone.utc)
 
 

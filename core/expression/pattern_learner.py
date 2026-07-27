@@ -58,9 +58,7 @@ class ExpressionPatternLearner:
         user_id: str | None = None,
     ) -> list[ExpressionPattern]:
         """处理一批消息并学习表达模式。"""
-        scope = PatternScope(
-            group_id=group_id, persona_id=persona_id, user_id=user_id
-        )
+        scope = PatternScope(group_id=group_id, persona_id=persona_id, user_id=user_id)
 
         # 抽取对话对
         pairs = self._extract_dialog_pairs(messages, scope)
@@ -87,9 +85,7 @@ class ExpressionPatternLearner:
         limit: int = 10,
     ) -> list[ExpressionPattern]:
         """获取用于上下文注入的高权重模式列表，按权重降序返回。"""
-        scope = PatternScope(
-            group_id=group_id, persona_id=persona_id, user_id=user_id
-        )
+        scope = PatternScope(group_id=group_id, persona_id=persona_id, user_id=user_id)
         return await self._store.get_top_by_weight(scope, limit=limit)
 
     async def format_patterns_for_prompt(
@@ -108,7 +104,9 @@ class ExpressionPatternLearner:
 
         lines = ["[学习到的表达习惯]"]
         for p in patterns:
-            lines.append(f"- 当遇到类似「{p.situation}」的情境时，可以回复「{p.expression}」")
+            lines.append(
+                f"- 当遇到类似「{p.situation}」的情境时，可以回复「{p.expression}」"
+            )
         return "\n".join(lines)
 
     # ---- 内部：对话对抽取 ------------------------------------
@@ -144,7 +142,9 @@ class ExpressionPatternLearner:
                 continue
 
             # 过滤系统风格消息
-            if self._is_system_message(content) or self._is_system_message(next_content):
+            if self._is_system_message(content) or self._is_system_message(
+                next_content
+            ):
                 continue
 
             pairs.append(

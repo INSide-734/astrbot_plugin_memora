@@ -75,11 +75,13 @@ class TestNoteValidation:
         req = _mock_request(note_id="999")
         mixin = _make_mixin()
         mixin._ensure_plugin_ready_orig = mixin._ensure_plugin_ready
+
         async def _ready():
             engine = MagicMock()
             engine.note_store = MagicMock()
             engine.note_store.get = AsyncMock(return_value=None)
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.note_api.request", req):
             r = await mixin.get_note_detail()
@@ -143,7 +145,9 @@ class TestNoteValidation:
     @pytest.mark.asyncio
     async def test_batch_update_no_ids(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={"note_ids": [], "field": "status", "value": "archived"})
+        req.get_json = AsyncMock(
+            return_value={"note_ids": [], "field": "status", "value": "archived"}
+        )
         with patch("core.api.note_api.request", req):
             r = await _make_mixin().batch_update_notes()
         assert r["status"] == "error"
@@ -154,12 +158,14 @@ class TestNoteHappyPath:
     async def test_list_notes(self) -> None:
         req = _mock_request()
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             store = MagicMock()
             store.list_notes = AsyncMock(return_value=([], 0))
             engine.note_store = store
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.note_api.request", req):
             r = await mixin.list_notes()
@@ -169,12 +175,14 @@ class TestNoteHappyPath:
     async def test_search_notes(self) -> None:
         req = _mock_request(query="test")
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             store = MagicMock()
             store.search = AsyncMock(return_value=([], 0))
             engine.note_store = store
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.note_api.request", req):
             r = await mixin.search_notes()
@@ -183,14 +191,18 @@ class TestNoteHappyPath:
     @pytest.mark.asyncio
     async def test_create_note(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={"title": "新笔记", "content": "笔记内容"})
+        req.get_json = AsyncMock(
+            return_value={"title": "新笔记", "content": "笔记内容"}
+        )
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             store = MagicMock()
             store.create = AsyncMock(return_value=1)
             engine.note_store = store
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.note_api.request", req):
             r = await mixin.create_note()
@@ -201,6 +213,7 @@ class TestNoteHappyPath:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": 1, "title": "更新标题"})
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             store = MagicMock()
@@ -208,6 +221,7 @@ class TestNoteHappyPath:
             store.update = AsyncMock(return_value=None)
             engine.note_store = store
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.note_api.request", req):
             r = await mixin.update_note()
@@ -218,6 +232,7 @@ class TestNoteHappyPath:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": 1})
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             store = MagicMock()
@@ -225,6 +240,7 @@ class TestNoteHappyPath:
             store.delete = AsyncMock(return_value=True)
             engine.note_store = store
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.note_api.request", req):
             r = await mixin.delete_note()
@@ -235,6 +251,7 @@ class TestNoteHappyPath:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_ids": [1, 2, 3]})
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             store = MagicMock()
@@ -242,6 +259,7 @@ class TestNoteHappyPath:
             store.get = AsyncMock(return_value=MagicMock())
             engine.note_store = store
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.note_api.request", req):
             r = await mixin.batch_delete_notes()
@@ -250,9 +268,11 @@ class TestNoteHappyPath:
     @pytest.mark.asyncio
     async def test_batch_update(self) -> None:
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "note_ids": [1, 2], "field": "status", "value": "archived"})
+        req.get_json = AsyncMock(
+            return_value={"note_ids": [1, 2], "field": "status", "value": "archived"}
+        )
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             store = MagicMock()
@@ -260,6 +280,7 @@ class TestNoteHappyPath:
             store.update = AsyncMock(return_value=None)
             engine.note_store = store
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.note_api.request", req):
             r = await mixin.batch_update_notes()
@@ -269,6 +290,7 @@ class TestNoteHappyPath:
     async def test_get_detail_with_versions(self) -> None:
         req = _mock_request(note_id="1")
         mixin = _make_mixin()
+
         async def _ready():
             engine = MagicMock()
             store = MagicMock()
@@ -278,6 +300,7 @@ class TestNoteHappyPath:
             store.get_versions = AsyncMock(return_value=[])
             engine.note_store = store
             return {"memory_engine": engine}, None
+
         mixin._ensure_plugin_ready = _ready
         with patch("core.api.note_api.request", req):
             r = await mixin.get_note_detail()

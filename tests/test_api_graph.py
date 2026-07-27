@@ -17,7 +17,9 @@ def _mock_request(**args):
     return mock
 
 
-def _make_mixin(plugin_ready: bool = True, graph_store=None, search_memories_result=None):
+def _make_mixin(
+    plugin_ready: bool = True, graph_store=None, search_memories_result=None
+):
     """Create a stub with GraphApiMixin methods and mocked dependencies."""
 
     from core.api.graph_api import GraphApiMixin
@@ -30,10 +32,12 @@ def _make_mixin(plugin_ready: bool = True, graph_store=None, search_memories_res
 
         def _ok(self, data):
             from core.api.response_utils import ok_response
+
             return ok_response(data)
 
         def _error(self, msg):
             from core.api.response_utils import error_response
+
             return error_response(msg)
 
         async def _ensure_plugin_ready(self):
@@ -41,16 +45,20 @@ def _make_mixin(plugin_ready: bool = True, graph_store=None, search_memories_res
                 return None, self._error("plugin not ready")
             engine = MagicMock()
             engine.get_statistics = AsyncMock(return_value={"total": 0})
-            engine.search_memories = AsyncMock(return_value=search_memories_result or [])
+            engine.search_memories = AsyncMock(
+                return_value=search_memories_result or []
+            )
             return {"memory_engine": engine}, None
 
         def _get_graph_store(self, engine):
             return graph_store
 
         def _build_graph_view_payload(self, snapshot, stats, **kwargs):
-            result = {"nodes": snapshot.get("nodes", []),
-                      "edges": snapshot.get("edges", []),
-                      "stats": stats}
+            result = {
+                "nodes": snapshot.get("nodes", []),
+                "edges": snapshot.get("edges", []),
+                "stats": stats,
+            }
             result.update(kwargs)
             return result
 
@@ -105,9 +113,9 @@ class TestGraphApiHappyPath:
     async def test_overview_with_graph_store_returns_ok(self) -> None:
         req = _mock_request()
         mock_gs = MagicMock()
-        mock_gs.get_graph_snapshot = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": []
-        })
+        mock_gs.get_graph_snapshot = AsyncMock(
+            return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
+        )
         with patch("core.api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.get_graph_overview()
@@ -132,9 +140,9 @@ class TestGraphApiHappyPath:
     async def test_overview_with_session_filters(self) -> None:
         req = _mock_request(session_id="s1", persona_id="p1")
         mock_gs = MagicMock()
-        mock_gs.get_graph_snapshot = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": []
-        })
+        mock_gs.get_graph_snapshot = AsyncMock(
+            return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
+        )
         with patch("core.api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.get_graph_overview()
@@ -145,9 +153,9 @@ class TestGraphApiHappyPath:
     async def test_query_graph_no_payload_falls_to_overview(self) -> None:
         req = _mock_request()
         mock_gs = MagicMock()
-        mock_gs.get_graph_snapshot = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": []
-        })
+        mock_gs.get_graph_snapshot = AsyncMock(
+            return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
+        )
         with patch("core.api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.query_graph()
@@ -159,28 +167,34 @@ class TestGraphApiHappyPath:
         """画布参数只替换默认全量读取，且响应不携带内部节点字段。"""
         req = _mock_request(canvas="1")
         mock_gs = MagicMock()
-        mock_gs.get_canvas_snapshot = AsyncMock(return_value={
-            "nodes": [{
-                "id": 7,
-                "key": "person:qq:7",
-                "canonical_value": "qq:7",
-                "label": "QQ:7",
-                "type": "person",
-                "entry_count": 2,
-                "memory_count": 1,
-                "degree": 3,
-                "weight": 3.8,
-            }],
-            "edges": [{
-                "id": 8,
-                "source": 7,
-                "target": 7,
-                "type": "related",
-                "weight": 1.0,
-                "timestamp": 100.0,
-                "metadata": {"internal": True},
-            }],
-        })
+        mock_gs.get_canvas_snapshot = AsyncMock(
+            return_value={
+                "nodes": [
+                    {
+                        "id": 7,
+                        "key": "person:qq:7",
+                        "canonical_value": "qq:7",
+                        "label": "QQ:7",
+                        "type": "person",
+                        "entry_count": 2,
+                        "memory_count": 1,
+                        "degree": 3,
+                        "weight": 3.8,
+                    }
+                ],
+                "edges": [
+                    {
+                        "id": 8,
+                        "source": 7,
+                        "target": 7,
+                        "type": "related",
+                        "weight": 1.0,
+                        "timestamp": 100.0,
+                        "metadata": {"internal": True},
+                    }
+                ],
+            }
+        )
 
         with patch("core.api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
@@ -200,17 +214,18 @@ class TestGraphApiHappyPath:
     async def test_search_graph_with_query_strips_whitespace(self) -> None:
         req = _mock_request(query="  hello world  ")
         mock_gs = MagicMock()
-        mock_gs.get_graph_snapshot = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": []
-        })
+        mock_gs.get_graph_snapshot = AsyncMock(
+            return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
+        )
         mock_gs.search_nodes_by_tokens = AsyncMock(return_value=[])
         mock_gs.get_entries_for_node_ids = AsyncMock(return_value=[])
-        mock_gs.get_subgraph_for_memories = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": []
-        })
+        mock_gs.get_subgraph_for_memories = AsyncMock(
+            return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
+        )
         with patch("core.api.graph_api.request", req):
-            mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs,
-                                search_memories_result=[])
+            mixin = _make_mixin(
+                plugin_ready=True, graph_store=mock_gs, search_memories_result=[]
+            )
             result = await mixin.search_graph()
         assert result["status"] == "ok"
 
@@ -232,9 +247,14 @@ class TestGraphApiEdgeCases:
         """search_graph with valid memory_id passes it to _query_graph_impl."""
         req = _mock_request(query="test", memory_id="42")
         mock_gs = MagicMock()
-        mock_gs.get_subgraph_for_memories = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": [],
-        })
+        mock_gs.get_subgraph_for_memories = AsyncMock(
+            return_value={
+                "nodes": [],
+                "edges": [],
+                "entries": [],
+                "memories": [],
+            }
+        )
         with patch("core.api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.search_graph()
@@ -263,13 +283,23 @@ class TestGraphApiEdgeCases:
     @pytest.mark.asyncio
     async def test_get_graph_overview_with_filters(self) -> None:
         """get_graph_overview passes session_id and persona_id to graph_store."""
-        req = _mock_request(session_id="sess_1", persona_id="pers_1",
-                            limit_memories="5", limit_entries="20",
-                            limit_nodes="30", limit_edges="40")
+        req = _mock_request(
+            session_id="sess_1",
+            persona_id="pers_1",
+            limit_memories="5",
+            limit_entries="20",
+            limit_nodes="30",
+            limit_edges="40",
+        )
         mock_gs = MagicMock()
-        mock_gs.get_graph_snapshot = AsyncMock(return_value={
-            "nodes": [{"id": 1}], "edges": [], "entries": [], "memories": []
-        })
+        mock_gs.get_graph_snapshot = AsyncMock(
+            return_value={
+                "nodes": [{"id": 1}],
+                "edges": [],
+                "entries": [],
+                "memories": [],
+            }
+        )
         with patch("core.api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.get_graph_overview()
@@ -293,9 +323,14 @@ class TestGraphApiEdgeCases:
     async def test_query_graph_impl_with_memory_id_focus(self) -> None:
         """_query_graph_impl with memory_id calls get_subgraph_for_memories."""
         mock_gs = MagicMock()
-        mock_gs.get_subgraph_for_memories = AsyncMock(return_value={
-            "nodes": [{"id": 1}], "edges": [], "entries": [], "memories": [],
-        })
+        mock_gs.get_subgraph_for_memories = AsyncMock(
+            return_value={
+                "nodes": [{"id": 1}],
+                "edges": [],
+                "entries": [],
+                "memories": [],
+            }
+        )
         mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
         result = await mixin._query_graph_impl({"memory_id": 42, "query": ""})
         assert result["status"] == "ok"
@@ -306,40 +341,64 @@ class TestGraphApiEdgeCases:
     async def test_query_graph_impl_with_search(self) -> None:
         """_query_graph_impl with query runs search_memories + tokens + subgraph."""
         from core.retrieval.rrf_fusion import HybridResult
+
         mock_gs = MagicMock()
         mock_gs.search_nodes_by_tokens = AsyncMock(return_value=[])
         mock_gs.get_entries_for_node_ids = AsyncMock(return_value=[])
-        mock_gs.get_subgraph_for_memories = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": [],
-        })
-        sr = HybridResult(doc_id=1, final_score=0.9, rrf_score=0.9,
-                          bm25_score=0.8, vector_score=None,
-                          content="result", metadata={"k": "v"},
-                          score_breakdown={"k1": 0.5})
-        mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs,
-                            search_memories_result=[sr])
+        mock_gs.get_subgraph_for_memories = AsyncMock(
+            return_value={
+                "nodes": [],
+                "edges": [],
+                "entries": [],
+                "memories": [],
+            }
+        )
+        sr = HybridResult(
+            doc_id=1,
+            final_score=0.9,
+            rrf_score=0.9,
+            bm25_score=0.8,
+            vector_score=None,
+            content="result",
+            metadata={"k": "v"},
+            score_breakdown={"k1": 0.5},
+        )
+        mixin = _make_mixin(
+            plugin_ready=True, graph_store=mock_gs, search_memories_result=[sr]
+        )
         result = await mixin._query_graph_impl({"query": "hello", "session_id": "s1"})
         assert result["status"] == "ok"
         assert "retrieval_items" in result["data"]
 
     @pytest.mark.asyncio
-    async def test_query_graph_impl_deduplicates_memory_ids_and_filters_scores(self) -> None:
+    async def test_query_graph_impl_deduplicates_memory_ids_and_filters_scores(
+        self,
+    ) -> None:
         """Search + node hits should deduplicate memory_ids and keep numeric scores only."""
         from core.retrieval.rrf_fusion import HybridResult
 
         mock_gs = MagicMock()
-        mock_gs.search_nodes_by_tokens = AsyncMock(return_value=[
-            {"id": 10, "node_value": "node-a"},
-            {"id": 11, "node_value": "node-b"},
-        ])
-        mock_gs.get_entries_for_node_ids = AsyncMock(return_value=[
-            {"source_memory_id": 1},
-            {"source_memory_id": 99},
-            {"source_memory_id": 99},
-        ])
-        mock_gs.get_subgraph_for_memories = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": [],
-        })
+        mock_gs.search_nodes_by_tokens = AsyncMock(
+            return_value=[
+                {"id": 10, "node_value": "node-a"},
+                {"id": 11, "node_value": "node-b"},
+            ]
+        )
+        mock_gs.get_entries_for_node_ids = AsyncMock(
+            return_value=[
+                {"source_memory_id": 1},
+                {"source_memory_id": 99},
+                {"source_memory_id": 99},
+            ]
+        )
+        mock_gs.get_subgraph_for_memories = AsyncMock(
+            return_value={
+                "nodes": [],
+                "edges": [],
+                "entries": [],
+                "memories": [],
+            }
+        )
 
         sr1 = HybridResult(
             doc_id=1,
@@ -372,17 +431,20 @@ class TestGraphApiEdgeCases:
         assert result["status"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_query_graph_impl_tolerates_malformed_score_breakdown_results(self) -> None:
+    async def test_query_graph_impl_tolerates_malformed_score_breakdown_results(
+        self,
+    ) -> None:
         """A single malformed score_breakdown should not crash the entire query."""
         from types import SimpleNamespace
+
         from core.retrieval.rrf_fusion import HybridResult
 
         mock_gs = MagicMock()
         mock_gs.search_nodes_by_tokens = AsyncMock(return_value=[])
         mock_gs.get_entries_for_node_ids = AsyncMock(return_value=[])
-        mock_gs.get_subgraph_for_memories = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": []
-        })
+        mock_gs.get_subgraph_for_memories = AsyncMock(
+            return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
+        )
 
         broken = SimpleNamespace(
             doc_id=1,
@@ -446,19 +508,28 @@ class TestGraphApiEdgeCases:
         from core.retrieval.rrf_fusion import HybridResult
 
         mock_gs = MagicMock()
-        mock_gs.search_nodes_by_tokens = AsyncMock(return_value=[
-            {"id": "10", "node_value": "node-a"},
-            {"id": "bad"},
-            "bad-node-hit",
-        ])
-        mock_gs.get_entries_for_node_ids = AsyncMock(return_value=[
-            {"source_memory_id": "99"},
-            {"source_memory_id": "oops"},
-            "bad-entry-hit",
-        ])
-        mock_gs.get_subgraph_for_memories = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": [],
-        })
+        mock_gs.search_nodes_by_tokens = AsyncMock(
+            return_value=[
+                {"id": "10", "node_value": "node-a"},
+                {"id": "bad"},
+                "bad-node-hit",
+            ]
+        )
+        mock_gs.get_entries_for_node_ids = AsyncMock(
+            return_value=[
+                {"source_memory_id": "99"},
+                {"source_memory_id": "oops"},
+                "bad-entry-hit",
+            ]
+        )
+        mock_gs.get_subgraph_for_memories = AsyncMock(
+            return_value={
+                "nodes": [],
+                "edges": [],
+                "entries": [],
+                "memories": [],
+            }
+        )
 
         good = HybridResult(
             doc_id=1,
@@ -520,17 +591,24 @@ class TestGraphApiEdgeCases:
     async def test_query_graph_impl_clamps_limit_parameters(self) -> None:
         """Query limit params are clamped before reaching graph store."""
         mock_gs = MagicMock()
-        mock_gs.get_graph_snapshot = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": [],
-        })
+        mock_gs.get_graph_snapshot = AsyncMock(
+            return_value={
+                "nodes": [],
+                "edges": [],
+                "entries": [],
+                "memories": [],
+            }
+        )
 
         mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
-        result = await mixin._query_graph_impl({
-            "limit_memories": 999,
-            "limit_entries": 1,
-            "limit_nodes": 999,
-            "limit_edges": 1,
-        })
+        result = await mixin._query_graph_impl(
+            {
+                "limit_memories": 999,
+                "limit_entries": 1,
+                "limit_nodes": 999,
+                "limit_edges": 1,
+            }
+        )
 
         assert result["status"] == "ok"
         mock_gs.get_graph_snapshot.assert_awaited_once_with(
@@ -546,17 +624,23 @@ class TestGraphApiEdgeCases:
     async def test_query_graph_impl_with_node_search(self) -> None:
         """_query_graph_impl with tokens triggers search_nodes_by_tokens."""
         mock_gs = MagicMock()
-        mock_gs.search_nodes_by_tokens = AsyncMock(return_value=[
-            {"id": 10, "node_value": "testnode"}
-        ])
-        mock_gs.get_entries_for_node_ids = AsyncMock(return_value=[
-            {"source_memory_id": 99}
-        ])
-        mock_gs.get_subgraph_for_memories = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": [],
-        })
-        mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs,
-                            search_memories_result=[])
+        mock_gs.search_nodes_by_tokens = AsyncMock(
+            return_value=[{"id": 10, "node_value": "testnode"}]
+        )
+        mock_gs.get_entries_for_node_ids = AsyncMock(
+            return_value=[{"source_memory_id": 99}]
+        )
+        mock_gs.get_subgraph_for_memories = AsyncMock(
+            return_value={
+                "nodes": [],
+                "edges": [],
+                "entries": [],
+                "memories": [],
+            }
+        )
+        mixin = _make_mixin(
+            plugin_ready=True, graph_store=mock_gs, search_memories_result=[]
+        )
         result = await mixin._query_graph_impl({"query": "hello world"})
         assert result["status"] == "ok"
         mock_gs.search_nodes_by_tokens.assert_called_once()
@@ -592,9 +676,9 @@ class TestGraphApiEdgeCases:
         """get_graph_overview with empty session_id/persona_id becomes None."""
         req = _mock_request(session_id="", persona_id="")
         mock_gs = MagicMock()
-        mock_gs.get_graph_snapshot = AsyncMock(return_value={
-            "nodes": [], "edges": [], "entries": [], "memories": []
-        })
+        mock_gs.get_graph_snapshot = AsyncMock(
+            return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
+        )
         with patch("core.api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.get_graph_overview()

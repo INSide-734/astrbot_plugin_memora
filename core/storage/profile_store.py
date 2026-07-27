@@ -25,7 +25,6 @@ from .canonical_source_validation import validate_domain_provenance
 from .domain_object_integrity import filter_current_domain_objects
 from .profile_preferences_integrity import require_manual_preferences
 
-
 PROFILE_SORT_COLUMNS = {
     "user_id": "user_id COLLATE NOCASE",
     "display_name": "display_name COLLATE NOCASE",
@@ -256,9 +255,7 @@ class ProfileStore(BaseStore):
                 if current_revision != expected_revision:
                     raise EditConflictError(current.to_dict(), current_revision)
 
-                await db.execute(
-                    "DELETE FROM user_tags WHERE user_id = ?", (user_id,)
-                )
+                await db.execute("DELETE FROM user_tags WHERE user_id = ?", (user_id,))
                 cursor = await db.execute(
                     "DELETE FROM user_profiles WHERE user_id = ?", (user_id,)
                 )
@@ -460,9 +457,7 @@ class ProfileStore(BaseStore):
                     await db.commit()
                     return 0
                 current.decay_tags(reference_time)
-                stale = [
-                    tag for tag in current.tags if tag.confidence < min_confidence
-                ]
+                stale = [tag for tag in current.tags if tag.confidence < min_confidence]
                 retained = [
                     tag for tag in current.tags if tag.confidence >= min_confidence
                 ]
@@ -674,9 +669,7 @@ class ProfileStore(BaseStore):
                     self._from_json(existing[4])
                 )
             elif str(existing[3] or "") == "manual":
-                existing_provenance = DomainProvenance(
-                    DomainObjectOrigin.MANUAL
-                )
+                existing_provenance = DomainProvenance(DomainObjectOrigin.MANUAL)
             merged_provenance = (
                 merge_domain_provenance(existing_provenance, tag.provenance)
                 if tag.provenance is not None

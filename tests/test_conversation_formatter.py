@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -57,7 +56,9 @@ class TestConversationFormatter:
         assert "Alice" in result
         assert "Hello world" in result
 
-    def test_format_multiple_messages(self, formatter: ConversationFormatter, sample_messages: list[Message]) -> None:
+    def test_format_multiple_messages(
+        self, formatter: ConversationFormatter, sample_messages: list[Message]
+    ) -> None:
         result = formatter.format_conversation(sample_messages)
         assert "你好" in result
         assert "Alice" in result
@@ -67,7 +68,9 @@ class TestConversationFormatter:
         result = formatter.format_conversation([])
         assert result == ""
 
-    def test_bot_message_gets_bot_prefix(self, formatter: ConversationFormatter) -> None:
+    def test_bot_message_gets_bot_prefix(
+        self, formatter: ConversationFormatter
+    ) -> None:
         msg = Message(
             id=1,
             session_id="s1",
@@ -93,7 +96,9 @@ class TestConversationFormatter:
         result = formatter.format_conversation([msg])
         assert "[Bot:" not in result
 
-    def test_format_falls_back_to_sender_id(self, formatter: ConversationFormatter) -> None:
+    def test_format_falls_back_to_sender_id(
+        self, formatter: ConversationFormatter
+    ) -> None:
         msg = Message(
             id=1,
             session_id="s1",
@@ -119,7 +124,9 @@ class TestConversationFormatter:
         result = formatter.format_conversation([msg])
         assert "未知" in result
 
-    def test_group_chat_includes_group_id_logging(self, formatter: ConversationFormatter) -> None:
+    def test_group_chat_includes_group_id_logging(
+        self, formatter: ConversationFormatter
+    ) -> None:
         msg = Message(
             id=1,
             session_id="s1",

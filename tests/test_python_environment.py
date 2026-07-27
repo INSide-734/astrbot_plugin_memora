@@ -114,3 +114,20 @@ def test_pre_commit_hooks_cover_ruff_and_file_integrity() -> None:
         "end-of-file-fixer",
         "trailing-whitespace",
     } <= integrity_hooks
+
+
+def test_root_agents_documents_uv_pre_commit_and_ruff_workflow() -> None:
+    """根协作规则应固定 uv、Ruff 与提交前钩子的执行边界。"""
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    required_markers = [
+        "uv sync --locked --dev",
+        "pre-commit install --install-hooks",
+        "pre-commit run --files",
+        "ruff check --fix",
+        "ruff format",
+        "--no-verify",
+        "渐进门禁",
+    ]
+
+    for marker in required_markers:
+        assert marker in agents, f"AGENTS.md 缺少工具链规范：{marker}"

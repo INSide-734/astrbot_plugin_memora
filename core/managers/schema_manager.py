@@ -26,7 +26,7 @@ class SchemaManager:
         """安全地引用 SQLite 标识符，转义嵌入的引号。"""
         if "\x00" in identifier:
             raise ValueError("SQLite identifier contains NUL byte")
-        return f'"{identifier.replace("\"", "\"\"")}"'
+        return f'"{identifier.replace('"', '""')}"'
 
     @classmethod
     def _quote_allowed_document_column(cls, identifier: str) -> str:

@@ -1,27 +1,26 @@
-"""测试 core.security.prompt_sanitizer — 3-layer prompt protection."""
+"""测试 core.security.prompt_sanitizer 的三层提示词保护。"""
 
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
-# Ensure plugin root on path
+# 支持直接运行本测试文件时从仓库根目录导入插件模块。
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-import pytest
-from core.security.prompt_sanitizer import (
+from core.security.prompt_sanitizer import (  # noqa: E402
     DoubleCheckValidator,
     MetaInstructionWrapper,
     PromptProtectionService,
     ResponseSanitizer,
 )
 
-
 # =============================================================================
 # MetaInstructionWrapper
 # =============================================================================
+
 
 class TestMetaInstructionWrapper:
     """标签包裹层测试"""
@@ -37,9 +36,7 @@ class TestMetaInstructionWrapper:
         wrapper = MetaInstructionWrapper(template_index=0)
         wrapped = wrapper.wrap_instruction("保持友好语气", add_suffix=True)
         # Should contain one of the non-output suffixes
-        assert any(
-            suffix in wrapped for suffix in wrapper.NON_OUTPUT_SUFFIXES
-        )
+        assert any(suffix in wrapped for suffix in wrapper.NON_OUTPUT_SUFFIXES)
 
     def test_wrap_empty_returns_empty(self):
         wrapper = MetaInstructionWrapper()
@@ -52,9 +49,7 @@ class TestMetaInstructionWrapper:
         assert "指令A" in wrapped
         assert "指令B" in wrapped
         # Only one suffix at the end
-        suffix_count = sum(
-            1 for s in wrapper.NON_OUTPUT_SUFFIXES if s in wrapped
-        )
+        suffix_count = sum(1 for s in wrapper.NON_OUTPUT_SUFFIXES if s in wrapped)
         assert suffix_count == 1
 
     def test_wrapped_hashes_tracking(self):
@@ -81,6 +76,7 @@ class TestMetaInstructionWrapper:
 # ResponseSanitizer
 # =============================================================================
 
+
 class TestResponseSanitizer:
     """后处理清洗器测试"""
 
@@ -105,19 +101,22 @@ class TestResponseSanitizer:
         cleaned, leaks = sanitizer.sanitize(response)
         assert "我收到了指令" not in cleaned
         assert "这是我的回复" in cleaned
-        assert any("KEYWORD" in l for l in leaks)
+        assert any("KEYWORD" in leak for leak in leaks)
 
     def test_remove_exact_original_fragments(self):
         sanitizer = ResponseSanitizer()
         # Use instruction without leak keywords so EXACT matching runs before keyword removal
         sanitizer.register_instructions(["user_preference_likes_coffee_blend_arabica"])
-        response = "hello. user_preference_likes_coffee_blend_arabica is here. normal reply."
+        response = (
+            "hello. user_preference_likes_coffee_blend_arabica is here. normal reply."
+        )
         cleaned, leaks = sanitizer.sanitize(
-            response, remove_keywords=False,
+            response,
+            remove_keywords=False,
         )
         assert "user_preference_likes_coffee_blend_arabica" not in cleaned
         assert "normal reply" in cleaned
-        assert any("EXACT" in l for l in leaks)
+        assert any("EXACT" in leak for leak in leaks)
 
     def test_remove_partial_5word_fragments(self):
         sanitizer = ResponseSanitizer()
@@ -125,7 +124,7 @@ class TestResponseSanitizer:
         # Response contains the 5-word fragment "alice bob charlie david eve"
         response = "secret alice bob charlie david eve was leaked here"
         cleaned, leaks = sanitizer.sanitize(response, remove_keywords=False)
-        assert any("PARTIAL" in l for l in leaks)
+        assert any("PARTIAL" in leak for leak in leaks)
 
     def test_check_for_leaks_non_destructive(self):
         sanitizer = ResponseSanitizer()
@@ -144,13 +143,16 @@ class TestResponseSanitizer:
     def test_clean_whitespace(self):
         sanitizer = ResponseSanitizer()
         response = "第一行\n\n\n\n第二行"
-        cleaned, _ = sanitizer.sanitize(response, remove_keywords=False, remove_original=False)
+        cleaned, _ = sanitizer.sanitize(
+            response, remove_keywords=False, remove_original=False
+        )
         assert cleaned.count("\n") <= 2
 
 
 # =============================================================================
 # DoubleCheckValidator
 # =============================================================================
+
 
 class TestDoubleCheckValidator:
     """4 算法验证器测试"""
@@ -227,6 +229,7 @@ class TestDoubleCheckValidator:
 # PromptProtectionService (integration)
 # =============================================================================
 
+
 class TestPromptProtectionService:
     """整合保护服务测试"""
 
@@ -236,7 +239,7 @@ class TestPromptProtectionService:
         assert "记忆上下文" in wrapped
 
         # Simulate LLM leaking the wrapped content
-        leaked_response = "用户问好。<system_internal do_not_output=\"true\">这是一段记忆上下文</system_internal>你好"
+        leaked_response = '用户问好。<system_internal do_not_output="true">这是一段记忆上下文</system_internal>你好'
         cleaned, report = svc.sanitize_response(leaked_response)
 
         assert "system_internal" not in cleaned
@@ -267,7 +270,7 @@ class TestPromptProtectionService:
 
     def test_disable_double_check(self):
         svc = PromptProtectionService(enable_double_check=False)
-        wrapped = svc.wrap_prompt("内部指令")
+        svc.wrap_prompt("内部指令")
         _, report = svc.sanitize_response("普通回复")
         # validation_details should be empty when double check is off
         assert report["validation_details"] == []

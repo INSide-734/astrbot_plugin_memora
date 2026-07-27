@@ -4,8 +4,8 @@
 
 import asyncio
 import time
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.star import Context
@@ -14,8 +14,8 @@ from astrbot.core.provider.provider import EmbeddingProvider, Provider
 from .base.config_manager import ConfigManager
 from .base.exceptions import InitializationError
 from .base.feature_config import is_jargon_discovery_enabled
-from .initializer.component_factory import ComponentFactory
 from .identity.runtime import ProtocolIdentityRuntime
+from .initializer.component_factory import ComponentFactory
 from .initializer.db_setup import DatabaseSetup
 from .initializer.faiss_checker import FaissChecker
 from .initializer.provider_loader import ProviderLoader
@@ -23,14 +23,14 @@ from .initializer.provider_waiter import ProviderWaiter
 from .injection.recorder import InjectionDecisionRecorder
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
+from .monitoring import report_debug_event, report_debug_exception
+from .monitoring.quality_scorer import MemoryQualityScorer
 from .processors.memory_processor import MemoryProcessor
 from .schedulers.backfill_scheduler import BackfillScheduler
 from .schedulers.decay_scheduler import DecayScheduler
-from .storage.injection_decision_store import InjectionDecisionStore
 from .security import PromptProtectionService
+from .storage.injection_decision_store import InjectionDecisionStore
 from .validators.index_validator import IndexValidator
-from .monitoring import report_debug_event, report_debug_exception
-from .monitoring.quality_scorer import MemoryQualityScorer
 
 
 class PluginInitializer:
@@ -138,9 +138,7 @@ class PluginInitializer:
             if not ready:
                 missing = []
                 if not self.embedding_provider:
-                    missing.append(
-                        "向量嵌入提供器（请在 AstrBot 中配置向量嵌入模型）"
-                    )
+                    missing.append("向量嵌入提供器（请在 AstrBot 中配置向量嵌入模型）")
                 if not self.llm_provider:
                     missing.append("LLM 提供器（请在 AstrBot 中配置语言模型）")
                 logger.warning(
@@ -264,9 +262,7 @@ class PluginInitializer:
             self.index_validator = components["index_validator"]
             self.decay_scheduler = components["decay_scheduler"]
             self.injection_decision_store = components["injection_decision_store"]
-            self.injection_decision_recorder = components[
-                "injection_decision_recorder"
-            ]
+            self.injection_decision_recorder = components["injection_decision_recorder"]
             self.memory_evolution_store = components.get("memory_evolution_store")
             self.memory_evolution_manager = components.get("memory_evolution_manager")
             owns_injection_components = True
@@ -306,9 +302,7 @@ class PluginInitializer:
                 stage="runtime_publish",
                 status="completed",
                 reason_code="core_components_published",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - publish_started) * 1000.0
-                ),
+                duration_ms=max(0.0, (time.perf_counter() - publish_started) * 1000.0),
                 success_count=sum(
                     component is not None
                     for component in (
@@ -519,7 +513,12 @@ class PluginInitializer:
         else:
             component_started = time.perf_counter()
             try:
-                from .jargon import JargonMiner, JargonQueryService, JargonStatisticalFilter, JargonStore
+                from .jargon import (
+                    JargonMiner,
+                    JargonQueryService,
+                    JargonStatisticalFilter,
+                    JargonStore,
+                )
 
                 self.jargon_filter = JargonStatisticalFilter()
                 self.jargon_store = JargonStore(db_path)

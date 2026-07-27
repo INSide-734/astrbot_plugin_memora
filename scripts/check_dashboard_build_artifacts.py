@@ -4,7 +4,6 @@ import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DASHBOARD_DIR = REPO_ROOT / "pages" / "dashboard"
 
@@ -48,7 +47,9 @@ def check_dashboard_build_artifacts(dashboard_dir: str | Path) -> list[str]:
         errors.append("index.html still references /src/main dev entry")
 
     module_scripts = [
-        script for script in parser.scripts if script.get("type", "").lower() == "module"
+        script
+        for script in parser.scripts
+        if script.get("type", "").lower() == "module"
     ]
     if module_scripts:
         errors.append('index.html must not contain type="module" scripts')
@@ -88,7 +89,9 @@ def check_dashboard_build_artifacts(dashboard_dir: str | Path) -> list[str]:
     if len(js_files) != 1:
         errors.append(f"expected exactly one JS file in assets, found {len(js_files)}")
     if len(css_files) != 1:
-        errors.append(f"expected exactly one CSS file in assets, found {len(css_files)}")
+        errors.append(
+            f"expected exactly one CSS file in assets, found {len(css_files)}"
+        )
 
     return errors
 

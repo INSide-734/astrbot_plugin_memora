@@ -85,10 +85,15 @@ class TestDelegationStatus:
         assert result["status"] == "ok"
         assert result["data"]["self_learning_active"] is False
         assert result["data"]["chatplus_active"] is False
-        assert all(not result["data"][k] for k in [
-            "delegated_jargon", "delegated_expression",
-            "delegated_affection", "delegated_reply",
-        ])
+        assert all(
+            not result["data"][k]
+            for k in [
+                "delegated_jargon",
+                "delegated_expression",
+                "delegated_affection",
+                "delegated_reply",
+            ]
+        )
 
     @pytest.mark.asyncio
     async def test_no_feature_delegation_returns_error(self) -> None:

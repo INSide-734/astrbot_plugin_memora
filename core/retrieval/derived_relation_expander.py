@@ -22,7 +22,6 @@ from ..models.memory_evolution import (
 from ..models.temporal import normalize_datetime, visible_at
 from .rrf_fusion import HybridResult
 
-
 _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}
 
 
@@ -229,7 +228,11 @@ def _opposite_endpoint(
 def _privacy_allowed(item_level: str, allowed_level: str) -> bool:
     item_value = _PRIVACY_ORDER.get(item_level)
     allowed_value = _PRIVACY_ORDER.get(allowed_level)
-    return item_value is not None and allowed_value is not None and item_value <= allowed_value
+    return (
+        item_value is not None
+        and allowed_value is not None
+        and item_value <= allowed_value
+    )
 
 
 def _relation_is_current(relation: RelationView, now: datetime) -> bool:

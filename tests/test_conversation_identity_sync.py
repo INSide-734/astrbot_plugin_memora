@@ -127,8 +127,12 @@ async def test_group_sync_updates_only_current_session(tmp_path) -> None:
 
     sync, identity_store, conversations, invalidator = await _build_sync(tmp_path)
     try:
-        await conversations.add_message(_message(session_id="group-a", sender_name="旧群名片A"))
-        await conversations.add_message(_message(session_id="group-b", sender_name="旧群名片B"))
+        await conversations.add_message(
+            _message(session_id="group-a", sender_name="旧群名片A")
+        )
+        await conversations.add_message(
+            _message(session_id="group-b", sender_name="旧群名片B")
+        )
         await conversations.add_message(
             _message(session_id="group-a", sender_id="10002", sender_name="另一用户")
         )
@@ -158,9 +162,9 @@ async def test_group_sync_updates_only_current_session(tmp_path) -> None:
         assert other.sender_name == "另一用户"
         assert assistant.sender_name == "机器人"
         assert group_b[0].sender_name == "旧群名片B"
-        assert await identity_store.find_aliases(
-            "qq", "10001", "group", "20001"
-        ) == ["旧群名片A"]
+        assert await identity_store.find_aliases("qq", "10001", "group", "20001") == [
+            "旧群名片A"
+        ]
         invalidator.assert_awaited_once_with("group-a")
     finally:
         await conversations.close()
@@ -168,7 +172,9 @@ async def test_group_sync_updates_only_current_session(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_private_sync_updates_only_proven_onebot_private_sessions(tmp_path) -> None:
+async def test_private_sync_updates_only_proven_onebot_private_sessions(
+    tmp_path,
+) -> None:
     """OneBot 私聊同步不能跨到其他平台或群聊。"""
 
     sync, identity_store, conversations, invalidator = await _build_sync(tmp_path)
@@ -199,17 +205,22 @@ async def test_private_sync_updates_only_proven_onebot_private_sessions(tmp_path
         changed = await sync.synchronize(identity, session_id="private-a")
 
         assert changed == {"private-a", "private-b"}
-        assert (await conversations.get_messages("private-a", 10))[0].sender_name == "新昵称"
-        assert (await conversations.get_messages("private-b", 10))[0].sender_name == "新昵称"
-        assert (
-            await conversations.get_messages("telegram-private", 10)
-        )[0].sender_name == "Telegram 名称"
-        assert (
-            await conversations.get_messages("onebot-group", 10)
-        )[0].sender_name == "群名片"
-        assert set(
-            await identity_store.find_aliases("qq", "10001", "global", "")
-        ) == {"旧昵称A", "旧昵称B"}
+        assert (await conversations.get_messages("private-a", 10))[
+            0
+        ].sender_name == "新昵称"
+        assert (await conversations.get_messages("private-b", 10))[
+            0
+        ].sender_name == "新昵称"
+        assert (await conversations.get_messages("telegram-private", 10))[
+            0
+        ].sender_name == "Telegram 名称"
+        assert (await conversations.get_messages("onebot-group", 10))[
+            0
+        ].sender_name == "群名片"
+        assert set(await identity_store.find_aliases("qq", "10001", "global", "")) == {
+            "旧昵称A",
+            "旧昵称B",
+        }
         assert {call.args[0] for call in invalidator.await_args_list} == changed
     finally:
         await conversations.close()
@@ -264,16 +275,16 @@ async def test_qq_official_private_sync_updates_only_current_session(tmp_path) -
             "global",
             "",
         ) == ["官方旧昵称"]
-        invalidator.assert_awaited_once_with(
-            "qq_official:FriendMessage:OPENID-1"
-        )
+        invalidator.assert_awaited_once_with("qq_official:FriendMessage:OPENID-1")
     finally:
         await conversations.close()
         await identity_store.close()
 
 
 @pytest.mark.asyncio
-async def test_admin_display_name_remains_highest_priority_during_sync(tmp_path) -> None:
+async def test_admin_display_name_remains_highest_priority_during_sync(
+    tmp_path,
+) -> None:
     """会话同步应采用管理员备注，但不得修改画像表。"""
 
     sync, identity_store, conversations, _invalidator = await _build_sync(tmp_path)
@@ -317,8 +328,12 @@ async def test_untrusted_identity_does_not_touch_conversation(tmp_path) -> None:
         )
 
         assert changed == set()
-        assert (await conversations.get_messages("group-a", 10))[0].sender_name == "旧名称"
-        assert await identity_store.get_identity("qq", "10001", "group", "20001") is None
+        assert (await conversations.get_messages("group-a", 10))[
+            0
+        ].sender_name == "旧名称"
+        assert (
+            await identity_store.get_identity("qq", "10001", "group", "20001") is None
+        )
         invalidator.assert_not_awaited()
     finally:
         await conversations.close()

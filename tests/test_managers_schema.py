@@ -8,7 +8,6 @@ import pytest
 
 from core.managers.schema_manager import SchemaManager
 
-
 # ---------------------------------------------------------------------------
 # create_tables tests
 # ---------------------------------------------------------------------------
@@ -192,10 +191,12 @@ class TestDropLegacyFtsTriggers:
 
         # Mock cursor for trigger query
         trigger_cursor = AsyncMock()
-        trigger_cursor.fetchall = AsyncMock(return_value=[
-            ("documents_fts_insert",),
-            ("documents_fts_update",),
-        ])
+        trigger_cursor.fetchall = AsyncMock(
+            return_value=[
+                ("documents_fts_insert",),
+                ("documents_fts_update",),
+            ]
+        )
 
         async def _execute(sql, *args, **kwargs):
             if "SELECT name FROM sqlite_master" in sql:
@@ -213,7 +214,9 @@ class TestDropLegacyFtsTriggers:
 
     def test_quote_allowed_document_column_rejects_unknown(self) -> None:
         with pytest.raises(ValueError, match="Unsupported documents column"):
-            SchemaManager._quote_allowed_document_column("doc_id; DROP TABLE documents;--")
+            SchemaManager._quote_allowed_document_column(
+                "doc_id; DROP TABLE documents;--"
+            )
 
     def test_quote_identifier_escapes_double_quotes(self) -> None:
         quoted = SchemaManager._quote_identifier('bad"name')

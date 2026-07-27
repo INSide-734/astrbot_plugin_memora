@@ -14,10 +14,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _mock_request(**args):
     mock = MagicMock()
@@ -30,6 +30,7 @@ def _mock_request(**args):
 # MemoryBatchApiMixin tests
 # ---------------------------------------------------------------------------
 
+
 class TestMemoryBatchValidation:
     """Batch API validates request parameters."""
 
@@ -39,8 +40,12 @@ class TestMemoryBatchValidation:
 
         class Stub:
             batch_memories = MemoryBatchApiMixin.batch_memories
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"memory_ids": [], "action": "delete"})
@@ -55,8 +60,11 @@ class TestMemoryBatchValidation:
         class Stub:
             batch_memories = MemoryBatchApiMixin.batch_memories
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-memory"])
@@ -71,12 +79,17 @@ class TestMemoryBatchValidation:
 
         class Stub:
             batch_memories = MemoryBatchApiMixin.batch_memories
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "memory_ids": [1, 2], "action": "invalid"})
+        req.get_json = AsyncMock(
+            return_value={"memory_ids": [1, 2], "action": "invalid"}
+        )
         with patch("core.api.memory_batch_api.request", req):
             result = await Stub().batch_memories()
         assert result["status"] == "error"
@@ -89,10 +102,17 @@ class TestMemoryBatchValidation:
         class Stub:
             batch_delete_memories = MemoryBatchApiMixin.batch_delete_memories
             _delete_valid_memory_ids = MemoryBatchApiMixin._delete_valid_memory_ids
-            _normalize_delete_result = staticmethod(MemoryBatchApiMixin._normalize_delete_result)
+            _normalize_delete_result = staticmethod(
+                MemoryBatchApiMixin._normalize_delete_result
+            )
             _coerce_memory_id = staticmethod(MemoryBatchApiMixin._coerce_memory_id)
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 engine.batch_delete_memories = AsyncMock(return_value=2)
@@ -118,8 +138,11 @@ class TestMemoryBatchValidation:
             )
             _coerce_memory_id = staticmethod(MemoryBatchApiMixin._coerce_memory_id)
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
@@ -140,19 +163,28 @@ class TestMemoryBatchValidation:
         class Stub:
             batch_delete_memories = MemoryBatchApiMixin.batch_delete_memories
             _delete_valid_memory_ids = MemoryBatchApiMixin._delete_valid_memory_ids
-            _normalize_delete_result = staticmethod(MemoryBatchApiMixin._normalize_delete_result)
+            _normalize_delete_result = staticmethod(
+                MemoryBatchApiMixin._normalize_delete_result
+            )
             _coerce_memory_id = staticmethod(MemoryBatchApiMixin._coerce_memory_id)
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
-                engine.batch_delete_memories_detailed = AsyncMock(return_value={
-                    "deleted_count": 1,
-                    "deleted_ids": [1],
-                    "not_found_ids": [999],
-                    "failed_ids": [],
-                    "errors": [],
-                })
+                engine.batch_delete_memories_detailed = AsyncMock(
+                    return_value={
+                        "deleted_count": 1,
+                        "deleted_ids": [1],
+                        "not_found_ids": [999],
+                        "failed_ids": [],
+                        "errors": [],
+                    }
+                )
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
@@ -183,8 +215,11 @@ class TestMemoryBatchValidation:
             )
             _coerce_memory_id = staticmethod(MemoryBatchApiMixin._coerce_memory_id)
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
@@ -215,15 +250,21 @@ class TestMemoryBatchValidation:
 
         class Stub:
             batch_update_memories = MemoryBatchApiMixin.batch_update_memories
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "memory_ids": [1], "field": "invalid_field", "value": "x"})
+        req.get_json = AsyncMock(
+            return_value={"memory_ids": [1], "field": "invalid_field", "value": "x"}
+        )
         with patch("core.api.memory_batch_api.request", req):
             result = await Stub().batch_update_memories()
         assert result["status"] == "error"
@@ -235,8 +276,11 @@ class TestMemoryBatchValidation:
         class Stub:
             batch_update_memories = MemoryBatchApiMixin.batch_update_memories
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
@@ -261,8 +305,11 @@ class TestMemoryBatchValidation:
             )
             _coerce_memory_id = staticmethod(MemoryBatchApiMixin._coerce_memory_id)
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
@@ -290,8 +337,11 @@ class TestMemoryBatchValidation:
             batch_update_memories = MemoryBatchApiMixin.batch_update_memories
             _coerce_memory_id = staticmethod(MemoryBatchApiMixin._coerce_memory_id)
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
@@ -301,11 +351,13 @@ class TestMemoryBatchValidation:
 
         stub = Stub()
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "memory_ids": [True, "bad", 3],
-            "field": "importance",
-            "value": 5,
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "memory_ids": [True, "bad", 3],
+                "field": "importance",
+                "value": 5,
+            }
+        )
         with patch("core.api.memory_batch_api.request", req):
             result = await stub.batch_update_memories()
         assert result["status"] == "ok"
@@ -322,8 +374,11 @@ class TestMemoryBatchValidation:
             batch_update_memories = MemoryBatchApiMixin.batch_update_memories
             _coerce_memory_id = staticmethod(MemoryBatchApiMixin._coerce_memory_id)
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
@@ -333,11 +388,13 @@ class TestMemoryBatchValidation:
 
         stub = Stub()
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "memory_ids": [3],
-            "field": "importance",
-            "value": True,
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "memory_ids": [3],
+                "field": "importance",
+                "value": True,
+            }
+        )
         with patch("core.api.memory_batch_api.request", req):
             result = await stub.batch_update_memories()
         assert result["status"] == "ok"
@@ -351,6 +408,7 @@ class TestMemoryBatchValidation:
 # MemoryReadApiMixin tests
 # ---------------------------------------------------------------------------
 
+
 class TestMemoryReadValidation:
     """Read API validates parameters."""
 
@@ -360,8 +418,13 @@ class TestMemoryReadValidation:
 
         class Stub:
             list_memories = MemoryReadApiMixin.list_memories
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 return None, self._error("not ready")
 
@@ -376,8 +439,13 @@ class TestMemoryReadValidation:
 
         class Stub:
             list_memories = MemoryReadApiMixin.list_memories
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 engine.db_path = ":memory:"
@@ -394,8 +462,13 @@ class TestMemoryReadValidation:
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
@@ -412,15 +485,23 @@ class TestMemoryReadValidation:
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
+
             async def _get_memory_record(self, mid):
                 return None
+
             def _get_graph_store(self, engine):
                 return None
+
             def _normalize_metadata(self, md):
                 return md or {}
 
@@ -436,15 +517,23 @@ class TestMemoryReadValidation:
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
+
             async def _get_memory_record(self, mid):
                 return "bad-record"
+
             def _get_graph_store(self, engine):
                 return None
+
             def _normalize_metadata(self, md):
                 return md or {}
 
@@ -455,16 +544,24 @@ class TestMemoryReadValidation:
         assert "不存在" in result.get("message", "")
 
     @pytest.mark.asyncio
-    async def test_get_memory_detail_tolerates_non_mapping_normalized_metadata(self) -> None:
+    async def test_get_memory_detail_tolerates_non_mapping_normalized_metadata(
+        self,
+    ) -> None:
         from core.api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
+
             async def _get_memory_record(self, mid):
                 return {
                     "id": 123,
@@ -474,8 +571,10 @@ class TestMemoryReadValidation:
                     "created_at": "2024-01-01",
                     "updated_at": "2024-01-02",
                 }
+
             def _get_graph_store(self, engine):
                 return None
+
             def _normalize_metadata(self, md):
                 return "bad-metadata"
 
@@ -491,16 +590,24 @@ class TestMemoryReadValidation:
         assert result["data"]["importance"] == 0.5
 
     @pytest.mark.asyncio
-    async def test_get_memory_detail_tolerates_non_mapping_subgraph_payload(self) -> None:
+    async def test_get_memory_detail_tolerates_non_mapping_subgraph_payload(
+        self,
+    ) -> None:
         from core.api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
+
             async def _get_memory_record(self, mid):
                 return {
                     "id": 123,
@@ -510,10 +617,12 @@ class TestMemoryReadValidation:
                     "created_at": "2024-01-01",
                     "updated_at": "2024-01-02",
                 }
+
             def _get_graph_store(self, engine):
                 store = MagicMock()
                 store.get_subgraph_for_memories = AsyncMock(return_value="bad-subgraph")
                 return store
+
             def _normalize_metadata(self, md):
                 return {}
 
@@ -525,16 +634,24 @@ class TestMemoryReadValidation:
         assert result["data"]["graph_context"] is None
 
     @pytest.mark.asyncio
-    async def test_get_memory_detail_tolerates_malformed_subgraph_collections(self) -> None:
+    async def test_get_memory_detail_tolerates_malformed_subgraph_collections(
+        self,
+    ) -> None:
         from core.api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
+
             async def _get_memory_record(self, mid):
                 return {
                     "id": 123,
@@ -544,6 +661,7 @@ class TestMemoryReadValidation:
                     "created_at": "2024-01-01",
                     "updated_at": "2024-01-02",
                 }
+
             def _get_graph_store(self, engine):
                 store = MagicMock()
                 store.get_subgraph_for_memories = AsyncMock(
@@ -554,6 +672,7 @@ class TestMemoryReadValidation:
                     }
                 )
                 return store
+
             def _normalize_metadata(self, md):
                 return {}
 
@@ -574,11 +693,17 @@ class TestMemoryReadValidation:
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
+
             async def _get_memory_record(self, mid):
                 return {
                     "id": 123,
@@ -588,8 +713,10 @@ class TestMemoryReadValidation:
                     "created_at": "2024-01-01",
                     "updated_at": "2024-01-02",
                 }
+
             def _get_graph_store(self, engine):
                 return None
+
             def _normalize_metadata(self, md):
                 return {
                     "memory_type": "FACT",
@@ -613,7 +740,9 @@ class TestMemoryReadValidation:
         assert result["data"]["update_history"] == []
 
     @pytest.mark.asyncio
-    async def test_list_memories_tolerates_non_mapping_normalized_metadata(self) -> None:
+    async def test_list_memories_tolerates_non_mapping_normalized_metadata(
+        self,
+    ) -> None:
         from core.api.memory_read_api import MemoryReadApiMixin
 
         class FakeCursor:
@@ -653,19 +782,27 @@ class TestMemoryReadValidation:
 
         class Stub:
             list_memories = MemoryReadApiMixin.list_memories
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 engine.db_path = ":memory:"
                 return {"memory_engine": engine}, None
+
             def _normalize_metadata(self, md):
                 return "bad-metadata"
 
         req = _mock_request()
-        with patch("core.api.memory_read_api.request", req), patch(
-            "core.api.memory_read_api.aiosqlite.connect", fake_connect
-        ), patch("core.api.memory_read_api.apply_perf_pragmas", AsyncMock()):
+        with (
+            patch("core.api.memory_read_api.request", req),
+            patch("core.api.memory_read_api.aiosqlite.connect", fake_connect),
+            patch("core.api.memory_read_api.apply_perf_pragmas", AsyncMock()),
+        ):
             result = await Stub().list_memories()
         assert result["status"] == "ok"
         assert result["data"]["total"] == 1
@@ -743,9 +880,11 @@ class TestMemoryReadValidation:
                 return md or {}
 
         req = _mock_request()
-        with patch("core.api.memory_read_api.request", req), patch(
-            "core.api.memory_read_api.aiosqlite.connect", fake_connect
-        ), patch("core.api.memory_read_api.apply_perf_pragmas", AsyncMock()):
+        with (
+            patch("core.api.memory_read_api.request", req),
+            patch("core.api.memory_read_api.aiosqlite.connect", fake_connect),
+            patch("core.api.memory_read_api.apply_perf_pragmas", AsyncMock()),
+        ):
             result = await Stub().list_memories()
         assert result["status"] == "ok"
         assert result["data"]["total"] == 2
@@ -831,9 +970,11 @@ class TestMemoryReadValidation:
                 return md or {}
 
         req = _mock_request()
-        with patch("core.api.memory_read_api.request", req), patch(
-            "core.api.memory_read_api.aiosqlite.connect", fake_connect
-        ), patch("core.api.memory_read_api.apply_perf_pragmas", AsyncMock()):
+        with (
+            patch("core.api.memory_read_api.request", req),
+            patch("core.api.memory_read_api.aiosqlite.connect", fake_connect),
+            patch("core.api.memory_read_api.apply_perf_pragmas", AsyncMock()),
+        ):
             result = await Stub().list_memories()
         assert result["status"] == "ok"
         assert result["data"]["items"] == [
@@ -857,6 +998,7 @@ class TestMemoryReadValidation:
 # MemoryWriteApiMixin tests
 # ---------------------------------------------------------------------------
 
+
 class TestMemoryWriteValidation:
     """Write API validates update fields."""
 
@@ -877,8 +1019,12 @@ class TestMemoryWriteValidation:
                     "memora.db.restore"
                 ]
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 raise AssertionError("pending restore should short-circuit writes")
 
@@ -892,15 +1038,21 @@ class TestMemoryWriteValidation:
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "memory_id": "not_int", "field": "importance", "value": 0.5})
+        req.get_json = AsyncMock(
+            return_value={"memory_id": "not_int", "field": "importance", "value": 0.5}
+        )
         with patch("core.api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
@@ -935,15 +1087,21 @@ class TestMemoryWriteValidation:
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "memory_id": True, "field": "importance", "value": 0.5})
+        req.get_json = AsyncMock(
+            return_value={"memory_id": True, "field": "importance", "value": 0.5}
+        )
         with patch("core.api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
@@ -954,14 +1112,21 @@ class TestMemoryWriteValidation:
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={"memory_id": 1, "field": "", "value": None})
+        req.get_json = AsyncMock(
+            return_value={"memory_id": 1, "field": "", "value": None}
+        )
         with patch("core.api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
@@ -972,19 +1137,27 @@ class TestMemoryWriteValidation:
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
+
             async def _get_memory_record(self, mid):
                 return None
+
             def _normalize_metadata(self, md):
                 return md or {}
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "memory_id": 999, "field": "status", "value": "archived"})
+        req.get_json = AsyncMock(
+            return_value={"memory_id": 999, "field": "status", "value": "archived"}
+        )
         with patch("core.api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
@@ -996,21 +1169,30 @@ class TestMemoryWriteValidation:
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
+
             async def _get_memory_record(self, mid):
                 return {"text": "test", "metadata": {}}
+
             def _normalize_metadata(self, md):
                 return md or {}
+
             def _importance_to_display(self, v):
                 return v
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "memory_id": 1, "field": "status", "value": "invalid_status"})
+        req.get_json = AsyncMock(
+            return_value={"memory_id": 1, "field": "status", "value": "invalid_status"}
+        )
         with patch("core.api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
@@ -1021,24 +1203,33 @@ class TestMemoryWriteValidation:
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 engine.update_memory = AsyncMock(return_value=True)
                 self.engine = engine
                 return {"memory_engine": engine}, None
+
             async def _get_memory_record(self, mid):
                 return {"text": "test", "metadata": {}}
+
             def _normalize_metadata(self, md):
                 return md or {}
+
             def _importance_to_display(self, v):
                 return v
 
         stub = Stub()
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "memory_id": 1, "field": "importance", "value": True})
+        req.get_json = AsyncMock(
+            return_value={"memory_id": 1, "field": "importance", "value": True}
+        )
         with patch("core.api.memory_write_api.request", req):
             result = await stub.update_memory()
         assert result["status"] == "error"
@@ -1051,21 +1242,30 @@ class TestMemoryWriteValidation:
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
+
             async def _get_memory_record(self, mid):
                 return {"text": "test", "metadata": {}}
+
             def _normalize_metadata(self, md):
                 return md or {}
+
             def _importance_to_display(self, v):
                 return v
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "memory_id": 1, "field": "unsupported", "value": "x"})
+        req.get_json = AsyncMock(
+            return_value={"memory_id": 1, "field": "unsupported", "value": "x"}
+        )
         with patch("core.api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
@@ -1074,6 +1274,7 @@ class TestMemoryWriteValidation:
 # ---------------------------------------------------------------------------
 # MemoryStatsRecallApiMixin tests
 # ---------------------------------------------------------------------------
+
 
 class TestMemoryStatsRecallValidation:
     """Stats and recall API validates parameters."""
@@ -1084,8 +1285,13 @@ class TestMemoryStatsRecallValidation:
 
         class Stub:
             get_stats = MemoryStatsRecallApiMixin.get_stats
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 return None, self._error("not ready")
 
@@ -1099,19 +1305,27 @@ class TestMemoryStatsRecallValidation:
 
         class Stub:
             get_stats = MemoryStatsRecallApiMixin.get_stats
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             def _get_graph_store(self, engine):
                 return None
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
-                engine.get_statistics = AsyncMock(return_value={
-                    "total": 10,
-                    "status_breakdown": {"active": 8, "archived": 2, "deleted": 0},
-                    "daily_memory_counts": [
-                        {"date": "2026-07-12", "count": 3},
-                    ],
-                })
+                engine.get_statistics = AsyncMock(
+                    return_value={
+                        "total": 10,
+                        "status_breakdown": {"active": 8, "archived": 2, "deleted": 0},
+                        "daily_memory_counts": [
+                            {"date": "2026-07-12", "count": 3},
+                        ],
+                    }
+                )
                 return {"memory_engine": engine}, None
 
         with patch("core.api.memory_stats_recall_api.request", _mock_request()):
@@ -1128,8 +1342,11 @@ class TestMemoryStatsRecallValidation:
         class Stub:
             get_stats = MemoryStatsRecallApiMixin.get_stats
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             def _get_graph_store(self, engine):
                 store = MagicMock()
@@ -1147,7 +1364,9 @@ class TestMemoryStatsRecallValidation:
                 )
                 engine.atom_store = MagicMock()
                 engine.atom_store.count_atoms = AsyncMock(return_value="7")
-                engine.atom_store.count_by_type = AsyncMock(return_value="bad-breakdown")
+                engine.atom_store.count_by_type = AsyncMock(
+                    return_value="bad-breakdown"
+                )
                 return {"memory_engine": engine}, None
 
         with patch("core.api.memory_stats_recall_api.request", _mock_request()):
@@ -1173,8 +1392,12 @@ class TestMemoryStatsRecallValidation:
         class Stub:
             get_stats = MemoryStatsRecallApiMixin.get_stats
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             def _get_graph_store(self, engine):
                 return None
 
@@ -1206,8 +1429,12 @@ class TestMemoryStatsRecallValidation:
         class Stub:
             get_stats = MemoryStatsRecallApiMixin.get_stats
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             def _get_graph_store(self, engine):
                 return None
 
@@ -1237,8 +1464,13 @@ class TestMemoryStatsRecallValidation:
 
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
@@ -1256,8 +1488,13 @@ class TestMemoryStatsRecallValidation:
 
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 engine.search_memories = AsyncMock(return_value=[])
@@ -1276,15 +1513,19 @@ class TestMemoryStatsRecallValidation:
 
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "query": "test query", "k": "invalid"})
+        req.get_json = AsyncMock(return_value={"query": "test query", "k": "invalid"})
         with patch("core.api.memory_stats_recall_api.request", req):
             result = await Stub().test_recall()
         assert result["status"] == "error"
@@ -1295,16 +1536,20 @@ class TestMemoryStatsRecallValidation:
 
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
                 engine.search_memories = AsyncMock(return_value=[])
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "query": "test query", "k": True})
+        req.get_json = AsyncMock(return_value={"query": "test query", "k": True})
         with patch("core.api.memory_stats_recall_api.request", req):
             result = await Stub().test_recall()
         assert result["status"] == "error"
@@ -1322,27 +1567,38 @@ class TestMemoryStatsRecallValidation:
                 self.rrf_score = score
                 self.bm25_score = score
                 self.vector_score = score
-                self.metadata = {"memory_type": "GENERAL", "status": "active",
-                                 "importance": 0.5, "session_id": None,
-                                 "persona_id": None, "create_time": 1234,
-                                 "canonical_summary": content}
+                self.metadata = {
+                    "memory_type": "GENERAL",
+                    "status": "active",
+                    "importance": 0.5,
+                    "session_id": None,
+                    "persona_id": None,
+                    "create_time": 1234,
+                    "canonical_summary": content,
+                }
                 self.score_breakdown = {}
 
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
-                engine.search_memories = AsyncMock(return_value=[
-                    MockResult(1, "result 1", 0.9),
-                    MockResult(2, "result 2", 0.7),
-                ])
+                engine.search_memories = AsyncMock(
+                    return_value=[
+                        MockResult(1, "result 1", 0.9),
+                        MockResult(2, "result 2", 0.7),
+                    ]
+                )
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "query": "test query", "k": 5})
+        req.get_json = AsyncMock(return_value={"query": "test query", "k": 5})
         with patch("core.api.memory_stats_recall_api.request", req):
             result = await Stub().test_recall()
         assert result["status"] == "ok"
@@ -1358,8 +1614,11 @@ class TestMemoryStatsRecallValidation:
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
@@ -1369,11 +1628,13 @@ class TestMemoryStatsRecallValidation:
 
         stub = Stub()
         req = _mock_request()
-        req.get_json = AsyncMock(return_value={
-            "query": "test query",
-            "k": 999,
-            "session_id": "sess-1",
-        })
+        req.get_json = AsyncMock(
+            return_value={
+                "query": "test query",
+                "k": 999,
+                "session_id": "sess-1",
+            }
+        )
         with patch("core.api.memory_stats_recall_api.request", req):
             result = await stub.test_recall()
         assert result["status"] == "ok"
@@ -1415,8 +1676,11 @@ class TestMemoryStatsRecallValidation:
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
@@ -1454,45 +1718,50 @@ class TestMemoryStatsRecallValidation:
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
-                engine.search_memories = AsyncMock(return_value=[
-                    MockResult(
-                        doc_id=5,
-                        final_score=0.81234,
-                        metadata={
-                            "memory_type": "GENERAL",
-                            "status": "active",
-                            "importance": 0.6,
-                            "session_id": "sess-5",
-                            "persona_id": None,
-                            "create_time": 111,
-                            "canonical_summary": "",
-                        },
-                        content="good result",
-                    ),
-                    MockResult(
-                        doc_id="oops",
-                        final_score=0.7,
-                        metadata={"memory_type": "GENERAL"},
-                        content="bad doc id",
-                    ),
-                    MockResult(
-                        doc_id=6,
-                        final_score="nan?",
-                        metadata={"memory_type": "GENERAL"},
-                        content="bad score",
-                    ),
-                    MockResult(
-                        doc_id=7,
-                        final_score=0.5,
-                        metadata="bad metadata",
-                        content="bad metadata",
-                    ),
-                ])
+                engine.search_memories = AsyncMock(
+                    return_value=[
+                        MockResult(
+                            doc_id=5,
+                            final_score=0.81234,
+                            metadata={
+                                "memory_type": "GENERAL",
+                                "status": "active",
+                                "importance": 0.6,
+                                "session_id": "sess-5",
+                                "persona_id": None,
+                                "create_time": 111,
+                                "canonical_summary": "",
+                            },
+                            content="good result",
+                        ),
+                        MockResult(
+                            doc_id="oops",
+                            final_score=0.7,
+                            metadata={"memory_type": "GENERAL"},
+                            content="bad doc id",
+                        ),
+                        MockResult(
+                            doc_id=6,
+                            final_score="nan?",
+                            metadata={"memory_type": "GENERAL"},
+                            content="bad score",
+                        ),
+                        MockResult(
+                            doc_id=7,
+                            final_score=0.5,
+                            metadata="bad metadata",
+                            content="bad metadata",
+                        ),
+                    ]
+                )
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
@@ -1544,8 +1813,11 @@ class TestMemoryStatsRecallValidation:
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
@@ -1590,8 +1862,11 @@ class TestMemoryStatsRecallValidation:
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
 
-            def _ok(self, d): return {"status": "ok", "data": d}
-            def _error(self, m): return {"status": "error", "message": m}
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
                 engine = MagicMock()
@@ -1638,6 +1913,7 @@ class TestRealtimeSSE:
 
     def test_register_returns_client_id_and_queue(self) -> None:
         import asyncio
+
         from core.api.realtime_api import RealtimeSSE
 
         engine = MagicMock()
@@ -1669,6 +1945,7 @@ class TestRealtimeSSE:
 
     def test_try_put_returns_false_on_success(self) -> None:
         import asyncio
+
         from core.api.realtime_api import RealtimeSSE
 
         q = asyncio.Queue(maxsize=256)
@@ -1676,6 +1953,7 @@ class TestRealtimeSSE:
 
     def test_try_put_returns_true_on_full(self) -> None:
         import asyncio
+
         from core.api.realtime_api import RealtimeSSE
 
         q = asyncio.Queue(maxsize=1)
@@ -1698,8 +1976,13 @@ class TestLearningApi:
             },
             "params": {"alpha": 0.5, "beta": 0.25},
             "history": [
-                {"timestamp": "t1", "reason": "adjust", "param": "alpha",
-                 "old": 0.4, "new": 0.5},
+                {
+                    "timestamp": "t1",
+                    "reason": "adjust",
+                    "param": "alpha",
+                    "old": 0.4,
+                    "new": 0.5,
+                },
             ],
             "enabled": True,
         }
@@ -1746,12 +2029,21 @@ class TestLearningApi:
         from core.api.learning_api import _flatten_learning_stats
 
         raw = {
-            "feedback": {"total_hits": 10, "total_recalls": 20,
-                        "avg_quality": 0.6, "total_corrections": 2},
+            "feedback": {
+                "total_hits": 10,
+                "total_recalls": 20,
+                "avg_quality": 0.6,
+                "total_corrections": 2,
+            },
             "params": {},
             "history": [
-                {"timestamp": "t1", "reason": "decay_rate adjusted",
-                 "param": "decay_rate", "old": 0.01, "new": 0.02},
+                {
+                    "timestamp": "t1",
+                    "reason": "decay_rate adjusted",
+                    "param": "decay_rate",
+                    "old": 0.01,
+                    "new": 0.02,
+                },
             ],
             "enabled": True,
         }

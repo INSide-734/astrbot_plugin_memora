@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.initializer.derived_rebuild_coordinator import DerivedRebuildCoordinator
 from core.initializer.db_setup import DatabaseSetup
+from core.initializer.derived_rebuild_coordinator import DerivedRebuildCoordinator
 
 
 def _build_components(*, evolution_mode: str = "active"):
@@ -80,9 +80,7 @@ async def test_rebuild_all_runs_in_fixed_order() -> None:
     assert result["canonical"]["documents"] == 3
 
 
-async def _record_async(
-    order: list[str], name: str, result: dict
-) -> dict:
+async def _record_async(order: list[str], name: str, result: dict) -> dict:
     """记录阶段调用顺序并返回阶段结果。"""
 
     order.append(name)

@@ -31,7 +31,6 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any, TypeVar
 
 import aiosqlite
-
 from astrbot.api import logger
 
 T = TypeVar("T")
@@ -84,15 +83,17 @@ def reset_write_metrics_snapshot() -> None:
 
     测试通过此函数隔离断言；生产调用方通常只通过指标摘要接口读取快照。
     """
-    _WRITE_METRICS.update({
-        "operations_total": 0,
-        "lock_retries_total": 0,
-        "failures_total": 0,
-        "retry_exhausted_total": 0,
-        "fatal_failures_total": 0,
-        "non_retryable_failures_total": 0,
-        "last_error": None,
-    })
+    _WRITE_METRICS.update(
+        {
+            "operations_total": 0,
+            "lock_retries_total": 0,
+            "failures_total": 0,
+            "retry_exhausted_total": 0,
+            "fatal_failures_total": 0,
+            "non_retryable_failures_total": 0,
+            "last_error": None,
+        }
+    )
 
 
 def get_write_metrics_snapshot() -> dict[str, Any]:

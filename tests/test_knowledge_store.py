@@ -107,8 +107,12 @@ class TestKnowledgeStoreSearch:
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
-        await store.insert(_make_entry(title="Python编程", content="Python是流行的编程语言"))
-        await store.insert(_make_entry(title="Java开发", content="Java是面向对象的语言"))
+        await store.insert(
+            _make_entry(title="Python编程", content="Python是流行的编程语言")
+        )
+        await store.insert(
+            _make_entry(title="Java开发", content="Java是面向对象的语言")
+        )
 
         results, total = await store.search("Python", limit=10)
         assert len(results) >= 1
@@ -201,7 +205,11 @@ class TestKnowledgeStoreSearch:
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
-        for title, confidence in (("Low event", 0.2), ("High event", 0.9), ("Mid event", 0.6)):
+        for title, confidence in (
+            ("Low event", 0.2),
+            ("High event", 0.9),
+            ("Mid event", 0.6),
+        ):
             await store.insert(_make_entry(title=title, confidence=confidence))
 
         results, _ = await store.search(

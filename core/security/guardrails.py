@@ -24,6 +24,7 @@ T = TypeVar("T", bound=BaseModel)
 # Pydantic 模型定义
 # ---------------------------------------------------------------------------
 
+
 class MemoryAtomSchema(BaseModel):
     """单条记忆原子的强类型 schema。
 
@@ -172,15 +173,14 @@ class GraphExtractionResult(BaseModel):
         for i, rel in enumerate(v):
             missing = required - set(rel.keys())
             if missing:
-                raise ValueError(
-                    f"relations[{i}] 缺少必需字段 {missing}: {rel}"
-                )
+                raise ValueError(f"relations[{i}] 缺少必需字段 {missing}: {rel}")
         return v
 
 
 # ---------------------------------------------------------------------------
 # JSON 清洗管线
 # ---------------------------------------------------------------------------
+
 
 def validate_and_clean_json(
     text: str,

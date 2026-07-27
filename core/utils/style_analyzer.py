@@ -195,9 +195,7 @@ class StyleAnalyzer:
                 self._safe_llm_call(_QUALITATIVE_PROMPT.format(joined_messages=joined))
             )
             quant_task = asyncio.create_task(
-                self._safe_llm_call(
-                    _QUANTITATIVE_PROMPT.format(joined_messages=joined)
-                )
+                self._safe_llm_call(_QUANTITATIVE_PROMPT.format(joined_messages=joined))
             )
             qual_result, quant_result = await asyncio.gather(
                 qual_task, quant_task, return_exceptions=True
@@ -265,9 +263,7 @@ class StyleAnalyzer:
         """分析演化历史中各维度的变化趋势。"""
         records = evolutions if evolutions is not None else self._evolution_history
 
-        def _build_entry(
-            dim: str, net: float, vol: float
-        ) -> dict[str, Any]:
+        def _build_entry(dim: str, net: float, vol: float) -> dict[str, Any]:
             if abs(net) < 0.05:
                 direction = "stable"
             elif net > 0:
@@ -370,13 +366,17 @@ class StyleAnalyzer:
         complex_ratio = sum(1 for m in messages if len(m) > 30) / len(messages)
 
         # 情感表达：感叹号 / emoji / 强情绪词的出现情况
-        emotion_markers = re.compile(r"[!！？?！]{2,}|[😊😂❤️🔥💔🎉😭]|[好太真非超级非常很极]")
-        emotional_ratio = sum(
-            1 for m in messages if emotion_markers.search(m)
-        ) / len(messages)
+        emotion_markers = re.compile(
+            r"[!！？?！]{2,}|[😊😂❤️🔥💔🎉😭]|[好太真非超级非常很极]"
+        )
+        emotional_ratio = sum(1 for m in messages if emotion_markers.search(m)) / len(
+            messages
+        )
 
         # 互动倾向：问句占比
-        question_ratio = sum(1 for m in messages if "?" in m or "？" in m) / len(messages)
+        question_ratio = sum(1 for m in messages if "?" in m or "？" in m) / len(
+            messages
+        )
 
         # 话题多样性：用唯一词比例近似
         topic_div = unique_ratio

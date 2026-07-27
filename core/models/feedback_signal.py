@@ -7,7 +7,6 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any
 
 FEEDBACK_REASON_CODES = frozenset(
     {
@@ -88,7 +87,10 @@ class FeedbackSignalPolicy:
         ):
             if not math.isfinite(value) or not 0.1 <= value <= 0.9:
                 raise ValueError("feedback_policy_weight_invalid")
-        if not math.isfinite(self.max_weight_delta) or not 0.0 <= self.max_weight_delta <= 0.4:
+        if (
+            not math.isfinite(self.max_weight_delta)
+            or not 0.0 <= self.max_weight_delta <= 0.4
+        ):
             raise ValueError("feedback_policy_weight_invalid")
         if not math.isclose(
             self.baseline_document_weight + self.baseline_graph_weight,
@@ -140,7 +142,9 @@ class TrustedFeedbackEvent:
             raise ValueError("feedback_persona_invalid")
         if not isinstance(self.observed_at, datetime):
             raise ValueError("feedback_event_time_invalid")
-        if self.observed_at.tzinfo is None or self.observed_at.utcoffset() != timedelta(0):
+        if self.observed_at.tzinfo is None or self.observed_at.utcoffset() != timedelta(
+            0
+        ):
             raise ValueError("feedback_event_time_invalid")
         if isinstance(self.schema_version, bool) or self.schema_version != 1:
             raise ValueError("feedback_schema_version_invalid")
@@ -163,7 +167,11 @@ def build_trusted_feedback_event(
         raise ValueError("feedback_outcome_invalid")
     if not isinstance(adapter_kind, FeedbackAdapterKind):
         raise ValueError("feedback_adapter_invalid")
-    if isinstance(window_seconds, bool) or not isinstance(window_seconds, int) or window_seconds <= 0:
+    if (
+        isinstance(window_seconds, bool)
+        or not isinstance(window_seconds, int)
+        or window_seconds <= 0
+    ):
         raise ValueError("feedback_window_invalid")
     if not isinstance(observed_at, datetime) or observed_at.tzinfo is None:
         raise ValueError("feedback_event_time_invalid")

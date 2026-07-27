@@ -119,11 +119,76 @@ _NUMERIC_FIELDS = frozenset(
     }
 )
 _ENUM_FIELDS = {
-    "status": frozenset({"started", "running", "completed", "failed", "degraded", "skipped", "cancelled", "ready", "waiting", "disabled"}),
-    "outcome": frozenset({"injected", "fallback", "skipped", "empty", "error", "blocked", "failed", "cancelled"}),
-    "delivery": frozenset({"auto", "extra_user_content", "user_message_before", "user_message_after", "fake_tool_call", "fake_tool_call_deepseek_v4", "system", "user", "tool", "none", "append", "replace"}),
-    "route": frozenset({"auto", "manual", "hybrid", "tool_first", "low_cost", "balanced", "quality", "minimal", "standard", "detailed", "none", "default"}),
-    "task_type": frozenset({"other", "maintenance", "evolution", "group_listing", "index", "cleanup", "summary", "storage"}),
+    "status": frozenset(
+        {
+            "started",
+            "running",
+            "completed",
+            "failed",
+            "degraded",
+            "skipped",
+            "cancelled",
+            "ready",
+            "waiting",
+            "disabled",
+        }
+    ),
+    "outcome": frozenset(
+        {
+            "injected",
+            "fallback",
+            "skipped",
+            "empty",
+            "error",
+            "blocked",
+            "failed",
+            "cancelled",
+        }
+    ),
+    "delivery": frozenset(
+        {
+            "auto",
+            "extra_user_content",
+            "user_message_before",
+            "user_message_after",
+            "fake_tool_call",
+            "fake_tool_call_deepseek_v4",
+            "system",
+            "user",
+            "tool",
+            "none",
+            "append",
+            "replace",
+        }
+    ),
+    "route": frozenset(
+        {
+            "auto",
+            "manual",
+            "hybrid",
+            "tool_first",
+            "low_cost",
+            "balanced",
+            "quality",
+            "minimal",
+            "standard",
+            "detailed",
+            "none",
+            "default",
+        }
+    ),
+    "task_type": frozenset(
+        {
+            "other",
+            "maintenance",
+            "evolution",
+            "group_listing",
+            "index",
+            "cleanup",
+            "summary",
+            "storage",
+        }
+    ),
 }
 _VALUE_FIELDS = {
     "component": frozenset(
@@ -398,7 +463,11 @@ def _exception_location(exception: BaseException) -> dict[str, Any]:
     selected = None
     while traceback is not None:
         module = str(traceback.tb_frame.f_globals.get("__name__", ""))
-        if module == "main" or module.startswith("core") or module.startswith("astrbot_plugin_memora"):
+        if (
+            module == "main"
+            or module.startswith("core")
+            or module.startswith("astrbot_plugin_memora")
+        ):
             selected = traceback
         traceback = traceback.tb_next
     if selected is None:
@@ -409,7 +478,11 @@ def _exception_location(exception: BaseException) -> dict[str, Any]:
     line = selected.tb_lineno
     if not _SAFE_TEXT_RE.fullmatch(module) or not _SAFE_TEXT_RE.fullmatch(function):
         return {}
-    return {"exception_module": module, "exception_function": function, "exception_line": line}
+    return {
+        "exception_module": module,
+        "exception_function": function,
+        "exception_line": line,
+    }
 
 
 def _valid_number(value: Any) -> bool:
@@ -488,7 +561,12 @@ def _emit_serialized(serialized: str) -> None:
                 try:
                     _astrbot_logger.info(
                         "[MemoraDebug] %s",
-                        json.dumps(disabled_event, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+                        json.dumps(
+                            disabled_event,
+                            ensure_ascii=True,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
                     )
                 except Exception:
                     pass
@@ -520,7 +598,12 @@ def _emit_serialized(serialized: str) -> None:
             try:
                 _astrbot_logger.info(
                     "[MemoraDebug] %s",
-                    json.dumps(disabled_event, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+                    json.dumps(
+                        disabled_event,
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
                 )
             except Exception:
                 pass
@@ -534,9 +617,14 @@ def _emit_rejection(reason_code: str) -> None:
         "schema_version": SCHEMA_VERSION,
         "event": "debug_event_rejected",
         "operation_token": _operation_token.get() or _new_token(),
-        "reason_code": reason_code if reason_code in {"unknown_event", "unknown_field", "invalid_field", "invalid_value"} else "invalid_value",
+        "reason_code": reason_code
+        if reason_code
+        in {"unknown_event", "unknown_field", "invalid_field", "invalid_value"}
+        else "invalid_value",
     }
-    _emit_serialized(json.dumps(event, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
+    _emit_serialized(
+        json.dumps(event, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    )
 
 
 def configure_debug_reporting(
@@ -572,7 +660,9 @@ def configure_debug_reporting(
             try:
                 _astrbot_logger.info(
                     "[MemoraDebug] %s",
-                    json.dumps(event, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+                    json.dumps(
+                        event, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+                    ),
                 )
             except Exception:
                 pass
@@ -635,11 +725,15 @@ def report_debug_event(event_name: str, **fields: Any) -> None:
         "event": event_name,
         **normalized,
     }
-    serialized = json.dumps(event, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    serialized = json.dumps(
+        event, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+    )
     _emit_serialized(serialized)
 
 
-def report_debug_exception(event_name: str, exception: BaseException, **fields: Any) -> None:
+def report_debug_exception(
+    event_name: str, exception: BaseException, **fields: Any
+) -> None:
     """记录异常类型和安全调用位置，不读取异常消息或完整 traceback。"""
     if not is_debug_reporting_enabled():
         return

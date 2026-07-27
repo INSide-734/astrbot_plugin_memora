@@ -5,14 +5,12 @@ from __future__ import annotations
 import math
 import time
 
-import pytest
-
 from core.managers.anomaly_detector import AnomalyDetector
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _midnight_ts(days_ago: int = 0) -> int:
     """Return Unix timestamp for midnight N days ago."""
@@ -24,6 +22,7 @@ def _midnight_ts(days_ago: int = 0) -> int:
 # ---------------------------------------------------------------------------
 # record_daily_count tests
 # ---------------------------------------------------------------------------
+
 
 class TestRecordDailyCount:
     """Tests for recording daily memory creation counts."""
@@ -55,9 +54,7 @@ class TestRecordDailyCount:
         base = _midnight_ts(0)
 
         # Fill 13 days with tightly varying data (~100) so stdev is small
-        values = [
-            99, 101, 100, 99, 101, 100, 99, 101, 100, 99, 101, 100
-        ]
+        values = [99, 101, 100, 99, 101, 100, 99, 101, 100, 99, 101, 100]
         for i, v in enumerate(values):
             day_ts = base - (len(values) - i) * 86400
             detector.record_daily_count(day_ts, v)
@@ -74,9 +71,7 @@ class TestRecordDailyCount:
         """Alert triggered when count drops significantly below mean."""
         detector = AnomalyDetector(window_days=14)
         base = _midnight_ts(0)
-        values = [
-            99, 101, 100, 99, 101, 100, 99, 101, 100, 99, 101, 100
-        ]
+        values = [99, 101, 100, 99, 101, 100, 99, 101, 100, 99, 101, 100]
         for i, v in enumerate(values):
             day_ts = base - (len(values) - i) * 86400
             detector.record_daily_count(day_ts, v)
@@ -102,9 +97,7 @@ class TestRecordDailyCount:
         """Debounce prevents duplicate alerts within 5 minutes."""
         detector = AnomalyDetector(window_days=14)
         base = _midnight_ts(0)
-        values = [
-            99, 101, 100, 99, 101, 100, 99, 101, 100, 99, 101, 100
-        ]
+        values = [99, 101, 100, 99, 101, 100, 99, 101, 100, 99, 101, 100]
         for i, v in enumerate(values):
             day_ts = base - (len(values) - i) * 86400
             detector.record_daily_count(day_ts, v)
@@ -154,9 +147,7 @@ class TestRecordDailyCount:
         """record_batch should collect alerts from multiple days."""
         detector = AnomalyDetector(window_days=14)
         base = _midnight_ts(0)
-        values = [
-            99, 101, 100, 99, 101, 100, 99, 101, 100, 99, 101, 100
-        ]
+        values = [99, 101, 100, 99, 101, 100, 99, 101, 100, 99, 101, 100]
         for i, v in enumerate(values):
             day_ts = base - (14 - i) * 86400
             detector.record_daily_count(day_ts, v)
@@ -174,6 +165,7 @@ class TestRecordDailyCount:
 # ---------------------------------------------------------------------------
 # stats property tests
 # ---------------------------------------------------------------------------
+
 
 class TestStats:
     """Tests for the stats property."""
@@ -207,9 +199,7 @@ class TestStats:
         """Alert count is tracked in stats."""
         detector = AnomalyDetector(window_days=14)
         base = _midnight_ts(0)
-        values = [
-            99, 101, 100, 99, 101, 100, 99, 101, 100, 99, 101, 100
-        ]
+        values = [99, 101, 100, 99, 101, 100, 99, 101, 100, 99, 101, 100]
         for i, v in enumerate(values):
             day_ts = base - (len(values) - i) * 86400
             detector.record_daily_count(day_ts, v)
@@ -223,12 +213,12 @@ class TestStats:
 # Persistence round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestPersistence:
     """Tests for save_state / load_state round-trip."""
 
     def test_save_and_load_round_trip(self, tmp_path) -> None:
         """Window state is preserved through save/load cycle."""
-        import os
 
         data_dir = str(tmp_path / "anomaly_data")
         detector = AnomalyDetector(data_dir=data_dir)

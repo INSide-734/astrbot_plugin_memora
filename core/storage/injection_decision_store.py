@@ -85,7 +85,11 @@ class DecisionQuery:
             raise ValueError("offset must be non-negative")
         if not 1 <= self.limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        if self.from_ms is not None and self.to_ms is not None and self.from_ms > self.to_ms:
+        if (
+            self.from_ms is not None
+            and self.to_ms is not None
+            and self.from_ms > self.to_ms
+        ):
             raise ValueError("from_ms must not exceed to_ms")
         if self.sort_by not in INJECTION_DECISION_SORT_COLUMNS:
             raise ValueError("sort_by is invalid")
@@ -246,10 +250,13 @@ class InjectionDecisionStore(BaseStore):
     async def list_decisions(self, query: DecisionQuery) -> DecisionPage:
         """Return a filtered page in deterministic, allowlisted order."""
         where, params = self._where(query)
-        total = int(await self._fetch_scalar(
-            "SELECT COUNT(*) FROM injection_decisions" + where,
-            params,
-        ) or 0)
+        total = int(
+            await self._fetch_scalar(
+                "SELECT COUNT(*) FROM injection_decisions" + where,
+                params,
+            )
+            or 0
+        )
         order_column = INJECTION_DECISION_SORT_COLUMNS[query.sort_by]
         order_direction = query.sort_order.upper()
         rows = await self._fetch_all(
@@ -311,20 +318,25 @@ class InjectionDecisionStore(BaseStore):
             bucket_count = int(row["decision_count"])
             bucket_fallback_count = int(row["fallback_count"] or 0)
             fallback_count += bucket_fallback_count
-            cost_trend.append({
-                "bucket_ms": int(row["bucket_ms"]),
-                "decision_count": bucket_count,
-                "payload_chars_p95": cls._p95(bucket_values),
-                "provider_fallback_rate": bucket_fallback_count / bucket_count,
-            })
+            cost_trend.append(
+                {
+                    "bucket_ms": int(row["bucket_ms"]),
+                    "decision_count": bucket_count,
+                    "payload_chars_p95": cls._p95(bucket_values),
+                    "provider_fallback_rate": bucket_fallback_count / bucket_count,
+                }
+            )
         return payload_values, fallback_count, cost_trend
 
-    async def summary(self, window: str = "24h", now_ms: int | None = None) -> dict[str, Any]:
+    async def summary(
+        self, window: str = "24h", now_ms: int | None = None
+    ) -> dict[str, Any]:
         """Build the deterministic aggregate and hourly cost trend for a window."""
         if window not in _WINDOW_MS:
             raise ValueError("window must be one of 1h, 24h, 7d, 30d")
         if now_ms is None:
             import time
+
             now_ms = int(time.time() * 1000)
         cutoff_ms = now_ms - _WINDOW_MS[window]
         bucket_rows = await self._fetch_all(
@@ -365,9 +377,7 @@ class InjectionDecisionStore(BaseStore):
                 for row in preset_rows
             },
             "cost_trend": cost_trend,
-            "recent_events": [
-                self._normalize_row(row) for row in recent_events
-            ],
+            "recent_events": [self._normalize_row(row) for row in recent_events],
         }
 
     async def cleanup(

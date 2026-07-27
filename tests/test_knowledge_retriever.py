@@ -9,7 +9,6 @@ import pytest
 
 
 class TestKnowledgeRetriever:
-
     @pytest.fixture
     def knowledge_store(self) -> AsyncMock:
         store = AsyncMock()
@@ -19,6 +18,7 @@ class TestKnowledgeRetriever:
     @pytest.fixture
     def retriever(self, knowledge_store: AsyncMock) -> Any:
         from core.retrieval.knowledge_retriever import KnowledgeRetriever
+
         return KnowledgeRetriever(knowledge_store=knowledge_store)
 
     @pytest.mark.asyncio
@@ -31,9 +31,13 @@ class TestKnowledgeRetriever:
     async def test_search_no_store_results(self, retriever: Any) -> None:
         """When store returns nothing, result is empty."""
         # Mock _keyword_search to return empty
-        with patch.object(retriever, "_keyword_search", new=AsyncMock(
-            return_value=([], 0),
-        )):
+        with patch.object(
+            retriever,
+            "_keyword_search",
+            new=AsyncMock(
+                return_value=([], 0),
+            ),
+        ):
             results = await retriever.search("nonexistent", k=5)
             assert results == []
 
@@ -44,21 +48,34 @@ class TestKnowledgeRetriever:
         from core.retrieval.knowledge_retriever import KnowledgeResult
 
         entry = KnowledgeEntry(
-            title="Test Knowledge", content="This is a test knowledge entry",
-            category=KnowledgeType.FACT, confidence=0.8, entry_id=1,
-            tags=["test"], source_ids=[101],
+            title="Test Knowledge",
+            content="This is a test knowledge entry",
+            category=KnowledgeType.FACT,
+            confidence=0.8,
+            entry_id=1,
+            tags=["test"],
+            source_ids=[101],
         )
         # Mock _keyword_search to return entries, and patch _merge to return known result
         mock_result = KnowledgeResult(
-            entry_id=1, title="Test Knowledge",
+            entry_id=1,
+            title="Test Knowledge",
             content="This is a test knowledge entry",
-            category="fact", confidence=0.8, keyword_score=0.5, final_score=0.5,
-            tags=["test"], source_ids=[101],
+            category="fact",
+            confidence=0.8,
+            keyword_score=0.5,
+            final_score=0.5,
+            tags=["test"],
+            source_ids=[101],
         )
         with (
-            patch.object(retriever, "_keyword_search", new=AsyncMock(
-                return_value=([entry], 1),
-            )),
+            patch.object(
+                retriever,
+                "_keyword_search",
+                new=AsyncMock(
+                    return_value=([entry], 1),
+                ),
+            ),
             patch.object(retriever, "_merge", return_value=[mock_result]),
         ):
             results = await retriever.search("test knowledge", k=5)
@@ -70,16 +87,14 @@ class TestKnowledgeRetriever:
     @pytest.mark.asyncio
     async def test_merge_entry_filtered_by_confidence(self, retriever: Any) -> None:
         """Entries below min_confidence are excluded by keyword_search."""
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
-
-        entry = KnowledgeEntry(
-            title="Low Conf", content="Low confidence entry",
-            category=KnowledgeType.FACT, confidence=0.1, entry_id=1,
-        )
         # _keyword_search filters by min_confidence internally
-        with patch.object(retriever, "_keyword_search", new=AsyncMock(
-            return_value=([], 0),  # entry filtered out
-        )):
+        with patch.object(
+            retriever,
+            "_keyword_search",
+            new=AsyncMock(
+                return_value=([], 0),  # entry filtered out
+            ),
+        ):
             results = await retriever.search("low confidence", k=5)
             assert results == []
 
@@ -89,16 +104,19 @@ class TestKnowledgeRetriever:
 
         # Create a pre-built KnowledgeResult directly to avoid the __slots__ issue
         kw_result = KnowledgeResult(
-            entry_id=1, title="Vector Test",
+            entry_id=1,
+            title="Vector Test",
             content="Testing vector blending",
-            category="concept", confidence=0.7,
-            keyword_score=0.4, final_score=0.4,
-            tags=["vector"], source_ids=[1],
+            category="concept",
+            confidence=0.7,
+            keyword_score=0.4,
+            final_score=0.4,
+            tags=["vector"],
+            source_ids=[1],
         )
 
         # Test _merge via a spy: mock _keyword_search to work, then call search
         # Instead, directly verify merge logic using the internal method
-        vector_scores = {1: 0.95}
         # Build the expected result manually — _merge takes keyword_entries (KnowledgeEntry list)
         # Since slots prevent _kw_score, we test the merge via the result structure
         # Verify that when vector_scores are provided, final_score > keyword_score
@@ -115,14 +133,21 @@ class TestKnowledgeRetriever:
         from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
 
         entry = KnowledgeEntry(
-            title="Fallback", content="Fallback content",
-            category=KnowledgeType.FACT, confidence=0.6, entry_id=1,
+            title="Fallback",
+            content="Fallback content",
+            category=KnowledgeType.FACT,
+            confidence=0.6,
+            entry_id=1,
         )
         retriever._vector_search_fn = MagicMock(side_effect=RuntimeError("broken"))
 
-        with patch.object(retriever, "_keyword_search", new=AsyncMock(
-            return_value=([entry], 1),
-        )):
+        with patch.object(
+            retriever,
+            "_keyword_search",
+            new=AsyncMock(
+                return_value=([entry], 1),
+            ),
+        ):
             # _vector_search will raise, caught internally
             results = await retriever.search("fallback", k=5)
             assert len(results) == 1
@@ -131,6 +156,7 @@ class TestKnowledgeRetriever:
     def test_tokenize_function(self) -> None:
         """_tokenize splits text and filters stopwords."""
         from core.retrieval.knowledge_retriever import _tokenize
+
         tokens = _tokenize("This is a test query")
         assert "test" in tokens
         assert "query" in tokens
@@ -140,12 +166,14 @@ class TestKnowledgeRetriever:
     def test_keyword_score_empty_terms(self) -> None:
         """_keyword_score returns 0 for empty query terms."""
         from core.retrieval.knowledge_retriever import _keyword_score
+
         score = _keyword_score(set(), "title", "content")
         assert score == 0.0
 
     def test_keyword_score_with_terms(self) -> None:
         """_keyword_score computes TF-based score."""
         from core.retrieval.knowledge_retriever import _keyword_score
+
         score = _keyword_score({"test"}, "test title", "test content here")
         assert 0 < score <= 1.0
 
@@ -154,8 +182,10 @@ class TestKnowledgeRetriever:
     @pytest.mark.asyncio
     async def test_vector_search_returns_coroutine(self, retriever: Any) -> None:
         """_vector_search awaits result when vector_search_fn returns a coroutine (line 163-164)."""
+
         async def _async_fn(_query: str, _limit: int) -> dict[int, float]:
             return {1: 0.85}
+
         retriever._vector_search_fn = _async_fn
         result = await retriever._vector_search("test", 10)
         assert result == {1: 0.85}
@@ -163,7 +193,9 @@ class TestKnowledgeRetriever:
     @pytest.mark.asyncio
     async def test_vector_search_returns_non_dict(self, retriever: Any) -> None:
         """_vector_search returns {} when result is not a dict (line 165)."""
-        retriever._vector_search_fn = MagicMock(return_value=[1, 2, 3])  # list, not dict
+        retriever._vector_search_fn = MagicMock(
+            return_value=[1, 2, 3]
+        )  # list, not dict
         result = await retriever._vector_search("test", 10)
         assert result == {}
 
@@ -177,6 +209,7 @@ class TestKnowledgeRetriever:
     def test_keyword_score_title_weighted_3x(self) -> None:
         """_keyword_score weights title matches 3× more than content matches."""
         from core.retrieval.knowledge_retriever import _keyword_score
+
         # Title-only match
         score_title = _keyword_score({"python"}, "python programming", "")
         # Content-only match
@@ -187,6 +220,7 @@ class TestKnowledgeRetriever:
     def test_tokenize_with_chinese_text(self) -> None:
         """_tokenize handles Chinese text — splits on CJK punctuation."""
         from core.retrieval.knowledge_retriever import _tokenize
+
         # Chinese text with punctuation separators
         tokens = _tokenize("测试，查询；内容！问题？")
         assert "测试" in tokens

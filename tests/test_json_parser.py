@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -24,7 +24,7 @@ class TestJsonParserFix:
     def test_fixes_trailing_comma(self) -> None:
         text = '{"key": "value",}'
         result = JsonParser.try_fix_json(text)
-        assert ',}' not in result
+        assert ",}" not in result
 
     def test_fixes_unmatched_brace(self) -> None:
         text = '{"key": "value"'
@@ -45,7 +45,7 @@ class TestJsonParserFix:
     def test_removes_trailing_comma_before_brace(self) -> None:
         text = '{"items": [1, 2,]}'
         result = JsonParser.try_fix_json(text)
-        assert ',]' not in result
+        assert ",]" not in result
 
 
 class TestJsonParser:
@@ -139,7 +139,9 @@ class TestJsonParser:
 
     def test_parse_regex_extracts_importance_and_sentiment(self) -> None:
         parser = JsonParser(QualityValidator())
-        response = 'broken {"summary": "partial", "importance": 0.75, "sentiment": "negative"'
+        response = (
+            'broken {"summary": "partial", "importance": 0.75, "sentiment": "negative"'
+        )
         result = parser.parse_llm_response(response, is_group_chat=False)
         assert result["importance"] == 0.75
         assert result["sentiment"] == "negative"
@@ -161,7 +163,10 @@ class TestJsonParser:
         """Test that unexpected exceptions during parsing return default data."""
         parser = JsonParser(QualityValidator())
         # Something that causes a non-JSON/non-ValueError exception during parsing
-        with patch("core.processors.json_parser.json.loads", side_effect=TypeError("unexpected type error")):
+        with patch(
+            "core.processors.json_parser.json.loads",
+            side_effect=TypeError("unexpected type error"),
+        ):
             result = parser.parse_llm_response('{"key": "value"}', is_group_chat=False)
             assert isinstance(result, dict)
 

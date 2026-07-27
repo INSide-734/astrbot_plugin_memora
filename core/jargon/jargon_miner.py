@@ -32,7 +32,6 @@ from .jargon_store import JargonStore
 from .models import JargonCandidate, JargonMeaning
 from .statistical_filter import JargonStatisticalFilter
 
-
 # ---------------------------------------------------------------------------
 # 渐进推断阈值
 # ---------------------------------------------------------------------------
@@ -98,6 +97,7 @@ _PROMPT_STEP3_COMPARE = """**推断结果 1（基于上下文）**
 # ---------------------------------------------------------------------------
 # JSON 提取辅助函数
 # ---------------------------------------------------------------------------
+
 
 def _safe_parse_json(text: str) -> dict[str, Any] | None:
     """从 LLM 响应中安全提取 JSON 对象。
@@ -219,9 +219,7 @@ class JargonMiner:
     # 公开 API
     # ------------------------------------------------------------------
 
-    async def run_once(
-        self, group_id: str, limit: int = 5
-    ) -> list[JargonMeaning]:
+    async def run_once(self, group_id: str, limit: int = 5) -> list[JargonMeaning]:
         """执行一轮黑话推断。
 
         1. 从统计过滤器获取候选词（get_candidates）
@@ -254,9 +252,9 @@ class JargonMiner:
             last_inference_count = (
                 existing.last_inference_count if existing is not None else 0
             )
-            if (
-                existing is None or not existing.is_complete
-            ) and self._should_infer(cand, last_inference_count):
+            if (existing is None or not existing.is_complete) and self._should_infer(
+                cand, last_inference_count
+            ):
                 eligible.append(cand)
 
         if not eligible:
@@ -264,8 +262,7 @@ class JargonMiner:
             return []
 
         logger.info(
-            f"[黑话挖掘器] 群 {group_id}: {len(eligible)}/"
-            f"{len(candidates)} 候选待推断"
+            f"[黑话挖掘器] 群 {group_id}: {len(eligible)}/{len(candidates)} 候选待推断"
         )
 
         # `run_once` 负责这些短生命周期任务，并始终会等待或取消它们。
@@ -299,9 +296,7 @@ class JargonMiner:
 
         return results
 
-    async def infer_meaning(
-        self, candidate: JargonCandidate
-    ) -> JargonMeaning | None:
+    async def infer_meaning(self, candidate: JargonCandidate) -> JargonMeaning | None:
         """对单个候选词执行三步推断。
 
         这是核心推断逻辑，可直接调用或通过 run_once 批量调用。
@@ -321,9 +316,7 @@ class JargonMiner:
         try:
             # ---- 步骤 1：基于上下文推断 ----
             context_text = "\n---\n".join(context_examples) if context_examples else ""
-            prompt1 = _PROMPT_STEP1_CONTEXT.format(
-                term=term, context_text=context_text
-            )
+            prompt1 = _PROMPT_STEP1_CONTEXT.format(term=term, context_text=context_text)
             response1 = await self._call_llm(prompt1)
             if response1 is None:
                 logger.warning(f"[黑话挖掘器] 步骤 1 失败：候选词={term}")
@@ -446,7 +439,9 @@ class JargonMiner:
 
             # 尝试 SelfLearning FrameworkLLMAdapter 接口
             if hasattr(self._llm, "generate_response"):
-                return await self._llm.generate_response(prompt, temperature=temperature)
+                return await self._llm.generate_response(
+                    prompt, temperature=temperature
+                )
 
             # 尝试直接调用 AstrBot 提供器接口
             if hasattr(self._llm, "text_chat"):
@@ -493,9 +488,7 @@ class JargonMiner:
         return False
 
     @staticmethod
-    def _calc_confidence(
-        candidate: JargonCandidate, is_jargon: bool
-    ) -> float:
+    def _calc_confidence(candidate: JargonCandidate, is_jargon: bool) -> float:
         """计算置信度。
 
         基于统计信号评分和推断结果加权：
@@ -567,17 +560,13 @@ class JargonMiner:
         """
         candidate_key = (candidate.group_id, candidate.term)
         if candidate_key in self._inflight_candidates:
-            logger.debug(
-                f"[黑话挖掘器] 候选词={candidate.term} 正在推断，跳过重复任务"
-            )
+            logger.debug(f"[黑话挖掘器] 候选词={candidate.term} 正在推断，跳过重复任务")
             return None
 
         self._inflight_candidates.add(candidate_key)
         try:
             # 任务排队期间可能已有其他调用完成推断，需在这里再次确认。
-            existing = await self._store.get_by_term(
-                candidate.term, candidate.group_id
-            )
+            existing = await self._store.get_by_term(candidate.term, candidate.group_id)
             if existing and existing.is_complete:
                 logger.debug(
                     f"[黑话挖掘器] 候选词={candidate.term} 已完成，跳过重新推断"

@@ -121,7 +121,9 @@ class TestLatencyStats:
             with m.measure("op"):
                 time.sleep(delay)
         stats = m.get_stats("op")
-        assert stats["min"] <= stats["p50"] <= stats["p95"] <= stats["p99"] <= stats["max"]
+        assert (
+            stats["min"] <= stats["p50"] <= stats["p95"] <= stats["p99"] <= stats["max"]
+        )
 
     def test_get_all_stats(self) -> None:
         """get_all_stats 返回所有操作的统计。"""

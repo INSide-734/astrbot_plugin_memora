@@ -70,7 +70,9 @@ class TestHumanLikeFormatter:
         assert len(result) == 1
         assert "喜欢" in result[0]
 
-    def test_preference_without_marker(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_preference_without_marker(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "memory_type": "PREFERENCE",
             "content": "咖啡",
@@ -88,7 +90,9 @@ class TestHumanLikeFormatter:
         assert len(result) == 1
         assert "小明是大学室友" in result[0]
 
-    def test_other_type_falls_back_to_factual(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_other_type_falls_back_to_factual(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "memory_type": "UNKNOWN",
             "content": "some content",
@@ -96,7 +100,9 @@ class TestHumanLikeFormatter:
         result = formatter.format([memory])
         assert len(result) == 1
 
-    def test_resolve_type_from_atom_type(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_resolve_type_from_atom_type(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "atom_type": "EPISODIC",
             "content": "went shopping",
@@ -104,7 +110,9 @@ class TestHumanLikeFormatter:
         result = formatter.format([memory])
         assert len(result) == 1
 
-    def test_resolve_type_case_insensitive(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_resolve_type_case_insensitive(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "memory_type": "episodic",
             "content": "lowercase episodic",
@@ -112,7 +120,9 @@ class TestHumanLikeFormatter:
         result = formatter.format([memory])
         assert len(result) == 1
 
-    def test_extract_content_from_key_facts(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_extract_content_from_key_facts(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "memory_type": "FACTUAL",
             "key_facts": "关键事实内容",
@@ -121,7 +131,9 @@ class TestHumanLikeFormatter:
         assert len(result) == 1
         assert "关键事实内容" in result[0]
 
-    def test_extract_content_from_metadata_key_facts(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_extract_content_from_metadata_key_facts(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "memory_type": "FACTUAL",
             "metadata": {"key_facts": "元数据中的关键事实"},
@@ -132,9 +144,7 @@ class TestHumanLikeFormatter:
 
     def test_max_fragments_enforced(self) -> None:
         formatter = HumanLikeMemoryFormatter(max_fragments=2, max_fragment_length=80)
-        memories = [
-            {"memory_type": "FACTUAL", "content": f"fact{i}"} for i in range(5)
-        ]
+        memories = [{"memory_type": "FACTUAL", "content": f"fact{i}"} for i in range(5)]
         result = formatter.format(memories)
         assert len(result) <= 2
 
@@ -148,7 +158,9 @@ class TestHumanLikeFormatter:
         assert len(result) == 1
         assert len(result[0]) <= 10 + 2  # "ta" prefix + content
 
-    def test_deduplication_removes_overlap(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_deduplication_removes_overlap(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memories = [
             {"memory_type": "FACTUAL", "content": "用户喜欢咖啡"},
             {"memory_type": "FACTUAL", "content": "用户喜欢咖啡"},  # identical
@@ -157,7 +169,9 @@ class TestHumanLikeFormatter:
         # Only one should remain after dedup
         assert len(result) == 1
 
-    def test_no_timestamp_no_time_hint(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_no_timestamp_no_time_hint(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "memory_type": "EPISODIC",
             "content": "something happened",
@@ -176,7 +190,9 @@ class TestHumanLikeFormatter:
         result = formatter.format([memory])
         assert "刚才" in result[0]
 
-    def test_timestamp_from_metadata_timestamp_field(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_timestamp_from_metadata_timestamp_field(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         now = time.time()
         memory = {
             "memory_type": "EPISODIC",
@@ -186,7 +202,9 @@ class TestHumanLikeFormatter:
         result = formatter.format([memory])
         assert "刚才" in result[0]
 
-    def test_invalid_timestamp_in_metadata(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_invalid_timestamp_in_metadata(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "memory_type": "EPISODIC",
             "content": "bad timestamp",
@@ -245,7 +263,9 @@ class TestHumanLikeFormatter:
         result = formatter.format([memory])
         assert "前年" in result[0]
 
-    def test_timestamp_many_years_ago(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_timestamp_many_years_ago(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         now = time.time()
         memory = {
             "memory_type": "EPISODIC",
@@ -255,7 +275,9 @@ class TestHumanLikeFormatter:
         result = formatter.format([memory])
         assert "年前" in result[0]
 
-    def test_empty_content_falls_back_to_key_facts(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_empty_content_falls_back_to_key_facts(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "memory_type": "FACTUAL",
             "content": "",
@@ -264,7 +286,9 @@ class TestHumanLikeFormatter:
         result = formatter.format([memory])
         assert len(result) == 1
 
-    def test_content_from_dict_key_facts_single_string(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_content_from_dict_key_facts_single_string(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "memory_type": "FACTUAL",
             "key_facts": ["事实A", "事实B"],
@@ -308,7 +332,9 @@ class TestHumanLikeFormatter:
         result = HumanLikeMemoryFormatter._is_overlapping("abcdef", ["xyz123"])
         assert result is False
 
-    def test_preference_without_marker_ta_prefix(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_preference_without_marker_ta_prefix(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         memory = {
             "memory_type": "PREFERENCE",
             "content": "冰淇淋",
@@ -323,10 +349,16 @@ class TestHumanLikeFormatter:
         result = formatter.format([memory])
         assert result == ["没有特别的记忆浮现"]
 
-    def test_format_all_types_in_one_call(self, formatter: HumanLikeMemoryFormatter) -> None:
+    def test_format_all_types_in_one_call(
+        self, formatter: HumanLikeMemoryFormatter
+    ) -> None:
         now = time.time()
         memories = [
-            {"memory_type": "EPISODIC", "content": "went skiing", "create_time": now - 3600},
+            {
+                "memory_type": "EPISODIC",
+                "content": "went skiing",
+                "create_time": now - 3600,
+            },
             {"memory_type": "FACTUAL", "content": "Beijing is capital"},
             {"memory_type": "PREFERENCE", "content": "喜欢咖啡"},
             {"memory_type": "RELATIONAL", "content": "friend with Bob"},

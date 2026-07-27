@@ -55,18 +55,34 @@ def test_proposal_rejects_invalid_confidence() -> None:
 def test_proposal_rejects_reversed_time_interval() -> None:
     start = datetime(2026, 7, 18, tzinfo=timezone.utc)
     with pytest.raises(ValueError):
-        MemoryRelationProposal("M1", "M2", RelationType.RELATED, 0.5, None, start, start.replace(day=17))
+        MemoryRelationProposal(
+            "M1", "M2", RelationType.RELATED, 0.5, None, start, start.replace(day=17)
+        )
 
 
 def test_local_constraints_cover_gate_job_source_and_projection_roles() -> None:
     with pytest.raises(ValueError, match="reason_code"):
         GateDecision(False, None, "")
     with pytest.raises(ValueError, match="source_ids must not be empty"):
-        JobSpec("scope", "bucket", (), "key", datetime(2026, 7, 18, tzinfo=timezone.utc))
+        JobSpec(
+            "scope", "bucket", (), "key", datetime(2026, 7, 18, tzinfo=timezone.utc)
+        )
     with pytest.raises(ValueError, match="unique"):
-        JobSpec("scope", "bucket", (17, 17), "key", datetime(2026, 7, 18, tzinfo=timezone.utc))
+        JobSpec(
+            "scope",
+            "bucket",
+            (17, 17),
+            "key",
+            datetime(2026, 7, 18, tzinfo=timezone.utc),
+        )
     with pytest.raises(ValueError, match="non-negative integers"):
-        JobSpec("scope", "bucket", (True,), "bool-id", datetime(2026, 7, 18, tzinfo=timezone.utc))
+        JobSpec(
+            "scope",
+            "bucket",
+            (True,),
+            "bool-id",
+            datetime(2026, 7, 18, tzinfo=timezone.utc),
+        )
     with pytest.raises(ValueError, match="reference source_ids"):
         JobSpec(
             "scope",
@@ -77,7 +93,14 @@ def test_local_constraints_cover_gate_job_source_and_projection_roles() -> None:
             source_revisions={18: "r18"},
         )
     with pytest.raises(ValueError, match="evidence length"):
-        MemorySourceRef(17, "r1", "scope", "shared", datetime(2026, 7, 18, tzinfo=timezone.utc), "x" * 4001)
+        MemorySourceRef(
+            17,
+            "r1",
+            "scope",
+            "shared",
+            datetime(2026, 7, 18, tzinfo=timezone.utc),
+            "x" * 4001,
+        )
     with pytest.raises(ValueError, match="source role"):
         ProjectionSourceView("p1", 17, "r1", role="unknown")
 
