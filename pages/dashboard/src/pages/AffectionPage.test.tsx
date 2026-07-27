@@ -101,7 +101,7 @@ describe("AffectionPage", () => {
   async function renderLoaded(props: Partial<FutureAffectionPageProps> = {}, statusOverrides: Record<string, unknown> = {}) {
     mockInitialData(undefined, statusOverrides);
     render(<FutureAffectionPage showToast={showToast} {...props} />);
-    await screen.findByText("alice");
+    await screen.findByRole("checkbox", { name: /alice/i });
   }
   function editor(name: RegExp | string) { return screen.getByRole("dialog", { name }); }
   function openRowAction(userId: string, action: "View" | "Edit" | "Delete") {
@@ -123,7 +123,7 @@ describe("AffectionPage", () => {
       });
     });
     expect(await screen.findByText("Upbeat")).toBeTruthy();
-    expect(screen.getByText("alice")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: /all.*users/i })).getByText("alice")).toBeTruthy();
   });
 
   it("shows the same selected group label as the menu option", async () => {
@@ -148,7 +148,7 @@ describe("AffectionPage", () => {
     expect(screen.getByRole("progressbar", { name: /alice.*score/i })).toBeTruthy();
     expect(screen.getByText("Friendly")).toBeTruthy();
     const leaderboard = screen.getByRole("region", { name: /leaderboard/i });
-    expect(within(leaderboard).queryByRole("button", { name: /Sort/ })).toBeNull();
+    expect(within(leaderboard).getByText("alice")).toBeTruthy(); expect(within(leaderboard).queryByRole("button", { name: /Sort/ })).toBeNull();
     expect(showToast).not.toHaveBeenCalled();
   });
 
@@ -347,7 +347,7 @@ describe("AffectionPage", () => {
     fireEvent.change(within(confirm).getByRole("textbox"), { target: { value: "alice" } });
     fireEvent.click(within(confirm).getByRole("button", { name: /delete/i }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /delete affection user/i })).toBeNull());
-    expect(screen.queryByText("alice")).toBeNull();
+    expect(within(screen.getByRole("region", { name: /all.*users/i })).queryByText("alice")).toBeNull();
   });
 
   it("keeps affection single-delete context after malformed success", async () => {
@@ -372,7 +372,7 @@ describe("AffectionPage", () => {
       return Promise.resolve(ok({}));
     });
     render(<AffectionPage showToast={showToast} />);
-    await screen.findByText("alice");
+    await screen.findByRole("checkbox", { name: /alice/i });
     bridge.apiPost.mockResolvedValue(ok({ total: 2, succeeded_count: 1, failed_count: 1, succeeded_ids: [{ user_id: "alice", group_id: "group-1" }], failures: [{ identity: { user_id: "bob", group_id: "group-1" }, code: "edit_conflict", message: "changed", current_revision: "rev-b" }] }));
     fireEvent.click(screen.getByRole("checkbox", { name: /select alice/i }));
     fireEvent.click(document.querySelector('[aria-label="Select bob"]') as HTMLElement);
@@ -497,7 +497,7 @@ describe("AffectionPage", () => {
   it("clears selection on group change and pagination change", async () => {
     mockInitialData([{ group_id: "group-1", message_count: 12 }, { group_id: "group-2", message_count: 4 }]);
     render(<AffectionPage showToast={showToast} />);
-    await screen.findByText("alice");
+    await screen.findByRole("checkbox", { name: /alice/i });
     fireEvent.click(screen.getByRole("checkbox", { name: /select alice/i }));
     expect(screen.getByText("1 selected")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("combobox")[0]);
