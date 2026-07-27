@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -29,7 +30,7 @@ from ..models.memory_evolution import (
 )
 from ..models.temporal import infer_time_precision, parse_datetime, serialize_datetime
 from .base_store import BaseStore
-from .memory_evolution_derived import MemoryEvolutionDerivedMixin
+from .memory_evolution_derived import MemoryEvolutionDerivedMixin, _serialized_write
 from .memory_evolution_derived_helpers import _metadata_dict
 
 
@@ -43,6 +44,12 @@ def _parse(value: str | None) -> datetime | None:
 
 class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
     """保存 job、relation、projection 和 source mapping 的本地 Store。"""
+
+    def __init__(self, db_path: str) -> None:
+        """初始化派生 Store，并为共享连接建立写操作串行锁。"""
+
+        super().__init__(db_path)
+        self._write_lock = asyncio.Lock()
 
     adapter_capabilities = AdapterCapabilityContract(
         kind=AdapterKind.PERSISTENT_STORE,
@@ -147,6 +154,7 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
             )
         await self.connection.commit()
 
+    @_serialized_write
     async def enqueue_job(self, spec: JobSpec) -> MemoryEvolutionJob:
         now = datetime.now(timezone.utc)
         job_id = spec.job_id or uuid.uuid4().hex
@@ -251,6 +259,7 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
             max_content_chars=max_content_chars,
         )
 
+    @_serialized_write
     async def claim_job(self, now: datetime, lease_seconds: int, worker_token: str | None = None) -> JobClaim | None:
         token = worker_token or uuid.uuid4().hex
         lease = now.timestamp() + lease_seconds
@@ -286,6 +295,7 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
             await self.connection.rollback()
             raise
 
+    @_serialized_write
     async def renew_lease(self, job_id: str, worker_token: str, lease_until: datetime) -> bool:
         cur = await self._execute("UPDATE memory_evolution_jobs SET lease_until=?,updated_at=? WHERE job_id=? AND state=? AND worker_token=?", (_dt(lease_until), _dt(datetime.now(timezone.utc)), job_id, JobState.PROCESSING.value, worker_token))
         await self._commit()
@@ -316,21 +326,25 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
 
         return await self._set_job_state(job_id, worker_token, JobState.PENDING)
 
+    @_serialized_write
     async def retry_job(self, job_id: str, worker_token: str, retry: RetrySpec) -> bool:
         cur = await self._execute("UPDATE memory_evolution_jobs SET state=?,not_before=?,lease_until=NULL,worker_token=NULL,last_error_code=?,updated_at=? WHERE job_id=? AND state=? AND worker_token=?", (JobState.RETRY_WAIT.value, _dt(retry.not_before), retry.reason_code, _dt(datetime.now(timezone.utc)), job_id, JobState.PROCESSING.value, worker_token))
         await self._commit()
         return cur.rowcount == 1
 
+    @_serialized_write
     async def _set_job_state(self, job_id: str, worker_token: str, state: JobState, reason: str | None = None) -> bool:
         cur = await self._execute("UPDATE memory_evolution_jobs SET state=?,lease_until=NULL,worker_token=NULL,last_error_code=?,updated_at=? WHERE job_id=? AND state=? AND worker_token=?", (state.value, reason, _dt(datetime.now(timezone.utc)), job_id, JobState.PROCESSING.value, worker_token))
         await self._commit()
         return cur.rowcount == 1
 
+    @_serialized_write
     async def recover_expired_leases(self, now: datetime) -> int:
         cur = await self._execute("UPDATE memory_evolution_jobs SET state=?,lease_until=NULL,worker_token=NULL,updated_at=? WHERE state=? AND lease_until IS NOT NULL AND lease_until<?", (JobState.PENDING.value, _dt(now), JobState.PROCESSING.value, _dt(now)))
         await self._commit()
         return cur.rowcount
 
+    @_serialized_write
     async def apply_derived_plan(self, plan: DerivedApplyPlan) -> None:
         if not self.connection:
             raise RuntimeError("MemoryEvolutionStore 未初始化 -- 先调用 initialize()")

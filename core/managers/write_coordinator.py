@@ -80,10 +80,9 @@ def _get_write_lock() -> asyncio.Lock:
 
 
 def reset_write_metrics_snapshot() -> None:
-    """Reset in-process write coordinator metrics.
+    """重置进程内写协调器指标。
 
-    Tests use this to isolate assertions; production callers normally only read
-    the snapshot through the metrics summary API.
+    测试通过此函数隔离断言；生产调用方通常只通过指标摘要接口读取快照。
     """
     _WRITE_METRICS.update({
         "operations_total": 0,
@@ -97,7 +96,7 @@ def reset_write_metrics_snapshot() -> None:
 
 
 def get_write_metrics_snapshot() -> dict[str, Any]:
-    """Return a JSON-serializable snapshot of write retry/failure counters."""
+    """返回可 JSON 序列化的写入重试与失败计数快照。"""
     return dict(_WRITE_METRICS)
 
 
@@ -139,7 +138,7 @@ class ConnectionRegistry:
 
     _db_path: str = ""
     _connection: Any = None
-    _modules: list[Any] = []  # 持有 self._db 引用的模块列表
+    _modules: list[Any] = []  # 持有数据库连接引用的模块列表
 
     @classmethod
     def register(
@@ -162,10 +161,8 @@ class ConnectionRegistry:
     async def try_repair(cls) -> bool:
         """尝试重建连接并广播给所有持有方。
 
-        Returns
-        -------
-        bool
-            ``True`` 表示重连成功，所有模块的 ``_db`` 已更新
+        返回值：
+            ``True`` 表示重连成功，所有模块的 ``_db`` 已更新。
         """
         if cls.is_alive():
             return True
@@ -221,8 +218,8 @@ async def _execute_with_retry(
             try:
                 return await fn()
             except Exception as exc:
-                _WRITE_METRICS["last_error"] = str(exc)
                 if is_connection_fatal(exc):
+                    _WRITE_METRICS["last_error"] = str(exc)
                     _WRITE_METRICS["failures_total"] += 1
                     _WRITE_METRICS["fatal_failures_total"] += 1
                     _inc_failure_metric("fatal")
@@ -231,6 +228,7 @@ async def _execute_with_retry(
 
                 if _is_retry_eligible(exc):
                     if attempt == max_retries - 1:
+                        _WRITE_METRICS["last_error"] = str(exc)
                         _WRITE_METRICS["failures_total"] += 1
                         _WRITE_METRICS["retry_exhausted_total"] += 1
                         _inc_failure_metric("retry_exhausted")
@@ -247,6 +245,7 @@ async def _execute_with_retry(
                     await asyncio.sleep(delay)
                     continue
 
+                _WRITE_METRICS["last_error"] = str(exc)
                 _WRITE_METRICS["failures_total"] += 1
                 _WRITE_METRICS["non_retryable_failures_total"] += 1
                 _inc_failure_metric("non_retryable")
@@ -313,10 +312,8 @@ def check_db_alive(db) -> bool:
     通过探测 ``_conn`` 属性判断底层 sqlite3 连接是否仍然打开。
     这是快速路径，不发起 I/O。
 
-    Returns
-    -------
-    bool
-        ``True`` 表示连接正常（至少未被显式 close）
+    返回值：
+        ``True`` 表示连接正常（至少未被显式关闭）。
     """
     if db is None:
         return False

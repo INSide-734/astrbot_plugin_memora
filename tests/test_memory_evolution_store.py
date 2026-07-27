@@ -279,6 +279,55 @@ async def test_invalidate_source_revision_removes_active_relation_and_projection
 
 
 @pytest.mark.asyncio
+async def test_derived_writes_are_serialized_on_shared_connection(tmp_path):
+    """派生写事务不能在同一持久连接上交叠。"""
+
+    class GateLock:
+        """让测试确定性观察第二个写操作等待第一个事务释放。"""
+
+        def __init__(self) -> None:
+            self._lock = asyncio.Lock()
+            self.first_entered = asyncio.Event()
+            self.second_waiting = asyncio.Event()
+            self.release_first = asyncio.Event()
+            self._first = True
+
+        async def __aenter__(self):
+            """获取测试锁，并阻塞首个持锁者以制造可控竞争。"""
+
+            if self._lock.locked():
+                self.second_waiting.set()
+            await self._lock.acquire()
+            if self._first:
+                self._first = False
+                self.first_entered.set()
+                await self.release_first.wait()
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            """释放测试锁并保留被包装协程的异常语义。"""
+
+            self._lock.release()
+            return False
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    gate = GateLock()
+    store._write_lock = gate
+    apply_task = asyncio.create_task(store.apply_derived_plan(valid_plan()))
+    await gate.first_entered.wait()
+    invalidate_task = asyncio.create_task(
+        store.invalidate_for_source_revision(17, "new-r17")
+    )
+    await gate.second_waiting.wait()
+    assert not invalidate_task.done()
+    gate.release_first.set()
+    await asyncio.gather(apply_task, invalidate_task)
+    assert await store.active_relations_for_seeds([17]) == []
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_relation_query_finds_seed_on_either_endpoint(tmp_path):
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
