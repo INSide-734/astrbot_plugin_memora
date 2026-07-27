@@ -221,8 +221,8 @@ Run `uv sync --locked --dev`, then `uv run --locked python scripts/check_all.py`
 | `/lmem webui` | Show WebUI access information |
 | `/lmem summarize` | Trigger immediate session summarization |
 | `/lmem reset` | Reset long-term memory context for the current session |
-| `/lmem cleanup [preview|exec]` | Clean memory injection fragments from historical messages |
-| `/lmem update [check|download|apply]` | Check, download, or install a SHA-256-verified runtime update; `apply` reloads and rolls back when supported |
+| `/lmem cleanup [preview\|exec]` | Clean memory injection fragments from historical messages |
+| `/lmem update [check\|download\|apply]` | Check, download, or install a SHA-256-verified runtime update; `apply` reloads and rolls back when supported |
 | `/lmem help` | Show command help |
 
 ## LLM Tools

@@ -133,8 +133,8 @@ pip install -r requirements.txt
 | `/lmem webui` | 输出 WebUI 访问信息。 |
 | `/lmem summarize` | 立即触发当前会话的记忆总结。 |
 | `/lmem reset` | 重置当前会话的长期记忆上下文。 |
-| `/lmem cleanup [preview|exec]` | 清理历史消息中的记忆注入片段；默认 `preview` 为预演。 |
-| `/lmem update [check|download|apply]` | 检查、下载或安装经 SHA-256 校验的 runtime 更新包；默认执行 `check`。 |
+| `/lmem cleanup [preview\|exec]` | 清理历史消息中的记忆注入片段；默认 `preview` 为预演。 |
+| `/lmem update [check\|download\|apply]` | 检查、下载或安装经 SHA-256 校验的 runtime 更新包；默认执行 `check`。 |
 | `/lmem help` | 查看帮助。 |
 
 例如：
