@@ -113,6 +113,35 @@ describe("useI18n", () => {
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 
+  it("follows the host locale after the persisted override is cleared", async () => {
+    const { Harness } = await loadHarness();
+
+    render(<Harness />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("cycle"));
+      fireEvent.click(screen.getByText("cycle"));
+      fireEvent.click(screen.getByText("cycle"));
+    });
+    expect(screen.getByTestId("lang").textContent).toBe("zh");
+
+    localStorage.clear();
+    bridge.getLocale.mockReturnValue("en-US");
+    bridge.getI18n.mockReturnValue({
+      dashboard: {
+        nav: { graph: "Knowledge Graph" },
+        timeline: { count: "{0} items" },
+      },
+    });
+    await act(async () => {
+      window.dispatchEvent(new Event("languagechange"));
+    });
+
+    expect(screen.getByTestId("lang").textContent).toBe("en");
+    expect(screen.getByTestId("text").textContent).toBe("Knowledge Graph");
+    expect(document.documentElement.lang).toBe("en-US");
+  });
+
   it("preserves dollar replacement tokens in interpolated API content", async () => {
     let snapshot: I18nSnapshot | undefined;
     const { Harness } = await loadHarness((value) => { snapshot = value; });

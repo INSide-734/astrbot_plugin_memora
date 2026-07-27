@@ -7,7 +7,7 @@ const listeners = new Set<() => void>();
 
 if (typeof window !== "undefined") {
   window.addEventListener("languagechange", () => {
-    syncDocumentLanguage(langOverride ?? getCurrentLocale());
+    syncDocumentLanguage(getEffectiveLanguageOverride() ?? getCurrentLocale());
     langVersion++;
     listeners.forEach((fn) => fn());
   });
@@ -51,6 +51,14 @@ function getStoredLanguage(): string | null {
   }
 }
 
+/** 返回仍然有效的本地语言覆盖；外部清理或修改存储后重新跟随当前状态。 */
+function getEffectiveLanguageOverride(): string | null {
+  const stored = getStoredLanguage();
+  if (stored === langOverride) return langOverride;
+  langOverride = stored;
+  return stored;
+}
+
 // 记录本地语言覆盖值（null 表示跟随 AstrBot）
 let langOverride: string | null = getStoredLanguage();
 syncDocumentLanguage(langOverride ?? getCurrentLocale());
@@ -67,7 +75,7 @@ export function useI18n() {
       const bridge = window.AstrBotPluginPage;
       if (bridge && typeof bridge.onContextChange === "function") {
         const handler = () => {
-          syncDocumentLanguage(langOverride ?? getCurrentLocale());
+          syncDocumentLanguage(getEffectiveLanguageOverride() ?? getCurrentLocale());
           langVersion++;
           listeners.forEach((l) => l());
         };
@@ -85,6 +93,7 @@ export function useI18n() {
 
   const t = useCallback((key: string, ...args: string[]): string => {
     const dashboardKey = `dashboard.${key}`;
+    const languageOverride = getEffectiveLanguageOverride();
     // 辅助函数：替换 {0}、{1} 等占位符
     const replaceArgs = (val: string): string => {
       if (!args.length) return val;
@@ -95,10 +104,9 @@ export function useI18n() {
       return result;
     };
 
-    // An explicit dashboard language selection must take precedence over the
-    // host bridge locale, which may remain unchanged in embedded mode.
-    if (langOverride) {
-      const langKey = langOverride === "en" ? "en" : langOverride === "ru" ? "ru" : "zh";
+    // 显式选择的 Dashboard 语言优先于嵌入模式中可能未变化的宿主语言。
+    if (languageOverride) {
+      const langKey = languageOverride === "en" ? "en" : languageOverride === "ru" ? "ru" : "zh";
       const value = (LANG_MAPS[langKey] ?? I18N_MAP)[key];
       if (value) return replaceArgs(value);
     }
@@ -118,13 +126,13 @@ export function useI18n() {
     try {
       const bridge = window.AstrBotPluginPage;
       if (bridge && typeof bridge.getI18n === "function") {
-        const locale = langOverride ?? bridge.getLocale?.() ?? "zh";
+        const locale = languageOverride ?? bridge.getLocale?.() ?? "zh";
         let map = i18nCache[locale];
         if (!map) {
           map = bridge.getI18n() as Record<string, unknown>;
           if (map) i18nCache[locale] = map;
         }
-        if (langOverride && locale !== bridge.getLocale?.()) {
+        if (languageOverride && locale !== bridge.getLocale?.()) {
           const primaryLocale = bridge.getLocale?.() ?? "zh";
           if (!i18nCache[primaryLocale]) {
             getBridgeI18n();
@@ -161,7 +169,7 @@ export function useI18n() {
 
     // 5. 直接查询 LANG_MAPS，绕过可能被覆盖的 window.t
     try {
-      const currentLocale = langOverride ?? getCurrentLocale();
+      const currentLocale = languageOverride ?? getCurrentLocale();
       const langKey = currentLocale === "en" ? "en" : currentLocale === "ru" ? "ru" : "zh";
       const map = LANG_MAPS[langKey] ?? I18N_MAP;
       const val = map[key];
@@ -174,7 +182,7 @@ export function useI18n() {
   }, [version]);
 
   const currentLang = useCallback((): string => {
-    return langOverride ?? getCurrentLocale();
+    return getEffectiveLanguageOverride() ?? getCurrentLocale();
   }, [version]);
 
   return { t, currentLang };
@@ -200,9 +208,9 @@ function syncDocumentLanguage(language: string): void {
       : "zh-CN";
 }
 
-/** Toggle language and notify all useI18n hooks to re-render. */
+/** 切换语言并通知所有 useI18n 实例重新渲染。 */
 export function toggleLanguage(): string {
-  const current = langOverride ?? getCurrentLocale();
+  const current = getEffectiveLanguageOverride() ?? getCurrentLocale();
   const next = current === "zh" ? "en" : current === "en" ? "ru" : "zh";
   langOverride = next;
   syncDocumentLanguage(next);
