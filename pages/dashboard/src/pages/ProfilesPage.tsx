@@ -5,7 +5,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Input } from "@/components/ui/Input";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/Dialog";
+} from "@/components/ui/dialog";
 import { MetricGrid, PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import { DataTable } from "@/components/data-table/DataTable";
 import { DataTablePagination } from "@/components/data-table/DataTablePagination";

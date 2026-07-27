@@ -6,7 +6,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/Dialog";
+} from "@/components/ui/dialog";
 
 export interface EditConflictDialogProps {
   open: boolean;

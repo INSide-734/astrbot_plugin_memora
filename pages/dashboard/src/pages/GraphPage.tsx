@@ -5,7 +5,7 @@ import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { useI18n } from "@/hooks/useI18n";
 import type { Theme } from "@/hooks/useTheme";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
+import { Input } from "@/components/ui/input";
 import { PageContent, PageFrame, PageHeader, PageToolbar } from "@/components/layout/PageLayout";
 import {
   GRAPH_NODE_COLORS,

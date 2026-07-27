@@ -13,10 +13,10 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/Dialog";
+} from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/Progress";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataTable } from "@/components/data-table/DataTable";
 import { actionsColumn, selectionColumn } from "@/components/data-table/data-table-columns";

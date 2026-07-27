@@ -8,8 +8,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/Dialog";
-import { Input } from "@/components/ui/Input";
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 export interface ConfirmationRequirement {
   label: string;

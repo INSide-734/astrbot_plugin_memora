@@ -1,7 +1,7 @@
 import * as React from "react";
 import { EditFormLayout, InlineFieldError as FieldError } from "@/components/editing/EditFormLayout";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/Input";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/hooks/useI18n";

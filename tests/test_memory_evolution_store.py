@@ -21,9 +21,11 @@ from core.storage.memory_evolution_store import MemoryEvolutionStore
 UTC = timezone.utc
 
 
-def job_spec(key: str) -> JobSpec:
-    now = datetime.now(UTC)
-    return JobSpec("scope", "bucket", (17,), key, now)
+def job_spec(key: str, *, not_before: datetime | None = None) -> JobSpec:
+    """构造可控的演化 job；测试需要时允许显式指定可领取时间。"""
+
+    scheduled_at = not_before or datetime.now(UTC)
+    return JobSpec("scope", "bucket", (17,), key, scheduled_at)
 
 
 def valid_plan() -> DerivedApplyPlan:
@@ -409,7 +411,7 @@ async def test_job_retry_renew_complete_and_reject_transitions(tmp_path):
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
     now = datetime.now(UTC)
-    first = await store.enqueue_job(job_spec("first"))
+    first = await store.enqueue_job(job_spec("first", not_before=now))
     first_claim = await store.claim_job(now, 30, worker_token="worker-1")
     assert first_claim is not None
     renewed_until = now + timedelta(seconds=60)

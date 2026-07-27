@@ -3,7 +3,7 @@ import { Search, Zap } from "lucide-react";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData, normalizeImportance } from "@/lib/bridge";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 import type { RecallResult } from "@/types";
