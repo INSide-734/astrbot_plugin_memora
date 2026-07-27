@@ -221,8 +221,8 @@ Run `uv sync --locked --dev`, then `uv run --locked python scripts/check_all.py`
 | `/memora webui` | Show WebUI access information |
 | `/memora summarize` | Trigger immediate session summarization |
 | `/memora reset` | Reset long-term memory context for the current session |
-| `/memora cleanup [preview|exec]` | Clean memory injection fragments from historical messages |
-| `/memora update [check|download|apply]` | Check, download, or install a SHA-256-verified runtime update; `apply` reloads and rolls back when supported |
+| `/memora cleanup [preview\|exec]` | Clean memory injection fragments from historical messages |
+| `/memora update [check\|download\|apply]` | Check, download, or install a SHA-256-verified runtime update; `apply` reloads and rolls back when supported |
 | `/memora help` | Show command help |
 
 ## LLM Tools
