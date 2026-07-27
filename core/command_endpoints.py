@@ -1,21 +1,94 @@
 """MemoraPlugin 的命令端点混入类。"""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
+from typing import Any, TypeVar
 
 from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
 from astrbot.api.event.filter import PermissionType, permission_type
+
+
+_HandlerT = TypeVar("_HandlerT", bound=Callable[..., object])
+_COMMAND_ENDPOINT_HANDLER_NAMES = frozenset(
+    {
+        "memora",
+        "status",
+        "health",
+        "diagnostics",
+        "search",
+        "trace",
+        "forget",
+        "rebuild_index",
+        "rebuild_graph",
+        "webui",
+        "summarize",
+        "reset",
+        "cleanup",
+        "help",
+    }
+)
+
+
+def _remove_legacy_command_handlers(registry: Any | None = None) -> None:
+    """移除热重载遗留在旧命令模块中的 /memora 处理器。
+
+    AstrBot 仅按插件入口模块卸载 handler，旧版本拆分到 ``core`` 的命令
+    会在热重载后继续留在注册表并与当前入口命令冲突。本函数只按当前模块
+    路径和已知的 /memora 方法名清理这些旧条目。
+
+    参数:
+        registry: 可选的 AstrBot handler 注册表；省略时使用运行时全局注册表。
+
+    返回:
+        无。命中旧 handler 时会直接从注册表删除。
+    """
+    if registry is None:
+        try:
+            from astrbot.core.star.star_handler import star_handlers_registry
+        except ImportError:
+            return
+        registry = star_handlers_registry
+
+    for registered_handler in list(registry):
+        if (
+            getattr(registered_handler, "handler_module_path", None) == __name__
+            and getattr(registered_handler, "handler_name", None)
+            in _COMMAND_ENDPOINT_HANDLER_NAMES
+        ):
+            registry.remove(registered_handler)
+
+
+_remove_legacy_command_handlers()
+
+
+def _bind_to_plugin_entrypoint(handler: _HandlerT) -> _HandlerT:
+    """把拆分模块中的命令端点归属到插件入口模块。
+
+    AstrBot 按处理函数的 ``__module__`` 将装饰器元数据绑定到插件实例，
+    因此命令实现拆到 ``core`` 后必须在注册装饰器执行前恢复入口归属。
+
+    参数:
+        handler: 即将交给 AstrBot 命令装饰器的处理函数。
+
+    返回:
+        已标记为插件入口模块所有的原处理函数。
+    """
+    package_root, separator, _ = __package__.rpartition(".")
+    handler.__module__ = f"{package_root}.main" if separator else "main"
+    return handler
 
 
 class CommandEndpointsMixin:
     """所有 /memora 命令端点。"""
 
     @filter.command_group("memora")
+    @_bind_to_plugin_entrypoint
     def memora(self):
         """长期记忆管理命令组 `/memora`。"""
         pass
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("status", priority=10)
+    @_bind_to_plugin_entrypoint
     async def status(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -33,6 +106,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("health", priority=10)
+    @_bind_to_plugin_entrypoint
     async def health(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -51,6 +125,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("diagnostics", priority=10)
+    @_bind_to_plugin_entrypoint
     async def diagnostics(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -69,6 +144,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("search", priority=10)
+    @_bind_to_plugin_entrypoint
     async def search(
         self, event: AstrMessageEvent, query: str, k: int = 5
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -87,6 +163,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("trace", priority=10)
+    @_bind_to_plugin_entrypoint
     async def trace(
         self, event: AstrMessageEvent, query: str, k: int = 5
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -105,6 +182,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("forget")
+    @_bind_to_plugin_entrypoint
     async def forget(
         self, event: AstrMessageEvent, doc_id: int
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -123,6 +201,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("rebuild-index")
+    @_bind_to_plugin_entrypoint
     async def rebuild_index(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -141,6 +220,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("rebuild-graph")
+    @_bind_to_plugin_entrypoint
     async def rebuild_graph(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -159,6 +239,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("webui")
+    @_bind_to_plugin_entrypoint
     async def webui(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -177,6 +258,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("summarize")
+    @_bind_to_plugin_entrypoint
     async def summarize(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -195,6 +277,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("reset")
+    @_bind_to_plugin_entrypoint
     async def reset(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -213,6 +296,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("cleanup")
+    @_bind_to_plugin_entrypoint
     async def cleanup(
         self, event: AstrMessageEvent, mode: str = "preview"
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -240,6 +324,7 @@ class CommandEndpointsMixin:
 
     @permission_type(PermissionType.ADMIN)
     @memora.command("help")
+    @_bind_to_plugin_entrypoint
     async def help(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
