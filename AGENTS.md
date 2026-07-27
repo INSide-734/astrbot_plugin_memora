@@ -1,6 +1,6 @@
 # Memora — AI 协作入口
 
-**最后更新：** 2026-07-23
+**最后更新：** 2026-07-27
 
 ## 项目定位
 
@@ -102,6 +102,35 @@ flowchart LR
 - SQL 值参数绑定；动态标识符只允许固定 allowlist。
 - Dashboard 复用 Base UI-backed shadcn、`PageFrame`、语义 token、Lucide 与三语言 key；桌面/移动端均需可访问、可滚动、无重叠和页面级横向溢出。
 
+## Python 环境、Ruff 与提交前门禁
+
+- `pyproject.toml`、`.python-version` 与 `uv.lock` 是 Python 3.12 开发环境的权威来源；`requirements.txt` 继续服务 AstrBot 插件安装。新增或调整直接运行时依赖时同步两处声明并更新锁文件，不得只修改当前 `.venv`。
+- 新克隆仓库后先同步锁定环境并安装本地 Git hook；`.git/hooks/pre-commit` 缺失或重建 `.git` 后必须重新安装：
+
+```powershell
+uv sync --locked --dev
+uv run --locked pre-commit install --install-hooks
+```
+
+- `pyproject.toml` 的 `[tool.ruff]` 与 `[tool.ruff.lint]` 是 Ruff 规则权威；`.pre-commit-config.yaml` 中 Ruff hook 版本必须与 uv dev 依赖保持一致。修改工具版本、规则或 hook 时同步 `uv.lock`、`docs/DEV_SETUP.md` 与契约测试。
+- Ruff 采用渐进门禁。本轮新增或修改的 Python 文件必须先按以下顺序修复 lint、格式化并复查；若自动修复改变文件，先审阅差异再继续：
+
+```powershell
+uv run --locked ruff check --fix path/to/file.py
+uv run --locked ruff format path/to/file.py
+uv run --locked ruff check path/to/file.py
+```
+
+- 完成变更前，对本轮全部新增或修改文件运行 pre-commit；hook 改写文件时必须重新检查 `git diff`，并重复运行直到通过：
+
+```powershell
+uv run --locked pre-commit run --files path/to/file.py path/to/config.toml
+```
+
+- 默认不得运行会无关改写历史文件的 `ruff format .`、`ruff check --fix .` 或 `pre-commit run --all-files`。只有用户明确要求治理全仓基线时才扩大范围，并在开始前量化影响。
+- 不得通过批量 `# noqa`、宽泛 `per-file-ignores`、扩大 exclude 或删除规则来伪造通过；确需抑制的规则必须限定到最小范围并写明中文原因。
+- 禁止使用 `git commit --no-verify`、`SKIP` 或移除 hook 绕过门禁，除非用户明确授权且交付说明记录原因。网络或工具环境失败时报告阻塞，不得静默降低检查标准。
+
 ## 文件长度与拆分规范
 
 - 新增或本轮负责修改的源码、测试文件以 **800 行为硬上限**，新增文件建议控制在 600 行以内；Markdown 设计/计划文件以 400 行为上限。行数按物理行统计，不能通过把一条语句或文档段落压成超长行规避。
@@ -129,14 +158,15 @@ flowchart LR
 
 ## 验证入口
 
-按范围选择最窄命令；完整门禁由 `scripts/check_all.py` 编排，schema validator 仅在对应脚本存在时执行：
+按范围选择最窄命令；Python 命令统一通过锁定 uv 环境执行。完整运行时门禁由 `scripts/check_all.py` 编排，schema validator 仅在对应脚本存在时执行；代码变更还必须通过本轮文件的 pre-commit：
 
 ```powershell
-python -m pytest tests -q
-python scripts/run_smoke.py -q
-python scripts/check_all.py
-python scripts/benchmark_recall_cost.py --all
-python scripts/benchmark_injection_decisions.py
+uv run --locked python -m pytest tests -q
+uv run --locked python scripts/run_smoke.py -q
+uv run --locked python scripts/check_all.py
+uv run --locked python scripts/benchmark_recall_cost.py --all
+uv run --locked python scripts/benchmark_injection_decisions.py
+uv run --locked pre-commit run --files path/to/changed-file
 
 Set-Location pages/dashboard
 npm test
