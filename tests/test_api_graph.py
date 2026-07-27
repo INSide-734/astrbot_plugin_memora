@@ -155,6 +155,48 @@ class TestGraphApiHappyPath:
         assert result["data"].get("mode") == "overview"
 
     @pytest.mark.asyncio
+    async def test_empty_canvas_search_uses_lightweight_snapshot(self) -> None:
+        """画布参数只替换默认全量读取，且响应不携带内部节点字段。"""
+        req = _mock_request(canvas="1")
+        mock_gs = MagicMock()
+        mock_gs.get_canvas_snapshot = AsyncMock(return_value={
+            "nodes": [{
+                "id": 7,
+                "key": "person:qq:7",
+                "canonical_value": "qq:7",
+                "label": "QQ:7",
+                "type": "person",
+                "entry_count": 2,
+                "memory_count": 1,
+                "degree": 3,
+                "weight": 3.8,
+            }],
+            "edges": [{
+                "id": 8,
+                "source": 7,
+                "target": 7,
+                "type": "related",
+                "weight": 1.0,
+                "timestamp": 100.0,
+                "metadata": {"internal": True},
+            }],
+        })
+
+        with patch("core.api.graph_api.request", req):
+            mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
+            result = await mixin.search_graph()
+
+        mock_gs.get_canvas_snapshot.assert_awaited_once_with(
+            session_id=None,
+            persona_id=None,
+        )
+        node = result["data"]["nodes"][0]
+        edge = result["data"]["edges"][0]
+        assert "key" not in node
+        assert "canonical_value" not in node
+        assert "metadata" not in edge
+
+    @pytest.mark.asyncio
     async def test_search_graph_with_query_strips_whitespace(self) -> None:
         req = _mock_request(query="  hello world  ")
         mock_gs = MagicMock()

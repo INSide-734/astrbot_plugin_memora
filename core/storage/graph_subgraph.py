@@ -44,6 +44,39 @@ class GraphSubgraphMixin(BaseStore):
         entry_rows, node_rows, edge_rows = await self._fetch_subgraph_rows(
             normalized_memory_ids, limit_entries, limit_edges
         )
+        return self._assemble_graph_snapshot(
+            entry_rows,
+            node_rows,
+            edge_rows,
+            limit_nodes=limit_nodes,
+        )
+
+    async def _get_full_graph_snapshot(
+        self,
+        session_id: str | None = None,
+        persona_id: str | None = None,
+    ) -> dict[str, Any]:
+        """返回指定会话与人格范围内未经数量裁剪的完整图快照。"""
+        entry_rows, node_rows, edge_rows = await self._fetch_full_graph_rows(
+            session_id=session_id,
+            persona_id=persona_id,
+        )
+        return self._assemble_graph_snapshot(
+            entry_rows,
+            node_rows,
+            edge_rows,
+            limit_nodes=None,
+        )
+
+    def _assemble_graph_snapshot(
+        self,
+        entry_rows: list[aiosqlite.Row],
+        node_rows: list[aiosqlite.Row],
+        edge_rows: list[aiosqlite.Row],
+        *,
+        limit_nodes: int | None,
+    ) -> dict[str, Any]:
+        """将图查询行组装成统一快照，并按需执行节点数量裁剪。"""
         if not entry_rows:
             return {"nodes": [], "edges": [], "entries": [], "memories": []}
 
@@ -71,8 +104,8 @@ class GraphSubgraphMixin(BaseStore):
                 4,
             )
 
-        nodes_were_limited = len(node_map) > limit_nodes
-        if nodes_were_limited:
+        nodes_were_limited = limit_nodes is not None and len(node_map) > limit_nodes
+        if nodes_were_limited and limit_nodes is not None:
             ranked_nodes = sorted(
                 node_map.values(),
                 key=lambda item: (
@@ -205,6 +238,84 @@ class GraphSubgraphMixin(BaseStore):
                     ),
                 )
                 edge_rows = list(await edge_cursor.fetchall())
+
+        return entry_rows, node_rows, edge_rows
+
+    async def _fetch_full_graph_rows(
+        self,
+        *,
+        session_id: str | None,
+        persona_id: str | None,
+    ) -> tuple[list[aiosqlite.Row], list[aiosqlite.Row], list[aiosqlite.Row]]:
+        """一次读取指定作用域内的全部图条目、关联节点和边。"""
+        filters: list[str] = []
+        params: list[Any] = []
+        if session_id is not None:
+            filters.append("ge.session_id = ?")
+            params.append(session_id)
+        if persona_id is not None:
+            filters.append("ge.persona_id = ?")
+            params.append(persona_id)
+
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+        related_filter = f"AND {' AND '.join(filters)}" if filters else ""
+
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            entry_cursor = await db.execute(
+                f"""
+                SELECT ge.id, ge.source_memory_id, ge.session_id, ge.persona_id,
+                       ge.entry_type, ge.relation_type, ge.content,
+                       ge.metadata, ge.edge_id
+                FROM graph_entries ge
+                {where_clause}
+                ORDER BY ge.id DESC
+                """,
+                tuple(params),
+            )
+            entry_rows = list(await entry_cursor.fetchall())
+            if not entry_rows:
+                return [], [], []
+
+            node_cursor = await db.execute(
+                f"""
+                SELECT gen.entry_id,
+                       gn.id AS node_id,
+                       gn.node_key,
+                       gn.node_type,
+                       gn.node_value,
+                       gn.canonical_value,
+                       gn.metadata
+                FROM graph_entry_nodes gen
+                JOIN graph_entries ge ON ge.id = gen.entry_id
+                JOIN graph_nodes gn ON gn.id = gen.node_id
+                {where_clause}
+                ORDER BY gn.id ASC
+                """,
+                tuple(params),
+            )
+            node_rows = list(await node_cursor.fetchall())
+
+            edge_cursor = await db.execute(
+                f"""
+                SELECT graph_edge.id, graph_edge.edge_key,
+                       graph_edge.source_node_id, graph_edge.target_node_id,
+                       graph_edge.relation_type, graph_edge.source_memory_id,
+                       graph_edge.weight, graph_edge.confidence,
+                       graph_edge.status, graph_edge.metadata,
+                       graph_edge.created_at
+                FROM graph_edges graph_edge
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM graph_entries ge
+                    WHERE ge.source_memory_id = graph_edge.source_memory_id
+                    {related_filter}
+                )
+                ORDER BY graph_edge.id DESC
+                """,
+                tuple(params),
+            )
+            edge_rows = list(await edge_cursor.fetchall())
 
         return entry_rows, node_rows, edge_rows
 
@@ -379,6 +490,7 @@ class GraphSubgraphMixin(BaseStore):
         *,
         relation_type: Any = None,
     ) -> float | None:
+        """从图元数据及关系类型中提取优先业务时间戳。"""
         for key in ("event_time", "timestamp", "create_time"):
             timestamp = cls._coerce_timestamp(metadata.get(key))
             if timestamp is not None:
@@ -398,6 +510,7 @@ class GraphSubgraphMixin(BaseStore):
 
     @staticmethod
     def _coerce_timestamp(value: Any) -> float | None:
+        """把 Unix 秒、毫秒或 ISO 字符串转换为正数 Unix 秒。"""
         if isinstance(value, bool) or value is None:
             return None
         if isinstance(value, (int, float)):

@@ -26,7 +26,10 @@ export interface MemoryItem {
 export interface GraphNode {
   id: string;
   label?: string;
+  display_name?: string;
   type?: string;
+  identity_namespace?: string;
+  stable_user_id?: string;
   weight?: number;
   memory_count?: number;
   degree?: number;

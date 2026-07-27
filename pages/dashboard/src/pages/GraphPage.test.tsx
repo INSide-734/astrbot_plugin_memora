@@ -40,6 +40,10 @@ function getGraphMockState() {
         render: (...args: unknown[]) => Promise<void>;
         destroy: (...args: unknown[]) => unknown;
         focusElement: (...args: unknown[]) => Promise<void>;
+        setElementVisibility: (
+          visibility: Record<string, "visible" | "hidden">,
+          animation?: boolean,
+        ) => Promise<void>;
         setElementState: (id: string, states: string[], animation?: boolean) => Promise<void>;
         getElementState: (id: string) => string[];
         getZoom: (...args: unknown[]) => number;
@@ -80,6 +84,7 @@ async function loadGraphPage() {
       render = vi.fn().mockResolvedValue(undefined);
       destroy = vi.fn();
       focusElement = vi.fn().mockResolvedValue(undefined);
+      setElementVisibility = vi.fn().mockResolvedValue(undefined);
       stateMap = new Map<string, string[]>();
       setElementState = vi.fn(async (id: string, states: string[]) => {
         this.stateMap.set(id, [...states]);
@@ -244,7 +249,7 @@ describe("GraphPage", () => {
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/stats", {});
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/graph/search", {});
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/graph/search", { canvas: "1" });
     });
 
     expect(await screen.findByText("12")).toBeTruthy();
@@ -265,6 +270,8 @@ describe("GraphPage", () => {
     });
     expect(clickSelect?.enable).toEqual(expect.any(Function));
     expect(clickSelect?.onClick).toEqual(expect.any(Function));
+    const layout = graph.config.layout as { alphaDecay?: number };
+    expect(layout.alphaDecay).toBe(0.03);
     const nodeConfig = graph.config.node as {
       state: {
         hover: { stroke: string; lineWidth: number };
@@ -337,7 +344,7 @@ describe("GraphPage", () => {
           sessions: {},
         }));
       }
-      if (path === "page/graph/search" && Object.keys(params).length === 0) {
+      if (path === "page/graph/search" && params.canvas === "1") {
         return Promise.resolve(ok({
           nodes: [{ id: "seed-1", label: "Seed", type: "topic", memory_count: 1, degree: 1, entry_count: 1, weight: 0.4 }],
           edges: [],
@@ -526,7 +533,7 @@ describe("GraphPage", () => {
     expect(screen.getByText("Theme node")).toBeTruthy();
   });
 
-  it("re-applies the cached graph and removes out-of-range graph items when the time range changes", async () => {
+  it("时间范围变化时重用缓存图数据并仅更新元素可见性", async () => {
     bridge.t?.mockImplementation((key: string) => {
       if (key === "dashboard.graph.hoursShort") return "{0} hours";
       if (key === "dashboard.graph.daysShort") return "{0} days";
@@ -568,6 +575,8 @@ describe("GraphPage", () => {
       expect(instance.setData).toHaveBeenCalled();
       return instance;
     });
+    const initialSetDataCallCount = vi.mocked(graph.setData).mock.calls.length;
+    const initialRenderCallCount = vi.mocked(graph.render).mock.calls.length;
 
     const timeSliders = screen.getAllByRole("slider");
     fireEvent.change(timeSliders[1], { target: { value: "12" } });
@@ -576,36 +585,17 @@ describe("GraphPage", () => {
     expect(screen.getByText("All – 1 days")).toBeTruthy();
 
     await waitFor(() => {
-      expect(graph.setData).toHaveBeenLastCalledWith({
-        nodes: [
-          { id: "recent", data: { label: "Recent", type: "topic", weight: 1, memory_count: 0, degree: 0, entry_count: 0 } },
-          { id: "old", data: { label: "Old", type: "fact", weight: 1, memory_count: 0, degree: 0, entry_count: 0 } },
-          { id: "anchor", data: { label: "Anchor", type: "summary", weight: 1, memory_count: 0, degree: 0, entry_count: 0 } },
-        ],
-        edges: [
-          {
-            id: "e-recent-anchor-0",
-            source: "recent",
-            target: "anchor",
-            data: {
-              type: "before",
-              weight: 1,
-              label: undefined,
-            },
-          },
-          {
-            id: "e-old-recent-1",
-            source: "old",
-            target: "recent",
-            data: {
-              type: "related",
-              weight: 1,
-              label: undefined,
-            },
-          },
-        ],
-      });
+      expect(graph.setElementVisibility).toHaveBeenLastCalledWith({
+        recent: "visible",
+        old: "visible",
+        anchor: "visible",
+        "e-recent-anchor-0": "visible",
+        "e-old-anchor-1": "hidden",
+        "e-old-recent-2": "visible",
+      }, false);
     });
+    expect(graph.setData).toHaveBeenCalledTimes(initialSetDataCallCount);
+    expect(graph.render).toHaveBeenCalledTimes(initialRenderCallCount);
   });
 
   it("applies a deferred graph response with the latest time range", async () => {
@@ -642,8 +632,15 @@ describe("GraphPage", () => {
       nodes: Array<{ id: string }>;
       edges: Array<{ source: string; target: string }>;
     };
-    expect(data.nodes.map((node) => node.id)).toEqual(["recent", "anchor"]);
-    expect(data.edges).toHaveLength(1);
+    expect(data.nodes.map((node) => node.id)).toEqual(["recent", "old", "anchor"]);
+    expect(data.edges).toHaveLength(2);
+    expect(graph.setElementVisibility).toHaveBeenLastCalledWith({
+      recent: "visible",
+      old: "hidden",
+      anchor: "visible",
+      "e-recent-anchor-0": "visible",
+      "e-old-anchor-1": "hidden",
+    }, false);
   });
 
   it("ignores an older manual search response after a newer search completes", async () => {
@@ -838,7 +835,7 @@ describe("GraphPage", () => {
     expect(errorSpy).toHaveBeenCalled();
   });
 
-  it("reports a G6 render rejection during a time-filter replay", async () => {
+  it("时间范围重放时报告 G6 可见性更新失败", async () => {
     const { GraphPage } = await loadGraphPage();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const nowSeconds = Math.floor(Date.now() / 1000);
@@ -867,18 +864,20 @@ describe("GraphPage", () => {
       expect(instance.render).toHaveBeenCalled();
       return instance;
     });
-    vi.mocked(graph.render).mockRejectedValueOnce(new Error("replay render exploded"));
+    vi.mocked(graph.setElementVisibility).mockRejectedValueOnce(
+      new Error("replay visibility exploded"),
+    );
 
     fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "12" } });
 
     expect(await screen.findByText("Failed to load graph data")).toBeTruthy();
-    expect(showToast).toHaveBeenCalledWith("Error: replay render exploded", true);
+    expect(showToast).toHaveBeenCalledWith("Error: replay visibility exploded", true);
     expect(errorSpy).toHaveBeenCalled();
   });
 
-  it("ignores a pending render completion after the graph unmounts", async () => {
+  it("图谱卸载后忽略待完成的可见性更新", async () => {
     const { GraphPage } = await loadGraphPage();
-    const pendingRender = deferred<void>();
+    const pendingVisibility = deferred<void>();
     const nowSeconds = Math.floor(Date.now() / 1000);
     bridge.apiGet.mockImplementation((path: string) => {
       if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
@@ -908,15 +907,17 @@ describe("GraphPage", () => {
     graph.emit("node:click", { target: { id: "recent" } });
     expect(await screen.findByText("Recent selected")).toBeTruthy();
 
-    vi.mocked(graph.render).mockImplementationOnce(() => pendingRender.promise);
+    vi.mocked(graph.setElementVisibility).mockImplementationOnce(
+      () => pendingVisibility.promise,
+    );
     fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "12" } });
-    await waitFor(() => expect(graph.render).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(graph.setElementVisibility).toHaveBeenCalledTimes(1));
     vi.mocked(graph.setElementState).mockClear();
     showToast.mockClear();
 
     view.unmount();
-    pendingRender.resolve();
-    await pendingRender.promise;
+    pendingVisibility.resolve();
+    await pendingVisibility.promise;
     await Promise.resolve();
 
     expect(graph.setElementState).not.toHaveBeenCalled();
@@ -957,9 +958,9 @@ describe("GraphPage", () => {
     expect(graph.setElementState).not.toHaveBeenCalled();
   });
 
-  it("does not let an older render completion write after a newer replay", async () => {
+  it("不允许较早的可见性更新在较新的重放后写入状态", async () => {
     const { GraphPage } = await loadGraphPage();
-    const olderRender = deferred<void>();
+    const olderVisibility = deferred<void>();
     bridge.apiGet.mockImplementation((path: string) => {
       if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
       if (path === "page/graph/search") {
@@ -983,18 +984,18 @@ describe("GraphPage", () => {
     graph.emit("node:click", { target: { id: "selected" } });
     expect(await screen.findByText("Selected node")).toBeTruthy();
 
-    vi.mocked(graph.render)
-      .mockImplementationOnce(() => olderRender.promise)
+    vi.mocked(graph.setElementVisibility)
+      .mockImplementationOnce(() => olderVisibility.promise)
       .mockResolvedValueOnce(undefined);
     fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "12" } });
-    await waitFor(() => expect(graph.render).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(graph.setElementVisibility).toHaveBeenCalledTimes(1));
     fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "24" } });
-    await waitFor(() => expect(graph.render).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(graph.setElementVisibility).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(graph.setElementState).toHaveBeenCalled());
     vi.mocked(graph.setElementState).mockClear();
 
-    olderRender.resolve();
-    await olderRender.promise;
+    olderVisibility.resolve();
+    await olderVisibility.promise;
     await Promise.resolve();
 
     expect(graph.setElementState).not.toHaveBeenCalled();
@@ -1034,7 +1035,7 @@ describe("GraphPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /retry/i }));
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/graph/search", {});
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/graph/search", { canvas: "1" });
       expect(getGraphMockState().instances[0].setData).toHaveBeenCalledWith({
         nodes: [
           {
