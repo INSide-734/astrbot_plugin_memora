@@ -7,6 +7,7 @@ import {
 } from "./DataTableRowActions";
 import type { DataTableColumn } from "./table-types";
 
+/** 创建固定在表格左侧的行选择列。 */
 export function selectionColumn<TData extends RowData>({
   label,
   rowLabel,
@@ -39,6 +40,7 @@ export function selectionColumn<TData extends RowData>({
   };
 }
 
+/** 创建固定在表格右侧且不会遮挡相邻内容的行操作列。 */
 export function actionsColumn<TData extends RowData>({
   label,
   rowLabel,
@@ -50,10 +52,14 @@ export function actionsColumn<TData extends RowData>({
 }): DataTableColumn<TData> {
   return {
     id: "actions",
+    size: 96,
+    minSize: 96,
+    maxSize: 96,
     meta: { label, required: true, defaultPin: "right" },
     enableSorting: false,
     enableHiding: false,
-    header: () => null,
+    enableResizing: false,
+    header: () => <span className="sr-only">{label}</span>,
     cell: ({ row }) => (
       <DataTableRowActions
         row={row.original}

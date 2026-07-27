@@ -245,6 +245,13 @@ describe("DataTable", () => {
       />,
     );
 
+    const actionButton = screen.getByRole("button", {
+      name: "Actions for Alpha",
+    });
+    const actionCell = actionButton.closest("td");
+    expect(actionCell?.style.width).toBe("96px");
+    expect(actionCell?.style.right).toBe("0px");
+
     fireEvent.click(screen.getByRole("button", { name: "Table view" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Unpin Select all rows" }),
