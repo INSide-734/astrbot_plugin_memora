@@ -10,6 +10,7 @@
 - 核心开关、检索权重、图检索、记忆原子 → `MemoraConfig` 各子模型
 - 话题分割 (topic_segmentation.*) → `TopicSegmentationConfig` (v1.0.0+)
 - 存量回填 (legacy_backfill.*) → `LegacyBackfillConfig` (v1.0.0+)
+- 黑话自动发现 (jargon.enabled) → `JargonConfig`，默认关闭
 - AstrBot UI Schema → `_conf_schema.json`
 
 更新配置键时请同步修改：本文件(文档)、config_validator.py(Pydantic默认值)、_conf_schema.json(Schema UI)

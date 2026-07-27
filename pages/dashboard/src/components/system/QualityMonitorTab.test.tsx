@@ -87,4 +87,37 @@ describe("QualityMonitorTab", () => {
       expect(bridge.apiGet.mock.calls.filter(([path]) => path === "page/quality/alerts")).toHaveLength(2);
     });
   });
+
+  it("无评分样本时显示明确空态而不是指标占位符", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/quality/stats") {
+        return Promise.resolve(ok({
+          status: "no_samples",
+          total_scored: 0,
+          paused: false,
+          pause_reason: "",
+          alert_counts: {},
+        }));
+      }
+      if (path === "page/quality/recent") {
+        return Promise.resolve(ok({ scores: [], total_scores: 0 }));
+      }
+      if (path === "page/quality/alerts") {
+        return Promise.resolve(ok({ alerts: [], total_alerts: 0 }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(
+      <QualityMonitorTab
+        showToast={() => undefined}
+        onResetRequested={() => undefined}
+        refreshToken={0}
+        resetPending={false}
+      />,
+    );
+
+    expect(await screen.findByText("暂无质量数据")).toBeTruthy();
+    expect(screen.queryByText("—")).toBe(null);
+  });
 });

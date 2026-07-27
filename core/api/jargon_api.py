@@ -17,6 +17,7 @@ from ..base.entity_editing import (
     EntityValidationError,
 )
 from ..base.list_sorting import parse_sort_query
+from ..base.feature_config import is_jargon_discovery_enabled
 from ..jargon.jargon_store import JARGON_MEANING_SORT_COLUMNS
 from ..jargon.statistical_filter import JARGON_CANDIDATE_SORT_FIELDS
 from .editing_utils import (
@@ -538,9 +539,17 @@ class JargonApiMixin:
         优先从插件或初始化器上查找现有 miner。
         若不存在，则惰性创建一个新实例（依赖 LLM provider、filter 与 store），
         并缓存到 ``plugin._jargon_miner``。
+
+        ``jargon.enabled`` 关闭时直接返回 ``None``，避免页面 API 绕过
+        初始化器重新创建自动发现组件。
         """
         plugin = getattr(self, "plugin", None)
         if plugin is None:
+            return None
+        if not is_jargon_discovery_enabled(
+            getattr(plugin, "config_manager", None)
+        ):
+            logger.info("[黑话接口] 黑话自动发现功能已禁用")
             return None
         for attr_name in ("_jargon_miner", "jargon_miner"):
             obj = getattr(plugin, attr_name, None)

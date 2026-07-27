@@ -57,7 +57,8 @@ flowchart LR
 
 | 文件 | 核心接口 | 约束 |
 |---|---|---|
-| `config_validator.py` | `MemoraConfig`、各分支模型、`validate_config()`、`get_default_config()`、`merge_config_with_defaults()`、`validate_runtime_config_changes()` | 默认值唯一运行时来源；顶层允许额外字段以兼容旧配置，已声明字段仍受类型/范围约束 |
+| `config_validator.py` | `MemoraConfig`、其余分支模型、`validate_config()`、`get_default_config()`、`merge_config_with_defaults()`、`validate_runtime_config_changes()` | 默认值唯一运行时来源；顶层允许额外字段以兼容旧配置，已声明字段仍受类型/范围约束 |
+| `feature_config.py` | `AgentToolsConfig`、`JargonConfig`、`DashboardConfig`、`is_jargon_discovery_enabled()` | 轻量功能开关与 Dashboard 构建配置；黑话发现缺少有效配置时遵循调用方的兼容边界，正常插件运行时默认关闭 |
 | `config_manager.py` | `ConfigManager`、`ConfigApplyResult`、配置事务异常 | revision 是规范化 JSON 的 SHA-256；结果中的 `changed_paths` 排序且不可变 |
 | `config_defaults.py` | 默认值维护说明 | 新键必须同步 Pydantic 模型、根级 `_conf_schema.json` 与访问处默认值 |
 | `constants.py` | `MEMORY_INJECTION_HEADER/FOOTER`、`FAKE_TOOL_CALL_NAME/ID_PREFIX` | 边界和伪调用标识同时被格式化器、清理器与测试依赖，不可单边改名 |
@@ -69,6 +70,7 @@ flowchart LR
 ## 配置不变量
 
 - `MemoryEvolutionConfig` 的安全默认是 `enabled=false`、`mode=disabled`；仅设置非 disabled 的 `mode` 不代表启用，运行时 gate 会在 `enabled=false` 时强制归一为 `disabled`。
+- `JargonConfig.enabled` 默认 `false`；关闭时初始化器不得创建黑话统计器、存储、查询服务或 Miner，页面 API 也不得惰性重建 Miner。已有词条数据不删除。
 - `memory_evolution.mode` 固定为 `disabled / shadow / readonly / active`。`disabled` 不启动 worker；`shadow` 不装配在线 relation/projection 读取器；只有同时显式启用且处于 `readonly` 或 `active` 时才允许装配派生读取器。
 - 演化配置同时约束触发阈值、候选/队列上限、lease 与重试、输入字符数、relation/projection 输出数量和查询扩展预算。修改任一叶子必须同步 `_conf_schema.json`，不能只改运行时字典读取的后备值。
 - `auto_active_relation_types` 默认只包含 `same_episode`、`supports`、`related`；`require_review_for_high_impact=true` 是关系激活安全边界，不得用配置迁移静默关闭。
