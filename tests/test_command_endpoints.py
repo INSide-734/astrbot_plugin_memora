@@ -229,6 +229,74 @@ def test_diagnostic_endpoints_keep_admin_permission_decorators() -> None:
         assert permission_index > previous_command_index
 
 
+def test_command_endpoints_are_owned_by_plugin_entrypoint() -> None:
+    """确保拆分后的命令仍由 AstrBot 插件入口模块注册。"""
+    endpoint_names = (
+        "status",
+        "health",
+        "diagnostics",
+        "search",
+        "trace",
+        "forget",
+        "rebuild_index",
+        "rebuild_graph",
+        "webui",
+        "summarize",
+        "reset",
+        "cleanup",
+        "help",
+    )
+
+    for endpoint_name in endpoint_names:
+        endpoint = getattr(CommandEndpointsMixin, endpoint_name)
+        assert endpoint.__module__ == "main"
+
+
+def test_legacy_command_handlers_are_removed_without_touching_others() -> None:
+    """只清理旧模块归属的 /lmem 命令处理器。"""
+    from core.command_endpoints import _remove_legacy_command_handlers
+
+    class Handler:
+        """用于模拟 AstrBot 注册表条目的最小对象。"""
+
+        def __init__(self, module_path: str, name: str) -> None:
+            """保存处理器所属模块和方法名称。"""
+            self.handler_module_path = module_path
+            self.handler_name = name
+
+    class Registry:
+        """用于观察注册表删除范围的最小容器。"""
+
+        def __init__(self, handlers: list[Handler]) -> None:
+            """使用传入的处理器列表初始化注册表。"""
+            self.handlers = handlers
+
+        def __iter__(self):
+            """返回当前处理器的迭代器。"""
+            return iter(self.handlers)
+
+        def remove(self, handler: Handler) -> None:
+            """删除指定的处理器。"""
+            self.handlers.remove(handler)
+
+    legacy_group = Handler("core.command_endpoints", "lmem")
+    legacy_endpoint = Handler("core.command_endpoints", "rebuild_graph")
+    non_command_handler = Handler("core.command_endpoints", "unrelated")
+    another_plugin_handler = Handler("other_plugin.commands", "lmem")
+    registry = Registry(
+        [
+            legacy_group,
+            legacy_endpoint,
+            non_command_handler,
+            another_plugin_handler,
+        ]
+    )
+
+    _remove_legacy_command_handlers(registry)
+
+    assert registry.handlers == [non_command_handler, another_plugin_handler]
+
+
 class TestCleanupModeMapping:
     @pytest.mark.asyncio
     async def test_cleanup_preview_maps_to_dry_run_true(self) -> None:
