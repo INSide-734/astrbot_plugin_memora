@@ -10,7 +10,7 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/Sheet";
+} from "@/components/ui/sheet";
 
 export interface EntityEditorLabels {
   edit: string;

@@ -4,7 +4,7 @@ import { X } from "lucide-react";
 
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
+import { Input } from "@/components/ui/input";
 
 export interface TagEditorProps {
   label: string;

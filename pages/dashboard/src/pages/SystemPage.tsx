@@ -4,7 +4,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { dashboardLocale, formatDashboardDate, formatDashboardNumber, translateEnum } from "@/lib/i18n";
 import { Button } from "@/components/ui/Button";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { TopicSegmentationConfig } from "@/components/TopicSegmentationConfig";
 import { QualityMonitorTab } from "@/components/system/QualityMonitorTab";
 import { DelegationTab } from "@/components/system/DelegationTab";

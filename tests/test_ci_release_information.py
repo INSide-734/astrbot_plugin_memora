@@ -32,7 +32,7 @@ def test_release_workflow_publishes_artifact_details_and_checksums() -> None:
     upload_step = next(
         step
         for step in build_job["steps"]
-        if step.get("uses") == "actions/upload-artifact@v4"
+        if step.get("uses") == "actions/upload-artifact@v7"
         and step.get("with", {}).get("if-no-files-found") == "error"
     )
     assert "dist/*.zip" in upload_step["with"]["path"]

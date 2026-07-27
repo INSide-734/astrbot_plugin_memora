@@ -13,7 +13,7 @@ import { DetailField, DetailGrid, DetailSection, DetailText } from "@/components
 import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { EditConflictDialog } from "@/components/editing/EditConflictDialog";
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/Button";
 import { DataTable } from "@/components/data-table/DataTable";
 import { actionsColumn, selectionColumn } from "@/components/data-table/data-table-columns";
