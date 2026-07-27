@@ -191,14 +191,10 @@ pip install -r requirements.txt
 3. Restart AstrBot — the plugin will automatically register and begin background initialization.
 
 4. Initialization requires both Embedding Provider and LLM Provider to be properly configured in AstrBot. If Providers are temporarily unavailable, the plugin enters background retry mode (up to 60 attempts).
-
 ## Developer Validation
 
-Developer setup and the unified quality gate are documented in `docs/DEV_SETUP.md`; the latest gate result is tracked in `docs/QUALITY_GATE_STATUS.md`.
-
-```bash
-python scripts/check_all.py
-```
+Developer setup and the unified quality gate are documented in `docs/DEV_SETUP.md`. The locked uv environment is the reproducible source for development and CI; `requirements.txt` remains the AstrBot plugin installation entrypoint.
+Run `uv sync --locked --dev`, then `uv run --locked python scripts/check_all.py`.
 
 ## Adaptive memory injection
 
