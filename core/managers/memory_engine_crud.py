@@ -1,7 +1,4 @@
-"""
-MemoryEngine CRUD Mixin
-提供 add_memory / search_memories / get_memory / update_memory / delete_memory / _delete_sub_resources
-"""
+"""提供 MemoryEngine 的增删改查、检索和派生维护入口。"""
 
 from __future__ import annotations
 
@@ -19,6 +16,7 @@ from ..retrieval.query_rewriter import resolve_reference_time
 from ..retrieval.rrf_fusion import HybridResult
 from ..utils.number_utils import clamp_float
 from .atom_source_binding import bind_atoms_to_canonical_source
+from .canonical_memory_reader import load_canonical_memory
 from .memory_engine_evolution_hooks import memory_revision
 from .write_op_serialization import serialize_atom_for_repair
 
@@ -501,23 +499,11 @@ class MemoryEngineCRUDMixin:
         """按 canonical 整数 ID 读取记忆详情。"""
 
         try:
-            docs = await self.faiss_db.document_storage.get_documents(
-                metadata_filters={}, ids=[memory_id], limit=1
+            return await load_canonical_memory(
+                self.faiss_db,
+                self.db_connection,
+                memory_id,
             )
-            if not docs or len(docs) == 0:
-                return None
-            doc = docs[0]
-            result = {
-                "id": doc["id"],
-                "text": doc["text"],
-                "metadata": doc["metadata"],
-            }
-            # Faiss DocumentStorage 会同时返回这两个 canonical 时间字段；
-            # 测试替身或旧后端缺失时保持既有返回形状。
-            for field in ("created_at", "updated_at"):
-                if field in doc:
-                    result[field] = doc[field]
-            return result
         except asyncio.CancelledError:
             raise
         except Exception:

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import time
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiosqlite
 import pytest
 
 import core.monitoring.metrics as monitoring_metrics
@@ -67,6 +69,56 @@ class TestMemoryEngineGetMemory:
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         result = await engine.get_memory(42)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_memory_preserves_raw_sqlite_revision(
+        self,
+        tmp_db_path: str,
+    ) -> None:
+        """canonical revision 必须保留 SQLite 原值供 Atom 事务校验。"""
+
+        raw_revision = "2026-07-24 02:21:07.123456"
+        async with aiosqlite.connect(tmp_db_path) as db:
+            await db.execute(
+                """CREATE TABLE documents (
+                       id INTEGER PRIMARY KEY, text TEXT NOT NULL, metadata TEXT,
+                       created_at TEXT, updated_at TEXT
+                   )"""
+            )
+            await db.execute(
+                "INSERT INTO documents(id,text,metadata,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    17,
+                    "匿名 canonical 正文",
+                    json.dumps({"privacy_level": "shared"}),
+                    raw_revision,
+                    raw_revision,
+                ),
+            )
+            await db.commit()
+
+        mock_faiss = MagicMock()
+        mock_faiss.document_storage.get_documents = AsyncMock(
+            return_value=[
+                {
+                    "id": 17,
+                    "text": "匿名 canonical 正文",
+                    "metadata": json.dumps({"privacy_level": "shared"}),
+                    "created_at": "2026-07-24T02:21:07.123456",
+                    "updated_at": "2026-07-24T02:21:07.123456",
+                }
+            ]
+        )
+        engine = MemoryEngine(db_path=tmp_db_path, faiss_db=mock_faiss)
+        engine.db_connection = await aiosqlite.connect(tmp_db_path)
+        try:
+            result = await engine.get_memory(17)
+        finally:
+            await engine.db_connection.close()
+
+        assert result is not None
+        assert result["updated_at"] == raw_revision
 
 
 class TestMemoryEngineAddMemoryErrors:
