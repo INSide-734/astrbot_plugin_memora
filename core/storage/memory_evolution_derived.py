@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -23,6 +24,19 @@ from .memory_evolution_derived_helpers import (
     _projection,
     _relation,
 )
+
+
+def _serialized_write(method):
+    """串行化共享 SQLite 连接上的写操作，并在取消时释放锁。"""
+
+    @functools.wraps(method)
+    async def wrapper(self, *args, **kwargs):
+        """在共享写锁内执行被包装的异步方法。"""
+
+        async with self._write_lock:
+            return await method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class MemoryEvolutionDerivedMixin:
@@ -245,6 +259,7 @@ class MemoryEvolutionDerivedMixin:
             bundles.append(ProjectionBundle(projection, sources))
         return bundles
 
+    @_serialized_write
     async def invalidate_for_source_revision(self, memory_id: int, revision_token: str) -> int:
         if not self.connection:
             raise RuntimeError("MemoryEvolutionStore 未初始化 -- 先调用 initialize()")
@@ -323,6 +338,7 @@ class MemoryEvolutionDerivedMixin:
             await self.connection.rollback()
             raise
 
+    @_serialized_write
     async def invalidate_for_deleted_source(self, memory_id: int) -> int:
         """在 canonical 删除提交后让引用该 source 的派生对象立即不可见。
 
@@ -394,6 +410,7 @@ class MemoryEvolutionDerivedMixin:
             await self.connection.rollback()
             raise
 
+    @_serialized_write
     async def rollback_job(self, job_id: str) -> int:
         """回滚指定 evolution job 产生且仍归属于该 job 的派生对象。"""
 
@@ -439,6 +456,7 @@ class MemoryEvolutionDerivedMixin:
             await self.connection.rollback()
             raise
 
+    @_serialized_write
     async def invalidate_all_derived(self) -> dict[str, int]:
         """为全量重建失效旧 relation/projection，并清空旧 source mapping。"""
 
@@ -478,6 +496,7 @@ class MemoryEvolutionDerivedMixin:
             await self.connection.rollback()
             raise
 
+    @_serialized_write
     async def cleanup_orphaned_derived(self) -> int:
         """标记缺失或陈旧 canonical source 的 relation/projection，并清理 mapping。"""
 

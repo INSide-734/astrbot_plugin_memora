@@ -8,6 +8,8 @@ from typing import Any
 
 from astrbot.api import logger
 
+from .write_coordinator import write_with_retry
+
 
 def memory_revision(memory: dict[str, Any]) -> str:
     """从 canonical 读取结果提取稳定 revision token。"""
@@ -42,8 +44,11 @@ class MemoryEngineEvolutionHooksMixin:
             sources = await store.load_sources((int(memory_id),))
             if not sources:
                 return
-            await store.invalidate_for_source_revision(
-                int(memory_id), sources[0].revision_token
+            await write_with_retry(
+                lambda: store.invalidate_for_source_revision(
+                    int(memory_id),
+                    sources[0].revision_token,
+                )
             )
         except asyncio.CancelledError:
             raise
@@ -62,7 +67,7 @@ class MemoryEngineEvolutionHooksMixin:
         try:
             sources = await manager.store.load_sources((int(memory_id),))
             if sources:
-                await manager.schedule_consider(sources[0])
+                await write_with_retry(lambda: manager.schedule_consider(sources[0]))
         except asyncio.CancelledError:
             raise
         except Exception:

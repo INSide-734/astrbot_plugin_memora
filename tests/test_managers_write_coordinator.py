@@ -1,4 +1,4 @@
-"""测试 write_coordinator module — connection health, retry, locking."""
+"""测试写协调器的连接健康、重试与锁行为。"""
 
 from __future__ import annotations
 
@@ -112,12 +112,12 @@ class TestConnectionRegistry:
 
     @pytest.mark.asyncio
     async def test_try_repair_reconnects(self, tmp_db_path: str) -> None:
-        # Create an actual database file for the reconnect test
+        # 为重连测试创建真实数据库文件。
         async with aiosqlite.connect(tmp_db_path) as db:
             await db.execute("CREATE TABLE IF NOT EXISTS test (id INTEGER)")
             await db.commit()
 
-        # Register with a dead mock connection
+        # 注册一个已经失效的模拟连接。
         dead_db = MagicMock()
         dead_db._conn = None
         mod = MagicMock()
@@ -128,17 +128,17 @@ class TestConnectionRegistry:
         assert mod._db is not None
         assert mod._db is ConnectionRegistry._connection
 
-        # Clean up
+        # 释放重连测试创建的连接。
         if ConnectionRegistry._connection is not None:
             await ConnectionRegistry._connection.close()
 
     @pytest.mark.asyncio
     async def test_try_repair_handles_reconnect_failure(self) -> None:
         old_mock = MagicMock()
-        old_mock._conn = None  # Ensure is_alive() returns False
+        old_mock._conn = None  # 确保存活检查返回 False。
         ConnectionRegistry.register("nonexistent.db", old_mock, [])
 
-        # This will fail on connect, but test that old close is attempted
+        # 连接会失败，但仍需确认旧连接已尝试关闭。
         with patch("aiosqlite.connect", side_effect=Exception("cannot connect")):
             result = await ConnectionRegistry.try_repair()
             assert result is False
@@ -157,6 +157,7 @@ class TestWriteWithRetry:
 
     @pytest.mark.asyncio
     async def test_retry_on_lock_then_succeed(self) -> None:
+        reset_write_metrics_snapshot()
         call_count = [0]
 
         async def op() -> str:
@@ -168,6 +169,9 @@ class TestWriteWithRetry:
         result = await write_with_retry(op, max_retries=3, base_delay=0.001)
         assert result == "ok"
         assert call_count[0] == 2
+        snapshot = get_write_metrics_snapshot()
+        assert snapshot["failures_total"] == 0
+        assert snapshot["last_error"] is None
 
     @pytest.mark.asyncio
     async def test_raises_on_connection_fatal(self) -> None:
