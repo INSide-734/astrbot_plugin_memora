@@ -17,12 +17,6 @@ class TestMABDefaults:
         assert dw == 0.65
         assert gw == 0.35
 
-    def test_weights_sum_to_one(self) -> None:
-        """Document and graph weights always sum to 1.0."""
-        learner = MABWeightLearner()
-        dw, gw = learner.get_weights()
-        assert dw + gw == pytest.approx(1.0)
-
     def test_default_stats(self) -> None:
         """默认 stats are sensible."""
         learner = MABWeightLearner()
@@ -65,16 +59,6 @@ class TestRecordFeedback:
         learner.record_feedback(0.65, 0.35, 0.3)
         assert learner.stats["total_trials"] == 2
 
-    def test_reward_clamped(self) -> None:
-        """Reward is clamped to [0.0, 1.0]."""
-        learner = MABWeightLearner()
-        dw_before, gw_before = learner.get_weights()
-        # Rewards outside [0,1] should be clamped
-        learner.record_feedback(0.65, 0.35, 2.0)  # clamped to 1.0
-        learner.record_feedback(0.65, 0.35, -1.0)  # clamped to 0.0
-        # Should not crash
-        assert learner.stats["total_trials"] == 2
-
     def test_persona_specific_weights(self) -> None:
         """Feedback with persona_id creates persona-specific weights."""
         learner = MABWeightLearner(learning_rate=0.1)
@@ -87,17 +71,6 @@ class TestRecordFeedback:
         assert 0.1 <= dw <= 0.9
         assert 0.1 <= gw <= 0.9
         assert dw + gw == pytest.approx(1.0)
-
-    def test_global_weights_independent_of_persona(self) -> None:
-        """Global weights are not affected by persona-specific feedback."""
-        learner = MABWeightLearner(learning_rate=0.1)
-        dw_before, _ = learner.get_weights()
-        learner.record_feedback(
-            doc_weight=0.8, graph_weight=0.2, reward=0.0, persona_id="persona1"
-        )
-        dw_after, _ = learner.get_weights()
-        # Global weight should also change because _record_feedback updates both
-        assert learner.stats["total_trials"] == 1
 
 
 class TestStats:

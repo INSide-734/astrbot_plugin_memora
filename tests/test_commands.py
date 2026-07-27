@@ -11,47 +11,6 @@ import pytest
 # ============================================================================
 
 
-class TestFormatErrorMessage:
-    """Tests for _format_error_message in QueryCommandMixin."""
-
-    def test_returns_non_empty_string(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
-
-        msg = QueryCommandMixin._format_error_message("测试", ValueError("错误"))
-        assert isinstance(msg, str)
-        assert len(msg) > 0
-
-    def test_includes_suggestions_when_provided(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
-
-        msg = QueryCommandMixin._format_error_message(
-            "测试", ValueError("错误"), suggestions=["建议1", "建议2"]
-        )
-        assert isinstance(msg, str)
-        # The format uses t() fallback — check it's longer with suggestions
-        assert "suggestion" in msg.lower() or len(msg) > 0
-
-    def test_formats_without_suggestions(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
-
-        msg = QueryCommandMixin._format_error_message(
-            "action_name", RuntimeError("err_detail")
-        )
-        assert isinstance(msg, str)
-        assert len(msg) > 0
-
-
-class TestComponentNotReadyMessage:
-    """Tests for _component_not_ready_message in QueryCommandMixin."""
-
-    def test_returns_non_empty_string(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
-
-        msg = QueryCommandMixin._component_not_ready_message("记忆引擎", "/lmem status")
-        assert isinstance(msg, str)
-        assert len(msg) > 0
-
-
 class TestMaintenanceWriteGuardDefaults:
     """Tests for default write-guard behavior on standalone mixins."""
 

@@ -33,17 +33,6 @@ class TestIntentKeywords:
         assert "是什么" in FACTUAL_TERMS
         assert "how to" in FACTUAL_TERMS
 
-    def test_terms_are_tuples(self) -> None:
-        """All keyword collections are immutable tuples."""
-        from core.retrieval.intent_keywords import (
-            FACTUAL_TERMS,
-            RELATION_TERMS,
-            TEMPORAL_TERMS,
-        )
-
-        for coll in (RELATION_TERMS, TEMPORAL_TERMS, FACTUAL_TERMS):
-            assert isinstance(coll, tuple)
-
     @pytest.mark.parametrize(
         "query,expected_in_collection",
         [

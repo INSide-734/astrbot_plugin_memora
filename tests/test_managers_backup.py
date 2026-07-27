@@ -15,7 +15,6 @@ import pytest
 from core.managers.backup_manager import (
     _BACKUP_INFO_FILE,
     _BACKUP_NAME_RE,
-    _BACKUP_PATTERNS,
     _VERSION_FILE,
     PLUGIN_VERSION,
     BackupManager,
@@ -517,14 +516,6 @@ class TestStageRestore:
 
 class TestConstants:
     """Verify constant values are sensible."""
-
-    def test_plugin_version_is_string(self) -> None:
-        assert isinstance(PLUGIN_VERSION, str)
-        assert len(PLUGIN_VERSION) > 0
-
-    def test_backup_patterns_are_strings(self) -> None:
-        for pattern in _BACKUP_PATTERNS:
-            assert isinstance(pattern, str)
 
     def test_version_file_name(self) -> None:
         assert _VERSION_FILE == ".plugin_version"

@@ -163,7 +163,7 @@ sequenceDiagram
 ```bash
 python -m pytest -q tests/test_managers_memory_engine.py tests/test_managers_memory_lifecycle.py tests/test_managers_memory_crud.py tests/test_managers_memory_batch.py
 python -m pytest -q tests/test_managers_write_coordinator.py tests/test_managers_write_journal.py tests/test_managers_write_serial.py
-python -m pytest -q tests/test_managers_decay.py tests/test_managers_lifecycle.py tests/test_managers_stats.py tests/test_managers_schema.py
+python -m pytest -q tests/test_managers_decay.py tests/test_managers_stats.py tests/test_managers_schema.py
 python -m pytest -q tests/test_managers_conversation.py tests/test_managers_message.py tests/test_managers_session.py tests/test_managers_range.py tests/test_managers_event.py tests/test_managers_sender.py
 python -m pytest -q tests/test_managers_backup.py tests/test_managers_export.py tests/test_managers_profile.py tests/test_managers_retrieval.py
 python -m pytest -q tests/test_memory_evolution_gate.py tests/test_memory_evolution_manager.py

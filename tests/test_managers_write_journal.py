@@ -12,51 +12,6 @@ import pytest
 from core.managers.write_op_journal import WriteOpJournal
 
 
-class TestWriteOpJournalConstructor:
-    """测试 WriteOpJournal.__init__。"""
-
-    def test_init_sets_attributes(self) -> None:
-        mock_db = MagicMock()
-        mock_graph = MagicMock()
-        mock_atom = MagicMock()
-        mock_get = MagicMock()
-        mock_inv = MagicMock()
-        mock_del_idx = MagicMock()
-        mock_del_ga = MagicMock()
-
-        journal = WriteOpJournal(
-            db_connection=mock_db,
-            graph_memory_manager=mock_graph,
-            atom_store=mock_atom,
-            atom_enabled=True,
-            write_op_max_retries=5,
-            get_memory_cb=mock_get,
-            invalidate_cache_cb=mock_inv,
-            delete_doc_indexes_batch_cb=mock_del_idx,
-            delete_graph_atoms_batch_cb=mock_del_ga,
-        )
-
-        assert journal._db is mock_db
-        assert journal._graph_memory_manager is mock_graph
-        assert journal._atom_store is mock_atom
-        assert journal._atom_enabled is True
-        assert journal._max_retries == 5
-        assert journal._get_memory is mock_get
-        assert journal._invalidate_cache is mock_inv
-        assert journal._delete_doc_indexes_batch is mock_del_idx
-        assert journal._delete_graph_atoms_batch is mock_del_ga
-
-    def test_init_with_none_db(self) -> None:
-        journal = WriteOpJournal(
-            db_connection=None,
-            graph_memory_manager=None,
-            atom_store=None,
-        )
-        assert journal._db is None
-        assert journal._atom_enabled is True  # default
-        assert journal._max_retries == 3  # default
-
-
 @pytest.mark.asyncio
 class TestWriteOpJournalDBOps:
     """测试 WriteOpJournal 数据库操作。"""

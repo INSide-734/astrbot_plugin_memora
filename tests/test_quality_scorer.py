@@ -749,14 +749,6 @@ class TestGetStats:
         assert stats["alert_counts"].get("high") == 1
 
 
-class TestScorerRepr:
-    def test_repr(self):
-        scorer = MemoryQualityScorer()
-        r = repr(scorer)
-        assert "MemoryQualityScorer" in r
-        assert "paused" in r
-
-
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------

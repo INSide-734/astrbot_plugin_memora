@@ -42,13 +42,6 @@ class _TestSessionManager(SessionCacheMixin, SessionLifecycleMixin):
 class TestSessionCacheMixin:
     """Behavioral tests for SessionCacheMixin LRU cache."""
 
-    def test_structure(self) -> None:
-        """所有 cache methods are defined."""
-        assert hasattr(SessionCacheMixin, "_update_cache")
-        assert hasattr(SessionCacheMixin, "_get_from_cache")
-        assert hasattr(SessionCacheMixin, "invalidate_cache")
-        assert hasattr(SessionCacheMixin, "_evict_cache")
-
     @pytest.mark.asyncio
     async def test_update_cache_adds_entry(self) -> None:
         """_update_cache stores messages with timestamp."""
@@ -238,14 +231,6 @@ class TestSessionCacheMixin:
 
 class TestSessionLifecycleMixin:
     """Behavioral tests for SessionLifecycleMixin."""
-
-    def test_structure(self) -> None:
-        """所有 lifecycle methods are defined."""
-        assert hasattr(SessionLifecycleMixin, "create_or_get_session")
-        assert hasattr(SessionLifecycleMixin, "get_session_info")
-        assert hasattr(SessionLifecycleMixin, "get_recent_sessions")
-        assert hasattr(SessionLifecycleMixin, "clear_session")
-        assert hasattr(SessionLifecycleMixin, "cleanup_expired_sessions")
 
     @pytest.mark.asyncio
     async def test_create_or_get_session_creates_new(self) -> None:

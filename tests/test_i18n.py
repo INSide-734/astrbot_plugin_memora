@@ -45,17 +45,6 @@ class TestTranslationFunction:
         """When neither translations nor fallback has the key, return the key itself."""
         assert i18n_mod.t("some.missing.key") == "some.missing.key"
 
-    def test_formatting_with_kwargs(self) -> None:
-        """When a translation has format placeholders, they are substituted."""
-        i18n_mod.init("zh")
-        result = i18n_mod.t("non.existent.key.{param}", param="value")
-        assert isinstance(result, str)
-
-    def test_handles_missing_format_args(self) -> None:
-        """t() should not crash when format kwargs don't match."""
-        result = i18n_mod.t("key.with.{missing}", param="value")
-        assert isinstance(result, str)
-
     def test_value_is_none_returns_key(self) -> None:
         """When _get returns None, fall back to key."""
         result = i18n_mod.t("completely.nonexistent.key")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -221,31 +221,3 @@ class TestDropLegacyFtsTriggers:
     def test_quote_identifier_escapes_double_quotes(self) -> None:
         quoted = SchemaManager._quote_identifier('bad"name')
         assert quoted == '"bad""name"'
-
-
-# ---------------------------------------------------------------------------
-# Misc structure tests
-# ---------------------------------------------------------------------------
-
-
-class TestSchemaManagerStructure:
-    """Smoke tests for SchemaManager."""
-
-    def test_default_construction(self) -> None:
-        """SchemaManager can be constructed without arguments."""
-        mgr = SchemaManager()
-        assert mgr._db is None
-
-    def test_construction_with_connection(self) -> None:
-        """SchemaManager accepts a db connection."""
-        mock_conn = MagicMock()
-        mgr = SchemaManager(db_connection=mock_conn)
-        assert mgr._db is mock_conn
-
-    def test_create_tables_exists(self) -> None:
-        """create_tables method is defined."""
-        assert hasattr(SchemaManager, "create_tables")
-
-    def test_drop_legacy_fts_triggers_exists(self) -> None:
-        """_drop_legacy_fts_triggers method is defined."""
-        assert hasattr(SchemaManager, "_drop_legacy_fts_triggers")

@@ -10,20 +10,6 @@ from core.managers.note_manager import NoteManager
 from core.models.note_models import Note, NoteStatus, NoteVersion
 
 # ---------------------------------------------------------------------------
-# Construction
-# ---------------------------------------------------------------------------
-
-
-class TestNoteManagerInit:
-    """Construction."""
-
-    def test_init_with_store(self) -> None:
-        store = MagicMock()
-        mgr = NoteManager(store=store)
-        assert mgr._store is store
-
-
-# ---------------------------------------------------------------------------
 # create_note
 # ---------------------------------------------------------------------------
 

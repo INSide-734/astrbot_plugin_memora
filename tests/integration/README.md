@@ -6,7 +6,7 @@
 |--------|---------------------|------------------------------|
 | `test_pipeline_ingest.py` | Message ingestion, extraction preparation, storage handoff | Temporary test database and AstrBot mocks |
 | `test_pipeline_event.py` | Event handling, recall/reflection entry points, runtime component wiring | `tests/conftest.py` AstrBot mocks |
-| `test_pipeline_retrieval.py` | Document retrieval, graph retrieval, fusion/rerank main path | Local mock embedding/retriever data |
+| `test_pipeline_retrieval.py` | Document retrieval, graph retrieval, and fusion main path | Local mock embedding/retriever data |
 | `test_pipeline_graph.py` | Graph memory write, query, delete consistency | Temporary SQLite/FAISS-style test data |
 | `test_pipeline_lifecycle.py` | Initialization, schedulers, maintenance lifecycle | Test config and mock providers |
 
