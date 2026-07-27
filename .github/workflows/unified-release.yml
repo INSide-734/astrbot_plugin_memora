@@ -1,0 +1,252 @@
+name: 构建、测试与发布
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 发布类型
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - pre-release
+          - release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+  UV_VERSION: "0.11.x"
+
+jobs:
+  build-and-package:
+    name: 校验并打包
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      package_name: ${{ steps.release-info.outputs.package_name }}
+      prerelease: ${{ steps.release-info.outputs.prerelease }}
+      release_tag: ${{ steps.release-info.outputs.release_tag }}
+      release_type: ${{ steps.release-info.outputs.release_type }}
+      should_release: ${{ steps.release-info.outputs.should_release }}
+      version: ${{ steps.release-info.outputs.version }}
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 配置 uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: pages/dashboard/package-lock.json
+
+      - name: 安装 Python 依赖
+        run: uv sync --locked --dev
+
+      - name: 安装 Dashboard 依赖
+        working-directory: pages/dashboard
+        run: npm ci
+
+      - name: 安装 Playwright Chromium
+        working-directory: pages/dashboard
+        run: npx playwright install --with-deps chromium
+
+      - name: 确定发布信息
+        id: release-info
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+        run: |
+          PACKAGE_INFO="$(uv run --locked python -c 'from scripts.package_plugin import REPO_ROOT, load_metadata; metadata = load_metadata(REPO_ROOT); print(f"{metadata.name}\t{metadata.version}")')"
+          IFS=$'\t' read -r PACKAGE_NAME VERSION <<< "${PACKAGE_INFO}"
+          if [[ ! "${PACKAGE_NAME}" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "::error::metadata.yaml 中的包名不是安全发布名称：${PACKAGE_NAME}"
+            exit 1
+          fi
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "::error::metadata.yaml 中的版本不是可发布版本：${VERSION}"
+            exit 1
+          fi
+
+          RELEASE_TAG="v${VERSION}"
+          if [[ "${EVENT_NAME}" == "push" && "${REF_NAME}" != "${RELEASE_TAG}" ]]; then
+            echo "::error::标签 ${REF_NAME} 与 metadata.yaml 版本 ${RELEASE_TAG} 不一致"
+            exit 1
+          fi
+
+          SHOULD_RELEASE="true"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${RELEASE_TYPE}" == "none" ]]; then
+            SHOULD_RELEASE="false"
+          fi
+
+          PRERELEASE="false"
+          if [[ "${RELEASE_TAG}" == *-* || "${RELEASE_TYPE}" == "pre-release" ]]; then
+            PRERELEASE="true"
+          fi
+
+          if [[ "${SHOULD_RELEASE}" != "true" ]]; then
+            RESOLVED_RELEASE_TYPE="build"
+          elif [[ "${PRERELEASE}" == "true" ]]; then
+            RESOLVED_RELEASE_TYPE="pre-release"
+          else
+            RESOLVED_RELEASE_TYPE="release"
+          fi
+
+          echo "package_name=${PACKAGE_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "release_tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "release_type=${RESOLVED_RELEASE_TYPE}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${PRERELEASE}" >> "${GITHUB_OUTPUT}"
+          echo "should_release=${SHOULD_RELEASE}" >> "${GITHUB_OUTPUT}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: 运行项目统一质量门禁
+        run: uv run --locked python scripts/check_all.py
+
+      - name: 构建运行时包和源码包
+        run: uv run --locked python scripts/package_plugin.py --mode both --from-git --output-dir dist
+
+      - name: 生成 SHA-256 校验清单
+        working-directory: dist
+        run: sha256sum *.zip > SHA256SUMS.txt
+
+      - name: 从模板生成发布说明
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          RELEASE_TYPE: ${{ steps.release-info.outputs.release_type }}
+        run: |
+          uv run --locked python scripts/generate_release_notes.py \
+            --template .github/release-notes-template.md \
+            --checksums dist/SHA256SUMS.txt \
+            --changelog CHANGELOG.md \
+            --output dist/release-notes.md \
+            --commit "${COMMIT_SHA}" \
+            --release-type "${RELEASE_TYPE}"
+
+      - name: 写入构建摘要
+        run: cat dist/release-notes.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 上传发布产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: memora-release-${{ steps.release-info.outputs.release_tag }}
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+            dist/release-notes.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 上传浏览器 Smoke 截图
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-browser-smoke-${{ github.run_id }}
+          path: /tmp/memora-dashboard-browser-smoke-screenshots
+          if-no-files-found: ignore
+          retention-days: 7
+
+  create-release:
+    name: 创建 GitHub Release
+    needs: build-and-package
+    if: needs.build-and-package.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: 检出发布提交
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 为手动发布创建标签
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.build-and-package.outputs.release_tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+            TAG_COMMIT="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            CURRENT_COMMIT="$(git rev-parse HEAD)"
+            if [[ "${TAG_COMMIT}" != "${CURRENT_COMMIT}" ]]; then
+              echo "::error::标签 ${RELEASE_TAG} 已指向其他提交，拒绝覆盖"
+              exit 1
+            fi
+            echo "标签 ${RELEASE_TAG} 已指向当前提交，无需重复创建"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "${RELEASE_TAG}" -m "发布 ${RELEASE_TAG}"
+            git push origin "${RELEASE_TAG}"
+          fi
+
+      - name: 下载发布产物
+        uses: actions/download-artifact@v4
+        with:
+          name: memora-release-${{ needs.build-and-package.outputs.release_tag }}
+          path: dist
+
+      - name: 创建或更新 GitHub Release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-and-package.outputs.release_tag }}
+          name: ${{ needs.build-and-package.outputs.release_tag }}
+          body_path: dist/release-notes.md
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ needs.build-and-package.outputs.prerelease == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 写入发布摘要
+        shell: bash
+        env:
+          PRERELEASE: ${{ needs.build-and-package.outputs.prerelease }}
+          RELEASE_TAG: ${{ needs.build-and-package.outputs.release_tag }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.build-and-package.outputs.release_tag }}
+        run: |
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            RELEASE_KIND="预发布"
+          else
+            RELEASE_KIND="正式发布"
+          fi
+
+          {
+            echo "## GitHub Release 已发布"
+            echo
+            echo "- 标签：\`${RELEASE_TAG}\`"
+            echo "- 类型：${RELEASE_KIND}"
+            echo "- 页面：[打开 Release](${RELEASE_URL})"
+          } >> "${GITHUB_STEP_SUMMARY}"

@@ -1,0 +1,121 @@
+name: Pre-commit 与 Ruff
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.11.x"
+
+jobs:
+  code-quality:
+    name: 检查变更文件
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 配置 uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: 安装锁定依赖
+        run: uv sync --locked --dev
+
+      - name: 确定检查区间
+        id: range
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          HEAD_SHA="$(git rev-parse HEAD)"
+          ZERO_SHA="0000000000000000000000000000000000000000"
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            BASE_SHA="${PR_BASE_SHA}"
+          elif [[ "${EVENT_NAME}" == "push" && "${PUSH_BEFORE_SHA}" != "${ZERO_SHA}" ]] \
+            && git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
+            BASE_SHA="${PUSH_BEFORE_SHA}"
+          elif git rev-parse HEAD^ >/dev/null 2>&1; then
+            BASE_SHA="$(git rev-parse HEAD^)"
+          else
+            BASE_SHA="$(git hash-object -t tree /dev/null)"
+          fi
+
+          if [[ -z "${BASE_SHA}" ]] || ! git cat-file -e "${BASE_SHA}^{tree}"; then
+            echo "::error::无法确定有效的代码质量检查起点"
+            exit 1
+          fi
+
+          echo "base_sha=${BASE_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "head_sha=${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "检查提交区间 ${BASE_SHA}..${HEAD_SHA}"
+
+      - name: 运行 Ruff 代码检查
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.range.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.range.outputs.head_sha }}
+        run: |
+          mapfile -d '' PYTHON_FILES < <(
+            git diff --name-only --diff-filter=ACMR -z \
+              "${BASE_SHA}" "${HEAD_SHA}" -- '*.py'
+          )
+          if (( ${#PYTHON_FILES[@]} == 0 )); then
+            echo "本次提交区间没有需要 Ruff 检查的 Python 文件"
+            exit 0
+          fi
+          uv run --locked ruff check "${PYTHON_FILES[@]}"
+
+      - name: 检查 Ruff 格式
+        if: ${{ always() && steps.range.outcome == 'success' }}
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.range.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.range.outputs.head_sha }}
+        run: |
+          mapfile -d '' PYTHON_FILES < <(
+            git diff --name-only --diff-filter=ACMR -z \
+              "${BASE_SHA}" "${HEAD_SHA}" -- '*.py'
+          )
+          if (( ${#PYTHON_FILES[@]} == 0 )); then
+            echo "本次提交区间没有需要检查格式的 Python 文件"
+            exit 0
+          fi
+          uv run --locked ruff format --check "${PYTHON_FILES[@]}"
+
+      - name: 运行 pre-commit
+        if: ${{ always() && steps.range.outcome == 'success' }}
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.range.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.range.outputs.head_sha }}
+        run: |
+          uv run --locked pre-commit run \
+            --from-ref "${BASE_SHA}" \
+            --to-ref "${HEAD_SHA}" \
+            --show-diff-on-failure \
+            --color=always

@@ -1,283 +1,77 @@
-# Changelog
+# 更新日志
 
-Memora 项目的所有重要变更都将记录在此文件中。
+Memora 的所有重要变更都记录在此文件中。
 
-格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
-版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
+本文档遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
+版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased] — 2026-07-23
+## [1.0.0] — 2026-07-27
 
-### feat: 只读诊断命令
+Memora 的首个正式版本，为 AstrBot 提供从对话采集、长期存储、混合检索到请求内安全注入的完整记忆生命周期，并配套可视化管理、诊断、备份和离线评测能力。
 
-- **健康评分** — 新增管理员命令 `/lmem health`，以本地化文本展示运行时健康分、异常领域和固定排障建议，不回显 Provider 原始错误。
-- **实时快照** — 新增管理员命令 `/lmem diagnostics`，仅输出 Provider、召回、后台任务、索引、写协调器和 Prometheus 的 allowlist 标量。
-- **召回追踪** — 新增管理员命令 `/lmem trace <query> [k]`，按当前会话和群聊隐私边界执行可解释召回；聊天只显示阶段、路由、记忆 ID 与评分，完整 trace 沿用现有 200 条有界存储。
+### 新增
 
-### feat: 稳定协议用户身份
+#### 记忆生命周期与身份
 
-- **OneBot 11 QQ 主键** — 可信用户统一以规范化 QQ 号作为 canonical user ID；昵称、群名片和 AstrBot 包装层显示名不再充当人物主键，冲突或非法身份按 fail-closed 处理。
-- **名称与别名同步** — 当前名称按群聊/私聊作用域更新，已保存会话消息同步新名称，旧名称保留为作用域别名；Bot 回复固定使用平台 `self_id`。
-- **协议扩展边界** — 固定适配器注册表、不可变解析结果和统一 Runtime 允许后续协议实现相同身份契约，不需要修改事件主链或记忆处理器。
-- **稳定记忆参与者** — 记忆抽取以 `QQ:10001` 标签和稳定参与者 ID 锚定人物；历史别名仅在唯一证据成立时于候选副本上只读增强，并统一覆盖五种动态交付方式，绝不写入 System Prompt。
-- **无数据库迁移** — 身份目录仅幂等创建三张独立表；本次不执行 `ALTER TABLE`、历史扫描、canonical memory 重写、迁移或回填。
+- 从对话中抽取、分类并持久化记忆原子，支持话题分割、会话总结、群聊环境消息反思、衰减、归档与遗忘。
+- 以 SQLite 中的 canonical memory 作为唯一权威记录；FTS5、FAISS、图关系和 Projection 均为可校验、可失效、可重建的派生数据。
+- 为 OneBot 11、QQ 官方 WebSocket 与 Webhook 接入稳定协议身份。QQ 号与不同平台实例下的 OpenID 严格隔离，名称变更只更新作用域显示名和历史别名，不改变 canonical user ID。
+- 新记忆保存受信任的参与者来源证据；历史别名仅在原会话作用域唯一匹配时用于只读召回增强，不回写原始记忆。
+- 提供默认关闭的记忆演化管线，以有界后台任务生成带 source revision 证据的关系和 Projection，不建立第二套记忆主键。
 
-### Breaking: 自适应记忆注入策略
+#### 检索、评测与注入
 
-- **可切换路由** — 支持 Manual、Auto 与 Hybrid；新安装默认采用 `manual + balanced + auto delivery`，需要回滚到确定性行为时使用 `manual + balanced`。
-- **高级预设** — Tool First、Low Cost、Balanced、Quality 的普通记忆字符预算分别为 `0/800/1200/2400`，最大条数分别为 `0/2/4/6`。
-- **安全注入边界** — 动态记忆不再进入 System Prompt；载荷仅在当前请求中临时存在，并受全局硬预算约束。
-- **完整策略工作台** — Dashboard 新增 Overview、Strategy Configuration 与 Decision History，用于查看、配置和审计注入决策。
-- **SQLite 决策记录** — 决策元数据全量持久化到 `injection_decisions`，不会保存查询文本、记忆正文/ID 或原始身份标识；默认保留 30 天和 100,000 行，两项均可配置。
-- **关闭与崩溃语义** — 正常关闭最多等待 5 秒刷新待写批次；进程崩溃可能丢失最后一个未刷新的批次。
-- **无旧配置迁移** — `recall_engine.injection_method` 已移除且没有兼容迁移；升级后必须用新字段重新配置，必要时可先采用 `manual + balanced`。
+- 组合 BM25 全文检索、FAISS 语义检索、图检索、RRF 融合、关系扩展、重排序和隐私过滤，并按会话、用户、群组、角色和有效期约束召回结果。
+- 支持 `manual`、`auto`、`hybrid` 三种注入路由，以及 Tool First、Low Cost、Balanced、Quality 四档预设。
+- 根据 Provider 能力选择当前请求内的临时交付方式；动态记忆不写入 System Prompt，并受条数、字符数和全局硬预算约束。
+- 异步记录脱敏注入决策，提供路由预览、决策历史和可解释召回 trace；记录不包含查询、Prompt、记忆正文、记忆 ID 列表或原始身份。
+- 提供 JSONL 检索数据集、Recall@K、MRR、nDCG@K、p95 延迟、消融对比和安全反馈排序 shadow，用于离线验证检索质量。
 
-### feat: Dashboard 全站数据表与实体编辑器重构
+#### 知识与个性化
 
-- **统一 DataTable** — 数据密集页面改用基于 TanStack React Table 的共享 DataTable，统一列头排序、选择列、操作列、横向滚动、当前详情行和键盘行激活。
-- **服务端排序契约** — 列表排序通过 allowlist 传递 `sort_by`/`sort_order`，在真实 `limit`/`offset` 分页前完成，并使用稳定 tie-breaker；排序、筛选、分页或查询变化会清除不可见行选择。
-- **选择性视图持久化** — 每张表按 `memora.table.<tableId>.v1` 只保存密度、列显隐、列顺序和左右固定列；排序、筛选、分页、选择和列宽不写入持久化状态，损坏偏好会安全回退并保护 required 列。
-- **统一实体详情编辑** — Knowledge、Memory、Notes、Profiles、Social、Jargon 和 Affection 详情统一使用 42rem 响应式 EntityEditorSheet，view/edit 共用一个 Sheet，body 独立滚动，危险/次要动作固定在 footer，并保留脏状态、重复提交保护和 revision 冲突流程。
-- **视觉验收覆盖** — 增加知识库表格默认/列视图、实体查看/编辑、移动端表格/编辑器、宽屏画像、暗色社交表格和紧凑注入决策表的 browser smoke 基线。
+- 提供知识库、笔记、用户画像、社交关系、好感度、Bot 情绪、表达模式和群聊黑话等存储与管理能力。
+- 为 AstrBot Agent 注册记忆搜索、主动记忆、笔记、知识库和用户画像工具。
+- 支持中文、English、Русский 三种界面与命令文本。
 
-### docs: 路线图 Milestone A 事实同步
+#### Dashboard、API 与运维
 
-- **当前事实入口** — 新增 `docs/QUALITY_GATE_STATUS.md`，记录最近一次 L0-L2 与统一 gate 的结果、耗时和失败归因。
-- **覆盖状态同步** — 根级 `AGENTS.md`、Dashboard/monitoring/tests 模块文档同步当前测试事实：167 个 Python 测试文件、19 个 Dashboard 前端测试、monitoring 核心文件已有直接测试。
-- **历史计划定位** — 旧深扫计划顶部增加状态说明，指向当前优化路线图与门禁状态文档。
-- **Integration smoke 说明** — 新增 `tests/integration/README.md`，明确 5 个 pipeline smoke 的覆盖承诺和 mock 依赖边界。
+- 提供 16 个 Dashboard 功能入口，覆盖概览、记忆、图谱、时间线、召回、注入、知识、笔记、画像、社交、好感度、黑话、学习、智能诊断、系统和配置。
+- 统一数据表排序、筛选、分页、列视图和选择行为；统一实体查看与编辑流程，并支持移动端布局、键盘操作、脏状态保护、revision 冲突和批量操作。
+- 提供与 AstrBot 配置联动的 Dashboard 配置页，支持字段校验、并发 revision、原子写回、运行时重载和失败回滚。
+- 提供 Page API、标准错误 envelope 与 SSE 实时事件，覆盖记忆、图谱、知识、笔记、画像、关系、注入、评测、备份、维护、诊断和配置等管理域。
+- 提供校验后发布的备份快照、定时备份、安全保留策略，以及带预检、维护锁、回滚和热重载的事务式恢复流程。
+- 系统概览支持检查 GitHub Release、查看发布说明、忽略版本和下载经 SHA-256 校验的 runtime 包；镜像失败时自动回退 GitHub，并复用 AstrBot 的 HTTP、HTTPS 或 SOCKS5 代理。
+- 宿主支持时，系统概览可在确认后自动安装 runtime、原子切换插件目录并请求 AstrBot 单插件重载；新版本重载失败会自动恢复旧目录，宿主不支持单插件重载时安全降级为仅下载。
+- 提供 `/lmem status`、`health`、`diagnostics`、`search`、`trace`、`forget`、`rebuild-index`、`rebuild-graph`、`webui`、`summarize`、`reset`、`cleanup`、`update` 和 `help` 管理命令。
+- 提供隐私安全的问题报告模式、运行时健康评分、性能与质量摘要、后台任务状态和有界召回追踪。
 
-### test: 门禁脚本状态输出
+#### 工程与发布
 
-- **Smoke 分目标状态** — `scripts/run_smoke.py` 逐个运行 integration 目标，输出每个目标的 pass/fail、耗时、汇总和总耗时。
-- **统一 gate 耗时记录** — `scripts/check_all.py` 为每个步骤和总流程输出耗时，失败时保留短失败归因。
-- **Dashboard 产物检查** — 新增 `scripts/check_dashboard_build_artifacts.py` 与 `npm run check:artifacts`，统一检查生产 `index.html` 是否为 classic script 单 bundle、无 `type="module"` / `crossorigin`、无陈旧 JS/CSS hash 堆积。
-- **元测试覆盖** — `tests/test_project_metadata.py` 增加脚本输出契约测试，防止门禁状态输出回退。
+- 建立 Python 3.12 锁定开发环境、pytest/Vitest 测试体系、Ruff 与 pre-commit 门禁，以及 Python、Dashboard、smoke 和构建产物检查组成的 CI 流程。
+- 提供经过校验的源码包与运行时包构建脚本，并检查 Dashboard 单文件构建产物的运行时兼容性。
+- 统一 `metadata.yaml`、Python 项目元数据、运行时注册版本和 Dashboard 包版本为 `1.0.0`。
 
-### feat: 可观测性摘要 API
+### 安全
 
-- **Metrics summary** — 新增 `GET /api/plugin/memora/metrics/summary`，返回 recall 性能、质量评分、后台任务和 Prometheus registry 的可序列化摘要。
-- **只读无副作用** — summary API 只读取现有 `_perf_tracker`、quality scorer 与 `_pending_tasks`，不会为了展示指标而惰性创建评分器或触发维护操作。
-- **观测文档** — 新增 `docs/OBSERVABILITY.md` 记录 API 结构、数据来源、Dashboard 接入契约与验证命令。
+- 所有写入、检索、编辑和派生流程均校验 scope、privacy、validity、role 与 revision；请求变更先完整构建，再原子应用。
+- 身份、Projection 和注入观测采用模型可见字段 allowlist，内部 ID、来源映射、歧义过程、Provider 凭据和敏感请求内容不会进入 Prompt 或诊断记录。
+- SQL 值使用参数绑定，动态排序与表名使用固定 allowlist；备份和恢复拒绝路径穿越、绝对路径及非法目标。
+- 初始化、后台任务和关闭流程传播取消信号；普通可恢复故障安全降级，不中断 AstrBot 聊天主链路。
 
-### feat: 检索质量评测基线
+### 修复
 
-- **离线评测 helper** — 新增 `core.evaluation.retrieval_quality`，支持 JSONL 样本加载、sync/async retriever runner、Recall@K、MRR、nDCG@K 与 p95 latency。
-- **MemoryEngine 评测适配器** — 新增 `make_memory_engine_retriever()`，将评测样本 metadata 映射到 `search_memories()` 的 session、user、chat、memory type、emotion、chain depth 等参数。
-- **检索样本集** — 新增 `private_basic`、`group_topic_shift`、`graph_relation`、`emotion_context`、`noise_negative` 五组 JSONL fixture，覆盖私聊、群聊话题切换、图关系、情绪上下文和负样本抗干扰。
-- **消融报告** — 新增 `AblationReport`、`compare_reports()` 与 `evaluate_variants()`，用于记录 graph expansion、emotion boost、seasonal boost、testing effect 等开关前后的指标差值。
-- **Boost trace 与 multi-hop 消融** — `RetrievalOptimizer.apply_boosts()` 支持可选 debug trace，multi-hop 检索支持按配置关闭图扩展或 topic 扩展，便于离线评测定位启发式贡献。
-- **评测文档** — 新增 `docs/RETRIEVAL_EVALUATION.md`，约束检索默认参数变更必须记录数据集、指标和副作用。
+- 修复初始化完成后运行期组件未及时创建、Provider 重试和后台调度器未完整关闭等生命周期问题。
+- 修复 SQLite 连接池跨数据库路径复用、维护游标阻塞 `VACUUM`、WAL/FTS 维护结果不完整等存储问题。
+- 修复 canonical 时间戳与 revision 丢失、结构化抽取字段被覆盖、派生数据并发写入和 Projection 来源映射校验问题。
+- 修复注入预算预留、请求作用域隔离、异步决策批次归属、工具可用性回退和历史注入清理边界。
+- 修复配置并发写回与回滚竞争、备份恢复失败状态、API 编辑冲突和敏感错误信息外泄风险。
+- 修复 Dashboard 移动端滚动与操作遮挡、长标签溢出、编辑竞态、表格固定列和配置导航状态问题。
 
-### fix: 存储连接池可靠性
+### 从预发布版本升级
 
-- **BaseStore pool path guard** — `BaseStore.init_pool()` 在不同 `db_path` 下会关闭旧池并重建，避免测试或运行期重初始化时静默复用旧数据库连接。
-- **连接池生命周期测试** — `tests/test_storage_base.py` 覆盖同路径重复初始化、不同路径重建、`close_pool()` 后重开和共享 PRAGMA 行为。
-- **存储维护 smoke** — `maintain_storage(vacuum=True)` 增加真实 SQLite + FTS + WAL checkpoint smoke，修复维护游标未关闭导致 `VACUUM` 失败的问题，并返回 FTS/WAL 诊断字段。
-
-## [Unreleased] — 2026-06-28
-
-### fix: 流程修复与质量门收口
-
-- **启动生命周期修复** — 初始化完成后即可创建运行期组件，不再依赖下一条消息触发
-- **后台任务治理** — terminate 统一停止 Provider retry、EventHandler 维护任务、DecayScheduler、BackfillScheduler
-- **BM25 表名校验** — validator / rebuilder 仅接受校验后的 FTS 表名
-- **备份恢复安全化** — 删除/恢复接口拒绝 `../`、绝对路径、分隔符和非法备份名
-- **Smoke 脚本恢复** — `scripts/run_smoke.py` 现在指向真实 integration tests，并在缺少 `uv` 时回退到 `python -m pytest`
-- **Dashboard 运行时安全控制** — Web API 触发 install/build 默认关闭，并带超时、并发锁和输出截断
-- **Dashboard 构建输出同步** — Vite 先输出到临时目录再同步回 `pages/dashboard/`，避免 `outDir` 覆盖源码警告
-
-### test: 最小前后端质量门
-
-- **统一本地 gate** — 新增 `python scripts/check_all.py`
-- **GitHub Actions CI** — 新增 Python + Node 双栈工作流
-- **pytest 配置固定化** — 新增 `pytest.ini`
-- **Dashboard 单测** — 新增 Bridge / `useRealtimeStream` Vitest 覆盖
-- **API 契约测试** — 新增前端 Bridge 端点与后端注册一致性校验
-- **全量回归状态** — 该轮 `python -m pytest tests -q` 为 3532 passed；当前基线以 `docs/QUALITY_GATE_STATUS.md` 为准
-
-### docs: 协作文档与元数据对齐
-
-- **命令文档对齐** — 根文档、README、多语言 README 同步为当前 `/lmem` 命令集
-- **版本元数据对齐** — `metadata.yaml`、`PLUGIN_VERSION`、`@register()`、Dashboard `package.json` 保持一致
-- **fast-context fallback** — 文档明确 `WINDSURF_API_KEY` 配置前提和本地搜索回退策略
-- **模块文档约定** — 明确根级 `AGENTS.md` + 模块级 `CLAUDE.md` 的现行约定
-
----
-
-## [1.0.0] — 2026-06-17
-
-### 初始发布
-
-Memora v1.0.0 — AstrBot 智能长期记忆插件的首个正式版本。
-
-### feat: 核心记忆引擎
-
-- **MemoryAtom 记忆原子模型** — 核心数据单元，包含 TTL、衰减类型、重要性、情感强度等时态属性
-- **MemoryEngine** — 统一记忆引擎，协调记忆的完整生命周期
-- **AtomLifecycleManager** — 原子生命周期管理：创建 → 激活 → 衰减 → 归档 → 遗忘
-- **MemoryProcessor** — LLM 驱动的记忆抽取管道，自动从对话中提取有价值信息
-- **ConversationManager** — 会话缓存与上下文管理
-
-### feat: 多路混合检索
-
-- **BM25 全文检索** — 基于 jieba 分词的中文 FTS5 全文搜索
-- **FAISS 向量检索** — 基于 Embedding 的语义相似度搜索
-- **RRF 融合** — Reciprocal Rank Fusion 融合 BM25 + 向量两路排序
-- **HybridRetriever** — 统一的混合检索入口
-- **DualRouteRetriever** — 文档路 + 图路双路并行召回
-- **CrossEncoder 重排序** — 提升检索结果精度
-- **LLM 重排序** — 基于 LLM 的结果重排序
-- **PersonalizedRanker** — 基于用户画像的个性化结果排序
-- **QueryRewriter** — 查询重写，提升召回效果
-
-### feat: 图记忆系统
-
-- **GraphStore** — 基于 SQLite 的图存储后端
-- **GraphCRUD / GraphQuery / GraphDelete** — 图数据的完整 CRUD 操作
-- **GraphRetriever** — 图检索：关键词匹配 + 向量搜索双路融合
-- **Knowledge graph visualization** — Dashboard 图谱可视化
-
-### feat: 知识库 & 笔记系统
-
-- **KnowledgeExtractor** — LLM 驱动的知识点自动抽取
-- **KnowledgeManager** — 知识库存储、检索、更新
-- **NoteGenerator** — LLM 驱动的对话总结和笔记生成
-- **NoteStore** — 笔记的持久化存储和检索
-- **标签管理** — 灵活的多维度标签体系
-
-### feat: 用户画像
-
-- **ProfileBuilder** — 对话中自动构建用户画像
-- **ProfileStore** — 用户画像持久化存储
-- **PersonaInterpretation** — 用户人格特征分析
-- **个性化对话策略** — 基于画像的个性化交互
-
-### feat: 记忆衰减与遗忘
-
-- **DecayScheduler** — 记忆衰减调度器，支持多种衰减策略
-- **DecayOperations** — 衰减计算引擎：线性 / 指数 / 对数 / 自适应
-- **EmotionScorer** — 情感强度评分，影响记忆权重
-- **自动遗忘** — 低价值/过期记忆自动清理
-
-### feat: 智能特性
-
-- **ReflectionHandler** — 反思机制，周期性回顾和整合记忆
-- **AutoLearning** — 从交互中持续学习和优化
-- **ProactiveReminder** — 基于记忆的主动提醒
-- **AnomalyDetector** — 记忆质量异常检测
-- **SeasonalRecall** — 时间敏感的周期性记忆召回
-- **PrivacyFilter** — 敏感信息自动过滤
-- **ContinuityTracker** — 对话连续性追踪
-
-### feat: 用户命令
-
-- `/lmem status` — 查看插件初始化状态与核心组件状态
-- `/lmem search <query> [k]` — 搜索记忆，`k` 默认为 5
-- `/lmem forget <doc_id>` — 删除指定记忆
-- `/lmem rebuild-index` — 重建向量索引
-- `/lmem rebuild-graph` — 重建图记忆索引
-- `/lmem webui` — 输出 WebUI 访问信息
-- `/lmem summarize` — 立即触发当前会话总结
-- `/lmem reset` — 重置当前会话长期记忆上下文
-- `/lmem cleanup [preview|exec]` — 清理历史消息中的记忆注入片段
-- `/lmem help` — 查看帮助信息
-
-### feat: LLM Agent 工具
-
-- **MemorySearchTool** — 记忆搜索工具
-- **MemoryMemorizeTool** — 主动记忆工具
-- **NoteTools** — 笔记管理工具集
-- **KnowledgeTools** — 知识库管理工具集
-- **ProfileTools** — 用户画像管理工具集
-
-### feat: Web Dashboard
-
-- **React 18 + TypeScript + Vite** — 现代前端技术栈
-- **Tailwind CSS + shadcn/ui** — 精美 UI 组件体系
-- **10 个功能页面** — Memory / Graph / Recall / Timeline / Profiles / Knowledge / Notes / Learning / System / Preview
-- **实时事件流** — SSE 支持
-- **Mock Server** — 独立开发调试环境
-
-### feat: REST API
-
-- **14+ API 端点** — 覆盖记忆读写、批量操作、统计、召回、图操作、知识库、笔记、画像、备份、学习、维护
-- **SSE 实时端点** — 实时事件推送
-- **统一响应格式** — 标准化的 API 响应封装
-
-### feat: 国际化 (i18n)
-
-- **zh** — 简体中文
-- **en** — English
-- **ru** — Русский
-
-### feat: 工程基础设施
-
-- **ConfigManager** — Pydantic 配置管理，所有默认值集中定义
-- **PluginInitializer** — 插件初始化编排，Provider 加载 + DB 建立 + 组件创建
-- **ProviderWaiter** — Provider 不可用时后台重试（最多 60 次）
-- **BackupManager** — 版本升级自动备份数据
-- **IndexValidator** — 索引一致性验证
-- **IndexRebuilder** — 索引自动重建
-- **SchemaManager** — 数据库 Schema 管理
-- **MemoraException 体系** — 分领域的异常类（Database / Retrieval / Initialization 等）
-
-### feat: 测试
-
-- **pytest + Vitest 最小质量门**
-- **完整 AstrBot Mock** — `conftest.py` 提供框架 Mock，无需真实环境
-- **后端回归** — 该轮为 116+ 测试文件、3532 个 pytest 用例；当前基线以 `docs/QUALITY_GATE_STATUS.md` 为准
-- **前端回归** — Dashboard Bridge / hooks Vitest 用例
-- **契约回归** — Page API contract test 覆盖前端调用与后端注册的一致性
-
-### feat: CI / 代码质量
-
-- **pre-commit hooks** — `.pre-commit-config.yaml` 配置
-- **ruff + ruff-format + mypy** — 代码格式化、静态检查与类型检查
-- **统一本地 gate** — `python scripts/check_all.py`
-- **GitHub Actions CI** — Python 回归 + smoke + Dashboard build/test
-
----
-
-## [Unreleased] — 2026-06-23
-
-### feat: 话题分割系统 (Topic Segmentation)
-
-- **Prompt Engineering (策略 A)** — 要求 LLM 输出 `memories[]` 数组，自动按话题分割记忆
-- **Embedding Clustering (策略 B)** — 后置聚类：按 embedding 相似度将 key_fact 聚类为独立话题
-- **Topic-aware Pre-chunking (策略 C)** — 前置分块：在 LLM 调用前检测话题边界
-- **Two-stage LLM (策略 D)** — 两阶段：第一阶段识别话题，第二阶段分别抽取
-- **A+B Hybrid 默认策略** — A 做主分割，B 做安全网回退
-- **TopicSegmentationRouter** — 运行时策略切换，支持热加载配置变更
-- **BackfillScheduler** — 存量记忆回填调度器，为旧版记忆重新执行话题分割
-- **配置键** — `topic_segmentation.*` 集中管理所有话题分割参数
-- **Dashboard 配置页** — TopicSegmentationConfig 组件，可视化策略管理
-
-### feat: 测试套件扩展
-
-- **116+ 测试文件** — 从早期 20 文件扩展到该轮 116+ 文件；当前数量见 `AGENTS.md` 与 `docs/QUALITY_GATE_STATUS.md`
-- **全覆盖** — 17 个核心模块 + 35 个管理器专项测试
-- **10 个存储层专项测试**
-- **10 个 API 层专项测试**
-- **完整 retrieval 管线测试** (20 retrieval 专项测试)
-- **19 个 processors 专项测试**
-- **话题分割集成测试** — 策略切换、性能基准、E2E 验证
-- **Dashboard 最小门禁** — Bridge / hooks Vitest + Page API contract test
-
-### fix: 发布就绪修复 (2026-06-23)
-
-- **版本号统一** — `backup_manager.py` PLUGIN_VERSION 从 2.4.0 修正为 1.0.0
-- **i18n 文件部署** — `.astrbot-plugin/i18n/` 补全 zh.json / en.json / ru.json
-- **Flaky 测试修复** — `test_cosine_similarity_matrix_latency` 阈值放宽至 3.0s
-- **Dashboard 构建** — 生产构建产物生成至 `pages/dashboard/assets/`
-
----
-
-## 版本规范
-
-- `[Major.Minor.Patch]` 严格遵循语义化版本
-- 标签格式：`feat` / `fix` / `refactor` / `docs` / `test` / `chore` / `perf` / `ci`
-
-## 参考
-
-- [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)
-- [Semantic Versioning](https://semver.org/lang/zh-CN/)
+- 运行环境要求 Python `>=3.12,<3.13`；AstrBot `>=4.24.2` 可获得完整的 Pages 与 WebUI 支持。
+- 运行前需要在 AstrBot 中配置可用的 Embedding Provider 和 LLM Provider。
+- 已移除 `recall_engine.injection_method`，且不提供旧字段迁移。请改用 `injection_routing_mode`、`injection_manual_preset` 和 `injection_delivery_override`；新安装默认使用 `manual + balanced + auto delivery`。
+- 稳定身份目录通过独立表幂等创建，不执行 `ALTER TABLE`、历史扫描、canonical memory 重写或身份回填。
+- `memory_evolution.enabled` 默认关闭；未显式启用时不会启动演化 worker，也不影响现有 canonical 记忆链路。
+- `1.0.0` 建立首个公开稳定契约，此前开发快照中的配置与数据行为不视为稳定 API。
