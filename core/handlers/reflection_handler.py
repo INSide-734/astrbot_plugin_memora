@@ -18,6 +18,7 @@ from ..managers.memory_engine import MemoryEngine
 from ..monitoring import report_debug_event, report_debug_exception
 from ..processors.memory_processor import MemoryProcessor
 from ..utils import OperationContext, get_persona_id
+from .reflection_trigger import ReflectionTrigger
 from .topic_batch_preparer import TopicBatchPreparer
 from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
@@ -73,6 +74,11 @@ class ReflectionHandler:
             config_manager=config_manager,
             memory_engine=memory_engine,
             memory_processor=memory_processor,
+        )
+        self._summary_trigger = ReflectionTrigger(
+            context=context,
+            config_manager=config_manager,
+            conversation_manager=conversation_manager,
         )
 
     async def handle_memory_reflection(
@@ -253,214 +259,7 @@ class ReflectionHandler:
             if not is_group:
                 await self._enforce_limit_cb(session_id)
 
-            session_info = await self._conversation_manager.get_session_info(session_id)
-            if not session_info:
-                report_debug_event(
-                    "reflection_state",
-                    component="reflection",
-                    stage="session",
-                    status="skipped",
-                    reason_code="session_info_unavailable",
-                )
-                logger.warning(
-                    f"[反思处理] [{session_id}] session_info 为空，跳过反思"
-                )
-                return
-
-            actual_message_count = (
-                await self._conversation_manager.store.get_message_count(session_id)
-            )
-
-            if session_info.message_count != actual_message_count:
-                logger.warning(
-                    f"[反思处理] [{session_id}] 数据不一致！"
-                    f"sessions表记录={session_info.message_count}, "
-                    f"实际消息数={actual_message_count}"
-                )
-
-            total_messages = actual_message_count
-
-            trigger_rounds = self._config_manager.get(
-                "reflection_engine.summary_trigger_rounds", 10
-            )
-
-            last_summarized_index = (
-                await self._conversation_manager.get_session_metadata(
-                    session_id,
-                    "last_summarized_index",
-                    0,
-                )
-            )
-
-            if last_summarized_index > total_messages:
-                logger.warning(
-                    f"[反思处理] [{session_id}] "
-                    f"last_summarized_index({last_summarized_index}) "
-                    f"> 实际消息数({total_messages})，调整为当前消息总数"
-                )
-                last_summarized_index = total_messages
-                await self._conversation_manager.update_session_metadata(
-                    session_id,
-                    "last_summarized_index",
-                    total_messages,
-                )
-
-            unsummarized_messages = total_messages - last_summarized_index
-            unsummarized_rounds = unsummarized_messages // 2
-
-            pending_summary = await self._conversation_manager.get_session_metadata(
-                session_id,
-                "pending_summary",
-                None,
-            )
-
-            logger.info(
-                f"[反思处理] [{session_id}] 总消息数：{total_messages}，"
-                f"上次总结位置：{last_summarized_index}，"
-                f"未总结轮数：{unsummarized_rounds}，"
-                f"触发阈值：{trigger_rounds} 轮，"
-                f"存在待处理失败总结：{pending_summary is not None}"
-            )
-
-            report_debug_event(
-                "reflection_state",
-                component="reflection",
-                stage="summary_gate",
-                status="completed" if unsummarized_rounds >= trigger_rounds else "skipped",
-                reason_code=(
-                    "summary_trigger_reached"
-                    if unsummarized_rounds >= trigger_rounds
-                    else "summary_threshold_not_reached"
-                ),
-                count=max(0, int(unsummarized_rounds)),
-            )
-
-            if unsummarized_rounds >= trigger_rounds:
-                logger.info(
-                    f"[{session_id}] 未总结轮数达到 {unsummarized_rounds} 轮，启动记忆反思任务"
-                )
-
-                start_index = last_summarized_index
-                end_index = total_messages
-                retry_count = 0
-
-                if pending_summary:
-                    pending_start = pending_summary.get("start_index", start_index)
-                    retry_count = pending_summary.get("retry_count", 0)
-
-                    if retry_count >= 3:
-                        report_debug_event(
-                            "reflection_state",
-                            component="reflection",
-                            stage="summary_gate",
-                            status="skipped",
-                            reason_code="pending_retry_exhausted",
-                            count=max(0, int(retry_count)),
-                        )
-                        logger.warning(
-                            f"[{session_id}] 待处理总结已连续失败 {retry_count} 次，放弃该范围 "
-                            f"[{pending_start}:{pending_summary.get('end_index', end_index)}]"
-                        )
-                        await self._conversation_manager.update_session_metadata(
-                            session_id,
-                            "pending_summary",
-                            None,
-                        )
-                        await self._conversation_manager.update_session_metadata(
-                            session_id,
-                            "last_summarized_index",
-                            end_index,
-                        )
-                        return
-
-                    start_index = pending_start
-                    logger.info(
-                        f"[{session_id}] 合并待处理失败总结，新范围 [{start_index}:{end_index}]，"
-                        f"重试次数：{retry_count + 1}/3"
-                    )
-
-                if end_index - start_index < 2:
-                    report_debug_event(
-                        "reflection_state",
-                        component="reflection",
-                        stage="summary_window",
-                        status="skipped",
-                        reason_code="insufficient_summary_window",
-                        count=max(0, int(end_index - start_index)),
-                    )
-                    logger.debug(f"[{session_id}] 消息数不足一轮对话，跳过总结")
-                    return
-
-                messages_to_summarize = end_index - start_index
-                rounds_to_summarize = messages_to_summarize // 2
-
-                logger.info(
-                    f"[{session_id}] 滑动窗口总结："
-                    f"消息范围 [{start_index}:{end_index}]/{total_messages}，"
-                    f"本次总结 {rounds_to_summarize} 轮"
-                )
-
-                history_messages = await self._conversation_manager.get_messages_range(
-                    session_id=session_id,
-                    start_index=start_index,
-                    end_index=end_index,
-                )
-
-                logger.info(
-                    f"[{session_id}] 获取到 {len(history_messages)} 条消息用于总结"
-                )
-
-                persona_id = await get_persona_id(self._context, event)
-
-                if not self._shutting_down:
-                    if not await self.try_begin_summary_window(session_id):
-                        report_debug_event(
-                            "reflection_state",
-                            component="reflection",
-                            stage="summary_window",
-                            status="skipped",
-                            reason_code="storage_task_already_running",
-                        )
-                        logger.info(
-                            f"[{session_id}] 已有记忆总结任务在执行，跳过本次触发"
-                        )
-                        return
-
-                    try:
-                        task = asyncio.create_task(
-                            self._storage_task(
-                                session_id,
-                                history_messages,
-                                persona_id,
-                                start_index,
-                                end_index,
-                                retry_count,
-                            )
-                        )
-                    except Exception:
-                        self.finish_summary_window(session_id)
-                        raise
-
-                    self._storage_tasks.add(task)
-                    task.add_done_callback(
-                        lambda t, sid=session_id: self._on_storage_task_done(t, sid)
-                    )
-                    report_debug_event(
-                        "reflection_state",
-                        component="reflection",
-                        stage="reflection",
-                        status="completed",
-                        reason_code="storage_task_scheduled",
-                        count=len(history_messages),
-                    )
-                else:
-                    report_debug_event(
-                        "reflection_state",
-                        component="reflection",
-                        stage="summary_window",
-                        status="skipped",
-                        reason_code="shutdown_in_progress",
-                    )
+            await self.maybe_schedule_summary(event)
 
         except asyncio.CancelledError:
             report_debug_event(
@@ -481,6 +280,111 @@ class ReflectionHandler:
                 reason_code="reflection_error",
             )
             logger.error(f"处理 on_llm_response 钩子时发生错误：{e}", exc_info=True)
+
+    async def maybe_schedule_summary(self, event: AstrMessageEvent) -> None:
+        """检查当前会话阈值，并在可用时调度后台记忆反思。
+
+        该入口同时服务于普通群消息捕获和 LLM assistant 响应。普通可恢复
+        错误只记录并降级，避免反思检查破坏聊天主链；取消信号保持传播。
+
+        Args:
+            event: 提供统一会话标识与人格作用域的 AstrBot 消息事件。
+
+        Returns:
+            无返回值；达到阈值时创建并登记后台存储任务。
+
+        Raises:
+            asyncio.CancelledError: 当前任务在关闭或取消期间被中止。
+        """
+
+        session_id = getattr(event, "unified_msg_origin", "") or ""
+        if not session_id:
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="session",
+                status="skipped",
+                reason_code="empty_session",
+            )
+            return
+
+        if self._writes_blocked():
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="write_guard",
+                status="skipped",
+                reason_code="write_blocked",
+            )
+            return
+
+        try:
+            request = await self._summary_trigger.prepare(event, session_id)
+            if request is None:
+                return
+
+            if self._shutting_down:
+                report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="summary_window",
+                    status="skipped",
+                    reason_code="shutdown_in_progress",
+                )
+                return
+
+            if not await self.try_begin_summary_window(session_id):
+                report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="summary_window",
+                    status="skipped",
+                    reason_code="storage_task_already_running",
+                )
+                logger.info(f"[{session_id}] 已有记忆总结任务在执行，跳过本次触发")
+                return
+
+            try:
+                task = asyncio.create_task(
+                    self._storage_task(
+                        request.session_id,
+                        request.history_messages,
+                        request.persona_id,
+                        request.start_index,
+                        request.end_index,
+                        request.retry_count,
+                    )
+                )
+            except Exception:
+                self.finish_summary_window(session_id)
+                raise
+
+            self._storage_tasks.add(task)
+            task.add_done_callback(
+                lambda completed, sid=session_id: self._on_storage_task_done(
+                    completed, sid
+                )
+            )
+            report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="reflection",
+                status="completed",
+                reason_code="storage_task_scheduled",
+                count=len(request.history_messages),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:
+            report_debug_exception(
+                "reflection_state",
+                exception,
+                component="reflection",
+                stage="reflection",
+                status="failed",
+                reason_code="reflection_error",
+            )
+            logger.error("检查或调度记忆反思时发生错误", exc_info=True)
 
     def _sanitize_response_text(
         self,
