@@ -2,8 +2,8 @@
 
 # 消息主链处理器
 
-**最后更新：** 2026-07-19
-**入口：** `RecallHandler.handle_memory_recall()`、`ReflectionHandler.handle_memory_reflection()`  
+**最后更新：** 2026-07-27
+**入口：** `RecallHandler.handle_memory_recall()`、`ReflectionHandler.handle_memory_reflection()`、`ReflectionHandler.maybe_schedule_summary()`
 **公开导出：** `RecallHandler`、`ReflectionHandler`
 
 ## 职责边界
@@ -12,6 +12,7 @@
 
 - 请求前：清理旧注入、确定查询、检索长期记忆、路由并原子注入当前 `ProviderRequest`。
 - 响应后：先清洗可见回复，再记录 assistant 消息；达到滑动窗口阈值时后台抽取并写入长期记忆。
+- 环境群消息：全量捕获成功且消息不会唤醒 Bot 时，也通过共享阈值入口检查并调度反思，不再依赖后续 LLM 响应。
 - `TopicBatchPreparer` 只负责为反思链准备消息批次；A/B 策略保持单批次，C/D 才在 LLM 抽取前预切分。
 
 不属于本模块：AstrBot 装饰器注册和群聊全量捕获在 `main.py` / `core/event_handler.py`；实际检索在 `core/retrieval/` 与 `MemoryEngine`；结构化抽取在 [`../processors/AGENTS.md`](../processors/AGENTS.md)；注入路由/执行在 `core/injection/`；持久化由 manager/store 完成。
@@ -31,7 +32,9 @@ flowchart TD
     H --> I["Provider/LLM 正常处理"]
     I --> J["AstrBot on_llm_response"]
     J --> K["ReflectionHandler: 响应清洗与消息记录"]
-    K --> L{"未总结轮数达到阈值?"}
+    S["全量群消息捕获"] -->|"未唤醒 Bot"| T["ReflectionHandler.maybe_schedule_summary"]
+    K --> T
+    T --> L{"未总结轮数达到阈值?"}
     L -->|"否"| M["结束"]
     L -->|"是"| N["TopicBatchPreparer"]
     N --> O["MemoryProcessor 结构化抽取"]
@@ -40,7 +43,7 @@ flowchart TD
     Q --> R["提交 last_summarized_index / 清除 pending_summary"]
 ```
 
-聊天主链路必须保持：`main.py` 的 `@filter.on_llm_request()` / `@filter.on_llm_response()` 只在插件就绪且 `EventHandler` 存在时委托；处理器不能自行注册钩子，也不能把动态记忆写进长期 System Prompt。群聊用户消息由全量捕获钩子写入；私聊用户消息在召回链写入；assistant 消息在反思链写入。
+聊天主链路必须保持：`main.py` 的 `@filter.on_llm_request()` / `@filter.on_llm_response()` 只在插件就绪且 `EventHandler` 存在时委托；处理器不能自行注册钩子，也不能把动态记忆写进长期 System Prompt。群聊用户消息由全量捕获钩子写入；其中 `is_at_or_wake_command=false` 的环境消息落库后调用共享总结入口，唤醒 Bot 的消息继续等待响应钩子；私聊用户消息在召回链写入；assistant 消息在反思链写入。
 
 ## 关键接口与协议
 
@@ -58,6 +61,7 @@ flowchart TD
 ### `ReflectionHandler`
 
 - `handle_memory_reflection(event, resp) -> None`：只处理 `assistant`；但在 tools、空会话、写阻塞等早退之前，先完成请求关联的可见回复安全清洗。
+- `maybe_schedule_summary(event) -> None`：由环境群消息和 assistant 响应共同调用；复用同一阈值、pending 状态、窗口锁与后台存储任务。普通检查失败只降级记录，取消继续传播。
 - 工具调用响应 `tools_call_name` 和工具循环总结 `tools_call_extra_content` 不进入普通对话存储。
 - 清洗后为空或命中常见 API/限流/连接错误文本时不记录。
 - assistant 消息成功写入会话后计算 `unsummarized_rounds = (total_messages - last_summarized_index) // 2`；阈值来自 `reflection_engine.summary_trigger_rounds`。
@@ -65,6 +69,12 @@ flowchart TD
 - `_storage_task()` 先由 `TopicBatchPreparer` 生成批次，再调用 `MemoryProcessor.process_conversation()`；多批次并行抽取，写入由 3 槽 semaphore 限流。
 - 每条 `MemoryEngine.add_memory()` 成功返回 canonical 整数 ID 后，由 `MemoryEngine` 从同一 SQLite Store 重新加载 source 并调用 `MemoryEvolutionManager.schedule_consider()`；缺少 manager/source 或调度普通失败只记录并隔离，不能把已经成功的 canonical 写入回滚或标记失败。`ReflectionHandler._schedule_evolution_after_write()` 仍覆盖反思链的兼容调度路径；稳定 idempotency key 使中央调度与该路径重复触发时不会产生重复可见 job。
 - `shutdown()` 停止新窗口并等待已登记存储任务，不主动取消正在落库的反思任务。
+
+### `ReflectionTrigger`
+
+- `prepare(event, session_id) -> ReflectionWindowRequest | None`：读取实际消息数、`last_summarized_index`、`pending_summary` 与 `summary_trigger_rounds`，达到阈值时冻结本次 index 范围、读取历史并解析 persona。
+- 该类只准备窗口，不创建任务、不持有会话锁、不调用 `MemoryProcessor`；任务所有权仍属于 `ReflectionHandler`。
+- assistant 响应与环境群消息必须共用该入口，禁止复制第二套轮次计算、重试耗尽或历史读取逻辑。
 
 ### `TopicBatchPreparer`
 
@@ -98,17 +108,18 @@ flowchart TD
 |---|---|
 | `recall_handler.py` | 请求前召回、路由、注入、安全关联和可观测性 |
 | `reflection_handler.py` | 响应清洗、会话记录、窗口控制、后台抽取与幂等写入 |
+| `reflection_trigger.py` | 共享反思阈值判断、pending 兼容与窗口参数准备 |
 | `topic_batch_preparer.py` | 反思前 C/D 话题预切分及成本回退 |
 | `__init__.py` | 仅导出 `RecallHandler`、`ReflectionHandler` |
 
 ## 测试定位与验证
 
-核心行为在 `tests/test_handlers.py`；跨模块委托、群聊捕获、演化调度和关闭语义在 `tests/test_event_handler.py`；Projection 可见字段在 `tests/test_recall_projection_metadata.py`；注入路由/保护协定在 `tests/test_injection_router.py`、`tests/test_prompt_sanitizer.py`；真实召回热路径成本契约在 `tests/test_recall_cost_benchmark.py`。
+核心行为在 `tests/test_handlers.py`；环境群消息独立触发、唤醒消息分流和失败隔离在 `tests/test_ambient_reflection_trigger.py`；跨模块委托、群聊捕获、演化调度和关闭语义在 `tests/test_event_handler.py`；Projection 可见字段在 `tests/test_recall_projection_metadata.py`；注入路由/保护协定在 `tests/test_injection_router.py`、`tests/test_prompt_sanitizer.py`；真实召回热路径成本契约在 `tests/test_recall_cost_benchmark.py`。
 
 只改本模块时的精确验证命令：
 
 ```bash
-python -m pytest tests/test_handlers.py tests/test_event_handler.py tests/test_recall_projection_metadata.py tests/test_injection_router.py tests/test_prompt_sanitizer.py tests/test_recall_cost_benchmark.py -q
+python -m pytest tests/test_ambient_reflection_trigger.py tests/test_handlers.py tests/test_event_handler.py tests/test_recall_projection_metadata.py tests/test_injection_router.py tests/test_prompt_sanitizer.py tests/test_recall_cost_benchmark.py -q
 ```
 
 重点回归：请求无候选不得变更请求；System Prompt 保持相等；取消向上传播；响应保护失败关闭输出；同 session 总结窗口互斥；部分写入保留幂等重试状态；关闭等待存储任务。

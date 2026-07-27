@@ -1294,7 +1294,7 @@ def test_preflight_estimates_headroom_from_real_provider_request_fields(
         request,
         "private",
     )
-    assert signals.context_headroom_chars == 0
+    assert signals.context_headroom_chars == 13_000
 
 
 @pytest.mark.asyncio

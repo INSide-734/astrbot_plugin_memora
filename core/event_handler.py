@@ -234,6 +234,11 @@ class EventHandler:
             if dedup_key:
                 await self._dedup.mark_processed(dedup_key)
 
+            # 会唤醒 Bot 的消息仍在 on_llm_response 后检查，避免响应生成前
+            # 提前冻结窗口；只有不会产生回复的环境消息在捕获阶段主动触发。
+            if not bool(getattr(event, "is_at_or_wake_command", False)):
+                await self._reflection_handler.maybe_schedule_summary(event)
+
             self._create_maintenance_task(
                 self._enforce_message_limit(session_id),
                 name="message-limit-cleanup",
