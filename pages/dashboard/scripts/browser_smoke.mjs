@@ -3011,7 +3011,7 @@ try {
     ["知识图谱", "#/graph", "知识图谱", "graph.png"],
     ["记忆管理", "#/memory", "记忆管理", "memory.png"],
     ["系统概览", "#/system", ["系统概览", "运行观测", "Provider 状态"], "system.png"],
-    ["黑话发现", "#/jargon", "黑话", "jargon.png"],
+    ["黑话发现", "#/jargon", ["黑话发现与管理", "黑话统计", "候选黑话", "发现新黑话"], "jargon.png"],
   ];
 
   for (const [navLabel, hash, expectedText, filename] of routes) {
@@ -3103,7 +3103,7 @@ try {
       "mobile-intelligence-evaluation.png",
     ],
     ["系统概览", "#/system", ["系统概览", "运行观测", "Provider 状态"], "mobile-system.png"],
-    ["黑话发现", "#/jargon", "黑话", "mobile-jargon.png"],
+    ["黑话发现", "#/jargon", ["黑话发现与管理", "黑话统计", "候选黑话", "发现新黑话"], "mobile-jargon.png"],
   ];
 
   for (const [navLabel, hash, expectedText, filename] of mobileRoutes) {

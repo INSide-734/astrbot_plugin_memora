@@ -1,7 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import ts from "typescript";
+import {
+  isCallExpression,
+  isIdentifier,
+  isNoSubstitutionTemplateLiteral,
+  isStringLiteral,
+  type Node,
+  type SourceFile,
+} from "typescript/unstable/ast";
+import { API } from "typescript/unstable/sync";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MOOD_TYPES, RELATION_CATEGORIES } from "../lib/constants";
@@ -9,6 +17,12 @@ import { EN_MAP, I18N_MAP, RU_MAP } from "./index";
 
 const SOURCE_ROOT = path.resolve(process.cwd(), "src");
 
+/**
+ * 递归收集参与生产构建的 TypeScript 源文件。
+ *
+ * @param directory 当前扫描目录。
+ * @returns 排除测试文件后的绝对路径列表。
+ */
 function productionSourceFiles(directory: string): string[] {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const entryPath = path.join(directory, entry.name);
@@ -18,34 +32,61 @@ function productionSourceFiles(directory: string): string[] {
   });
 }
 
-function staticTranslationKeys(filePath: string): string[] {
-  const source = fs.readFileSync(filePath, "utf8");
-  const sourceFile = ts.createSourceFile(
-    filePath,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    filePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
+/**
+ * 从已解析的 TypeScript AST 中提取静态翻译键。
+ *
+ * @param sourceFile TypeScript 项目快照中的源文件。
+ * @returns `t()` 与 `label()` 首个静态字符串参数组成的键列表。
+ */
+function staticTranslationKeys(sourceFile: SourceFile): string[] {
   const keys: string[] = [];
 
-  function visit(node: ts.Node): void {
+  /** 遍历当前节点及其所有子节点并收集静态调用参数。 */
+  function visit(node: Node): void {
     if (
-      ts.isCallExpression(node)
-      && ts.isIdentifier(node.expression)
+      isCallExpression(node)
+      && isIdentifier(node.expression)
       && (node.expression.text === "t" || node.expression.text === "label")
       && node.arguments.length > 0
     ) {
       const key = node.arguments[0];
-      if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) {
+      if (isStringLiteral(key) || isNoSubstitutionTemplateLiteral(key)) {
         keys.push(key.text);
       }
     }
-    ts.forEachChild(node, visit);
+    node.forEachChild(visit);
   }
 
   visit(sourceFile);
   return keys;
+}
+
+/**
+ * 在单个 TypeScript 项目快照中收集全部生产源码的静态翻译键。
+ *
+ * @returns 去重并排序后的静态翻译键。
+ * @throws 当项目快照为空或生产源文件未进入项目时抛出错误。
+ */
+function collectStaticTranslationKeys(): string[] {
+  const api = new API({ cwd: process.cwd() });
+  try {
+    const snapshot = api.updateSnapshot({
+      openProjects: [path.resolve(process.cwd(), "tsconfig.json")],
+    });
+    try {
+      const project = snapshot.getProjects()[0];
+      if (!project) throw new Error("TypeScript 项目快照为空");
+      return [...new Set(productionSourceFiles(SOURCE_ROOT).flatMap((filePath) => {
+        const sourceFile = project.program.getSourceFile(filePath);
+        if (!sourceFile) throw new Error(`TypeScript 项目未包含生产源文件：${filePath}`);
+        return staticTranslationKeys(sourceFile);
+      }))].sort();
+    } finally {
+      snapshot.dispose();
+    }
+  } finally {
+    api.close();
+  }
 }
 
 const TABLE_KEYS = [
@@ -338,9 +379,7 @@ const DYNAMIC_KEYS = [
   ].map((field) => `injection.detail.field.${field}`),
 ] as const;
 
-const STATIC_TRANSLATION_KEYS = [...new Set(
-  productionSourceFiles(SOURCE_ROOT).flatMap(staticTranslationKeys),
-)].sort();
+const STATIC_TRANSLATION_KEYS = collectStaticTranslationKeys();
 
 const REQUIRED_EDITING_KEYS = [...new Set([
   ...STATIC_TRANSLATION_KEYS,
@@ -349,10 +388,23 @@ const REQUIRED_EDITING_KEYS = [...new Set([
   "affection.restoreDefaultMood",
 ])].sort();
 
+/**
+ * 查找翻译字典中缺失或只包含空白的键。
+ *
+ * @param map 待检查的翻译字典。
+ * @param keys 必须存在的翻译键。
+ * @returns 缺失或空白的键列表。
+ */
 function missingOrBlankKeys(map: Record<string, string>, keys: readonly string[]): string[] {
   return keys.filter((key) => typeof map[key] !== "string" || map[key].trim().length === 0);
 }
 
+/**
+ * 提取翻译文本中的数字占位符编号。
+ *
+ * @param value 待解析的翻译文本。
+ * @returns 排序后的占位符编号列表。
+ */
 function placeholders(value: string): string[] {
   return [...value.matchAll(/\{(\d+)\}/g)].map((match) => match[1]).sort();
 }
