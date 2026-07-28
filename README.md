@@ -288,10 +288,6 @@ uv run --locked python scripts/check_all.py
 
 Dashboard 的 `npm run smoke:runtime` 与 `npm run smoke:browser` 属于完整门禁；浏览器 smoke 完成后还需要人工检查生成的截图。
 
-### 代码探索
-
-仓库优先使用 `mcp__fast_context__fast_context_search` 做语义代码搜索。若当前环境未配置 fast-context，可使用 fallback 方式退回 `Select-String`、定向文件读取等本地方法；不要自动读取 Windsurf 凭证。若使用 fast-context，请仅在已自行配置 `WINDSURF_API_KEY` 时使用，不要把本机凭证写入代码或文档。
-
 ## 技术栈
 
 - 后端：Python、SQLite、FTS5、FAISS、NetworkX、jieba、Quart、Pydantic。
