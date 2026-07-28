@@ -1,0 +1,101 @@
+name: 缺陷报告
+description: 报告可稳定复现的 Memora 缺陷
+title: "[Bug]: "
+labels:
+  - "type: bug"
+  - "status: needs-triage"
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。使用咨询请前往 Discussions；安全漏洞请使用私密漏洞报告，不要公开提交敏感信息。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue，未发现相同问题。
+          required: true
+        - label: 这不是普通安装、配置或使用咨询。
+          required: true
+        - label: 内容已脱敏，不含密钥、身份信息、记忆正文或运行时数据。
+          required: true
+  - type: input
+    id: memora-version
+    attributes:
+      label: Memora 版本
+      placeholder: 例如 1.2.3 或提交 SHA
+    validations:
+      required: true
+  - type: input
+    id: astrbot-version
+    attributes:
+      label: AstrBot 版本
+      placeholder: 例如 4.24.2
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python 版本
+      placeholder: 例如 3.12.8
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境与协议
+      description: 说明操作系统、部署方式以及 OneBot 11、QQ 官方或其他协议适配器。
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 简要说明问题及其影响。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 最小复现步骤
+      placeholder: |
+        1. 执行……
+        2. 发送……
+        3. 观察到……
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏日志
+      description: 可选。只粘贴复现所需的最小日志，不要包含密钥、请求头、身份或记忆正文。
+      render: shell
+  - type: dropdown
+    id: regression
+    attributes:
+      label: 是否为回归问题
+      options:
+        - 不确定
+        - 是，旧版本正常
+        - 否，首次使用即存在
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充信息
+      description: 可选。可添加已脱敏的截图、相关 Issue 或其他上下文。

@@ -1,0 +1,23 @@
+name: PR 路径标签
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    name: 应用路径标签
+    runs-on: ubuntu-latest
+    steps:
+      - name: 根据改动路径添加标签
+        uses: actions/labeler@v6
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}

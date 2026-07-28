@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用咨询与讨论
+    url: https://github.com/INSide-734/astrbot_plugin_memora/discussions
+    about: 安装、配置和使用问题请前往 Discussions。
+  - name: 私密报告安全漏洞
+    url: https://github.com/INSide-734/astrbot_plugin_memora/security/advisories/new
+    about: 请勿公开漏洞细节，通过私密漏洞报告联系维护者。

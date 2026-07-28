@@ -1,0 +1,15 @@
+"area: core":
+  - changed-files:
+      - any-glob-to-any-file: "core/**"
+
+"area: dashboard":
+  - changed-files:
+      - any-glob-to-any-file: "pages/dashboard/**"
+
+"area: tests":
+  - changed-files:
+      - any-glob-to-any-file: "tests/**"
+
+"area: github":
+  - changed-files:
+      - any-glob-to-any-file: ".github/**"

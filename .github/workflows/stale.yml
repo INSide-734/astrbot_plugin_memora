@@ -1,0 +1,38 @@
+name: Stale 维护
+
+on:
+  schedule:
+    - cron: "17 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    name: 标记无活动事项
+    runs-on: ubuntu-latest
+    steps:
+      - name: 标记并关闭无活动事项
+        uses: actions/stale@v10
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          stale-issue-label: "status: stale"
+          stale-issue-message: >-
+            此 Issue 已连续 60 天无活动，因此被标记为 stale。请在 14 天内补充仍需处理的信息；恢复活动后标签会自动移除。
+          close-issue-message: >-
+            此 Issue 在 stale 提醒后 14 天仍无活动，现按 not planned 关闭。如问题仍然存在，请补充最新复现信息后重新打开或创建关联 Issue。
+          close-issue-reason: not_planned
+          days-before-pr-stale: 60
+          days-before-pr-close: -1
+          stale-pr-label: "status: stale"
+          stale-pr-message: >-
+            此 PR 已连续 60 天无活动，因此被标记为 stale。PR 不会自动关闭；后续活动会自动移除此标签。
+          exempt-all-assignees: true
+          exempt-all-milestones: true
+          remove-stale-when-updated: true
+          operations-per-run: 100

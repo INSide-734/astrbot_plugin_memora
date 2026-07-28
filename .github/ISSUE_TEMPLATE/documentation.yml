@@ -1,0 +1,47 @@
+name: 文档问题
+description: 报告缺失、错误或难以理解的文档内容
+title: "[Docs]: "
+labels:
+  - "type: docs"
+  - "status: needs-triage"
+assignees: []
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue，未发现相同文档问题。
+          required: true
+  - type: input
+    id: location
+    attributes:
+      label: 文档位置
+      description: 提供文件路径、章节名称或网页链接。
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 当前问题
+      description: 说明内容为何错误、缺失、过期或难以理解。
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 建议修正方向
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 受影响版本
+      placeholder: 例如最新 main、1.2.3 或不确定
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充信息
+      description: 可选。添加相关截图或上下文。
