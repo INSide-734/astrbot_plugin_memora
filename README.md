@@ -306,5 +306,6 @@ Dashboard 的 `npm run smoke:runtime` 与 `npm run smoke:browser` 属于完整�
 ## 致谢
 
 - [AstrBot](https://github.com/Soulter/AstrBot)
+- [astrbot_plugin_livingmemory](https://github.com/lxfight-s-Astrbot-Plugins/astrbot_plugin_livingmemory)
 - [faiss](https://github.com/facebookresearch/faiss)
 - [shadcn/ui](https://ui.shadcn.com/)
