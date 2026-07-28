@@ -4,15 +4,19 @@ import type { Translate } from "@/lib/i18n";
 interface GraphTimeRangeFilterProps {
   start: number;
   end: number;
+  isAll: boolean;
+  isDirty: boolean;
+  disabled: boolean;
   t: Translate;
   onStartChange: (value: number) => void;
   onEndChange: (value: number) => void;
+  onApply: () => void;
   onReset: () => void;
 }
 
 /** 把距今小时数格式化为图谱时间范围文案。 */
 function formatHours(hours: number, t: Translate): string {
-  if (hours === 0) return t("graph.all");
+  if (hours === 0) return t("graph.hoursShort", "0");
   if (hours < 24) return t("graph.hoursShort", String(hours));
   return t("graph.daysShort", String(Math.round(hours / 24)));
 }
@@ -21,9 +25,13 @@ function formatHours(hours: number, t: Translate): string {
 export function GraphTimeRangeFilter({
   start,
   end,
+  isAll,
+  isDirty,
+  disabled,
   t,
   onStartChange,
   onEndChange,
+  onApply,
   onReset,
 }: GraphTimeRangeFilterProps) {
   return (
@@ -48,7 +56,7 @@ export function GraphTimeRangeFilter({
         />
         <input
           type="range"
-          min="0"
+          min="1"
           max="720"
           step="1"
           value={end}
@@ -62,11 +70,26 @@ export function GraphTimeRangeFilter({
         />
         <div className="pointer-events-none absolute inset-x-0 h-1 rounded bg-border" />
       </div>
-      <Button variant="link" size="xs" onClick={onReset} className="shrink-0">
+      <Button
+        variant="secondary"
+        size="xs"
+        disabled={!isDirty || disabled}
+        onClick={onApply}
+        className="shrink-0"
+      >
+        {t("common.apply")}
+      </Button>
+      <Button
+        variant="link"
+        size="xs"
+        disabled={disabled}
+        onClick={onReset}
+        className="shrink-0"
+      >
         {t("common.reset")}
       </Button>
       <span className="w-28 shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
-        {start === 0 && end >= 720
+        {isAll
           ? t("graph.all")
           : `${formatHours(start, t)} – ${formatHours(end, t)}`}
       </span>

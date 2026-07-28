@@ -1,7 +1,4 @@
-"""core/api/graph_api.py — GraphApiMixin 测试。
-
-Tests request validation and response format logic.
-"""
+"""core/api/graph_api.py — GraphApiMixin 测试。"""
 
 from __future__ import annotations
 
@@ -20,7 +17,7 @@ def _mock_request(**args):
 def _make_mixin(
     plugin_ready: bool = True, graph_store=None, search_memories_result=None
 ):
-    """Create a stub with GraphApiMixin methods and mocked dependencies."""
+    """创建带有 GraphApiMixin 方法和模拟依赖的测试替身。"""
 
     from core.api.graph_api import GraphApiMixin
 
@@ -69,7 +66,7 @@ def _make_mixin(
 
 
 class TestGraphApiValidation:
-    """Graph API validates parameters and handles missing plugin."""
+    """验证图谱 API 的参数校验和插件未就绪处理。"""
 
     @pytest.mark.asyncio
     async def test_search_graph_plugin_not_ready(self) -> None:
@@ -107,7 +104,7 @@ class TestGraphApiValidation:
 
 
 class TestGraphApiHappyPath:
-    """Graph API returns proper responses with mocked stores."""
+    """验证图谱 API 使用模拟存储返回稳定响应。"""
 
     @pytest.mark.asyncio
     async def test_overview_with_graph_store_returns_ok(self) -> None:
@@ -211,6 +208,90 @@ class TestGraphApiHappyPath:
         assert "metadata" not in edge
 
     @pytest.mark.asyncio
+    async def test_canvas_search_converts_time_range_to_unix_seconds(self) -> None:
+        """画布请求把相对小时范围转换为绝对 Unix 秒再交给存储层。"""
+        req = _mock_request(canvas="1", time_start_hours="24", time_end_hours="168")
+        mock_gs = MagicMock()
+        mock_gs.get_canvas_snapshot = AsyncMock(return_value={"nodes": [], "edges": []})
+        mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
+
+        with (
+            patch("core.api.graph_api.request", req),
+            patch("core.api.graph_api.time.time", return_value=1_000_000.0),
+        ):
+            result = await mixin.search_graph()
+
+        assert result["status"] == "ok"
+        mock_gs.get_canvas_snapshot.assert_awaited_once_with(
+            session_id=None,
+            persona_id=None,
+            oldest_timestamp=395_200.0,
+            newest_timestamp=913_600.0,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "time_params",
+        [
+            {"time_end_hours": "0"},
+            {"time_end_hours": "-1"},
+            {"time_end_hours": "721"},
+            {"time_end_hours": "1.5"},
+            {"time_end_hours": "invalid"},
+            {"time_start_hours": "2", "time_end_hours": "1"},
+            {"time_start_hours": "721", "time_end_hours": "720"},
+            {"time_start_hours": "1"},
+        ],
+    )
+    async def test_canvas_search_rejects_invalid_time_range(
+        self,
+        time_params: dict[str, str],
+    ) -> None:
+        """非法、越界或不完整的时间范围返回稳定参数错误。"""
+        req = _mock_request(canvas="1", **time_params)
+        mock_gs = MagicMock()
+        mock_gs.get_canvas_snapshot = AsyncMock(return_value={"nodes": [], "edges": []})
+        mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
+
+        with patch("core.api.graph_api.request", req):
+            result = await mixin.search_graph()
+
+        assert result["status"] == "error"
+        assert "时间范围" in result["message"]
+        mock_gs.get_canvas_snapshot.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memory_focus_search_applies_time_range_to_limited_snapshot(
+        self,
+    ) -> None:
+        """记忆聚焦查询也只返回当前时间范围内的边和节点。"""
+        mock_gs = MagicMock()
+        mock_gs.get_subgraph_for_memories = AsyncMock(
+            return_value={
+                "nodes": [
+                    {"id": 1, "label": "近期", "type": "fact"},
+                    {"id": 2, "label": "旧节点", "type": "fact"},
+                ],
+                "edges": [
+                    {"source": 1, "target": 1, "timestamp": 999_000.0},
+                    {"source": 2, "target": 2, "timestamp": 900_000.0},
+                ],
+                "entries": [],
+                "memories": [],
+            }
+        )
+        mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
+
+        with patch("core.api.graph_api.time.time", return_value=1_000_000.0):
+            result = await mixin._query_graph_impl(
+                {"memory_id": 42, "time_start_hours": 0, "time_end_hours": 1}
+            )
+
+        assert result["status"] == "ok"
+        assert [node["id"] for node in result["data"]["nodes"]] == [1]
+        assert [edge["source"] for edge in result["data"]["edges"]] == [1]
+
+    @pytest.mark.asyncio
     async def test_search_graph_with_query_strips_whitespace(self) -> None:
         req = _mock_request(query="  hello world  ")
         mock_gs = MagicMock()
@@ -240,11 +321,11 @@ class TestGraphApiHappyPath:
 
 
 class TestGraphApiEdgeCases:
-    """Coverage gap fill — parameter validation, error paths, branch coverage."""
+    """补充参数校验、错误路径和分支覆盖。"""
 
     @pytest.mark.asyncio
     async def test_search_graph_with_memory_id_as_integer(self) -> None:
-        """search_graph with valid memory_id passes it to _query_graph_impl."""
+        """有效 memory_id 会传递给 _query_graph_impl。"""
         req = _mock_request(query="test", memory_id="42")
         mock_gs = MagicMock()
         mock_gs.get_subgraph_for_memories = AsyncMock(
@@ -264,7 +345,7 @@ class TestGraphApiEdgeCases:
 
     @pytest.mark.asyncio
     async def test_search_graph_invalid_memory_id(self) -> None:
-        """search_graph with non-integer memory_id returns error."""
+        """非整数 memory_id 返回错误。"""
         req = _mock_request(query="test", memory_id="not_a_number")
         with patch("core.api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True)
@@ -273,7 +354,7 @@ class TestGraphApiEdgeCases:
 
     @pytest.mark.asyncio
     async def test_get_graph_overview_invalid_params(self) -> None:
-        """get_graph_overview with non-integer limit params returns error."""
+        """非整数概览限制参数返回错误。"""
         req = _mock_request(limit_memories="bad")
         with patch("core.api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True)
@@ -282,7 +363,7 @@ class TestGraphApiEdgeCases:
 
     @pytest.mark.asyncio
     async def test_get_graph_overview_with_filters(self) -> None:
-        """get_graph_overview passes session_id and persona_id to graph_store."""
+        """概览接口将 session_id 和 persona_id 传递给图存储。"""
         req = _mock_request(
             session_id="sess_1",
             persona_id="pers_1",
@@ -374,7 +455,7 @@ class TestGraphApiEdgeCases:
     async def test_query_graph_impl_deduplicates_memory_ids_and_filters_scores(
         self,
     ) -> None:
-        """Search + node hits should deduplicate memory_ids and keep numeric scores only."""
+        """搜索和节点命中会去重 memory_id，并只保留数字分数。"""
         from core.retrieval.rrf_fusion import HybridResult
 
         mock_gs = MagicMock()
@@ -434,7 +515,7 @@ class TestGraphApiEdgeCases:
     async def test_query_graph_impl_tolerates_malformed_score_breakdown_results(
         self,
     ) -> None:
-        """A single malformed score_breakdown should not crash the entire query."""
+        """单条损坏的 score_breakdown 不应使整个查询失败。"""
         from types import SimpleNamespace
 
         from core.retrieval.rrf_fusion import HybridResult
@@ -504,7 +585,7 @@ class TestGraphApiEdgeCases:
 
     @pytest.mark.asyncio
     async def test_query_graph_impl_skips_malformed_search_and_graph_hits(self) -> None:
-        """Malformed retrieval and graph-hit items should be ignored instead of failing the query."""
+        """损坏的检索项和图命中项应被忽略，而不是使查询失败。"""
         from core.retrieval.rrf_fusion import HybridResult
 
         mock_gs = MagicMock()
@@ -589,7 +670,7 @@ class TestGraphApiEdgeCases:
 
     @pytest.mark.asyncio
     async def test_query_graph_impl_clamps_limit_parameters(self) -> None:
-        """Query limit params are clamped before reaching graph store."""
+        """查询限制参数在传给图存储前会被约束到安全范围。"""
         mock_gs = MagicMock()
         mock_gs.get_graph_snapshot = AsyncMock(
             return_value={
@@ -664,7 +745,7 @@ class TestGraphApiEdgeCases:
 
     @pytest.mark.asyncio
     async def test_query_graph_impl_rejects_boolean_memory_id(self) -> None:
-        """Boolean JSON values must not be coerced into memory ids."""
+        """JSON 布尔值不能被强制转换为 memory_id。"""
         mock_gs = MagicMock()
         mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
         result = await mixin._query_graph_impl({"memory_id": True})
@@ -673,7 +754,7 @@ class TestGraphApiEdgeCases:
 
     @pytest.mark.asyncio
     async def test_get_graph_overview_empty_session_persona(self) -> None:
-        """get_graph_overview with empty session_id/persona_id becomes None."""
+        """空 session_id 和 persona_id 会规范化为 None。"""
         req = _mock_request(session_id="", persona_id="")
         mock_gs = MagicMock()
         mock_gs.get_graph_snapshot = AsyncMock(

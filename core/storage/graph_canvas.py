@@ -18,8 +18,20 @@ class GraphCanvasMixin(BaseStore):
         *,
         session_id: str | None = None,
         persona_id: str | None = None,
+        oldest_timestamp: float | None = None,
+        newest_timestamp: float | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
-        """返回指定作用域中全部可绘制节点和边的轻量快照。"""
+        """返回指定作用域与时间范围内可绘制节点和边的轻量快照。
+
+        Args:
+            session_id: 可选会话作用域。
+            persona_id: 可选人格作用域。
+            oldest_timestamp: 允许显示的最旧 Unix 秒；缺失时不限制。
+            newest_timestamp: 允许显示的最新 Unix 秒；缺失时不限制。
+
+        Returns:
+            不携带条目正文与记忆摘要的节点、边快照。
+        """
         filters: list[str] = []
         params: list[Any] = []
         if session_id is not None:
@@ -92,7 +104,23 @@ class GraphCanvasMixin(BaseStore):
             edge_rows = list(await edge_cursor.fetchall())
 
         nodes = self._build_canvas_nodes(node_rows)
-        edges = self._build_canvas_edges(edge_rows, nodes)
+        edges = self._build_canvas_edges(
+            edge_rows,
+            nodes,
+            oldest_timestamp=oldest_timestamp,
+            newest_timestamp=newest_timestamp,
+        )
+        if oldest_timestamp is not None or newest_timestamp is not None:
+            visible_node_ids = {
+                int(node_id)
+                for edge in edges
+                for node_id in (edge["source"], edge["target"])
+            }
+            nodes = {
+                node_id: node
+                for node_id, node in nodes.items()
+                if node_id in visible_node_ids
+            }
         return {
             "nodes": sorted(
                 nodes.values(),
@@ -130,8 +158,11 @@ class GraphCanvasMixin(BaseStore):
         self,
         edge_rows: list[aiosqlite.Row],
         nodes: dict[int, dict[str, Any]],
+        *,
+        oldest_timestamp: float | None = None,
+        newest_timestamp: float | None = None,
     ) -> list[dict[str, Any]]:
-        """构建画布边并同步回填节点度数与展示权重。"""
+        """构建范围内画布边，并同步回填节点度数与展示权重。"""
         edges: list[dict[str, Any]] = []
         for row in edge_rows:
             source = int(row["source_node_id"])
@@ -147,6 +178,11 @@ class GraphCanvasMixin(BaseStore):
                 created_at=row["created_at"],
                 entry_time=entry_time,
             )
+            if timestamp is not None:
+                if oldest_timestamp is not None and timestamp < oldest_timestamp:
+                    continue
+                if newest_timestamp is not None and timestamp > newest_timestamp:
+                    continue
             nodes[source]["degree"] += 1
             nodes[target]["degree"] += 1
             edges.append(

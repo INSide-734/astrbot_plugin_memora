@@ -1,7 +1,9 @@
 """图谱 API — 概览 + 查询。"""
 
 import asyncio
+import math
 import re
+import time
 from typing import Any
 
 from astrbot.api import logger
@@ -9,6 +11,7 @@ from quart import request
 
 _ONEBOT11_PERSON_LABEL = re.compile(r"QQ:([1-9][0-9]{0,18})", re.ASCII)
 _POSITIVE_INT64_MAX = 9_223_372_036_854_775_807
+_GRAPH_TIME_RANGE_MAX_HOURS = 720
 
 
 class GraphApiMixin:
@@ -56,6 +59,50 @@ class GraphApiMixin:
             return None
 
     @staticmethod
+    def _parse_graph_time_range(
+        payload: dict[str, Any],
+    ) -> tuple[tuple[float | None, float | None], str | None]:
+        """校验相对小时范围，并转换为绝对 Unix 秒边界。"""
+
+        start_key = "time_start_hours"
+        end_key = "time_end_hours"
+        has_start = start_key in payload
+        has_end = end_key in payload
+        if not has_start and not has_end:
+            return (None, None), None
+        if not has_end:
+            return (None, None), "图谱时间范围必须提供较旧边界"
+
+        values: dict[str, int] = {}
+        for key in (start_key, end_key):
+            raw_value = payload.get(key, 0)
+            if isinstance(raw_value, bool):
+                return (None, None), "图谱时间范围必须是整数小时"
+            try:
+                numeric_value = float(raw_value)
+            except (TypeError, ValueError):
+                return (None, None), "图谱时间范围必须是整数小时"
+            if not math.isfinite(numeric_value) or not numeric_value.is_integer():
+                return (None, None), "图谱时间范围必须是整数小时"
+            values[key] = int(numeric_value)
+
+        start_hours = values[start_key]
+        end_hours = values[end_key]
+        if (
+            start_hours < 0
+            or start_hours > _GRAPH_TIME_RANGE_MAX_HOURS
+            or end_hours <= 0
+            or end_hours > _GRAPH_TIME_RANGE_MAX_HOURS
+            or start_hours > end_hours
+        ):
+            return (None, None), "图谱时间范围无效"
+
+        now = time.time()
+        oldest_timestamp = now - end_hours * 3600
+        newest_timestamp = now - start_hours * 3600 if start_hours > 0 else None
+        return (oldest_timestamp, newest_timestamp), None
+
+    @staticmethod
     def _canvas_response_snapshot(
         snapshot: dict[str, Any],
     ) -> dict[str, list[dict[str, Any]]]:
@@ -84,6 +131,49 @@ class GraphApiMixin:
             if isinstance(item, dict)
         ]
         return {"nodes": nodes, "edges": edges}
+
+    @staticmethod
+    def _filter_graph_snapshot_by_time(
+        snapshot: dict[str, Any],
+        *,
+        oldest_timestamp: float | None,
+        newest_timestamp: float | None,
+    ) -> dict[str, Any]:
+        """按已规范化的边时间裁剪有限快照，并移除孤立节点。"""
+
+        if oldest_timestamp is None and newest_timestamp is None:
+            return snapshot
+
+        visible_edges: list[dict[str, Any]] = []
+        visible_node_ids: set[str] = set()
+        for item in snapshot.get("edges", []):
+            if not isinstance(item, dict):
+                continue
+            raw_timestamp = item.get("timestamp")
+            timestamp: float | None = None
+            if not isinstance(raw_timestamp, bool) and raw_timestamp is not None:
+                try:
+                    candidate = float(raw_timestamp)
+                except (TypeError, ValueError):
+                    candidate = 0.0
+                if math.isfinite(candidate) and candidate > 0:
+                    while candidate > 100_000_000_000:
+                        candidate /= 1000.0
+                    timestamp = candidate
+            if timestamp is not None:
+                if oldest_timestamp is not None and timestamp < oldest_timestamp:
+                    continue
+                if newest_timestamp is not None and timestamp > newest_timestamp:
+                    continue
+            visible_edges.append(item)
+            visible_node_ids.update((str(item.get("source")), str(item.get("target"))))
+
+        visible_nodes = [
+            item
+            for item in snapshot.get("nodes", [])
+            if isinstance(item, dict) and str(item.get("id")) in visible_node_ids
+        ]
+        return {**snapshot, "nodes": visible_nodes, "edges": visible_edges}
 
     @staticmethod
     def _stable_person_identity(
@@ -169,7 +259,7 @@ class GraphApiMixin:
     # ---- 公开端点 ----
 
     async def search_graph(self):
-        """GET /graph/search?query=X&memory_id=Y — 前端兼容端点，从 query string 构建 payload"""
+        """处理 GET /graph/search?query=X&memory_id=Y，并从查询参数构建请求载荷。"""
         try:
             args = request.args
             query_text = str(args.get("query", "")).strip()
@@ -186,13 +276,16 @@ class GraphApiMixin:
                     return self._error("memory_id 必须是整数")
             if str(args.get("canvas", "")).strip().lower() in {"1", "true"}:
                 payload["canvas"] = True
+            for key in ("time_start_hours", "time_end_hours"):
+                if key in args:
+                    payload[key] = args.get(key)
             return await self._query_graph_impl(payload)
         except Exception as exc:
             logger.error(f"[PageAPI] 图谱搜索失败: {exc}", exc_info=True)
             return self._error(str(exc))
 
     async def query_graph(self):
-        """POST /graph/query — 从 JSON body 读取参数"""
+        """处理 POST /graph/query，并从 JSON 请求体读取参数。"""
         payload = await request.get_json(silent=True) or {}
         payload, error = GraphApiMixin._json_object_payload_or_error(payload)
         if error:
@@ -284,6 +377,10 @@ class GraphApiMixin:
         memory_id_raw = payload.get("memory_id")
         canvas_view = payload.get("canvas") is True
         filters = {"session_id": session_id, "persona_id": persona_id}
+        time_range, time_range_error = GraphApiMixin._parse_graph_time_range(payload)
+        if time_range_error:
+            return self._error(time_range_error)
+        oldest_timestamp, newest_timestamp = time_range
         limit_keys = (
             "limit_memories",
             "limit_entries",
@@ -328,6 +425,11 @@ class GraphApiMixin:
                     limit_nodes=limit_nodes,
                     limit_edges=limit_edges,
                 )
+                snapshot = GraphApiMixin._filter_graph_snapshot_by_time(
+                    snapshot,
+                    oldest_timestamp=oldest_timestamp,
+                    newest_timestamp=newest_timestamp,
+                )
                 identity_runtime = getattr(
                     ready.get("conversation_manager"), "identity_runtime", None
                 )
@@ -347,9 +449,19 @@ class GraphApiMixin:
 
             if not query_text:
                 if canvas_view and not has_explicit_limits:
+                    canvas_kwargs: dict[str, Any] = {
+                        "session_id": session_id,
+                        "persona_id": persona_id,
+                    }
+                    if oldest_timestamp is not None or newest_timestamp is not None:
+                        canvas_kwargs.update(
+                            {
+                                "oldest_timestamp": oldest_timestamp,
+                                "newest_timestamp": newest_timestamp,
+                            }
+                        )
                     snapshot = await graph_store.get_canvas_snapshot(
-                        session_id=session_id,
-                        persona_id=persona_id,
+                        **canvas_kwargs,
                     )
                 elif has_explicit_limits:
                     snapshot = await graph_store.get_graph_snapshot(
@@ -454,6 +566,11 @@ class GraphApiMixin:
                 limit_entries=limit_entries,
                 limit_nodes=limit_nodes,
                 limit_edges=limit_edges,
+            )
+            snapshot = GraphApiMixin._filter_graph_snapshot_by_time(
+                snapshot,
+                oldest_timestamp=oldest_timestamp,
+                newest_timestamp=newest_timestamp,
             )
             identity_runtime = getattr(
                 ready.get("conversation_manager"), "identity_runtime", None
