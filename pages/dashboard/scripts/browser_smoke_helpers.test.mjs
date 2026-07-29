@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 
+const NODE_TEST_SPECIFIER = "node:test";
 const { describe, it } = process.env.VITEST
   ? await import("vitest")
-  : await import("node:test");
+  : await import(/* @vite-ignore */ NODE_TEST_SPECIFIER);
 import * as browserHelpers from "./browser_smoke_helpers.mjs";
 
 const {

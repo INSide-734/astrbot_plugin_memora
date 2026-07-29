@@ -135,7 +135,7 @@ _WEEKDAY_INDEX = {
 
 def _parse_weekday_time(text: str, now: float) -> float | None:
     """将中文星期表达解析为目标日期。"""
-    match = re.search(r"(上周|本周|下下周|下周)?周([一二三四五六日天])", text)
+    match = re.search(r"(?:(上周|本周|下下周|下周)|周)([一二三四五六日天])", text)
     if not match:
         return None
 

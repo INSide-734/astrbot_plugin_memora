@@ -1,10 +1,13 @@
 """atom_classifier 测试 — 否定检测 + 6种原子类型 + v2.6质量过滤器。"""
 
+from datetime import datetime
+
 import pytest
 
 # 导入模块级分类函数。
 from core.processors.atom_classifier import (
     _has_minimal_information,
+    _parse_weekday_time,
     classify_atoms,
     get_filter_stats,
     reset_filter_stats,
@@ -134,6 +137,15 @@ class TestNegationDetection:
 
 class TestAtomClassification:
     """验证六类 Atom 的分类结果。"""
+
+    def test_next_weekday_keeps_relative_week_prefix(self):
+        """下周三在当前周三执行时仍应解析到七天后。"""
+        now = datetime(2026, 7, 29, 12).timestamp()
+
+        event_time = _parse_weekday_time("下周三", now)
+
+        assert event_time is not None
+        assert datetime.fromtimestamp(event_time).date() == datetime(2026, 8, 5).date()
 
     def test_planned_classification(self):
         # 注："评审"+"会议" 均不在 _ACTION_VERBS 中 → 实际分类为 UNKNOWN
