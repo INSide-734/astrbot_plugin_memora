@@ -452,7 +452,8 @@ describe("ConfigPage", () => {
     const decoy = document.createElement("button");
     decoy.dataset.configPath = "provider_settings.llm_provider_id";
     document.body.prepend(decoy);
-    const decoyScroll = vi.spyOn(decoy, "scrollIntoView");
+    const decoyScroll = vi.fn();
+    Object.defineProperty(decoy, "scrollIntoView", { configurable: true, value: decoyScroll });
     let view: ReturnType<typeof render> | undefined;
     try {
       view = render(
@@ -468,7 +469,8 @@ describe("ConfigPage", () => {
 
       const provider = screen.getByRole("combobox", { name: "LLM provider" });
       const field = provider.closest<HTMLElement>("[data-slot='field']")!;
-      const fieldScroll = vi.spyOn(field, "scrollIntoView");
+      const fieldScroll = vi.fn();
+      Object.defineProperty(field, "scrollIntoView", { configurable: true, value: fieldScroll });
       await act(async () => vi.advanceTimersByTimeAsync(0));
 
       expect(decoyScroll).not.toHaveBeenCalled();
@@ -889,9 +891,11 @@ describe("ConfigPage", () => {
     const advancedFocusTarget =
       advancedSection.querySelector<HTMLElement>("[data-slot='config-group']") ??
       advancedSection;
-    const providerScroll = vi.spyOn(providerSection, "scrollIntoView");
+    const providerScroll = vi.fn();
+    Object.defineProperty(providerSection, "scrollIntoView", { configurable: true, value: providerScroll });
     const providerFocus = vi.spyOn(providerFocusTarget, "focus");
-    const advancedScroll = vi.spyOn(advancedSection, "scrollIntoView");
+    const advancedScroll = vi.fn();
+    Object.defineProperty(advancedSection, "scrollIntoView", { configurable: true, value: advancedScroll });
     const advancedFocus = vi.spyOn(advancedFocusTarget, "focus");
     const mobileSelect = screen.getByRole("combobox", {
       name: "Configuration group",

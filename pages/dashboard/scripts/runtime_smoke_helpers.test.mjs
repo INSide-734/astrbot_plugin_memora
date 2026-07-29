@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 
+const NODE_TEST_SPECIFIER = "node:test";
 const { describe, it } = process.env.VITEST
   ? await import("vitest")
-  : await import("node:test");
+  : await import(/* @vite-ignore */ NODE_TEST_SPECIFIER);
 
 import * as runtimeHelpers from "./runtime_smoke_helpers.mjs";
 
