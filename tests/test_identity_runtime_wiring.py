@@ -171,6 +171,9 @@ async def test_runtime_persists_only_trusted_and_unblocked() -> None:
     runtime = ProtocolIdentityRuntime(resolver, synchronizer=synchronizer)
     event = SimpleNamespace(unified_msg_origin="aiocqhttp:private:10001")
 
+    assert runtime.resolve(event) == resolver.resolve.return_value
+    resolver.resolve.assert_called_once_with(event)
+
     resolved = await runtime.prepare(event, writes_blocked=False)
     assert resolved.trust_status is IdentityTrust.TRUSTED
     synchronizer.synchronize.assert_awaited_once_with(
@@ -208,6 +211,77 @@ async def test_runtime_degrades_storage_errors_but_propagates_cancellation() -> 
 
 
 @pytest.mark.asyncio
+async def test_event_handler_defers_and_deduplicates_identity_sync() -> None:
+    """请求与响应共享事件时目录同步只调度一次且不阻塞召回。"""
+
+    from core.event_handler import EventHandler
+    from core.identity.runtime import ProtocolIdentityRuntime
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def synchronize(*_args, **_kwargs) -> None:
+        """用事件屏障模拟慢身份目录，不依赖不稳定的计时断言。"""
+
+        started.set()
+        await release.wait()
+
+    runtime = ProtocolIdentityRuntime()
+    runtime.resolve = MagicMock(return_value=trusted_identity())
+    runtime.synchronize = AsyncMock(side_effect=synchronize)
+    conversation = MagicMock(identity_runtime=runtime)
+    handler = EventHandler(
+        context=MagicMock(),
+        config_manager=MagicMock(),
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=conversation,
+    )
+    handler._recall_handler.handle_memory_recall = AsyncMock()
+    handler._reflection_handler.handle_memory_reflection = AsyncMock()
+    event = MagicMock()
+
+    await handler.handle_memory_recall(event, MagicMock())
+    handler._recall_handler.handle_memory_recall.assert_awaited_once()
+    assert handler._maintenance_tasks
+    await started.wait()
+
+    await handler.handle_memory_reflection(event, MagicMock())
+    assert runtime.synchronize.await_count == 1
+
+    release.set()
+    await asyncio.gather(*handler._maintenance_tasks)
+
+
+def test_event_handler_retries_identity_sync_after_scheduling_failure() -> None:
+    """目录任务创建失败时清除事件标记，使后续钩子能够重试。"""
+
+    from core.event_handler import EventHandler
+    from core.identity.runtime import ProtocolIdentityRuntime
+
+    runtime = ProtocolIdentityRuntime()
+    identity = trusted_identity()
+    runtime.resolve = MagicMock(return_value=identity)
+    runtime.synchronize = MagicMock()
+    conversation = MagicMock(identity_runtime=runtime)
+    handler = EventHandler(
+        context=MagicMock(),
+        config_manager=MagicMock(),
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=conversation,
+    )
+    handler._create_maintenance_task = MagicMock(side_effect=RuntimeError("boom"))
+    event = SimpleNamespace()
+
+    assert handler._resolve_identity(event, writes_blocked=False) is identity
+    assert handler._resolve_identity(event, writes_blocked=False) is identity
+
+    assert handler._create_maintenance_task.call_count == 2
+    assert getattr(event, handler._IDENTITY_SYNC_MARKER_ATTR) is False
+
+
+@pytest.mark.asyncio
 async def test_runtime_exposes_read_only_current_identity_lookup() -> None:
     """身份运行时通过只读边界返回当前目录记录，并在无 Store 时安全降级。"""
 
@@ -241,7 +315,8 @@ async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> No
     conversation = MagicMock()
     conversation.add_message_from_event = AsyncMock()
     runtime = ProtocolIdentityRuntime()
-    runtime.prepare = AsyncMock(return_value=group_identity())
+    runtime.resolve = MagicMock(return_value=group_identity())
+    runtime.synchronize = AsyncMock()
     conversation.identity_runtime = runtime
     event = MagicMock()
     event.unified_msg_origin = "aiocqhttp:group:20001"
@@ -269,7 +344,7 @@ async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> No
 
     await handler.handle_all_group_messages(event)
 
-    runtime.prepare.assert_awaited_once()
+    runtime.resolve.assert_called_once_with(event)
     assert (
         handler._dedup.build_dedup_key.await_args.kwargs["sender_id_override"]
         == "10001"
@@ -369,7 +444,8 @@ async def test_conflict_group_capture_skips_user_message_and_cognitive_state() -
     conversation = MagicMock()
     conversation.add_message_from_event = AsyncMock()
     runtime = ProtocolIdentityRuntime()
-    runtime.prepare = AsyncMock(return_value=conflict_identity())
+    runtime.resolve = MagicMock(return_value=conflict_identity())
+    runtime.synchronize = AsyncMock()
     conversation.identity_runtime = runtime
     relation = MagicMock()
     relation.apply_delta = AsyncMock()

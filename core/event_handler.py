@@ -41,6 +41,8 @@ if TYPE_CHECKING:
 class EventHandler:
     """事件处理器 — 协调各子模块处理 AstrBot 事件"""
 
+    _IDENTITY_SYNC_MARKER_ATTR = "_memora_identity_sync_scheduled"
+
     def __init__(
         self,
         context: Any,
@@ -172,7 +174,7 @@ class EventHandler:
         try:
             session_id = event.unified_msg_origin
             writes_blocked = self._writes_blocked()
-            identity = await self._identity_runtime.prepare(
+            identity = self._resolve_identity(
                 event,
                 writes_blocked=writes_blocked,
             )
@@ -332,7 +334,7 @@ class EventHandler:
     ) -> None:
         """在 LLM 请求前检索并注入长期记忆。"""
         with debug_operation():
-            identity = await self._identity_runtime.prepare(
+            identity = self._resolve_identity(
                 event,
                 writes_blocked=self._writes_blocked(),
             )
@@ -350,7 +352,7 @@ class EventHandler:
     ) -> None:
         """在 LLM 响应后判断是否需要反思与存储记忆。"""
         with debug_operation():
-            identity = await self._identity_runtime.prepare(
+            identity = self._resolve_identity(
                 event,
                 writes_blocked=self._writes_blocked(),
             )
@@ -437,6 +439,59 @@ class EventHandler:
         )
 
     # ---- 内部方法 ----
+
+    def _resolve_identity(
+        self,
+        event: AstrMessageEvent,
+        *,
+        writes_blocked: bool,
+    ) -> ResolvedIdentity:
+        """同步解析身份，并把可信名称目录更新交给受管理任务。"""
+
+        identity = self._identity_runtime.resolve(event)
+        self._schedule_identity_sync(
+            event,
+            identity,
+            writes_blocked=writes_blocked,
+        )
+        return identity
+
+    def _schedule_identity_sync(
+        self,
+        event: AstrMessageEvent,
+        identity: ResolvedIdentity,
+        *,
+        writes_blocked: bool,
+    ) -> None:
+        """为同一事件至多调度一次可信身份目录同步。"""
+
+        if writes_blocked or identity.trust_status is not IdentityTrust.TRUSTED:
+            return
+        if getattr(event, self._IDENTITY_SYNC_MARKER_ATTR, False) is True:
+            return
+
+        try:
+            setattr(event, self._IDENTITY_SYNC_MARKER_ATTR, True)
+        except Exception:
+            logger.debug("协议身份同步标记写入失败，将继续执行本次同步")
+
+        coroutine = self._identity_runtime.synchronize(
+            event,
+            identity,
+            writes_blocked=False,
+        )
+        try:
+            self._create_maintenance_task(
+                coroutine,
+                name="identity-directory-sync",
+            )
+        except Exception:
+            coroutine.close()
+            try:
+                setattr(event, self._IDENTITY_SYNC_MARKER_ATTR, False)
+            except Exception:
+                logger.debug("协议身份同步标记回退失败")
+            logger.warning("协议身份目录同步任务调度失败", exc_info=True)
 
     def _create_maintenance_task(self, coro, *, name: str) -> asyncio.Task:
         """登记短生命周期维护任务，确保关闭阶段能够感知其失败。"""
