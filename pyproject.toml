@@ -31,6 +31,7 @@ dev = [
 ]
 
 [tool.uv]
+cache-dir = ".uv-cache"
 package = false
 
 [tool.ruff]
