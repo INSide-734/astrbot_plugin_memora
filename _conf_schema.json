@@ -102,6 +102,14 @@
                 "min": 0,
                 "max": 50
             },
+            "pre_llm_soft_budget_ms": {
+                "description": "LLM 前召回软预算",
+                "hint": "从 LLM 请求钩子开始计算的被动召回软预算。向量支路超时后保留本地检索结果继续响应；0 表示关闭。",
+                "type": "int",
+                "default": 800,
+                "min": 0,
+                "max": 5000
+            },
             "max_k": {
                 "description": "主动检索最大数量",
                 "hint": "Agent 主动调用长期记忆检索工具时允许返回的最大记忆条数。用于限制工具单次召回规模，建议 5-10。",

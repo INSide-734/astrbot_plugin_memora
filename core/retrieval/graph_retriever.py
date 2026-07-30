@@ -27,6 +27,7 @@ from ..utils.number_utils import clamp_float, safe_float
 from .graph_keyword_retriever import GraphKeywordRetriever
 from .graph_vector_retriever import GraphVectorRetriever
 from .rrf_fusion import BM25Result, RRFFusion, VectorResult
+from .vector_deadline import run_local_and_bounded_vector
 
 
 @dataclass(slots=True)
@@ -104,7 +105,7 @@ class GraphRetriever:
         session_id: str | None = None,
         persona_id: str | None = None,
         memory_types: list[str] | None = None,
-        timing_sink: dict[str, float] | None = None,
+        timing_sink: dict[str, object] | None = None,
         **kwargs: Any,
     ) -> list[GraphResult]:
         """按请求级参考时间并行执行图关键词检索和图向量检索。"""
@@ -123,20 +124,41 @@ class GraphRetriever:
             current_time = normalized_time.timestamp()
 
         _t_graph_start = time.perf_counter()
+        deadline_monotonic = kwargs.get("deadline_monotonic")
         (
-            (keyword_results, _kw_failed, _kw_ms),
-            (vector_results, _vec_failed, _vec_ms),
-        ) = await asyncio.gather(
-            self._search_route(
+            local_route,
+            vector_route,
+            vector_timed_out,
+        ) = await run_local_and_bounded_vector(
+            lambda: self._search_route(
                 self.keyword_retriever.search(query, k, session_id, persona_id),
             ),
-            self._search_route(
+            lambda: self._search_route(
                 self.vector_retriever.search(query, k, session_id, persona_id),
             ),
+            deadline_monotonic=(
+                float(deadline_monotonic)
+                if isinstance(deadline_monotonic, (int, float))
+                and not isinstance(deadline_monotonic, bool)
+                else None
+            ),
         )
+        keyword_results, _kw_failed, _kw_ms = local_route
+        if vector_route is None:
+            vector_results, _vec_failed, _vec_ms = [], True, 0.0
+        else:
+            vector_results, _vec_failed, _vec_ms = vector_route
         if timing_sink is not None:
             timing_sink["graph_keyword_ms"] = _kw_ms
             timing_sink["graph_vector_ms"] = _vec_ms
+            if vector_timed_out:
+                timing_sink.update(
+                    {
+                        "graph_vector_timed_out": True,
+                        "deadline_exhausted": True,
+                        "partial_fallback": bool(keyword_results),
+                    }
+                )
 
         if not keyword_results and not vector_results:
             if timing_sink is not None:

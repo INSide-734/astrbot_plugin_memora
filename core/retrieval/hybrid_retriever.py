@@ -21,6 +21,7 @@ from .memory_lifecycle import MemoryLifecycleManager
 from .mmr_reranker import apply_mmr
 from .rrf_fusion import BM25Result, HybridResult, RRFFusion, VectorResult
 from .score_weighting import ScoreWeighting
+from .vector_deadline import run_local_and_bounded_vector
 from .vector_retriever import VectorRetriever
 
 
@@ -138,7 +139,7 @@ class HybridRetriever:
         session_id: str | None = None,
         persona_id: str | None = None,
         memory_types: list[str] | None = None,
-        timing_sink: dict[str, float] | None = None,
+        timing_sink: dict[str, object] | None = None,
         **kwargs: Any,
     ) -> list[HybridResult]:
         """
@@ -169,22 +170,43 @@ class HybridRetriever:
 
         # 1. 并行执行两路检索
         _t_route_start = time.perf_counter()
+        deadline_monotonic = kwargs.get("deadline_monotonic")
         (
-            (bm25_results, bm25_error, bm25_ms),
-            (vector_results, vector_error, vector_ms),
-        ) = await asyncio.gather(
-            self._search_route(
+            local_route,
+            vector_route,
+            vector_timed_out,
+        ) = await run_local_and_bounded_vector(
+            lambda: self._search_route(
                 "BM25",
                 self.bm25_retriever.search(query, k, session_id, persona_id),
             ),
-            self._search_route(
+            lambda: self._search_route(
                 "向量",
                 self.vector_retriever.search(query, k, session_id, persona_id),
             ),
+            deadline_monotonic=(
+                float(deadline_monotonic)
+                if isinstance(deadline_monotonic, (int, float))
+                and not isinstance(deadline_monotonic, bool)
+                else None
+            ),
         )
+        bm25_results, bm25_error, bm25_ms = local_route
+        if vector_route is None:
+            vector_results, vector_error, vector_ms = [], TimeoutError(), 0.0
+        else:
+            vector_results, vector_error, vector_ms = vector_route
         if timing_sink is not None:
             timing_sink["bm25_ms"] = bm25_ms
             timing_sink["vector_ms"] = vector_ms
+            if vector_timed_out:
+                timing_sink.update(
+                    {
+                        "document_vector_timed_out": True,
+                        "deadline_exhausted": True,
+                        "partial_fallback": bool(bm25_results),
+                    }
+                )
 
         # 2. 处理退化情况
         if bm25_error and vector_error:

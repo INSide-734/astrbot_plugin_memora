@@ -47,7 +47,7 @@ describe("createMockConfigServer", () => {
     );
 
     expect(Object.keys(first.schema)).toHaveLength(45);
-    expect(countSchemaLeaves(first.schema)).toBe(238);
+    expect(countSchemaLeaves(first.schema)).toBe(239);
     expect(first.plugin_name).toBe("astrbot_plugin_memora");
     expect(first.provider_options).toEqual({
       llm: [
@@ -82,7 +82,10 @@ describe("createMockConfigServer", () => {
     const server = createMockConfigServer();
     const initial = fullState(server);
     const config = initial.config as ConfigObject;
-    expect(config.recall_engine).toMatchObject({ top_k: 5 });
+    expect(config.recall_engine).toMatchObject({
+      top_k: 5,
+      pre_llm_soft_budget_ms: 800,
+    });
 
     (config.recall_engine as ConfigObject).top_k = 999;
 

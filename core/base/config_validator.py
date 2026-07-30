@@ -54,6 +54,12 @@ class RecallEngineConfig(BaseModel):
     top_k: int = Field(
         default=5, ge=0, le=50, description="返回记忆数量。设为 0 则跳过自动召回和注入"
     )
+    pre_llm_soft_budget_ms: int = Field(
+        default=800,
+        ge=0,
+        le=5000,
+        description="LLM 请求前被动召回的软预算毫秒数；0 表示关闭",
+    )
     max_k: int = Field(
         default=10, ge=1, le=50, description="Agent 主动检索时允许的最大返回数量"
     )

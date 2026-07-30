@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -1063,6 +1064,52 @@ class TestDualRouteRetriever:
         )
         release.set()
         await task
+
+    @pytest.mark.asyncio
+    async def test_multi_query_routes_share_one_absolute_deadline(
+        self,
+        memory_loader: AsyncMock,
+    ) -> None:
+        """多查询计划的全部文档与图路必须复用同一绝对截止时间。"""
+
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.retrieval.query_planner import QueryPlan
+
+        document = MagicMock()
+        document.search = AsyncMock(return_value=[])
+        graph = MagicMock()
+        graph.search = AsyncMock(return_value=[])
+        retriever = DualRouteRetriever(document, graph, memory_loader)
+        plan = QueryPlan(
+            original_query="查询甲",
+            intent="default",
+            entities=(),
+            focus_terms=(),
+            temporal_anchor=None,
+            reference_time=datetime.now(timezone.utc),
+            queries=("查询甲", "查询乙"),
+            required_facets=(),
+            ambiguity_flags=(),
+            memory_types=(),
+        )
+        deadline = time.perf_counter() + 5.0
+
+        await retriever.search(
+            "查询甲",
+            k=4,
+            query_plan=plan,
+            deadline_monotonic=deadline,
+        )
+
+        assert document.search.await_count == 2
+        assert graph.search.await_count == 2
+        assert {
+            call.kwargs["deadline_monotonic"]
+            for call in document.search.await_args_list
+        } == {deadline}
+        assert {
+            call.kwargs["deadline_monotonic"] for call in graph.search.await_args_list
+        } == {deadline}
 
     @pytest.mark.asyncio
     async def test_privacy_filter_runs_before_final_truncation(
