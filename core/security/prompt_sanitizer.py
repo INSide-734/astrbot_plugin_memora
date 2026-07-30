@@ -12,6 +12,7 @@ import hashlib
 import logging
 import random
 import re
+import threading
 import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -595,7 +596,15 @@ class PromptProtectionService:
         scope_ttl_seconds: float = 300.0,
         max_scopes: int = 1024,
     ) -> None:
+        """初始化提示词保护组件和线程安全的请求作用域注册表。
 
+        参数:
+            wrapper_template_index: 元指令包装模板索引。
+            enable_double_check: 是否启用回复泄露双重验证。
+            clock: scope 生命周期使用的单调时钟。
+            scope_ttl_seconds: 请求 scope 的存活秒数。
+            max_scopes: 最多保留的请求 scope 数量。
+        """
         self.wrapper = MetaInstructionWrapper(wrapper_template_index)
         self.sanitizer = ResponseSanitizer()
         self.validator = DoubleCheckValidator()
@@ -604,6 +613,7 @@ class PromptProtectionService:
         self._scope_ttl_seconds = max(0.0, float(scope_ttl_seconds))
         self._max_scopes = max(0, int(max_scopes))
         self._scoped_instructions: dict[str, tuple[tuple[str, ...], float]] = {}
+        self._scope_lock = threading.RLock()
 
         self._stats: dict[str, int] = {
             "wrapped": 0,
@@ -630,13 +640,34 @@ class PromptProtectionService:
             content: 要注入的记忆上下文
             label: 内容标签（保留用于未来扩展）
             register_for_filter: 是否注册到清洗器/验证器
+            scope_id: 当前请求的唯一保护作用域；为空时使用兼容全局登记。
+
+        返回:
+            添加保护边界后的记忆上下文。
+
+        异常:
+            Exception: 包装或 scope 登记失败时原样传播，由注入执行器安全回滚。
         """
         wrapped = self.wrapper.wrap_instruction(content)
         self._stats["wrapped"] += 1
 
         if register_for_filter:
             if scope_id is not None:
-                self._register_scope(scope_id, (content.strip(),))
+                try:
+                    self._register_scope(scope_id, (content.strip(),))
+                except Exception as exc:
+                    with self._scope_lock:
+                        scoped_scope_count = len(self._scoped_instructions)
+                    logger.error(
+                        "提示词保护登记失败：stage=scope_registration "
+                        "exception_type=%s scope_present=%s payload_chars=%d "
+                        "scoped_scope_count=%d",
+                        type(exc).__name__,
+                        bool(scope_id),
+                        len(content),
+                        scoped_scope_count,
+                    )
+                    raise
             else:
                 self.sanitizer.register_instructions([content])
                 self.validator.register_instructions([content])
@@ -705,54 +736,64 @@ class PromptProtectionService:
                 self.discard_scope(scope_id)
 
     def _prune_scopes(self) -> None:
-        now = self._clock()
-        expired = [
-            scope_id
-            for scope_id, (_, registered_at) in self._scoped_instructions.items()
-            if now - registered_at >= self._scope_ttl_seconds
-        ]
-        for scope_id in expired:
-            self._scoped_instructions.pop(scope_id, None)
+        """在同一临界区内移除所有已过期的请求 scope。"""
+        with self._scope_lock:
+            now = self._clock()
+            expired = [
+                scope_id
+                for scope_id, (_, registered_at) in self._scoped_instructions.items()
+                if now - registered_at >= self._scope_ttl_seconds
+            ]
+            for scope_id in expired:
+                self._scoped_instructions.pop(scope_id, None)
 
     def _register_scope(
         self,
         scope_id: str,
         instructions: tuple[str, ...],
     ) -> None:
-        self._prune_scopes()
-        self._scoped_instructions.pop(scope_id, None)
-        if self._max_scopes <= 0:
-            return
-        while len(self._scoped_instructions) >= self._max_scopes:
-            oldest = min(
-                self._scoped_instructions,
-                key=lambda key: self._scoped_instructions[key][1],
-            )
-            self._scoped_instructions.pop(oldest, None)
-        self._scoped_instructions[scope_id] = (instructions, self._clock())
+        """原子登记一个 scope，并在容量满时淘汰最早记录。"""
+        with self._scope_lock:
+            self._prune_scopes()
+            self._scoped_instructions.pop(scope_id, None)
+            if self._max_scopes <= 0:
+                return
+            while len(self._scoped_instructions) >= self._max_scopes:
+                oldest = min(
+                    self._scoped_instructions,
+                    key=lambda key: self._scoped_instructions[key][1],
+                )
+                self._scoped_instructions.pop(oldest, None)
+            self._scoped_instructions[scope_id] = (instructions, self._clock())
 
     def _get_scope(self, scope_id: str) -> tuple[str, ...]:
-        self._prune_scopes()
-        entry = self._scoped_instructions.get(scope_id)
-        return entry[0] if entry is not None else ()
+        """返回指定 scope 的不可变指令快照，缺失时返回空元组。"""
+        with self._scope_lock:
+            self._prune_scopes()
+            entry = self._scoped_instructions.get(scope_id)
+            return entry[0] if entry is not None else ()
 
     def has_scope(self, scope_id: str | None) -> bool:
-        """Return whether a live request-scoped registration exists."""
+        """返回当前是否存在有效的请求 scope 登记。"""
         if not scope_id:
             return False
-        self._prune_scopes()
-        return scope_id in self._scoped_instructions
+        with self._scope_lock:
+            self._prune_scopes()
+            return scope_id in self._scoped_instructions
 
     @property
     def scoped_scope_count(self) -> int:
-        self._prune_scopes()
-        return len(self._scoped_instructions)
+        """返回清理过期项后的活跃请求 scope 数量。"""
+        with self._scope_lock:
+            self._prune_scopes()
+            return len(self._scoped_instructions)
 
     def discard_scope(self, scope_id: str | None) -> None:
-        """Discard one request-scoped registration without touching legacy state."""
-        self._prune_scopes()
-        if scope_id:
-            self._scoped_instructions.pop(scope_id, None)
+        """删除一个请求 scope，不改变兼容用的全局登记状态。"""
+        with self._scope_lock:
+            self._prune_scopes()
+            if scope_id:
+                self._scoped_instructions.pop(scope_id, None)
 
     def process_interaction(
         self,
