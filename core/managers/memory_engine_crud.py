@@ -24,6 +24,7 @@ from .memory_engine_atom_support import (
     successful_atoms,
 )
 from .memory_engine_evolution_hooks import memory_revision
+from .retrieval_timing import RetrievalTimingSink
 from .write_op_serialization import serialize_atom_for_repair
 
 
@@ -277,8 +278,10 @@ class MemoryEngineCRUDMixin:
         debug_trace: list[dict[str, Any]] | None = None,
         reference_time: datetime | None = None,
         query_plan: Any | None = None,
+        timing_sink: RetrievalTimingSink | None = None,
+        deadline_monotonic: float | None = None,
     ) -> list[HybridResult]:
-        """执行受 scope、privacy 与时间边界约束的多路召回。"""
+        """执行受 scope、privacy、参考时间与可选软截止时间约束的召回。"""
 
         requested_reference_time = normalize_datetime(
             reference_time
@@ -333,6 +336,8 @@ class MemoryEngineCRUDMixin:
                 "cache_lookup_ms": (_t_cache_end - _t_cache) * 1000.0,
                 "retrieval_total_ms": (_t_cache_end - _t_start) * 1000.0,
             }
+            if timing_sink is not None:
+                timing_sink.update(self._last_search_timing)
             return cached_results
 
         # 请求级会话缓存：消除 Bridge→RecallHandler 同一请求的重复搜索
@@ -370,6 +375,8 @@ class MemoryEngineCRUDMixin:
                 "cache_lookup_ms": (_t_cache_end - _t_cache) * 1000.0,
                 "retrieval_total_ms": (_t_cache_end - _t_start) * 1000.0,
             }
+            if timing_sink is not None:
+                timing_sink.update(self._last_search_timing)
             return truncated
         if session_id and ":" in session_id:
             self._create_tracked_task(
@@ -390,6 +397,7 @@ class MemoryEngineCRUDMixin:
         _t_graph_route = 0.0
         _t_merge = 0.0
         _t_rerank = 0.0
+        route_timing: dict[str, float | int | bool] = {}
         if self.dual_route_retriever is not None:
             results = await self.dual_route_retriever.search(
                 query,
@@ -403,14 +411,13 @@ class MemoryEngineCRUDMixin:
                 user_id=user_id,
                 reference_time=effective_reference_time,
                 query_plan=query_plan,
+                timing_sink=route_timing,
+                deadline_monotonic=deadline_monotonic,
             )
-            # 读取双路检索的阶段计时
-            dr_timing = getattr(self.dual_route_retriever, "last_search_timing", None)
-            if dr_timing:
-                _t_doc_route = dr_timing.get("document_route_ms", 0.0)
-                _t_graph_route = dr_timing.get("graph_route_ms", 0.0)
-                _t_merge = dr_timing.get("merge_ms", 0.0)
-                _t_rerank = dr_timing.get("rerank_ms", 0.0)
+            _t_doc_route = float(route_timing.get("document_route_ms", 0.0))
+            _t_graph_route = float(route_timing.get("graph_route_ms", 0.0))
+            _t_merge = float(route_timing.get("merge_ms", 0.0))
+            _t_rerank = float(route_timing.get("rerank_ms", 0.0))
         else:
             if self.hybrid_retriever is None:
                 raise RuntimeError("混合检索器未初始化")
@@ -420,6 +427,8 @@ class MemoryEngineCRUDMixin:
                 session_id,
                 persona_id,
                 memory_types=memory_types,
+                timing_sink=route_timing,
+                deadline_monotonic=deadline_monotonic,
             )
             # 群聊过滤机密记忆（hybrid_retriever 不支持 chat_type 参数，后置过滤）
             if chat_type == "group":
@@ -512,12 +521,9 @@ class MemoryEngineCRUDMixin:
             "boost_ms": _t_boost,
             "chain_expand_ms": _t_chain,
         }
-        if self.dual_route_retriever is not None:
-            for key, value in (
-                getattr(self.dual_route_retriever, "last_search_timing", None) or {}
-            ).items():
-                if isinstance(value, (int, float, bool)):
-                    self._last_search_timing[key] = value
+        self._last_search_timing.update(route_timing)
+        if timing_sink is not None:
+            timing_sink.update(self._last_search_timing)
         return results
 
     async def get_memory(self, memory_id: int) -> dict[str, Any] | None:

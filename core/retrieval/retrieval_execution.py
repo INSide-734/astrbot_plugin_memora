@@ -45,6 +45,7 @@ class RouteExecutionCoordinator:
         persona_id: str | None = None,
         memory_types: list[str] | None = None,
         reference_time: Any = None,
+        deadline_monotonic: float | None = None,
     ) -> RouteOutcome:
         """并发启动三路检索，并在调用方取消后收敛所有子任务。"""
         timing: dict[str, float] = {}
@@ -62,6 +63,7 @@ class RouteExecutionCoordinator:
                     persona_id,
                     memory_types=memory_types,
                     timing_sink=route_timing,
+                    deadline_monotonic=deadline_monotonic,
                 )
                 route_timing.setdefault(
                     "document_total_ms", (time.perf_counter() - started) * 1000.0
@@ -92,6 +94,7 @@ class RouteExecutionCoordinator:
                     memory_types=memory_types,
                     reference_time=reference_time,
                     timing_sink=route_timing,
+                    deadline_monotonic=deadline_monotonic,
                 )
                 route_timing.setdefault(
                     "graph_total_ms", (time.perf_counter() - started) * 1000.0

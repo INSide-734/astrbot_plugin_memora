@@ -22,6 +22,7 @@ from .core.command_endpoints import CommandEndpointsMixin
 from .core.command_handler import CommandHandler
 from .core.event_handler import EventHandler
 from .core.feature_delegation import FeatureDelegation
+from .core.handlers.recall_observability import RecallTimingContext
 from .core.i18n_backend import init as i18n_init
 from .core.i18n_backend import t
 from .core.managers.backup_manager import BackupManager
@@ -798,7 +799,12 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     @filter.on_llm_request()
     async def handle_memory_recall(self, event: AstrMessageEvent, req: ProviderRequest):
         """[事件钩子] 在 LLM 请求前查询并注入长期记忆。"""
+        timing_context = RecallTimingContext.start(
+            self.config_manager.get("recall_engine.pre_llm_soft_budget_ms", 800)
+        )
+        ready_started = time.perf_counter()
         ready, _ = await self._ensure_plugin_ready(wait=False)
+        timing_context.record_elapsed("plugin_ready_ms", ready_started)
         if not ready:
             logger.debug("插件未完成初始化，跳过记忆召回")
             return
@@ -806,7 +812,11 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         if not self.event_handler:
             return
 
-        await self.event_handler.handle_memory_recall(event, req)
+        await self.event_handler.handle_memory_recall(
+            event,
+            req,
+            timing_context=timing_context,
+        )
 
     @filter.on_llm_response()
     async def handle_memory_reflection(

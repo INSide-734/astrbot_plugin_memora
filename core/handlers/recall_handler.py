@@ -45,6 +45,7 @@ from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
 from ..utils import OperationContext, get_persona_id
+from .recall_observability import RecallTimingContext
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -128,9 +129,18 @@ class RecallHandler:
         event: AstrMessageEvent,
         req: ProviderRequest,
         identity: ResolvedIdentity | None = None,
+        timing_context: RecallTimingContext | None = None,
     ) -> None:
         """在 LLM 请求前查询并注入长期记忆，可使用已解析协议身份。"""
         recall_started = time.perf_counter()
+        if timing_context is None:
+            timing_context = RecallTimingContext.start(
+                self._config_manager.get(
+                    "recall_engine.pre_llm_soft_budget_ms",
+                    800,
+                ),
+                started_monotonic=recall_started,
+            )
         injected_count = 0
         filtered_count = 0
         candidate_count = 0
@@ -201,6 +211,7 @@ class RecallHandler:
                             f"[{session_id}] 已清理 {removed} 处历史记忆注入片段"
                         )
 
+                query_analysis_started = time.perf_counter()
                 actual_query = await self._extractor.get_event_message_str(event)
                 report_debug_event(
                     "recall_stage",
@@ -322,6 +333,10 @@ class RecallHandler:
                 )
                 # R1.5：查询计划构建 — 生成多查询计划用于跨查询RRF融合
                 query_plan = QueryPlanner.build(query=actual_query, intent=query_intent)
+                timing_context.record_elapsed(
+                    "query_analysis_ms",
+                    query_analysis_started,
+                )
                 # 使用改写后的第一条查询（或原始查询）作为主检索词
                 rewritten_queries = query_intent.rewritten_queries
                 primary_query = (
@@ -437,6 +452,8 @@ class RecallHandler:
                     user_id=user_id,
                     reference_time=reference_time,
                     query_plan=query_plan,
+                    timing_sink=timing_context.retrieval,
+                    deadline_monotonic=timing_context.deadline_monotonic,
                 )
                 report_debug_event(
                     "recall_stage",
@@ -466,9 +483,14 @@ class RecallHandler:
                 ordinary_candidates = list(recalled_memories or [])
                 if spontaneous:
                     ordinary_candidates.extend(spontaneous)
+                candidate_finalize_started = time.perf_counter()
                 ordinary_candidates = self._finalize_recall_candidates(
                     ordinary_candidates,
                     top_k=top_k,
+                )
+                timing_context.record_elapsed(
+                    "candidate_finalize_ms",
+                    candidate_finalize_started,
                 )
 
                 prospective = await self._maybe_prospective_recall(
@@ -574,8 +596,10 @@ class RecallHandler:
             )
             logger.error(f"处理 on_llm_request 钩子时发生错误: {e}", exc_info=True)
         finally:
+            recall_total_ms = (time.perf_counter() - recall_started) * 1000.0
+            timing_context.record("recall_hook_total_ms", recall_total_ms)
             self._record_recall_observability(
-                total_ms=(time.perf_counter() - recall_started) * 1000.0,
+                total_ms=recall_total_ms,
                 injected_count=injected_count,
                 filtered_count=filtered_count,
                 candidate_count=candidate_count,
@@ -585,6 +609,7 @@ class RecallHandler:
                 inject_ms=injection_inject_ms,
                 injection_chars=injection_chars,
                 selected_count=injection_selected_count,
+                timing_context=timing_context,
             )
 
     def _routing_config(self) -> InjectionRoutingConfig:
@@ -1003,7 +1028,10 @@ class RecallHandler:
         inject_ms: float = 0.0,
         injection_chars: int = 0,
         selected_count: int = 0,
+        timing_context: RecallTimingContext | None = None,
     ) -> None:
+        """记录一次召回的安全总量、阶段计时和结果计数。"""
+
         report_debug_event(
             "recall_completed",
             component="recall",
@@ -1025,8 +1053,7 @@ class RecallHandler:
 
         if self._perf_tracker is None:
             return
-        # 从 MemoryEngine 读取实际阶段耗时
-        timing = getattr(self._memory_engine, "_last_search_timing", None) or {}
+        timing = timing_context.snapshot() if timing_context is not None else {}
         try:
             from ..monitoring.recall_timing import BOOL_KEYS, COUNT_KEYS, TIMING_KEYS
 

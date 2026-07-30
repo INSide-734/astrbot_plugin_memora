@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from typing import Final
 
 TIMING_KEYS: Final[tuple[str, ...]] = (
+    "plugin_ready_ms",
+    "identity_resolve_ms",
     # 新粒度键
     "query_analysis_ms",
     "conditional_llm_ms",
@@ -52,6 +54,11 @@ BOOL_KEYS: Final[tuple[str, ...]] = (
     "conditional_llm_triggered",
     "conditional_llm_used",
     "conditional_llm_timed_out",
+    "document_vector_timed_out",
+    "graph_vector_timed_out",
+    "deadline_exhausted",
+    "partial_fallback",
+    "graph_route_skipped",
 )
 STATUS_VALUES: Final[frozenset[str]] = frozenset(
     {

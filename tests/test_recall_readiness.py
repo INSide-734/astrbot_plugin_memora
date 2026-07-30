@@ -14,7 +14,10 @@ def _plugin_shell():
     """创建不触发插件初始化副作用的最小实例。"""
 
     plugin_class = _load_memora_plugin_class()
-    return object.__new__(plugin_class)
+    plugin = object.__new__(plugin_class)
+    plugin.config_manager = MagicMock()
+    plugin.config_manager.get.return_value = 800
+    return plugin
 
 
 @pytest.mark.asyncio
@@ -64,4 +67,7 @@ async def test_ready_recall_still_delegates_once() -> None:
 
     await plugin.handle_memory_recall(event, request)
 
-    plugin.event_handler.handle_memory_recall.assert_awaited_once_with(event, request)
+    plugin.event_handler.handle_memory_recall.assert_awaited_once()
+    call = plugin.event_handler.handle_memory_recall.await_args
+    assert call.args == (event, request)
+    assert call.kwargs["timing_context"].deadline_monotonic is not None

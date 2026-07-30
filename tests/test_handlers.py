@@ -276,12 +276,20 @@ class TestRecallHandlerSearchParameters:
         }.get(key, default)
 
         engine = MagicMock()
-        engine.search_memories = AsyncMock(return_value=[])
-        engine._last_search_timing = {
-            "retrieval_total_ms": 12.5,
-            "query_count": 1,
-            "cache_hit": False,
-        }
+
+        async def search_memories(**kwargs):
+            """模拟引擎向当前请求的局部 sink 写入阶段计时。"""
+
+            kwargs["timing_sink"].update(
+                {
+                    "retrieval_total_ms": 12.5,
+                    "query_count": 1,
+                    "cache_hit": False,
+                }
+            )
+            return []
+
+        engine.search_memories = AsyncMock(side_effect=search_memories)
         conv = MagicMock()
         conv.add_message_from_event = AsyncMock()
         adapter = MagicMock()

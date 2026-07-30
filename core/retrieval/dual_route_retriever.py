@@ -112,6 +112,8 @@ class DualRouteRetriever:
         user_id: str | None = None,
         reference_time: datetime | None = None,
         query_plan: QueryPlan | None = None,
+        timing_sink: dict[str, float | int | bool] | None = None,
+        deadline_monotonic: float | None = None,
     ) -> list[HybridResult]:
         """同时运行两条检索路由，并合并候选记忆。
 
@@ -133,6 +135,8 @@ class DualRouteRetriever:
                 query_intent=query_intent,
                 user_id=user_id,
                 reference_time=reference_time,
+                timing_sink=timing_sink,
+                deadline_monotonic=deadline_monotonic,
             )
 
         # 向后兼容：单查询路径
@@ -146,6 +150,7 @@ class DualRouteRetriever:
             persona_id=persona_id,
             memory_types=memory_types,
             reference_time=reference_time,
+            deadline_monotonic=deadline_monotonic,
         )
         doc_results = outcome.document_results
         graph_results = outcome.graph_results
@@ -173,6 +178,7 @@ class DualRouteRetriever:
             merged = self._apply_persona_boost(merged, persona_id)
 
         # v2.5 个性化排序 — 基于用户画像标签加权
+        _t_profile_start = time.perf_counter()
         if user_id and self.personalized_ranker and self.profile_manager and merged:
             try:
                 tag_weights = await self.profile_manager.get_tag_weights(user_id)
@@ -180,6 +186,7 @@ class DualRouteRetriever:
                 merged = self.personalized_ranker.apply(merged, tag_weights, profile)
             except Exception:
                 pass  # 个性化排序失败不影响主流程
+        profile_lookup_ms = (time.perf_counter() - _t_profile_start) * 1000.0
 
         # v3.0 证据评分 — temporal/entity/focus/cross-query 维度打分
         if self.evidence_scorer is not None and query_plan is not None and merged:
@@ -293,6 +300,7 @@ class DualRouteRetriever:
             "merge_ms": merge_ms,
             "relation_ms": relation_ms,
             "projection_ms": projection_ms,
+            "profile_lookup_ms": profile_lookup_ms,
             "derived_expansion_ms": relation_ms + projection_ms,
             "rerank_ms": rerank_ms,
             "query_count": 1,
@@ -302,6 +310,8 @@ class DualRouteRetriever:
         visible = self._filter_by_privacy(merged, chat_type)[:k]
         privacy_ms = (time.perf_counter() - _t_privacy_start) * 1000.0
         self.last_search_timing["privacy_ms"] = privacy_ms
+        if timing_sink is not None:
+            timing_sink.update(self.last_search_timing)
         await self._schedule_atom_touch(visible, atom_ids_by_parent)
         return visible
 
@@ -318,6 +328,8 @@ class DualRouteRetriever:
         query_intent: QueryIntent | None,
         user_id: str | None,
         reference_time: datetime | None,
+        timing_sink: dict[str, float | int | bool] | None,
+        deadline_monotonic: float | None,
     ) -> list[HybridResult]:
         """多查询计划路径：按计划拆分预算，逐查询检索并跨查询 RRF 融合。"""
         reference_time = normalize_datetime(reference_time) or datetime.now(
@@ -348,6 +360,7 @@ class DualRouteRetriever:
                     persona_id=persona_id,
                     memory_types=memory_types,
                     reference_time=reference_time,
+                    deadline_monotonic=deadline_monotonic,
                 )
                 for sub_query, budget in active_queries
             )
@@ -400,6 +413,7 @@ class DualRouteRetriever:
             fused = self._apply_persona_boost(fused, persona_id)
 
         # 个性化排序
+        _t_profile_start = time.perf_counter()
         if user_id and self.personalized_ranker and self.profile_manager and fused:
             try:
                 tag_weights = await self.profile_manager.get_tag_weights(user_id)
@@ -407,6 +421,7 @@ class DualRouteRetriever:
                 fused = self.personalized_ranker.apply(fused, tag_weights, profile)
             except Exception:
                 pass
+        profile_lookup_ms = (time.perf_counter() - _t_profile_start) * 1000.0
 
         # v3.0 证据评分 — temporal/entity/focus/cross-query 维度打分
         if self.evidence_scorer is not None and fused:
@@ -522,6 +537,7 @@ class DualRouteRetriever:
             "merge_ms": merge_total_ms,
             "relation_ms": relation_ms,
             "projection_ms": projection_ms,
+            "profile_lookup_ms": profile_lookup_ms,
             "derived_expansion_ms": relation_ms + projection_ms,
             "rerank_ms": rerank_ms,
             "query_count": len(active_queries),
@@ -531,6 +547,8 @@ class DualRouteRetriever:
         visible = self._filter_by_privacy(fused, chat_type)[:k]
         privacy_ms = (time.perf_counter() - _t_privacy_start) * 1000.0
         self.last_search_timing["privacy_ms"] = privacy_ms
+        if timing_sink is not None:
+            timing_sink.update(self.last_search_timing)
         await self._schedule_atom_touch(visible, all_atom_ids_by_parent)
         return visible
 

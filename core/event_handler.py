@@ -17,6 +17,7 @@ from .cleaners.injection_cleaner import InjectionCleaner
 from .dedup.dedup_manager import DedupManager
 from .extractors.message_content_extractor import MessageContentExtractor
 from .handlers.recall_handler import RecallHandler
+from .handlers.recall_observability import RecallTimingContext
 from .handlers.reflection_handler import ReflectionHandler
 from .identity.models import IdentityTrust, ResolvedIdentity
 from .identity.runtime import ProtocolIdentityRuntime
@@ -331,17 +332,22 @@ class EventHandler:
         self,
         event: AstrMessageEvent,
         req: ProviderRequest,
+        timing_context: RecallTimingContext | None = None,
     ) -> None:
         """在 LLM 请求前检索并注入长期记忆。"""
         with debug_operation():
+            identity_started = time.perf_counter()
             identity = self._resolve_identity(
                 event,
                 writes_blocked=self._writes_blocked(),
             )
+            if timing_context is not None:
+                timing_context.record_elapsed("identity_resolve_ms", identity_started)
             await self._recall_handler.handle_memory_recall(
                 event,
                 req,
                 identity=identity,
+                timing_context=timing_context,
             )
 
     @monitored
