@@ -53,6 +53,15 @@ class BenchmarkDelays:
     soft_budget_seconds: float = 0.100
 
 
+@dataclass(frozen=True, slots=True)
+class _Scenario:
+    """单个温度、缓存状态与聊天类型组合。"""
+
+    state: str
+    cache: str
+    chat_type: str
+
+
 class _CountingEmbeddingProvider:
     """记录真实底层调用次数的可控延迟 Embedding Provider。"""
 
@@ -194,15 +203,15 @@ def evaluate_route_quality_guard(
 
 async def _run_scenario(
     *,
-    state: str,
-    cache: str,
-    chat_type: str,
+    scenario: _Scenario,
     samples: int,
     delays: BenchmarkDelays,
 ) -> dict[str, Any]:
     """运行单个冷/热、缓存和聊天类型组合。"""
 
-    query = "群里谁负责发布说明" if chat_type == "group" else "用户偏好燕麦拿铁"
+    query = (
+        "群里谁负责发布说明" if scenario.chat_type == "group" else "用户偏好燕麦拿铁"
+    )
     intent = QueryIntent.from_keywords(query)
     plan = QueryPlanner.build(query=query, intent=intent)
     use_graph = should_use_graph_route(plan, intent)
@@ -214,10 +223,10 @@ async def _run_scenario(
     for _index in range(samples):
         started = time.perf_counter()
         deadline = started + max(0.0, delays.soft_budget_seconds)
-        if state == "cold":
+        if scenario.state == "cold":
             await asyncio.sleep(max(0.0, delays.cold_ready_seconds))
 
-        if cache == "hit":
+        if scenario.cache == "hit":
             await asyncio.sleep(max(0.0, delays.cache_hit_seconds))
             partial = False
         else:
@@ -247,9 +256,9 @@ async def _run_scenario(
         durations_ms.append((time.perf_counter() - started) * 1000.0)
 
     return {
-        "state": state,
-        "cache": cache,
-        "chat_type": chat_type,
+        "state": scenario.state,
+        "cache": scenario.cache,
+        "chat_type": scenario.chat_type,
         "samples": samples,
         "p50_ms": round(percentile(durations_ms, 0.50), 3),
         "p95_ms": round(percentile(durations_ms, 0.95), 3),
@@ -275,9 +284,11 @@ async def run_benchmark(
             for chat_type in ("private", "group"):
                 scenarios.append(
                     await _run_scenario(
-                        state=state,
-                        cache=cache,
-                        chat_type=chat_type,
+                        scenario=_Scenario(
+                            state=state,
+                            cache=cache,
+                            chat_type=chat_type,
+                        ),
                         samples=sample_count,
                         delays=active_delays,
                     )

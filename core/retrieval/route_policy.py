@@ -18,19 +18,29 @@ def should_use_graph_route(query_plan: Any | None, query_intent: Any | None) -> 
         return True
     if tuple(getattr(query_plan, "ambiguity_flags", ()) or ()):
         return True
+    intent = _resolve_intent(query_plan, query_intent)
+    if intent not in _KNOWN_INTENTS or intent in _GRAPH_INTENTS:
+        return True
+    return _has_graph_facet(query_plan)
+
+
+def _resolve_intent(query_plan: Any, query_intent: Any | None) -> str:
+    """优先从计划读取意图，并在字段缺失时回退到改写结果。"""
 
     raw_intent = getattr(query_plan, "intent", None)
     if not raw_intent and query_intent is not None:
         raw_intent = getattr(query_intent, "intent", None)
-    intent = str(raw_intent or "").strip().casefold()
-    if intent not in _KNOWN_INTENTS or intent in _GRAPH_INTENTS:
-        return True
+    return str(raw_intent or "").strip().casefold()
 
-    required_facets = {
+
+def _has_graph_facet(query_plan: Any) -> bool:
+    """判断查询计划是否声明实体、关系、时间或事件维度。"""
+
+    facets = {
         str(facet).strip().casefold()
         for facet in (getattr(query_plan, "required_facets", ()) or ())
     }
-    return bool(required_facets & _GRAPH_FACETS)
+    return bool(facets & _GRAPH_FACETS)
 
 
 __all__ = ["should_use_graph_route"]
