@@ -718,6 +718,14 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         if not initialized:
             return False, self._get_initialization_status_message()
 
+        if not wait:
+            runtime_ready = (
+                not self._terminating
+                and self.event_handler is not None
+                and self.command_handler is not None
+            )
+            return (True, "") if runtime_ready else (False, t("command.core_not_ready"))
+
         if not await self._ensure_runtime_components():
             return (
                 False,
@@ -790,7 +798,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     @filter.on_llm_request()
     async def handle_memory_recall(self, event: AstrMessageEvent, req: ProviderRequest):
         """[事件钩子] 在 LLM 请求前查询并注入长期记忆。"""
-        ready, _ = await self._ensure_plugin_ready()
+        ready, _ = await self._ensure_plugin_ready(wait=False)
         if not ready:
             logger.debug("插件未完成初始化，跳过记忆召回")
             return
