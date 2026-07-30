@@ -158,6 +158,9 @@ class AuxiliaryRecall:
                     HybridResult(
                         doc_id=atom.parent_memory_id,
                         final_score=0.9,
+                        rrf_score=0.9,
+                        bm25_score=None,
+                        vector_score=None,
                         content=f"[待办] {atom.content}",
                         metadata=metadata,
                     )

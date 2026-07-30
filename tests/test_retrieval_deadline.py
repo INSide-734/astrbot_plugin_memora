@@ -11,6 +11,7 @@ import pytest
 
 from core.retrieval.graph_retriever import GraphRetriever
 from core.retrieval.hybrid_retriever import HybridRetriever
+from core.retrieval.retrieval_execution import RouteExecutionCoordinator
 from core.retrieval.rrf_fusion import RRFFusion
 from core.retrieval.vector_deadline import run_local_and_bounded_vector
 
@@ -129,3 +130,36 @@ async def test_graph_route_falls_back_to_keyword_after_vector_deadline() -> None
     assert timing["graph_vector_timed_out"] is True
     assert timing["deadline_exhausted"] is True
     assert timing["partial_fallback"] is True
+
+
+@pytest.mark.asyncio
+async def test_route_coordinator_preserves_timeout_flags_as_booleans() -> None:
+    """路由计时合并不得把超时与部分降级布尔值转换为浮点数。"""
+
+    async def search_document(*_args, timing_sink=None, **_kwargs):
+        """模拟文档路写入向量超时状态并返回本地结果。"""
+
+        timing_sink.update(
+            {
+                "document_vector_timed_out": True,
+                "deadline_exhausted": True,
+                "partial_fallback": True,
+            }
+        )
+        return ["local"]
+
+    document = MagicMock()
+    document.search = AsyncMock(side_effect=search_document)
+    graph = MagicMock()
+    graph.search = AsyncMock(return_value=[])
+    coordinator = RouteExecutionCoordinator(document, graph)
+
+    outcome = await coordinator.execute(
+        query="query",
+        k=3,
+        use_graph_route=False,
+    )
+
+    assert outcome.timing["document_vector_timed_out"] is True
+    assert outcome.timing["deadline_exhausted"] is True
+    assert outcome.timing["partial_fallback"] is True

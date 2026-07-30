@@ -165,7 +165,9 @@ class RouteExecutionCoordinator:
         # 合并各路子阶段计时
         for source_timing in (doc_timing, graph_timing, atom_timing):
             for key, value in source_timing.items():
-                if isinstance(value, (int, float)):
+                if isinstance(value, bool):
+                    timing[key] = bool(timing.get(key, False)) or value
+                elif isinstance(value, (int, float)):
                     timing[key] = float(value)
 
         timing["route_wall_ms"] = (time.perf_counter() - _t_total_start) * 1000.0

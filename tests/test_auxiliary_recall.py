@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -145,3 +146,35 @@ async def test_auxiliary_recall_propagates_calling_task_cancellation() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert collected.is_set()
+
+
+@pytest.mark.asyncio
+async def test_prospective_atom_is_converted_to_complete_hybrid_result() -> None:
+    """命中的 PLANNED 原子必须生成字段完整、可直接参与注入的候选。"""
+
+    atom = SimpleNamespace(
+        parent_memory_id=42,
+        content="提交复盘记录",
+        event_time="2026-08-01T09:00:00Z",
+        metadata={},
+    )
+    engine = MagicMock()
+    engine.atom_store.query_upcoming_planned = AsyncMock(return_value=[atom])
+    auxiliary = AuxiliaryRecall(
+        _config({"recall_engine.prospective_recall_enabled": True}),
+        engine,
+    )
+
+    results = await auxiliary.maybe_prospective_recall(
+        session_id="session",
+        persona_id=None,
+        chat_type="private",
+        deadline_monotonic=None,
+    )
+
+    assert len(results) == 1
+    assert results[0].doc_id == 42
+    assert results[0].rrf_score == 0.9
+    assert results[0].bm25_score is None
+    assert results[0].vector_score is None
+    assert results[0].metadata["recall_source"] == "prospective"
