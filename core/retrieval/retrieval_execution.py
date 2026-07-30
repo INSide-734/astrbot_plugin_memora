@@ -33,6 +33,8 @@ class RouteExecutionCoordinator:
         graph_retriever: Any,
         atom_retriever: Any | None = None,
     ) -> None:
+        """保存文档、图与可选 Atom 检索器，供单次查询并发协调。"""
+
         self._document_retriever = document_retriever
         self._graph_retriever = graph_retriever
         self._atom_retriever = atom_retriever
@@ -54,6 +56,8 @@ class RouteExecutionCoordinator:
         _t_total_start = time.perf_counter()
 
         async def _run_document() -> tuple[list[Any], dict[str, float]]:
+            """执行文档检索，并把可恢复故障降级为空结果与局部计时。"""
+
             route_timing: dict[str, float] = {}
             started = time.perf_counter()
             try:
@@ -84,6 +88,8 @@ class RouteExecutionCoordinator:
                 return [], route_timing
 
         async def _run_graph() -> tuple[list[Any], dict[str, float]]:
+            """执行图检索，并把可恢复故障降级为空结果与局部计时。"""
+
             route_timing: dict[str, float] = {}
             started = time.perf_counter()
             try:
@@ -115,6 +121,8 @@ class RouteExecutionCoordinator:
                 return [], route_timing
 
         async def _run_atom() -> tuple[list[Any], dict[str, float]]:
+            """执行可选 Atom 检索，并在组件缺失或故障时安全降级。"""
+
             route_timing: dict[str, float] = {}
             if self._atom_retriever is None:
                 return [], route_timing
