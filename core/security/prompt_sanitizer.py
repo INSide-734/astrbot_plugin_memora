@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 import random
 import re
 import threading
@@ -18,7 +17,8 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Callable
 
-logger = logging.getLogger("astrbot.memora.security.prompt_sanitizer")
+from astrbot.api import logger
+
 PROMPT_PROTECTION_SCOPE_EXTRA_KEY = "memora_prompt_protection_scope"
 PROMPT_PROTECTION_REQUIRED_EXTRA_KEY = "memora_prompt_protection_required"
 PROMPT_PROTECTION_SCOPE_ATTR = "_memora_prompt_protection_scope"

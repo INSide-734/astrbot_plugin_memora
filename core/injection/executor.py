@@ -10,6 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
 
 from ..base.constants import FAKE_TOOL_CALL_ID_PREFIX, FAKE_TOOL_CALL_NAME
@@ -200,9 +201,16 @@ class InjectionExecutor:
                 self._restore_request(req, request_snapshot)
                 self._discard_protection_scope(context.scope_id)
                 raise
-            except Exception:
+            except Exception as exc:
                 self._restore_request(req, request_snapshot)
                 self._discard_protection_scope(context.scope_id)
+                logger.error(
+                    "注入提示词保护失败：stage=prompt_protection "
+                    "exception_type=%s scope_present=%s payload_chars=%d",
+                    type(exc).__name__,
+                    bool(context.scope_id),
+                    len(escaped_raw_payload),
+                )
                 return self._result(
                     InjectionOutcome.ERROR,
                     configured_budget,
