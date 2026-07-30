@@ -32,6 +32,8 @@ class GraphVectorResult:
 class GraphVectorRetriever:
     """封装专用于图记忆条目的向量存储。"""
 
+    _DELETE_BATCH_SIZE = 200
+
     adapter_capabilities = AdapterCapabilityContract(
         kind=AdapterKind.VECTOR_RETRIEVER,
         native=frozenset({AdapterCapability.SCORING}),
@@ -153,6 +155,40 @@ class GraphVectorRetriever:
             return False
         await self.faiss_db.delete(uuid_doc_id)
         return True
+
+    async def delete_entries_for_memory(self, source_memory_id: int) -> int:
+        """删除属于指定源记忆的全部图向量，并返回删除数量。"""
+        if not self.backend_capabilities.supports(AdapterCapability.DELETE):
+            raise RuntimeError("图向量后端不支持删除")
+
+        deleted = 0
+        deleted_document_ids: set[str] = set()
+        while True:
+            documents = await self.faiss_db.document_storage.get_documents(
+                metadata_filters={"source_memory_id": source_memory_id},
+                limit=self._DELETE_BATCH_SIZE,
+                offset=0,
+            )
+            if not documents:
+                return deleted
+
+            document_ids = [
+                document.get("doc_id")
+                for document in documents
+                if document.get("doc_id")
+            ]
+            if not document_ids:
+                raise RuntimeError("图向量文档缺少可删除标识")
+            normalized_ids = {str(document_id) for document_id in document_ids}
+            if normalized_ids & deleted_document_ids:
+                raise RuntimeError("图向量删除未取得进展")
+
+            for document_id in document_ids:
+                delete_result = await self.faiss_db.delete(document_id)
+                if delete_result is False:
+                    raise RuntimeError("图向量删除未取得进展")
+                deleted += 1
+                deleted_document_ids.add(str(document_id))
 
     async def update_metadata(
         self, vector_doc_id: int, metadata: dict[str, Any]
