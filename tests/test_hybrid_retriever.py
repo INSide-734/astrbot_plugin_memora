@@ -1,5 +1,6 @@
 """HybridRetriever 测试 — BM25+向量+RRF融合管线。"""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock
@@ -90,6 +91,49 @@ class TestHybridRetriever:
         hybrid.vector_retriever.search.side_effect = Exception("Vector down")
         results = await hybrid.search("test", k=3)
         assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_populates_independent_route_timings(self, hybrid):
+        """BM25 与向量路必须记录各自的实际耗时。"""
+
+        async def fast_bm25(*_args, **_kwargs):
+            """模拟快速关键词检索。"""
+
+            return [_FakeResult(doc_id=1, score=0.8, content="doc1")]
+
+        async def slow_vector(*_args, **_kwargs):
+            """模拟较慢向量检索。"""
+
+            await asyncio.sleep(0.02)
+            return [_FakeResult(doc_id=1, score=0.8, content="doc1")]
+
+        hybrid.bm25_retriever.search.side_effect = fast_bm25
+        hybrid.vector_retriever.search.side_effect = slow_vector
+        timing: dict[str, float] = {}
+
+        await hybrid.search("匿名查询", k=2, timing_sink=timing)
+
+        assert timing["vector_ms"] > timing["bm25_ms"]
+
+    @pytest.mark.asyncio
+    async def test_disabled_fallback_still_populates_document_timing(self, hybrid):
+        """单路失败且禁用降级时仍应输出完整文档路计时。"""
+
+        hybrid.fallback_enabled = False
+        hybrid.bm25_retriever.search.side_effect = RuntimeError("关键词路失败")
+        hybrid.vector_retriever.search.return_value = [
+            _FakeResult(doc_id=1, score=0.8, content="doc1")
+        ]
+        timing: dict[str, float] = {}
+
+        results = await hybrid.search("匿名查询", k=2, timing_sink=timing)
+
+        assert results == []
+        assert timing["document_fusion_ms"] == 0.0
+        assert timing["document_weighting_ms"] == 0.0
+        assert timing["document_mmr_ms"] == 0.0
+        assert timing["document_total_ms"] >= timing["bm25_ms"]
+        assert timing["document_total_ms"] >= timing["vector_ms"]
 
     @pytest.mark.asyncio
     async def test_memory_types_filter(self, hybrid):

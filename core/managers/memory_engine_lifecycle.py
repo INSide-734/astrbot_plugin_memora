@@ -311,6 +311,8 @@ class MemoryEngineLifecycleMixin:
 
         # DualRouteRetriever（需在 v2.5 组件之后创建，以传入依赖）
         if self.graph_enabled and self.graph_vector_db is not None:
+            from ..retrieval.evidence_scorer import RetrievalEvidenceScorer
+
             self.dual_route_retriever = DualRouteRetriever(
                 self.hybrid_retriever,
                 self.graph_retriever,
@@ -322,6 +324,8 @@ class MemoryEngineLifecycleMixin:
                 derived_expander=self.config.get("derived_expander"),
                 projection_reader=self.config.get("projection_reader"),
                 atom_retriever=self.atom_retriever,
+                evidence_scorer=RetrievalEvidenceScorer(),
+                create_tracked_task_cb=self._create_tracked_task,
             )
 
         # D4：实时 SSE 事件流。

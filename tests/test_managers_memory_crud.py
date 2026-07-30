@@ -289,7 +289,7 @@ class TestMemoryEngineUpdateMemoryErrors:
 
 
 class TestMemoryEngineSearchMemories:
-    """Tests for search_memories."""
+    """验证 search_memories 的行为。"""
 
     @pytest.mark.asyncio
     async def test_search_empty_query_returns_empty(self) -> None:
@@ -314,6 +314,50 @@ class TestMemoryEngineSearchMemories:
 
         with pytest.raises(RuntimeError, match="混合检索器未初始化"):
             await engine.search_memories("test query")
+
+    @pytest.mark.asyncio
+    async def test_cache_hits_report_retrieval_total_timing(self) -> None:
+        """结果缓存与会话缓存命中时都应上报完整检索耗时。"""
+
+        from core.retrieval.rrf_fusion import HybridResult
+
+        cached = [
+            HybridResult(
+                doc_id=1,
+                final_score=0.9,
+                rrf_score=0.9,
+                bm25_score=None,
+                vector_score=None,
+                content="memory",
+                metadata={},
+            )
+        ]
+        engine = MemoryEngine(db_path=":memory:", faiss_db=MagicMock())
+        engine._retrieval = MagicMock()
+        engine._retrieval.cache_key.return_value = "cache-key"
+        engine._retrieval.get_cached.side_effect = [cached, None]
+        engine._retrieval.get_session_cached.return_value = cached
+        engine._maintenance = MagicMock()
+        engine._maintenance.update_access_times_batch = AsyncMock(return_value=1)
+
+        def _close_background(coro):
+            """关闭测试中不需要实际调度的后台协程。"""
+
+            if inspect.iscoroutine(coro):
+                coro.close()
+
+        engine._create_tracked_task = MagicMock(side_effect=_close_background)
+
+        assert await engine.search_memories("result cache") == cached
+        assert engine._last_search_timing["cache_hit"] is True
+        assert engine._last_search_timing["retrieval_total_ms"] >= 0.0
+
+        assert (
+            await engine.search_memories("session cache", session_id="session")
+            == cached
+        )
+        assert engine._last_search_timing["cache_hit"] is True
+        assert engine._last_search_timing["retrieval_total_ms"] >= 0.0
 
     @pytest.mark.asyncio
     async def test_search_forwards_memory_types_and_user_id_to_dual_route(self) -> None:
@@ -352,6 +396,7 @@ class TestMemoryEngineSearchMemories:
                 coro.close()
 
         engine._create_tracked_task = MagicMock(side_effect=_close_background)
+        query_plan = MagicMock()
 
         await engine.search_memories(
             "test query",
@@ -360,12 +405,16 @@ class TestMemoryEngineSearchMemories:
             persona_id="persona-1",
             memory_types=["fact", "preference"],
             user_id="user-1",
+            query_plan=query_plan,
         )
 
         engine.dual_route_retriever.search.assert_awaited_once()
         kwargs = engine.dual_route_retriever.search.await_args.kwargs
         assert kwargs["memory_types"] == ["fact", "preference"]
         assert kwargs["user_id"] == "user-1"
+        assert kwargs["query_plan"] is query_plan
+        session_kwargs = engine._retrieval.set_session_cached.call_args.kwargs
+        assert session_kwargs["query_intent"] is query_plan
 
     @pytest.mark.asyncio
     async def test_search_forwards_strategy_and_debug_trace_to_retrieval_path(

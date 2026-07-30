@@ -276,6 +276,7 @@ class MemoryEngineCRUDMixin:
         trace_debug: bool = False,
         debug_trace: list[dict[str, Any]] | None = None,
         reference_time: datetime | None = None,
+        query_plan: Any | None = None,
     ) -> list[HybridResult]:
         """执行受 scope、privacy 与时间边界约束的多路召回。"""
 
@@ -298,6 +299,7 @@ class MemoryEngineCRUDMixin:
         # 阶段计时：追踪每次检索的各阶段耗时
         _t_start = time.perf_counter()
         _t_cache = _t_start
+        cache_intent = query_plan or query_intent
         cache_key = self._retrieval.cache_key(
             query,
             k,
@@ -306,7 +308,7 @@ class MemoryEngineCRUDMixin:
             user_id=user_id,
             chat_type=chat_type,
             memory_types=memory_types,
-            query_intent=query_intent,
+            query_intent=cache_intent,
             chain_depth=chain_depth,
             emotion_context=emotion_context,
             recall_strategy=recall_strategy,
@@ -316,6 +318,7 @@ class MemoryEngineCRUDMixin:
             None if trace_requested else self._retrieval.get_cached(cache_key)
         )
         if cached_results is not None:
+            _t_cache_end = time.perf_counter()
             ids = [
                 r.doc_id
                 for r in cached_results
@@ -327,7 +330,8 @@ class MemoryEngineCRUDMixin:
                 )
             self._last_search_timing = {
                 "cache_hit": True,
-                "cache_lookup_ms": (time.perf_counter() - _t_cache) * 1000.0,
+                "cache_lookup_ms": (_t_cache_end - _t_cache) * 1000.0,
+                "retrieval_total_ms": (_t_cache_end - _t_start) * 1000.0,
             }
             return cached_results
 
@@ -342,7 +346,7 @@ class MemoryEngineCRUDMixin:
                 user_id=user_id,
                 chat_type=chat_type,
                 memory_types=memory_types,
-                query_intent=query_intent,
+                query_intent=cache_intent,
                 chain_depth=chain_depth,
                 emotion_context=emotion_context,
                 recall_strategy=recall_strategy,
@@ -364,6 +368,7 @@ class MemoryEngineCRUDMixin:
             self._last_search_timing = {
                 "cache_hit": True,
                 "cache_lookup_ms": (_t_cache_end - _t_cache) * 1000.0,
+                "retrieval_total_ms": (_t_cache_end - _t_start) * 1000.0,
             }
             return truncated
         if session_id and ":" in session_id:
@@ -394,9 +399,10 @@ class MemoryEngineCRUDMixin:
                 strategy=recall_strategy,
                 memory_types=memory_types,
                 chat_type=chat_type,
-                query_intent=query_intent,
+                query_intent=cache_intent,
                 user_id=user_id,
                 reference_time=effective_reference_time,
+                query_plan=query_plan,
             )
             # 读取双路检索的阶段计时
             dr_timing = getattr(self.dual_route_retriever, "last_search_timing", None)
@@ -485,17 +491,19 @@ class MemoryEngineCRUDMixin:
                 user_id=user_id,
                 chat_type=chat_type,
                 memory_types=memory_types,
-                query_intent=query_intent,
+                query_intent=cache_intent,
                 chain_depth=chain_depth,
                 emotion_context=emotion_context,
                 recall_strategy=recall_strategy,
                 reference_time=requested_reference_time,
             )
         # === 存储阶段计时供 RecallHandler 读取 ===
+        retrieval_total_ms = (time.perf_counter() - _t_start) * 1000.0
         self._last_search_timing = {
             "cache_hit": False,
             "cache_lookup_ms": (_t_cache_end - _t_cache) * 1000.0,
             "total_search_ms": (_t_search_end - _t_search_start) * 1000.0,
+            "retrieval_total_ms": retrieval_total_ms,
             "bm25_ms": _t_doc_route,  # 文档路含 BM25+Vector
             "vector_ms": 0.0,  # 包含在 document_route_ms 中
             "graph_ms": _t_graph_route,
@@ -504,6 +512,12 @@ class MemoryEngineCRUDMixin:
             "boost_ms": _t_boost,
             "chain_expand_ms": _t_chain,
         }
+        if self.dual_route_retriever is not None:
+            for key, value in (
+                getattr(self.dual_route_retriever, "last_search_timing", None) or {}
+            ).items():
+                if isinstance(value, (int, float, bool)):
+                    self._last_search_timing[key] = value
         return results
 
     async def get_memory(self, memory_id: int) -> dict[str, Any] | None:

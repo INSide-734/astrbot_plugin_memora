@@ -277,6 +277,11 @@ class TestRecallHandlerSearchParameters:
 
         engine = MagicMock()
         engine.search_memories = AsyncMock(return_value=[])
+        engine._last_search_timing = {
+            "retrieval_total_ms": 12.5,
+            "query_count": 1,
+            "cache_hit": False,
+        }
         conv = MagicMock()
         conv.add_message_from_event = AsyncMock()
         adapter = MagicMock()
@@ -307,6 +312,9 @@ class TestRecallHandlerSearchParameters:
         engine.search_memories.assert_awaited_once()
         assert engine.search_memories.await_args.kwargs["user_id"] == "user-1"
         assert perf_tracker.get_perf_data()["count_total_ms"] == 1
+        sample = perf_tracker.get_samples(after_sequence=0)["items"][0]
+        assert sample["retrieval_total_ms"] == 12.5
+        assert sample["query_count"] == 1
 
 
 class TestRecallHandlerFinalizeCandidates:

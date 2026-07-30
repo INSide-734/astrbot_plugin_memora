@@ -60,8 +60,11 @@ class TestGraphRetriever:
     @pytest.mark.asyncio
     async def test_search_both_empty(self, retriever: Any) -> None:
         """When both routes return nothing, result is empty."""
-        results = await retriever.search("nothing matches", k=5)
+        timing: dict[str, float] = {}
+        results = await retriever.search("nothing matches", k=5, timing_sink=timing)
         assert results == []
+        assert timing["graph_fusion_ms"] == 0.0
+        assert timing["graph_total_ms"] >= 0.0
 
     @pytest.mark.asyncio
     async def test_search_keyword_only(self, retriever: Any) -> None:

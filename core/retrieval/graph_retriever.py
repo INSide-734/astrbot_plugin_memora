@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import time
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+
+from astrbot.api import logger
 
 from ..adapter_capabilities import (
     AdapterCapability,
@@ -77,6 +81,22 @@ class GraphRetriever:
         self.score_gamma = float(self.config.get("graph_memory.score_gamma", 0.15))
         self.score_delta = float(self.config.get("graph_memory.score_delta", 0.1))
 
+    async def _search_route(
+        self, awaitable: Awaitable[list[Any]]
+    ) -> tuple[list[Any], bool, float]:
+        """执行单条图路并返回结果、失败标志和真实耗时。"""
+        started = time.perf_counter()
+        try:
+            results = await awaitable
+            return results, False, (time.perf_counter() - started) * 1000.0
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[GraphRetriever] 单路检索降级，异常类型=%s", exc.__class__.__name__
+            )
+            return [], True, (time.perf_counter() - started) * 1000.0
+
     async def search(
         self,
         query: str,
@@ -84,6 +104,7 @@ class GraphRetriever:
         session_id: str | None = None,
         persona_id: str | None = None,
         memory_types: list[str] | None = None,
+        timing_sink: dict[str, float] | None = None,
         **kwargs: Any,
     ) -> list[GraphResult]:
         """按请求级参考时间并行执行图关键词检索和图向量检索。"""
@@ -101,14 +122,31 @@ class GraphRetriever:
             ) or datetime.now(timezone.utc)
             current_time = normalized_time.timestamp()
 
-        keyword_results, vector_results = await asyncio.gather(
-            self.keyword_retriever.search(query, k, session_id, persona_id),
-            self.vector_retriever.search(query, k, session_id, persona_id),
+        _t_graph_start = time.perf_counter()
+        (
+            (keyword_results, _kw_failed, _kw_ms),
+            (vector_results, _vec_failed, _vec_ms),
+        ) = await asyncio.gather(
+            self._search_route(
+                self.keyword_retriever.search(query, k, session_id, persona_id),
+            ),
+            self._search_route(
+                self.vector_retriever.search(query, k, session_id, persona_id),
+            ),
         )
+        if timing_sink is not None:
+            timing_sink["graph_keyword_ms"] = _kw_ms
+            timing_sink["graph_vector_ms"] = _vec_ms
 
         if not keyword_results and not vector_results:
+            if timing_sink is not None:
+                timing_sink["graph_fusion_ms"] = 0.0
+                timing_sink["graph_total_ms"] = (
+                    time.perf_counter() - _t_graph_start
+                ) * 1000.0
             return []
 
+        _t_fusion_start = time.perf_counter()
         fused = self.rrf_fusion.fuse(
             [
                 BM25Result(
@@ -131,7 +169,15 @@ class GraphRetriever:
             top_k=k,
         )
         if not fused:
+            if timing_sink is not None:
+                timing_sink["graph_fusion_ms"] = 0.0
+                timing_sink["graph_total_ms"] = (
+                    time.perf_counter() - _t_graph_start
+                ) * 1000.0
             return []
+        _t_fusion_end = time.perf_counter()
+        if timing_sink is not None:
+            timing_sink["graph_fusion_ms"] = (_t_fusion_end - _t_fusion_start) * 1000.0
 
         keyword_score_map = {item.doc_id: item.score for item in keyword_results}
         graph_distance_map = {
@@ -225,6 +271,9 @@ class GraphRetriever:
             )
 
         results.sort(key=lambda item: item.final_score, reverse=True)
+        _t_graph_end = time.perf_counter()
+        if timing_sink is not None:
+            timing_sink["graph_total_ms"] = (_t_graph_end - _t_graph_start) * 1000.0
         return results[:k]
 
 

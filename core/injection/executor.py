@@ -1,4 +1,4 @@
-"""Atomic, budget-bounded execution of a memory-injection decision."""
+"""以原子方式执行受字符预算约束的记忆注入决策。"""
 
 from __future__ import annotations
 
@@ -58,6 +58,7 @@ class InjectionExecutionContext:
     context_headroom_chars: int = 10_000
     provider: Any | None = None
     scope_id: str | None = None
+    required_facets: tuple[str, ...] = ()
 
 
 class InjectionExecutor:
@@ -77,6 +78,19 @@ class InjectionExecutor:
         decision: InjectionDecision,
         context: InjectionExecutionContext,
     ) -> InjectionExecutionResult:
+        """构建并原子投递注入载荷，失败时恢复请求并返回脱敏结果。
+
+        参数:
+            req: AstrBot Provider 请求对象。
+            decision: 已完成路由解析的不可变注入决策。
+            context: 当前请求的候选、预算、Provider 与保护 scope。
+
+        返回:
+            包含结果、预算、计数和阶段耗时的脱敏执行结果。
+
+        异常:
+            asyncio.CancelledError: 调用被取消时原样传播。
+        """
         configured_budget = (
             max(0, decision.memory_budget_chars)
             + max(0, context.cognitive_budget_chars)
@@ -87,7 +101,9 @@ class InjectionExecutor:
         )
         format_started = time.perf_counter()
         try:
-            selected, dropped = select_candidates(decision, context.memories)
+            selected, dropped = select_candidates(
+                decision, context.memories, required_facets=context.required_facets
+            )
             protected_payload, stats, selected, dropped = self._build_verified_payload(
                 decision,
                 context,
