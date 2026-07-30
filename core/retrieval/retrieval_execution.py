@@ -18,7 +18,7 @@ class RouteOutcome:
     graph_results: list[Any]
     atom_results: list[Any]
     atom_scores: dict[str, float]
-    timing: dict[str, float]
+    timing: dict[str, float | bool]
     degraded_routes: tuple[str, ...]
 
 
@@ -46,9 +46,10 @@ class RouteExecutionCoordinator:
         memory_types: list[str] | None = None,
         reference_time: Any = None,
         deadline_monotonic: float | None = None,
+        use_graph_route: bool = True,
     ) -> RouteOutcome:
         """并发启动三路检索，并在调用方取消后收敛所有子任务。"""
-        timing: dict[str, float] = {}
+        timing: dict[str, float | bool] = {}
         degraded: list[str] = []
         _t_total_start = time.perf_counter()
 
@@ -140,24 +141,26 @@ class RouteExecutionCoordinator:
 
         tasks: dict[str, asyncio.Task[tuple[list[Any], dict[str, float]]]] = {
             "document": asyncio.create_task(_run_document()),
-            "graph": asyncio.create_task(_run_graph()),
             "atom": asyncio.create_task(_run_atom()),
         }
+        if use_graph_route:
+            tasks["graph"] = asyncio.create_task(_run_graph())
+        else:
+            timing["graph_route_skipped"] = True
         try:
-            (
-                (doc_results, doc_timing),
-                (graph_results, graph_timing),
-                (
-                    atom_results,
-                    atom_timing,
-                ),
-            ) = await asyncio.gather(*tasks.values())
+            route_results = dict(
+                zip(tasks, await asyncio.gather(*tasks.values()), strict=True)
+            )
         except asyncio.CancelledError:
             for task in tasks.values():
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks.values(), return_exceptions=True)
             raise
+
+        doc_results, doc_timing = route_results["document"]
+        atom_results, atom_timing = route_results["atom"]
+        graph_results, graph_timing = route_results.get("graph", ([], {}))
 
         # 合并各路子阶段计时
         for source_timing in (doc_timing, graph_timing, atom_timing):

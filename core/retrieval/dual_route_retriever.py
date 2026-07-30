@@ -29,6 +29,7 @@ from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
 from .multi_query_fusion import fuse_query_results, split_candidate_budget
 from .projection_reader import ProjectionBudget, ProjectionScope
 from .retrieval_execution import RouteExecutionCoordinator
+from .route_policy import should_use_graph_route
 from .rrf_fusion import HybridResult
 
 if TYPE_CHECKING:
@@ -124,6 +125,7 @@ class DualRouteRetriever:
             query_plan: 可选多查询计划；存在时按计划拆分预算并跨查询 RRF 融合。
         """
         if query_plan is not None and query_plan.queries:
+            use_graph_route = should_use_graph_route(query_plan, query_intent)
             return await self._search_with_plan(
                 query_plan=query_plan,
                 k=k,
@@ -137,6 +139,7 @@ class DualRouteRetriever:
                 reference_time=reference_time,
                 timing_sink=timing_sink,
                 deadline_monotonic=deadline_monotonic,
+                use_graph_route=use_graph_route,
             )
 
         # 向后兼容：单查询路径
@@ -151,6 +154,7 @@ class DualRouteRetriever:
             memory_types=memory_types,
             reference_time=reference_time,
             deadline_monotonic=deadline_monotonic,
+            use_graph_route=should_use_graph_route(query_plan, query_intent),
         )
         doc_results = outcome.document_results
         graph_results = outcome.graph_results
@@ -330,6 +334,7 @@ class DualRouteRetriever:
         reference_time: datetime | None,
         timing_sink: dict[str, float | int | bool] | None,
         deadline_monotonic: float | None,
+        use_graph_route: bool,
     ) -> list[HybridResult]:
         """多查询计划路径：按计划拆分预算，逐查询检索并跨查询 RRF 融合。"""
         reference_time = normalize_datetime(reference_time) or datetime.now(
@@ -344,7 +349,7 @@ class DualRouteRetriever:
         document_route_total_ms = 0.0
         graph_route_total_ms = 0.0
         merge_total_ms = 0.0
-        route_timing: dict[str, float] = {}
+        route_timing: dict[str, float | bool] = {}
 
         active_queries = [
             (sub_query, budget)
@@ -361,6 +366,7 @@ class DualRouteRetriever:
                     memory_types=memory_types,
                     reference_time=reference_time,
                     deadline_monotonic=deadline_monotonic,
+                    use_graph_route=use_graph_route,
                 )
                 for sub_query, budget in active_queries
             )
@@ -376,7 +382,9 @@ class DualRouteRetriever:
                 outcome.timing.get("graph_total_ms", 0.0),
             )
             for key, value in outcome.timing.items():
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if isinstance(value, bool):
+                    route_timing[key] = value
+                elif isinstance(value, (int, float)):
                     route_timing[key] = max(route_timing.get(key, 0.0), float(value))
 
             atom_scores, atom_ids_map = self._aggregate_atom_evidence(

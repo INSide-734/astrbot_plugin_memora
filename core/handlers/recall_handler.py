@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
-import random
 import time
 import uuid
 from collections.abc import Callable
@@ -45,6 +44,7 @@ from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
 from ..utils import OperationContext, get_persona_id
+from .auxiliary_recall import AuxiliaryRecall
 from .recall_observability import RecallTimingContext
 
 if TYPE_CHECKING:
@@ -122,6 +122,7 @@ class RecallHandler:
         self._query_rewriter = QueryRewriter(
             enabled=config_manager.get("recall_engine.query_rewrite_enabled", True),
         )
+        self._auxiliary_recall = AuxiliaryRecall(config_manager, memory_engine)
 
     @monitored
     async def handle_memory_recall(
@@ -413,6 +414,7 @@ class RecallHandler:
                         session_id=recall_session_id,
                         persona_id=recall_persona_id,
                         chat_type=chat_type,
+                        deadline_monotonic=timing_context.deadline_monotonic,
                     )
                     result = await self._execute_and_record(
                         _RecallExecutionInput(
@@ -471,6 +473,7 @@ class RecallHandler:
                     session_id=recall_session_id,
                     persona_id=recall_persona_id,
                     chat_type=chat_type,
+                    deadline_monotonic=timing_context.deadline_monotonic,
                 )
                 report_debug_event(
                     "recall_stage",
@@ -497,6 +500,7 @@ class RecallHandler:
                     session_id=recall_session_id,
                     persona_id=recall_persona_id,
                     chat_type=chat_type,
+                    deadline_monotonic=timing_context.deadline_monotonic,
                 )
                 report_debug_event(
                     "recall_stage",
@@ -1294,73 +1298,21 @@ class RecallHandler:
         session_id: str | None,
         persona_id: str | None,
         chat_type: str,
+        deadline_monotonic: float | None = None,
     ) -> list[Any]:
-        """自发回忆 — 以低概率主动浮现非查询驱动的关联记忆。
+        """兼容旧调用边界，并委托独立组件执行受预算约束的自发回忆。"""
 
-        约 6% 的请求会触发，使用低阈值宽泛检索，模拟人类"突然想起来"的体验。
-        """
-        enabled = self._config_manager.get(
-            "recall_engine.spontaneous_recall_enabled", True
+        return await self._auxiliary_recall.maybe_spontaneous_recall(
+            session_id=session_id,
+            persona_id=persona_id,
+            chat_type=chat_type,
+            deadline_monotonic=deadline_monotonic,
         )
-        if not enabled:
-            return []
-
-        probability = float(
-            self._config_manager.get(
-                "recall_engine.spontaneous_recall_probability", 0.06
-            )
-        )
-        if random.random() >= probability:
-            return []
-
-        try:
-            # 使用宽泛的通用查询词进行低阈值检索
-            seed_queries = [
-                "重要的事情",
-                "开心的回忆",
-                "最近发生的事",
-                "之前的对话",
-                "难忘的经历",
-            ]
-            seed_query = random.choice(seed_queries)
-            spontaneous_k = int(
-                self._config_manager.get("recall_engine.spontaneous_recall_k", 2)
-            )
-
-            results = await self._memory_engine.search_memories(
-                query=seed_query,
-                k=spontaneous_k,
-                session_id=session_id,
-                persona_id=persona_id,
-                chat_type=chat_type,
-            )
-            # 标记为自发回忆来源
-            for r in results:
-                meta = r.metadata or {}
-                meta["recall_source"] = "spontaneous"
-                r.metadata = meta
-
-            if results:
-                logger.debug(
-                    f"[{session_id}] 自发回忆触发 (p={probability:.0%}): "
-                    f"seed='{seed_query}', {len(results)} 条记忆"
-                )
-            return results
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.debug("自发回忆检索失败", exc_info=True)
-            return []
 
     def _prospective_recall_enabled(self) -> bool:
         """读取标准前瞻召回开关，并兼容旧版回退配置。"""
-        enabled = self._config_manager.get(
-            "recall_engine.prospective_recall_enabled",
-            None,
-        )
-        if enabled is None:
-            enabled = self._config_manager.get("prospective.enabled", True)
-        return bool(enabled)
+
+        return self._auxiliary_recall.prospective_enabled()
 
     @monitored
     async def _maybe_prospective_recall(
@@ -1368,68 +1320,13 @@ class RecallHandler:
         session_id: str | None,
         persona_id: str | None,
         chat_type: str,
+        deadline_monotonic: float | None = None,
     ) -> list[Any]:
-        """前瞻记忆 — 扫描 24h 内到期的 PLANNED 原子并注入上下文。
+        """兼容旧调用边界，并委托独立组件执行受预算约束的前瞻召回。"""
 
-        认知原理：人类会自动想起"今天要做 X"，PLANNED 原子承载此功能。
-        每次 LLM 请求前扫描，将即将到期的计划注入当前上下文。
-        """
-        if not self._prospective_recall_enabled():
-            return []
-
-        try:
-            lookahead_hours = float(
-                self._config_manager.get(
-                    "recall_engine.prospective_lookahead_hours", 24.0
-                )
-            )
-            lookahead_sec = lookahead_hours * 3600.0
-            prospective_k = int(
-                self._config_manager.get("recall_engine.prospective_recall_k", 3)
-            )
-
-            # 使用 memory_engine 的 atom_store 查询
-            engine = self._memory_engine
-            if not hasattr(engine, "atom_store") or engine.atom_store is None:
-                return []
-
-            planned_atoms = await engine.atom_store.query_upcoming_planned(
-                lookahead_sec=lookahead_sec,
-                session_id=session_id,
-                persona_id=persona_id,
-                chat_type=chat_type,
-                limit=prospective_k,
-            )
-
-            if not planned_atoms:
-                return []
-
-            # 将 PLANNED 原子转为 HybridResult 格式
-            from ..retrieval.rrf_fusion import HybridResult
-
-            results: list[HybridResult] = []
-            for atom in planned_atoms:
-                meta = atom.metadata or {}
-                meta["recall_source"] = "prospective"
-                meta["atom_type"] = "planned"
-                meta["event_time"] = atom.event_time
-                results.append(
-                    HybridResult(
-                        doc_id=atom.parent_memory_id,
-                        final_score=0.9,  # 高优先级
-                        content=f"[待办] {atom.content}",
-                        metadata=meta,
-                    )
-                )
-
-            if results:
-                logger.info(
-                    f"[{session_id}] 前瞻记忆: {len(results)} 条 PLANNED 原子在 "
-                    f"{lookahead_hours:.0f}h 内到期"
-                )
-            return results
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.debug(f"[{session_id}] 前瞻记忆扫描失败", exc_info=True)
-            return []
+        return await self._auxiliary_recall.maybe_prospective_recall(
+            session_id=session_id,
+            persona_id=persona_id,
+            chat_type=chat_type,
+            deadline_monotonic=deadline_monotonic,
+        )

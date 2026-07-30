@@ -1,0 +1,147 @@
+"""辅助召回剩余预算与取消语义测试。"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from core.handlers.auxiliary_recall import AuxiliaryRecall
+from core.managers.retrieval_timing import RetrievalTimingSink
+
+
+def _config(values: dict[str, object]) -> MagicMock:
+    """创建支持点路径默认值的最小配置对象。"""
+
+    config = MagicMock()
+    config.get.side_effect = lambda key, default=None: values.get(key, default)
+    return config
+
+
+@pytest.mark.asyncio
+async def test_expired_budget_skips_spontaneous_and_prospective_io() -> None:
+    """主检索已耗尽预算时，两类辅助召回都不启动 I/O。"""
+
+    engine = MagicMock()
+    engine.search_memories = AsyncMock(return_value=[])
+    engine.atom_store.query_upcoming_planned = AsyncMock(return_value=[])
+    auxiliary = AuxiliaryRecall(
+        _config(
+            {
+                "recall_engine.spontaneous_recall_enabled": True,
+                "recall_engine.spontaneous_recall_probability": 1.0,
+                "recall_engine.prospective_recall_enabled": True,
+            }
+        ),
+        engine,
+    )
+    expired = time.perf_counter() - 1.0
+
+    assert (
+        await auxiliary.maybe_spontaneous_recall(
+            session_id="session",
+            persona_id=None,
+            chat_type="private",
+            deadline_monotonic=expired,
+        )
+        == []
+    )
+    assert (
+        await auxiliary.maybe_prospective_recall(
+            session_id="session",
+            persona_id=None,
+            chat_type="private",
+            deadline_monotonic=expired,
+        )
+        == []
+    )
+    engine.search_memories.assert_not_awaited()
+    engine.atom_store.query_upcoming_planned.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_spontaneous_recall_uses_independent_timing_sink() -> None:
+    """辅助搜索不得覆盖主检索的请求局部阶段计时。"""
+
+    captured_sink: RetrievalTimingSink | None = None
+
+    async def search_memories(**kwargs):
+        """捕获辅助搜索的局部 sink。"""
+
+        nonlocal captured_sink
+        captured_sink = kwargs["timing_sink"]
+        captured_sink.record("retrieval_total_ms", 9.0)
+        return []
+
+    engine = MagicMock()
+    engine.search_memories = AsyncMock(side_effect=search_memories)
+    auxiliary = AuxiliaryRecall(
+        _config(
+            {
+                "recall_engine.spontaneous_recall_enabled": True,
+                "recall_engine.spontaneous_recall_probability": 1.0,
+                "recall_engine.spontaneous_recall_k": 2,
+            }
+        ),
+        engine,
+    )
+    main_sink = RetrievalTimingSink()
+    main_sink.record("retrieval_total_ms", 3.0)
+
+    assert (
+        await auxiliary.maybe_spontaneous_recall(
+            session_id="session",
+            persona_id=None,
+            chat_type="private",
+            deadline_monotonic=None,
+        )
+        == []
+    )
+    assert captured_sink is not None
+    assert captured_sink is not main_sink
+    assert main_sink.snapshot()["retrieval_total_ms"] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_recall_propagates_calling_task_cancellation() -> None:
+    """调用方取消时辅助搜索被收束，并继续传播 ``CancelledError``。"""
+
+    started = asyncio.Event()
+    collected = asyncio.Event()
+
+    async def search_memories(**_kwargs):
+        """等待取消并用 finally 证明检索已收束。"""
+
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            collected.set()
+
+    engine = MagicMock()
+    engine.search_memories = AsyncMock(side_effect=search_memories)
+    auxiliary = AuxiliaryRecall(
+        _config(
+            {
+                "recall_engine.spontaneous_recall_enabled": True,
+                "recall_engine.spontaneous_recall_probability": 1.0,
+            }
+        ),
+        engine,
+    )
+    task = asyncio.create_task(
+        auxiliary.maybe_spontaneous_recall(
+            session_id="session",
+            persona_id=None,
+            chat_type="private",
+            deadline_monotonic=None,
+        )
+    )
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert collected.is_set()

@@ -1082,13 +1082,13 @@ class TestDualRouteRetriever:
         retriever = DualRouteRetriever(document, graph, memory_loader)
         plan = QueryPlan(
             original_query="查询甲",
-            intent="default",
+            intent="relationship",
             entities=(),
             focus_terms=(),
             temporal_anchor=None,
             reference_time=datetime.now(timezone.utc),
             queries=("查询甲", "查询乙"),
-            required_facets=(),
+            required_facets=("relation",),
             ambiguity_flags=(),
             memory_types=(),
         )
