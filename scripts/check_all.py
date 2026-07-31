@@ -35,7 +35,7 @@ def _run_step(title: str, command: list[str], *, cwd: Path | None = None) -> int
     print(f"cwd: {workdir}")
     print("cmd:", " ".join(resolved_command))
     started_at = time.perf_counter()
-    completed = subprocess.run(resolved_command, cwd=workdir)
+    completed = subprocess.run(resolved_command, cwd=workdir, shell=False)
     elapsed = time.perf_counter() - started_at
     if completed.returncode == 0:
         print(f"PASSED: {title} in {elapsed:.2f}s")

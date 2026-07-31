@@ -370,6 +370,7 @@ def run_handler_worker(
     completed = subprocess.run(
         command,
         check=True,
+        shell=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
