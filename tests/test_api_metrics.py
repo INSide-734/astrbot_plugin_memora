@@ -364,3 +364,91 @@ async def test_metrics_summary_exposes_scheduler_run_metadata(tmp_path) -> None:
     assert schedulers["decay"]["last_decay_date"] == "2026-07-04"
     assert schedulers["decay"]["last_completed_at"] == 1783140000.5
     assert schedulers["decay"]["retry_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recall_samples_payload_clamps_cursor_and_limit() -> None:
+    """指标端点必须限制游标和分页大小。"""
+    tracker = PerfTracker(maxlen=3)
+    tracker.record(
+        {
+            "retrieval_total_ms": 7.5,
+            "partial_fallback": True,
+            "graph_route_degraded": True,
+            "route_aborted": False,
+        }
+    )
+    plugin = SimpleNamespace(initializer=SimpleNamespace(_perf_tracker=tracker))
+    api = _MetricsApiStub(plugin)
+
+    response = await api.get_recall_samples_payload(
+        {"after_sequence": "0", "limit": "9999"}
+    )
+
+    assert response["status"] == "ok"
+    assert response["data"]["items"][0]["retrieval_total_ms"] == 7.5
+    assert response["data"]["items"][0]["partial_fallback"] is True
+    assert response["data"]["items"][0]["graph_route_degraded"] is True
+    assert response["data"]["items"][0]["route_aborted"] is False
+    assert response["data"]["latest_sequence"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recall_samples_returns_empty_page_when_no_tracker() -> None:
+    """无 PerfTracker 时返回空页。"""
+    plugin = SimpleNamespace(initializer=None)
+    api = _MetricsApiStub(plugin)
+
+    response = await api.get_recall_samples_payload({})
+
+    assert response["status"] == "ok"
+    assert response["data"]["items"] == []
+    assert response["data"]["next_sequence"] == 0
+
+
+@pytest.mark.asyncio
+async def test_recall_samples_rejects_invalid_query() -> None:
+    """非法参数必须返回稳定错误，不能重置游标读取历史样本。"""
+    tracker = PerfTracker(maxlen=3)
+    plugin = SimpleNamespace(initializer=SimpleNamespace(_perf_tracker=tracker))
+    api = _MetricsApiStub(plugin)
+
+    response = await api.get_recall_samples_payload({"after_sequence": "not-a-number"})
+
+    assert response == {
+        "status": "error",
+        "message": "recall_samples_invalid_query",
+    }
+
+
+@pytest.mark.asyncio
+async def test_recall_samples_rejects_invalid_query_without_tracker() -> None:
+    """参数校验不得因 PerfTracker 尚未初始化而被绕过。"""
+
+    plugin = SimpleNamespace(initializer=None)
+    api = _MetricsApiStub(plugin)
+
+    response = await api.get_recall_samples_payload({"limit": "not-a-number"})
+
+    assert response == {
+        "status": "error",
+        "message": "recall_samples_invalid_query",
+    }
+
+
+@pytest.mark.asyncio
+async def test_recall_samples_reports_unavailable_when_tracker_raises() -> None:
+    """PerfTracker 读取异常时必须返回稳定错误码。"""
+
+    tracker = MagicMock()
+    tracker.get_samples.side_effect = RuntimeError("unexpected failure")
+    plugin = SimpleNamespace(initializer=SimpleNamespace(_perf_tracker=tracker))
+    api = _MetricsApiStub(plugin)
+
+    response = await api.get_recall_samples_payload({})
+
+    assert response == {
+        "status": "error",
+        "message": "recall_samples_unavailable",
+    }
+    tracker.get_samples.assert_called_once_with(after_sequence=0, limit=50)

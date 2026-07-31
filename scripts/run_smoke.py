@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         target_started_at = time.perf_counter()
         cmd = _pytest_command(target, args)
         print(f"- {target}")
-        completed = subprocess.run(cmd, cwd=plugin_root)
+        completed = subprocess.run(cmd, cwd=plugin_root, shell=False)
         elapsed = time.perf_counter() - target_started_at
         if completed.returncode == 0:
             passed += 1

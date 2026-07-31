@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 def _namespace_package(name: str, path: Path | None = None) -> types.ModuleType:
+    """构造可用于隔离导入测试的命名空间包。"""
     module = types.ModuleType(name)
     module.__package__ = name
     module.__path__ = [] if path is None else [str(path)]
@@ -14,10 +15,12 @@ def _namespace_package(name: str, path: Path | None = None) -> types.ModuleType:
 
 
 def test_feature_modules_import_under_astrbot_package_name(monkeypatch):
+    """验证功能模块可在 AstrBot 的真实插件包命名空间下导入。"""
     plugin_root = Path(__file__).resolve().parent.parent
     plugin_package = "data.plugins.astrbot_plugin_memora"
 
     def belongs_to_isolated_tree(name: str) -> bool:
+        """判断模块是否属于本测试需要隔离和恢复的导入树。"""
         return (
             name == "core"
             or name.startswith("core.")
@@ -58,10 +61,14 @@ def test_feature_modules_import_under_astrbot_package_name(monkeypatch):
         recorder_module = importlib.import_module(
             "data.plugins.astrbot_plugin_memora.core.injection.recorder"
         )
+        perf_tracker_module = importlib.import_module(
+            "data.plugins.astrbot_plugin_memora.core.monitoring.perf_tracker"
+        )
         assert trace_module.RecallTraceApiMixin.__name__ == "RecallTraceApiMixin"
         assert recorder_module.InjectionDecisionRecorder.__name__ == (
             "InjectionDecisionRecorder"
         )
+        assert perf_tracker_module.PerfTracker.__name__ == "PerfTracker"
     finally:
         for module_name in list(sys.modules):
             if belongs_to_isolated_tree(module_name):

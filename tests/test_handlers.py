@@ -276,7 +276,20 @@ class TestRecallHandlerSearchParameters:
         }.get(key, default)
 
         engine = MagicMock()
-        engine.search_memories = AsyncMock(return_value=[])
+
+        async def search_memories(**kwargs):
+            """模拟引擎向当前请求的局部 sink 写入阶段计时。"""
+
+            kwargs["timing_sink"].update(
+                {
+                    "retrieval_total_ms": 12.5,
+                    "query_count": 1,
+                    "cache_hit": False,
+                }
+            )
+            return []
+
+        engine.search_memories = AsyncMock(side_effect=search_memories)
         conv = MagicMock()
         conv.add_message_from_event = AsyncMock()
         adapter = MagicMock()
@@ -307,6 +320,9 @@ class TestRecallHandlerSearchParameters:
         engine.search_memories.assert_awaited_once()
         assert engine.search_memories.await_args.kwargs["user_id"] == "user-1"
         assert perf_tracker.get_perf_data()["count_total_ms"] == 1
+        sample = perf_tracker.get_samples(after_sequence=0)["items"][0]
+        assert sample["retrieval_total_ms"] == 12.5
+        assert sample["query_count"] == 1
 
 
 class TestRecallHandlerFinalizeCandidates:

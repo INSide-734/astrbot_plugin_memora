@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 from core.monitoring.perf_tracker import PerfTracker
@@ -115,3 +116,41 @@ class TestPerfTrackerPercentiles:
 
         assert tracker.get_percentile("total_ms", -1) == 5.0
         assert tracker.get_percentile("total_ms", 101) == 25.0
+
+
+class TestRecallSamples:
+    """召回性能样本的安全游标和 allowlist 测试。"""
+
+    def test_recall_samples_use_monotonic_cursor_and_scalar_allowlist(self) -> None:
+        """游标样本只返回允许的标量字段并保持严格递增。"""
+        tracker = PerfTracker(maxlen=3)
+        tracker.record(
+            {
+                "retrieval_total_ms": 12.5,
+                "cache_hit": False,
+                "query_count": 2,
+                "conditional_llm_status": "not_triggered",
+                "query": "PRIVATE-QUERY-CANARY",
+                "candidate_ids": [1, 2],
+            }
+        )
+        tracker.record({"retrieval_total_ms": 8.0, "injection_chars": 320})
+
+        page = tracker.get_samples(after_sequence=0, limit=10)
+
+        assert [item["sequence"] for item in page["items"]] == [1, 2]
+        assert page["next_sequence"] == 2
+        serialized = json.dumps(page, ensure_ascii=False)
+        assert "PRIVATE-QUERY-CANARY" not in serialized
+        assert "candidate_ids" not in serialized
+
+    def test_recall_sample_cursor_survives_ring_buffer_eviction(self) -> None:
+        """环形缓冲淘汰旧项后序号不得复用。"""
+        tracker = PerfTracker(maxlen=2)
+        for value in (1.0, 2.0, 3.0):
+            tracker.record({"retrieval_total_ms": value})
+
+        page = tracker.get_samples(after_sequence=1, limit=10)
+
+        assert [item["sequence"] for item in page["items"]] == [2, 3]
+        assert page["latest_sequence"] == 3

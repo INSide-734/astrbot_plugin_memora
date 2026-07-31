@@ -126,7 +126,7 @@ class TestQueryRewriter:
         )
         result = QueryRewriter._parse_llm_response(raw, "fallback")
         assert result is not None
-        assert result.intent == "relational"
+        assert result.intent == "relationship"
         assert len(result.rewritten_queries) == 2
 
     def test_parse_llm_response_invalid(self) -> None:

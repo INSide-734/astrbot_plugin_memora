@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import pytest
 
 # 支持直接运行本测试文件时从仓库根目录导入插件模块。
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -16,6 +21,37 @@ from core.security.prompt_sanitizer import (  # noqa: E402
     PromptProtectionService,
     ResponseSanitizer,
 )
+
+
+class _CoordinatedScopeRegistry(dict):
+    """通过受控线程交错稳定复现注册表迭代与删除竞态。"""
+
+    def __init__(self, values):
+        """复制初始 scope，并建立线程同步事件。"""
+        super().__init__(values)
+        self.blocked_thread_id: int | None = None
+        self.iteration_started = threading.Event()
+        self.mutation_done = threading.Event()
+
+    def items(self):
+        """仅阻塞指定线程的首次迭代，让另一线程完成删除。"""
+        iterator = super().items().__iter__()
+        if threading.get_ident() != self.blocked_thread_id:
+            return iterator
+
+        def coordinated_items():
+            """在首项之后等待并发删除，再继续原字典迭代器。"""
+            try:
+                first = next(iterator)
+            except StopIteration:
+                return
+            yield first
+            self.iteration_started.set()
+            self.mutation_done.wait(timeout=0.2)
+            yield from iterator
+
+        return coordinated_items()
+
 
 # =============================================================================
 # MetaInstructionWrapper
@@ -364,3 +400,66 @@ class TestPromptProtectionService:
         for index in range(20):
             svc.wrap_prompt(f"secret-{index}", scope_id=f"scope-{index}")
         assert svc.scoped_scope_count == 3
+
+    def test_scope_registry_serializes_iteration_and_concurrent_delete(self):
+        """读取线程迭代 scope 时，并发删除不应破坏注册表。"""
+        svc = PromptProtectionService(enable_double_check=False)
+        svc.wrap_prompt("alpha secret", scope_id="scope-a")
+        svc.wrap_prompt("beta secret", scope_id="scope-b")
+        registry = _CoordinatedScopeRegistry(svc._scoped_instructions)
+        svc._scoped_instructions = registry
+
+        def read_scope() -> bool:
+            """在受控线程中读取 scope，使清理迭代停在首项之后。"""
+            registry.blocked_thread_id = threading.get_ident()
+            return svc.has_scope("scope-a")
+
+        def discard_scope() -> None:
+            """等待读取开始后删除另一个 scope，并通知读取线程。"""
+            assert registry.iteration_started.wait(timeout=1.0)
+            try:
+                svc.discard_scope("scope-b")
+            finally:
+                registry.mutation_done.set()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            read_future = executor.submit(read_scope)
+            assert registry.iteration_started.wait(timeout=1.0)
+            discard_future = executor.submit(discard_scope)
+            assert read_future.result(timeout=2.0) is True
+            discard_future.result(timeout=2.0)
+
+        assert svc.has_scope("scope-a") is True
+        assert svc.has_scope("scope-b") is False
+
+    def test_scope_registration_failure_logs_only_safe_metadata(
+        self,
+        monkeypatch,
+        caplog,
+    ):
+        """注册异常日志应可定位类型，但不得泄露载荷或异常消息。"""
+        svc = PromptProtectionService(enable_double_check=False)
+        secret = "private payload canary alpha beta gamma"
+        exception_canary = "private exception canary"
+
+        def fail_registration(scope_id, instructions):
+            """模拟 scope 注册阶段抛出包含敏感消息的异常。"""
+            raise RuntimeError(exception_canary)
+
+        monkeypatch.setattr(svc, "_register_scope", fail_registration)
+        with caplog.at_level(
+            logging.ERROR,
+            logger="astrbot.memora.security.prompt_sanitizer",
+        ):
+            with pytest.raises(RuntimeError, match=exception_canary):
+                svc.wrap_prompt(secret, scope_id="scope-log-failure")
+
+        log_text = caplog.text
+        assert "RuntimeError" in log_text
+        assert "scope_registration" in log_text
+        assert "scope_present=True" in log_text
+        assert "payload_chars=" in log_text
+        assert "scoped_scope_count=" in log_text
+        assert "scope-log-failure" not in log_text
+        assert secret not in log_text
+        assert exception_canary not in log_text

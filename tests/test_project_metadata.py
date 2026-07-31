@@ -52,8 +52,9 @@ def test_run_smoke_reports_each_target_status_and_total_duration(
 
     calls: list[list[str]] = []
 
-    def _fake_run(command, cwd):
+    def _fake_run(command, cwd, **kwargs):
         calls.append(command)
+        assert kwargs == {"shell": False}
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(run_smoke, "SMOKE_TARGETS", [target_a, target_b])
@@ -86,8 +87,9 @@ def test_check_all_reports_step_durations_and_total(monkeypatch, capsys) -> None
 
     calls: list[tuple[list[str], Path]] = []
 
-    def _fake_run(command, cwd):
+    def _fake_run(command, cwd, **kwargs):
         calls.append((command, cwd))
+        assert kwargs == {"shell": False}
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(check_all, "_resolve_command", lambda command: command)

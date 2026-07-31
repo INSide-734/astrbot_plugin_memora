@@ -342,3 +342,50 @@ async def test_recall_trace_api_returns_stable_codes_without_exception_text() ->
     assert capture == {"status": "error", "message": "recall_trace_failed"}
     assert detail == {"status": "error", "message": "recall_trace_detail_failed"}
     assert _SENTINEL not in _serialized([capture, detail])
+
+
+@pytest.mark.asyncio
+async def test_recall_sample_page_rejects_query_prompt_content_identity_and_ids() -> (
+    None
+):
+    """召回样本页不得包含查询、正文、身份、候选 ID、任意 metadata 或 Provider 凭据。"""
+    from core.monitoring.perf_tracker import PerfTracker
+    from core.monitoring.recall_timing import sanitize_recall_sample
+
+    tracker = PerfTracker(maxlen=3)
+    tracker.record(
+        {
+            "retrieval_total_ms": 15.0,
+            "query": _SENTINEL,
+            "prompt": _SENTINEL,
+            "memory_content": _SENTINEL,
+            "identity_user_id": _SENTINEL,
+            "session_id": _SENTINEL,
+            "candidate_ids": [42],
+            "metadata": {"secret": _SENTINEL},
+            "provider_url": _SENTINEL,
+            "provider_key": _SENTINEL,
+        }
+    )
+    page = tracker.get_samples(after_sequence=0, limit=10)
+    serialized = _serialized(page)
+    assert _SENTINEL not in serialized
+
+    # 同时验证 sanitize 函数本身不放过敏感字段
+    raw = {
+        "retrieval_total_ms": 7.0,
+        "query": _SENTINEL,
+        "prompt": _SENTINEL,
+        "candidate_ids": [1, 2, 3],
+        "identity_user_id": _SENTINEL,
+        "provider_key": _SENTINEL,
+    }
+    safe = sanitize_recall_sample(raw)
+    safe_str = _serialized(safe)
+    assert _SENTINEL not in safe_str
+    assert "query" not in safe
+    assert "prompt" not in safe
+    assert "candidate_ids" not in safe
+    assert "identity_user_id" not in safe
+    assert "provider_key" not in safe
+    assert safe["retrieval_total_ms"] == 7.0

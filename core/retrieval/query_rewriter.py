@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -17,6 +18,90 @@ from astrbot.api import logger
 
 from ..models.temporal import normalize_datetime, parse_datetime
 from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
+
+# 规范化的意图标签（外部 LLM 或旧配置可能使用别名）
+CANONICAL_INTENTS: frozenset[str] = frozenset(
+    {
+        "factual",
+        "relationship",
+        "temporal",
+        "preference",
+        "contextual",
+        "default",
+    }
+)
+
+_INTENT_ALIASES: dict[str, str] = {
+    "relational": "relationship",
+    "relation": "relationship",
+    "relationship": "relationship",
+    "factual": "factual",
+    "fact": "factual",
+    "temporal": "temporal",
+    "time": "temporal",
+    "preference": "preference",
+    "pref": "preference",
+    "contextual": "contextual",
+    "context": "contextual",
+}
+
+
+def normalize_query_intent(raw: object) -> str:
+    """将任意意图字符串映射到规范标签，未知值回退为 \"default\"。"""
+    key = str(raw or "").strip().casefold()
+    if not key:
+        return "default"
+    return _INTENT_ALIASES.get(key, "default")
+
+
+_VALID_MEMORY_TYPES = frozenset(
+    {"EPISODIC", "FACTUAL", "RELATIONAL", "PREFERENCE", "PLANNED"}
+)
+_VALID_TIME_REFERENCES = frozenset({"recent", "today", "yesterday", "this_week"})
+
+
+def _bounded_string_list(
+    value: object,
+    *,
+    limit: int,
+    max_chars: int,
+) -> list[str]:
+    """把模型数组收敛为有限、去空白且去重的字符串列表。"""
+
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        normalized = " ".join(item.split())[:max_chars]
+        key = normalized.casefold()
+        if not normalized or key in seen:
+            continue
+        seen.add(key)
+        result.append(normalized)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _normalize_time_reference(value: object) -> str | None:
+    """把模型时间引用收敛为固定相对值、月份或可解析绝对时间。"""
+
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split())[:64]
+    if not normalized:
+        return None
+    folded = normalized.casefold()
+    if folded in _VALID_TIME_REFERENCES:
+        return folded
+    try:
+        datetime.strptime(normalized, "%Y-%m")
+    except ValueError:
+        return normalized if parse_datetime(normalized) is not None else None
+    return normalized
 
 
 @dataclass
@@ -32,7 +117,7 @@ class QueryIntent:
 
     @classmethod
     def from_keywords(cls, query: str) -> QueryIntent:
-        """Fallback: 使用硬编码关键词做意图分类（LLM 不可用时调用）。"""
+        """降级路径：使用硬编码关键词做意图分类。"""
         normalized = query.casefold()
         intent = "default"
 
@@ -56,7 +141,7 @@ class QueryIntent:
             memory_types = ["FACTUAL"]
 
         return cls(
-            intent=intent,
+            intent=normalize_query_intent(intent),
             extracted_entities=[],
             time_reference=None,
             rewritten_queries=[query],
@@ -146,6 +231,8 @@ class QueryRewriter:
                 intent = self._parse_llm_response(raw, query)
                 if intent is not None:
                     return intent
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 logger.debug(
                     "[查询改写] LLM 改写失败，回退到关键词匹配，异常类型=%s",
@@ -170,13 +257,38 @@ class QueryRewriter:
 
             data = json.loads(text)
 
+            if not isinstance(data, dict):
+                return None
+            entities = _bounded_string_list(
+                data.get("extracted_entities"),
+                limit=8,
+                max_chars=128,
+            )
+            queries = _bounded_string_list(
+                data.get("rewritten_queries"),
+                limit=3,
+                max_chars=256,
+            )
+            if not queries:
+                queries = [" ".join(fallback_query.split())[:256]]
+            memory_types = [
+                item
+                for item in _bounded_string_list(
+                    data.get("memory_types"),
+                    limit=len(_VALID_MEMORY_TYPES),
+                    max_chars=32,
+                )
+                if item.upper() in _VALID_MEMORY_TYPES
+            ]
+            time_reference = _normalize_time_reference(data.get("time_reference"))
+
             return QueryIntent(
-                intent=str(data.get("intent", "default")),
-                extracted_entities=list(data.get("extracted_entities", [])),
-                time_reference=data.get("time_reference"),
+                intent=normalize_query_intent(str(data.get("intent", "default"))),
+                extracted_entities=entities,
+                time_reference=time_reference,
                 reference_time=parse_datetime(data.get("reference_time")),
-                rewritten_queries=list(data.get("rewritten_queries", [fallback_query])),
-                memory_types=list(data.get("memory_types", [])),
+                rewritten_queries=queries,
+                memory_types=[item.upper() for item in memory_types],
             )
         except (json.JSONDecodeError, TypeError, KeyError):
             return None
@@ -207,4 +319,10 @@ def resolve_reference_time(
     return None
 
 
-__all__ = ["QueryIntent", "QueryRewriter", "resolve_reference_time"]
+__all__ = [
+    "CANONICAL_INTENTS",
+    "normalize_query_intent",
+    "QueryIntent",
+    "QueryRewriter",
+    "resolve_reference_time",
+]

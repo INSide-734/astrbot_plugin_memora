@@ -21,6 +21,7 @@ from .memory_lifecycle import MemoryLifecycleManager
 from .mmr_reranker import apply_mmr
 from .rrf_fusion import BM25Result, HybridResult, RRFFusion, VectorResult
 from .score_weighting import ScoreWeighting
+from .vector_deadline import run_local_and_bounded_vector
 from .vector_retriever import VectorRetriever
 
 
@@ -110,10 +111,11 @@ class HybridRetriever:
     @staticmethod
     async def _search_route(
         route_name: str, search_coro
-    ) -> tuple[list, Exception | None]:
+    ) -> tuple[list, Exception | None, float]:
         """执行单条检索路由，并把普通失败转换为可降级的路由错误。"""
+        started = time.perf_counter()
         try:
-            return await search_coro, None
+            return await search_coro, None, (time.perf_counter() - started) * 1000.0
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -122,7 +124,7 @@ class HybridRetriever:
                 route_name,
                 exc.__class__.__name__,
             )
-            return [], exc
+            return [], exc, (time.perf_counter() - started) * 1000.0
 
     async def add_memory(
         self, content: str, metadata: dict[str, Any] | None = None
@@ -137,6 +139,7 @@ class HybridRetriever:
         session_id: str | None = None,
         persona_id: str | None = None,
         memory_types: list[str] | None = None,
+        timing_sink: dict[str, object] | None = None,
         **kwargs: Any,
     ) -> list[HybridResult]:
         """
@@ -152,35 +155,132 @@ class HybridRetriever:
             List[HybridResult]: 混合检索结果,按最终分数降序排列
         """
         if not query or not query.strip():
+            if timing_sink is not None:
+                timing_sink.update(
+                    {
+                        "bm25_ms": 0.0,
+                        "vector_ms": 0.0,
+                        "document_fusion_ms": 0.0,
+                        "document_weighting_ms": 0.0,
+                        "document_mmr_ms": 0.0,
+                        "document_total_ms": 0.0,
+                    }
+                )
             return []
 
         # 1. 并行执行两路检索
+        _t_route_start = time.perf_counter()
+        deadline_monotonic = kwargs.get("deadline_monotonic")
         (
-            (bm25_results, bm25_error),
-            (vector_results, vector_error),
-        ) = await asyncio.gather(
-            self._search_route(
+            local_route,
+            vector_route,
+            vector_timed_out,
+        ) = await run_local_and_bounded_vector(
+            lambda: self._search_route(
                 "BM25",
                 self.bm25_retriever.search(query, k, session_id, persona_id),
             ),
-            self._search_route(
+            lambda: self._search_route(
                 "向量",
                 self.vector_retriever.search(query, k, session_id, persona_id),
             ),
+            deadline_monotonic=(
+                float(deadline_monotonic)
+                if isinstance(deadline_monotonic, (int, float))
+                and not isinstance(deadline_monotonic, bool)
+                else None
+            ),
         )
+        bm25_results, bm25_error, bm25_ms = local_route
+        if vector_route is None:
+            vector_results, vector_error, vector_ms = [], TimeoutError(), 0.0
+        else:
+            vector_results, vector_error, vector_ms = vector_route
+        if timing_sink is not None:
+            timing_sink["bm25_ms"] = bm25_ms
+            timing_sink["vector_ms"] = vector_ms
+            if vector_timed_out:
+                timing_sink.update(
+                    {
+                        "document_vector_timed_out": True,
+                        "deadline_exhausted": True,
+                        "partial_fallback": bool(bm25_results),
+                    }
+                )
 
         # 2. 处理退化情况
         if bm25_error and vector_error:
+            if timing_sink is not None:
+                timing_sink.update(
+                    {
+                        "document_route_degraded": True,
+                        "document_fusion_ms": 0.0,
+                        "document_weighting_ms": 0.0,
+                        "document_mmr_ms": 0.0,
+                        "document_total_ms": (time.perf_counter() - _t_route_start)
+                        * 1000.0,
+                    }
+                )
             return []
 
         if bm25_error:
             if self.fallback_enabled and vector_results:
-                return self._fallback_vector_only(vector_results, k)
+                weighted_started = time.perf_counter()
+                fallback = self._fallback_vector_only(vector_results, k)
+                if timing_sink is not None:
+                    timing_sink.update(
+                        {
+                            "document_fusion_ms": 0.0,
+                            "document_weighting_ms": (
+                                time.perf_counter() - weighted_started
+                            )
+                            * 1000.0,
+                            "document_mmr_ms": 0.0,
+                            "document_total_ms": (time.perf_counter() - _t_route_start)
+                            * 1000.0,
+                        }
+                    )
+                return fallback
+            if timing_sink is not None:
+                timing_sink.update(
+                    {
+                        "document_fusion_ms": 0.0,
+                        "document_weighting_ms": 0.0,
+                        "document_mmr_ms": 0.0,
+                        "document_total_ms": (time.perf_counter() - _t_route_start)
+                        * 1000.0,
+                    }
+                )
             return []
 
         if vector_error:
             if self.fallback_enabled and bm25_results:
-                return self._fallback_bm25_only(bm25_results, k)
+                weighted_started = time.perf_counter()
+                fallback = self._fallback_bm25_only(bm25_results, k)
+                if timing_sink is not None:
+                    timing_sink.update(
+                        {
+                            "document_fusion_ms": 0.0,
+                            "document_weighting_ms": (
+                                time.perf_counter() - weighted_started
+                            )
+                            * 1000.0,
+                            "document_mmr_ms": 0.0,
+                            "document_total_ms": (time.perf_counter() - _t_route_start)
+                            * 1000.0,
+                        }
+                    )
+                return fallback
+            if timing_sink is not None:
+                timing_sink.update(
+                    {
+                        "document_fusion_ms": 0.0,
+                        "document_weighting_ms": 0.0,
+                        "document_mmr_ms": 0.0,
+                        "document_total_ms": (time.perf_counter() - _t_route_start)
+                        * 1000.0,
+                    }
+                )
             return []
 
         # 3. RRF融合
@@ -199,24 +299,49 @@ class HybridRetriever:
             for r in vector_results
         ]
 
+        _t_fusion_start = time.perf_counter()
         fused_results = self.rrf_fusion.fuse(
             rrf_bm25_results, rrf_vector_results, top_k=k
         )
+        _t_fusion_end = time.perf_counter()
+        if timing_sink is not None:
+            timing_sink["document_fusion_ms"] = (
+                _t_fusion_end - _t_fusion_start
+            ) * 1000.0
 
         if not fused_results:
+            if timing_sink is not None:
+                timing_sink.update(
+                    {
+                        "document_weighting_ms": 0.0,
+                        "document_mmr_ms": 0.0,
+                        "document_total_ms": (time.perf_counter() - _t_route_start)
+                        * 1000.0,
+                    }
+                )
             return []
 
         # 4. 应用加权（通过线程池卸载 CPU 密集型 json.loads + 循环）
         current_time = time.time()
+        _t_weight_start = time.perf_counter()
         weighted_results = await asyncio.to_thread(
             self.score_weighting.apply_weighting, fused_results, current_time
         )
+        _t_weight_end = time.perf_counter()
+        if timing_sink is not None:
+            timing_sink["document_weighting_ms"] = (
+                _t_weight_end - _t_weight_start
+            ) * 1000.0
 
         # 5. MMR 去重（通过线程池卸载 O(k*n) Jaccard 集合运算）
+        _t_mmr_start = time.perf_counter()
         if len(weighted_results) > 1:
             weighted_results = await asyncio.to_thread(
                 apply_mmr, weighted_results, k, self.mmr_lambda
             )
+        _t_mmr_end = time.perf_counter()
+        if timing_sink is not None:
+            timing_sink["document_mmr_ms"] = (_t_mmr_end - _t_mmr_start) * 1000.0
 
         # 6. 记忆类型后处理过滤
         if memory_types:
@@ -228,6 +353,11 @@ class HybridRetriever:
                 if atom_type.lower() not in memory_types_lower:
                     result.final_score *= 0.1
             weighted_results.sort(key=lambda r: r.final_score, reverse=True)
+
+        if timing_sink is not None:
+            timing_sink["document_total_ms"] = (
+                time.perf_counter() - _t_route_start
+            ) * 1000.0
 
         return weighted_results
 

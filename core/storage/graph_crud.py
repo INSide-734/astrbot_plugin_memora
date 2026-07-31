@@ -25,11 +25,21 @@ class GraphCRUDMixin(BaseStore):
             return {}
 
         now = self._now_iso()
-        node_key_to_id: dict[str, int] = {}
         async with self._connect() as db:
-            for node in nodes:
-                node_key_to_id[node.node_key] = await self._upsert_node(db, node, now)
+            node_key_to_id = await self._upsert_nodes(db, nodes, now)
             await db.commit()
+        return node_key_to_id
+
+    async def _upsert_nodes(
+        self,
+        db: aiosqlite.Connection,
+        nodes: list[GraphNode],
+        now: str,
+    ) -> dict[str, int]:
+        """使用调用方连接插入或更新多个节点。"""
+        node_key_to_id: dict[str, int] = {}
+        for node in nodes:
+            node_key_to_id[node.node_key] = await self._upsert_node(db, node, now)
         return node_key_to_id
 
     async def _upsert_node(
@@ -38,6 +48,7 @@ class GraphCRUDMixin(BaseStore):
         node: GraphNode,
         now: str,
     ) -> int:
+        """使用调用方连接插入或更新单个节点。"""
         cursor = await db.execute(
             """
             INSERT INTO graph_nodes(
@@ -101,21 +112,37 @@ class GraphCRUDMixin(BaseStore):
             return {}
 
         now = self._now_iso()
-        edge_key_to_id: dict[str, int] = {}
         async with self._connect() as db:
-            for edge in edges:
-                source_node_id = node_key_to_id.get(edge.source_key)
-                target_node_id = node_key_to_id.get(edge.target_key)
-                if source_node_id is None or target_node_id is None:
-                    continue
-                edge_key_to_id[edge.edge_key] = await self._add_edge(
-                    db,
-                    edge,
-                    source_node_id,
-                    target_node_id,
-                    now,
-                )
+            edge_key_to_id = await self._add_edges(
+                db,
+                edges,
+                node_key_to_id,
+                now,
+            )
             await db.commit()
+        return edge_key_to_id
+
+    async def _add_edges(
+        self,
+        db: aiosqlite.Connection,
+        edges: list[GraphEdge],
+        node_key_to_id: dict[str, int],
+        now: str,
+    ) -> dict[str, int]:
+        """使用调用方连接插入或更新多条边。"""
+        edge_key_to_id: dict[str, int] = {}
+        for edge in edges:
+            source_node_id = node_key_to_id.get(edge.source_key)
+            target_node_id = node_key_to_id.get(edge.target_key)
+            if source_node_id is None or target_node_id is None:
+                continue
+            edge_key_to_id[edge.edge_key] = await self._add_edge(
+                db,
+                edge,
+                source_node_id,
+                target_node_id,
+                now,
+            )
         return edge_key_to_id
 
     async def _add_edge(
@@ -126,6 +153,7 @@ class GraphCRUDMixin(BaseStore):
         target_node_id: int,
         now: str,
     ) -> int:
+        """使用调用方连接插入或合并单条边。"""
         # 先做精确键匹配（同一记忆、同一条边）
         cursor = await db.execute(
             "SELECT id FROM graph_edges WHERE edge_key = ?",
@@ -226,20 +254,38 @@ class GraphCRUDMixin(BaseStore):
             return []
 
         now = self._now_iso()
-        entry_ids: list[int] = []
         async with self._connect() as db:
-            for entry in entries:
-                edge_id = None
-                if entry.relation_type and len(entry.node_keys) >= 2:
-                    edge_key = (
-                        f"{entry.node_keys[0]}|{entry.relation_type}|"
-                        f"{entry.node_keys[1]}|{entry.source_memory_id}"
-                    )
-                    edge_id = edge_key_to_id.get(edge_key)
-                entry_ids.append(
-                    await self._add_entry(db, entry, node_key_to_id, edge_id, now)
-                )
+            entry_ids = await self._add_entries(
+                db,
+                entries,
+                node_key_to_id,
+                edge_key_to_id,
+                now,
+            )
             await db.commit()
+        return entry_ids
+
+    async def _add_entries(
+        self,
+        db: aiosqlite.Connection,
+        entries: list[GraphEntry],
+        node_key_to_id: dict[str, int],
+        edge_key_to_id: dict[str, int],
+        now: str,
+    ) -> list[int]:
+        """使用调用方连接插入或更新多个可搜索图条目。"""
+        entry_ids: list[int] = []
+        for entry in entries:
+            edge_id = None
+            if entry.relation_type and len(entry.node_keys) >= 2:
+                edge_key = (
+                    f"{entry.node_keys[0]}|{entry.relation_type}|"
+                    f"{entry.node_keys[1]}|{entry.source_memory_id}"
+                )
+                edge_id = edge_key_to_id.get(edge_key)
+            entry_ids.append(
+                await self._add_entry(db, entry, node_key_to_id, edge_id, now)
+            )
         return entry_ids
 
     async def _add_entry(
@@ -250,6 +296,7 @@ class GraphCRUDMixin(BaseStore):
         edge_id: int | None,
         now: str,
     ) -> int:
+        """使用调用方连接插入或更新单个可搜索图条目。"""
         cursor = await db.execute(
             "SELECT id FROM graph_entries WHERE entry_key = ?",
             (entry.entry_key,),

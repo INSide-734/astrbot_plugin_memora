@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -173,6 +174,80 @@ class TestGraphVectorRetriever:
         result = await retriever.delete_entry(5)
         assert result is True
         faiss_db.delete.assert_called_once_with("uuid-abc")
+
+    @pytest.mark.asyncio
+    async def test_delete_entries_for_memory_removes_all_matching_documents(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
+        """按源记忆清理会删除全部匹配向量并返回数量。"""
+        faiss_db.document_storage.get_documents.side_effect = [
+            [{"doc_id": "uuid-1"}, {"doc_id": "uuid-2"}],
+            [],
+        ]
+
+        deleted = await retriever.delete_entries_for_memory(36)
+
+        assert deleted == 2
+        faiss_db.delete.assert_has_awaits([call("uuid-1"), call("uuid-2")])
+        assert faiss_db.document_storage.get_documents.await_count == 2
+        for awaited in faiss_db.document_storage.get_documents.await_args_list:
+            assert awaited.kwargs["metadata_filters"] == {"source_memory_id": 36}
+            assert awaited.kwargs["offset"] == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_entries_for_memory_raises_without_progress(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
+        """匹配文档缺少可删除标识时必须失败，不能无限重试。"""
+        faiss_db.document_storage.get_documents.return_value = [{"text": "坏数据"}]
+
+        with pytest.raises(RuntimeError, match="缺少可删除标识"):
+            await retriever.delete_entries_for_memory(36)
+
+        faiss_db.delete.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delete_entries_for_memory_raises_when_backend_rejects_delete(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
+        """底层显式拒绝删除时必须失败，不能重复读取同一向量。"""
+        faiss_db.document_storage.get_documents.return_value = [
+            {"doc_id": "uuid-stalled"}
+        ]
+        faiss_db.delete.return_value = False
+
+        with pytest.raises(RuntimeError, match="未取得进展"):
+            await retriever.delete_entries_for_memory(36)
+
+        faiss_db.delete.assert_awaited_once_with("uuid-stalled")
+
+    @pytest.mark.asyncio
+    async def test_delete_entries_for_memory_raises_when_document_reappears(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
+        """已删除 UUID 再次出现时必须失败，避免静默 no-op 无限循环。"""
+        faiss_db.document_storage.get_documents.side_effect = [
+            [{"doc_id": "uuid-repeated"}],
+            [{"doc_id": "uuid-repeated"}],
+        ]
+
+        with pytest.raises(RuntimeError, match="未取得进展"):
+            await retriever.delete_entries_for_memory(36)
+
+        faiss_db.delete.assert_awaited_once_with("uuid-repeated")
+
+    @pytest.mark.asyncio
+    async def test_delete_entries_for_memory_propagates_cancel(
+        self, retriever: Any, faiss_db: MagicMock
+    ) -> None:
+        """批量向量删除期间的取消必须原样传播。"""
+        faiss_db.document_storage.get_documents.return_value = [
+            {"doc_id": "uuid-cancel"}
+        ]
+        faiss_db.delete.side_effect = asyncio.CancelledError
+
+        with pytest.raises(asyncio.CancelledError):
+            await retriever.delete_entries_for_memory(36)
 
     @pytest.mark.asyncio
     async def test_update_metadata_not_found(

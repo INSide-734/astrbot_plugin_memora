@@ -267,28 +267,23 @@ class DiagnosticEventStore:
         include_resolved: bool = True,
     ) -> list[dict[str, Any]]:
         """按可选领域、严重度和解决状态列出最新事件。"""
-        clauses: list[str] = []
-        params: list[Any] = []
-        if domain is not None:
-            clauses.append("domain = ?")
-            params.append(domain)
-        if severity is not None:
-            clauses.append("severity = ?")
-            params.append(severity)
-        if not include_resolved:
-            clauses.append("resolved_at IS NULL")
-
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         safe_limit = self._safe_limit(limit)
-        query = f"""
+        query = """
             SELECT event_id, created_at, domain, severity, title, message,
                    source, payload, resolved_at
             FROM diagnostic_events
-            {where}
+            WHERE (:domain IS NULL OR domain = :domain)
+              AND (:severity IS NULL OR severity = :severity)
+              AND (:include_resolved = 1 OR resolved_at IS NULL)
             ORDER BY created_at DESC, rowid DESC
-            LIMIT ?
+            LIMIT :limit
         """
-        params.append(safe_limit)
+        params = {
+            "domain": domain,
+            "severity": severity,
+            "include_resolved": int(include_resolved),
+            "limit": safe_limit,
+        }
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row

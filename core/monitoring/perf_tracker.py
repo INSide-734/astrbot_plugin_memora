@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import math
 from collections import deque
+from collections.abc import Mapping
 from typing import Any
+
+from .recall_timing import sanitize_recall_sample
 
 # ---------------------------------------------------------------------------
 # 有序耗时键集合：每条记录都应包含这些字段
@@ -25,9 +28,12 @@ class PerfTracker:
     """默认环形缓冲容量。"""
 
     def __init__(self, maxlen: int = MAXLEN_DEFAULT) -> None:
-        """初始化环形缓冲区与 Welford 统计器。"""
+        """初始化环形缓冲区、序列计数器与 Welford 统计器。"""
         self._maxlen: int = max(maxlen, 1)
-        self._samples: deque[dict[str, float]] = deque(maxlen=self._maxlen)
+        self._samples: deque[tuple[int, dict[str, float | int | bool | str]]] = deque(
+            maxlen=self._maxlen
+        )
+        self._next_sequence: int = 0
 
         # Welford 状态：count、mean、M2（到均值平方距离的累计量）
         self._count: dict[str, int] = {k: 0 for k in _TIMING_KEYS}
@@ -38,21 +44,26 @@ class PerfTracker:
     # 记录数据
     # ------------------------------------------------------------------
 
-    def record(self, sample: dict[str, float]) -> None:
-        """追加一条耗时样本，并更新滚动统计值。"""
+    def record(self, sample: Mapping[str, object]) -> None:
+        """追加一条样本，先做安全归一化再记录单调序号与滚动统计。"""
+        safe = sanitize_recall_sample(sample)
+        self._next_sequence += 1
+        entry = (self._next_sequence, safe)
         evicted = self._samples[0] if len(self._samples) == self._maxlen else None
-        self._samples.append(sample)
+        self._samples.append(entry)
         if evicted is not None:
             self._rebuild_stats()
             return
         for key in _TIMING_KEYS:
-            value = sample.get(key)
+            value = safe.get(key)
             if value is None:
                 continue
+            if not isinstance(value, (int, float)):
+                continue
             self._count[key] += 1
-            delta: float = value - self._mean[key]
+            delta: float = float(value) - self._mean[key]
             self._mean[key] += delta / self._count[key]
-            delta2: float = value - self._mean[key]
+            delta2: float = float(value) - self._mean[key]
             self._m2[key] += delta * delta2
 
     # ------------------------------------------------------------------
@@ -60,7 +71,7 @@ class PerfTracker:
     # ------------------------------------------------------------------
 
     def get_perf_data(self, recent_limit: int = 50) -> dict[str, Any]:
-        """返回汇总统计信息以及最近的样本列表。"""
+        """返回汇总统计信息以及最近的样本列表（不含序号以保持兼容）。"""
         stats: dict[str, Any] = {}
         for key in _TIMING_KEYS:
             stats[f"avg_{key}"] = round(self._mean[key], 4)
@@ -68,8 +79,29 @@ class PerfTracker:
             stats[f"count_{key}"] = self._count[key]
 
         limit = min(max(recent_limit, 0), len(self._samples))
-        stats["recent"] = list(self._samples)[-limit:] if limit else []
+        stats["recent"] = (
+            [sample for _sequence, sample in list(self._samples)[-limit:]]
+            if limit
+            else []
+        )
         return stats
+
+    def get_samples(
+        self, *, after_sequence: int = 0, limit: int = 50
+    ) -> dict[str, Any]:
+        """按单调序号返回安全样本页，不暴露请求关联信息。"""
+        safe_after = max(0, int(after_sequence))
+        safe_limit = min(max(1, int(limit)), 200)
+        items = [
+            {"sequence": sequence, **sample}
+            for sequence, sample in self._samples
+            if sequence > safe_after
+        ][:safe_limit]
+        return {
+            "items": items,
+            "next_sequence": items[-1]["sequence"] if items else safe_after,
+            "latest_sequence": self._next_sequence,
+        }
 
     # ------------------------------------------------------------------
     # 百分位辅助函数
@@ -79,7 +111,9 @@ class PerfTracker:
         """计算指定键的 p 分位数（0 到 100）。"""
         if not self._samples:
             return None
-        values = sorted(s.get(key, 0.0) for s in self._samples if key in s)
+        values = sorted(
+            sample.get(key, 0.0) for _sequence, sample in self._samples if key in sample
+        )
         if not values:
             return None
         if p <= 0:
@@ -112,15 +146,17 @@ class PerfTracker:
         self._mean = {k: 0.0 for k in _TIMING_KEYS}
         self._m2 = {k: 0.0 for k in _TIMING_KEYS}
 
-        for retained in self._samples:
+        for _sequence, retained in self._samples:
             for key in _TIMING_KEYS:
                 value = retained.get(key)
                 if value is None:
                     continue
+                if not isinstance(value, (int, float)):
+                    continue
                 self._count[key] += 1
-                delta = value - self._mean[key]
+                delta = float(value) - self._mean[key]
                 self._mean[key] += delta / self._count[key]
-                delta2 = value - self._mean[key]
+                delta2 = float(value) - self._mean[key]
                 self._m2[key] += delta * delta2
 
     def __len__(self) -> int:

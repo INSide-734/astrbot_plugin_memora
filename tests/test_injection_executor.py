@@ -142,6 +142,47 @@ def test_candidate_utility_uses_fixed_formula_and_clamps_inputs() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_selection_covers_required_facets_before_near_duplicate() -> None:
+    """注入选择应优先覆盖缺失维度，而不是选择近重复证据。"""
+
+    memories = [
+        {
+            "id": "a",
+            "content": "事件事实甲",
+            "score": 0.95,
+            "metadata": {},
+            "_matched_facets": {"event": 1.0},
+        },
+        {
+            "id": "b",
+            "content": "事件事实甲的近重复",
+            "score": 0.94,
+            "metadata": {},
+            "_matched_facets": {"event": 1.0},
+        },
+        {
+            "id": "c",
+            "content": "时间事实乙",
+            "score": 0.88,
+            "metadata": {},
+            "_matched_facets": {"time": 1.0},
+        },
+    ]
+
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        _request(),
+        _decision(),
+        _context(memories, required_facets=("event", "time")),
+    )
+
+    assert result.selected_count >= 2
+    payload = _part_payload()
+    assert "事件事实甲" in payload
+    assert "时间事实乙" in payload
+    assert "_matched_facets" not in payload
+
+
 def test_candidate_utility_uses_score_and_default_importance() -> None:
     utility = candidate_utility(
         {"score": 0.4, "metadata": None},

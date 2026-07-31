@@ -336,16 +336,26 @@ class ConversationStore(MessageStoreMixin):
                 return 0
 
             # 删除这些会话的所有消息
-            placeholders = ",".join("?" * len(session_ids))
+            session_params = {"session_ids_json": json.dumps(session_ids)}
             await self.connection.execute(
-                f"DELETE FROM messages WHERE session_id IN ({placeholders})",
-                session_ids,
+                """
+                DELETE FROM messages
+                WHERE session_id IN (
+                    SELECT value FROM json_each(:session_ids_json)
+                )
+                """,
+                session_params,
             )
 
             # 删除会话记录
             await self.connection.execute(
-                f"DELETE FROM sessions WHERE session_id IN ({placeholders})",
-                session_ids,
+                """
+                DELETE FROM sessions
+                WHERE session_id IN (
+                    SELECT value FROM json_each(:session_ids_json)
+                )
+                """,
+                session_params,
             )
 
             await self.connection.commit()

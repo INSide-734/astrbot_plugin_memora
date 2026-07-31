@@ -8,6 +8,44 @@ import aiosqlite
 from astrbot.api import logger
 
 from ..storage.base import apply_perf_pragmas
+from ..storage.sql_contract import (
+    MEMORY_FTS_SELECT_DISTINCT_DOC_IDS_SQL,
+    MEMORY_FTS_TABLE,
+)
+
+_ID_QUERY_ALLOWLIST = {
+    ("documents", "id", None): "SELECT DISTINCT id FROM documents",
+    (MEMORY_FTS_TABLE, "doc_id", None): MEMORY_FTS_SELECT_DISTINCT_DOC_IDS_SQL,
+    ("memory_atoms", "parent_memory_id", "parent_memory_id IS NOT NULL"): (
+        "SELECT DISTINCT parent_memory_id FROM memory_atoms "
+        "WHERE parent_memory_id IS NOT NULL"
+    ),
+    ("graph_entries", "source_memory_id", "source_memory_id IS NOT NULL"): (
+        "SELECT DISTINCT source_memory_id FROM graph_entries "
+        "WHERE source_memory_id IS NOT NULL"
+    ),
+    (
+        "graph_entries",
+        "vector_doc_id",
+        "vector_doc_id IS NOT NULL AND vector_doc_id != ''",
+    ): (
+        "SELECT DISTINCT vector_doc_id FROM graph_entries "
+        "WHERE vector_doc_id IS NOT NULL AND vector_doc_id != ''"
+    ),
+    ("graph_entries", "id", None): "SELECT DISTINCT id FROM graph_entries",
+    ("graph_entry_nodes", "entry_id", None): (
+        "SELECT DISTINCT entry_id FROM graph_entry_nodes"
+    ),
+    ("graph_nodes", "id", None): "SELECT DISTINCT id FROM graph_nodes",
+    ("graph_entry_nodes", "node_id", None): (
+        "SELECT DISTINCT node_id FROM graph_entry_nodes"
+    ),
+    ("notes", "id", None): "SELECT DISTINCT id FROM notes",
+    ("note_versions", "note_id", None): ("SELECT DISTINCT note_id FROM note_versions"),
+}
+_COUNT_QUERY_ALLOWLIST = {
+    "memory_atoms": "SELECT COUNT(*) FROM memory_atoms",
+}
 
 
 class PersistenceHealthValidator:
@@ -69,9 +107,9 @@ class PersistenceHealthValidator:
     ) -> None:
         """检查 BM25 文档引用是否存在 canonical source。"""
 
-        if not await self._table_exists(db, "memora_memories_fts"):
+        if not await self._table_exists(db, MEMORY_FTS_TABLE):
             return
-        bm25_ids = await self._ids(db, "memora_memories_fts", "doc_id")
+        bm25_ids = await self._ids(db, MEMORY_FTS_TABLE, "doc_id")
         counts["bm25"] = len(bm25_ids)
         orphan = sorted(bm25_ids - document_ids)
         if orphan:
@@ -304,10 +342,10 @@ class PersistenceHealthValidator:
     ) -> set[Any]:
         """读取固定内部表列的去重 ID 集合。"""
 
-        clause = f" WHERE {where}" if where else ""
-        cursor = await db.execute(
-            f"SELECT DISTINCT {column_name} FROM {table_name}{clause}"
-        )
+        sql = _ID_QUERY_ALLOWLIST.get((table_name, column_name, where))
+        if sql is None:
+            raise ValueError("不支持的持久化健康检查 ID 查询")
+        cursor = await db.execute(sql)
         values = {row[0] for row in await cursor.fetchall() if row[0] is not None}
         if not normalize:
             return values
@@ -320,7 +358,10 @@ class PersistenceHealthValidator:
     ) -> int:
         """统计固定内部表的行数。"""
 
-        cursor = await db.execute(f"SELECT COUNT(*) FROM {table_name}")
+        sql = _COUNT_QUERY_ALLOWLIST.get(table_name)
+        if sql is None:
+            raise ValueError("不支持的持久化健康检查计数查询")
+        cursor = await db.execute(sql)
         row = await cursor.fetchone()
         return int(row[0]) if row else 0
 

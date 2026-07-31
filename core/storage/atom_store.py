@@ -28,6 +28,13 @@ class AtomStore(BaseStore, AtomFTSMixin):
     """持久化记忆原子，并提供 FTS 检索支持。"""
 
     _SQLITE_BATCH_SIZE = 500
+    _PARENT_COLUMN_MIGRATIONS = {
+        "parent_revision": "ALTER TABLE memory_atoms ADD COLUMN parent_revision TEXT",
+        "parent_scope_key": "ALTER TABLE memory_atoms ADD COLUMN parent_scope_key TEXT",
+        "parent_privacy_level": (
+            "ALTER TABLE memory_atoms ADD COLUMN parent_privacy_level TEXT"
+        ),
+    }
 
     def __init__(self, db_path: str, config: dict[str, Any] | None = None):
         """保存 SQLite 路径与原子生命周期配置。"""
@@ -77,9 +84,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
                 "parent_privacy_level",
             ):
                 if column not in columns:
-                    await db.execute(
-                        f"ALTER TABLE memory_atoms ADD COLUMN {column} TEXT"
-                    )
+                    await db.execute(self._PARENT_COLUMN_MIGRATIONS[column])
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_atoms_status ON memory_atoms(status)"
             )
@@ -416,14 +421,19 @@ class AtomStore(BaseStore, AtomFTSMixin):
                 atom_ids = [int(row[0]) for row in rows]
                 if not atom_ids:
                     break
-                placeholders = ",".join("?" * len(atom_ids))
                 await db.execute(
-                    f"DELETE FROM memory_atoms_fts WHERE atom_id IN ({placeholders})",
-                    atom_ids,
+                    """
+                    DELETE FROM memory_atoms_fts
+                    WHERE atom_id IN (SELECT value FROM json_each(:atom_ids_json))
+                    """,
+                    {"atom_ids_json": json.dumps(atom_ids)},
                 )
                 await db.execute(
-                    f"DELETE FROM memory_atoms WHERE id IN ({placeholders})",
-                    atom_ids,
+                    """
+                    DELETE FROM memory_atoms
+                    WHERE id IN (SELECT value FROM json_each(:atom_ids_json))
+                    """,
+                    {"atom_ids_json": json.dumps(atom_ids)},
                 )
                 total_removed += len(atom_ids)
             await db.commit()
@@ -447,14 +457,22 @@ class AtomStore(BaseStore, AtomFTSMixin):
                 atom_ids = [int(row[0]) for row in rows]
                 if not atom_ids:
                     break
-                placeholders = ",".join("?" * len(atom_ids))
                 await db.execute(
-                    f"DELETE FROM memory_atoms_fts WHERE atom_id IN ({placeholders})",
-                    atom_ids,
+                    """
+                    DELETE FROM memory_atoms_fts
+                    WHERE atom_id IN (SELECT value FROM json_each(:atom_ids_json))
+                    """,
+                    {"atom_ids_json": json.dumps(atom_ids)},
                 )
                 await db.execute(
-                    f"UPDATE memory_atoms SET status = ? WHERE id IN ({placeholders})",
-                    (AtomStatus.FORGOTTEN.value, *atom_ids),
+                    """
+                    UPDATE memory_atoms SET status = :status
+                    WHERE id IN (SELECT value FROM json_each(:atom_ids_json))
+                    """,
+                    {
+                        "status": AtomStatus.FORGOTTEN.value,
+                        "atom_ids_json": json.dumps(atom_ids),
+                    },
                 )
                 total_forgotten += len(atom_ids)
             await db.commit()
@@ -509,14 +527,19 @@ class AtomStore(BaseStore, AtomFTSMixin):
                 atom_ids = [int(row[0]) for row in rows]
                 if not atom_ids:
                     break
-                placeholders = ",".join("?" * len(atom_ids))
                 await db.execute(
-                    f"DELETE FROM memory_atoms_fts WHERE atom_id IN ({placeholders})",
-                    atom_ids,
+                    """
+                    DELETE FROM memory_atoms_fts
+                    WHERE atom_id IN (SELECT value FROM json_each(:atom_ids_json))
+                    """,
+                    {"atom_ids_json": json.dumps(atom_ids)},
                 )
                 await db.execute(
-                    f"DELETE FROM memory_atoms WHERE id IN ({placeholders})",
-                    atom_ids,
+                    """
+                    DELETE FROM memory_atoms
+                    WHERE id IN (SELECT value FROM json_each(:atom_ids_json))
+                    """,
+                    {"atom_ids_json": json.dumps(atom_ids)},
                 )
                 total_deleted += len(atom_ids)
             await db.commit()
@@ -532,28 +555,34 @@ class AtomStore(BaseStore, AtomFTSMixin):
         async with self._connect() as db:
             for index in range(0, len(normalized_ids), self._SQLITE_BATCH_SIZE):
                 batch = normalized_ids[index : index + self._SQLITE_BATCH_SIZE]
-                parent_placeholders = ",".join("?" * len(batch))
                 cursor = await db.execute(
-                    f"""
+                    """
                     SELECT id
                     FROM memory_atoms
-                    WHERE parent_memory_id IN ({parent_placeholders})
+                    WHERE parent_memory_id IN (
+                        SELECT value FROM json_each(:parent_ids_json)
+                    )
                     """,
-                    batch,
+                    {"parent_ids_json": json.dumps(batch)},
                 )
                 rows = await cursor.fetchall()
                 atom_ids = [int(row[0]) for row in rows]
                 if not atom_ids:
                     continue
 
-                atom_placeholders = ",".join("?" * len(atom_ids))
                 await db.execute(
-                    f"DELETE FROM memory_atoms_fts WHERE atom_id IN ({atom_placeholders})",
-                    atom_ids,
+                    """
+                    DELETE FROM memory_atoms_fts
+                    WHERE atom_id IN (SELECT value FROM json_each(:atom_ids_json))
+                    """,
+                    {"atom_ids_json": json.dumps(atom_ids)},
                 )
                 cursor = await db.execute(
-                    f"DELETE FROM memory_atoms WHERE id IN ({atom_placeholders})",
-                    atom_ids,
+                    """
+                    DELETE FROM memory_atoms
+                    WHERE id IN (SELECT value FROM json_each(:atom_ids_json))
+                    """,
+                    {"atom_ids_json": json.dumps(atom_ids)},
                 )
                 deleted_count += cursor.rowcount
 
@@ -600,26 +629,6 @@ class AtomStore(BaseStore, AtomFTSMixin):
         """
         now = time.time()
         cutoff = now + lookahead_sec
-        conditions = [
-            "atom_type = ?",
-            "status = 'active'",
-            "event_time IS NOT NULL",
-            "event_time >= ?",
-            "event_time <= ?",
-        ]
-        params: list[Any] = [
-            AtomType.PLANNED.value,
-            now,
-            cutoff,
-        ]
-        if session_id:
-            conditions.append("session_id = ?")
-            params.append(session_id)
-        if persona_id:
-            conditions.append("persona_id = ?")
-            params.append(persona_id)
-
-        where_clause = " AND ".join(conditions)
         batch_size = max(32, min(500, max(1, limit) * 2))
         atoms: list[MemoryAtom] = []
         last_event_time: float | None = None
@@ -627,18 +636,32 @@ class AtomStore(BaseStore, AtomFTSMixin):
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             while len(atoms) < limit:
-                page_conditions = [where_clause]
-                page_params = list(params)
-                if last_event_time is not None:
-                    page_conditions.append(
-                        "(event_time > ? OR (event_time = ? AND id > ?))"
-                    )
-                    page_params.extend([last_event_time, last_event_time, last_atom_id])
-                page_clause = " AND ".join(page_conditions)
                 cursor = await db.execute(
-                    f"SELECT * FROM memory_atoms WHERE {page_clause} "
-                    "ORDER BY event_time ASC, id ASC LIMIT ?",
-                    (*page_params, batch_size),
+                    """SELECT * FROM memory_atoms
+                       WHERE atom_type = :atom_type
+                         AND status = 'active'
+                         AND event_time IS NOT NULL
+                         AND event_time >= :now
+                         AND event_time <= :cutoff
+                         AND (:session_id IS NULL OR session_id = :session_id)
+                         AND (:persona_id IS NULL OR persona_id = :persona_id)
+                         AND (
+                           :last_event_time IS NULL
+                           OR event_time > :last_event_time
+                           OR (event_time = :last_event_time AND id > :last_atom_id)
+                         )
+                       ORDER BY event_time ASC, id ASC
+                       LIMIT :batch_size""",
+                    {
+                        "atom_type": AtomType.PLANNED.value,
+                        "now": now,
+                        "cutoff": cutoff,
+                        "session_id": session_id or None,
+                        "persona_id": persona_id or None,
+                        "last_event_time": last_event_time,
+                        "last_atom_id": last_atom_id,
+                        "batch_size": batch_size,
+                    },
                 )
                 rows = await cursor.fetchall()
                 if not rows:

@@ -142,25 +142,46 @@ class WriteOpJournal(WriteOpRepairMixin):
                         current_payload = {}
                 current_payload.update(payload_patch)
 
-            fields = ["status = ?", "step = ?", "updated_at = ?"]
-            params: list[Any] = [status, step, time.time()]
-            if memory_id is not None:
-                fields.append("memory_id = ?")
-                params.append(memory_id)
-            if error is not None:
-                fields.append("error = ?")
-                params.append(error[:1000])
-                if status != "completed":
-                    fields.append("retry_count = retry_count + 1")
-            elif status == "completed":
-                fields.append("error = NULL")
-            if payload_patch:
-                fields.append("payload = ?")
-                params.append(json.dumps(current_payload, ensure_ascii=False))
-            params.append(op_id)
             await self._db.execute(
-                f"UPDATE memory_write_ops SET {', '.join(fields)} WHERE id = ?",
-                params,
+                """
+                UPDATE memory_write_ops
+                SET status = :status,
+                    step = :step,
+                    updated_at = :updated_at,
+                    memory_id = CASE
+                        WHEN :set_memory_id = 1 THEN :memory_id
+                        ELSE memory_id
+                    END,
+                    error = CASE
+                        WHEN :clear_error = 1 THEN NULL
+                        WHEN :set_error = 1 THEN :error
+                        ELSE error
+                    END,
+                    retry_count = retry_count + :retry_increment,
+                    payload = CASE
+                        WHEN :set_payload = 1 THEN :payload
+                        ELSE payload
+                    END
+                WHERE id = :op_id
+                """,
+                {
+                    "status": status,
+                    "step": step,
+                    "updated_at": time.time(),
+                    "set_memory_id": int(memory_id is not None),
+                    "memory_id": memory_id,
+                    "clear_error": int(status == "completed"),
+                    "set_error": int(error is not None),
+                    "error": error[:1000] if error is not None else None,
+                    "retry_increment": int(error is not None and status != "completed"),
+                    "set_payload": int(bool(payload_patch)),
+                    "payload": (
+                        json.dumps(current_payload, ensure_ascii=False)
+                        if payload_patch
+                        else None
+                    ),
+                    "op_id": op_id,
+                },
             )
             await self._db.commit()
         except asyncio.CancelledError:

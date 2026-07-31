@@ -41,6 +41,57 @@ def _parse(value: str | None) -> datetime | None:
     return parse_datetime(value)
 
 
+_DERIVED_TABLE_INFO_SQL = {
+    "memory_relations": "PRAGMA table_info(memory_relations)",
+    "memory_projections": "PRAGMA table_info(memory_projections)",
+}
+_DERIVED_MIGRATION_SQL = {
+    ("memory_relations", "origin_job_id"): (
+        "ALTER TABLE memory_relations ADD COLUMN origin_job_id TEXT"
+    ),
+    ("memory_relations", "reference_at"): (
+        "ALTER TABLE memory_relations ADD COLUMN reference_at TEXT"
+    ),
+    ("memory_relations", "discovered_at"): (
+        "ALTER TABLE memory_relations ADD COLUMN discovered_at TEXT"
+    ),
+    ("memory_relations", "invalid_at"): (
+        "ALTER TABLE memory_relations ADD COLUMN invalid_at TEXT"
+    ),
+    ("memory_relations", "time_source"): (
+        "ALTER TABLE memory_relations ADD COLUMN time_source TEXT"
+    ),
+    ("memory_relations", "time_precision"): (
+        "ALTER TABLE memory_relations ADD COLUMN time_precision TEXT"
+    ),
+    ("memory_projections", "origin_job_id"): (
+        "ALTER TABLE memory_projections ADD COLUMN origin_job_id TEXT"
+    ),
+    ("memory_projections", "reference_at"): (
+        "ALTER TABLE memory_projections ADD COLUMN reference_at TEXT"
+    ),
+    ("memory_projections", "discovered_at"): (
+        "ALTER TABLE memory_projections ADD COLUMN discovered_at TEXT"
+    ),
+    ("memory_projections", "invalid_at"): (
+        "ALTER TABLE memory_projections ADD COLUMN invalid_at TEXT"
+    ),
+    ("memory_projections", "time_source"): (
+        "ALTER TABLE memory_projections ADD COLUMN time_source TEXT"
+    ),
+    ("memory_projections", "time_precision"): (
+        "ALTER TABLE memory_projections ADD COLUMN time_precision TEXT"
+    ),
+}
+_SOURCE_MIGRATION_SQL = {
+    "occurred_at": (
+        "ALTER TABLE memory_projection_sources ADD COLUMN occurred_at TEXT"
+    ),
+    "valid_from": "ALTER TABLE memory_projection_sources ADD COLUMN valid_from TEXT",
+    "valid_to": "ALTER TABLE memory_projection_sources ADD COLUMN valid_to TEXT",
+}
+
+
 class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
     """保存 job、relation、projection 和 source mapping 的本地 Store。"""
 
@@ -114,24 +165,24 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
               ON memory_projection_sources(memory_id, projection_id);
             """
         )
-        derived_columns = {
-            "reference_at": "TEXT",
-            "discovered_at": "TEXT",
-            "invalid_at": "TEXT",
-            "time_source": "TEXT",
-            "time_precision": "TEXT",
-        }
+        derived_columns = (
+            "reference_at",
+            "discovered_at",
+            "invalid_at",
+            "time_source",
+            "time_precision",
+        )
         for table in ("memory_relations", "memory_projections"):
-            columns = await self.connection.execute(f"PRAGMA table_info({table})")
+            columns = await self.connection.execute(_DERIVED_TABLE_INFO_SQL[table])
             names = {str(row[1]) for row in await columns.fetchall()}
             if "origin_job_id" not in names:
                 await self.connection.execute(
-                    f"ALTER TABLE {table} ADD COLUMN origin_job_id TEXT"
+                    _DERIVED_MIGRATION_SQL[(table, "origin_job_id")]
                 )
-            for column, column_type in derived_columns.items():
+            for column in derived_columns:
                 if column not in names:
                     await self.connection.execute(
-                        f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"
+                        _DERIVED_MIGRATION_SQL[(table, column)]
                     )
         source_columns = await self.connection.execute(
             "PRAGMA table_info(memory_projection_sources)"
@@ -139,9 +190,7 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
         source_names = {str(row[1]) for row in await source_columns.fetchall()}
         for column in ("occurred_at", "valid_from", "valid_to"):
             if column not in source_names:
-                await self.connection.execute(
-                    f"ALTER TABLE memory_projection_sources ADD COLUMN {column} TEXT"
-                )
+                await self.connection.execute(_SOURCE_MIGRATION_SQL[column])
         job_columns = await self.connection.execute(
             "PRAGMA table_info(memory_evolution_jobs)"
         )
@@ -211,11 +260,11 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
         ids = tuple(dict.fromkeys(int(memory_id) for memory_id in memory_ids))
         if not ids:
             return []
-        placeholders = ",".join("?" for _ in ids)
         rows = await self._fetch_all(
-            "SELECT id, text, metadata, created_at, updated_at "
-            f"FROM documents WHERE id IN ({placeholders})",
-            ids,
+            """SELECT id, text, metadata, created_at, updated_at
+               FROM documents
+               WHERE id IN (SELECT value FROM json_each(:ids_json))""",
+            {"ids_json": _json_ids(ids)},
         )
         sources_by_id: dict[int, MemorySourceRef] = {}
         for row in rows:

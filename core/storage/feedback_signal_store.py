@@ -6,7 +6,6 @@ import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from ..models.feedback_signal import (
     FeedbackSignalAggregate,
@@ -115,20 +114,32 @@ class FeedbackSignalStore:
         """读取内部聚合所需事件；不提供报告级原始字段出口。"""
 
         self._ensure_initialized()
-        clauses: list[str] = []
-        params: list[Any] = []
-        if scope_domain is not None:
-            clauses.append("scope_domain = ?")
-            params.append(scope_domain)
+        persona_filter = "unset"
         if persona_domain is None:
-            clauses.append("persona_domain IS NULL")
+            persona_filter = "null"
         elif persona_domain is not _UNSET:
-            clauses.append("persona_domain = ?")
-            params.append(persona_domain)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            persona_filter = "value"
         rows = self._connection.execute(
-            f"SELECT * FROM feedback_events {where} ORDER BY observed_at, id",
-            params,
+            """
+            SELECT * FROM feedback_events
+            WHERE (:scope_domain IS NULL OR scope_domain = :scope_domain)
+              AND (
+                :persona_filter = 'unset'
+                OR (:persona_filter = 'null' AND persona_domain IS NULL)
+                OR (
+                    :persona_filter = 'value'
+                    AND persona_domain = :persona_domain
+                )
+              )
+            ORDER BY observed_at, id
+            """,
+            {
+                "scope_domain": scope_domain,
+                "persona_filter": persona_filter,
+                "persona_domain": (
+                    persona_domain if persona_domain is not _UNSET else None
+                ),
+            },
         ).fetchall()
         from ..models.feedback_signal import FeedbackAdapterKind, FeedbackOutcome
 
