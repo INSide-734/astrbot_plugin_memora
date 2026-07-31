@@ -32,20 +32,12 @@ class GraphCanvasMixin(BaseStore):
         Returns:
             不携带条目正文与记忆摘要的节点、边快照。
         """
-        filters: list[str] = []
-        params: list[Any] = []
-        if session_id is not None:
-            filters.append("ge.session_id = ?")
-            params.append(session_id)
-        if persona_id is not None:
-            filters.append("ge.persona_id = ?")
-            params.append(persona_id)
-        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+        params = {"session_id": session_id, "persona_id": persona_id}
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             node_cursor = await db.execute(
-                f"""
+                """
                 SELECT gn.id, gn.node_key, gn.node_type, gn.node_value,
                        gn.canonical_value,
                        COUNT(DISTINCT ge.id) AS entry_count,
@@ -53,21 +45,23 @@ class GraphCanvasMixin(BaseStore):
                 FROM graph_entries ge
                 JOIN graph_entry_nodes gen ON gen.entry_id = ge.id
                 JOIN graph_nodes gn ON gn.id = gen.node_id
-                {where_clause}
+                WHERE (:session_id IS NULL OR ge.session_id = :session_id)
+                  AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
                 GROUP BY gn.id
                 """,
-                tuple(params),
+                params,
             )
             node_rows = list(await node_cursor.fetchall())
             if not node_rows:
                 return {"nodes": [], "edges": []}
 
             edge_cursor = await db.execute(
-                f"""
+                """
                 WITH scoped_entries AS (
                     SELECT ge.id, ge.source_memory_id, ge.edge_id, ge.metadata
                     FROM graph_entries ge
-                    {where_clause}
+                    WHERE (:session_id IS NULL OR ge.session_id = :session_id)
+                      AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
                 ),
                 scoped_nodes AS (
                     SELECT DISTINCT gen.node_id
@@ -99,7 +93,7 @@ class GraphCanvasMixin(BaseStore):
                 )
                 ORDER BY edge.id DESC
                 """,
-                tuple(params),
+                params,
             )
             edge_rows = list(await edge_cursor.fetchall())
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
-import random
 import time
 import uuid
 from collections.abc import Callable
@@ -36,6 +35,7 @@ from ..injection.router import InjectionRoutingConfig, InjectionStrategyRouter
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..monitoring import monitored, report_debug_event, report_debug_exception
+from ..retrieval.query_planner import QueryPlanner
 from ..retrieval.query_rewriter import QueryRewriter, resolve_reference_time
 from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
@@ -44,6 +44,8 @@ from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
 from ..utils import OperationContext, get_persona_id
+from .auxiliary_recall import AuxiliaryRecall
+from .recall_observability import RecallTimingContext
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -70,6 +72,7 @@ class _RecallExecutionInput:
     provider: Any
     event: Any
     preflight_short_circuit: bool
+    required_facets: tuple[str, ...] = ()
     cognitive_format_ms: float = 0.0
 
 
@@ -119,6 +122,7 @@ class RecallHandler:
         self._query_rewriter = QueryRewriter(
             enabled=config_manager.get("recall_engine.query_rewrite_enabled", True),
         )
+        self._auxiliary_recall = AuxiliaryRecall(config_manager, memory_engine)
 
     @monitored
     async def handle_memory_recall(
@@ -126,12 +130,25 @@ class RecallHandler:
         event: AstrMessageEvent,
         req: ProviderRequest,
         identity: ResolvedIdentity | None = None,
+        timing_context: RecallTimingContext | None = None,
     ) -> None:
         """在 LLM 请求前查询并注入长期记忆，可使用已解析协议身份。"""
         recall_started = time.perf_counter()
+        if timing_context is None:
+            timing_context = RecallTimingContext.start(
+                self._config_manager.get(
+                    "recall_engine.pre_llm_soft_budget_ms",
+                    800,
+                ),
+                started_monotonic=recall_started,
+            )
         injected_count = 0
         filtered_count = 0
         candidate_count = 0
+        injection_format_ms: float = 0.0
+        injection_inject_ms: float = 0.0
+        injection_chars: int = 0
+        injection_selected_count: int = 0
         recall_status = "completed"
         recall_reason = "recall_completed"
         report_debug_event(
@@ -195,6 +212,7 @@ class RecallHandler:
                             f"[{session_id}] 已清理 {removed} 处历史记忆注入片段"
                         )
 
+                query_analysis_started = time.perf_counter()
                 actual_query = await self._extractor.get_event_message_str(event)
                 report_debug_event(
                     "recall_stage",
@@ -314,6 +332,12 @@ class RecallHandler:
                     query=actual_query,
                     recent_context=query_for_search,
                 )
+                # R1.5：查询计划构建 — 生成多查询计划用于跨查询RRF融合
+                query_plan = QueryPlanner.build(query=actual_query, intent=query_intent)
+                timing_context.record_elapsed(
+                    "query_analysis_ms",
+                    query_analysis_started,
+                )
                 # 使用改写后的第一条查询（或原始查询）作为主检索词
                 rewritten_queries = query_intent.rewritten_queries
                 primary_query = (
@@ -390,6 +414,7 @@ class RecallHandler:
                         session_id=recall_session_id,
                         persona_id=recall_persona_id,
                         chat_type=chat_type,
+                        deadline_monotonic=timing_context.deadline_monotonic,
                     )
                     result = await self._execute_and_record(
                         _RecallExecutionInput(
@@ -409,6 +434,10 @@ class RecallHandler:
                         )
                     )
                     injected_count = result.selected_count
+                    injection_format_ms = result.format_ms
+                    injection_inject_ms = result.inject_ms
+                    injection_chars = result.actual_payload_chars
+                    injection_selected_count = result.selected_count
                     recall_reason = "passive_recall_only"
                     return
 
@@ -424,6 +453,9 @@ class RecallHandler:
                     memory_types=memory_type_filter,
                     user_id=user_id,
                     reference_time=reference_time,
+                    query_plan=query_plan,
+                    timing_sink=timing_context.retrieval,
+                    deadline_monotonic=timing_context.deadline_monotonic,
                 )
                 report_debug_event(
                     "recall_stage",
@@ -441,6 +473,7 @@ class RecallHandler:
                     session_id=recall_session_id,
                     persona_id=recall_persona_id,
                     chat_type=chat_type,
+                    deadline_monotonic=timing_context.deadline_monotonic,
                 )
                 report_debug_event(
                     "recall_stage",
@@ -453,15 +486,21 @@ class RecallHandler:
                 ordinary_candidates = list(recalled_memories or [])
                 if spontaneous:
                     ordinary_candidates.extend(spontaneous)
+                candidate_finalize_started = time.perf_counter()
                 ordinary_candidates = self._finalize_recall_candidates(
                     ordinary_candidates,
                     top_k=top_k,
+                )
+                timing_context.record_elapsed(
+                    "candidate_finalize_ms",
+                    candidate_finalize_started,
                 )
 
                 prospective = await self._maybe_prospective_recall(
                     session_id=recall_session_id,
                     persona_id=recall_persona_id,
                     chat_type=chat_type,
+                    deadline_monotonic=timing_context.deadline_monotonic,
                 )
                 report_debug_event(
                     "recall_stage",
@@ -527,10 +566,15 @@ class RecallHandler:
                         provider=provider,
                         preflight_short_circuit=False,
                         event=event,
+                        required_facets=query_plan.required_facets,
                         cognitive_format_ms=format_ms,
                     )
                 )
                 injected_count = result.selected_count
+                injection_format_ms = result.format_ms
+                injection_inject_ms = result.inject_ms
+                injection_chars = result.actual_payload_chars
+                injection_selected_count = result.selected_count
 
         except asyncio.CancelledError:
             recall_status = "cancelled"
@@ -556,13 +600,20 @@ class RecallHandler:
             )
             logger.error(f"处理 on_llm_request 钩子时发生错误: {e}", exc_info=True)
         finally:
+            recall_total_ms = (time.perf_counter() - recall_started) * 1000.0
+            timing_context.record("recall_hook_total_ms", recall_total_ms)
             self._record_recall_observability(
-                total_ms=(time.perf_counter() - recall_started) * 1000.0,
+                total_ms=recall_total_ms,
                 injected_count=injected_count,
                 filtered_count=filtered_count,
                 candidate_count=candidate_count,
                 status=recall_status,
                 reason_code=recall_reason,
+                format_ms=injection_format_ms,
+                inject_ms=injection_inject_ms,
+                injection_chars=injection_chars,
+                selected_count=injection_selected_count,
+                timing_context=timing_context,
             )
 
     def _routing_config(self) -> InjectionRoutingConfig:
@@ -730,6 +781,16 @@ class RecallHandler:
             }
             if isinstance(stable_id, (str, int)):
                 safe_candidate["id"] = stable_id
+            # 仅把固定 facet 信号复制到注入选择的请求局部字段。
+            score_breakdown = getattr(candidate, "score_breakdown", None)
+            if isinstance(score_breakdown, dict):
+                matched_facets: dict[str, float] = {}
+                for k in ("entity", "role", "time", "event", "focus", "relation"):
+                    v = score_breakdown.get(k)
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        matched_facets[k] = float(v)
+                if matched_facets:
+                    safe_candidate["_matched_facets"] = matched_facets
             safe.append(safe_candidate)
         return safe
 
@@ -847,6 +908,7 @@ class RecallHandler:
                 context_headroom_chars=signals.context_headroom_chars,
                 provider=execution.provider,
                 scope_id=scope_id,
+                required_facets=execution.required_facets,
             )
             result = await self._executor.execute(execution.req, decision, context)
             if self._prompt_protection is not None:
@@ -966,7 +1028,14 @@ class RecallHandler:
         candidate_count: int,
         status: str = "completed",
         reason_code: str = "recall_completed",
+        format_ms: float = 0.0,
+        inject_ms: float = 0.0,
+        injection_chars: int = 0,
+        selected_count: int = 0,
+        timing_context: RecallTimingContext | None = None,
     ) -> None:
+        """记录一次召回的安全总量、阶段计时和结果计数。"""
+
         report_debug_event(
             "recall_completed",
             component="recall",
@@ -988,25 +1057,27 @@ class RecallHandler:
 
         if self._perf_tracker is None:
             return
-        # 从 MemoryEngine 读取实际阶段耗时
-        timing = getattr(self._memory_engine, "_last_search_timing", None) or {}
+        timing = timing_context.snapshot() if timing_context is not None else {}
         try:
-            self._perf_tracker.record(
+            from ..monitoring.recall_timing import BOOL_KEYS, COUNT_KEYS, TIMING_KEYS
+
+            sample = {
+                key: timing[key]
+                for key in (*TIMING_KEYS, *COUNT_KEYS, *BOOL_KEYS)
+                if key in timing
+            }
+            sample.update(
                 {
                     "total_ms": max(0.0, total_ms),
-                    "cache_hit": timing.get("cache_hit", False),
-                    "cache_lookup_ms": timing.get("cache_lookup_ms", 0.0),
-                    "bm25_ms": timing.get("bm25_ms", 0.0),
-                    "vector_ms": timing.get("vector_ms", 0.0),
-                    "graph_ms": timing.get("graph_ms", 0.0),
-                    "rerank_ms": timing.get("rerank_ms", 0.0),
-                    "merge_ms": timing.get("merge_ms", 0.0),
-                    "boost_ms": timing.get("boost_ms", 0.0),
-                    "chain_expand_ms": timing.get("chain_expand_ms", 0.0),
-                    "injected_count": float(injected_count),
-                    "filtered_count": float(filtered_count),
+                    "recall_hook_total_ms": max(0.0, total_ms),
+                    "format_ms": max(0.0, format_ms),
+                    "injection_ms": max(0.0, inject_ms),
+                    "injection_chars": max(0, injection_chars),
+                    "selected_count": max(0, selected_count),
+                    "candidate_count": max(0, candidate_count),
                 }
             )
+            self._perf_tracker.record(sample)
         except Exception:
             logger.debug("[召回流程] 性能样本记录失败", exc_info=True)
 
@@ -1227,73 +1298,21 @@ class RecallHandler:
         session_id: str | None,
         persona_id: str | None,
         chat_type: str,
+        deadline_monotonic: float | None = None,
     ) -> list[Any]:
-        """自发回忆 — 以低概率主动浮现非查询驱动的关联记忆。
+        """兼容旧调用边界，并委托独立组件执行受预算约束的自发回忆。"""
 
-        约 6% 的请求会触发，使用低阈值宽泛检索，模拟人类"突然想起来"的体验。
-        """
-        enabled = self._config_manager.get(
-            "recall_engine.spontaneous_recall_enabled", True
+        return await self._auxiliary_recall.maybe_spontaneous_recall(
+            session_id=session_id,
+            persona_id=persona_id,
+            chat_type=chat_type,
+            deadline_monotonic=deadline_monotonic,
         )
-        if not enabled:
-            return []
-
-        probability = float(
-            self._config_manager.get(
-                "recall_engine.spontaneous_recall_probability", 0.06
-            )
-        )
-        if random.random() >= probability:
-            return []
-
-        try:
-            # 使用宽泛的通用查询词进行低阈值检索
-            seed_queries = [
-                "重要的事情",
-                "开心的回忆",
-                "最近发生的事",
-                "之前的对话",
-                "难忘的经历",
-            ]
-            seed_query = random.choice(seed_queries)
-            spontaneous_k = int(
-                self._config_manager.get("recall_engine.spontaneous_recall_k", 2)
-            )
-
-            results = await self._memory_engine.search_memories(
-                query=seed_query,
-                k=spontaneous_k,
-                session_id=session_id,
-                persona_id=persona_id,
-                chat_type=chat_type,
-            )
-            # 标记为自发回忆来源
-            for r in results:
-                meta = r.metadata or {}
-                meta["recall_source"] = "spontaneous"
-                r.metadata = meta
-
-            if results:
-                logger.debug(
-                    f"[{session_id}] 自发回忆触发 (p={probability:.0%}): "
-                    f"seed='{seed_query}', {len(results)} 条记忆"
-                )
-            return results
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.debug("自发回忆检索失败", exc_info=True)
-            return []
 
     def _prospective_recall_enabled(self) -> bool:
         """读取标准前瞻召回开关，并兼容旧版回退配置。"""
-        enabled = self._config_manager.get(
-            "recall_engine.prospective_recall_enabled",
-            None,
-        )
-        if enabled is None:
-            enabled = self._config_manager.get("prospective.enabled", True)
-        return bool(enabled)
+
+        return self._auxiliary_recall.prospective_enabled()
 
     @monitored
     async def _maybe_prospective_recall(
@@ -1301,68 +1320,13 @@ class RecallHandler:
         session_id: str | None,
         persona_id: str | None,
         chat_type: str,
+        deadline_monotonic: float | None = None,
     ) -> list[Any]:
-        """前瞻记忆 — 扫描 24h 内到期的 PLANNED 原子并注入上下文。
+        """兼容旧调用边界，并委托独立组件执行受预算约束的前瞻召回。"""
 
-        认知原理：人类会自动想起"今天要做 X"，PLANNED 原子承载此功能。
-        每次 LLM 请求前扫描，将即将到期的计划注入当前上下文。
-        """
-        if not self._prospective_recall_enabled():
-            return []
-
-        try:
-            lookahead_hours = float(
-                self._config_manager.get(
-                    "recall_engine.prospective_lookahead_hours", 24.0
-                )
-            )
-            lookahead_sec = lookahead_hours * 3600.0
-            prospective_k = int(
-                self._config_manager.get("recall_engine.prospective_recall_k", 3)
-            )
-
-            # 使用 memory_engine 的 atom_store 查询
-            engine = self._memory_engine
-            if not hasattr(engine, "atom_store") or engine.atom_store is None:
-                return []
-
-            planned_atoms = await engine.atom_store.query_upcoming_planned(
-                lookahead_sec=lookahead_sec,
-                session_id=session_id,
-                persona_id=persona_id,
-                chat_type=chat_type,
-                limit=prospective_k,
-            )
-
-            if not planned_atoms:
-                return []
-
-            # 将 PLANNED 原子转为 HybridResult 格式
-            from ..retrieval.rrf_fusion import HybridResult
-
-            results: list[HybridResult] = []
-            for atom in planned_atoms:
-                meta = atom.metadata or {}
-                meta["recall_source"] = "prospective"
-                meta["atom_type"] = "planned"
-                meta["event_time"] = atom.event_time
-                results.append(
-                    HybridResult(
-                        doc_id=atom.parent_memory_id,
-                        final_score=0.9,  # 高优先级
-                        content=f"[待办] {atom.content}",
-                        metadata=meta,
-                    )
-                )
-
-            if results:
-                logger.info(
-                    f"[{session_id}] 前瞻记忆: {len(results)} 条 PLANNED 原子在 "
-                    f"{lookahead_hours:.0f}h 内到期"
-                )
-            return results
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.debug(f"[{session_id}] 前瞻记忆扫描失败", exc_info=True)
-            return []
+        return await self._auxiliary_recall.maybe_prospective_recall(
+            session_id=session_id,
+            persona_id=persona_id,
+            chat_type=chat_type,
+            deadline_monotonic=deadline_monotonic,
+        )

@@ -60,8 +60,32 @@ class TestGraphRetriever:
     @pytest.mark.asyncio
     async def test_search_both_empty(self, retriever: Any) -> None:
         """When both routes return nothing, result is empty."""
-        results = await retriever.search("nothing matches", k=5)
+        timing: dict[str, float] = {}
+        results = await retriever.search("nothing matches", k=5, timing_sink=timing)
         assert results == []
+        assert "graph_route_degraded" not in timing
+        assert timing["graph_fusion_ms"] == 0.0
+        assert timing["graph_total_ms"] >= 0.0
+
+    @pytest.mark.asyncio
+    async def test_search_marks_graph_route_degraded_when_both_backends_fail(
+        self,
+        retriever: Any,
+    ) -> None:
+        """两种图检索后端均失败时必须上报整路降级。"""
+
+        retriever.keyword_retriever.search.side_effect = RuntimeError(
+            "keyword unavailable"
+        )
+        retriever.vector_retriever.search.side_effect = RuntimeError(
+            "vector unavailable"
+        )
+        timing: dict[str, float | bool] = {}
+
+        results = await retriever.search("test", k=5, timing_sink=timing)
+
+        assert results == []
+        assert timing["graph_route_degraded"] is True
 
     @pytest.mark.asyncio
     async def test_search_keyword_only(self, retriever: Any) -> None:

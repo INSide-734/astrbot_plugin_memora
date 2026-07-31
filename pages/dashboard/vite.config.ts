@@ -139,12 +139,22 @@ export default defineConfig({
     target: "es2017",
     modulePreload: false,
     cssCodeSplit: false,
+    // Tailwind 3 构建仍会保留依赖中的 Tailwind 4 扩展指令；使用 Vite
+    // 支持的兼容压缩器可原样保留这些指令，避免 Lightning CSS 误报告警。
+    cssMinify: "esbuild",
     // AstrBot Page 要求单个 classic-script 包；当前约 3.25 MB，超过 3.5 MB 时继续告警。
     chunkSizeWarningLimit: 3500,
-    rollupOptions: {
+    rolldownOptions: {
+      // Vite 会为 lazy() 动态导入注入引用 import.meta 的辅助代码；IIFE
+      // 不存在模块元数据，且本构建已禁用 module preload，因此显式沿用
+      // Rolldown 的空对象替换语义，避免为每个懒加载页面重复告警。
+      transform: {
+        define: {
+          "import.meta": "{}",
+        },
+      },
       output: {
         format: "iife",
-        inlineDynamicImports: true,
         entryFileNames: "assets/[name]-[hash].js",
         assetFileNames: "assets/[name]-[hash][extname]",
       },

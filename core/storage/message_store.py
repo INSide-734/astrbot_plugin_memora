@@ -184,19 +184,30 @@ class MessageStoreMixin(MessageQueryMixin):
 
         if self.connection is None:
             raise RuntimeError("数据库连接未初始化")
-        scope_clause, scope_params = self._identity_name_scope(
+        self._identity_name_scope(
             session_id=session_id,
             private_platform=private_platform,
         )
         cursor = await self.connection.execute(
-            f"""
+            """
             SELECT DISTINCT sender_name
             FROM messages
-            WHERE role = 'user' AND sender_id = ?
+            WHERE role = 'user' AND sender_id = :sender_id
               AND sender_name IS NOT NULL AND sender_name <> ''
-              {scope_clause}
+              AND (
+                (:session_id IS NOT NULL AND session_id = :session_id)
+                OR (
+                  :private_platform IS NOT NULL
+                  AND platform = :private_platform
+                  AND group_id IS NULL
+                )
+              )
             """,
-            (sender_id, *scope_params),
+            {
+                "sender_id": sender_id,
+                "session_id": session_id,
+                "private_platform": private_platform,
+            },
         )
         rows = await cursor.fetchall()
         return {str(row[0]) for row in rows}
@@ -215,19 +226,31 @@ class MessageStoreMixin(MessageQueryMixin):
             raise RuntimeError("数据库连接未初始化")
         if not isinstance(sender_name, str) or not sender_name:
             raise ValueError("sender_name 必须是非空字符串")
-        scope_clause, scope_params = self._identity_name_scope(
+        self._identity_name_scope(
             session_id=session_id,
             private_platform=private_platform,
         )
-        params = (sender_id, *scope_params, sender_name)
+        params = {
+            "sender_id": sender_id,
+            "sender_name": sender_name,
+            "session_id": session_id,
+            "private_platform": private_platform,
+        }
         async with self._write_lock:
             cursor = await self.connection.execute(
-                f"""
+                """
                 SELECT DISTINCT session_id
                 FROM messages
-                WHERE role = 'user' AND sender_id = ?
-                  {scope_clause}
-                  AND (sender_name IS NULL OR sender_name <> ?)
+                WHERE role = 'user' AND sender_id = :sender_id
+                  AND (
+                    (:session_id IS NOT NULL AND session_id = :session_id)
+                    OR (
+                      :private_platform IS NOT NULL
+                      AND platform = :private_platform
+                      AND group_id IS NULL
+                    )
+                  )
+                  AND (sender_name IS NULL OR sender_name <> :sender_name)
                 """,
                 params,
             )
@@ -235,14 +258,21 @@ class MessageStoreMixin(MessageQueryMixin):
             if not changed_sessions:
                 return set()
             await self.connection.execute(
-                f"""
+                """
                 UPDATE messages
-                SET sender_name = ?
-                WHERE role = 'user' AND sender_id = ?
-                  {scope_clause}
-                  AND (sender_name IS NULL OR sender_name <> ?)
+                SET sender_name = :sender_name
+                WHERE role = 'user' AND sender_id = :sender_id
+                  AND (
+                    (:session_id IS NOT NULL AND session_id = :session_id)
+                    OR (
+                      :private_platform IS NOT NULL
+                      AND platform = :private_platform
+                      AND group_id IS NULL
+                    )
+                  )
+                  AND (sender_name IS NULL OR sender_name <> :sender_name)
                 """,
-                (sender_name, sender_id, *scope_params, sender_name),
+                params,
             )
             await self.connection.commit()
         return changed_sessions

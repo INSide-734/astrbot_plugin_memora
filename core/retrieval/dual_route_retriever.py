@@ -22,13 +22,18 @@ from ..adapter_capabilities import (
 from ..models.memory_evolution import ExpansionBudget, ScopeContext
 from ..models.recall_strategy import RecallStrategy
 from ..models.temporal import normalize_datetime
+from .evidence_scorer import RetrievalEvidenceScorer
 from .graph_retriever import GraphRetriever
 from .hybrid_retriever import HybridRetriever
 from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
+from .multi_query_fusion import fuse_query_results, split_candidate_budget
 from .projection_reader import ProjectionBudget, ProjectionScope
+from .retrieval_execution import RouteExecutionCoordinator
+from .route_policy import should_use_graph_route
 from .rrf_fusion import HybridResult
 
 if TYPE_CHECKING:
+    from .query_planner import QueryPlan
     from .query_rewriter import QueryIntent
 
 
@@ -60,6 +65,8 @@ class DualRouteRetriever:
         derived_expander=None,
         projection_reader=None,
         atom_retriever=None,
+        evidence_scorer: RetrievalEvidenceScorer | None = None,
+        create_tracked_task_cb: Callable[[Awaitable[Any]], None] | None = None,
     ):
         """装配文档、图与可选 Atom 证据路及后续排序组件。"""
 
@@ -83,9 +90,15 @@ class DualRouteRetriever:
         self.derived_expander = derived_expander
         self.projection_reader = projection_reader
         self.atom_retriever = atom_retriever
+        self.evidence_scorer = evidence_scorer
+        self._create_tracked_task = create_tracked_task_cb
+        self._route_coordinator = RouteExecutionCoordinator(
+            document_retriever=document_retriever or self.document_retriever,
+            graph_retriever=graph_retriever or self.graph_retriever,
+            atom_retriever=atom_retriever,
+        )
         self._reranker_strategy = self.config.get("reranker.strategy", "mmr")
         # 阶段计时存储（每次 search() 后更新）
-        self.last_search_timing: dict[str, float] = {}
 
     async def search(
         self,
@@ -99,6 +112,9 @@ class DualRouteRetriever:
         query_intent: QueryIntent | None = None,
         user_id: str | None = None,
         reference_time: datetime | None = None,
+        query_plan: QueryPlan | None = None,
+        timing_sink: dict[str, float | int | bool] | None = None,
+        deadline_monotonic: float | None = None,
     ) -> list[HybridResult]:
         """同时运行两条检索路由，并合并候选记忆。
 
@@ -106,40 +122,46 @@ class DualRouteRetriever:
             chat_type: 私聊或群聊场景，用于隐私过滤。
             query_intent: 查询改写结果，优先使用 LLM 意图做权重调整。
             user_id: 用户 ID，用于个性化排序。
+            query_plan: 可选多查询计划；存在时按计划拆分预算并跨查询 RRF 融合。
         """
+        if query_plan is not None and query_plan.queries:
+            use_graph_route = should_use_graph_route(query_plan, query_intent)
+            return await self._search_with_plan(
+                query_plan=query_plan,
+                k=k,
+                session_id=session_id,
+                persona_id=persona_id,
+                strategy=strategy,
+                memory_types=memory_types,
+                chat_type=chat_type,
+                query_intent=query_intent,
+                user_id=user_id,
+                reference_time=reference_time,
+                timing_sink=timing_sink,
+                deadline_monotonic=deadline_monotonic,
+                use_graph_route=use_graph_route,
+            )
+
+        # 向后兼容：单查询路径
         reference_time = normalize_datetime(reference_time) or datetime.now(
             timezone.utc
         )
-        _t_route_start = time.perf_counter()
-        doc_task = self.document_retriever.search(
-            query,
-            max(k * 2, k),
-            session_id,
-            persona_id,
-            memory_types=memory_types,
-        )
-        graph_task = self.graph_retriever.search(
-            query,
-            max(k * 2, k),
-            session_id,
-            persona_id,
-            memory_types=memory_types,
-            reference_time=reference_time,
-        )
-        _t_doc_start = time.perf_counter()
-        doc_results = await doc_task
-        _t_doc_end = time.perf_counter()
-        graph_results = await graph_task
-        _t_graph_end = time.perf_counter()
-        atom_results = await self._search_atom_evidence(
-            query,
+        outcome = await self._route_coordinator.execute(
+            query=query,
             k=max(k * 2, k),
             session_id=session_id,
             persona_id=persona_id,
+            memory_types=memory_types,
+            reference_time=reference_time,
+            deadline_monotonic=deadline_monotonic,
+            use_graph_route=should_use_graph_route(query_plan, query_intent),
         )
+        doc_results = outcome.document_results
+        graph_results = outcome.graph_results
+        atom_results = outcome.atom_results
         atom_scores, atom_ids_by_parent = self._aggregate_atom_evidence(atom_results)
-        document_route_ms = (_t_doc_end - _t_doc_start) * 1000.0
-        graph_route_ms = (_t_graph_end - _t_doc_end) * 1000.0
+        document_route_ms = outcome.timing.get("document_total_ms", 0.0)
+        graph_route_ms = outcome.timing.get("graph_total_ms", 0.0)
 
         _t_merge_start = time.perf_counter()
         if not graph_results and not atom_scores:
@@ -160,6 +182,7 @@ class DualRouteRetriever:
             merged = self._apply_persona_boost(merged, persona_id)
 
         # v2.5 个性化排序 — 基于用户画像标签加权
+        _t_profile_start = time.perf_counter()
         if user_id and self.personalized_ranker and self.profile_manager and merged:
             try:
                 tag_weights = await self.profile_manager.get_tag_weights(user_id)
@@ -167,8 +190,13 @@ class DualRouteRetriever:
                 merged = self.personalized_ranker.apply(merged, tag_weights, profile)
             except Exception:
                 pass  # 个性化排序失败不影响主流程
+        profile_lookup_ms = (time.perf_counter() - _t_profile_start) * 1000.0
 
-        _t_expansion_start = time.perf_counter()
+        # v3.0 证据评分 — temporal/entity/focus/cross-query 维度打分
+        if self.evidence_scorer is not None and query_plan is not None and merged:
+            merged = self.evidence_scorer.score(merged, query_plan)
+
+        _t_relation_start = time.perf_counter()
         evolution_config = self.config.get("memory_evolution", {})
         if not isinstance(evolution_config, dict):
             evolution_config = {}
@@ -214,7 +242,9 @@ class DualRouteRetriever:
                 raise
             except Exception:
                 merged = baseline
+        relation_ms = (time.perf_counter() - _t_relation_start) * 1000.0
 
+        _t_projection_start = time.perf_counter()
         if (
             self.projection_reader is not None
             and _supports_declared_capability(
@@ -256,7 +286,7 @@ class DualRouteRetriever:
                 raise
             except Exception:
                 merged = baseline
-        expansion_ms = (time.perf_counter() - _t_expansion_start) * 1000.0
+        projection_ms = (time.perf_counter() - _t_projection_start) * 1000.0
 
         # v2.5 可插拔重排序 — MMR / Cross-Encoder / LLM / Hybrid
         _t_rerank_start = time.perf_counter()
@@ -268,15 +298,266 @@ class DualRouteRetriever:
 
         # 存储阶段计时
         self.last_search_timing = {
+            **outcome.timing,
             "document_route_ms": document_route_ms,
             "graph_route_ms": graph_route_ms,
             "merge_ms": merge_ms,
-            "derived_expansion_ms": expansion_ms,
+            "relation_ms": relation_ms,
+            "projection_ms": projection_ms,
+            "profile_lookup_ms": profile_lookup_ms,
+            "derived_expansion_ms": relation_ms + projection_ms,
             "rerank_ms": rerank_ms,
+            "query_count": 1,
         }
 
-        visible = self._filter_by_privacy(merged[:k], chat_type)
-        await self._touch_atom_evidence(visible, atom_ids_by_parent)
+        _t_privacy_start = time.perf_counter()
+        visible = self._filter_by_privacy(merged, chat_type)[:k]
+        privacy_ms = (time.perf_counter() - _t_privacy_start) * 1000.0
+        self.last_search_timing["privacy_ms"] = privacy_ms
+        if timing_sink is not None:
+            timing_sink.update(self.last_search_timing)
+        await self._schedule_atom_touch(visible, atom_ids_by_parent)
+        return visible
+
+    async def _search_with_plan(
+        self,
+        *,
+        query_plan: QueryPlan,
+        k: int,
+        session_id: str | None,
+        persona_id: str | None,
+        strategy: RecallStrategy | None,
+        memory_types: list[str] | None,
+        chat_type: str,
+        query_intent: QueryIntent | None,
+        user_id: str | None,
+        reference_time: datetime | None,
+        timing_sink: dict[str, float | int | bool] | None,
+        deadline_monotonic: float | None,
+        use_graph_route: bool,
+    ) -> list[HybridResult]:
+        """多查询计划路径：按计划拆分预算，逐查询检索并跨查询 RRF 融合。"""
+        reference_time = normalize_datetime(reference_time) or datetime.now(
+            timezone.utc
+        )
+
+        queries = list(query_plan.queries)
+        budgets = split_candidate_budget(max(k * 2, k), len(queries))
+
+        per_query_merged: list[list[HybridResult]] = []
+        all_atom_ids_by_parent: dict[int, list[int]] = {}
+        document_route_total_ms = 0.0
+        graph_route_total_ms = 0.0
+        merge_total_ms = 0.0
+        route_timing: dict[str, float | bool] = {}
+
+        active_queries = [
+            (sub_query, budget)
+            for sub_query, budget in zip(queries, budgets)
+            if budget > 0
+        ]
+        outcomes = await asyncio.gather(
+            *(
+                self._route_coordinator.execute(
+                    query=sub_query,
+                    k=budget,
+                    session_id=session_id,
+                    persona_id=persona_id,
+                    memory_types=memory_types,
+                    reference_time=reference_time,
+                    deadline_monotonic=deadline_monotonic,
+                    use_graph_route=use_graph_route,
+                )
+                for sub_query, budget in active_queries
+            )
+        )
+
+        for (sub_query, budget), outcome in zip(active_queries, outcomes):
+            document_route_total_ms = max(
+                document_route_total_ms,
+                outcome.timing.get("document_total_ms", 0.0),
+            )
+            graph_route_total_ms = max(
+                graph_route_total_ms,
+                outcome.timing.get("graph_total_ms", 0.0),
+            )
+            for key, value in outcome.timing.items():
+                if isinstance(value, bool):
+                    route_timing[key] = value
+                elif isinstance(value, (int, float)):
+                    route_timing[key] = max(route_timing.get(key, 0.0), float(value))
+
+            atom_scores, atom_ids_map = self._aggregate_atom_evidence(
+                outcome.atom_results
+            )
+            for parent_id, atom_id_list in atom_ids_map.items():
+                all_atom_ids_by_parent.setdefault(parent_id, []).extend(atom_id_list)
+
+            _t_merge_start = time.perf_counter()
+            if not outcome.graph_results and not atom_scores:
+                merged = list(outcome.document_results)
+            else:
+                merged = await self._merge_dual_results(
+                    outcome.document_results,
+                    outcome.graph_results,
+                    sub_query,
+                    strategy=strategy,
+                    query_intent=query_intent,
+                    atom_scores=atom_scores,
+                )
+            merge_total_ms += (time.perf_counter() - _t_merge_start) * 1000.0
+
+            merged.sort(key=lambda item: (-item.final_score, item.doc_id))
+            per_query_merged.append(merged[:budget])
+
+        # 跨查询 RRF 融合
+        fused = fuse_query_results(
+            per_query_merged,
+            sum(len(results) for results in per_query_merged),
+        )
+
+        # 人格感知记忆解读
+        if persona_id and fused:
+            fused = self._apply_persona_boost(fused, persona_id)
+
+        # 个性化排序
+        _t_profile_start = time.perf_counter()
+        if user_id and self.personalized_ranker and self.profile_manager and fused:
+            try:
+                tag_weights = await self.profile_manager.get_tag_weights(user_id)
+                profile = await self.profile_manager.get_profile(user_id)
+                fused = self.personalized_ranker.apply(fused, tag_weights, profile)
+            except Exception:
+                pass
+        profile_lookup_ms = (time.perf_counter() - _t_profile_start) * 1000.0
+
+        # v3.0 证据评分 — temporal/entity/focus/cross-query 维度打分
+        if self.evidence_scorer is not None and fused:
+            fused = self.evidence_scorer.score(fused, query_plan)
+
+        # 派生扩展与投射（仅当配置启用时）
+        _t_relation_start = time.perf_counter()
+        evolution_config = self.config.get("memory_evolution", {})
+        if not isinstance(evolution_config, dict):
+            evolution_config = {}
+        if (
+            self.derived_expander is not None
+            and _supports_declared_capability(
+                self.derived_expander,
+                AdapterCapability.REFERENCE_TIME,
+            )
+            and bool(evolution_config.get("enabled", False))
+            and str(evolution_config.get("mode", "disabled")) in {"readonly", "active"}
+            and fused
+        ):
+            baseline = list(fused)
+            try:
+                max_expansions = max(
+                    0,
+                    int(evolution_config.get("max_query_expansions", 8)),
+                )
+                fused = await self.derived_expander.expand(
+                    fused,
+                    scope=ScopeContext(
+                        scope_key=session_id or persona_id or f"{chat_type}:default",
+                        privacy_level=(
+                            "shared" if chat_type == "group" else "confidential"
+                        ),
+                    ),
+                    budget=ExpansionBudget(
+                        max_chars=max(
+                            0,
+                            int(
+                                evolution_config.get(
+                                    "projection_budget_chars",
+                                    2_000,
+                                )
+                            ),
+                        ),
+                        max_items=len(fused) + max_expansions,
+                    ),
+                    reference_time=reference_time,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                fused = baseline
+        relation_ms = (time.perf_counter() - _t_relation_start) * 1000.0
+
+        _t_projection_start = time.perf_counter()
+        if (
+            self.projection_reader is not None
+            and _supports_declared_capability(
+                self.projection_reader,
+                AdapterCapability.REFERENCE_TIME,
+            )
+            and bool(evolution_config.get("enabled", False))
+            and str(evolution_config.get("mode", "disabled")) in {"readonly", "active"}
+            and fused
+        ):
+            baseline = list(fused)
+            try:
+                projection_budget_chars = max(
+                    0,
+                    int(evolution_config.get("projection_budget_chars", 2_000)),
+                )
+                projection_limit = max(
+                    0,
+                    int(evolution_config.get("max_query_expansions", 8)),
+                )
+                fused = await self.projection_reader.attach(
+                    fused,
+                    scope=ProjectionScope(
+                        scope_key=session_id or persona_id or f"{chat_type}:default",
+                        privacy_level=(
+                            "shared" if chat_type == "group" else "confidential"
+                        ),
+                        now=reference_time,
+                        reference_time=reference_time,
+                    ),
+                    budget=ProjectionBudget(
+                        max_chars=projection_budget_chars,
+                        max_items=projection_limit,
+                        max_per_candidate=4,
+                        max_summary_chars=min(600, projection_budget_chars),
+                    ),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                fused = baseline
+        projection_ms = (time.perf_counter() - _t_projection_start) * 1000.0
+
+        # 重排序
+        _t_rerank_start = time.perf_counter()
+        if self.reranker and len(fused) > 1:
+            fused = await self._apply_reranker(
+                fused, k, query=query_plan.original_query
+            )
+        else:
+            fused.sort(key=lambda item: item.final_score, reverse=True)
+        rerank_ms = (time.perf_counter() - _t_rerank_start) * 1000.0
+
+        self.last_search_timing = {
+            **route_timing,
+            "document_route_ms": document_route_total_ms,
+            "graph_route_ms": graph_route_total_ms,
+            "merge_ms": merge_total_ms,
+            "relation_ms": relation_ms,
+            "projection_ms": projection_ms,
+            "profile_lookup_ms": profile_lookup_ms,
+            "derived_expansion_ms": relation_ms + projection_ms,
+            "rerank_ms": rerank_ms,
+            "query_count": len(active_queries),
+        }
+
+        _t_privacy_start = time.perf_counter()
+        visible = self._filter_by_privacy(fused, chat_type)[:k]
+        privacy_ms = (time.perf_counter() - _t_privacy_start) * 1000.0
+        self.last_search_timing["privacy_ms"] = privacy_ms
+        if timing_sink is not None:
+            timing_sink.update(self.last_search_timing)
+        await self._schedule_atom_touch(visible, all_atom_ids_by_parent)
         return visible
 
     async def _search_atom_evidence(
@@ -359,6 +640,19 @@ class DualRouteRetriever:
                 exc.__class__.__name__,
             )
 
+    async def _schedule_atom_touch(
+        self,
+        results: list[HybridResult],
+        ids_by_parent: dict[int, list[int]],
+    ) -> None:
+        """把非关键 Atom 访问反馈交给引擎生命周期任务管理器。"""
+
+        touch = self._touch_atom_evidence(results, ids_by_parent)
+        if self._create_tracked_task is None:
+            await touch
+            return
+        self._create_tracked_task(touch)
+
     async def _apply_reranker(
         self,
         results: list[HybridResult],
@@ -366,16 +660,19 @@ class DualRouteRetriever:
         *,
         query: str,
     ) -> list[HybridResult]:
-        """兼容同步和异步重排序器，失败时保持基础召回结果。"""
+        """兼容同步和异步重排序器，并保留未进入前 k 的回填候选。"""
         fallback = list(results)
-        fallback.sort(key=lambda item: item.final_score, reverse=True)
+        fallback.sort(key=lambda item: (-item.final_score, item.doc_id))
         try:
             reranked = self.reranker.rerank(results, k, query=query)
             if inspect.isawaitable(reranked):
                 reranked = await reranked
             if not isinstance(reranked, list):
                 return fallback
-            return reranked
+            returned_ids = {item.doc_id for item in reranked}
+            return reranked + [
+                item for item in fallback if item.doc_id not in returned_ids
+            ]
         except Exception:
             return fallback
 
@@ -557,6 +854,7 @@ class DualRouteRetriever:
                 )
             )
 
+        merged_results.sort(key=lambda item: (-item.final_score, item.doc_id))
         return merged_results
 
     @staticmethod

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -1013,3 +1017,259 @@ class TestDualRouteRetriever:
         assert breakdown.get("document_route_score") == 0.0
         assert "graph_keyword_score" in breakdown
         assert "graph_vector_score" in breakdown
+
+    @pytest.mark.asyncio
+    async def test_multi_query_routes_start_concurrently(
+        self,
+        memory_loader: AsyncMock,
+    ) -> None:
+        """多条查询必须在任意一条完成前全部启动。"""
+
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.retrieval.query_planner import QueryPlan
+
+        queries = ("查询甲", "查询乙", "查询丙")
+        started = {query: asyncio.Event() for query in queries}
+        release = asyncio.Event()
+
+        async def search_document(query: str, *_args: Any, **_kwargs: Any) -> list[Any]:
+            """登记查询启动并等待统一释放。"""
+
+            started[query].set()
+            await release.wait()
+            return [_make_hybrid(len(query), 0.8, query)]
+
+        document = MagicMock()
+        document.search = AsyncMock(side_effect=search_document)
+        graph = MagicMock()
+        graph.search = AsyncMock(return_value=[])
+        retriever = DualRouteRetriever(document, graph, memory_loader)
+        plan = QueryPlan(
+            original_query="查询甲",
+            intent="default",
+            entities=(),
+            focus_terms=(),
+            temporal_anchor=None,
+            reference_time=datetime.now(timezone.utc),
+            queries=queries,
+            required_facets=(),
+            ambiguity_flags=(),
+            memory_types=(),
+        )
+
+        task = asyncio.create_task(retriever.search("查询甲", k=6, query_plan=plan))
+        await asyncio.wait_for(
+            asyncio.gather(*(event.wait() for event in started.values())),
+            timeout=1.0,
+        )
+        release.set()
+        await task
+
+    @pytest.mark.asyncio
+    async def test_multi_query_routes_share_one_absolute_deadline(
+        self,
+        memory_loader: AsyncMock,
+    ) -> None:
+        """多查询计划的全部文档与图路必须复用同一绝对截止时间。"""
+
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.retrieval.query_planner import QueryPlan
+
+        document = MagicMock()
+        document.search = AsyncMock(return_value=[])
+        graph = MagicMock()
+        graph.search = AsyncMock(return_value=[])
+        retriever = DualRouteRetriever(document, graph, memory_loader)
+        plan = QueryPlan(
+            original_query="查询甲",
+            intent="relationship",
+            entities=(),
+            focus_terms=(),
+            temporal_anchor=None,
+            reference_time=datetime.now(timezone.utc),
+            queries=("查询甲", "查询乙"),
+            required_facets=("relation",),
+            ambiguity_flags=(),
+            memory_types=(),
+        )
+        deadline = time.perf_counter() + 5.0
+
+        await retriever.search(
+            "查询甲",
+            k=4,
+            query_plan=plan,
+            deadline_monotonic=deadline,
+        )
+
+        assert document.search.await_count == 2
+        assert graph.search.await_count == 2
+        assert {
+            call.kwargs["deadline_monotonic"]
+            for call in document.search.await_args_list
+        } == {deadline}
+        assert {
+            call.kwargs["deadline_monotonic"] for call in graph.search.await_args_list
+        } == {deadline}
+
+    @pytest.mark.asyncio
+    async def test_privacy_filter_runs_before_final_truncation(
+        self,
+        doc_retriever: AsyncMock,
+        graph_retriever: AsyncMock,
+        memory_loader: AsyncMock,
+    ) -> None:
+        """群聊过滤机密候选后应继续用后续共享候选补足 top-k。"""
+
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+
+        doc_retriever.search.return_value = [
+            _make_hybrid(1, 0.99, metadata={"privacy_level": "confidential"}),
+            _make_hybrid(2, 0.90, metadata={"privacy_level": "shared"}),
+            _make_hybrid(3, 0.80, metadata={"privacy_level": "shared"}),
+        ]
+        retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
+
+        results = await retriever.search("匿名查询", k=2, chat_type="group")
+
+        assert [item.doc_id for item in results] == [2, 3]
+
+    @pytest.mark.asyncio
+    async def test_privacy_filter_backfills_candidates_omitted_by_reranker(
+        self,
+        doc_retriever: AsyncMock,
+        graph_retriever: AsyncMock,
+        memory_loader: AsyncMock,
+    ) -> None:
+        """重排器先截断时，隐私过滤后仍应从基础候选回填。"""
+
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+
+        candidates = [
+            _make_hybrid(1, 0.99, metadata={"privacy_level": "confidential"}),
+            _make_hybrid(2, 0.90, metadata={"privacy_level": "shared"}),
+            _make_hybrid(3, 0.80, metadata={"privacy_level": "shared"}),
+        ]
+        doc_retriever.search.return_value = candidates
+        reranker = MagicMock()
+        reranker.rerank.return_value = candidates[:2]
+        retriever = DualRouteRetriever(
+            doc_retriever,
+            graph_retriever,
+            memory_loader,
+            reranker=reranker,
+        )
+
+        results = await retriever.search("匿名查询", k=2, chat_type="group")
+
+        assert [item.doc_id for item in results] == [2, 3]
+
+    @pytest.mark.asyncio
+    async def test_multi_query_privacy_filter_uses_full_shared_budget(
+        self,
+        doc_retriever: AsyncMock,
+        graph_retriever: AsyncMock,
+        memory_loader: AsyncMock,
+    ) -> None:
+        """多查询融合不得在隐私过滤前把候选提前截断为最终 k。"""
+
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.retrieval.query_planner import QueryPlan
+
+        confidential = _make_hybrid(
+            1,
+            0.99,
+            metadata={"privacy_level": "confidential"},
+        )
+
+        async def search_by_query(query: str, *_args, **_kwargs):
+            """为两条查询返回共享机密候选和不同的公开候选。"""
+
+            shared_id = 2 if query == "查询甲" else 3
+            return [
+                confidential,
+                _make_hybrid(
+                    shared_id,
+                    0.80,
+                    metadata={"privacy_level": "shared"},
+                ),
+            ]
+
+        doc_retriever.search.side_effect = search_by_query
+        plan = QueryPlan(
+            original_query="匿名查询",
+            intent="default",
+            entities=(),
+            focus_terms=(),
+            temporal_anchor=None,
+            reference_time=datetime.now(timezone.utc),
+            queries=("查询甲", "查询乙"),
+            required_facets=(),
+            ambiguity_flags=(),
+            memory_types=(),
+        )
+        retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
+
+        results = await retriever.search(
+            "匿名查询",
+            k=2,
+            chat_type="group",
+            query_plan=plan,
+        )
+
+        assert [item.doc_id for item in results] == [2, 3]
+
+    @pytest.mark.asyncio
+    async def test_atom_touch_uses_tracked_background_task(
+        self,
+        doc_retriever: AsyncMock,
+        graph_retriever: AsyncMock,
+        memory_loader: AsyncMock,
+    ) -> None:
+        """Atom 访问反馈不得阻塞检索结果返回。"""
+
+        from core.retrieval.dual_route_retriever import DualRouteRetriever
+
+        doc_retriever.search.return_value = [_make_hybrid(1, 0.9)]
+        memory_loader.return_value = {
+            "id": 1,
+            "doc_id": 1,
+            "text": "content_1",
+            "content": "content_1",
+            "metadata": {},
+        }
+        release = asyncio.Event()
+        atom = MagicMock()
+        atom.search = AsyncMock(
+            return_value=[
+                SimpleNamespace(parent_memory_id=1, atom_id=7, final_score=0.8)
+            ]
+        )
+
+        async def blocked_touch(_ids: list[int]) -> None:
+            """模拟等待数据库写入的访问反馈。"""
+
+            await release.wait()
+
+        atom.touch_many = AsyncMock(side_effect=blocked_touch)
+        tasks: list[asyncio.Task[Any]] = []
+
+        def track(coro: Any) -> None:
+            """模拟引擎的受跟踪任务注册。"""
+
+            tasks.append(asyncio.create_task(coro))
+
+        retriever = DualRouteRetriever(
+            doc_retriever,
+            graph_retriever,
+            memory_loader,
+            atom_retriever=atom,
+            create_tracked_task_cb=track,
+        )
+
+        results = await asyncio.wait_for(retriever.search("匿名查询", k=2), timeout=1.0)
+
+        assert [item.doc_id for item in results] == [1]
+        assert len(tasks) == 1
+        assert not tasks[0].done()
+        release.set()
+        await tasks[0]

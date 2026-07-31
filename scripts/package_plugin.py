@@ -443,7 +443,9 @@ def run_dashboard_build(repo_root: Path) -> None:
     if not npm:
         raise PackageError("未找到 npm；请安装 Node.js 后重试")
     try:
-        completed = subprocess.run([npm, "run", "build"], cwd=dashboard, check=False)
+        completed = subprocess.run(
+            [npm, "run", "build"], cwd=dashboard, check=False, shell=False
+        )
     except OSError as exc:
         raise PackageError(
             "启动 npm run build 失败；请先在 pages/dashboard 执行 npm ci"

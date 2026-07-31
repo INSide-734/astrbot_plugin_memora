@@ -36,6 +36,7 @@ def test_check_runtime_uses_cold_start_timeout(
 
     run.assert_called_once_with(
         [sys.executable, "-c", "import faiss"],
+        shell=False,
         capture_output=True,
         text=True,
         timeout=30,

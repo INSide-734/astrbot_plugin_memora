@@ -31,6 +31,7 @@ class FaissChecker:
             # sys.executable 是受信任的解释器路径，参数固定且不含用户输入。
             result = subprocess.run(
                 [sys.executable, "-c", "import faiss"],
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=FAISS_RUNTIME_CHECK_TIMEOUT_SECONDS,

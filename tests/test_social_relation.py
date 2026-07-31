@@ -492,6 +492,30 @@ class TestRelationStoreCRUD:
         with pytest.raises(ValueError, match="Unsupported relation table"):
             _ = store._table_sql
 
+    @pytest.mark.asyncio
+    async def test_group_id_sql_payload_remains_bound_data(self, tmp_db_path):
+        """群组 ID 中的 SQL 片段只能作为值保存，不能改变查询结构。"""
+
+        payload = "g'); DROP TABLE social_relations;--"
+        store = await _create_store(tmp_db_path)
+        await store.upsert_relation(
+            SocialRelation(
+                from_user="alice",
+                to_user="bob",
+                relation_type="friend",
+                strength=0.7,
+                frequency=0,
+                last_interaction=0.0,
+                group_id=payload,
+            )
+        )
+
+        relations = await store.get_group_relations(payload)
+
+        assert [relation.group_id for relation in relations] == [payload]
+        assert await store.list_group_ids() == [payload]
+        assert await store.count() == 1
+
 
 # ============================================================================
 # RelationManager

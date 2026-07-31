@@ -22,6 +22,7 @@ from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_processor import MemoryProcessor
 from ..provider_adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..retrieval.derived_relation_expander import DerivedRelationExpander
+from ..retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
 from ..retrieval.projection_reader import ProjectionReader
 from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
@@ -103,13 +104,21 @@ class ComponentFactory:
                 str(graph_index_path), embedding_provider
             )
 
+        shared_embedding_provider = InFlightEmbeddingProviderProxy(embedding_provider)
+
         # 并行初始化主 DB 和图 DB（两者完全独立，不同的文件）
-        db = faiss_vec_db_cls(str(db_path), str(index_path), embedding_provider)
+        db = faiss_vec_db_cls(
+            str(db_path),
+            str(index_path),
+            shared_embedding_provider,
+        )
 
         graph_db = None
         if graph_memory_enabled:
             graph_db = faiss_vec_db_cls(
-                str(graph_doc_path), str(graph_index_path), embedding_provider
+                str(graph_doc_path),
+                str(graph_index_path),
+                shared_embedding_provider,
             )
             await asyncio.gather(db.initialize(), graph_db.initialize())
         else:

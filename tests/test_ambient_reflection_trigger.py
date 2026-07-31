@@ -64,7 +64,7 @@ async def test_group_capture_checks_only_ambient_messages_after_persisting() -> 
         memory_processor=MagicMock(),
         conversation_manager=conversation,
     )
-    handler._identity_runtime.prepare = AsyncMock(
+    handler._identity_runtime.resolve = MagicMock(
         return_value=_unsupported_group_identity()
     )
     handler._extractor.extract_message_content = AsyncMock(return_value="普通群消息")

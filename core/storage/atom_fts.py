@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -38,31 +39,31 @@ class AtomFTSMixin:
         ]
         fts_query = " OR ".join(fts_tokens)
 
-        filters = ["ma.status = 'active'"] if not include_expired else []
-        params: list[Any] = [fts_query]
-        if session_id is not None:
-            filters.append("ma.session_id = ?")
-            params.append(session_id)
-        if persona_id is not None:
-            filters.append("ma.persona_id = ?")
-            params.append(persona_id)
-
-        where_clause = f"AND {' AND '.join(filters)}" if filters else ""
+        params = {
+            "fts_query": fts_query,
+            "include_expired": int(include_expired),
+            "session_id": session_id,
+            "persona_id": persona_id,
+            "limit": limit,
+        }
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             # 优先尝试 FTS 检索
             try:
                 cursor = await db.execute(
-                    f"""
+                    """
                     SELECT ma.*, bm25(memory_atoms_fts) AS bm25_score
                     FROM memory_atoms_fts
                     JOIN memory_atoms ma ON ma.id = memory_atoms_fts.atom_id
-                    WHERE memory_atoms_fts MATCH ? {where_clause}
+                    WHERE memory_atoms_fts MATCH :fts_query
+                      AND (:include_expired = 1 OR ma.status = 'active')
+                      AND (:session_id IS NULL OR ma.session_id = :session_id)
+                      AND (:persona_id IS NULL OR ma.persona_id = :persona_id)
                     ORDER BY bm25_score ASC
-                    LIMIT ?
+                    LIMIT :limit
                     """,
-                    (*params, limit),
+                    params,
                 )
                 rows = await cursor.fetchall()
             except Exception as e:
@@ -71,30 +72,27 @@ class AtomFTSMixin:
 
             # 当 FTS 无结果时，回退到 LIKE 检索
             if not rows:
-                like_clauses = " OR ".join(["ma.content LIKE ?" for _ in tokens])
-                like_params_full: list[Any] = [f"%{t}%" for t in tokens]
-                status_filter = (
-                    "AND ma.status = 'active'" if not include_expired else ""
-                )
-                session_filter = (
-                    "AND ma.session_id = ?" if session_id is not None else ""
-                )
-                persona_filter = (
-                    "AND ma.persona_id = ?" if persona_id is not None else ""
-                )
-                if session_id is not None:
-                    like_params_full.append(session_id)
-                if persona_id is not None:
-                    like_params_full.append(persona_id)
+                like_params = {
+                    **params,
+                    "like_patterns_json": json.dumps(
+                        [f"%{token}%" for token in tokens]
+                    ),
+                }
                 cursor = await db.execute(
-                    f"""
+                    """
                     SELECT ma.*, 0.5 AS bm25_score
                     FROM memory_atoms ma
-                    WHERE ({like_clauses}) {status_filter} {session_filter} {persona_filter}
+                    WHERE EXISTS (
+                        SELECT 1 FROM json_each(:like_patterns_json) AS pattern
+                        WHERE ma.content LIKE pattern.value
+                    )
+                      AND (:include_expired = 1 OR ma.status = 'active')
+                      AND (:session_id IS NULL OR ma.session_id = :session_id)
+                      AND (:persona_id IS NULL OR ma.persona_id = :persona_id)
                     ORDER BY ma.id DESC
-                    LIMIT ?
+                    LIMIT :limit
                     """,
-                    (*like_params_full, limit),
+                    like_params,
                 )
                 rows = await cursor.fetchall()
 
@@ -152,22 +150,18 @@ class AtomFTSMixin:
                 ]
                 fts_query = " OR ".join(fts_tokens)
 
-        filters: list[str] = ["ma.status = 'active'"] if not include_expired else []
-        params: list[Any] = []
-        if has_query:
-            params.append(fts_query)
-        if session_id is not None:
-            filters.append("ma.session_id = ?")
-            params.append(session_id)
-        if persona_id is not None:
-            filters.append("ma.persona_id = ?")
-            params.append(persona_id)
-        if atom_types is not None and len(atom_types) > 0:
-            placeholders = ", ".join(["?"] * len(atom_types))
-            filters.append(f"ma.atom_type IN ({placeholders})")
-            params.extend(atom_types)
-
-        where_clause = f"AND {' AND '.join(filters)}" if filters else ""
+        atom_type_values = list(atom_types or [])
+        params = {
+            "fts_query": fts_query,
+            "has_query": int(has_query),
+            "include_expired": int(include_expired),
+            "session_id": session_id,
+            "persona_id": persona_id,
+            "has_atom_types": int(bool(atom_type_values)),
+            "atom_types_json": json.dumps(atom_type_values),
+            "like_patterns_json": json.dumps([f"%{token}%" for token in tokens]),
+            "limit": limit,
+        }
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
@@ -175,15 +169,24 @@ class AtomFTSMixin:
             if has_query:
                 try:
                     cursor = await db.execute(
-                        f"""
+                        """
                         SELECT ma.*, bm25(memory_atoms_fts) AS bm25_score
                         FROM memory_atoms_fts
                         JOIN memory_atoms ma ON ma.id = memory_atoms_fts.atom_id
-                        WHERE memory_atoms_fts MATCH ? {where_clause}
+                        WHERE memory_atoms_fts MATCH :fts_query
+                          AND (:include_expired = 1 OR ma.status = 'active')
+                          AND (:session_id IS NULL OR ma.session_id = :session_id)
+                          AND (:persona_id IS NULL OR ma.persona_id = :persona_id)
+                          AND (
+                            :has_atom_types = 0
+                            OR ma.atom_type IN (
+                                SELECT value FROM json_each(:atom_types_json)
+                            )
+                          )
                         ORDER BY bm25_score ASC
-                        LIMIT ?
+                        LIMIT :limit
                         """,
-                        (*params, limit),
+                        params,
                     )
                     rows = await cursor.fetchall()
                 except Exception as e:
@@ -191,42 +194,31 @@ class AtomFTSMixin:
                     rows = []
 
             if not rows:
-                if has_query:
-                    like_clauses = " OR ".join(["ma.content LIKE ?" for _ in tokens])
-                    like_params_full: list[Any] = [f"%{t}%" for t in tokens]
-                else:
-                    like_clauses = "1=1"
-                    like_params_full = []
-
-                status_filter = (
-                    "AND ma.status = 'active'" if not include_expired else ""
-                )
-                session_filter = (
-                    "AND ma.session_id = ?" if session_id is not None else ""
-                )
-                persona_filter = (
-                    "AND ma.persona_id = ?" if persona_id is not None else ""
-                )
-                type_filter = ""
-                if atom_types is not None and len(atom_types) > 0:
-                    type_placeholders = ", ".join(["?"] * len(atom_types))
-                    type_filter = f"AND ma.atom_type IN ({type_placeholders})"
-                    like_params_full.extend(atom_types)
-
-                if session_id is not None:
-                    like_params_full.append(session_id)
-                if persona_id is not None:
-                    like_params_full.append(persona_id)
-
                 cursor = await db.execute(
-                    f"""
-                    SELECT ma.*, {"0.5" if has_query else "0.0"} AS bm25_score
+                    """
+                    SELECT ma.*,
+                           CASE WHEN :has_query = 1 THEN 0.5 ELSE 0.0 END AS bm25_score
                     FROM memory_atoms ma
-                    WHERE ({like_clauses}) {status_filter} {session_filter} {persona_filter} {type_filter}
+                    WHERE (
+                        :has_query = 0
+                        OR EXISTS (
+                            SELECT 1 FROM json_each(:like_patterns_json) AS pattern
+                            WHERE ma.content LIKE pattern.value
+                        )
+                    )
+                      AND (:include_expired = 1 OR ma.status = 'active')
+                      AND (:session_id IS NULL OR ma.session_id = :session_id)
+                      AND (:persona_id IS NULL OR ma.persona_id = :persona_id)
+                      AND (
+                        :has_atom_types = 0
+                        OR ma.atom_type IN (
+                            SELECT value FROM json_each(:atom_types_json)
+                        )
+                      )
                     ORDER BY ma.id DESC
-                    LIMIT ?
+                    LIMIT :limit
                     """,
-                    (*like_params_full, limit),
+                    params,
                 )
                 rows = await cursor.fetchall()
 

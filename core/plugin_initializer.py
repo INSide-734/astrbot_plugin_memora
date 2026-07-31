@@ -403,8 +403,11 @@ class PluginInitializer:
             self._initialization_error = str(e)
             raise InitializationError(f"初始化失败: {e}") from e
 
-    def _create_prompt_protection_service(self) -> PromptProtectionService:
-        """为 LLM 数据流创建共享的提示词保护服务。"""
+    def _create_prompt_protection_service(self) -> PromptProtectionService | None:
+        """按安全配置为 LLM 数据流创建共享的提示词保护服务。"""
+        if not self.config_manager.get("security.prompt_protection_enabled", True):
+            logger.info("提示词保护服务已关闭")
+            return None
         template_index = int(
             self.config_manager.get("security.wrapper_template_index", 0)
         )

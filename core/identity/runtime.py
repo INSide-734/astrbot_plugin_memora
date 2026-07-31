@@ -72,9 +72,30 @@ class ProtocolIdentityRuntime:
     ) -> ResolvedIdentity:
         """解析事件，并在可信且允许写入时尽力保存当前名称。"""
 
-        identity = self._resolver.resolve(event)
+        identity = self.resolve(event)
+        await self.synchronize(
+            event,
+            identity,
+            writes_blocked=writes_blocked,
+        )
+        return identity
+
+    def resolve(self, event: Any) -> ResolvedIdentity:
+        """同步解析事件中的稳定身份，不执行目录或会话 I/O。"""
+
+        return self._resolver.resolve(event)
+
+    async def synchronize(
+        self,
+        event: Any,
+        identity: ResolvedIdentity,
+        *,
+        writes_blocked: bool = False,
+    ) -> None:
+        """在可信且允许写入时尽力同步身份名称目录。"""
+
         if writes_blocked or identity.trust_status is not IdentityTrust.TRUSTED:
-            return identity
+            return
 
         try:
             if self._synchronizer is not None:
@@ -89,7 +110,6 @@ class ProtocolIdentityRuntime:
             raise
         except Exception:
             logger.warning("协议身份名称同步失败，已保留本次解析结果")
-        return identity
 
     async def close(self) -> None:
         """关闭运行时拥有的身份 Store；解析器降级模式无需处理。"""

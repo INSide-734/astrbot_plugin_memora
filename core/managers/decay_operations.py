@@ -268,10 +268,13 @@ class DecayOperationsMixin:
         try:
             async with coordinated_transaction(self._db) as db:
                 # 批量读取：1 次 SELECT 替代 N 次
-                placeholders = ",".join("?" for _ in unique_ids)
                 cursor = await db.execute(
-                    f"SELECT id, metadata FROM documents WHERE id IN ({placeholders})",
-                    unique_ids,
+                    """
+                    SELECT id, metadata
+                    FROM documents
+                    WHERE id IN (SELECT value FROM json_each(:memory_ids_json))
+                    """,
+                    {"memory_ids_json": json.dumps(unique_ids)},
                 )
                 rows = await cursor.fetchall()
                 if not rows:

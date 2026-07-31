@@ -36,60 +36,109 @@ class MemoryReadApiMixin:
             return self._error("记忆引擎数据库路径不可用")
 
         offset = (page - 1) * page_size
-        where_clauses: list[str] = []
-        params: list[Any] = []
-
-        if session_id:
-            where_clauses.append(
-                "CASE WHEN json_valid(metadata) "
-                "THEN json_extract(metadata, '$.session_id') END = ?"
-            )
-            params.append(session_id)
-
-        if status_filter != "all":
-            where_clauses.append(
-                "COALESCE(CASE WHEN json_valid(metadata) "
-                "THEN json_extract(metadata, '$.status') END,'active') = ?"
-            )
-            params.append(status_filter)
-
-        if keyword:
-            keyword_like = f"%{keyword}%"
-            if keyword.isdigit():
-                where_clauses.append(
-                    "(CAST(id AS TEXT) = ? OR text LIKE ? COLLATE NOCASE)"
-                )
-                params.extend([keyword, keyword_like])
-            else:
-                where_clauses.append(
-                    "(text LIKE ? COLLATE NOCASE "
-                    "OR COALESCE(CASE WHEN json_valid(metadata) "
-                    "THEN json_extract(metadata, '$.memory_type') END,'') LIKE ? COLLATE NOCASE)"
-                )
-                params.extend([keyword_like, keyword_like])
-
-        where_str = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-        sort_expr = (
-            "COALESCE(CASE WHEN json_valid(metadata) "
-            "THEN CAST(json_extract(metadata, '$.create_time') AS REAL) END,0)"
-        )
+        keyword_value = keyword or None
+        params: dict[str, Any] = {
+            "session_id": session_id,
+            "status": None if status_filter == "all" else status_filter,
+            "keyword": keyword_value,
+            "keyword_is_digit": int(bool(keyword_value and keyword.isdigit())),
+            "keyword_like": f"%{keyword}%" if keyword_value else None,
+        }
 
         try:
             async with aiosqlite.connect(db_path) as db:
                 await apply_perf_pragmas(db)
                 db.row_factory = aiosqlite.Row
                 count_cursor = await db.execute(
-                    f"SELECT COUNT(*) AS total FROM documents {where_str}",
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM documents
+                    WHERE (
+                        :session_id IS NULL
+                        OR CASE WHEN json_valid(metadata)
+                           THEN json_extract(metadata, '$.session_id') END = :session_id
+                    )
+                      AND (
+                        :status IS NULL
+                        OR COALESCE(
+                            CASE WHEN json_valid(metadata)
+                            THEN json_extract(metadata, '$.status') END,
+                            'active'
+                        ) = :status
+                      )
+                      AND (
+                        :keyword IS NULL
+                        OR (
+                            :keyword_is_digit = 1
+                            AND (
+                                CAST(id AS TEXT) = :keyword
+                                OR text LIKE :keyword_like COLLATE NOCASE
+                            )
+                        )
+                        OR (
+                            :keyword_is_digit = 0
+                            AND (
+                                text LIKE :keyword_like COLLATE NOCASE
+                                OR COALESCE(
+                                    CASE WHEN json_valid(metadata)
+                                    THEN json_extract(metadata, '$.memory_type') END,
+                                    ''
+                                ) LIKE :keyword_like COLLATE NOCASE
+                            )
+                        )
+                      )
+                    """,
                     params,
                 )
                 count_row = await count_cursor.fetchone()
                 total = int(count_row["total"]) if count_row else 0
 
                 cursor = await db.execute(
-                    f"SELECT id, doc_id, text, metadata, created_at, updated_at "
-                    f"FROM documents {where_str} ORDER BY {sort_expr} DESC, id DESC "
-                    f"LIMIT ? OFFSET ?",
-                    (*params, page_size, offset),
+                    """
+                    SELECT id, doc_id, text, metadata, created_at, updated_at
+                    FROM documents
+                    WHERE (
+                        :session_id IS NULL
+                        OR CASE WHEN json_valid(metadata)
+                           THEN json_extract(metadata, '$.session_id') END = :session_id
+                    )
+                      AND (
+                        :status IS NULL
+                        OR COALESCE(
+                            CASE WHEN json_valid(metadata)
+                            THEN json_extract(metadata, '$.status') END,
+                            'active'
+                        ) = :status
+                      )
+                      AND (
+                        :keyword IS NULL
+                        OR (
+                            :keyword_is_digit = 1
+                            AND (
+                                CAST(id AS TEXT) = :keyword
+                                OR text LIKE :keyword_like COLLATE NOCASE
+                            )
+                        )
+                        OR (
+                            :keyword_is_digit = 0
+                            AND (
+                                text LIKE :keyword_like COLLATE NOCASE
+                                OR COALESCE(
+                                    CASE WHEN json_valid(metadata)
+                                    THEN json_extract(metadata, '$.memory_type') END,
+                                    ''
+                                ) LIKE :keyword_like COLLATE NOCASE
+                            )
+                        )
+                      )
+                    ORDER BY COALESCE(
+                        CASE WHEN json_valid(metadata)
+                        THEN CAST(json_extract(metadata, '$.create_time') AS REAL) END,
+                        0
+                    ) DESC, id DESC
+                    LIMIT :limit OFFSET :offset
+                    """,
+                    {**params, "limit": page_size, "offset": offset},
                 )
                 rows = await cursor.fetchall()
         except Exception as exc:

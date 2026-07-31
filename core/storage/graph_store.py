@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
+from ..models.graph_models import GraphEdge, GraphEntry, GraphNode
 from .graph_canvas import GraphCanvasMixin
 from .graph_crud import GraphCRUDMixin
 from .graph_delete import GraphDeleteMixin
 from .graph_query import GraphQueryMixin
 from .graph_subgraph import GraphSubgraphMixin
+
+
+@dataclass(frozen=True, slots=True)
+class GraphReplaceResult:
+    """描述一次 SQLite 图产物原子替换的提交结果。"""
+
+    entry_ids: list[int]
 
 
 class GraphStore(
@@ -133,6 +142,40 @@ class GraphStore(
             )
             await db.commit()
 
+    async def replace_memory_graph(
+        self,
+        source_memory_id: int,
+        nodes: list[GraphNode],
+        edges: list[GraphEdge],
+        entries: list[GraphEntry],
+    ) -> GraphReplaceResult:
+        """在一个 SQLite 事务中替换源记忆的全部结构化图产物。"""
+        now = self._now_iso()
+        async with self._connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                await self._delete_memory_rows(db, source_memory_id)
+                node_key_to_id = await self._upsert_nodes(db, nodes, now)
+                edge_key_to_id = await self._add_edges(
+                    db,
+                    edges,
+                    node_key_to_id,
+                    now,
+                )
+                entry_ids = await self._add_entries(
+                    db,
+                    entries,
+                    node_key_to_id,
+                    edge_key_to_id,
+                    now,
+                )
+                await self._delete_orphan_nodes(db)
+                await db.commit()
+                return GraphReplaceResult(entry_ids=entry_ids)
+            except BaseException:
+                await db.rollback()
+                raise
+
     @staticmethod
     def _chunked(items: list[int], size: int) -> list[list[int]]:
         """按固定大小把整数列表拆分为连续批次。"""
@@ -183,4 +226,4 @@ class GraphStore(
         }
 
 
-__all__ = ["GraphStore"]
+__all__ = ["GraphReplaceResult", "GraphStore"]

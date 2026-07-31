@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from astrbot.api import logger
+from quart import request
 
 from .response_utils import error_response, ok_response
 
@@ -522,6 +523,30 @@ class MetricsApiMixin:
             if sanitized_item:
                 sanitized.append(sanitized_item)
         return sanitized
+
+    async def get_recall_samples(self):
+        """从查询参数读取召回样本游标。"""
+        return await self.get_recall_samples_payload(dict(request.args))
+
+    async def get_recall_samples_payload(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """返回游标之后的隐私安全召回标量样本。"""
+        try:
+            after_sequence = max(0, int(payload.get("after_sequence", 0)))
+            limit = min(max(1, int(payload.get("limit", 50))), 200)
+        except (TypeError, ValueError):
+            return error_response("recall_samples_invalid_query")
+        tracker = self._get_existing_perf_tracker()
+        if tracker is None or not hasattr(tracker, "get_samples"):
+            return ok_response({"items": [], "next_sequence": 0, "latest_sequence": 0})
+        try:
+            return ok_response(
+                tracker.get_samples(after_sequence=after_sequence, limit=limit)
+            )
+        except Exception:
+            logger.warning("[指标接口] 读取召回样本失败", exc_info=True)
+            return error_response("recall_samples_unavailable")
 
 
 __all__ = ["MetricsApiMixin"]

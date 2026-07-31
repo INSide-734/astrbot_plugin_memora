@@ -119,6 +119,12 @@ class PluginPageApi(
             "页面接口：运行观测摘要",
         )
         register(
+            f"{PAGE_API_PREFIX}/metrics/recall-samples",
+            self.get_recall_samples,
+            ["GET"],
+            "页面接口：召回性能样本（游标分页）",
+        )
+        register(
             f"{PAGE_API_PREFIX}/update/check",
             self.check_update,
             ["GET"],

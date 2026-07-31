@@ -3,13 +3,17 @@
 # Storage 模块上下文
 
 **最后更新：** 2026-07-21
-**源码范围：** `core/storage/*.py`（18 个 Python 文件）
+**源码范围：** `core/storage/*.py`（19 个 Python 文件）
 
 ## 职责与边界
 
 `core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存原子、图、会话消息、知识、笔记、画像和注入决策遥测，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
 
 `feedback_signal_store.py` 是仅供离线实验显式传入路径的同步 SQLite Store；它保存最小反馈事件和可重建聚合，使用 dedupe 唯一约束与事务，不得默认连接 `memora.db`，也不得把事件 key/domain/query/正文写入安全摘要。
+
+`sql_contract.py` 集中保存跨 retrieval、managers、validators 与 social 复用的固定表名和静态 FTS SQL；这些常量不接受运行时输入，调用方仍必须对值参数绑定，并在支持可替换标识符的入口保留白名单校验。
+
+SQLite 不支持把表标识符作为绑定参数。`RelationStore` 因此只用 `SOCIAL_RELATIONS_TABLE` 校验固定表契约，实际执行语句始终包含静态 `social_relations` 标识符，不把运行时标识符插入 SQL；群组 ID、用户 ID、关系类型和排序选择继续通过值参数或固定 allowlist 处理。
 
 ## Memory Evolution 派生解释平面
 

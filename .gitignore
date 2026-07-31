@@ -65,7 +65,8 @@ storage/**/*.sqlite*
 .worktrees/
 .codex/
 openspec/
-.tmp-*/
+.uv-cache/
+.tmp*/
 
 # 本地数据目录
 data/

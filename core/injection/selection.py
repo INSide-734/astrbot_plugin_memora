@@ -1,4 +1,4 @@
-"""Deterministic utility selection for adaptive memory injection."""
+"""为自适应记忆注入提供确定性的效用选择。"""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from .models import InjectionDecision, PresetName
 from .presets import PRESETS
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+_VALID_FACETS = frozenset({"entity", "role", "time", "event", "focus", "relation"})
 
 
 def bounded_float(value: Any, default: float = 0.0) -> float:
@@ -31,7 +32,7 @@ def candidate_utility(
     redundancy: float,
     cost_penalty: float,
 ) -> float:
-    """Return the fixed, deterministic utility score from the design contract."""
+    """按照设计契约返回固定且确定的效用分数。"""
 
     metadata = memory.get("metadata") or {}
     relevance = bounded_float(
@@ -52,6 +53,8 @@ def candidate_utility(
 def select_candidates(
     decision: InjectionDecision,
     memories: Iterable[dict[str, Any]],
+    *,
+    required_facets: tuple[str, ...] = (),
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     candidates = [memory for memory in memories if isinstance(memory, dict)]
     if (
@@ -62,9 +65,9 @@ def select_candidates(
         return [], candidates
     if not candidates:
         return [], []
-
+    safe_facets = tuple(dict.fromkeys(f for f in required_facets if f in _VALID_FACETS))
     remaining = normalize_relevance(candidates)
-    selected = select_by_utility(decision, remaining)
+    selected = select_by_utility(decision, remaining, required_facets=safe_facets)
     return selected, dropped_candidates(candidates, selected)
 
 
@@ -91,24 +94,45 @@ def normalized_score(score: float, low: float, high: float) -> float:
 def select_by_utility(
     decision: InjectionDecision,
     remaining: list[dict[str, Any]],
+    *,
+    required_facets: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     preset = PRESETS[decision.resolved_preset]
     selected: list[dict[str, Any]] = []
     estimated_chars = 0
+    covered_facets: set[str] = set()
     while remaining and len(selected) < decision.max_memories:
         ranked = ranked_candidates(
-            decision, preset.cost_penalty_weight, remaining, selected
+            decision,
+            preset.cost_penalty_weight,
+            remaining,
+            selected,
+            required_facets=required_facets,
+            covered_facets=covered_facets,
         )
         negative_utility, _, chosen_index, chosen = ranked[0]
         utility = -negative_utility
         estimate = estimate_candidate_chars(decision, chosen)
-        if utility < preset.minimum_utility:
+        matched = chosen.get("_matched_facets")
+        fills_required_gap = isinstance(matched, dict) and any(
+            facet not in covered_facets
+            and isinstance(matched.get(facet), (int, float))
+            and matched[facet] > 0
+            for facet in required_facets
+        )
+        if utility < preset.minimum_utility and not fills_required_gap:
             break
         remaining.pop(chosen_index)
         if estimated_chars + estimate > decision.memory_budget_chars:
             continue
         selected.append(chosen)
         estimated_chars += estimate
+        # 记录新覆盖的维度，避免后续候选重复获得覆盖优先级。
+        if isinstance(matched, dict) and required_facets:
+            for facet in required_facets:
+                val = matched.get(facet)
+                if isinstance(val, (int, float)) and val > 0:
+                    covered_facets.add(facet)
     return selected
 
 
@@ -117,8 +141,16 @@ def ranked_candidates(
     cost_penalty_weight: float,
     remaining: list[dict[str, Any]],
     selected: list[dict[str, Any]],
+    *,
+    required_facets: tuple[str, ...] = (),
+    covered_facets: set[str] | None = None,
 ) -> list[tuple[float, str, int, dict[str, Any]]]:
-    ranked = []
+    """对候选排序，并在存在缺失维度时优先选择可补足维度的候选。"""
+
+    ranked: list[tuple[float, str, int, dict[str, Any]]] = []
+    covering: list[tuple[float, str, int, dict[str, Any]]] = []
+    uncovered = set(required_facets) - (covered_facets or set())
+    total_required = len(required_facets)
     for index, memory in enumerate(remaining):
         estimate = estimate_candidate_chars(decision, memory)
         redundancy = max(
@@ -136,9 +168,25 @@ def ranked_candidates(
                 cost_penalty_weight * estimate / max(1, decision.memory_budget_chars)
             ),
         )
-        ranked.append((-utility, stable_memory_id(memory), index, memory))
-    ranked.sort(key=lambda item: (item[0], item[1], item[2]))
-    return ranked
+        newly_covered = 0
+        # 覆盖奖励最多为 0.08，只奖励此前尚未覆盖的必需维度。
+        if uncovered and total_required > 0:
+            matched = memory.get("_matched_facets")
+            if isinstance(matched, dict):
+                newly_covered = sum(
+                    1
+                    for f in uncovered
+                    if isinstance(matched.get(f), (int, float)) and matched[f] > 0
+                )
+                if newly_covered > 0:
+                    utility += 0.08 * newly_covered / total_required
+        row = (-utility, stable_memory_id(memory), index, memory)
+        ranked.append(row)
+        if newly_covered > 0:
+            covering.append(row)
+    selected_pool = covering or ranked
+    selected_pool.sort(key=lambda item: (item[0], item[1], item[2]))
+    return selected_pool
 
 
 def dropped_candidates(

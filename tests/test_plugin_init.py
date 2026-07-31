@@ -1119,6 +1119,11 @@ class TestInjectionDecisionLifecycle:
             with pytest.raises(RuntimeError, match="injection failed"):
                 await task
 
+        db_factory = args[2]
+        document_provider = db_factory.call_args_list[0].args[2]
+        graph_provider = db_factory.call_args_list[1].args[2]
+        assert document_provider is graph_provider
+        assert document_provider is not args[0]
         assert order == [
             "scheduler",
             "conversation_store",

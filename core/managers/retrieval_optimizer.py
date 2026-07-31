@@ -124,21 +124,44 @@ class RetrievalOptimizer:
 
     @classmethod
     def _query_intent_cache_key(cls, query_intent: Any | None) -> tuple[Any, ...]:
+        """把 QueryIntent 或 QueryPlan 收敛为完整且可哈希的缓存键。"""
+
         if query_intent is None:
             return ()
-        entities = getattr(query_intent, "entities", None)
+
+        # entities: 兼容 QueryIntent.extracted_entities 和 QueryPlan.entities
+        entities = getattr(query_intent, "extracted_entities", None)
+        if entities is None:
+            entities = getattr(query_intent, "entities", None)
         try:
             entities_key = json.dumps(
-                entities or {}, sort_keys=True, ensure_ascii=False
+                list(entities) if entities else [],
+                sort_keys=True,
+                ensure_ascii=False,
             )
         except (TypeError, ValueError):
             entities_key = str(entities or "")
+
+        # query variants: 兼容 QueryIntent.rewritten_queries 和 QueryPlan.queries
+        queries = getattr(query_intent, "rewritten_queries", None)
+        if queries is None:
+            queries = getattr(query_intent, "queries", None)
+        temporal_anchor = getattr(query_intent, "temporal_anchor", None)
+        if temporal_anchor is None:
+            temporal_anchor = getattr(query_intent, "time_reference", None)
+
         return (
+            cls._normalize_query(getattr(query_intent, "original_query", "")),
             cls._normalize_string(getattr(query_intent, "intent", "")),
             round(safe_float(getattr(query_intent, "confidence", 0.0)), 4),
             entities_key,
-            cls._normalize_sequence(getattr(query_intent, "rewritten_queries", None)),
+            cls._normalize_sequence(queries),
             cls._normalize_sequence(getattr(query_intent, "memory_types", None)),
+            cls._normalize_sequence(getattr(query_intent, "focus_terms", None)),
+            cls._normalize_string(temporal_anchor),
+            cls._normalize_sequence(getattr(query_intent, "required_facets", None)),
+            cls._normalize_sequence(getattr(query_intent, "ambiguity_flags", None)),
+            reference_time_key(getattr(query_intent, "reference_time", None)),
         )
 
     @staticmethod
