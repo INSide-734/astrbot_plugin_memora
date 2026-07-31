@@ -1,0 +1,16 @@
+{
+  "name": "memora-docs",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "mermaid": "11.16.0",
+    "vitepress": "2.0.0-alpha.18",
+    "vitepress-plugin-mermaid2": "0.0.3"
+  }
+}

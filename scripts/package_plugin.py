@@ -55,6 +55,7 @@ EXCLUDED_DIRS = {
     "playwright-report",
     "test-results",
     ".vite",
+    ".vitepress",
     ".vite-build",
     "__pycache__",
 }

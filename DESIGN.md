@@ -189,7 +189,7 @@ unrelated local artifacts.
 ## Authoritative references
 
 - Root and module `CLAUDE.md` files: current ownership and implementation notes.
-- `docs/DEV_SETUP.md`: environment and gate commands.
+- `website/docs/development/`: environment and gate commands.
 - `docs/superpowers/specs/`: approved feature designs.
 - `docs/superpowers/plans/`: executable implementation plans.
 - `tests/` and `scripts/check_all.py`: executable repository contract.

@@ -30,6 +30,8 @@ pages/dashboard/.vite/
 pages/dashboard/coverage/
 pages/dashboard/playwright-report/
 pages/dashboard/test-results/
+website/docs/.vitepress/cache/
+website/docs/.vitepress/dist/
 
 # IDE 与编辑器临时文件
 .vscode/
