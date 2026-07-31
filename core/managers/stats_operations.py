@@ -296,15 +296,24 @@ class StatsOperationsMixin:
 
             fts_optimized: list[str] = []
             fts_skipped: dict[str, str] = {}
-            for fts_table in (
-                "memora_memories_fts",
-                "memora_graph_entries_fts",
-                "memory_atoms_fts",
+            for fts_table, optimize_sql in (
+                (
+                    "memora_memories_fts",
+                    "INSERT INTO memora_memories_fts(memora_memories_fts) "
+                    "VALUES ('optimize')",
+                ),
+                (
+                    "memora_graph_entries_fts",
+                    "INSERT INTO memora_graph_entries_fts(memora_graph_entries_fts) "
+                    "VALUES ('optimize')",
+                ),
+                (
+                    "memory_atoms_fts",
+                    "INSERT INTO memory_atoms_fts(memory_atoms_fts) VALUES ('optimize')",
+                ),
             ):
                 try:
-                    cursor = await self._db.execute(
-                        f"INSERT INTO {fts_table}({fts_table}) VALUES ('optimize')"
-                    )
+                    cursor = await self._db.execute(optimize_sql)
                     await _close_cursor(cursor)
                     fts_optimized.append(fts_table)
                 except asyncio.CancelledError:

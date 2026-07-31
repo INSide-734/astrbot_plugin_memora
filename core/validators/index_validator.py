@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -67,13 +68,13 @@ class IndexValidator(IndexRebuilderMixin):
         self, table_name: str = "memora_memories_fts", max_attempts: int = 5
     ) -> None:
         """清空 BM25 索引表，不触碰 documents 原始数据。"""
-        validated_table = self._validate_fts_table_name(table_name)
+        self._validate_fts_table_name(table_name)
         for attempt in range(max_attempts):
             try:
                 async with aiosqlite.connect(self.db_path) as db:
                     await apply_perf_pragmas(db)
                     try:
-                        await db.execute(f"DELETE FROM {validated_table}")
+                        await db.execute("DELETE FROM memora_memories_fts")
                     except Exception as e:
                         logger.warning(f"清空BM25索引失败: {e}")
                     await db.commit()
@@ -312,17 +313,16 @@ class IndexValidator(IndexRebuilderMixin):
             sorted_ids = sorted(int(doc_id) for doc_id in document_ids)
             for start in range(0, len(sorted_ids), batch_size):
                 chunk = sorted_ids[start : start + batch_size]
-                placeholders = ",".join("?" for _ in chunk)
                 async with aiosqlite.connect(self.db_path) as db:
                     await apply_perf_pragmas(db)
                     cursor = await db.execute(
-                        f"""
+                        """
                         SELECT id, doc_id, text, metadata
                         FROM documents
-                        WHERE id IN ({placeholders})
+                        WHERE id IN (SELECT value FROM json_each(:ids_json))
                         ORDER BY id
                         """,
-                        chunk,
+                        {"ids_json": json.dumps(chunk)},
                     )
                     yield await cursor.fetchall()
             return

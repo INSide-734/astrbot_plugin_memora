@@ -24,6 +24,7 @@ from .base import BaseStore
 from .canonical_source_validation import validate_domain_provenance
 from .domain_object_integrity import filter_current_domain_objects
 from .profile_preferences_integrity import require_manual_preferences
+from .profile_queries import PROFILE_LIST_SQL
 
 PROFILE_SORT_COLUMNS = {
     "user_id": "user_id COLLATE NOCASE",
@@ -33,7 +34,6 @@ PROFILE_SORT_COLUMNS = {
     "first_seen_at": "first_seen_at",
     "last_seen_at": "last_seen_at",
 }
-
 _CREATE_PROFILES = """
 CREATE TABLE IF NOT EXISTS user_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -527,7 +527,7 @@ class ProfileStore(BaseStore):
     ) -> tuple[list[UserProfile], int]:
         """分页列出画像。"""
 
-        order_by = order_by_clause(
+        _ = order_by_clause(
             sort,
             columns=PROFILE_SORT_COLUMNS,
             tie_breaker="user_id",
@@ -536,8 +536,13 @@ class ProfileStore(BaseStore):
             cursor = await db.execute("SELECT COUNT(*) FROM user_profiles")
             total = (await cursor.fetchone())[0]
             cursor = await db.execute(
-                f"SELECT * FROM user_profiles ORDER BY {order_by} LIMIT ? OFFSET ?",
-                (limit, offset),
+                PROFILE_LIST_SQL,
+                {
+                    "sort_by": sort.by,
+                    "sort_order": sort.order,
+                    "limit": limit,
+                    "offset": offset,
+                },
             )
             rows = await cursor.fetchall()
         profiles: list[UserProfile] = []

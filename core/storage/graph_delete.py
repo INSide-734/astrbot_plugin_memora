@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import aiosqlite
 
 from .base import BaseStore
@@ -63,14 +65,16 @@ class GraphDeleteMixin(BaseStore):
         """使用调用方事务分批删除多条源记忆的图行。"""
         result: dict[int, list[int]] = {}
         for batch in self._chunked(source_memory_ids, self._SQLITE_BATCH_SIZE):
-            memory_placeholders = ",".join("?" * len(batch))
+            batch_params = {"memory_ids_json": json.dumps(batch)}
             cursor = await db.execute(
-                f"""
+                """
                 SELECT id, source_memory_id, vector_doc_id, edge_id
                 FROM graph_entries
-                WHERE source_memory_id IN ({memory_placeholders})
+                WHERE source_memory_id IN (
+                    SELECT value FROM json_each(:memory_ids_json)
+                )
                 """,
-                batch,
+                batch_params,
             )
             rows = await cursor.fetchall()
             entry_ids = [int(row[0]) for row in rows]
@@ -81,11 +85,13 @@ class GraphDeleteMixin(BaseStore):
                     result.setdefault(int(row[1]), []).append(int(vector_doc_id))
 
             cursor = await db.execute(
-                f"""
+                """
                 SELECT id FROM graph_edges
-                WHERE source_memory_id IN ({memory_placeholders})
+                WHERE source_memory_id IN (
+                    SELECT value FROM json_each(:memory_ids_json)
+                )
                 """,
-                batch,
+                batch_params,
             )
             edge_ids.extend(int(row[0]) for row in await cursor.fetchall())
             await self._delete_entries_by_id(db, entry_ids)
@@ -99,18 +105,27 @@ class GraphDeleteMixin(BaseStore):
     ) -> None:
         """使用调用方事务删除条目、FTS 与节点关联行。"""
         for entry_batch in self._chunked(entry_ids, self._SQLITE_BATCH_SIZE):
-            placeholders = ",".join("?" * len(entry_batch))
+            entry_params = {"entry_ids_json": json.dumps(entry_batch)}
             await db.execute(
-                f"DELETE FROM memora_graph_entries_fts WHERE entry_id IN ({placeholders})",
-                entry_batch,
+                """
+                DELETE FROM memora_graph_entries_fts
+                WHERE entry_id IN (SELECT value FROM json_each(:entry_ids_json))
+                """,
+                entry_params,
             )
             await db.execute(
-                f"DELETE FROM graph_entry_nodes WHERE entry_id IN ({placeholders})",
-                entry_batch,
+                """
+                DELETE FROM graph_entry_nodes
+                WHERE entry_id IN (SELECT value FROM json_each(:entry_ids_json))
+                """,
+                entry_params,
             )
             await db.execute(
-                f"DELETE FROM graph_entries WHERE id IN ({placeholders})",
-                entry_batch,
+                """
+                DELETE FROM graph_entries
+                WHERE id IN (SELECT value FROM json_each(:entry_ids_json))
+                """,
+                entry_params,
             )
 
     async def _delete_unreferenced_edges(
@@ -121,17 +136,16 @@ class GraphDeleteMixin(BaseStore):
         """使用调用方事务删除已经没有图条目引用的边。"""
         unique_edge_ids = sorted(set(edge_ids))
         for edge_batch in self._chunked(unique_edge_ids, self._SQLITE_BATCH_SIZE):
-            placeholders = ",".join("?" * len(edge_batch))
             await db.execute(
-                f"""
+                """
                 DELETE FROM graph_edges
-                WHERE id IN ({placeholders})
+                WHERE id IN (SELECT value FROM json_each(:edge_ids_json))
                 AND NOT EXISTS (
                     SELECT 1 FROM graph_entries
                     WHERE graph_entries.edge_id = graph_edges.id
                 )
                 """,
-                edge_batch,
+                {"edge_ids_json": json.dumps(edge_batch)},
             )
 
     async def _delete_orphan_nodes(self, db: aiosqlite.Connection) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import aiosqlite
@@ -20,31 +21,29 @@ class GraphQueryMixin(BaseStore):
         persona_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """通过 FTS 表搜索图条目。"""
-        filters: list[str] = []
-        params: list[Any] = [fts_query]
-        if session_id is not None:
-            filters.append("ge.session_id = ?")
-            params.append(session_id)
-        if persona_id is not None:
-            filters.append("ge.persona_id = ?")
-            params.append(persona_id)
-
-        where_clause = f"AND {' AND '.join(filters)}" if filters else ""
+        params = {
+            "fts_query": fts_query,
+            "session_id": session_id,
+            "persona_id": persona_id,
+            "limit": limit,
+        }
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                f"""
+                """
                 SELECT ge.id, ge.source_memory_id, ge.content, ge.metadata,
                        ge.entry_type, ge.relation_type, ge.session_id, ge.persona_id,
                        bm25(memora_graph_entries_fts) AS score
                 FROM memora_graph_entries_fts
                 JOIN graph_entries ge ON ge.id = memora_graph_entries_fts.entry_id
-                WHERE memora_graph_entries_fts MATCH ? {where_clause}
+                WHERE memora_graph_entries_fts MATCH :fts_query
+                  AND (:session_id IS NULL OR ge.session_id = :session_id)
+                  AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
                 ORDER BY score ASC
-                LIMIT ?
+                LIMIT :limit
                 """,
-                (*params, limit),
+                params,
             )
             rows = await cursor.fetchall()
 
@@ -82,19 +81,23 @@ class GraphQueryMixin(BaseStore):
         """查找规范值中包含查询 token 的图节点。"""
         if not tokens:
             return []
-        clauses = ["canonical_value LIKE ?" for _ in tokens]
-        params = [f"%{token}%" for token in tokens]
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                f"""
+                """
                 SELECT id, node_key, node_type, node_value, canonical_value, metadata
                 FROM graph_nodes
-                WHERE {" OR ".join(clauses)}
+                WHERE EXISTS (
+                    SELECT 1 FROM json_each(:patterns_json) AS pattern
+                    WHERE canonical_value LIKE pattern.value
+                )
                 ORDER BY LENGTH(canonical_value) ASC
-                LIMIT ?
+                LIMIT :limit
                 """,
-                (*params, limit),
+                {
+                    "patterns_json": json.dumps([f"%{token}%" for token in tokens]),
+                    "limit": limit,
+                },
             )
             rows = await cursor.fetchall()
 
@@ -121,32 +124,31 @@ class GraphQueryMixin(BaseStore):
         if not node_ids:
             return []
 
-        placeholders = ",".join("?" * len(node_ids))
-        filters: list[str] = []
-        params: list[Any] = list(node_ids)
-
-        if session_id is not None:
-            filters.append("ge.session_id = ?")
-            params.append(session_id)
-        if persona_id is not None:
-            filters.append("ge.persona_id = ?")
-            params.append(persona_id)
-        where_clause = f"AND {' AND '.join(filters)}" if filters else ""
+        params = {
+            "node_ids_json": json.dumps(node_ids),
+            "session_id": session_id,
+            "persona_id": persona_id,
+            "limit": limit,
+        }
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                f"""
+                """
                 SELECT ge.id, ge.source_memory_id, ge.content, ge.metadata,
                        ge.entry_type, ge.relation_type, COUNT(DISTINCT gen.node_id) AS hit_count
                 FROM graph_entry_nodes gen
                 JOIN graph_entries ge ON ge.id = gen.entry_id
-                WHERE gen.node_id IN ({placeholders}) {where_clause}
+                WHERE gen.node_id IN (
+                    SELECT value FROM json_each(:node_ids_json)
+                )
+                  AND (:session_id IS NULL OR ge.session_id = :session_id)
+                  AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
                 GROUP BY ge.id
                 ORDER BY hit_count DESC, ge.id DESC
-                LIMIT ?
+                LIMIT :limit
                 """,
-                (*params, limit),
+                params,
             )
             rows = await cursor.fetchall()
 
@@ -177,30 +179,35 @@ class GraphQueryMixin(BaseStore):
             return []
 
         normalized_ids = sorted({int(item) for item in node_ids})
-        placeholders = ",".join("?" * len(normalized_ids))
         limit = max(1, min(limit, 500))
 
         async with self._connect() as db:
             cursor = await db.execute(
-                f"""
+                """
                 SELECT neighbor_id, SUM(edge_weight) AS total_weight
                 FROM (
                     SELECT target_node_id AS neighbor_id, weight AS edge_weight
                     FROM graph_edges
-                    WHERE source_node_id IN ({placeholders})
+                    WHERE source_node_id IN (
+                        SELECT value FROM json_each(:node_ids_json)
+                    )
                       AND status = 'active'
                     UNION ALL
                     SELECT source_node_id AS neighbor_id, weight AS edge_weight
                     FROM graph_edges
-                    WHERE target_node_id IN ({placeholders})
+                    WHERE target_node_id IN (
+                        SELECT value FROM json_each(:node_ids_json)
+                    )
                       AND status = 'active'
                 )
-                WHERE neighbor_id NOT IN ({placeholders})
+                WHERE neighbor_id NOT IN (
+                    SELECT value FROM json_each(:node_ids_json)
+                )
                 GROUP BY neighbor_id
                 ORDER BY total_weight DESC, neighbor_id ASC
-                LIMIT ?
+                LIMIT :limit
                 """,
-                (*normalized_ids, *normalized_ids, *normalized_ids, limit),
+                {"node_ids_json": json.dumps(normalized_ids), "limit": limit},
             )
             rows = await cursor.fetchall()
 
@@ -214,30 +221,23 @@ class GraphQueryMixin(BaseStore):
     ) -> list[int]:
         """返回图中最近更新的记忆标识符。"""
         limit = max(1, min(limit, 200))
-        filters: list[str] = []
-        params: list[Any] = []
-
-        if session_id is not None:
-            filters.append("session_id = ?")
-            params.append(session_id)
-        if persona_id is not None:
-            filters.append("persona_id = ?")
-            params.append(persona_id)
-
-        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
-
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                f"""
+                """
                 SELECT source_memory_id, MAX(id) AS latest_entry_id
                 FROM graph_entries
-                {where_clause}
+                WHERE (:session_id IS NULL OR session_id = :session_id)
+                  AND (:persona_id IS NULL OR persona_id = :persona_id)
                 GROUP BY source_memory_id
                 ORDER BY latest_entry_id DESC
-                LIMIT ?
+                LIMIT :limit
                 """,
-                (*params, limit),
+                {
+                    "session_id": session_id,
+                    "persona_id": persona_id,
+                    "limit": limit,
+                },
             )
             rows = await cursor.fetchall()
 

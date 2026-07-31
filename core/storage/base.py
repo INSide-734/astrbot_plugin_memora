@@ -14,26 +14,24 @@ import aiosqlite
 # 共享 SQLite 性能 PRAGMA —— 单一事实来源
 # ---------------------------------------------------------------------------
 
-_PERF_PRAGMAS: tuple[tuple[str, str], ...] = (
-    ("foreign_keys", "ON"),
-    ("journal_mode", "WAL"),
-    ("synchronous", "NORMAL"),
-    ("busy_timeout", "30000"),
-    ("cache_size", "-65536"),  # 64 MB page cache
-    ("temp_store", "MEMORY"),
-    ("mmap_size", "268435456"),  # 256 MB memory-mapped I/O
+_PERF_PRAGMAS: tuple[str, ...] = (
+    "PRAGMA foreign_keys = ON",
+    "PRAGMA journal_mode = WAL",
+    "PRAGMA synchronous = NORMAL",
+    "PRAGMA busy_timeout = 30000",
+    "PRAGMA cache_size = -65536",  # 64 MB page cache
+    "PRAGMA temp_store = MEMORY",
+    "PRAGMA mmap_size = 268435456",  # 256 MB memory-mapped I/O
 )
 
 
 async def apply_perf_pragmas(conn: aiosqlite.Connection) -> None:
     """将共享性能 PRAGMA 设置应用到 `conn`。
 
-    此处安全使用 f-string：`key` 与 `value` 均来自硬编码的
-    `_PERF_PRAGMAS` 常量，而非用户输入。
+    每条 PRAGMA 均为固定语句，不接受调用方提供的标识符或值。
     """
-    for key, value in _PERF_PRAGMAS:
-        # 安全：key/value 来自上方可信的 _PERF_PRAGMAS 常量
-        await conn.execute(f"PRAGMA {key} = {value}")
+    for statement in _PERF_PRAGMAS:
+        await conn.execute(statement)
 
 
 # ---------------------------------------------------------------------------

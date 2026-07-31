@@ -68,9 +68,9 @@ class RelationStore(BaseStore):
     async def initialize(self) -> None:
         """若表不存在，则创建 ``social_relations`` 表。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
-            await db.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_sql} (
+            _ = self._table_sql
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS social_relations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     from_user TEXT NOT NULL,
                     to_user TEXT NOT NULL,
@@ -83,17 +83,17 @@ class RelationStore(BaseStore):
                     UNIQUE(from_user, to_user, relation_type, group_id)
                 )
             """)
-            await db.execute(f"""
+            await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_social_from
-                ON {table_sql}(from_user, group_id)
+                ON social_relations(from_user, group_id)
             """)
-            await db.execute(f"""
+            await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_social_to
-                ON {table_sql}(to_user, group_id)
+                ON social_relations(to_user, group_id)
             """)
-            await db.execute(f"""
+            await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_social_group
-                ON {table_sql}(group_id)
+                ON social_relations(group_id)
             """)
             await db.commit()
 
@@ -409,10 +409,10 @@ class RelationStore(BaseStore):
     async def upsert_relation(self, rel: SocialRelation) -> None:
         """插入或更新一条 ``SocialRelation``。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             await db.execute(
-                f"""
-                INSERT INTO {table_sql}
+                """
+                INSERT INTO social_relations
                     (from_user, to_user, relation_type, strength, frequency,
                      last_interaction, group_id, tags_json)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -444,11 +444,11 @@ class RelationStore(BaseStore):
     ) -> SocialRelation | None:
         """按主键获取单条关系记录。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
+                """
                 SELECT *
-                FROM {table_sql}
+                FROM social_relations
                 WHERE from_user = ?
                   AND to_user = ?
                   AND relation_type = ?
@@ -467,21 +467,54 @@ class RelationStore(BaseStore):
         sort: SortQuery = SortQuery("strength", "desc"),
     ) -> list[SocialRelation]:
         """返回指定群组内的全部关系。"""
-        order_by = order_by_clause(
+        _ = order_by_clause(
             sort,
             columns=_SOCIAL_SQL_COLUMNS,
             tie_breaker="id",
         )
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
+                """
                 SELECT *
-                FROM {table_sql}
-                WHERE group_id = ?
-                ORDER BY {order_by}
+                FROM social_relations
+                WHERE group_id = :group_id
+                ORDER BY
+                  CASE WHEN :sort_by = 'from_user' AND :sort_order = 'asc'
+                       THEN from_user END COLLATE NOCASE ASC,
+                  CASE WHEN :sort_by = 'from_user' AND :sort_order = 'desc'
+                       THEN from_user END COLLATE NOCASE DESC,
+                  CASE WHEN :sort_by = 'to_user' AND :sort_order = 'asc'
+                       THEN to_user END COLLATE NOCASE ASC,
+                  CASE WHEN :sort_by = 'to_user' AND :sort_order = 'desc'
+                       THEN to_user END COLLATE NOCASE DESC,
+                  CASE WHEN :sort_by = 'group_id' AND :sort_order = 'asc'
+                       THEN group_id END COLLATE NOCASE ASC,
+                  CASE WHEN :sort_by = 'group_id' AND :sort_order = 'desc'
+                       THEN group_id END COLLATE NOCASE DESC,
+                  CASE WHEN :sort_by = 'relation_type' AND :sort_order = 'asc'
+                       THEN relation_type END COLLATE NOCASE ASC,
+                  CASE WHEN :sort_by = 'relation_type' AND :sort_order = 'desc'
+                       THEN relation_type END COLLATE NOCASE DESC,
+                  CASE WHEN :sort_by = 'strength' AND :sort_order = 'asc'
+                       THEN strength END ASC,
+                  CASE WHEN :sort_by = 'strength' AND :sort_order = 'desc'
+                       THEN strength END DESC,
+                  CASE WHEN :sort_by = 'frequency' AND :sort_order = 'asc'
+                       THEN frequency END ASC,
+                  CASE WHEN :sort_by = 'frequency' AND :sort_order = 'desc'
+                       THEN frequency END DESC,
+                  CASE WHEN :sort_by = 'last_interaction' AND :sort_order = 'asc'
+                       THEN last_interaction END ASC,
+                  CASE WHEN :sort_by = 'last_interaction' AND :sort_order = 'desc'
+                       THEN last_interaction END DESC,
+                  id ASC
                 """,
-                (group_id,),
+                {
+                    "group_id": group_id,
+                    "sort_by": sort.by,
+                    "sort_order": sort.order,
+                },
             )
             rows = await cursor.fetchall()
             return [SocialRelation.from_row(self._row_to_dict(r)) for r in rows]
@@ -489,11 +522,11 @@ class RelationStore(BaseStore):
     async def get_user_network(self, user_id: str) -> list[SocialRelation]:
         """返回涉及指定用户的全部关系（作为 from 或 to）。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
+                """
                 SELECT *
-                FROM {table_sql}
+                FROM social_relations
                 WHERE from_user = ? OR to_user = ?
                 ORDER BY strength DESC
                 """,
@@ -507,11 +540,11 @@ class RelationStore(BaseStore):
     ) -> list[SocialRelation]:
         """返回指定群组中涉及该用户的全部关系。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
+                """
                 SELECT *
-                FROM {table_sql}
+                FROM social_relations
                 WHERE (from_user = ? OR to_user = ?)
                   AND group_id = ?
                 ORDER BY strength DESC
@@ -530,10 +563,10 @@ class RelationStore(BaseStore):
     ) -> bool:
         """删除单条关系；若成功删除行则返回 ``True``。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
-                DELETE FROM {table_sql}
+                """
+                DELETE FROM social_relations
                 WHERE from_user = ?
                   AND to_user = ?
                   AND relation_type = ?
@@ -547,10 +580,10 @@ class RelationStore(BaseStore):
     async def delete_user_relations(self, user_id: str, group_id: str) -> int:
         """删除指定群组内涉及该用户的全部关系。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
-                DELETE FROM {table_sql}
+                """
+                DELETE FROM social_relations
                 WHERE (from_user = ? OR to_user = ?)
                   AND group_id = ?
                 """,
@@ -564,31 +597,68 @@ class RelationStore(BaseStore):
         sort: SortQuery = SortQuery("last_interaction", "desc"),
     ) -> list[SocialRelation]:
         """返回全部记录（便于调试或迁移）。"""
-        order_by = order_by_clause(
+        _ = order_by_clause(
             sort,
             columns=_SOCIAL_SQL_COLUMNS,
             tie_breaker="id",
         )
         async with self._connect() as db:
-            table_sql = self._table_sql
-            cursor = await db.execute(f"SELECT * FROM {table_sql} ORDER BY {order_by}")
+            _ = self._table_sql
+            cursor = await db.execute(
+                """
+                SELECT * FROM social_relations
+                ORDER BY
+                  CASE WHEN :sort_by = 'from_user' AND :sort_order = 'asc'
+                       THEN from_user END COLLATE NOCASE ASC,
+                  CASE WHEN :sort_by = 'from_user' AND :sort_order = 'desc'
+                       THEN from_user END COLLATE NOCASE DESC,
+                  CASE WHEN :sort_by = 'to_user' AND :sort_order = 'asc'
+                       THEN to_user END COLLATE NOCASE ASC,
+                  CASE WHEN :sort_by = 'to_user' AND :sort_order = 'desc'
+                       THEN to_user END COLLATE NOCASE DESC,
+                  CASE WHEN :sort_by = 'group_id' AND :sort_order = 'asc'
+                       THEN group_id END COLLATE NOCASE ASC,
+                  CASE WHEN :sort_by = 'group_id' AND :sort_order = 'desc'
+                       THEN group_id END COLLATE NOCASE DESC,
+                  CASE WHEN :sort_by = 'relation_type' AND :sort_order = 'asc'
+                       THEN relation_type END COLLATE NOCASE ASC,
+                  CASE WHEN :sort_by = 'relation_type' AND :sort_order = 'desc'
+                       THEN relation_type END COLLATE NOCASE DESC,
+                  CASE WHEN :sort_by = 'strength' AND :sort_order = 'asc'
+                       THEN strength END ASC,
+                  CASE WHEN :sort_by = 'strength' AND :sort_order = 'desc'
+                       THEN strength END DESC,
+                  CASE WHEN :sort_by = 'frequency' AND :sort_order = 'asc'
+                       THEN frequency END ASC,
+                  CASE WHEN :sort_by = 'frequency' AND :sort_order = 'desc'
+                       THEN frequency END DESC,
+                  CASE WHEN :sort_by = 'last_interaction' AND :sort_order = 'asc'
+                       THEN last_interaction END ASC,
+                  CASE WHEN :sort_by = 'last_interaction' AND :sort_order = 'desc'
+                       THEN last_interaction END DESC,
+                  id ASC
+                """,
+                {"sort_by": sort.by, "sort_order": sort.order},
+            )
             rows = await cursor.fetchall()
             return [SocialRelation.from_row(self._row_to_dict(r)) for r in rows]
 
     async def count(self) -> int:
         """返回总行数。"""
         async with self._connect() as db:
-            cursor = await db.execute(f"SELECT COUNT(*) FROM {self._table_sql}")
+            _ = self._table_sql
+            cursor = await db.execute("SELECT COUNT(*) FROM social_relations")
             row = await cursor.fetchone()
             return int(row[0]) if row else 0
 
     async def list_group_ids(self) -> list[str]:
         """返回社交关系表中所有非空且去重的群组 ID。"""
         async with self._connect() as db:
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
+                """
                 SELECT DISTINCT group_id
-                FROM {self._table_sql}
+                FROM social_relations
                 WHERE group_id <> ''
                 ORDER BY group_id
                 """

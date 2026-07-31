@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -65,7 +66,7 @@ class TestGraphSubgraphMixin:
 
     @pytest.mark.asyncio
     async def test_duplicate_memory_ids_deduplicated(self) -> None:
-        """Duplicate memory_ids are deduplicated (line 32)."""
+        """重复的记忆 ID 会在查询前去重。"""
         store = _make_graph_store()
         mock_db = AsyncMock()
         mock_db.__aenter__ = AsyncMock(return_value=mock_db)
@@ -78,13 +79,10 @@ class TestGraphSubgraphMixin:
         store._connect = MagicMock(return_value=mock_db)
 
         await store.get_subgraph_for_memories([1, 1, 2, 2, 2, 3])
-        # Check that the query used exactly 3 unique memory ids
+        # 检查查询仅绑定 3 个去重后的记忆 ID。
         call_args = mock_db.execute.call_args_list[0]
-        params = call_args[0][1]  # positional params tuple
-        # Params structure: (*memory_ids, limit_entries). Last param is limit.
-        memory_id_params = list(params[:-1])  # exclude limit_entries
-        assert len(memory_id_params) == 3
-        assert sorted(memory_id_params) == [1, 2, 3]
+        params = call_args[0][1]
+        assert json.loads(params["memory_ids_json"]) == [1, 2, 3]
 
     @pytest.mark.asyncio
     async def test_empty_entry_rows_returns_empty(self) -> None:

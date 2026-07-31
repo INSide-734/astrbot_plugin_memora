@@ -57,8 +57,12 @@ class Bm25RebuilderMixin:
                     async with aiosqlite.connect(self.db_path) as db:
                         await apply_perf_pragmas(db)
                         await db.executemany(
-                            f"INSERT INTO {table_name}(doc_id, content) VALUES (?, ?)",
-                            rows_to_insert,
+                            """INSERT INTO memora_memories_fts(doc_id, content)
+                               VALUES (:doc_id, :content)""",
+                            [
+                                {"doc_id": doc_id, "content": content}
+                                for doc_id, content in rows_to_insert
+                            ],
                         )
                         await db.commit()
                     processed += len(rows_to_insert)
@@ -69,8 +73,12 @@ class Bm25RebuilderMixin:
                             async with aiosqlite.connect(self.db_path) as db:
                                 await apply_perf_pragmas(db)
                                 await db.execute(
-                                    f"INSERT INTO {table_name}(doc_id, content) VALUES (?, ?)",
-                                    (row_doc_id, processed_content),
+                                    """INSERT INTO memora_memories_fts(doc_id, content)
+                                       VALUES (:doc_id, :content)""",
+                                    {
+                                        "doc_id": row_doc_id,
+                                        "content": processed_content,
+                                    },
                                 )
                                 await db.commit()
                             processed += 1

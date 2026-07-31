@@ -6,6 +6,7 @@ MemoryEngine 批量操作 Mixin
 from __future__ import annotations
 
 import asyncio
+import json
 
 from astrbot.api import logger
 
@@ -32,7 +33,7 @@ class MemoryEngineBatchMixin:
         errors: list[dict] = []
         for i in range(0, len(memory_ids), 200):
             batch = memory_ids[i : i + 200]
-            ph = ",".join("?" * len(batch))
+            batch_params = {"memory_ids_json": json.dumps(batch)}
             op_id = await self._write_journal.start_op(
                 "batch_delete",
                 {"memory_ids": batch, "batch_offset": i, "batch_size": len(batch)},
@@ -41,10 +42,18 @@ class MemoryEngineBatchMixin:
             batch_existing_ids: list[int] = []
             try:
                 await self.db_connection.execute(
-                    f"DELETE FROM memora_memories_fts WHERE doc_id IN ({ph})", batch
+                    """
+                    DELETE FROM memora_memories_fts
+                    WHERE doc_id IN (SELECT value FROM json_each(:memory_ids_json))
+                    """,
+                    batch_params,
                 )
                 cursor = await self.db_connection.execute(
-                    f"SELECT id, doc_id FROM documents WHERE id IN ({ph})", batch
+                    """
+                    SELECT id, doc_id FROM documents
+                    WHERE id IN (SELECT value FROM json_each(:memory_ids_json))
+                    """,
+                    batch_params,
                 )
                 uuid_rows = await cursor.fetchall()
                 batch_existing_ids = [int(row["id"]) for row in uuid_rows]
@@ -57,7 +66,11 @@ class MemoryEngineBatchMixin:
                         except Exception:
                             pass
                 cursor = await self.db_connection.execute(
-                    f"DELETE FROM documents WHERE id IN ({ph})", batch
+                    """
+                    DELETE FROM documents
+                    WHERE id IN (SELECT value FROM json_each(:memory_ids_json))
+                    """,
+                    batch_params,
                 )
                 await self.db_connection.commit()
                 batch_deleted = int(cursor.rowcount or 0)
@@ -111,12 +124,20 @@ class MemoryEngineBatchMixin:
     async def _delete_document_indexes_for_batch(self, memory_ids: list[int]) -> int:
         if not memory_ids or self.db_connection is None:
             return 0
-        ph = ",".join("?" * len(memory_ids))
+        batch_params = {"memory_ids_json": json.dumps(memory_ids)}
         await self.db_connection.execute(
-            f"DELETE FROM memora_memories_fts WHERE doc_id IN ({ph})", memory_ids
+            """
+            DELETE FROM memora_memories_fts
+            WHERE doc_id IN (SELECT value FROM json_each(:memory_ids_json))
+            """,
+            batch_params,
         )
         cursor = await self.db_connection.execute(
-            f"SELECT id, doc_id FROM documents WHERE id IN ({ph})", memory_ids
+            """
+            SELECT id, doc_id FROM documents
+            WHERE id IN (SELECT value FROM json_each(:memory_ids_json))
+            """,
+            batch_params,
         )
         uuid_rows = await cursor.fetchall()
         for row in uuid_rows:
@@ -128,7 +149,11 @@ class MemoryEngineBatchMixin:
                 except Exception as e:
                     logger.warning(f"[批量删除索引] FAISS 向量删除失败: {e}")
         cursor = await self.db_connection.execute(
-            f"DELETE FROM documents WHERE id IN ({ph})", memory_ids
+            """
+            DELETE FROM documents
+            WHERE id IN (SELECT value FROM json_each(:memory_ids_json))
+            """,
+            batch_params,
         )
         await self.db_connection.commit()
         for memory_id in memory_ids:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -174,20 +175,22 @@ class GraphSubgraphMixin(BaseStore):
         limit_edges: int,
     ) -> tuple[list[aiosqlite.Row], list[aiosqlite.Row], list[aiosqlite.Row]]:
         """查询给定记忆 ID 对应的条目、节点和边数据。"""
-        memory_placeholders = ",".join("?" * len(normalized_memory_ids))
+        memory_params = {"memory_ids_json": json.dumps(normalized_memory_ids)}
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             entry_cursor = await db.execute(
-                f"""
+                """
                 SELECT id, source_memory_id, session_id, persona_id,
                        entry_type, relation_type, content, metadata, edge_id
                 FROM graph_entries
-                WHERE source_memory_id IN ({memory_placeholders})
+                WHERE source_memory_id IN (
+                    SELECT value FROM json_each(:memory_ids_json)
+                )
                 ORDER BY id DESC
-                LIMIT ?
+                LIMIT :limit_entries
                 """,
-                (*normalized_memory_ids, limit_entries),
+                {**memory_params, "limit_entries": limit_entries},
             )
             entry_rows = list(await entry_cursor.fetchall())
 
@@ -195,9 +198,8 @@ class GraphSubgraphMixin(BaseStore):
                 return [], [], []
 
             entry_ids = [int(row["id"]) for row in entry_rows]
-            entry_placeholders = ",".join("?" * len(entry_ids))
             node_cursor = await db.execute(
-                f"""
+                """
                 SELECT gen.entry_id,
                        gn.id AS node_id,
                        gn.node_key,
@@ -207,35 +209,41 @@ class GraphSubgraphMixin(BaseStore):
                        gn.metadata
                 FROM graph_entry_nodes gen
                 JOIN graph_nodes gn ON gn.id = gen.node_id
-                WHERE gen.entry_id IN ({entry_placeholders})
+                WHERE gen.entry_id IN (
+                    SELECT value FROM json_each(:entry_ids_json)
+                )
                 ORDER BY gn.id ASC
                 """,
-                tuple(entry_ids),
+                {"entry_ids_json": json.dumps(entry_ids)},
             )
             node_rows = list(await node_cursor.fetchall())
 
             node_ids = sorted({int(row["node_id"]) for row in node_rows})
             edge_rows: list[aiosqlite.Row] = []
             if node_ids:
-                node_placeholders = ",".join("?" * len(node_ids))
                 edge_cursor = await db.execute(
-                    f"""
+                    """
                     SELECT id, edge_key, source_node_id, target_node_id,
                            relation_type, source_memory_id, weight,
                            confidence, status, metadata, created_at
                     FROM graph_edges
-                    WHERE source_memory_id IN ({memory_placeholders})
-                      AND source_node_id IN ({node_placeholders})
-                      AND target_node_id IN ({node_placeholders})
+                    WHERE source_memory_id IN (
+                        SELECT value FROM json_each(:memory_ids_json)
+                    )
+                      AND source_node_id IN (
+                        SELECT value FROM json_each(:node_ids_json)
+                      )
+                      AND target_node_id IN (
+                        SELECT value FROM json_each(:node_ids_json)
+                      )
                     ORDER BY id DESC
-                    LIMIT ?
+                    LIMIT :limit_edges
                     """,
-                    (
-                        *normalized_memory_ids,
-                        *node_ids,
-                        *node_ids,
-                        limit_edges,
-                    ),
+                    {
+                        **memory_params,
+                        "node_ids_json": json.dumps(node_ids),
+                        "limit_edges": limit_edges,
+                    },
                 )
                 edge_rows = list(await edge_cursor.fetchall())
 
@@ -248,37 +256,28 @@ class GraphSubgraphMixin(BaseStore):
         persona_id: str | None,
     ) -> tuple[list[aiosqlite.Row], list[aiosqlite.Row], list[aiosqlite.Row]]:
         """一次读取指定作用域内的全部图条目、关联节点和边。"""
-        filters: list[str] = []
-        params: list[Any] = []
-        if session_id is not None:
-            filters.append("ge.session_id = ?")
-            params.append(session_id)
-        if persona_id is not None:
-            filters.append("ge.persona_id = ?")
-            params.append(persona_id)
-
-        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
-        related_filter = f"AND {' AND '.join(filters)}" if filters else ""
+        params = {"session_id": session_id, "persona_id": persona_id}
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             entry_cursor = await db.execute(
-                f"""
+                """
                 SELECT ge.id, ge.source_memory_id, ge.session_id, ge.persona_id,
                        ge.entry_type, ge.relation_type, ge.content,
                        ge.metadata, ge.edge_id
                 FROM graph_entries ge
-                {where_clause}
+                WHERE (:session_id IS NULL OR ge.session_id = :session_id)
+                  AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
                 ORDER BY ge.id DESC
                 """,
-                tuple(params),
+                params,
             )
             entry_rows = list(await entry_cursor.fetchall())
             if not entry_rows:
                 return [], [], []
 
             node_cursor = await db.execute(
-                f"""
+                """
                 SELECT gen.entry_id,
                        gn.id AS node_id,
                        gn.node_key,
@@ -289,15 +288,16 @@ class GraphSubgraphMixin(BaseStore):
                 FROM graph_entry_nodes gen
                 JOIN graph_entries ge ON ge.id = gen.entry_id
                 JOIN graph_nodes gn ON gn.id = gen.node_id
-                {where_clause}
+                WHERE (:session_id IS NULL OR ge.session_id = :session_id)
+                  AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
                 ORDER BY gn.id ASC
                 """,
-                tuple(params),
+                params,
             )
             node_rows = list(await node_cursor.fetchall())
 
             edge_cursor = await db.execute(
-                f"""
+                """
                 SELECT graph_edge.id, graph_edge.edge_key,
                        graph_edge.source_node_id, graph_edge.target_node_id,
                        graph_edge.relation_type, graph_edge.source_memory_id,
@@ -309,11 +309,12 @@ class GraphSubgraphMixin(BaseStore):
                     SELECT 1
                     FROM graph_entries ge
                     WHERE ge.source_memory_id = graph_edge.source_memory_id
-                    {related_filter}
+                      AND (:session_id IS NULL OR ge.session_id = :session_id)
+                      AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
                 )
                 ORDER BY graph_edge.id DESC
                 """,
-                tuple(params),
+                params,
             )
             edge_rows = list(await edge_cursor.fetchall())
 

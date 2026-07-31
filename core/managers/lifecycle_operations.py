@@ -215,16 +215,18 @@ class LifecycleOperationsMixin:
             if row and row[0] == "true":
                 return
 
-            placeholders = " OR ".join(
-                ["json_extract(metadata, '$.session_id') = ?" for _ in candidates]
-            )
-            query = f"""
+            query = """
                 SELECT id, metadata FROM documents
-                WHERE ({placeholders})
+                WHERE json_extract(metadata, '$.session_id') IN (
+                    SELECT value FROM json_each(:candidates_json)
+                )
                 AND json_extract(metadata, '$.session_id') NOT LIKE '%:%'
             """
 
-            cursor = await self._db.execute(query, tuple(candidates))
+            cursor = await self._db.execute(
+                query,
+                {"candidates_json": json.dumps(candidates)},
+            )
             rows = list(await cursor.fetchall())
 
             if not rows:

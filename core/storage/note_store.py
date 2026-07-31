@@ -29,6 +29,10 @@ _CREATE_VERSIONS = """CREATE TABLE IF NOT EXISTS note_versions (
     content TEXT NOT NULL, created_at REAL NOT NULL,
     FOREIGN KEY (note_id) REFERENCES notes(id)
 )"""
+_NOTE_MIGRATIONS = {
+    "origin": "ALTER TABLE notes ADD COLUMN origin TEXT DEFAULT 'manual'",
+    "provenance_json": "ALTER TABLE notes ADD COLUMN provenance_json TEXT",
+}
 
 
 class NoteStore(BaseStore):
@@ -47,14 +51,9 @@ class NoteStore(BaseStore):
             await db.execute(_CREATE_VERSIONS)
             cursor = await db.execute("PRAGMA table_info(notes)")
             columns = {str(row[1]) for row in await cursor.fetchall()}
-            for column, definition in (
-                ("origin", "TEXT DEFAULT 'manual'"),
-                ("provenance_json", "TEXT"),
-            ):
+            for column, migration_sql in _NOTE_MIGRATIONS.items():
                 if column not in columns:
-                    await db.execute(
-                        f"ALTER TABLE notes ADD COLUMN {column} {definition}"
-                    )
+                    await db.execute(migration_sql)
             await db.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_note_versions_note_version

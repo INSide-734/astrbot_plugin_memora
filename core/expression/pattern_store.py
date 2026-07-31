@@ -211,7 +211,7 @@ class ExpressionPatternStore:
         sort: SortQuery = SortQuery("weight", "desc"),
     ) -> list[ExpressionPattern]:
         """按指定字段排序并返回作用域内前 N 条模式。"""
-        order_by = order_by_clause(
+        _ = order_by_clause(
             sort,
             columns=_EXPRESSION_SQL_COLUMNS,
             tie_breaker="id",
@@ -219,13 +219,47 @@ class ExpressionPatternStore:
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                f"""
+                """
                 SELECT * FROM expression_patterns
-                WHERE group_id = ? AND persona_id = ? AND user_id IS ?
-                ORDER BY {order_by}
-                LIMIT ?
+                WHERE group_id = :group_id
+                  AND persona_id = :persona_id
+                  AND user_id IS :user_id
+                ORDER BY
+                  CASE WHEN :sort_by = 'situation' AND :sort_order = 'asc'
+                       THEN situation END COLLATE NOCASE ASC,
+                  CASE WHEN :sort_by = 'situation' AND :sort_order = 'desc'
+                       THEN situation END COLLATE NOCASE DESC,
+                  CASE WHEN :sort_by = 'expression' AND :sort_order = 'asc'
+                       THEN expression END COLLATE NOCASE ASC,
+                  CASE WHEN :sort_by = 'expression' AND :sort_order = 'desc'
+                       THEN expression END COLLATE NOCASE DESC,
+                  CASE WHEN :sort_by = 'weight' AND :sort_order = 'asc'
+                       THEN weight END ASC,
+                  CASE WHEN :sort_by = 'weight' AND :sort_order = 'desc'
+                       THEN weight END DESC,
+                  CASE WHEN :sort_by = 'usage_count' AND :sort_order = 'asc'
+                       THEN usage_count END ASC,
+                  CASE WHEN :sort_by = 'usage_count' AND :sort_order = 'desc'
+                       THEN usage_count END DESC,
+                  CASE WHEN :sort_by = 'created_at' AND :sort_order = 'asc'
+                       THEN created_at END ASC,
+                  CASE WHEN :sort_by = 'created_at' AND :sort_order = 'desc'
+                       THEN created_at END DESC,
+                  CASE WHEN :sort_by = 'last_used_at' AND :sort_order = 'asc'
+                       THEN last_used_at END ASC,
+                  CASE WHEN :sort_by = 'last_used_at' AND :sort_order = 'desc'
+                       THEN last_used_at END DESC,
+                  id ASC
+                LIMIT :limit
                 """,
-                (scope.group_id, scope.persona_id, scope.user_id, limit),
+                {
+                    "group_id": scope.group_id,
+                    "persona_id": scope.persona_id,
+                    "user_id": scope.user_id,
+                    "sort_by": sort.by,
+                    "sort_order": sort.order,
+                    "limit": limit,
+                },
             )
             rows = await cursor.fetchall()
             return [self._row_to_pattern(dict(row)) for row in rows]

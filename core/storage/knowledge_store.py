@@ -23,6 +23,67 @@ KNOWLEDGE_SORT_COLUMNS = {
     "access_count": "access_count",
 }
 _KNOWLEDGE_SQL_COLUMNS = {**KNOWLEDGE_SORT_COLUMNS, "id": "id"}
+_KNOWLEDGE_MIGRATIONS = {
+    "origin": "ALTER TABLE knowledge_entries ADD COLUMN origin TEXT DEFAULT 'manual'",
+    "provenance_json": "ALTER TABLE knowledge_entries ADD COLUMN provenance_json TEXT",
+}
+_KNOWLEDGE_SEARCH_SQL = """
+    SELECT * FROM knowledge_entries
+    WHERE (:category IS NULL OR category = :category)
+      AND (title LIKE :like OR content LIKE :like)
+    ORDER BY
+      CASE WHEN :sort_by = 'title' AND :sort_order = 'asc'
+           THEN title END COLLATE NOCASE ASC,
+      CASE WHEN :sort_by = 'title' AND :sort_order = 'desc'
+           THEN title END COLLATE NOCASE DESC,
+      CASE WHEN :sort_by = 'category' AND :sort_order = 'asc'
+           THEN category END COLLATE NOCASE ASC,
+      CASE WHEN :sort_by = 'category' AND :sort_order = 'desc'
+           THEN category END COLLATE NOCASE DESC,
+      CASE WHEN :sort_by = 'confidence' AND :sort_order = 'asc'
+           THEN confidence END ASC,
+      CASE WHEN :sort_by = 'confidence' AND :sort_order = 'desc'
+           THEN confidence END DESC,
+      CASE WHEN :sort_by = 'updated_at' AND :sort_order = 'asc'
+           THEN updated_at END ASC,
+      CASE WHEN :sort_by = 'updated_at' AND :sort_order = 'desc'
+           THEN updated_at END DESC,
+      CASE WHEN :sort_by = 'access_count' AND :sort_order = 'asc'
+           THEN access_count END ASC,
+      CASE WHEN :sort_by = 'access_count' AND :sort_order = 'desc'
+           THEN access_count END DESC,
+      CASE WHEN :sort_by = 'id' AND :sort_order = 'asc' THEN id END ASC,
+      CASE WHEN :sort_by = 'id' AND :sort_order = 'desc' THEN id END DESC,
+      id ASC
+"""
+_KNOWLEDGE_LIST_SQL = """
+    SELECT * FROM knowledge_entries
+    WHERE :category IS NULL OR category = :category
+    ORDER BY
+      CASE WHEN :sort_by = 'title' AND :sort_order = 'asc'
+           THEN title END COLLATE NOCASE ASC,
+      CASE WHEN :sort_by = 'title' AND :sort_order = 'desc'
+           THEN title END COLLATE NOCASE DESC,
+      CASE WHEN :sort_by = 'category' AND :sort_order = 'asc'
+           THEN category END COLLATE NOCASE ASC,
+      CASE WHEN :sort_by = 'category' AND :sort_order = 'desc'
+           THEN category END COLLATE NOCASE DESC,
+      CASE WHEN :sort_by = 'confidence' AND :sort_order = 'asc'
+           THEN confidence END ASC,
+      CASE WHEN :sort_by = 'confidence' AND :sort_order = 'desc'
+           THEN confidence END DESC,
+      CASE WHEN :sort_by = 'updated_at' AND :sort_order = 'asc'
+           THEN updated_at END ASC,
+      CASE WHEN :sort_by = 'updated_at' AND :sort_order = 'desc'
+           THEN updated_at END DESC,
+      CASE WHEN :sort_by = 'access_count' AND :sort_order = 'asc'
+           THEN access_count END ASC,
+      CASE WHEN :sort_by = 'access_count' AND :sort_order = 'desc'
+           THEN access_count END DESC,
+      CASE WHEN :sort_by = 'id' AND :sort_order = 'asc' THEN id END ASC,
+      CASE WHEN :sort_by = 'id' AND :sort_order = 'desc' THEN id END DESC,
+      id ASC
+"""
 
 _CREATE_KB = """CREATE TABLE IF NOT EXISTS knowledge_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,14 +117,9 @@ class KnowledgeStore(BaseStore):
             await db.execute(_CREATE_KB)
             cursor = await db.execute("PRAGMA table_info(knowledge_entries)")
             columns = {str(row[1]) for row in await cursor.fetchall()}
-            for column, definition in (
-                ("origin", "TEXT DEFAULT 'manual'"),
-                ("provenance_json", "TEXT"),
-            ):
+            for column, migration_sql in _KNOWLEDGE_MIGRATIONS.items():
                 if column not in columns:
-                    await db.execute(
-                        f"ALTER TABLE knowledge_entries ADD COLUMN {column} {definition}"
-                    )
+                    await db.execute(migration_sql)
             await db.commit()
 
     async def insert(self, entry: KnowledgeEntry) -> int:
@@ -133,26 +189,21 @@ class KnowledgeStore(BaseStore):
         """按关键词搜索知识，并过滤不可见的 derived 条目。"""
 
         like = f"%{query}%"
-        order_by = order_by_clause(
+        _ = order_by_clause(
             sort,
             columns=_KNOWLEDGE_SQL_COLUMNS,
             tie_breaker="id",
         )
         async with self._connect() as db:
-            if category:
-                cursor = await db.execute(
-                    f"""SELECT * FROM knowledge_entries
-                       WHERE category = ? AND (title LIKE ? OR content LIKE ?)
-                       ORDER BY {order_by}""",
-                    (category, like, like),
-                )
-            else:
-                cursor = await db.execute(
-                    f"""SELECT * FROM knowledge_entries
-                       WHERE title LIKE ? OR content LIKE ?
-                       ORDER BY {order_by}""",
-                    (like, like),
-                )
+            cursor = await db.execute(
+                _KNOWLEDGE_SEARCH_SQL,
+                {
+                    "category": category or None,
+                    "like": like,
+                    "sort_by": sort.by,
+                    "sort_order": sort.order,
+                },
+            )
             rows = await cursor.fetchall()
             entries = [self._row_to_entry(r) for r in rows]
             visible = await filter_current_domain_objects(db, entries)
@@ -185,22 +236,20 @@ class KnowledgeStore(BaseStore):
     ) -> tuple[list[KnowledgeEntry], int]:
         """分页列出知识，并过滤不可见的 derived 条目。"""
 
-        order_by = order_by_clause(
+        _ = order_by_clause(
             sort,
             columns=_KNOWLEDGE_SQL_COLUMNS,
             tie_breaker="id",
         )
         async with self._connect() as db:
-            if category:
-                cursor = await db.execute(
-                    f"""SELECT * FROM knowledge_entries
-                       WHERE category = ? ORDER BY {order_by}""",
-                    (category,),
-                )
-            else:
-                cursor = await db.execute(
-                    f"SELECT * FROM knowledge_entries ORDER BY {order_by}",
-                )
+            cursor = await db.execute(
+                _KNOWLEDGE_LIST_SQL,
+                {
+                    "category": category or None,
+                    "sort_by": sort.by,
+                    "sort_order": sort.order,
+                },
+            )
             rows = await cursor.fetchall()
             entries = [self._row_to_entry(r) for r in rows]
             visible = await filter_current_domain_objects(db, entries)

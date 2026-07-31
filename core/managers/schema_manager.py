@@ -17,6 +17,16 @@ class SchemaManager:
     """数据库模式管理 — 建表、迁移、旧触发器清理"""
 
     _ALLOWED_DOCUMENT_COLUMNS = frozenset({"doc_id", "created_at", "updated_at"})
+    _DOCUMENT_COLUMN_MIGRATIONS = {
+        "doc_id": 'ALTER TABLE documents ADD COLUMN "doc_id" TEXT',
+        "created_at": 'ALTER TABLE documents ADD COLUMN "created_at" TEXT',
+        "updated_at": 'ALTER TABLE documents ADD COLUMN "updated_at" TEXT',
+    }
+    _LEGACY_TRIGGER_DROP_SQL = {
+        "documents_fts_insert": "DROP TRIGGER IF EXISTS documents_fts_insert",
+        "documents_fts_update": "DROP TRIGGER IF EXISTS documents_fts_update",
+        "documents_fts_delete": "DROP TRIGGER IF EXISTS documents_fts_delete",
+    }
 
     def __init__(self, db_connection: aiosqlite.Connection | None = None) -> None:
         self._db = db_connection
@@ -58,10 +68,8 @@ class SchemaManager:
 
         for col_name in ("doc_id", "created_at", "updated_at"):
             if col_name not in existing_columns:
-                quoted_column = self._quote_allowed_document_column(col_name)
-                await self._db.execute(
-                    f"ALTER TABLE documents ADD COLUMN {quoted_column} TEXT"
-                )
+                self._quote_allowed_document_column(col_name)
+                await self._db.execute(self._DOCUMENT_COLUMN_MIGRATIONS[col_name])
                 logger.warning(
                     f"[SchemaManager] 检测到旧版 documents 表结构，已补齐字段: {col_name}"
                 )
@@ -168,6 +176,9 @@ class SchemaManager:
             if not isinstance(trigger_name, str) or not trigger_name.strip():
                 logger.warning("[SchemaManager] 跳过空的旧 FTS 触发器名")
                 continue
-            quoted_trigger_name = self._quote_identifier(trigger_name)
-            await self._db.execute(f"DROP TRIGGER IF EXISTS {quoted_trigger_name}")
+            drop_sql = self._LEGACY_TRIGGER_DROP_SQL.get(trigger_name)
+            if drop_sql is None:
+                logger.warning("[SchemaManager] 跳过非白名单旧 FTS 触发器名")
+                continue
+            await self._db.execute(drop_sql)
             logger.warning(f"已清理旧 Memora FTS 触发器: {trigger_name}")

@@ -288,9 +288,8 @@ class ReviewStore:
         memory_id: str,
         reasons: list[str],
     ) -> list[aiosqlite.Row]:
-        reason_placeholders = ",".join("?" for _ in reasons)
         cursor = await db.execute(
-            f"""
+            """
             SELECT *
             FROM review_items
             WHERE memory_id = ?
@@ -298,11 +297,11 @@ class ReviewStore:
               AND EXISTS (
                   SELECT 1
                   FROM json_each(reasons_json)
-                  WHERE value IN ({reason_placeholders})
+                  WHERE value IN (SELECT value FROM json_each(?))
             )
             ORDER BY updated_at DESC, item_id DESC
             """,
-            (memory_id, ReviewStatus.OPEN.value, *reasons),
+            (memory_id, ReviewStatus.OPEN.value, json.dumps(reasons)),
         )
         return await cursor.fetchall()
 

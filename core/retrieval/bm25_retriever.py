@@ -139,10 +139,10 @@ class BM25Retriever:
         """
         async with self._connect() as db:
             await self._warn_if_legacy_documents_fts_exists(db)
-            fts_table_sql = self._fts_table_sql
+            _ = self._fts_table_sql
             # 创建FTS5虚拟表
-            await db.execute(f"""
-                CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_sql}
+            await db.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS memora_memories_fts
                 USING fts5(
                     content,
                     doc_id UNINDEXED,
@@ -199,10 +199,10 @@ class BM25Retriever:
         processed_content = " ".join(tokens)
 
         async with self._connect() as db:
-            fts_table_sql = self._fts_table_sql
+            _ = self._fts_table_sql
             # 插入到FTS表
             await db.execute(
-                f"INSERT INTO {fts_table_sql}(doc_id, content) VALUES (?, ?)",
+                "INSERT INTO memora_memories_fts(doc_id, content) VALUES (?, ?)",
                 (doc_id, processed_content),
             )
             await db.commit()
@@ -251,19 +251,19 @@ class BM25Retriever:
         fetch_limit = limit * 10 if has_filters else limit * 2
 
         async with self._connect() as db:
-            fts_table_sql = self._fts_table_sql
-            doc_table_sql = self._doc_table_sql
+            _ = self._fts_table_sql
+            _ = self._doc_table_sql
             # 执行FTS5 BM25搜索
             # 注意: SQLite FTS5 bm25() 分数越小越相关（常见为负数）
             cursor = await db.execute(
-                f"""
-                SELECT doc_id, bm25({fts_table_sql}) as score
-                FROM {fts_table_sql}
-                WHERE {fts_table_sql} MATCH ?
+                """
+                SELECT doc_id, bm25(memora_memories_fts) as score
+                FROM memora_memories_fts
+                WHERE memora_memories_fts MATCH :fts_query
                 ORDER BY score ASC
-                LIMIT ?
+                LIMIT :fetch_limit
             """,
-                (fts_query, fetch_limit),
+                {"fts_query": fts_query, "fetch_limit": fetch_limit},
             )  # 多取一些以备过滤后不足
 
             fts_results = await cursor.fetchall()
@@ -273,15 +273,13 @@ class BM25Retriever:
 
             # 获取文档详情
             doc_ids = [row[0] for row in fts_results]
-            placeholders = ",".join("?" * len(doc_ids))
-
             cursor = await db.execute(
-                f"""
+                """
                 SELECT id, text, metadata
-                FROM {doc_table_sql}
-                WHERE id IN ({placeholders})
+                FROM documents
+                WHERE id IN (SELECT value FROM json_each(:doc_ids_json))
             """,
-                doc_ids,
+                {"doc_ids_json": json.dumps(doc_ids)},
             )
 
             docs = {}
@@ -354,9 +352,10 @@ class BM25Retriever:
 
         try:
             async with self._connect() as db:
-                fts_table_sql = self._fts_table_sql
+                _ = self._fts_table_sql
                 await db.execute(
-                    f"DELETE FROM {fts_table_sql} WHERE doc_id = ?", (doc_id,)
+                    "DELETE FROM memora_memories_fts WHERE doc_id = :doc_id",
+                    {"doc_id": doc_id},
                 )
                 await db.commit()
                 return True
@@ -392,16 +391,20 @@ class BM25Retriever:
             processed_content = " ".join(tokens)
 
             async with self._connect() as db:
-                fts_table_sql = self._fts_table_sql
+                _ = self._fts_table_sql
                 # 先删除旧索引
                 await db.execute(
-                    f"DELETE FROM {fts_table_sql} WHERE doc_id = ?", (doc_id,)
+                    "DELETE FROM memora_memories_fts WHERE doc_id = :doc_id",
+                    {"doc_id": doc_id},
                 )
 
                 # 插入新索引
                 await db.execute(
-                    f"INSERT INTO {fts_table_sql}(doc_id, content) VALUES (?, ?)",
-                    (doc_id, processed_content),
+                    """
+                    INSERT INTO memora_memories_fts(doc_id, content)
+                    VALUES (:doc_id, :content)
+                    """,
+                    {"doc_id": doc_id, "content": processed_content},
                 )
 
                 await db.commit()
