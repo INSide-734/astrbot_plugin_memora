@@ -76,7 +76,8 @@ flowchart LR
 | `pages/dashboard/` | React 管理面板 | [AGENTS.md](./pages/dashboard/AGENTS.md) |
 | `tests/` | pytest 测试体系 | [AGENTS.md](./tests/AGENTS.md) |
 | `scripts/` | 门禁、smoke 与 benchmark | [AGENTS.md](./scripts/AGENTS.md) |
-| `docs/` | 开发、设计与计划维护边界 | [AGENTS.md](./docs/AGENTS.md) |
+| `website/` | VitePress 中文用户与开发文档站 | [AGENTS.md](./website/AGENTS.md) |
+| `docs/` | 设计、计划与旧链接迁移入口 | [AGENTS.md](./docs/AGENTS.md) |
 
 ## 跨模块契约
 
@@ -112,7 +113,7 @@ uv sync --locked --dev
 uv run --locked pre-commit install --install-hooks
 ```
 
-- `pyproject.toml` 的 `[tool.ruff]` 与 `[tool.ruff.lint]` 是 Ruff 规则权威；`.pre-commit-config.yaml` 中 Ruff hook 版本必须与 uv dev 依赖保持一致。修改工具版本、规则或 hook 时同步 `uv.lock`、`docs/DEV_SETUP.md` 与契约测试。
+- `pyproject.toml` 的 `[tool.ruff]` 与 `[tool.ruff.lint]` 是 Ruff 规则权威；`.pre-commit-config.yaml` 中 Ruff hook 版本必须与 uv dev 依赖保持一致。修改工具版本、规则或 hook 时同步 `uv.lock`、`website/docs/development/` 与契约测试。
 - Ruff 采用渐进门禁。本轮新增或修改的 Python 文件必须先按以下顺序修复 lint、格式化并复查；若自动修复改变文件，先审阅差异再继续：
 
 ```powershell

@@ -192,6 +192,6 @@ python scripts/check_all.py
 ## 维护联动
 
 - 变更 `SMOKE_TARGETS`：同步 [测试模块上下文](../tests/AGENTS.md) 与 `tests/integration/README.md`。
-- 变更 `check_all.py` 步骤：同步 `docs/DEV_SETUP.md`、CI workflow 和 [普通文档维护边界](../docs/AGENTS.md)。
+- 变更 `check_all.py` 步骤：同步 [`website/docs/development/`](../website/docs/development/setup.md)、CI workflow 和 [文档维护边界](../docs/AGENTS.md)。
 - 变更 Dashboard bundle 形状：同步 Dashboard 构建配置、package script 与产物检查器。
 - 变更全路径场景或测量契约：同步基准测试；只有场景仍可比较时才更新版本化 baseline。
