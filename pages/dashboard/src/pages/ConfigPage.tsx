@@ -1,4 +1,10 @@
-import { LoaderCircle, RefreshCw, Save, Settings2 } from "lucide-react";
+import {
+  LoaderCircle,
+  RefreshCw,
+  Save,
+  Settings2,
+  TriangleAlert,
+} from "lucide-react";
 import {
   type UIEvent,
   useCallback,
@@ -18,6 +24,11 @@ import {
 } from "@/components/layout/PageLayout";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -476,6 +487,24 @@ export function ConfigPage({
         className="min-w-0 lg:overflow-hidden"
         onScroll={handleSectionScroll}
       >
+        {sync.runtimeEffects?.manualRestartRequired ? (
+          <Alert role="status" className="mb-3 shrink-0 rounded-md">
+            <TriangleAlert aria-hidden="true" />
+            <AlertTitle>{t("config.restartRequiredTitle")}</AlertTitle>
+            <AlertDescription>
+              {t("config.restartRequiredDescription")}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {sync.runtimeEffects?.rebuildRequired ? (
+          <Alert role="status" className="mb-3 shrink-0 rounded-md">
+            <RefreshCw aria-hidden="true" />
+            <AlertTitle>{t("config.rebuildRequiredTitle")}</AlertTitle>
+            <AlertDescription>
+              {t("config.rebuildRequiredDescription")}
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {!loaded && sync.status === "loading" ? (
           <StatePanel
             state="loading"

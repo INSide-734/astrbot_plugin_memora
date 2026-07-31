@@ -1,4 +1,4 @@
-"""Tests for the initialization-independent configuration Page API."""
+"""不依赖插件初始化状态的配置 Page API 测试。"""
 
 from __future__ import annotations
 
@@ -553,6 +553,8 @@ class TestConfigApplyApi:
     async def test_success_applies_exact_transaction_and_never_logs_values(
         self,
     ) -> None:
+        """成功响应应报告生效要求，并且日志不得包含配置值。"""
+
         secret_value = "never-log-this-secret"
         changes = {
             "provider_settings.llm_provider_id": secret_value,
@@ -592,6 +594,8 @@ class TestConfigApplyApi:
                     "recall_engine.top_k",
                 ],
                 "reload_scheduled": True,
+                "restart_required": True,
+                "rebuild_required": False,
                 "instance_id": "instance-123",
             },
         }

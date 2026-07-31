@@ -3,6 +3,7 @@ config_validator.py - 配置验证模块
 提供配置验证和默认值管理功能。
 """
 
+import math
 from typing import Any, Literal
 
 from astrbot.api import logger
@@ -15,6 +16,7 @@ from .feature_config import (
     JargonConfig,
     UpdateSettings,
 )
+from .runtime_feature_config import RuntimeFeatureConfigSections
 
 PresetName = Literal["tool_first", "low_cost", "balanced", "quality"]
 
@@ -424,7 +426,7 @@ class GraphMemoryConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_route_weights(self):
-        """将路由权重归一化至总和为 1.0，以确保数值稳定的融合计算。"""
+        """归一化路由权重，并拒绝总和不为一的图评分权重。"""
         total = self.document_route_weight + self.graph_route_weight
         if total <= 0:
             self.document_route_weight = 0.65
@@ -432,6 +434,11 @@ class GraphMemoryConfig(BaseModel):
         elif total != 1.0:
             self.document_route_weight = self.document_route_weight / total
             self.graph_route_weight = self.graph_route_weight / total
+        score_total = (
+            self.score_alpha + self.score_beta + self.score_gamma + self.score_delta
+        )
+        if not math.isclose(score_total, 1.0, rel_tol=0.0, abs_tol=1e-6):
+            raise ValueError("graph_memory 评分权重总和必须为 1.0")
         return self
 
 
@@ -621,7 +628,7 @@ class MemoryEvolutionConfig(BaseModel):
     )
 
 
-class MemoraConfig(BaseModel):
+class MemoraConfig(RuntimeFeatureConfigSections):
     """完整插件配置"""
 
     debug: bool = Field(

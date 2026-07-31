@@ -31,6 +31,7 @@ from ..storage.memory_evolution_store import MemoryEvolutionStore
 from ..storage.protocol_identity_store import ProtocolIdentityStore
 from ..validators.index_validator import IndexValidator
 from .derived_rebuild_coordinator import DerivedRebuildCoordinator
+from .engine_runtime_config import build_engine_runtime_config
 
 
 class ComponentFactory:
@@ -192,6 +193,9 @@ class ComponentFactory:
             llm_provider=llm_id if llm_id else None,
             config={
                 "atom_enabled": engine_config["atom_enabled"],
+                "atom_classifier.negation_detection_enabled": engine_config[
+                    "atom_classifier.negation_detection_enabled"
+                ],
                 **{
                     key: engine_config[key]
                     for key in (
@@ -457,175 +461,19 @@ class ComponentFactory:
     def _build_engine_config(
         self, stopwords_dir: Path, graph_memory_enabled: bool
     ) -> dict:
-        """把已校验配置投影为 MemoryEngine 使用的扁平运行时字典。
+        """把已校验配置投影为 MemoryEngine 使用的运行时白名单快照。
 
         参数:
             stopwords_dir: 文本处理器加载停用词的目录。
             graph_memory_enabled: 本次装配是否启用图记忆能力。
 
         返回:
-            包含召回、Atom 生命周期、图与演化设置的引擎配置副本。
+            包含显式字段所有权与生效语义的引擎配置副本。
         """
 
-        cm = self.config_manager
-        return {
-            "data_dir": self.data_dir,
-            "rrf_k": cm.get("fusion_strategy.rrf_k", 60),
-            "decay_rate": cm.get("importance_decay.decay_rate", 0.01),
-            "access_decay_window_days": cm.get(
-                "importance_decay.access_decay_window_days", 30.0
-            ),
-            "access_decay_max_count": cm.get(
-                "importance_decay.access_decay_max_count", 10
-            ),
-            "access_count_decay_multiplier": cm.get(
-                "importance_decay.access_count_decay_multiplier", 0.5
-            ),
-            "importance_weight": cm.get("recall_engine.importance_weight", 1.0),
-            "search_cache_enabled": cm.get("recall_engine.search_cache_enabled", True),
-            "search_cache_ttl_seconds": cm.get(
-                "recall_engine.search_cache_ttl_seconds", 45.0
-            ),
-            "search_cache_max_size": cm.get("recall_engine.search_cache_max_size", 256),
-            "fallback_enabled": cm.get("recall_engine.fallback_to_vector", True),
-            "cleanup_days_threshold": cm.get(
-                "forgetting_agent.cleanup_days_threshold", 30
-            ),
-            "cleanup_importance_threshold": cm.get(
-                "forgetting_agent.cleanup_importance_threshold", 0.3
-            ),
-            "auto_cleanup_enabled": cm.get(
-                "forgetting_agent.auto_cleanup_enabled", True
-            ),
-            "stopwords_path": str(stopwords_dir),
-            "graph_memory_enabled": graph_memory_enabled,
-            "document_route_weight": cm.get("graph_memory.document_route_weight", 0.65),
-            "graph_route_weight": cm.get("graph_memory.graph_route_weight", 0.35),
-            "cross_route_bonus": cm.get("graph_memory.cross_route_bonus", 0.08),
-            "graph_expansion_limit": cm.get("graph_memory.expansion_limit", 24),
-            "graph_expansion_hops": cm.get("graph_memory.expansion_hops", 1),
-            "graph_second_hop_weight": cm.get("graph_memory.second_hop_weight", 0.4),
-            "dynamic_route_weighting": cm.get(
-                "graph_memory.dynamic_route_weighting", True
-            ),
-            "graph_max_topics": cm.get("graph_memory.max_topics_per_memory", 6),
-            "graph_max_participants": cm.get(
-                "graph_memory.max_participants_per_memory", 8
-            ),
-            "graph_max_facts": cm.get("graph_memory.max_facts_per_memory", 8),
-            "atom_enabled": cm.get("graph_memory.atom_enabled", True),
-            "atom_maintenance_interval_hours": cm.get(
-                "graph_memory.atom_maintenance_interval_hours", 24.0
-            ),
-            "atom_forget_delay_days": cm.get(
-                "graph_memory.atom_forget_delay_days", 7.0
-            ),
-            "atom_purge_delay_days": cm.get("graph_memory.atom_purge_delay_days", 30.0),
-            "atom_quality_filter_enabled": cm.get(
-                "atom_quality_filter.atom_quality_filter_enabled", True
-            ),
-            "atom_min_confidence": cm.get(
-                "atom_quality_filter.atom_min_confidence", 0.65
-            ),
-            "atom_min_importance": cm.get(
-                "atom_quality_filter.atom_min_importance", 0.3
-            ),
-            "atom_min_content_length": cm.get(
-                "atom_quality_filter.atom_min_content_length", 5
-            ),
-            "atom_info_check_enabled": cm.get(
-                "atom_quality_filter.atom_info_check_enabled", True
-            ),
-            "atom_probationary_enabled": cm.get(
-                "atom_quality_filter.atom_probationary_enabled", True
-            ),
-            "atom_probationary_ttl_days": cm.get(
-                "atom_quality_filter.atom_probationary_ttl_days", 3.0
-            ),
-            "atom_dedup_enabled": cm.get(
-                "atom_quality_filter.atom_dedup_enabled", True
-            ),
-            "atom_dedup_threshold": cm.get(
-                "atom_quality_filter.atom_dedup_threshold", 0.7
-            ),
-            "atom_cold_storage_enabled": cm.get(
-                "atom_quality_filter.atom_cold_storage_enabled", True
-            ),
-            "atom_cold_days_threshold": cm.get(
-                "atom_quality_filter.atom_cold_days_threshold", 14.0
-            ),
-            "atom_cold_max_importance": cm.get(
-                "atom_quality_filter.atom_cold_max_importance", 0.4
-            ),
-            "index_rebuild_batch_size": cm.get("index_rebuild_settings.batch_size", 50),
-            "index_rebuild_embedding_batch_size": cm.get(
-                "index_rebuild_settings.embedding_batch_size", 8
-            ),
-            "index_rebuild_tasks_limit": cm.get(
-                "index_rebuild_settings.tasks_limit", 1
-            ),
-            "index_rebuild_max_retries": cm.get(
-                "index_rebuild_settings.max_retries", 5
-            ),
-            "index_rebuild_retry_base_delay": cm.get(
-                "index_rebuild_settings.retry_base_delay", 30.0
-            ),
-            "index_rebuild_batch_delay": cm.get(
-                "index_rebuild_settings.batch_delay", 5.0
-            ),
-            "index_rebuild_request_delay": cm.get(
-                "index_rebuild_settings.request_delay", 5.0
-            ),
-            "index_rebuild_max_failure_ratio": cm.get(
-                "index_rebuild_settings.max_failure_ratio", 0.02
-            ),
-            # === 请求级会话缓存（消除 Bridge→RecallHandler 重复检索） ===
-            "session_cache_enabled": cm.get(
-                "recall_engine.session_cache_enabled", True
-            ),
-            "session_cache_ttl_seconds": cm.get(
-                "recall_engine.session_cache_ttl_seconds", 10.0
-            ),
-            # === 链式扩展（R2 多跳图/话题扩展） ===
-            "recall_engine.max_chain_hops": cm.get("recall_engine.max_chain_hops", 1),
-            "recall_engine.chain_hop_decay": cm.get(
-                "recall_engine.chain_hop_decay", 0.65
-            ),
-            "recall_engine.chain_graph_expansion_enabled": cm.get(
-                "recall_engine.chain_graph_expansion_enabled", True
-            ),
-            "recall_engine.chain_topic_expansion_enabled": cm.get(
-                "recall_engine.chain_topic_expansion_enabled", True
-            ),
-            # === 测试效应（召回成功后的访问时间强化） ===
-            "testing_effect_async": cm.get("recall_engine.testing_effect_async", True),
-            "testing_effect_top_k": cm.get("recall_engine.testing_effect_top_k", 5),
-            # === 重排序器 ===
-            "reranker.enabled": cm.get("reranker.enabled", True),
-            "reranker.strategy": cm.get("reranker.strategy", "mmr"),
-            "reranker.llm_batch_size": cm.get("reranker.llm_batch_size", 10),
-            "reranker.cross_encoder_lambda": cm.get(
-                "reranker.cross_encoder_lambda", 0.7
-            ),
-            "reranker.mmr_lambda": cm.get("reranker.mmr_lambda", 0.7),
-            # === 成本控制 ===
-            "cost_control.mode": cm.get("cost_control.mode", "balanced"),
-            "cost_control.max_extra_llm_calls_per_turn": cm.get(
-                "cost_control.max_extra_llm_calls_per_turn", 0
-            ),
-            "cost_control.allow_llm_reranker_in_passive_recall": cm.get(
-                "cost_control.allow_llm_reranker_in_passive_recall", False
-            ),
-            "cost_control.allow_llm_topic_strategy_d": cm.get(
-                "cost_control.allow_llm_topic_strategy_d", False
-            ),
-            "cost_control.max_reflection_parallel_llm_calls": cm.get(
-                "cost_control.max_reflection_parallel_llm_calls", 2
-            ),
-            "cost_control.llm_reranker_min_candidates": cm.get(
-                "cost_control.llm_reranker_min_candidates", 12
-            ),
-            "cost_control.llm_reranker_prompt_chars": cm.get(
-                "cost_control.llm_reranker_prompt_chars", 3000
-            ),
-        }
+        return build_engine_runtime_config(
+            self.config_manager,
+            data_dir=self.data_dir,
+            stopwords_dir=stopwords_dir,
+            graph_memory_enabled=graph_memory_enabled,
+        )

@@ -10,6 +10,7 @@
 `core/base/` 是插件的低层基础契约，负责：
 
 - 以 Pydantic v2 描述配置树、默认值、数值范围和跨字段不变量；
+- 为每个公开配置分支声明产品分类、唯一责任模块以及保存后的重启/重建影响；
 - 将 AstrBot 注入的可变配置映射规范化为隔离快照，并提供带修订号的原子更新；
 - 提供稳定的异常码、记忆注入边界常量、领域无关实体编辑冲突类型；
 - 对额外 LLM 调用实施成本模式门控；
@@ -58,6 +59,9 @@ flowchart LR
 | 文件 | 核心接口 | 约束 |
 |---|---|---|
 | `config_validator.py` | `MemoraConfig`、其余分支模型、`validate_config()`、`get_default_config()`、`merge_config_with_defaults()`、`validate_runtime_config_changes()` | 默认值唯一运行时来源；顶层允许额外字段以兼容旧配置，已声明字段仍受类型/范围约束 |
+| `runtime_feature_config.py` | 运行时功能分支 Pydantic 模型 | 正式功能分支不得退回无类型字典；Hybrid/Graph 融合权重总和必须为 `1.0` |
+| `config_ownership.py` | `CONFIG_SECTION_OWNERSHIP`、`resolve_config_ownership()` | 每个 Schema 叶必须解析为 `runtime/dashboard_only/experimental/deprecated` 和唯一 owner；未知顶层分支不得静默归类 |
+| `config_runtime_effects.py` | `RuntimeConfigEffect`、`classify_config_effects()` | 非空保存保守要求重启；时序/因果图边变更还要求重建图派生数据 |
 | `feature_config.py` | `AgentToolsConfig`、`JargonConfig`、`DashboardConfig`、`is_jargon_discovery_enabled()` | 轻量功能开关与 Dashboard 构建配置；黑话发现缺少有效配置时遵循调用方的兼容边界，正常插件运行时默认关闭 |
 | `config_manager.py` | `ConfigManager`、`ConfigApplyResult`、配置事务异常 | revision 是规范化 JSON 的 SHA-256；结果中的 `changed_paths` 排序且不可变 |
 | `config_defaults.py` | 默认值维护说明 | 新键必须同步 Pydantic 模型、根级 `_conf_schema.json` 与访问处默认值 |
@@ -81,6 +85,7 @@ flowchart LR
 - `SecurityConfig.strict_mode` 仅表达策略；严格失败关闭由使用该配置的处理链实现，不是 `ConfigManager` 自动行为。
 - `CostControl(mode="quality")` 的 `allow()` 会允许功能，但仍应由调用方检查每轮调用上限；`reset_turn()` 必须在轮次边界调用。
 - Schema option 比较要求值和类型都相同，避免 Python 中 `True == 1` 导致错误接受。
+- 所有权按顶层配置分支声明；同一分支若新增不同生命周期的叶子，应先拆分公开分支，不能在消费者中私设例外。
 
 ## 依赖方向
 
@@ -101,7 +106,7 @@ flowchart LR
 | 变更 | 首选测试 |
 |---|---|
 | 常量、异常、默认配置 | `tests/test_base.py` |
-| Schema 与 Pydantic 默认/范围、Hybrid 顺序、revision、冲突和持久化 | `tests/test_config_contract.py` |
+| Schema 与 Pydantic 默认/范围、Hybrid 顺序、revision、冲突和持久化 | `tests/test_config_contract.py tests/test_engine_runtime_config_contract.py` |
 | Memory Evolution 默认、模式和范围契约 | `tests/test_config_contract.py tests/test_memory_evolution_gate.py` |
 | Dashboard 配置 API 到事务异常的映射 | `tests/test_api_config.py` |
 | 实体 revision 与编辑异常 | `tests/test_entity_editing.py` |

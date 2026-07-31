@@ -11,6 +11,7 @@ import type {
   ConfigStateData,
   JsonValue,
 } from "@/types/config";
+import { configEffectsForChangedPaths } from "@/lib/configRuntimeEffects";
 
 const PLUGIN_NAME = "astrbot_plugin_memora";
 const INITIAL_REVISION_SEQUENCE = 1;
@@ -400,10 +401,13 @@ export function createMockConfigServer(options: MockConfigServerOptions = {}) {
     const changedPaths = Object.keys(normalizedChanges).sort();
     const reloadScheduled =
       changedPaths.length > 0 ? scheduleReload() : false;
+    const runtimeEffects = configEffectsForChangedPaths(changedPaths);
     return success({
       revision: state.revision,
       changed_paths: changedPaths,
       reload_scheduled: reloadScheduled,
+      restart_required: runtimeEffects.restartRequired,
+      rebuild_required: runtimeEffects.rebuildRequired,
       instance_id: state.instanceId,
     });
   };

@@ -260,6 +260,7 @@ def classify_atoms(
     min_content_length: int = 5,
     enable_info_check: bool = True,
     enable_quality_filter: bool = True,
+    enable_negation_detection: bool = True,
     atom_type_hint: str | None = None,
 ) -> list[MemoryAtom]:
     """将一组 `key_fact` 字符串分类为 `MemoryAtom` 实例。
@@ -280,6 +281,7 @@ def classify_atoms(
         min_content_length: 最小内容长度（字符），过短的原子不保存（默认 5）。
         enable_info_check: 是否启用信息量预检（默认 True）。
         enable_quality_filter: 质量过滤总开关，False 时跳过所有过滤（默认 True）。
+        enable_negation_detection: 是否识别否定极性并阻止否定句成为未来计划。
         atom_type_hint: 结构化抽取显式提供的可选类型，仅在规则无法判定时使用。
 
     返回:
@@ -313,7 +315,11 @@ def classify_atoms(
                 continue
 
         # ---- 分类 ----
-        atom_type, confidence, event_time = _classify_single(fact, atom_type_hint)
+        atom_type, confidence, event_time = _classify_single(
+            fact,
+            atom_type_hint,
+            enable_negation_detection=enable_negation_detection,
+        )
 
         # ---- 质量过滤（分类后） ----
         if enable_quality_filter:
@@ -335,7 +341,7 @@ def classify_atoms(
             "emotion_tags": list(_emotion_tags),
             "emotional_intensity": normalized_intensity,
         }
-        if _NEGATION_RE.search(fact):
+        if enable_negation_detection and _NEGATION_RE.search(fact):
             atom_metadata["polarity"] = "negative"
 
         atom = MemoryAtom(
@@ -369,8 +375,10 @@ def classify_atoms(
 def _classify_single(
     text: str,
     atom_type_hint: str | None = None,
+    *,
+    enable_negation_detection: bool = True,
 ) -> tuple[AtomType, float, float | None]:
-    """按强规则优先、结构提示兜底分类并返回类型、置信度与事件时间。"""
+    """按强规则优先分类，并按开关决定否定句是否阻断未来计划。"""
     has_time = bool(_TIME_INDICATORS.search(text))
     has_action = bool(_ACTION_VERBS.search(text))
     has_relation = bool(_RELATION_PATTERNS.search(text))
@@ -379,7 +387,7 @@ def _classify_single(
 
     event_time = _parse_event_time(text) if has_time else None
     now = time.time()
-    is_negated = bool(_NEGATION_RE.search(text))
+    is_negated = enable_negation_detection and bool(_NEGATION_RE.search(text))
 
     # 时间和动作同时出现时，必须先区分过去事件与未来计划。
     if has_time and has_action:

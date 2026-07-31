@@ -2,6 +2,11 @@
 // 模拟桥接初始化器：当 AstrBot bridge 缺失时自动启用
 // ================================================================
 import { handleApiGet, handleApiPost } from "./server";
+import {
+  CONFIG_RUNTIME_EN_MAP,
+  CONFIG_RUNTIME_RU_MAP,
+  CONFIG_RUNTIME_ZH_MAP,
+} from "./configRuntimeI18n";
 import { EVALUATION_EN_MAP, EVALUATION_RU_MAP, EVALUATION_ZH_MAP } from "./evaluationI18n";
 import {
   RECALL_TRACE_EN_MAP,
@@ -204,6 +209,7 @@ const INJECTION_RU_MAP = injectionLocaleCopy(2);
 
 // 完整 i18n 映射（zh-CN），供模拟模式与生产环境回退共用
 const I18N_MAP: Record<string, string> = {
+  ...CONFIG_RUNTIME_ZH_MAP,
   ...INJECTION_ZH_MAP,
   ...EVALUATION_ZH_MAP,
   ...RECALL_TRACE_ZH_MAP,
@@ -1168,6 +1174,7 @@ const I18N_MAP: Record<string, string> = {
 
 // 英文 i18n 映射
 const EN_MAP: Record<string, string> = {
+  ...CONFIG_RUNTIME_EN_MAP,
   ...INJECTION_EN_MAP,
   ...EVALUATION_EN_MAP,
   ...RECALL_TRACE_EN_MAP,
@@ -2006,6 +2013,7 @@ const EN_MAP: Record<string, string> = {
 };
 
 const RU_MAP: Record<string, string> = {
+  ...CONFIG_RUNTIME_RU_MAP,
   ...INJECTION_RU_MAP,
   ...EVALUATION_RU_MAP,
   ...RECALL_TRACE_RU_MAP,

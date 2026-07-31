@@ -468,6 +468,12 @@ class MemoryProcessor:
             enable_quality_filter=bool(
                 self.config.get("atom_quality_filter_enabled", True)
             ),
+            enable_negation_detection=bool(
+                self.config.get(
+                    "atom_classifier.negation_detection_enabled",
+                    True,
+                )
+            ),
             atom_type_hint=metadata.get("atom_type"),
         )
 

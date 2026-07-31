@@ -64,7 +64,9 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """创建规则格式化器；是否使用由每次调用的正式配置决定。"""
+
         self.formatter = HumanLikeMemoryFormatter(
             max_fragments=5, max_fragment_length=80
         )
@@ -155,8 +157,16 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
                     }
                 )
 
+            formatter_mode = str(
+                self.config_manager.get(
+                    "human_like_memory.human_like_formatter_mode",
+                    "rule",
+                )
+            ).casefold()
             formatted_recall = (
-                self.formatter.format(serialized_results) if format_output else []
+                self.formatter.format(serialized_results)
+                if format_output and formatter_mode == "rule"
+                else []
             )
 
             return _json_result(

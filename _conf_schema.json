@@ -536,32 +536,40 @@
     },
     "hybrid_scoring": {
         "description": "混合检索评分权重",
-        "hint": "控制 BM25 + 向量混合检索结果的评分权重分配。修改后即时生效，无需重启。",
+        "hint": "控制 BM25 + 向量混合检索结果的评分权重分配。三个评分权重总和必须为 1，保存后需重载插件。",
         "type": "object",
         "items": {
             "score_alpha": {
                 "description": "检索相关性权重",
                 "hint": "BM25+向量检索相似度在混合评分中的占比。值越大，检索结果越偏向字面和语义匹配。范围 0-1。",
                 "type": "float",
-                "default": 0.5
+                "default": 0.5,
+                "min": 0.0,
+                "max": 1.0
             },
             "score_beta": {
                 "description": "重要性权重",
                 "hint": "记忆自身重要性在混合评分中的占比。值越大，高重要性记忆越容易被召回。范围 0-1。",
                 "type": "float",
-                "default": 0.25
+                "default": 0.25,
+                "min": 0.0,
+                "max": 1.0
             },
             "score_gamma": {
                 "description": "时间新鲜度权重",
                 "hint": "记忆创建/访问时间在混合评分中的占比。值越大，越新的记忆越容易被召回。范围 0-1。",
                 "type": "float",
-                "default": 0.25
+                "default": 0.25,
+                "min": 0.0,
+                "max": 1.0
             },
             "mmr_lambda": {
                 "description": "MMR 多样性权衡",
                 "hint": "Maximal Marginal Relevance 参数。1=纯相关性排序，0=纯多样性排序。0.7 表示偏向相关性但保留一定多样性，避免召回大量相似记忆。",
                 "type": "float",
-                "default": 0.7
+                "default": 0.7,
+                "min": 0.0,
+                "max": 1.0
             }
         }
     },
@@ -793,11 +801,10 @@
             },
             "human_like_formatter_mode": {
                 "description": "类人格式化模式",
-                "hint": "rule: 基于规则的自然语言记忆片段; llm: LLM驱动的高质量格式化; disabled: 返回原始结果",
+                "hint": "rule: 基于规则的自然语言记忆片段; disabled: 仅返回结构化原始结果",
                 "type": "string",
                 "options": [
                     "rule",
-                    "llm",
                     "disabled"
                 ],
                 "default": "rule"
@@ -1606,7 +1613,9 @@
                 "description": "闪光灯记忆强度阈值",
                 "hint": "emotional_intensity 达到此值的记忆将完全跳过衰减。0.90 表示极高情感强度的记忆。",
                 "type": "float",
-                "default": 0.90
+                "default": 0.90,
+                "min": 0.0,
+                "max": 1.0
             }
         }
     },

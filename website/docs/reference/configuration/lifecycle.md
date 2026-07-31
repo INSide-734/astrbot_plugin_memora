@@ -22,14 +22,14 @@ pageClass: config-reference-page
 
 ## 类人记忆增强
 
-配置域：`"human_like_memory"`。让记忆检索行为更接近人类记忆的自然浮现过程，包括近因效应、季节性召回、情感加权、类人格式化及类型感知衰减。
+配置域：`"human_like_memory"`。让记忆检索行为更接近人类记忆的自然浮现过程，包括近因效应、季节性召回、情感加权、类人格式化及类型感知衰减。该配置在插件重载后生效。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
 | `"human_like_memory.recency_bump_enabled"` | `"bool"` | `true` | - | 近因爆发效应<br><small>0-7天记忆获得1.5倍近因加成，模拟人类近期记忆更鲜明的特点</small> |
 | `"human_like_memory.seasonal_recall_enabled"` | `"bool"` | `true` | - | 季节性召回<br><small>周年/季节性时间点附近的相关记忆获得检索加成</small> |
 | `"human_like_memory.emotion_scoring_mode"` | `"string"` | `"enhanced"` | 可选：`"enhanced"` / `"basic"` / `"disabled"` | 情感加权模式<br><small>enhanced: Jaccard+情绪一致性+强度三维计分; basic: 简单标签重叠; disabled: 关闭情感加权</small> |
-| `"human_like_memory.human_like_formatter_mode"` | `"string"` | `"rule"` | 可选：`"rule"` / `"llm"` / `"disabled"` | 类人格式化模式<br><small>rule: 基于规则的自然语言记忆片段; llm: LLM驱动的高质量格式化; disabled: 返回原始结果</small> |
+| `"human_like_memory.human_like_formatter_mode"` | `"string"` | `"rule"` | 可选：`"rule"` / `"disabled"` | 类人格式化模式<br><small>rule: 基于规则生成自然语言记忆片段; disabled: 仅返回结构化原始结果。当前没有未经评测的 LLM 格式化模式。</small> |
 | `"human_like_memory.type_aware_decay_enabled"` | `"bool"` | `true` | - | 类型感知衰减<br><small>不同记忆类型以不同速度衰减: EPISODIC 1.5倍速/ FACTUAL 0.5倍速/ PREFERENCE 0.7倍速/ RELATIONAL 0.6倍速</small> |
 
 ## 记忆演化
@@ -128,7 +128,7 @@ pageClass: config-reference-page
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"atom_classifier.negation_detection_enabled"` | `"bool"` | `true` | - | 启用否定检测<br><small>开启后，原子分类器会检测否定句式（如"我不喜欢"），防止将否定陈述误分类为 PREFERENCE 等类型。</small> |
+| `"atom_classifier.negation_detection_enabled"` | `"bool"` | `true` | - | 启用否定检测<br><small>开启后记录否定极性，并避免把带否定动作的未来表达误判为已确认计划。</small> |
 
 ## 闪光灯记忆设置
 
@@ -137,7 +137,7 @@ pageClass: config-reference-page
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
 | `"flashbulb.enabled"` | `"bool"` | `true` | - | 启用闪光灯记忆保护<br><small>开启后，emotional_intensity >= 阈值的记忆将永不过期。</small> |
-| `"flashbulb.intensity_threshold"` | `"float"` | `0.9` | - | 闪光灯记忆强度阈值<br><small>emotional_intensity 达到此值的记忆将完全跳过衰减。0.90 表示极高情感强度的记忆。</small> |
+| `"flashbulb.intensity_threshold"` | `"float"` | `0.9` | 最小值：`0`<br>最大值：`1` | 闪光灯记忆强度阈值<br><small>emotional_intensity 达到此值的记忆将完全跳过衰减。0.90 表示极高情感强度的记忆。</small> |
 
 ## 自动清理设置
 

@@ -100,6 +100,8 @@ function applySuccess(): ConfigApiResponse<ConfigApplyData> {
       "recall_engine.injection_routing_mode",
     ],
     reload_scheduled: false,
+    restart_required: true,
+    rebuild_required: false,
     instance_id: "instance-1",
   });
 }

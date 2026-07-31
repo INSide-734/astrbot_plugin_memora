@@ -303,9 +303,9 @@ def test_config_dict() -> dict[str, Any]:
             "rrf_k": 60,
         },
         "hybrid_scoring": {
-            "alpha": 0.5,
-            "beta": 0.25,
-            "gamma": 0.25,
+            "score_alpha": 0.5,
+            "score_beta": 0.25,
+            "score_gamma": 0.25,
             "mmr_lambda": 0.7,
         },
         "graph_memory_enabled": False,

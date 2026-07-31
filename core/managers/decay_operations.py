@@ -26,7 +26,7 @@ from .write_op_serialization import safe_json_dict
 
 
 def _normalize_batch_metadata(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Normalize metadata from JSON strings to dicts for a batch of documents."""
+    """把一批文档的 JSON 字符串 metadata 统一转换为字典。"""
     for doc in docs:
         metadata = doc.get("metadata")
         if isinstance(metadata, str):
@@ -40,10 +40,12 @@ def _normalize_batch_metadata(docs: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 class DecayOperationsMixin:
-    """Daily decay and access-time update operations."""
+    """提供每日衰减与访问时间更新操作。"""
 
     @staticmethod
     def _type_decay_multiplier(memory_type: str | None) -> float:
+        """返回不同记忆类型的衰减倍率，未知类型保持中性。"""
+
         if not memory_type:
             return 1.0
         multipliers = {
@@ -115,7 +117,10 @@ class DecayOperationsMixin:
                     effective_decay_rate = decay_rate * (
                         1 - 0.5 * access_factor * recent_access_factor
                     )
-                    if self._config.get("type_aware_decay_enabled", True):
+                    if self._config.get(
+                        "human_like_memory.type_aware_decay_enabled",
+                        True,
+                    ):
                         memory_type = metadata.get("memory_type")
                         type_mult = self._type_decay_multiplier(memory_type)
                         emotional_intensity = safe_float(

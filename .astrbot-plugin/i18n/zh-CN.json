@@ -1547,6 +1547,10 @@
       "apply": "应用配置",
       "applying": "正在应用...",
       "reloading": "正在重载...",
+      "restartRequiredTitle": "需要手动重启",
+      "restartRequiredDescription": "配置已保存，但 AstrBot 未安排自动重载。请重启插件以应用本次变更。",
+      "rebuildRequiredTitle": "需要重建图派生数据",
+      "rebuildRequiredDescription": "图边提取规则已更改。重载插件后，请运行 /memora rebuild-graph 使既有图数据与新规则一致。",
       "retry": "重试",
       "loading": "正在加载配置",
       "status": {

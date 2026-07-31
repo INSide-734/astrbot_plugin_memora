@@ -142,6 +142,8 @@ function applyResult(
     revision: "rev-2",
     changed_paths: ["general.bot_name"],
     reload_scheduled: false,
+    restart_required: true,
+    rebuild_required: false,
     instance_id: "instance-1",
     ...overrides,
   });

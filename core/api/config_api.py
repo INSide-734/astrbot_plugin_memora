@@ -15,6 +15,7 @@ from ..base.config_manager import (
     ConfigPersistenceError,
     ConfigValidationError,
 )
+from ..base.config_runtime_effects import classify_config_effects
 from ..monitoring import report_debug_event, set_debug_mode
 from .response_utils import ok_response
 
@@ -162,6 +163,9 @@ class ConfigApiMixin:
 
         self._apply_live_debug_mode(result.changed_paths)
         self._schedule_injection_decision_cleanup(result.changed_paths)
+        restart_required, rebuild_required = classify_config_effects(
+            result.changed_paths
+        )
         reload_scheduled = self._schedule_plugin_reload(result.changed_paths)
 
         logger.info(
@@ -174,6 +178,8 @@ class ConfigApiMixin:
                 "revision": result.revision,
                 "changed_paths": list(result.changed_paths),
                 "reload_scheduled": reload_scheduled,
+                "restart_required": restart_required,
+                "rebuild_required": rebuild_required,
                 "instance_id": self.plugin.instance_id,
             }
         )

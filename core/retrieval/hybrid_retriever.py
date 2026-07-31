@@ -106,6 +106,9 @@ class HybridRetriever:
             score_alpha=self.score_alpha,
             score_beta=self.score_beta,
             score_gamma=self.score_gamma,
+            recency_bump_enabled=bool(
+                self.config.get("human_like_memory.recency_bump_enabled", True)
+            ),
         )
 
     @staticmethod

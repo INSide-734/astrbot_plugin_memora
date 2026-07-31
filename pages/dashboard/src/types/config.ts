@@ -83,7 +83,14 @@ export interface ConfigApplyData {
   revision: string;
   changed_paths: string[];
   reload_scheduled: boolean;
+  restart_required: boolean;
+  rebuild_required: boolean;
   instance_id: string;
+}
+
+export interface ConfigRuntimeEffects {
+  manualRestartRequired: boolean;
+  rebuildRequired: boolean;
 }
 
 export interface ConfigApplyRequest {
@@ -144,4 +151,30 @@ export interface ConfigRemoteSnapshot {
 export interface ConfigSyncOptions {
   pollIntervalMs?: number;
   reloadTimeoutMs?: number;
+}
+
+/** 配置同步 hook 向页面公开的完整状态与操作契约。 */
+export interface ConfigSyncResult {
+  schemaData: ConfigSchemaData | null;
+  baseConfig: ConfigObject | null;
+  draft: ConfigObject | null;
+  revision: string | null;
+  instanceId: string | null;
+  remoteConfig: ConfigObject | null;
+  remoteRevision: string | null;
+  remoteInstanceId: string | null;
+  dirtyPaths: string[];
+  localPaths: string[];
+  remotePaths: string[];
+  overlapPaths: string[];
+  fieldErrors: Record<string, string>;
+  status: ConfigSyncStatus;
+  error: ConfigSyncError | null;
+  runtimeEffects: ConfigRuntimeEffects | null;
+  changeField: (path: string, value: ConfigValue) => void;
+  refresh: () => Promise<void>;
+  apply: () => Promise<void>;
+  discardLocal: () => void;
+  acceptRemote: () => void;
+  rebaseRemote: () => void;
 }

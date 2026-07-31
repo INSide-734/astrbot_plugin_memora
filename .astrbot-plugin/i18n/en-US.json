@@ -1547,6 +1547,10 @@
       "apply": "Apply configuration",
       "applying": "Applying...",
       "reloading": "Reloading...",
+      "restartRequiredTitle": "Manual restart required",
+      "restartRequiredDescription": "The configuration was saved, but AstrBot did not schedule a reload. Restart the plugin to apply these changes.",
+      "rebuildRequiredTitle": "Graph rebuild required",
+      "rebuildRequiredDescription": "Graph edge extraction changed. After reloading the plugin, run /memora rebuild-graph to rebuild existing derived graph data.",
       "retry": "Retry",
       "loading": "Loading configuration",
       "status": {
