@@ -7,8 +7,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.base.cost_control import CostControl
+from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 from core.models.conversation_models import Message
 from core.processors.memory_processor import MemoryProcessor
+
+
+def _quality_control() -> CostControl:
+    """构造允许一次人设解释额外调用的质量档成本门。"""
+
+    return CostControl(mode="quality", max_extra_llm_calls_per_turn=1)
 
 
 class TestMemoryProcessorInit:
@@ -659,14 +667,16 @@ class TestGeneratePersonaInterpretations:
             context=ctx,
             llm_provider=provider,
             config={"persona_interpretation.enabled": True},
+            cost_control=_quality_control(),
         )
-        result = await proc.generate_persona_interpretations(
-            "用户喜欢喝咖啡",
-            "用户: 我喜欢喝咖啡",
-            "primary_persona",
-            ["coffee_expert"],
-            {"coffee_expert": "你是咖啡专家，关注用户的咖啡消费习惯"},
-        )
+        with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
+            result = await proc.generate_persona_interpretations(
+                "用户喜欢喝咖啡",
+                "用户: 我喜欢喝咖啡",
+                "primary_persona",
+                ["coffee_expert"],
+                {"coffee_expert": "你是咖啡专家，关注用户的咖啡消费习惯"},
+            )
         assert len(result) >= 1
         assert "coffee_expert" in result
 
@@ -682,14 +692,16 @@ class TestGeneratePersonaInterpretations:
             context=ctx,
             llm_provider=provider,
             config={"persona_interpretation.enabled": True},
+            cost_control=_quality_control(),
         )
-        result = await proc.generate_persona_interpretations(
-            "content",
-            "conv",
-            "primary",
-            ["secondary"],
-            {"secondary": "desc"},
-        )
+        with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
+            result = await proc.generate_persona_interpretations(
+                "content",
+                "conv",
+                "primary",
+                ["secondary"],
+                {"secondary": "desc"},
+            )
         # Short text (< 3 chars) is discarded
         assert "secondary" not in result
 
@@ -703,13 +715,15 @@ class TestGeneratePersonaInterpretations:
             context=ctx,
             llm_provider=provider,
             config={"persona_interpretation.enabled": True},
+            cost_control=_quality_control(),
         )
-        result = await proc.generate_persona_interpretations(
-            "content",
-            "conv",
-            "primary",
-            ["secondary"],
-            {"secondary": "desc"},
-        )
+        with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
+            result = await proc.generate_persona_interpretations(
+                "content",
+                "conv",
+                "primary",
+                ["secondary"],
+                {"secondary": "desc"},
+            )
         # Error should be handled, should not raise
         assert "secondary" not in result

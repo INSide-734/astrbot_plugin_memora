@@ -62,7 +62,7 @@ graph TD
 3. 构建 `TextProcessor → BM25Retriever → VectorRetriever → HybridRetriever`。
 4. 仅在 `graph_enabled` 且存在 `graph_vector_db` 时构建 `GraphStore`、`AtomStore`、层级存储、图双路检索和 `GraphMemoryManager`。
 5. 可选执行 `WriteOpJournal.repair_incomplete()`。
-6. 按配置构建画像、知识、笔记、自动学习、性格追踪、重排序器等；高成本 `llm`/`hybrid` 重排可能由成本控制降级为 `mmr`。
+6. 按配置构建画像、知识、笔记、自动学习、性格追踪、重排序器等；复用工厂注入的 typed `CostControl`，高成本 `llm`/`hybrid` 重排未通过功能门时降级为 `mmr`，成功创建的实例写回 `MemoryEngine.reranker` 并传给图双路检索器。
 7. 图路可用时构建 `DualRouteRetriever`，最后创建 `RealtimeSSE`。
 8. 若注入了 `projection_reader`，`MemoryEngine` 只把它作为召回阶段的派生注解读取器；它不改变 canonical 写入和整数 `doc_id` 语义。
 

@@ -2,12 +2,15 @@
 记忆处理器 - 使用LLM将对话历史处理为结构化记忆
 """
 
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
 
+from ..base.cost_control import CostControl
+from ..base.extra_llm_budget import budgeted_extra_llm_call
 from ..identity.memory import build_memory_identity_context
 from ..models.conversation_models import Message
 from ..models.memory_atom import MemoryAtom
@@ -34,11 +37,13 @@ class MemoryProcessor:
         context=None,
         llm_provider: Any = None,
         config: dict[str, Any] | None = None,
+        cost_control: CostControl | None = None,
     ):
         """初始化 LLM、Prompt、解析、质量校验与存储格式协作对象。"""
 
         self.context = context
         self.config = config or {}
+        self.cost_control = cost_control or CostControl()
 
         self.llm_client = LLMClient(context, llm_provider)
         prompt_dir = Path(__file__).parent.parent / "prompts"
@@ -91,6 +96,7 @@ class MemoryProcessor:
         serial_position_hint: str | None = None,
         interest_profile: list[str] | None = None,
         continuity_context: str | None = None,
+        llm_max_retries: int = 3,
     ) -> list[dict[str, Any]]:
         """处理对话批次并生成结构化记忆（可能返回多条独立话题记忆）。
 
@@ -134,6 +140,7 @@ class MemoryProcessor:
             llm_response_text = await self.llm_client.call_llm_with_retry(
                 prompt=prompt,
                 system_prompt=system_prompt,
+                max_retries=max(1, int(llm_max_retries)),
             )
 
             logger.info(
@@ -521,19 +528,27 @@ class MemoryProcessor:
             )
 
             try:
-                result = await self.llm_client.call_llm_with_retry(
-                    prompt=prompt,
-                    system_prompt=persona_desc[:500],
-                )
+                async with budgeted_extra_llm_call(
+                    self.cost_control,
+                    "persona_interpretation",
+                ) as allowed:
+                    if not allowed:
+                        continue
+                    result = await self.llm_client.call_llm_with_retry(
+                        prompt=prompt,
+                        system_prompt=persona_desc[:500],
+                        max_retries=1,
+                    )
                 text = str(result).strip()[:120]
                 if text and len(text) >= 3:
                     interpretations[pid] = text
-                    logger.debug(
-                        f"[MemoryProcessor]persona={pid[:20]} interpretation={text[:50]}"
-                    )
-            except Exception as e:
+                    logger.debug("[MemoryProcessor] 人格解读生成成功")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
                 logger.warning(
-                    f"[MemoryProcessor]interpretation failed for {pid[:20]}: {e}"
+                    "[MemoryProcessor] 人格解读生成失败，异常类型=%s",
+                    exc.__class__.__name__,
                 )
 
         return interpretations

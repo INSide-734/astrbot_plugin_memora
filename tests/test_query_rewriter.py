@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from core.base.cost_control import CostControl
+from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 from core.retrieval.query_rewriter import QueryIntent, QueryRewriter
 
 VALID_INTENTS = {
@@ -14,6 +16,12 @@ VALID_INTENTS = {
     "preference",
     "contextual",
 }
+
+
+def _quality_control() -> CostControl:
+    """构造允许一次查询改写额外调用的质量档成本门。"""
+
+    return CostControl(mode="quality", max_extra_llm_calls_per_turn=1)
 
 
 class TestQueryIntent:
@@ -91,8 +99,9 @@ class TestQueryRewriter:
                 "memory_types": ["EPISODIC"],
             }
         )
-        rw = QueryRewriter(llm_caller=llm_client)
-        result = await rw.rewrite("上次那个事")
+        rw = QueryRewriter(llm_caller=llm_client, cost_control=_quality_control())
+        with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
+            result = await rw.rewrite("上次那个事")
         assert isinstance(result, QueryIntent)
         assert result.intent == "temporal"
         assert "最近对话" in result.rewritten_queries
@@ -101,8 +110,9 @@ class TestQueryRewriter:
     async def test_llm_rewrite_returns_fallback_on_error(self, llm_client):
         """当 LLM raises, fallback to keyword-based intent."""
         llm_client.side_effect = RuntimeError("LLM down")
-        rw = QueryRewriter(llm_caller=llm_client)
-        result = await rw.rewrite("上次那个事")
+        rw = QueryRewriter(llm_caller=llm_client, cost_control=_quality_control())
+        with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
+            result = await rw.rewrite("上次那个事")
         assert isinstance(result, QueryIntent)
         assert result.intent in VALID_INTENTS
 
@@ -110,8 +120,9 @@ class TestQueryRewriter:
     async def test_llm_rewrite_invalid_json_uses_fallback(self, llm_client):
         """当 LLM returns invalid JSON, fallback to keyword intent."""
         llm_client.return_value = "not valid json {{{"
-        rw = QueryRewriter(llm_caller=llm_client)
-        result = await rw.rewrite("上次那个事")
+        rw = QueryRewriter(llm_caller=llm_client, cost_control=_quality_control())
+        with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
+            result = await rw.rewrite("上次那个事")
         assert isinstance(result, QueryIntent)
 
     def test_parse_llm_response_valid(self) -> None:

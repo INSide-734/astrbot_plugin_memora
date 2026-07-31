@@ -6,11 +6,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from astrbot.api import logger
 
 from ..base.config_manager import ConfigManager
+from ..base.cost_control import CostControl
+from ..base.extra_llm_budget import budgeted_extra_llm_call
 from ..processors.topic_splitter import (
     TopicChunkingStrategy,
     TwoStageLLMStrategy,
@@ -35,10 +38,14 @@ class TopicBatchPreparer:
         config_manager: ConfigManager,
         memory_engine: Any = None,
         memory_processor: Any = None,
+        cost_control: CostControl | None = None,
     ) -> None:
+        """保存配置、检索、处理器与统一成本门。"""
+
         self._config_manager = config_manager
         self._memory_engine = memory_engine
         self._memory_processor = memory_processor
+        self._cost_control = cost_control or CostControl()
 
     # ------------------------------------------------------------------
     # 对外接口
@@ -67,17 +74,6 @@ class TopicBatchPreparer:
             return await self._prepare_strategy_c(history_messages, topic_cfg)
 
         if strategy_key == "d":
-            # 成本控制：balanced/low_cost 下 strategy D 自动降级为单批次
-            cost_mode = self._config_manager.get("cost_control.mode", "balanced")
-            allow_d = self._config_manager.get(
-                "cost_control.allow_llm_topic_strategy_d", False
-            )
-            if cost_mode != "quality" and not allow_d:
-                logger.info(
-                    f"[CostControl] topic strategy=d 降级为单批次: "
-                    f"mode={cost_mode}, allow_llm_topic_strategy_d={allow_d}"
-                )
-                return [list(history_messages)]
             return await self._prepare_strategy_d(history_messages, topic_cfg)
 
         return [list(history_messages)]
@@ -111,7 +107,22 @@ class TopicBatchPreparer:
             llm_client=self._memory_processor.llm_client_instance,
         )
         try:
-            topics = await strat.identify_topics(conversation_text)
+            async with budgeted_extra_llm_call(
+                self._cost_control,
+                "topic_strategy_d",
+            ) as allowed:
+                if not allowed:
+                    logger.info(
+                        "[话题批次准备器] Strategy D 未通过额外 LLM 双门，"
+                        "已回退为单批次"
+                    )
+                    return [list(history_messages)]
+                topics = await strat.identify_topics(
+                    conversation_text,
+                    propagate_errors=True,
+                )
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.warning(
                 "[话题批次准备器] 策略 D 的第一阶段失败，已回退为单批次处理。"

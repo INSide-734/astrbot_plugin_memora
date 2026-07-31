@@ -68,7 +68,8 @@ flowchart LR
 | `constants.py` | `MEMORY_INJECTION_HEADER/FOOTER`、`FAKE_TOOL_CALL_NAME/ID_PREFIX` | 边界和伪调用标识同时被格式化器、清理器与测试依赖，不可单边改名 |
 | `exceptions.py` | `MemoraException` 及 16 个语义子类 | `message` 与稳定 `error_code` 是上层错误映射契约 |
 | `entity_editing.py` | `compute_entity_revision()`、编辑异常族 | revision 使用排序、紧凑、禁 NaN 的 JSON；该异常族独立于 `MemoraException` |
-| `cost_control.py` | `CostControl`、`build_cost_control_from_config()` | `allow()` 与 `check_call_limit()` 是两个门，调用方应同时检查并在成功调用后 `record_call()` |
+| `cost_control.py` | `CostControl`、`build_cost_control_from_config()` | 只接受 `CostControlConfig` 或 `cost_control` 叶子映射，生成不可变功能许可门；不得传入完整配置树 |
+| `extra_llm_budget.py` | `ExtraLlmBudget`、`budgeted_extra_llm_call()`、`extra_llm_budget_scope()` | 请求级 reservation 防并发超卖；Provider 成功后 commit，普通失败或取消 release；观测只含固定标量 |
 | `__init__.py` | 配置事务类型、8 个常用异常 | 常量通过星号导入到包命名空间，但不在 `__all__`；其余异常和成本/实体接口需从子模块直接导入 |
 
 ## 配置不变量
@@ -83,7 +84,8 @@ flowchart LR
 - `RecallEngineConfig.top_k=0` 是明确的“跳过自动召回和注入”语义；不要把它强制改成正数。
 - 顶层 `debug` 默认关闭，仅用于用户问题报告的隐私安全结构化诊断；它不授权向 Dashboard 或普通日志返回原始异常消息。
 - `SecurityConfig.strict_mode` 仅表达策略；严格失败关闭由使用该配置的处理链实现，不是 `ConfigManager` 自动行为。
-- `CostControl(mode="quality")` 的 `allow()` 会允许功能，但仍应由调用方检查每轮调用上限；`reset_turn()` 必须在轮次边界调用。
+- 额外 LLM 必须同时通过不可变 `CostControl.allow()` 与当前请求的 `ExtraLlmBudget`；轮次状态只存在于预算对象，不得恢复 `CostControl` 内部可变计数器或另建调用方局部计数。
+- 计入请求额度的功能固定为 LLM 查询改写、LLM 重排、Strategy D 第一阶段、persona interpretation 和第 2 个及后续反思批次；基础反思抽取是 canonical 写入主链，不计入额外额度。
 - Schema option 比较要求值和类型都相同，避免 Python 中 `True == 1` 导致错误接受。
 - 所有权按顶层配置分支声明；同一分支若新增不同生命周期的叶子，应先拆分公开分支，不能在消费者中私设例外。
 
@@ -100,6 +102,7 @@ flowchart LR
 - 新异常若需要从 `core.base` 导入，必须显式加入 `__init__.__all__`；不要依赖星号导出的偶然行为。
 - 修改注入边界常量时必须同步格式化器、清理器和兼容测试；这些是协议，不是展示文本。
 - 成本控制是策略门而非计费器，不记录 token 或货币成本。
+- 预算观测只允许 `feature/allowed/used/remaining/reason_code`；不得记录 query、Prompt、记忆正文、ID、身份或 Provider 连接信息。
 
 ## 测试定位与精确验证
 
@@ -108,6 +111,7 @@ flowchart LR
 | 常量、异常、默认配置 | `tests/test_base.py` |
 | Schema 与 Pydantic 默认/范围、Hybrid 顺序、revision、冲突和持久化 | `tests/test_config_contract.py tests/test_engine_runtime_config_contract.py` |
 | Memory Evolution 默认、模式和范围契约 | `tests/test_config_contract.py tests/test_memory_evolution_gate.py` |
+| 请求级额外 LLM 双门、并发 reservation 与轮次复用 | `tests/test_extra_llm_budget.py tests/test_llm_reranker.py` |
 | Dashboard 配置 API 到事务异常的映射 | `tests/test_api_config.py` |
 | 实体 revision 与编辑异常 | `tests/test_entity_editing.py` |
 | 实体调用链集成 | `tests/test_affection_manager.py tests/test_jargon_admin_service.py tests/test_managers_profile.py tests/test_profile_store.py` |

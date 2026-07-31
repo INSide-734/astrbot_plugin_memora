@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from abc import ABC, abstractmethod
@@ -351,9 +352,13 @@ class TwoStageLLMStrategy(TopicSegmentationStrategy):
         )
 
     async def identify_topics(
-        self, conversation_text: str, system_prompt: str = ""
+        self,
+        conversation_text: str,
+        system_prompt: str = "",
+        *,
+        propagate_errors: bool = False,
     ) -> list[dict[str, Any]]:
-        """第一阶段：返回 `{"topic", "line_range"}` 结构的话题列表。"""
+        """第一阶段返回话题范围，并可让上游预算门观察 Provider 失败。"""
         if self._llm_client is None:
             return []
 
@@ -368,6 +373,7 @@ class TwoStageLLMStrategy(TopicSegmentationStrategy):
             raw = await self._llm_client.call_llm_with_retry(
                 prompt=prompt,
                 system_prompt=system_prompt,
+                max_retries=1,
             )
             line_count = len(conversation_text.splitlines()) or 1
             return _parse_topic_identification_response(
@@ -375,7 +381,11 @@ class TwoStageLLMStrategy(TopicSegmentationStrategy):
                 max_topics=self._max_topics,
                 line_count=line_count,
             )
+        except asyncio.CancelledError:
+            raise
         except Exception:
+            if propagate_errors:
+                raise
             logger.warning("[两阶段分割] 第一阶段话题识别失败", exc_info=True)
         return []
 

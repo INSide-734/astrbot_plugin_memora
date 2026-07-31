@@ -70,6 +70,7 @@ async def create_reranker(
         return LLMReranker(
             llm_client=llm_client,
             batch_size=int(cfg.get("reranker.llm_batch_size", 10)),
+            cost_control=deps.get("cost_control"),
         )
     if strategy == "hybrid":
         from .cross_encoder_reranker import CrossEncoderReranker
@@ -95,6 +96,7 @@ async def create_reranker(
             LLMReranker(
                 llm_client=llm_client,
                 batch_size=int(cfg.get("reranker.llm_batch_size", 10)),
+                cost_control=deps.get("cost_control"),
             ),
         )
     # 未知或默认策略使用不依赖外部 Provider 的 MMR。

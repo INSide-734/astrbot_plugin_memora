@@ -6,6 +6,8 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.core.provider.provider import Provider
 
+from ..base.config_validator import CostControlConfig
+from ..base.cost_control import build_cost_control_from_config
 from ..base.exceptions import ProviderNotReadyError
 from ..identity.conversation_sync import ConversationIdentitySynchronizer
 from ..identity.memory import MemoryIdentityEnricher
@@ -86,6 +88,11 @@ class ComponentFactory:
         evolution_config = self.config_manager.get_section("memory_evolution")
         if not isinstance(evolution_config, dict):
             evolution_config = {}
+        cost_control_section = self.config_manager.get_section("cost_control")
+        if not isinstance(cost_control_section, dict):
+            cost_control_section = {}
+        cost_control_config = CostControlConfig.model_validate(cost_control_section)
+        cost_control = build_cost_control_from_config(cost_control_config)
 
         if not embedding_provider:
             raise ProviderNotReadyError("Embedding Provider 未初始化")
@@ -160,6 +167,7 @@ class ComponentFactory:
 
         engine_config = self._build_engine_config(stopwords_dir, graph_memory_enabled)
         engine_config["memory_evolution"] = evolution_config
+        engine_config["cost_control_runtime"] = cost_control
         engine_config["derived_expander"] = derived_expander
         engine_config["projection_reader"] = projection_reader
         memory_engine = MemoryEngine(
@@ -219,7 +227,11 @@ class ComponentFactory:
                 "topic_segmentation.enabled": self.config_manager.get(
                     "topic_segmentation.enabled", True
                 ),
+                "persona_interpretation.enabled": self.config_manager.get(
+                    "persona_interpretation.enabled", False
+                ),
             },
+            cost_control=cost_control,
         )
         logger.info("MemoryProcessor 已初始化")
 

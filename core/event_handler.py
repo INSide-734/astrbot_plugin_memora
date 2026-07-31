@@ -7,12 +7,19 @@ from __future__ import annotations
 
 import asyncio
 import time
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from .base.config_manager import ConfigManager
+from .base.cost_control import CostControl, build_cost_control_from_config
+from .base.extra_llm_budget import (
+    ExtraLlmBudget,
+    ExtraLlmBudgetObservation,
+    extra_llm_budget_scope,
+)
 from .cleaners.injection_cleaner import InjectionCleaner
 from .dedup.dedup_manager import DedupManager
 from .extractors.message_content_extractor import MessageContentExtractor
@@ -79,6 +86,15 @@ class EventHandler:
         self._injection_recorder = injection_recorder
         self._memory_tool_available = memory_tool_available
         self._memory_evolution_manager = memory_evolution_manager
+        configured_cost_control = getattr(memory_engine, "cost_control", None)
+        cost_control_section = config_manager.get_section("cost_control")
+        if not isinstance(cost_control_section, dict):
+            cost_control_section = {}
+        self._cost_control = (
+            configured_cost_control
+            if isinstance(configured_cost_control, CostControl)
+            else build_cost_control_from_config(cost_control_section)
+        )
         identity_runtime = getattr(conversation_manager, "identity_runtime", None)
         self._identity_runtime = (
             identity_runtime
@@ -108,6 +124,12 @@ class EventHandler:
             injection_recorder=injection_recorder,
             memory_tool_available=memory_tool_available,
             identity_enricher=self._identity_runtime.enricher,
+            query_rewrite_llm_caller=partial(
+                memory_processor.llm_client.call_llm_with_retry,
+                system_prompt="只解析记忆查询意图并返回要求的 JSON。",
+                max_retries=1,
+            ),
+            cost_control=self._cost_control,
         )
         self._reflection_handler = ReflectionHandler(
             context=context,
@@ -123,12 +145,68 @@ class EventHandler:
             prompt_protection_service=prompt_protection_service,
             write_guard_cb=write_guard_cb,
             memory_evolution_manager=memory_evolution_manager,
+            cost_control=self._cost_control,
         )
 
     @property
     def summary_window_locker(self) -> ReflectionHandler:
         """反思流程与命令流程共用的会话级总结提交锁。"""
         return self._reflection_handler
+
+    def _new_extra_llm_budget(self, event: AstrMessageEvent) -> ExtraLlmBudget:
+        """为新 AstrBot 请求创建预算并附着到同一事件对象。"""
+
+        budget = ExtraLlmBudget(
+            self._cost_control.max_extra_llm_calls_per_turn,
+            observer=self._observe_extra_llm_budget,
+        )
+        try:
+            setattr(event, "_memora_extra_llm_budget", budget)
+        except Exception:
+            logger.warning("额外 LLM 请求预算无法附着到事件，响应阶段将使用新预算")
+        return budget
+
+    def _extra_llm_budget_for_response(
+        self,
+        event: AstrMessageEvent,
+    ) -> ExtraLlmBudget:
+        """复用召回阶段预算；缺少召回钩子时创建独立安全预算。"""
+
+        budget = getattr(event, "_memora_extra_llm_budget", None)
+        if isinstance(budget, ExtraLlmBudget):
+            return budget
+        return self._new_extra_llm_budget(event)
+
+    @staticmethod
+    def _clear_extra_llm_budget(
+        event: AstrMessageEvent,
+        budget: ExtraLlmBudget,
+    ) -> None:
+        """响应结束后移除事件引用，后台任务继续持有上下文副本。"""
+
+        try:
+            if getattr(event, "_memora_extra_llm_budget", None) is budget:
+                delattr(event, "_memora_extra_llm_budget")
+        except Exception:
+            logger.debug("额外 LLM 请求预算事件引用清理失败", exc_info=True)
+
+    @staticmethod
+    def _observe_extra_llm_budget(
+        observation: ExtraLlmBudgetObservation,
+    ) -> None:
+        """把预算决策写入只含 allowlist 标量的诊断事件。"""
+
+        report_debug_event(
+            "extra_llm_budget",
+            component="event_handler",
+            stage="budget",
+            status="allowed" if observation.allowed else "denied",
+            reason_code=observation.reason_code,
+            feature=observation.feature,
+            allowed=observation.allowed,
+            used=observation.used,
+            remaining=observation.remaining,
+        )
 
     # ---- 公开事件处理方法 ----
 
@@ -241,7 +319,12 @@ class EventHandler:
             # 会唤醒 Bot 的消息仍在 on_llm_response 后检查，避免响应生成前
             # 提前冻结窗口；只有不会产生回复的环境消息在捕获阶段主动触发。
             if not bool(getattr(event, "is_at_or_wake_command", False)):
-                await self._reflection_handler.maybe_schedule_summary(event)
+                budget = self._new_extra_llm_budget(event)
+                try:
+                    with extra_llm_budget_scope(budget):
+                        await self._reflection_handler.maybe_schedule_summary(event)
+                finally:
+                    self._clear_extra_llm_budget(event, budget)
 
             self._create_maintenance_task(
                 self._enforce_message_limit(session_id),
@@ -335,7 +418,8 @@ class EventHandler:
         timing_context: RecallTimingContext | None = None,
     ) -> None:
         """在 LLM 请求前检索并注入长期记忆。"""
-        with debug_operation():
+        budget = self._new_extra_llm_budget(event)
+        with extra_llm_budget_scope(budget), debug_operation():
             identity_started = time.perf_counter()
             identity = self._resolve_identity(
                 event,
@@ -357,16 +441,20 @@ class EventHandler:
         resp: LLMResponse,
     ) -> None:
         """在 LLM 响应后判断是否需要反思与存储记忆。"""
-        with debug_operation():
-            identity = self._resolve_identity(
-                event,
-                writes_blocked=self._writes_blocked(),
-            )
-            await self._reflection_handler.handle_memory_reflection(
-                event,
-                resp,
-                identity=identity,
-            )
+        budget = self._extra_llm_budget_for_response(event)
+        try:
+            with extra_llm_budget_scope(budget), debug_operation():
+                identity = self._resolve_identity(
+                    event,
+                    writes_blocked=self._writes_blocked(),
+                )
+                await self._reflection_handler.handle_memory_reflection(
+                    event,
+                    resp,
+                    identity=identity,
+                )
+        finally:
+            self._clear_extra_llm_budget(event, budget)
 
     async def handle_session_reset(self, event: AstrMessageEvent) -> None:
         """处理 /reset 或 /new 触发的会话清空"""

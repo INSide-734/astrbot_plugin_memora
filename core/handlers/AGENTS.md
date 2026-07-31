@@ -52,6 +52,7 @@ flowchart TD
 - `handle_memory_recall(event, req) -> None`：主入口。请求没有 `prompt` 且没有额外用户内容时直接跳过。
 - 清理：配置 `recall_engine.auto_remove_injected` 开启时调用 [`../cleaners/AGENTS.md`](../cleaners/AGENTS.md) 中两个清理入口。
 - 查询：优先 `event.get_message_str()`；纯 At 等空消息从最近历史构建回退查询。私聊写入请求消息时按 `req.prompt` → 组件提取 → 原始事件文本回退。
+- 预算：`EventHandler` 在请求钩子创建 `ExtraLlmBudget`，响应钩子复用同一对象并在结束后移除事件引用；召回、Strategy D、额外反思批次和 persona interpretation 通过 `ContextVar` 共享额度，后台反思任务继承创建时上下文。
 - 过滤：`filtering_settings` 决定 session/persona 范围；`get_persona_id()` 解析当前人格。
 - 路由：根据 `manual` / `auto` / `hybrid` 配置和 Provider、工具集、上下文余量执行 preflight；只有未短路时才调用 `MemoryEngine.search_memories()`，最终路由只执行一次。
 - 候选：主召回可加自发回忆；按稳定 `doc_id` 或来源+内容哈希去重，来源优先级为 prospective > main > spontaneous，再按分数排序并截断 `top_k`。前瞻记忆使用独立辅助预算，不混入普通候选列表。
@@ -66,7 +67,7 @@ flowchart TD
 - 清洗后为空或命中常见 API/限流/连接错误文本时不记录。
 - assistant 消息成功写入会话后计算 `unsummarized_rounds = (total_messages - last_summarized_index) // 2`；阈值来自 `reflection_engine.summary_trigger_rounds`。
 - `try_begin_summary_window()` / `finish_summary_window()` 是反思与手动提交共享的会话级并发门；同一 session 同时只允许一个总结任务。
-- `_storage_task()` 先由 `TopicBatchPreparer` 生成批次，再调用 `MemoryProcessor.process_conversation()`；多批次并行抽取，写入由 3 槽 semaphore 限流。
+- `_storage_task()` 先由 `TopicBatchPreparer` 生成批次，再由 `reflection_llm_budget.py` 按剩余额度合并溢出批次并调用 `MemoryProcessor.process_conversation()`。第 1 批是基础反思，不计额外额度；后续每批各 reservation 一次且固定 `max_retries=1`。LLM 并发受 `max_reflection_parallel_llm_calls` 限制，写入另由 3 槽 semaphore 限流。
 - 每条 `MemoryEngine.add_memory()` 成功返回 canonical 整数 ID 后，由 `MemoryEngine` 从同一 SQLite Store 重新加载 source 并调用 `MemoryEvolutionManager.schedule_consider()`；缺少 manager/source 或调度普通失败只记录并隔离，不能把已经成功的 canonical 写入回滚或标记失败。`ReflectionHandler._schedule_evolution_after_write()` 仍覆盖反思链的兼容调度路径；稳定 idempotency key 使中央调度与该路径重复触发时不会产生重复可见 job。
 - `shutdown()` 停止新窗口并等待已登记存储任务，不主动取消正在落库的反思任务。
 
@@ -81,11 +82,12 @@ flowchart TD
 - `prepare_batches(history_messages, is_group_chat) -> list[list]`。
 - 非 C/D 或少于 3 条消息：复制为单批次。
 - C：调用 `MemoryEngine.embed_texts` 的相邻向量边界策略；失败回退单批次。
-- D：`balanced` / `low_cost` 默认禁用额外 LLM 阶段；仅 `quality` 或显式 `cost_control.allow_llm_topic_strategy_d` 允许。识别失败、零/单话题或无有效行范围均回退单批次。
+- D：`low_cost` 禁用；`balanced` 仅在显式 `cost_control.allow_llm_topic_strategy_d=true` 时放行，`quality` 由功能门放行，但三者仍必须取得当前请求额度。第一阶段固定单次 Provider 调用；拒绝、失败、零/单话题或无有效行范围均回退单批次。
 
 ## 失败、取消与一致性
 
 - **`asyncio.CancelledError` 必须向上传播。** 召回主入口、Provider 获取/能力探测、执行器、决策记录、自发/前瞻检索和反思主入口均有显式重抛路径；不得把关闭取消误记为普通业务失败或保守回退。测试已锁定执行器和 Provider getter 的真实取消传播。
+- 额外 LLM Provider 普通失败或取消必须释放未提交 reservation；成功返回后即使 JSON 无效也视为已经使用额度。额度拒绝不得改变候选排序、分数或丢弃反思消息。
 - 普通召回异常在钩子边界记录后降级为“不注入”，并始终记录总耗时；可选认知上下文、指标和 recorder 失败彼此隔离。
 - 响应保护采用 fail-closed：要求保护却没有有效 scope、scope 查询失败、清洗异常或二次验证失败时，将 `resp.completion_text` 置空并清理事件标记。
 - 反思 LLM 任一批次失败时不提交窗口，写 `pending_summary`；部分落库记录成功的幂等键，重试跳过已完成项。
@@ -108,13 +110,14 @@ flowchart TD
 |---|---|
 | `recall_handler.py` | 请求前召回、路由、注入、安全关联和可观测性 |
 | `reflection_handler.py` | 响应清洗、会话记录、窗口控制、后台抽取与幂等写入 |
+| `reflection_llm_budget.py` | 按请求额度拟合反思批次，并执行基础/额外批次的并发与 reservation 协议 |
 | `reflection_trigger.py` | 共享反思阈值判断、pending 兼容与窗口参数准备 |
 | `topic_batch_preparer.py` | 反思前 C/D 话题预切分及成本回退 |
 | `__init__.py` | 仅导出 `RecallHandler`、`ReflectionHandler` |
 
 ## 测试定位与验证
 
-核心行为在 `tests/test_handlers.py`；环境群消息独立触发、唤醒消息分流和失败隔离在 `tests/test_ambient_reflection_trigger.py`；跨模块委托、群聊捕获、演化调度和关闭语义在 `tests/test_event_handler.py`；Projection 可见字段在 `tests/test_recall_projection_metadata.py`；注入路由/保护协定在 `tests/test_injection_router.py`、`tests/test_prompt_sanitizer.py`；真实召回热路径成本契约在 `tests/test_recall_cost_benchmark.py`。
+核心行为在 `tests/test_handlers.py`；请求级预算复用、反思批次 reservation 和成本档位在 `tests/test_extra_llm_budget.py`；环境群消息独立触发、唤醒消息分流和失败隔离在 `tests/test_ambient_reflection_trigger.py`；跨模块委托、群聊捕获、演化调度和关闭语义在 `tests/test_event_handler.py`；Projection 可见字段在 `tests/test_recall_projection_metadata.py`；注入路由/保护协定在 `tests/test_injection_router.py`、`tests/test_prompt_sanitizer.py`；真实召回热路径成本契约在 `tests/test_recall_cost_benchmark.py`。
 
 只改本模块时的精确验证命令：
 

@@ -101,7 +101,7 @@ sequenceDiagram
 
 ### 查询改写
 
-`QueryRewriter.rewrite()` 可把 query 与 recent context 交给 LLM，解析 `QueryIntent`（intent、实体、时间引用、可选 UTC `reference_time`、改写查询、memory types）；失败回退 `intent_keywords.py`。LLM 返回只作为路由提示，不能直接用作 SQL/路径/工具输入。`reference_time` 必须从 MemoryEngine 贯穿 DualRoute、relation/projection reader 和链式扩展，并进入 retrieval/session cache key；下游不得各自读取墙钟。
+`QueryRewriter.rewrite()` 可把 query 与 recent context 交给生产注入的单次 LLM caller，解析 `QueryIntent`（intent、实体、时间引用、可选 UTC `reference_time`、改写查询、memory types）；功能门或请求额度拒绝、Provider 失败及解析失败均回退 `intent_keywords.py`。LLM 返回只作为路由提示，不能直接用作 SQL/路径/工具输入。`reference_time` 必须从 MemoryEngine 贯穿 DualRoute、relation/projection reader 和链式扩展，并进入 retrieval/session cache key；下游不得各自读取墙钟。
 
 ### 个性化
 
@@ -113,7 +113,7 @@ sequenceDiagram
 |---|---|---|
 | `mmr` | 词袋 Jaccard | 同步、无外部调用 |
 | `cross_encoder` | 实际为 query/doc embedding 余弦代理，不是真正 cross-encoder | 生产路径 FAISS/向量不可用回退 MMR；可信消融使用严格运行时探针 |
-| `llm` | 把 query 与最多 `2 * batch_size` 个正文预览交给 LLM 评分 | 解析/调用失败使用基于原排序的合成分数 |
+| `llm` | 通过请求级双门后，把 query 与最多 `2 * batch_size` 个正文预览交给 LLM 评分 | 额度拒绝、解析或调用失败保持输入顺序和分数不变；普通失败释放 reservation |
 | `hybrid` | CrossEncoder 窄化后 LLM 精排 | 组合两者语义 |
 
 `create_reranker()` 是 async 工厂；只有显式 `vector_access`/`sync_text_generation` 能力满足时才构造对应外部重排器，否则在工厂阶段返回带稳定原因码的 MMR。`DualRouteRetriever._apply_reranker()` 兼容同步/异步返回并在异常或返回非 list 时恢复原始分数排序。注意 `HybridReranker.rerank()` 当前是同步方法但可能返回 LLM coroutine，调用方负责 await。

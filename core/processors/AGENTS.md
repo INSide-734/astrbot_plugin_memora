@@ -44,7 +44,7 @@ flowchart LR
 - 低质量总结仍返回，但写 `summary_quality=low`；调用方决定是否持久化。
 - 每条记忆写 `schema_version=v3`、最多 150 字符 `source_snippet`；`StorageBuilder` 同时维护 `summary_schema_version=v2` 的摘要元数据，这是不同层级的版本字段。
 - 重要性可受情感强度、首因/近因和兴趣命中影响，并始终上限钳制到 1.0。
-- `build_memory_from_structured_data()` 用于已有结构化数据；`classify_atoms_from_metadata()` 尊重 `atom_enabled`；`generate_persona_interpretations()` 是可选逐 persona LLM 调用，单个失败不影响其他 persona。
+- `build_memory_from_structured_data()` 用于已有结构化数据；`classify_atoms_from_metadata()` 尊重 `atom_enabled`；`generate_persona_interpretations()` 是可选逐 persona 额外 LLM 调用，每个 persona 必须分别取得请求预算并固定单次 Provider 请求，单个失败释放 reservation 且不影响其他 persona。
 
 ### LLM、解析与格式化
 
@@ -63,7 +63,7 @@ flowchart LR
 - B `EmbeddingClusteringStrategy`：按 key facts 的余弦相似度聚类。
 - `HybridSegmentationStrategy`：先 A，必要时回退 B。
 - C `TopicChunkingStrategy`：在抽取前按相邻消息 embedding 边界切块；无 embed 函数时使用确定性伪向量回退。
-- D `TwoStageLLMStrategy`：第一阶段识别 1-based `line_range`，第二阶段由上游逐批抽取。
+- D `TwoStageLLMStrategy`：第一阶段以单次 Provider 请求识别 1-based `line_range`，第二阶段由上游逐批抽取；预算调用方可要求普通失败向上传播以释放 reservation。
 - `TopicSegmentationRouter` 接受 `a`、`b`、`c`、`d`、`a_b_hybrid` 及别名；非法策略稳定回退 `a_b_hybrid`。
 
 策略输出必须保持输入顺序、边界合法和至少可回退为单段；C/D 的运行成本门控由 handlers 中的 `TopicBatchPreparer` 负责。
@@ -101,6 +101,7 @@ flowchart LR
 ## 失败、取消与安全边界
 
 - 主管道在 LLM/构建异常时记录并重新抛出，交由反思窗口记录 `pending_summary`；不要在这里伪造成功或返回占位记忆。
+- `process_conversation(llm_max_retries=...)` 的默认重试只服务基础反思；额外反思批次必须由上游传入 `1`，避免一个 reservation 对应多次物理 Provider 请求。
 - `asyncio.CancelledError` 属于控制流，必须穿透处理器与 LLM 重试。新增异步异常处理时先单独 `except asyncio.CancelledError: raise`，不要把关闭取消转成重试、空结果或 pending 业务失败。
 - LLM 文本是不可信输入：优先 guardrail，回退解析后仍需规范字段、长度、枚举与数值范围。Prompt 中只放完成抽取所需的对话片段，避免在日志输出正文或人格秘密。
 - 图、画像、知识、笔记属于不同派生模型；不要把它们加入 `MemoryProcessor` 的关键同步路径，除非上游契约明确要求。

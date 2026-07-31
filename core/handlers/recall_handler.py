@@ -16,6 +16,7 @@ from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
 from ..base.constants import FAKE_TOOL_CALL_NAME
+from ..base.cost_control import CostControl
 from ..cleaners.injection_cleaner import InjectionCleaner
 from ..extractors.message_content_extractor import MessageContentExtractor
 from ..identity.models import IdentityTrust, ResolvedIdentity
@@ -96,6 +97,8 @@ class RecallHandler:
         injection_recorder: InjectionDecisionRecorder | None = None,
         memory_tool_available: bool = False,
         identity_enricher: MemoryIdentityEnricher | None = None,
+        query_rewrite_llm_caller: Any | None = None,
+        cost_control: CostControl | None = None,
     ) -> None:
         """装配召回依赖与可选的历史别名只读增强器。"""
 
@@ -118,9 +121,10 @@ class RecallHandler:
         self._executor = InjectionExecutor(injection_adapter, prompt_protection_service)
         self._cleaner = InjectionCleaner()
         self._extractor = MessageContentExtractor()
-        # R1：查询改写器（无 LLM 调用方时使用关键词回退，后续再注入 LLM 调用方）
         self._query_rewriter = QueryRewriter(
+            llm_caller=query_rewrite_llm_caller,
             enabled=config_manager.get("recall_engine.query_rewrite_enabled", True),
+            cost_control=cost_control,
         )
         self._auxiliary_recall = AuxiliaryRecall(config_manager, memory_engine)
 

@@ -12,6 +12,7 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
+from ..base.cost_control import CostControl
 from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
@@ -24,6 +25,10 @@ from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
 from ..utils import OperationContext, get_persona_id
+from .reflection_llm_budget import (
+    fit_batches_to_extra_llm_budget,
+    process_reflection_batches,
+)
 from .reflection_trigger import ReflectionTrigger
 from .topic_batch_preparer import TopicBatchPreparer
 
@@ -50,7 +55,10 @@ class ReflectionHandler:
         prompt_protection_service: Any | None = None,
         write_guard_cb: Any | None = None,
         memory_evolution_manager: Any | None = None,
+        cost_control: CostControl | None = None,
     ) -> None:
+        """装配响应清洗、反思存储及可选认知组件。"""
+
         self._context = context
         self._config_manager = config_manager
         self._memory_engine = memory_engine
@@ -64,6 +72,7 @@ class ReflectionHandler:
         self._prompt_protection = prompt_protection_service
         self._write_guard_cb = write_guard_cb
         self._memory_evolution_manager = memory_evolution_manager
+        self._cost_control = cost_control or CostControl()
 
         self._storage_tasks: set[asyncio.Task] = set()
         self._storage_sessions_inflight: set[str] = set()
@@ -74,6 +83,7 @@ class ReflectionHandler:
             config_manager=config_manager,
             memory_engine=memory_engine,
             memory_processor=memory_processor,
+            cost_control=self._cost_control,
         )
         self._summary_trigger = ReflectionTrigger(
             context=context,
@@ -696,9 +706,10 @@ class ReflectionHandler:
         self, history_messages: list, is_group_chat: bool
     ) -> list[list]:
         """通过 ``TopicBatchPreparer`` 准备消息批次。"""
-        return await self._batch_preparer.prepare_batches(
+        batches = await self._batch_preparer.prepare_batches(
             history_messages, is_group_chat
         )
+        return fit_batches_to_extra_llm_budget(batches, self._cost_control)
 
     async def _storage_task(
         self,
@@ -826,38 +837,27 @@ class ReflectionHandler:
                     batch_processing_failed = False
                     failed_batch_count = 0
                     extraction_started = time.perf_counter()
-                    if len(batches) == 1:
-                        batch_memories = (
-                            await self._memory_processor.process_conversation(
-                                messages=batches[0],
-                                is_group_chat=is_group_chat,
-                                persona_id=persona_id,
+                    batch_results = await process_reflection_batches(
+                        batches,
+                        process_conversation=(
+                            self._memory_processor.process_conversation
+                        ),
+                        cost_control=self._cost_control,
+                        is_group_chat=is_group_chat,
+                        persona_id=persona_id,
+                    )
+                    for i, result in enumerate(batch_results):
+                        if isinstance(result, BaseException):
+                            batch_processing_failed = True
+                            failed_batch_count += 1
+                            logger.error(
+                                "反思批次 %d/%d LLM 处理失败，异常类型=%s",
+                                i + 1,
+                                len(batches),
+                                result.__class__.__name__,
                             )
-                        )
-                        all_memories.extend(batch_memories)
-                    else:
-                        # 多批次（策略 C/D 场景）并行调用 LLM
-                        async def _process_batch(batch):
-                            return await self._memory_processor.process_conversation(
-                                messages=batch,
-                                is_group_chat=is_group_chat,
-                                persona_id=persona_id,
-                            )
-
-                        batch_results = await asyncio.gather(
-                            *[_process_batch(b) for b in batches],
-                            return_exceptions=True,
-                        )
-                        for i, result in enumerate(batch_results):
-                            if isinstance(result, BaseException):
-                                batch_processing_failed = True
-                                failed_batch_count += 1
-                                logger.error(
-                                    f"[{session_id}] 批次 {i + 1}/{len(batches)} "
-                                    f"LLM 处理失败：{result}"
-                                )
-                            else:
-                                all_memories.extend(result)
+                        else:
+                            all_memories.extend(result)
 
                     if batch_processing_failed:
                         report_debug_event(
@@ -912,6 +912,8 @@ class ReflectionHandler:
                         f"[{session_id}] LLM 生成 {len(memories)} 条独立记忆"
                         f"（来自 {len(batches)} 个批次）"
                     )
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     report_debug_exception(
                         "storage_task",
@@ -924,7 +926,9 @@ class ReflectionHandler:
                         retry_count=max(0, int(retry_count)),
                     )
                     logger.error(
-                        f"[{session_id}] LLM 处理失败（重试 {retry_count + 1}/3）：{e}",
+                        "反思 LLM 处理失败（重试 %d/3），异常类型=%s",
+                        retry_count + 1,
+                        e.__class__.__name__,
                         exc_info=True,
                     )
                     await self._record_pending_summary(

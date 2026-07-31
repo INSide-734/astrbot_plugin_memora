@@ -53,15 +53,17 @@ pageClass: config-reference-page
 
 ## 成本控制
 
-配置域：`"cost_control"`。统一管理高成本 LLM 功能的启用与降级策略。balanced 模式默认禁止额外 LLM 调用。
+配置域：`"cost_control"`。统一管理高成本 LLM 功能的启用与降级策略。运行时只从该 typed 叶子分支构造一个不可变功能门；balanced 模式默认禁止额外 LLM 调用。
+
+每轮请求另有共享 reservation 预算。LLM 查询改写、LLM 重排、Strategy D 第一阶段、persona interpretation 和额外反思批次共用 `max_extra_llm_calls_per_turn`；基础反思抽取不计入额外额度。Provider 普通失败或取消释放未提交额度，成功返回后即使解析失败也会提交。`max_reflection_parallel_llm_calls` 只控制并发，不增加总额度。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
 | `"cost_control.mode"` | `"string"` | `"balanced"` | 可选：`"balanced"` / `"low_cost"` / `"quality"` | 成本模式<br><small>balanced: 默认禁止额外LLM调用; low_cost: 最小化所有成本; quality: 允许高成本路径(LLM reranker/strategyD等)</small> |
-| `"cost_control.max_extra_llm_calls_per_turn"` | `"int"` | `0` | 最小值：`0`<br>最大值：`10` | 每轮额外 LLM 调用上限<br><small>被动召回 + 反思总共允许的额外 LLM 调用次数。balanced/low_cost 下默认 0。</small> |
+| `"cost_control.max_extra_llm_calls_per_turn"` | `"int"` | `0` | 最小值：`0`<br>最大值：`10` | 每轮额外 LLM 调用上限<br><small>召回增强与反思额外阶段共享的请求级总额度；并发 reservation 不会超卖。balanced/low_cost 下默认 0。</small> |
 | `"cost_control.allow_llm_reranker_in_passive_recall"` | `"bool"` | `false` | - | 允许被动召回触发 LLM reranker<br><small>WARNING: 开启会显著增加 token 消耗和延迟。仅 quality 模式建议开启。</small> |
-| `"cost_control.allow_llm_topic_strategy_d"` | `"bool"` | `false` | - | 允许 strategy D（两阶段 LLM 话题分割）<br><small>WARNING: strategy D 需要多次 LLM 调用。仅 quality 模式或手动批处理建议开启。</small> |
-| `"cost_control.max_reflection_parallel_llm_calls"` | `"int"` | `2` | 最小值：`1`<br>最大值：`8` | 单次反思流程允许并行执行的 LLM 请求数。提高可缩短批量处理时间，但会增加瞬时并发、限流风险和费用；Provider 配额较低时应保持较小值。 |
+| `"cost_control.allow_llm_topic_strategy_d"` | `"bool"` | `false` | - | 允许 strategy D（两阶段 LLM 话题分割）<br><small>Strategy D 第一阶段及后续额外反思批次仍受共享请求额度约束。</small> |
+| `"cost_control.max_reflection_parallel_llm_calls"` | `"int"` | `2` | 最小值：`1`<br>最大值：`8` | 单次反思流程允许并行执行的 LLM 请求数。它只限制瞬时并发，不替代 `max_extra_llm_calls_per_turn`；Provider 配额较低时应保持较小值。 |
 | `"cost_control.llm_reranker_min_candidates"` | `"int"` | `12` | 最小值：`1`<br>最大值：`50` | LLM reranker 最小候选数<br><small>候选数低于此值时不触发 LLM reranker（使用 MMR 替代）。</small> |
 | `"cost_control.llm_reranker_prompt_chars"` | `"int"` | `3000` | 最小值：`500`<br>最大值：`10000` | LLM reranker prompt 最大字符数 |
 

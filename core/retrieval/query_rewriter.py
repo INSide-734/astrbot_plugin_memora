@@ -16,6 +16,8 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..base.cost_control import CostControl
+from ..base.extra_llm_budget import budgeted_extra_llm_call
 from ..models.temporal import normalize_datetime, parse_datetime
 from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
 
@@ -187,9 +189,13 @@ class QueryRewriter:
         self,
         llm_caller: Any | None = None,
         enabled: bool = True,
+        cost_control: CostControl | None = None,
     ) -> None:
+        """初始化可选 LLM 调用方、功能开关与成本许可门。"""
+
         self._llm = llm_caller  # 可选：注入 LLM 调用函数
         self._enabled = enabled
+        self._cost_control = cost_control or CostControl()
 
     @property
     def enabled(self) -> bool:
@@ -227,7 +233,13 @@ class QueryRewriter:
                     query=query,
                     recent_context=recent_context or "无",
                 )
-                raw = await self._llm(prompt)
+                async with budgeted_extra_llm_call(
+                    self._cost_control,
+                    "llm_query_rewrite",
+                ) as allowed:
+                    if not allowed:
+                        return QueryIntent.from_keywords(query)
+                    raw = await self._llm(prompt)
                 intent = self._parse_llm_response(raw, query)
                 if intent is not None:
                     return intent
