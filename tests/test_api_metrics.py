@@ -370,7 +370,14 @@ async def test_metrics_summary_exposes_scheduler_run_metadata(tmp_path) -> None:
 async def test_recall_samples_payload_clamps_cursor_and_limit() -> None:
     """指标端点必须限制游标和分页大小。"""
     tracker = PerfTracker(maxlen=3)
-    tracker.record({"retrieval_total_ms": 7.5})
+    tracker.record(
+        {
+            "retrieval_total_ms": 7.5,
+            "partial_fallback": True,
+            "graph_route_degraded": True,
+            "route_aborted": False,
+        }
+    )
     plugin = SimpleNamespace(initializer=SimpleNamespace(_perf_tracker=tracker))
     api = _MetricsApiStub(plugin)
 
@@ -380,6 +387,9 @@ async def test_recall_samples_payload_clamps_cursor_and_limit() -> None:
 
     assert response["status"] == "ok"
     assert response["data"]["items"][0]["retrieval_total_ms"] == 7.5
+    assert response["data"]["items"][0]["partial_fallback"] is True
+    assert response["data"]["items"][0]["graph_route_degraded"] is True
+    assert response["data"]["items"][0]["route_aborted"] is False
     assert response["data"]["latest_sequence"] == 1
 
 
@@ -424,3 +434,21 @@ async def test_recall_samples_rejects_invalid_query_without_tracker() -> None:
         "status": "error",
         "message": "recall_samples_invalid_query",
     }
+
+
+@pytest.mark.asyncio
+async def test_recall_samples_reports_unavailable_when_tracker_raises() -> None:
+    """PerfTracker 读取异常时必须返回稳定错误码。"""
+
+    tracker = MagicMock()
+    tracker.get_samples.side_effect = RuntimeError("unexpected failure")
+    plugin = SimpleNamespace(initializer=SimpleNamespace(_perf_tracker=tracker))
+    api = _MetricsApiStub(plugin)
+
+    response = await api.get_recall_samples_payload({})
+
+    assert response == {
+        "status": "error",
+        "message": "recall_samples_unavailable",
+    }
+    tracker.get_samples.assert_called_once_with(after_sequence=0, limit=50)

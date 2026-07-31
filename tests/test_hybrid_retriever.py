@@ -89,8 +89,12 @@ class TestHybridRetriever:
         """When both routes fail, return empty list."""
         hybrid.bm25_retriever.search.side_effect = Exception("BM25 down")
         hybrid.vector_retriever.search.side_effect = Exception("Vector down")
-        results = await hybrid.search("test", k=3)
+        timing: dict[str, float | bool] = {}
+
+        results = await hybrid.search("test", k=3, timing_sink=timing)
+
         assert results == []
+        assert timing["document_route_degraded"] is True
 
     @pytest.mark.asyncio
     async def test_search_populates_independent_route_timings(self, hybrid):

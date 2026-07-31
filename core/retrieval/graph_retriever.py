@@ -143,11 +143,11 @@ class GraphRetriever:
                 else None
             ),
         )
-        keyword_results, _kw_failed, _kw_ms = local_route
+        keyword_results, keyword_failed, _kw_ms = local_route
         if vector_route is None:
-            vector_results, _vec_failed, _vec_ms = [], True, 0.0
+            vector_results, vector_failed, _vec_ms = [], True, 0.0
         else:
-            vector_results, _vec_failed, _vec_ms = vector_route
+            vector_results, vector_failed, _vec_ms = vector_route
         if timing_sink is not None:
             timing_sink["graph_keyword_ms"] = _kw_ms
             timing_sink["graph_vector_ms"] = _vec_ms
@@ -162,6 +162,8 @@ class GraphRetriever:
 
         if not keyword_results and not vector_results:
             if timing_sink is not None:
+                if keyword_failed and vector_failed:
+                    timing_sink["graph_route_degraded"] = True
                 timing_sink["graph_fusion_ms"] = 0.0
                 timing_sink["graph_total_ms"] = (
                     time.perf_counter() - _t_graph_start

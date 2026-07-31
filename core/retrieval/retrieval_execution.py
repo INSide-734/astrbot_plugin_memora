@@ -183,6 +183,27 @@ class RouteExecutionCoordinator:
         timing["graph_total_ms"] = timing.get("graph_total_ms", 0.0)
         timing["atom_ms"] = timing.get("atom_ms", 0.0)
 
+        for route in ("document", "graph", "atom"):
+            if bool(timing.get(f"{route}_route_degraded", False)):
+                degraded.append(route)
+        ordered_degraded = tuple(
+            route for route in ("document", "graph", "atom") if route in degraded
+        )
+        route_aborted = len(ordered_degraded) >= self.MAX_FAILED_ROUTES_BEFORE_ABORT
+        if bool(timing.get("partial_fallback", False)) or (
+            ordered_degraded and not route_aborted
+        ):
+            timing["partial_fallback"] = True
+        else:
+            timing.pop("partial_fallback", None)
+        for route in ordered_degraded:
+            timing[f"{route}_route_degraded"] = True
+        if route_aborted:
+            timing["route_aborted"] = True
+            doc_results = []
+            graph_results = []
+            atom_results = []
+
         # 解析 Atom 评分
         atom_scores: dict[str, float] = {}
         for result in atom_results:
@@ -196,5 +217,5 @@ class RouteExecutionCoordinator:
             atom_results=list(atom_results),
             atom_scores=atom_scores,
             timing=timing,
-            degraded_routes=tuple(degraded),
+            degraded_routes=ordered_degraded,
         )

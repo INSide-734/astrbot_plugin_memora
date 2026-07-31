@@ -11,6 +11,12 @@ import aiosqlite
 from astrbot.api import logger
 
 from ..storage.base import apply_perf_pragmas
+from ..storage.sql_contract import (
+    MEMORY_FTS_CLEAR_SQL,
+    MEMORY_FTS_COUNT_DISTINCT_DOC_IDS_SQL,
+    MEMORY_FTS_SELECT_DISTINCT_DOC_IDS_SQL,
+    MEMORY_FTS_TABLE,
+)
 from .index_rebuilder import IndexRebuilderMixin
 
 
@@ -55,7 +61,7 @@ class IndexValidator(IndexRebuilderMixin):
     DEFAULT_REQUEST_DELAY = 5.0
     RATE_LIMIT_RETRY_MIN_DELAY = 30.0
     DEFAULT_MAX_FAILURE_RATIO = 0.02
-    _ALLOWED_FTS_TABLES = frozenset({"memora_memories_fts"})
+    _ALLOWED_FTS_TABLES = frozenset({MEMORY_FTS_TABLE})
 
     @classmethod
     def _validate_fts_table_name(cls, table_name: str) -> str:
@@ -65,7 +71,7 @@ class IndexValidator(IndexRebuilderMixin):
         return normalized
 
     async def _clear_bm25_with_retry(
-        self, table_name: str = "memora_memories_fts", max_attempts: int = 5
+        self, table_name: str = MEMORY_FTS_TABLE, max_attempts: int = 5
     ) -> None:
         """清空 BM25 索引表，不触碰 documents 原始数据。"""
         self._validate_fts_table_name(table_name)
@@ -74,7 +80,7 @@ class IndexValidator(IndexRebuilderMixin):
                 async with aiosqlite.connect(self.db_path) as db:
                     await apply_perf_pragmas(db)
                     try:
-                        await db.execute("DELETE FROM memora_memories_fts")
+                        await db.execute(MEMORY_FTS_CLEAR_SQL)
                     except Exception as e:
                         logger.warning(f"清空BM25索引失败: {e}")
                     await db.commit()
@@ -112,22 +118,21 @@ class IndexValidator(IndexRebuilderMixin):
                 doc_ids = {row[0] for row in await cursor.fetchall()}
 
                 # 2. 检查BM25索引（memora_memories_fts表）
-                cursor = await db.execute("""
+                cursor = await db.execute(
+                    """
                     SELECT name FROM sqlite_master
-                    WHERE type='table' AND name='memora_memories_fts'
-                """)
+                    WHERE type = 'table' AND name = :table_name
+                    """,
+                    {"table_name": MEMORY_FTS_TABLE},
+                )
                 has_fts_table = await cursor.fetchone()
 
                 if has_fts_table:
-                    cursor = await db.execute(
-                        "SELECT COUNT(DISTINCT doc_id) FROM memora_memories_fts"
-                    )
+                    cursor = await db.execute(MEMORY_FTS_COUNT_DISTINCT_DOC_IDS_SQL)
                     bm25_result = await cursor.fetchone()
                     bm25_count = bm25_result[0] if bm25_result else 0
 
-                    cursor = await db.execute(
-                        "SELECT DISTINCT doc_id FROM memora_memories_fts"
-                    )
+                    cursor = await db.execute(MEMORY_FTS_SELECT_DISTINCT_DOC_IDS_SQL)
                     bm25_ids = {row[0] for row in await cursor.fetchall()}
                 else:
                     bm25_count = 0

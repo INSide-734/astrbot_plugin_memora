@@ -6,6 +6,7 @@ import aiosqlite
 from astrbot.api import logger
 
 from ..storage.base import apply_perf_pragmas
+from ..storage.sql_contract import MEMORY_FTS_INSERT_SQL, MEMORY_FTS_TABLE
 
 
 class Bm25RebuilderMixin:
@@ -25,9 +26,9 @@ class Bm25RebuilderMixin:
         if text_processor is None:
             raise RuntimeError("无法重建 BM25：TextProcessor 未初始化")
 
-        raw_table_name = getattr(bm25_retriever, "fts_table", "memora_memories_fts")
+        raw_table_name = getattr(bm25_retriever, "fts_table", MEMORY_FTS_TABLE)
         if not isinstance(raw_table_name, str) or not raw_table_name.strip():
-            raw_table_name = "memora_memories_fts"
+            raw_table_name = MEMORY_FTS_TABLE
         table_name = self._validate_fts_table_name(raw_table_name)
         batch_size = int(options["batch_size"])
         max_failure_ratio = float(options["max_failure_ratio"])
@@ -57,8 +58,7 @@ class Bm25RebuilderMixin:
                     async with aiosqlite.connect(self.db_path) as db:
                         await apply_perf_pragmas(db)
                         await db.executemany(
-                            """INSERT INTO memora_memories_fts(doc_id, content)
-                               VALUES (:doc_id, :content)""",
+                            MEMORY_FTS_INSERT_SQL,
                             [
                                 {"doc_id": doc_id, "content": content}
                                 for doc_id, content in rows_to_insert
@@ -73,8 +73,7 @@ class Bm25RebuilderMixin:
                             async with aiosqlite.connect(self.db_path) as db:
                                 await apply_perf_pragmas(db)
                                 await db.execute(
-                                    """INSERT INTO memora_memories_fts(doc_id, content)
-                                       VALUES (:doc_id, :content)""",
+                                    MEMORY_FTS_INSERT_SQL,
                                     {
                                         "doc_id": row_doc_id,
                                         "content": processed_content,

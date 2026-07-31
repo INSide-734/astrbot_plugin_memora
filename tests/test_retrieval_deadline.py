@@ -163,3 +163,79 @@ async def test_route_coordinator_preserves_timeout_flags_as_booleans() -> None:
     assert outcome.timing["document_vector_timed_out"] is True
     assert outcome.timing["deadline_exhausted"] is True
     assert outcome.timing["partial_fallback"] is True
+
+
+@pytest.mark.asyncio
+async def test_route_coordinator_aborts_after_two_route_failures() -> None:
+    """两路故障达到阈值时必须丢弃残余结果并暴露安全降级标量。"""
+
+    document = MagicMock()
+    document.search = AsyncMock(return_value=["document-result"])
+    graph = MagicMock()
+    graph.search = AsyncMock(side_effect=RuntimeError("graph failure"))
+    atom = MagicMock()
+    atom.search = AsyncMock(side_effect=RuntimeError("atom failure"))
+    coordinator = RouteExecutionCoordinator(document, graph, atom)
+
+    outcome = await coordinator.execute(query="query", k=3)
+
+    assert outcome.document_results == []
+    assert outcome.graph_results == []
+    assert outcome.atom_results == []
+    assert outcome.degraded_routes == ("graph", "atom")
+    assert "document_route_degraded" not in outcome.timing
+    assert outcome.timing["graph_route_degraded"] is True
+    assert outcome.timing["atom_route_degraded"] is True
+    assert outcome.timing["route_aborted"] is True
+
+
+@pytest.mark.asyncio
+async def test_route_coordinator_aborts_for_internally_reported_route_failures() -> (
+    None
+):
+    """下层检索器吞掉异常时，固定降级信号仍必须触发整次中止。"""
+
+    async def degraded_document(*_args, timing_sink=None, **_kwargs):
+        timing_sink["document_route_degraded"] = True
+        return []
+
+    async def degraded_graph(*_args, timing_sink=None, **_kwargs):
+        timing_sink["graph_route_degraded"] = True
+        return []
+
+    document = MagicMock()
+    document.search = AsyncMock(side_effect=degraded_document)
+    graph = MagicMock()
+    graph.search = AsyncMock(side_effect=degraded_graph)
+    atom = MagicMock()
+    atom.search = AsyncMock(return_value=["atom-result"])
+    coordinator = RouteExecutionCoordinator(document, graph, atom)
+
+    outcome = await coordinator.execute(query="query", k=3)
+
+    assert outcome.document_results == []
+    assert outcome.graph_results == []
+    assert outcome.atom_results == []
+    assert outcome.degraded_routes == ("document", "graph")
+    assert outcome.timing["document_route_degraded"] is True
+    assert outcome.timing["graph_route_degraded"] is True
+    assert outcome.timing["route_aborted"] is True
+
+
+@pytest.mark.asyncio
+async def test_route_coordinator_keeps_results_after_one_route_failure() -> None:
+    """单路故障必须保留成功结果并标记为部分降级。"""
+
+    document = MagicMock()
+    document.search = AsyncMock(return_value=["document-result"])
+    graph = MagicMock()
+    graph.search = AsyncMock(side_effect=RuntimeError("graph failure"))
+    coordinator = RouteExecutionCoordinator(document, graph)
+
+    outcome = await coordinator.execute(query="query", k=3)
+
+    assert outcome.document_results == ["document-result"]
+    assert outcome.degraded_routes == ("graph",)
+    assert outcome.timing["partial_fallback"] is True
+    assert outcome.timing["graph_route_degraded"] is True
+    assert "route_aborted" not in outcome.timing

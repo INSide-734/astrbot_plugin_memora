@@ -21,6 +21,7 @@ from typing import Any, Iterable
 
 from astrbot.api import logger
 
+from ..storage.sql_contract import MEMORY_FTS_OPTIMIZE_SQL, MEMORY_FTS_TABLE
 from ..utils.number_utils import clamp_float, safe_float
 from .decay_operations import _normalize_batch_metadata
 
@@ -298,9 +299,8 @@ class StatsOperationsMixin:
             fts_skipped: dict[str, str] = {}
             for fts_table, optimize_sql in (
                 (
-                    "memora_memories_fts",
-                    "INSERT INTO memora_memories_fts(memora_memories_fts) "
-                    "VALUES ('optimize')",
+                    MEMORY_FTS_TABLE,
+                    MEMORY_FTS_OPTIMIZE_SQL,
                 ),
                 (
                     "memora_graph_entries_fts",

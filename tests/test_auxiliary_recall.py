@@ -106,6 +106,53 @@ async def test_spontaneous_recall_uses_independent_timing_sink() -> None:
 
 
 @pytest.mark.asyncio
+async def test_spontaneous_recall_probability_gates_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """概率值在阈值上下时必须分别触发和抑制自发召回。"""
+
+    engine = MagicMock()
+    engine.search_memories = AsyncMock(return_value=[])
+    auxiliary = AuxiliaryRecall(
+        _config(
+            {
+                "recall_engine.spontaneous_recall_enabled": True,
+                "recall_engine.spontaneous_recall_probability": 0.4,
+            }
+        ),
+        engine,
+    )
+    draws = iter((0.399, 0.401))
+
+    def next_draw() -> float:
+        """依次返回阈值下方和上方的确定性抽样值。"""
+
+        return next(draws)
+
+    monkeypatch.setattr(
+        "core.handlers.auxiliary_recall.random.random",
+        next_draw,
+    )
+
+    triggered = await auxiliary.maybe_spontaneous_recall(
+        session_id="session",
+        persona_id=None,
+        chat_type="private",
+        deadline_monotonic=None,
+    )
+    suppressed = await auxiliary.maybe_spontaneous_recall(
+        session_id="session",
+        persona_id=None,
+        chat_type="private",
+        deadline_monotonic=None,
+    )
+
+    assert triggered == []
+    assert suppressed == []
+    engine.search_memories.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_auxiliary_recall_propagates_calling_task_cancellation() -> None:
     """调用方取消时辅助搜索被收束，并继续传播 ``CancelledError``。"""
 

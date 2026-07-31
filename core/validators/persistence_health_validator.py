@@ -8,12 +8,14 @@ import aiosqlite
 from astrbot.api import logger
 
 from ..storage.base import apply_perf_pragmas
+from ..storage.sql_contract import (
+    MEMORY_FTS_SELECT_DISTINCT_DOC_IDS_SQL,
+    MEMORY_FTS_TABLE,
+)
 
 _ID_QUERY_ALLOWLIST = {
     ("documents", "id", None): "SELECT DISTINCT id FROM documents",
-    ("memora_memories_fts", "doc_id", None): (
-        "SELECT DISTINCT doc_id FROM memora_memories_fts"
-    ),
+    (MEMORY_FTS_TABLE, "doc_id", None): MEMORY_FTS_SELECT_DISTINCT_DOC_IDS_SQL,
     ("memory_atoms", "parent_memory_id", "parent_memory_id IS NOT NULL"): (
         "SELECT DISTINCT parent_memory_id FROM memory_atoms "
         "WHERE parent_memory_id IS NOT NULL"
@@ -105,9 +107,9 @@ class PersistenceHealthValidator:
     ) -> None:
         """检查 BM25 文档引用是否存在 canonical source。"""
 
-        if not await self._table_exists(db, "memora_memories_fts"):
+        if not await self._table_exists(db, MEMORY_FTS_TABLE):
             return
-        bm25_ids = await self._ids(db, "memora_memories_fts", "doc_id")
+        bm25_ids = await self._ids(db, MEMORY_FTS_TABLE, "doc_id")
         counts["bm25"] = len(bm25_ids)
         orphan = sorted(bm25_ids - document_ids)
         if orphan:

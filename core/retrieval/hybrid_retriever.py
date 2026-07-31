@@ -213,6 +213,7 @@ class HybridRetriever:
             if timing_sink is not None:
                 timing_sink.update(
                     {
+                        "document_route_degraded": True,
                         "document_fusion_ms": 0.0,
                         "document_weighting_ms": 0.0,
                         "document_mmr_ms": 0.0,

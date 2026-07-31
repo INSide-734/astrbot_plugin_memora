@@ -110,6 +110,8 @@ def test_retrieval_timing_sink_rejects_sensitive_and_non_scalar_values() -> None
             "retrieval_total_ms": 4.0,
             "query_count": 2,
             "deadline_exhausted": True,
+            "graph_route_degraded": True,
+            "route_aborted": False,
             "query": "secret",
             "ids": [1, 2],
         }
@@ -119,4 +121,6 @@ def test_retrieval_timing_sink_rejects_sensitive_and_non_scalar_values() -> None
         "retrieval_total_ms": 4.0,
         "query_count": 2,
         "deadline_exhausted": True,
+        "graph_route_degraded": True,
+        "route_aborted": False,
     }

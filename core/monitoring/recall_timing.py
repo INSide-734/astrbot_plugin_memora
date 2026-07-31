@@ -59,6 +59,10 @@ BOOL_KEYS: Final[tuple[str, ...]] = (
     "deadline_exhausted",
     "partial_fallback",
     "graph_route_skipped",
+    "document_route_degraded",
+    "graph_route_degraded",
+    "atom_route_degraded",
+    "route_aborted",
 )
 STATUS_VALUES: Final[frozenset[str]] = frozenset(
     {

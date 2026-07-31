@@ -10,6 +10,8 @@ import json
 
 from astrbot.api import logger
 
+from ..storage.sql_contract import MEMORY_FTS_DELETE_BY_JSON_IDS_SQL
+
 
 class MemoryEngineBatchMixin:
     """MemoryEngine 批量操作方法"""
@@ -42,10 +44,7 @@ class MemoryEngineBatchMixin:
             batch_existing_ids: list[int] = []
             try:
                 await self.db_connection.execute(
-                    """
-                    DELETE FROM memora_memories_fts
-                    WHERE doc_id IN (SELECT value FROM json_each(:memory_ids_json))
-                    """,
+                    MEMORY_FTS_DELETE_BY_JSON_IDS_SQL,
                     batch_params,
                 )
                 cursor = await self.db_connection.execute(
@@ -126,10 +125,7 @@ class MemoryEngineBatchMixin:
             return 0
         batch_params = {"memory_ids_json": json.dumps(memory_ids)}
         await self.db_connection.execute(
-            """
-            DELETE FROM memora_memories_fts
-            WHERE doc_id IN (SELECT value FROM json_each(:memory_ids_json))
-            """,
+            MEMORY_FTS_DELETE_BY_JSON_IDS_SQL,
             batch_params,
         )
         cursor = await self.db_connection.execute(
