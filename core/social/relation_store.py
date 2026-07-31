@@ -60,7 +60,7 @@ class RelationStore(BaseStore):
 
     @property
     def _table_sql(self) -> str:
-        """返回经过白名单校验并引用的关系表标识符。"""
+        """验证固定关系表契约；执行查询始终使用静态 SQL 文本。"""
 
         return self._quote_identifier(
             self._TABLE,
@@ -73,9 +73,9 @@ class RelationStore(BaseStore):
     async def initialize(self) -> None:
         """若表不存在，则创建 ``social_relations`` 表。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
-            await db.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_sql} (
+            _ = self._table_sql
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS social_relations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     from_user TEXT NOT NULL,
                     to_user TEXT NOT NULL,
@@ -88,17 +88,17 @@ class RelationStore(BaseStore):
                     UNIQUE(from_user, to_user, relation_type, group_id)
                 )
             """)
-            await db.execute(f"""
+            await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_social_from
-                ON {table_sql}(from_user, group_id)
+                ON social_relations(from_user, group_id)
             """)
-            await db.execute(f"""
+            await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_social_to
-                ON {table_sql}(to_user, group_id)
+                ON social_relations(to_user, group_id)
             """)
-            await db.execute(f"""
+            await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_social_group
-                ON {table_sql}(group_id)
+                ON social_relations(group_id)
             """)
             await db.commit()
 
@@ -134,12 +134,12 @@ class RelationStore(BaseStore):
             rel.group_id,
         )
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             try:
                 await db.execute("BEGIN IMMEDIATE")
                 await db.execute(
-                    f"""
-                    INSERT INTO {table_sql}
+                    """
+                    INSERT INTO social_relations
                         (from_user, to_user, relation_type, strength, frequency,
                          last_interaction, group_id, tags_json)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -158,9 +158,9 @@ class RelationStore(BaseStore):
                     ),
                 )
                 cursor = await db.execute(
-                    f"""
+                    """
                     SELECT *
-                    FROM {table_sql}
+                    FROM social_relations
                     WHERE from_user = ?
                       AND to_user = ?
                       AND relation_type = ?
@@ -187,13 +187,13 @@ class RelationStore(BaseStore):
     ) -> tuple[SocialRelation, SocialRelation] | None:
         """锁内重读关系并仅更新自动学习拥有的互动字段。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             try:
                 await db.execute("BEGIN IMMEDIATE")
                 cursor = await db.execute(
-                    f"""
+                    """
                     SELECT *
-                    FROM {table_sql}
+                    FROM social_relations
                     WHERE from_user = ?
                       AND to_user = ?
                       AND relation_type = ?
@@ -222,8 +222,8 @@ class RelationStore(BaseStore):
                     tags=list(current.tags),
                 )
                 await db.execute(
-                    f"""
-                    UPDATE {table_sql}
+                    """
+                    UPDATE social_relations
                     SET strength = ?, frequency = ?, last_interaction = ?
                     WHERE from_user = ?
                       AND to_user = ?
@@ -246,11 +246,11 @@ class RelationStore(BaseStore):
     async def create_relation_strict(self, rel: SocialRelation) -> SocialRelation:
         """严格插入关系；复合键已存在时不覆盖现有记录。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             try:
                 await db.execute(
-                    f"""
-                    INSERT INTO {table_sql}
+                    """
+                    INSERT INTO social_relations
                         (from_user, to_user, relation_type, strength, frequency,
                          last_interaction, group_id, tags_json)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -287,13 +287,13 @@ class RelationStore(BaseStore):
         """在同一事务内检查修订版本并绝对更新关系业务字段。"""
         from_user, to_user, current_type, group_id = identity
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             try:
                 await db.execute("BEGIN IMMEDIATE")
                 cursor = await db.execute(
-                    f"""
+                    """
                     SELECT *
-                    FROM {table_sql}
+                    FROM social_relations
                     WHERE from_user = ?
                       AND to_user = ?
                       AND relation_type = ?
@@ -316,9 +316,9 @@ class RelationStore(BaseStore):
 
                 if relation_type != current_type:
                     cursor = await db.execute(
-                        f"""
+                        """
                         SELECT 1
-                        FROM {table_sql}
+                        FROM social_relations
                         WHERE from_user = ?
                           AND to_user = ?
                           AND relation_type = ?
@@ -340,8 +340,8 @@ class RelationStore(BaseStore):
                     tags=list(tags),
                 )
                 await db.execute(
-                    f"""
-                    UPDATE {table_sql}
+                    """
+                    UPDATE social_relations
                     SET relation_type = ?, strength = ?, tags_json = ?
                     WHERE from_user = ?
                       AND to_user = ?
@@ -375,13 +375,13 @@ class RelationStore(BaseStore):
     ) -> bool:
         """在同一事务内检查修订版本并删除关系。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             try:
                 await db.execute("BEGIN IMMEDIATE")
                 cursor = await db.execute(
-                    f"""
+                    """
                     SELECT *
-                    FROM {table_sql}
+                    FROM social_relations
                     WHERE from_user = ?
                       AND to_user = ?
                       AND relation_type = ?
@@ -403,8 +403,8 @@ class RelationStore(BaseStore):
                     )
 
                 await db.execute(
-                    f"""
-                    DELETE FROM {table_sql}
+                    """
+                    DELETE FROM social_relations
                     WHERE from_user = ?
                       AND to_user = ?
                       AND relation_type = ?
@@ -421,10 +421,10 @@ class RelationStore(BaseStore):
     async def upsert_relation(self, rel: SocialRelation) -> None:
         """插入或更新一条 ``SocialRelation``。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             await db.execute(
-                f"""
-                INSERT INTO {table_sql}
+                """
+                INSERT INTO social_relations
                     (from_user, to_user, relation_type, strength, frequency,
                      last_interaction, group_id, tags_json)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -456,11 +456,11 @@ class RelationStore(BaseStore):
     ) -> SocialRelation | None:
         """按主键获取单条关系记录。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
+                """
                 SELECT *
-                FROM {table_sql}
+                FROM social_relations
                 WHERE from_user = ?
                   AND to_user = ?
                   AND relation_type = ?
@@ -485,11 +485,11 @@ class RelationStore(BaseStore):
             tie_breaker="id",
         )
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
+                """
                 SELECT *
-                FROM {table_sql}
+                FROM social_relations
                 WHERE group_id = :group_id
                 ORDER BY
                   CASE WHEN :sort_by = 'from_user' AND :sort_order = 'asc'
@@ -534,11 +534,11 @@ class RelationStore(BaseStore):
     async def get_user_network(self, user_id: str) -> list[SocialRelation]:
         """返回涉及指定用户的全部关系（作为 from 或 to）。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
+                """
                 SELECT *
-                FROM {table_sql}
+                FROM social_relations
                 WHERE from_user = ? OR to_user = ?
                 ORDER BY strength DESC
                 """,
@@ -552,11 +552,11 @@ class RelationStore(BaseStore):
     ) -> list[SocialRelation]:
         """返回指定群组中涉及该用户的全部关系。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
+                """
                 SELECT *
-                FROM {table_sql}
+                FROM social_relations
                 WHERE (from_user = ? OR to_user = ?)
                   AND group_id = ?
                 ORDER BY strength DESC
@@ -575,10 +575,10 @@ class RelationStore(BaseStore):
     ) -> bool:
         """删除单条关系；若成功删除行则返回 ``True``。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
-                DELETE FROM {table_sql}
+                """
+                DELETE FROM social_relations
                 WHERE from_user = ?
                   AND to_user = ?
                   AND relation_type = ?
@@ -592,10 +592,10 @@ class RelationStore(BaseStore):
     async def delete_user_relations(self, user_id: str, group_id: str) -> int:
         """删除指定群组内涉及该用户的全部关系。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
-                DELETE FROM {table_sql}
+                """
+                DELETE FROM social_relations
                 WHERE (from_user = ? OR to_user = ?)
                   AND group_id = ?
                 """,
@@ -615,10 +615,10 @@ class RelationStore(BaseStore):
             tie_breaker="id",
         )
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
-                SELECT * FROM {table_sql}
+                """
+                SELECT * FROM social_relations
                 ORDER BY
                   CASE WHEN :sort_by = 'from_user' AND :sort_order = 'asc'
                        THEN from_user END COLLATE NOCASE ASC,
@@ -658,19 +658,19 @@ class RelationStore(BaseStore):
     async def count(self) -> int:
         """返回总行数。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
-            cursor = await db.execute(f"SELECT COUNT(*) FROM {table_sql}")
+            _ = self._table_sql
+            cursor = await db.execute("SELECT COUNT(*) FROM social_relations")
             row = await cursor.fetchone()
             return int(row[0]) if row else 0
 
     async def list_group_ids(self) -> list[str]:
         """返回社交关系表中所有非空且去重的群组 ID。"""
         async with self._connect() as db:
-            table_sql = self._table_sql
+            _ = self._table_sql
             cursor = await db.execute(
-                f"""
+                """
                 SELECT DISTINCT group_id
-                FROM {table_sql}
+                FROM social_relations
                 WHERE group_id <> ''
                 ORDER BY group_id
                 """

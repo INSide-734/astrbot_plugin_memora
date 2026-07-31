@@ -13,6 +13,8 @@
 
 `sql_contract.py` 集中保存跨 retrieval、managers、validators 与 social 复用的固定表名和静态 FTS SQL；这些常量不接受运行时输入，调用方仍必须对值参数绑定，并在支持可替换标识符的入口保留白名单校验。
 
+SQLite 不支持把表标识符作为绑定参数。`RelationStore` 因此只用 `SOCIAL_RELATIONS_TABLE` 校验固定表契约，实际执行语句始终包含静态 `social_relations` 标识符，不把运行时标识符插入 SQL；群组 ID、用户 ID、关系类型和排序选择继续通过值参数或固定 allowlist 处理。
+
 ## Memory Evolution 派生解释平面
 
 `memory_evolution_store.py` 与 canonical `memora.db` 共用连接生命周期，但只保存可失效、可重建的演化数据：job/lease 队列、`memory_relations`、`memory_projections` 及 projection source mapping 四类解释平面。relation/projection 写入保留 source revision、`reference_at`/`discovered_at`/`invalid_at` 和时间来源/精度；source mapping 可保存自己的 occurred/valid 窗口。旧库由初始化迁移补列，缺失时间保持 NULL，不从 `updated_at` 推断事实时间。canonical memory 的整数 ID、正文和 revision 仍由主记忆表权威维护，Projection 不创建第二套 canonical ID。
