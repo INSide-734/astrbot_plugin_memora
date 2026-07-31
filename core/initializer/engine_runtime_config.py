@@ -214,6 +214,7 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
         0.7,
     ),
     _field("reranker.mmr_lambda", "reranker.mmr_lambda", 0.7),
+    _field("security.strict_mode", "security.strict_mode", False),
     _field("cost_control.mode", "cost_control.mode", "balanced"),
     _field(
         "cost_control.max_extra_llm_calls_per_turn",

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -28,6 +27,11 @@ from .hybrid_retriever import HybridRetriever
 from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
 from .multi_query_fusion import fuse_query_results, split_candidate_budget
 from .projection_reader import ProjectionBudget, ProjectionScope
+from .provider_privacy_prefilter import (
+    ProviderPrivacyContext,
+    ProviderPrivacyPrefilter,
+    rerank_with_provider_boundary,
+)
 from .retrieval_execution import RouteExecutionCoordinator
 from .route_policy import should_use_graph_route
 from .rrf_fusion import HybridResult
@@ -98,6 +102,7 @@ class DualRouteRetriever:
             atom_retriever=atom_retriever,
         )
         self._reranker_strategy = self.config.get("reranker.strategy", "mmr")
+        self._provider_prefilter = ProviderPrivacyPrefilter()
         # 阶段计时存储（每次 search() 后更新）
 
     async def search(
@@ -291,7 +296,15 @@ class DualRouteRetriever:
         # v2.5 可插拔重排序 — MMR / Cross-Encoder / LLM / Hybrid
         _t_rerank_start = time.perf_counter()
         if self.reranker and len(merged) > 1:
-            merged = await self._apply_reranker(merged, k, query=query)
+            merged = await self._apply_reranker(
+                merged,
+                k,
+                query=query,
+                session_id=session_id,
+                persona_id=persona_id,
+                chat_type=chat_type,
+                user_id=user_id,
+            )
         else:
             merged.sort(key=lambda item: item.final_score, reverse=True)
         rerank_ms = (time.perf_counter() - _t_rerank_start) * 1000.0
@@ -532,7 +545,13 @@ class DualRouteRetriever:
         _t_rerank_start = time.perf_counter()
         if self.reranker and len(fused) > 1:
             fused = await self._apply_reranker(
-                fused, k, query=query_plan.original_query
+                fused,
+                k,
+                query=query_plan.original_query,
+                session_id=session_id,
+                persona_id=persona_id,
+                chat_type=chat_type,
+                user_id=user_id,
             )
         else:
             fused.sort(key=lambda item: item.final_score, reverse=True)
@@ -659,22 +678,28 @@ class DualRouteRetriever:
         k: int,
         *,
         query: str,
+        session_id: str | None,
+        persona_id: str | None,
+        chat_type: str,
+        user_id: str | None,
     ) -> list[HybridResult]:
-        """兼容同步和异步重排序器，并保留未进入前 k 的回填候选。"""
-        fallback = list(results)
-        fallback.sort(key=lambda item: (-item.final_score, item.doc_id))
-        try:
-            reranked = self.reranker.rerank(results, k, query=query)
-            if inspect.isawaitable(reranked):
-                reranked = await reranked
-            if not isinstance(reranked, list):
-                return fallback
-            returned_ids = {item.doc_id for item in reranked}
-            return reranked + [
-                item for item in fallback if item.doc_id not in returned_ids
-            ]
-        except Exception:
-            return fallback
+        """携带当前请求授权上下文执行同步或异步重排。"""
+
+        return await rerank_with_provider_boundary(
+            results,
+            k,
+            query=query,
+            reranker=self.reranker,
+            strategy=str(self._reranker_strategy),
+            prefilter=self._provider_prefilter,
+            context=ProviderPrivacyContext(
+                chat_type=chat_type,
+                scope_key=session_id or persona_id or f"{chat_type}:default",
+                stable_user_id=user_id,
+            ),
+            strict_mode=bool(self.config.get("security.strict_mode", False)),
+            mmr_lambda=float(self.config.get("reranker.mmr_lambda", 0.7)),
+        )
 
     @staticmethod
     def _filter_by_privacy(

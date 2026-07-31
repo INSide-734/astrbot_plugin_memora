@@ -132,6 +132,17 @@ def test_factory_projects_lifecycle_feature_sections() -> None:
     assert config["export.enabled"] is False
 
 
+def test_factory_projects_security_strict_mode_for_provider_prefilter() -> None:
+    """安全严格模式必须进入引擎快照并控制 Provider 前预过滤降级。"""
+
+    assert (
+        _build_engine_config({"security": {"strict_mode": True}})[
+            "security.strict_mode"
+        ]
+        is True
+    )
+
+
 @pytest.mark.asyncio
 async def test_projected_lifecycle_flags_control_real_engine_components(
     tmp_db_path: str,

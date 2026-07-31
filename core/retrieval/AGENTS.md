@@ -116,15 +116,16 @@ sequenceDiagram
 | `llm` | 通过请求级双门后，把 query 与最多 `2 * batch_size` 个正文预览交给 LLM 评分 | 额度拒绝、解析或调用失败保持输入顺序和分数不变；普通失败释放 reservation |
 | `hybrid` | CrossEncoder 窄化后 LLM 精排 | 组合两者语义 |
 
-`create_reranker()` 是 async 工厂；只有显式 `vector_access`/`sync_text_generation` 能力满足时才构造对应外部重排器，否则在工厂阶段返回带稳定原因码的 MMR。`DualRouteRetriever._apply_reranker()` 兼容同步/异步返回并在异常或返回非 list 时恢复原始分数排序。注意 `HybridReranker.rerank()` 当前是同步方法但可能返回 LLM coroutine，调用方负责 await。
+`create_reranker()` 是 async 工厂；只有显式 `vector_access`/`sync_text_generation` 能力满足时才构造对应外部重排器，否则在工厂阶段返回带稳定原因码的 MMR。`DualRouteRetriever._apply_reranker()` 通过 `provider_privacy_prefilter` 兼容同步/异步返回，并在普通异常或返回非 list 时恢复安全候选的原始分数排序。注意 `HybridReranker.rerank()` 当前是同步方法但可能返回 LLM coroutine，调用方负责 await。
 
 ## 隐私与不可泄露数据边界
 
-1. **最终群聊过滤在 `DualRouteRetriever` 重排之后执行。** `chat_type == "group"` 时丢弃 `metadata.privacy_level == "confidential"`；缺字段按 `shared`。任何绕过该入口的直接 `HybridRetriever`/图检索调用都不具备此保护。
-2. 过滤发生较晚：机密候选在被过滤前可能进入画像排序和 LLM 重排。群聊启用 `llm`/`hybrid` 时，provider 仍可能看到机密正文；调用层必须按 provider 授权策略配置，安全敏感路径应考虑在外部调用前预过滤。
-3. `QueryRewriter` 会向 LLM 发送 query/recent context；`LLMReranker` 会发送 query 和每项前 200 字符。不得把凭据、系统提示或未授权私密会话传入外部 provider。
-4. `HybridResult.content`、metadata、graph provenance、query、session/user/persona ID 都是敏感数据。禁止进入普通指标标签或未授权 API。
-5. FTS、FAISS 与图路返回的 metadata 不可信；读取时需类型校验，不能把 metadata 字段当成权限声明以外的可信控制输入。
+1. **任何非 MMR 重排都先经过 `ProviderPrivacyPrefilter`。** 预过滤按当前 chat type、scope、稳定用户和候选 role/privacy 约束正文；群聊 `confidential`、跨 scope、私聊稳定身份不匹配和非法 role 候选不得进入 Provider。
+2. 预过滤普通故障时，`security.strict_mode=true` 跳过外部重排并保持基础顺序；兼容模式只执行本地 MMR。`asyncio.CancelledError` 必须传播，两种模式都不得把未过滤候选交给 Provider。
+3. **最终群聊过滤继续保留在重排之后。** `chat_type == "group"` 时丢弃 `metadata.privacy_level == "confidential"`；缺字段按 `shared`，用于防止中间组件错误恢复候选。任何绕过 `DualRouteRetriever` 的直接检索调用都不具备完整双层保护。
+4. `QueryRewriter` 会向 LLM 发送 query/recent context；`LLMReranker` 只发送 query、匿名局部索引和每项前 200 字符。不得把凭据、系统提示或未授权私密会话传入外部 provider。
+5. `HybridResult.content`、metadata、graph provenance、query、session/user/persona ID 都是敏感数据。禁止进入普通指标标签或未授权 API。
+6. FTS、FAISS 与图路返回的 metadata 不可信；预过滤必须校验字段类型和值，不能把 metadata 字段当成未经验证的授权证明。
 
 ## 可解释召回与追踪
 
