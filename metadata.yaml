@@ -1,5 +1,5 @@
 name: astrbot_plugin_memora
 author: INSide-734
-version: 1.0.0
-description: 为 AstrBot 打造的、拥有完整记忆生命周期的智能长期记忆插件。
+version: 1.1.0
+description: 为 AstrBot 打造的全链路智能长期记忆插件：融合 BM25、FAISS、图检索与派生关系，支持稳定身份识别、记忆抽取与反思、可演化记忆、隐私安全过滤、SQLite/FTS5 持久化及可视化管理面板，让 Bot 真正拥有可持续、可追溯、可控的强大记忆能力。
 repo: https://github.com/INSide-734/astrbot_plugin_memora
