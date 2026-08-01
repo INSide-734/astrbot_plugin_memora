@@ -575,6 +575,7 @@ class RecallHandler:
                         cognitive_format_ms=format_ms,
                     )
                 )
+                await self._maybe_propose_reconsolidation(memories, actual_query)
                 injected_count = result.selected_count
                 injection_format_ms = result.format_ms
                 injection_inject_ms = result.inject_ms
@@ -1277,6 +1278,26 @@ class RecallHandler:
             logger.debug("[召回流程] 好感度上下文构建失败", exc_info=True)
 
         return "\n".join(parts)
+
+    async def _maybe_propose_reconsolidation(
+        self,
+        memories: list[Any],
+        query: str,
+    ) -> None:
+        """召回后为最高分记忆生成再巩固候选；永不直接写 canonical。"""
+
+        manager = getattr(self._memory_engine, "reconsolidation", None)
+        if manager is None or not memories:
+            return
+        memory_id = getattr(memories[0], "doc_id", None)
+        if not memory_id:
+            return
+        try:
+            await manager.maybe_propose(int(memory_id), context=query)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("[召回流程] 再巩固候选生成失败")
 
     async def _build_fallback_query(self, session_id: str) -> str | None:
         """从最近历史消息构建回退查询，用于空消息场景（如纯 @mention）。

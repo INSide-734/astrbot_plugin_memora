@@ -351,12 +351,26 @@ class MemoryEngineLifecycleMixin:
             self.db_path,
         )
 
-        # 记忆再巩固
+        # 记忆再巩固：默认关闭；启用时只生成候选，人工 CAS 应用与回滚
+        self.reconsolidation = None
+        self.reconsolidation_store = None
         if bool(self.config.get("reconsolidation.enabled", False)):
+            from ..storage.reconsolidation_store import ReconsolidationStore
             from .reconsolidation import ReconsolidationManager
 
+            store = ReconsolidationStore(
+                configured_data_dir / "reconsolidation_candidates.db"
+            )
+            await store.initialize()
+            self.reconsolidation_store = store
             self.reconsolidation = ReconsolidationManager(
-                self.db_connection, self.llm_provider
+                store,
+                get_memory_cb=self.get_memory,
+                llm_caller=self._build_reconsolidation_llm_caller(),
+                enabled=True,
+                min_recall_count=int(
+                    self.config.get("reconsolidation.min_recall_count", 5)
+                ),
             )
 
         # 异常检测：记忆创建速率滚动统计
@@ -462,3 +476,26 @@ class MemoryEngineLifecycleMixin:
         task = asyncio.create_task(coro)
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
+
+    def _build_reconsolidation_llm_caller(self) -> Any | None:
+        """构造带形状校验的再巩固 LLM 调用器，Provider 缺失时返回 None。"""
+
+        from ..provider_adapters import LLMProviderAdapter
+
+        provider = getattr(self, "llm_provider", None)
+        if provider is None:
+            return None
+        try:
+            adapter = LLMProviderAdapter.from_provider(provider)
+        except Exception:
+            return None
+
+        async def _call(prompt: str) -> str | None:
+            try:
+                return await adapter.generate(prompt, system_prompt="")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return None
+
+        return _call

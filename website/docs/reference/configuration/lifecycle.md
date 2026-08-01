@@ -87,11 +87,11 @@ pageClass: config-reference-page
 
 ## 记忆再巩固
 
-配置域：`"reconsolidation"`。召回时可选 LLM 微调记忆内容，保留原始版本
+配置域：`"reconsolidation"`。召回时只生成可审阅候选，不直接修改 canonical；人工确认后按来源 revision CAS 应用，并可回滚旧正文。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"reconsolidation.enabled"` | `"bool"` | `false` | - | 是否启用记忆再巩固。开启后，达到条件且被反复召回的记忆可进入重新整理流程；该过程会增加后台处理成本，建议先观察召回质量再启用。 |
+| `"reconsolidation.enabled"` | `"bool"` | `false` | - | 是否启用记忆再巩固候选。开启后，被反复召回的候选记忆经 LLM 修订生成 pending 候选，等待人工 CAS 确认；不会自动改写 canonical。 |
 | `"reconsolidation.min_recall_count"` | `"int"` | `5` | - | 记忆进入再巩固前必须达到的最低召回次数。值越低触发越积极，值越高越偏向只整理长期反复使用的记忆。 |
 
 ## 话题分割

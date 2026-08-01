@@ -63,6 +63,7 @@ flowchart TD
 - 候选：主召回可加自发回忆；按稳定 `doc_id` 或来源+内容哈希去重，来源优先级为 prospective > main > spontaneous，再按分数排序并截断 `top_k`。前瞻记忆使用独立辅助预算，不混入普通候选列表。
 - Projection：`_safe_candidates()` 仅允许模型看到 `derived_projections[].type/summary/confidence`。类型必须属于四种已声明 Projection，summary 非空，confidence 为有限数并钳制到 `[0,1]`；内部 projection/source ID、revision、scope、privacy、role 和 job 信息全部丢弃。非法 Projection 只被移除，不应连带丢弃 canonical 候选。
 - 连续性：只读取当前稳定 session 的待续话题并并入 cognitive context；该内容继续经过既有预算、Prompt 保护和 `InjectionExecutor`，不写 System Prompt 或 canonical。关闭配置时 Tracker 为 `None`，不得恢复或注入。
+- 再巩固：启用时只为最高分召回候选调用 `ReconsolidationManager.maybe_propose()` 生成 pending 候选；普通失败降级，任何路径都不得在召回热路径直接写 canonical。
 - 注入：`InjectionExecutor` 负责硬字符预算、保护、Provider 传输适配与请求回滚；结果和脱敏计数交给 recorder/metrics。`system_prompt` 必须保持不变。
 
 ### `ReflectionHandler`

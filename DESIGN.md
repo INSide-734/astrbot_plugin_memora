@@ -153,7 +153,7 @@ canonical ID。
 privacy 与 role 分区内按 topic Jaccard 聚类。它通过 Manager 的外部 Projection proposal 边界
 二次核对全部 source revision，再写入 `semantic_summary`；不会调用 canonical add/delete。
 任何摘要来源更新、删除或 orphan cleanup 都使整条摘要失效，统一派生重建和每日维护可幂等
-重建当前 revision。关闭语义压缩后读取器屏蔽已有 `semantic_summary`，canonical 仍正常召回。
+重建当前 revision。关闭语义压缩后读取器屏蔽已有 `semantic_summary`，canonical 仍正常召回。记忆再巩固默认关闭：召回只生成 pending 候选（记录 source revision、旧正文与 LLM 提案），人工确认后按 `expected_revision` CAS 应用，回滚恢复旧正文与派生索引，热路径永不直接写 canonical。
 
 高影响 relation 使用独立复核状态机和动作审计表，不复用 canonical review 或 pre-canonical
 quarantine 的 ID/状态。`approve`、`reject`、`replay` 都要求候选 revision CAS；approve/replay

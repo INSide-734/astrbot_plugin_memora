@@ -133,6 +133,10 @@ stateDiagram-v2
 - `cleanup()` 先按 retention 删除，再按 `(created_at_ms DESC, decision_id DESC)` 稳定保留 newest `max_rows`，同一事务提交。
 - provider 型号和错误码仍可能泄露部署信息，API 层必须授权；“无正文”不代表可公开。
 
+### 再巩固候选：`ReconsolidationStore`
+
+`reconsolidation_candidates` 保存 source revision、旧正文与 proposed 正文，`reconsolidation_actions` 记录 stage/apply/reject/rollback 低敏审计；状态迁移使用 CAS，应用与回滚必须携带 `expected_revision`。
+
 ### Memory Evolution 能力快照
 
 `MemoryEvolutionStore` 显式声明原生 filtering、batch write、update 和 delete；取消传播由调用层保证。该快照只描述当前 Store 的稳定入口，不改变 canonical SQLite 权威、source revision 校验或派生对象可重建边界，也不得暴露 source mapping、revision、scope、内部 ID 或 job 信息。
