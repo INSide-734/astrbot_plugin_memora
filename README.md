@@ -29,6 +29,8 @@ Memora 是 AstrBot 的长期记忆插件，为对话提供记忆提取、混合�
   source revision 变化或删除后自动失效，人工笔记与版本历史保持独立。
 - 可选语义压缩把同 scope、privacy、role 的旧 canonical memory 聚合为带完整来源 revision 的
   `semantic_summary` Projection；原记忆不会被删除或替换，关闭功能后派生摘要不进入召回。
+- 可选对话连续性只从通过质量门并成功写入 canonical 的 topics 维护同 session 待续话题，
+  重启可恢复未过期状态；召回时仅作为受预算和保护的临时请求上下文，不写 System Prompt。
 - 提供 Dashboard、管理命令、Agent 工具与 Page API。
 - 提供诊断、评测、备份恢复、索引重建和校验后的在线更新。
 

@@ -74,7 +74,7 @@ pageClass: config-reference-page
 
 ## 对话连续性追踪
 
-配置域：`"continuity_tracking"`。追踪未完成话题，下次对话时优先恢复上下文
+配置域：`"continuity_tracking"`。只从通过质量门并成功写入 canonical 的 topics 追踪同 session 未完成话题；启动时恢复未过期状态，召回结果仅进入受预算与保护的临时请求上下文。关闭后不读取、不写入、不注入。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|

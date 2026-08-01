@@ -62,6 +62,7 @@ flowchart TD
 - 路由：根据 `manual` / `auto` / `hybrid` 配置和 Provider、工具集、上下文余量执行 preflight；只有未短路时才调用 `MemoryEngine.search_memories()`，最终路由只执行一次。
 - 候选：主召回可加自发回忆；按稳定 `doc_id` 或来源+内容哈希去重，来源优先级为 prospective > main > spontaneous，再按分数排序并截断 `top_k`。前瞻记忆使用独立辅助预算，不混入普通候选列表。
 - Projection：`_safe_candidates()` 仅允许模型看到 `derived_projections[].type/summary/confidence`。类型必须属于四种已声明 Projection，summary 非空，confidence 为有限数并钳制到 `[0,1]`；内部 projection/source ID、revision、scope、privacy、role 和 job 信息全部丢弃。非法 Projection 只被移除，不应连带丢弃 canonical 候选。
+- 连续性：只读取当前稳定 session 的待续话题并并入 cognitive context；该内容继续经过既有预算、Prompt 保护和 `InjectionExecutor`，不写 System Prompt 或 canonical。关闭配置时 Tracker 为 `None`，不得恢复或注入。
 - 注入：`InjectionExecutor` 负责硬字符预算、保护、Provider 传输适配与请求回滚；结果和脱敏计数交给 recorder/metrics。`system_prompt` 必须保持不变。
 
 ### `ReflectionHandler`
@@ -73,6 +74,7 @@ flowchart TD
 - assistant 消息成功写入会话后计算 `unsummarized_rounds = (total_messages - last_summarized_index) // 2`；阈值来自 `reflection_engine.summary_trigger_rounds`。
 - `try_begin_summary_window()` / `finish_summary_window()` 是反思与手动提交共享的会话级并发门；同一 session 同时只允许一个总结任务。
 - `_storage_task()` 先由 `TopicBatchPreparer` 生成批次，再由 `reflection_llm_budget.py` 按剩余额度合并溢出批次并调用 `MemoryProcessor.process_conversation()`。第 1 批是基础反思，不计额外额度；后续每批各 reservation 一次且固定 `max_retries=1`。LLM 并发受 `max_reflection_parallel_llm_calls` 限制，写入另由 3 槽 semaphore 限流。
+- 连续性话题只在 `MemoryQualityGate` allow 且 `MemoryEngine.add_memory()` 成功后标记；quarantine 不标记。窗口全部处理完成后通知 Tracker 收尾，普通 Tracker 失败不得破坏 canonical 写入或聊天主链。
 - 每条 `MemoryEngine.add_memory()` 成功返回 canonical 整数 ID 后，由 `MemoryEngine` 从同一 SQLite Store 重新加载 source 并调用 `MemoryEvolutionManager.schedule_consider()`；缺少 manager/source 或调度普通失败只记录并隔离，不能把已经成功的 canonical 写入回滚或标记失败。`ReflectionHandler._schedule_evolution_after_write()` 仍覆盖反思链的兼容调度路径；稳定 idempotency key 使中央调度与该路径重复触发时不会产生重复可见 job。
 - `shutdown()` 停止新窗口并等待已登记存储任务，不主动取消正在落库的反思任务。
 
@@ -115,6 +117,7 @@ flowchart TD
 |---|---|
 | `recall_handler.py` | 请求前召回、路由、注入、安全关联和可观测性 |
 | `reflection_handler.py` | 响应清洗、会话记录、窗口控制、后台抽取与幂等写入 |
+| `continuity_hooks.py` | canonical 写后话题标记、窗口收尾和只读临时连续性上下文边界 |
 | `reflection_llm_budget.py` | 按请求额度拟合反思批次，并执行基础/额外批次的并发与 reservation 协议 |
 | `reflection_trigger.py` | 共享反思阈值判断、pending 兼容与窗口参数准备 |
 | `topic_batch_preparer.py` | 反思前 C/D 话题预切分及成本回退 |
@@ -122,7 +125,7 @@ flowchart TD
 
 ## 测试定位与验证
 
-核心行为在 `tests/test_handlers.py`；请求级预算复用、反思批次 reservation 和成本档位在 `tests/test_extra_llm_budget.py`；环境群消息独立触发、唤醒消息分流和失败隔离在 `tests/test_ambient_reflection_trigger.py`；跨模块委托、群聊捕获、演化调度和关闭语义在 `tests/test_event_handler.py`；Projection 可见字段在 `tests/test_recall_projection_metadata.py`；注入路由/保护协定在 `tests/test_injection_router.py`、`tests/test_prompt_sanitizer.py`；真实召回热路径成本契约在 `tests/test_recall_cost_benchmark.py`。
+核心行为在 `tests/test_handlers.py`；连续性生产装配、canonical 写后边界、session 隔离和状态恢复在 `tests/test_continuity_closed_loop.py`；请求级预算复用、反思批次 reservation 和成本档位在 `tests/test_extra_llm_budget.py`；环境群消息独立触发、唤醒消息分流和失败隔离在 `tests/test_ambient_reflection_trigger.py`；跨模块委托、群聊捕获、演化调度和关闭语义在 `tests/test_event_handler.py`；Projection 可见字段在 `tests/test_recall_projection_metadata.py`；注入路由/保护协定在 `tests/test_injection_router.py`、`tests/test_prompt_sanitizer.py`；真实召回热路径成本契约在 `tests/test_recall_cost_benchmark.py`。
 
 只改本模块时的精确验证命令：
 

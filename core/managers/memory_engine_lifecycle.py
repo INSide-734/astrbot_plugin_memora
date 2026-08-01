@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 from astrbot.api import logger
@@ -30,6 +32,38 @@ from ..storage.graph_store import GraphStore
 from .schema_migration import SchemaMigrationCoordinator
 from .write_coordinator import ConnectionRegistry
 
+if TYPE_CHECKING:
+    from .continuity_tracker import ContinuityTracker
+
+
+def _build_continuity_tracker(
+    config: Mapping[str, Any],
+    db_path: str,
+) -> ContinuityTracker | None:
+    """按运行时配置构造并同步恢复连续性 Tracker。
+
+    Args:
+        config: 已由工厂投影的引擎运行时配置。
+        db_path: canonical SQLite 路径，用于缺省 data_dir 推导。
+
+    Returns:
+        功能关闭时返回 ``None``；否则返回已恢复状态的真实 Tracker。
+    """
+
+    if not bool(config.get("continuity_tracking.enabled", True)):
+        return None
+    from .continuity_tracker import ContinuityTracker
+
+    data_dir = str(config.get("data_dir") or Path(db_path).parent)
+    topic_ttl_days = float(config.get("continuity_tracking.topic_ttl_days", 7))
+    tracker = ContinuityTracker(
+        data_dir=data_dir,
+        topic_ttl_sec=topic_ttl_days * 86400.0,
+        max_topics=int(config.get("continuity_tracking.max_pending_topics", 10)),
+    )
+    tracker.load_state()
+    return tracker
+
 
 class MemoryEngineLifecycleMixin:
     """MemoryEngine 生命周期方法（initialize / close / _create_tracked_task）"""
@@ -37,6 +71,8 @@ class MemoryEngineLifecycleMixin:
     # ==================== 生命周期 ====================
 
     def __init__(self):
+        """初始化生命周期内由后续装配填充的组件引用。"""
+
         self.db_connection = None
         self.text_processor = None
         self.rrf_fusion = None
@@ -283,12 +319,10 @@ class MemoryEngineLifecycleMixin:
         # ===== 可选子系统初始化 =====
 
         # 对话连续性追踪
-        if bool(self.config.get("continuity_tracking.enabled", False)):
-            from .continuity_tracker import ContinuityTracker
-
-            self.continuity_tracker = ContinuityTracker(
-                self.db_path, self.db_connection
-            )
+        self.continuity_tracker = _build_continuity_tracker(
+            self.config,
+            self.db_path,
+        )
 
         # 关系阶段追踪
         if bool(self.config.get("relationship_tracking.enabled", False)):
@@ -374,6 +408,8 @@ class MemoryEngineLifecycleMixin:
         self.sse = RealtimeSSE(self)
 
     async def close(self):
+        """停止后台组件、保存状态并关闭数据库与向量资源。"""
+
         if self.atom_lifecycle_manager is not None:
             await self.atom_lifecycle_manager.stop()
         # 持久化子系统状态
@@ -388,12 +424,18 @@ class MemoryEngineLifecycleMixin:
                     task.cancel()
             await asyncio.gather(*self._pending_tasks, return_exceptions=True)
             self._pending_tasks.clear()
+        continuity_tracker = getattr(self, "continuity_tracker", None)
+        if continuity_tracker is not None:
+            with contextlib.suppress(Exception):
+                continuity_tracker.save_state()
         if self.db_connection:
             await self.db_connection.close()
         if self.graph_vector_db is not None:
             await self.graph_vector_db.close()
 
     def _create_tracked_task(self, coro) -> None:
+        """创建受引擎关闭流程管理的后台任务。"""
+
         task = asyncio.create_task(coro)
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)

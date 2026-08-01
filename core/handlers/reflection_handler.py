@@ -25,6 +25,10 @@ from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
 from ..utils import OperationContext, get_persona_id
+from .continuity_hooks import (
+    record_continuity_topics,
+    resolve_continuity_session,
+)
 from .reflection_llm_budget import (
     fit_batches_to_extra_llm_budget,
     process_reflection_batches,
@@ -1000,6 +1004,11 @@ class ReflectionHandler:
                                 metadata=metadata,
                                 atoms=mem.get("atoms", []),
                             )
+                            record_continuity_topics(
+                                self._memory_engine,
+                                session_id,
+                                mem,
+                            )
                             await self._schedule_evolution_after_write(memory_id)
                             if idempotency_key:
                                 successful_keys.add(idempotency_key)
@@ -1157,6 +1166,8 @@ class ReflectionHandler:
                                 "可能出现重复总结。",
                                 exc_info=True,
                             )
+
+                resolve_continuity_session(self._memory_engine, session_id)
 
                 report_debug_event(
                     "storage_task",

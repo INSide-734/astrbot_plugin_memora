@@ -46,6 +46,7 @@ from ..security.prompt_sanitizer import (
 )
 from ..utils import OperationContext, get_persona_id
 from .auxiliary_recall import AuxiliaryRecall
+from .continuity_hooks import build_continuity_context
 from .recall_observability import RecallTimingContext
 
 if TYPE_CHECKING:
@@ -1232,6 +1233,12 @@ class RecallHandler:
     ) -> str:
         """构建来自 v1.0+ 认知模块的可选只读上下文。"""
         parts: list[str] = []
+        continuity_context = build_continuity_context(
+            self._memory_engine,
+            group_id,
+        )
+        if continuity_context:
+            parts.append(continuity_context)
         try:
             if self._jargon_query_service is not None:
                 explanation = await self._jargon_query_service.check_and_explain(
