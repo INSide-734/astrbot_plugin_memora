@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -382,12 +383,15 @@ class MemoryEngineLifecycleMixin:
             self.reconsolidation = ReconsolidationManager(
                 store,
                 get_memory_cb=self.get_memory,
+                update_memory_cb=self.update_memory,
+                refresh_derived_cb=self._refresh_reconsolidation_derived,
                 llm_caller=self._build_reconsolidation_llm_caller(),
                 enabled=True,
                 min_recall_count=int(
                     self.config.get("reconsolidation.min_recall_count", 5)
                 ),
             )
+            await self.reconsolidation.recover_incomplete_rollbacks()
 
         # 异常检测：记忆创建速率滚动统计
         self.anomaly_detector = _build_anomaly_detector(
@@ -513,3 +517,33 @@ class MemoryEngineLifecycleMixin:
                 return None
 
         return _call
+
+    async def _refresh_reconsolidation_derived(self, memory_id: int) -> bool:
+        """按当前 canonical 快照重刷单条再巩固 graph 派生数据。
+
+        Args:
+            memory_id: 已由正常更新入口恢复的 canonical 记忆 ID。
+
+        Returns:
+            source 可读取且 graph 已刷新时返回 True；graph 未启用时也返回 True。
+        """
+
+        memory = await self.get_memory(memory_id)
+        if not memory:
+            return False
+        graph_manager = getattr(self, "graph_memory_manager", None)
+        if graph_manager is None:
+            return True
+        metadata = memory.get("metadata", {}) or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (json.JSONDecodeError, TypeError):
+                metadata = {}
+        elif not isinstance(metadata, dict):
+            metadata = {}
+        content = str(memory.get("text") or memory.get("content") or "")
+        if not content.strip():
+            return False
+        await graph_manager.index_memory(memory_id, content, metadata)
+        return True

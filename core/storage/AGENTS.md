@@ -135,7 +135,7 @@ stateDiagram-v2
 
 ### 再巩固候选：`ReconsolidationStore`
 
-`reconsolidation_candidates` 保存 source revision、旧正文与 proposed 正文，`reconsolidation_actions` 记录 stage/apply/reject/rollback 低敏审计；状态迁移使用 CAS，应用与回滚必须携带 `expected_revision`。
+`reconsolidation_candidates` 保存 source revision、旧正文与 proposed 正文，`reconsolidation_actions` 记录 stage/apply/reject/rollback 低敏审计；状态迁移使用 CAS，应用与回滚必须携带 `expected_revision`。`reconsolidation_rollback_ops` 在 canonical 更新前保存回滚意图；完成时必须在同一事务内迁移候选、追加动作并删除操作。启动恢复只重放 revision 未变或正文已经等于目标旧正文的 pending 操作，冲突操作保持 blocked，不能覆盖后续编辑。
 
 ### Memory Evolution 能力快照
 

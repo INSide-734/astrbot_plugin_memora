@@ -40,6 +40,8 @@ class ReconsolidationManager:
         store: ReconsolidationStore,
         *,
         get_memory_cb: Callable[..., Awaitable[dict[str, Any] | None]] | None = None,
+        update_memory_cb: Callable[..., Awaitable[bool]] | None = None,
+        refresh_derived_cb: Callable[[int], Awaitable[bool]] | None = None,
         llm_caller: Callable[..., Awaitable[str | None]] | None = None,
         enabled: bool = False,
         min_recall_count: int = 5,
@@ -48,6 +50,8 @@ class ReconsolidationManager:
 
         self._store = store
         self._get_memory = get_memory_cb
+        self._update_memory = update_memory_cb
+        self._refresh_derived = refresh_derived_cb
         self._llm = llm_caller
         self._enabled = enabled
         self._min_recall_count = max(1, int(min_recall_count))
@@ -222,6 +226,10 @@ class ReconsolidationManager:
         current_revision = memory_revision(memory) if memory else None
         if not current_revision:
             return {"restored": False, "reason_code": "source_not_found"}
+        await self._store.begin_rollback(
+            candidate_id,
+            expected_revision=current_revision,
+        )
         restored = await update_memory_cb(
             candidate["memory_id"],
             {
@@ -235,15 +243,107 @@ class ReconsolidationManager:
                 getattr(update_memory_cb, "_last_write_reason_code", None)
                 or "rollback_failed"
             )
+            await self._store.cancel_rollback(candidate_id)
             return {"restored": False, "reason_code": reason_code}
-        await self._store.transition(
-            candidate_id,
-            expected_status="approved",
-            new_status="rolled_back",
-            reason_code="restored",
-            action="rollback",
-        )
+        if self._refresh_derived is not None:
+            refreshed = await self._refresh_derived(candidate["memory_id"])
+            if not refreshed:
+                return {"restored": False, "reason_code": "derived_refresh_failed"}
+        await self._store.complete_rollback(candidate_id)
         return {"restored": True, "reason_code": "restored"}
+
+    async def recover_incomplete_rollbacks(self) -> dict[str, int]:
+        """在启动时安全重放跨 Store 未完成回滚。
+
+        仅当 canonical revision 仍等于开始值，或当前正文已经等于目标旧正文时
+        才允许重放。后者会再次走正常更新入口，用于补刷 FTS、FAISS、graph 和
+        evolution 派生状态；其他 revision/正文组合标记为 blocked。
+
+        Returns:
+            已恢复和已阻塞操作数，不包含候选 ID 或正文。
+
+        Raises:
+            asyncio.CancelledError: 启动恢复被取消时继续传播。
+        """
+
+        if self._get_memory is None or self._update_memory is None:
+            return {"recovered": 0, "blocked": 0}
+        try:
+            operations = await self._store.list_incomplete_rollbacks()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error(
+                "[再巩固] 未完成回滚读取失败，reason_code=rollback_scan_failed"
+            )
+            return {"recovered": 0, "blocked": 1}
+
+        recovered = 0
+        blocked = 0
+        for operation in operations:
+            candidate_id = str(operation["candidate_id"])
+            try:
+                candidate = await self._store.get_candidate(candidate_id)
+                memory = (
+                    await self._get_memory(candidate["memory_id"])
+                    if candidate is not None
+                    else None
+                )
+                current_revision = memory_revision(memory) if memory else None
+                current_content = str(
+                    (memory or {}).get("text") or (memory or {}).get("content") or ""
+                )
+                expected_revision = str(operation["expected_revision"])
+                if candidate is None or candidate.get("status") != "approved":
+                    reason_code = "candidate_status_changed"
+                elif not current_revision:
+                    reason_code = "source_not_found"
+                elif current_revision != expected_revision and current_content != str(
+                    candidate["old_content"]
+                ):
+                    reason_code = "source_revision_mismatch"
+                else:
+                    restored = await self._update_memory(
+                        candidate["memory_id"],
+                        {
+                            "content": candidate["old_content"],
+                            "metadata": candidate["old_metadata"],
+                        },
+                        expected_revision=current_revision,
+                    )
+                    if restored:
+                        if self._refresh_derived is not None:
+                            refreshed = await self._refresh_derived(
+                                candidate["memory_id"]
+                            )
+                            if not refreshed:
+                                reason_code = "derived_refresh_failed"
+                                await self._store.mark_rollback_blocked(
+                                    candidate_id,
+                                    reason_code=reason_code,
+                                )
+                                blocked += 1
+                                continue
+                        await self._store.complete_rollback(candidate_id)
+                        recovered += 1
+                        continue
+                    reason_code = str(
+                        getattr(self._update_memory, "_last_write_reason_code", None)
+                        or "rollback_failed"
+                    )
+                await self._store.mark_rollback_blocked(
+                    candidate_id,
+                    reason_code=reason_code,
+                )
+                blocked += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error(
+                    "[再巩固] 回滚恢复失败，reason_code=rollback_recovery_failed"
+                )
+                blocked += 1
+        return {"recovered": recovered, "blocked": blocked}
 
     async def _call_llm(self, text: str, context: str) -> str | None:
         """调用 LLM 生成修订文本；失败或输出过短返回 None。"""
