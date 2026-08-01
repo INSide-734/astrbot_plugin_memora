@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import aiosqlite
 import pytest
 
 from core.managers.memory_engine import MemoryEngine
@@ -244,6 +246,53 @@ async def test_stage_candidate_serializes_concurrent_duplicates(tmp_path: Path) 
 
     assert not [result for result in results if isinstance(result, Exception)]
     assert len(await store.list_candidates()) == 1
+
+
+@pytest.mark.asyncio
+async def test_transition_rolls_back_status_when_action_audit_fails(
+    tmp_path: Path,
+) -> None:
+    """动作审计写入失败时，候选状态迁移必须一并回滚。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    candidate = await store.stage_candidate(
+        memory_id=7,
+        source_revision="r-7",
+        old_content="原始记忆正文",
+        old_metadata={"access_count": 8},
+        proposed_content="修正后的记忆正文内容",
+        change_summary="LLM 修订候选",
+        evidence_type="llm_revision",
+    )
+    async with aiosqlite.connect(store.db_path) as db:
+        await db.execute(
+            """
+            CREATE TRIGGER reject_reconsolidation_action
+            BEFORE INSERT ON reconsolidation_actions
+            WHEN NEW.action='reject'
+            BEGIN
+                SELECT RAISE(ABORT, 'action audit blocked');
+            END
+            """
+        )
+        await db.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await store.transition(
+            candidate["candidate_id"],
+            expected_status="pending",
+            new_status="rejected",
+            reason_code="manual_reject",
+            action="reject",
+        )
+
+    persisted = await store.get_candidate(candidate["candidate_id"])
+    assert persisted is not None
+    assert persisted["status"] == "pending"
+    assert [
+        item["action"] for item in await store.list_actions(candidate["candidate_id"])
+    ] == ["stage"]
 
 
 @pytest.mark.asyncio

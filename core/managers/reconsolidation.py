@@ -167,6 +167,39 @@ class ReconsolidationManager:
         )
         return {"applied": True, "candidate": updated}
 
+    async def reject_candidate(
+        self,
+        candidate_id: str,
+        *,
+        reason_code: str = "manual_reject",
+    ) -> dict[str, Any]:
+        """拒绝 pending 候选并记录低敏动作审计。
+
+        Args:
+            candidate_id: 待拒绝候选 ID。
+            reason_code: 面向维护和诊断的稳定拒绝原因码。
+
+        Returns:
+            状态迁移后的候选摘要。
+
+        Raises:
+            ReconsolidationCandidateNotFoundError: 候选不存在。
+            ReconsolidationCandidateConflictError: 候选已被其他动作处理。
+        """
+
+        candidate = await self._store.get_candidate(candidate_id)
+        if candidate is None:
+            raise ReconsolidationCandidateNotFoundError(candidate_id)
+        if candidate["status"] != "pending":
+            raise ReconsolidationCandidateConflictError("candidate_status_changed")
+        return await self._store.transition(
+            candidate_id,
+            expected_status="pending",
+            new_status="rejected",
+            reason_code=reason_code,
+            action="reject",
+        )
+
     async def rollback_candidate(
         self,
         candidate_id: str,

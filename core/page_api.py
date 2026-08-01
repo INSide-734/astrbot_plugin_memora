@@ -35,6 +35,7 @@ from .api.profile_api import ProfileApiMixin
 from .api.quality_api import QualityApiMixin
 from .api.quarantine_api import QuarantineApiMixin
 from .api.recall_trace_api import RecallTraceApiMixin
+from .api.reconsolidation_review_api import ReconsolidationReviewApiMixin
 from .api.response_utils import error_response, ok_response
 from .api.review_api import ReviewApiMixin
 from .api.social_api import SocialApiMixin
@@ -71,6 +72,7 @@ class PluginPageApi(
     InjectionStrategyApiMixin,
     ReviewApiMixin,
     MemoryEvolutionReviewApiMixin,
+    ReconsolidationReviewApiMixin,
     JargonApiMixin,
     DelegationApiMixin,
     EvaluationApiMixin,
@@ -758,6 +760,24 @@ class PluginPageApi(
             self.apply_memory_evolution_review_action,
             ["POST"],
             "页面接口：处置高影响派生候选",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/reconsolidation",
+            self.list_reconsolidation_review_candidates,
+            ["GET"],
+            "页面接口：再巩固候选复核队列",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/reconsolidation/detail",
+            self.get_reconsolidation_review_candidate,
+            ["GET"],
+            "页面接口：再巩固候选复核详情",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/reconsolidation/action",
+            self.apply_reconsolidation_review_action,
+            ["POST"],
+            "页面接口：处置再巩固候选",
         )
         register(
             f"{PAGE_API_PREFIX}/review/quarantine",

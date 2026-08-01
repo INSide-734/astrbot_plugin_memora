@@ -225,21 +225,76 @@ class ReconsolidationStore:
     ) -> list[dict[str, Any]]:
         """按状态列出候选，限制条数并保持稳定排序。"""
 
-        safe_limit = max(1, min(200, int(limit)))
         status_value = status if status in _STATUSES else "pending"
+        page = await self.list_candidates_page(
+            status=status_value,
+            offset=0,
+            limit=limit,
+        )
+        return page["items"]
+
+    async def list_candidates_page(
+        self,
+        *,
+        status: str | None = "pending",
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """返回真实总数和稳定排序的候选分页。
+
+        Args:
+            status: 固定候选状态；传入 ``None`` 时查询全部状态。
+            offset: 从零开始的服务端偏移量。
+            limit: 单页上限，Store 内部最多返回 200 条。
+
+        Returns:
+            包含 ``items``、``total``、``offset`` 和 ``limit`` 的分页。
+
+        Raises:
+            ValueError: 状态、偏移量或页大小无效。
+        """
+
+        if status is not None and status not in _STATUSES:
+            raise ValueError("再巩固候选状态无效")
+        if isinstance(offset, bool) or isinstance(limit, bool):
+            raise ValueError("再巩固候选分页参数无效")
+        try:
+            safe_offset = int(offset)
+            safe_limit = int(limit)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("再巩固候选分页参数无效") from exc
+        if safe_offset < 0 or safe_limit < 1:
+            raise ValueError("再巩固候选分页参数无效")
+        safe_limit = min(200, safe_limit)
+        where_sql = "WHERE status=?" if status is not None else ""
+        params: tuple[Any, ...] = (status,) if status is not None else ()
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
+            await db.execute("BEGIN")
+            count_cursor = await db.execute(
+                f"SELECT COUNT(*) FROM reconsolidation_candidates {where_sql}",
+                params,
+            )
+            count_row = await count_cursor.fetchone()
+            await count_cursor.close()
             cursor = await db.execute(
-                """
+                f"""
                 SELECT * FROM reconsolidation_candidates
-                WHERE status=?
+                {where_sql}
                 ORDER BY updated_at DESC, candidate_id DESC LIMIT ?
+                OFFSET ?
                 """,
-                (status_value, safe_limit),
+                (*params, safe_limit, safe_offset),
             )
             rows = await cursor.fetchall()
             await cursor.close()
-        return [self._row_to_candidate(row) for row in rows]
+            await db.commit()
+        return {
+            "items": [self._row_to_candidate(row) for row in rows],
+            "total": int(count_row[0]) if count_row is not None else 0,
+            "offset": safe_offset,
+            "limit": safe_limit,
+        }
 
     async def transition(
         self,
@@ -257,6 +312,8 @@ class ReconsolidationStore:
         now = self._now()
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
+            await db.execute("PRAGMA busy_timeout = 5000")
+            await db.execute("BEGIN IMMEDIATE")
             cursor = await db.execute(
                 """
                 UPDATE reconsolidation_candidates
@@ -265,8 +322,9 @@ class ReconsolidationStore:
                 """,
                 (new_status, reason_code, now, candidate_id, expected_status),
             )
-            await db.commit()
-            if cursor.rowcount == 0:
+            changed = cursor.rowcount
+            await cursor.close()
+            if changed == 0:
                 raise ReconsolidationCandidateConflictError("candidate_status_changed")
             await db.execute(
                 """
@@ -276,15 +334,15 @@ class ReconsolidationStore:
                 """,
                 (uuid.uuid4().hex, candidate_id, action, reason_code, now),
             )
-            await db.commit()
             cursor = await db.execute(
                 "SELECT * FROM reconsolidation_candidates WHERE candidate_id=?",
                 (candidate_id,),
             )
             row = await cursor.fetchone()
             await cursor.close()
-        if row is None:
-            raise ReconsolidationCandidateNotFoundError(candidate_id)
+            if row is None:
+                raise ReconsolidationCandidateNotFoundError(candidate_id)
+            await db.commit()
         return self._row_to_candidate(row)
 
     async def list_actions(self, candidate_id: str) -> list[dict[str, Any]]:
