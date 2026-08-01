@@ -276,7 +276,7 @@ actual user-controlled Critical/High findings block delivery.
 
 Metrics use bounded labels and sanitized scalar counts. Recall observability records stage
 latency, cache behavior, candidate/selection counts, budget use, fallback outcomes, and
-recorder health without logging the source query or selected memory identifiers.
+recorder health without logging the source query or selected memory identifiers. 异常检测按 UTC 日聚合 canonical `created_at` 创建量并幂等投喂滚动窗口；告警只写脱敏诊断事件（固定 reason code 与标量）并进入健康快照。
 
 Performance gates include deterministic routing/execution metrics, a real
 `RecallHandler.handle_memory_recall` total-path p95 comparison against a recorded baseline,
@@ -391,9 +391,9 @@ DerivedRebuildCoordinator、自动笔记定向测试和模块文档；不新增 
 **决策依据**：canonical SQLite 继续保持唯一来源，自动笔记只保存 derived provenance；重建不调用
 Provider，同 provenance 重放不覆盖人工或派生版本历史。
 
-### 2026-08-01 - 接通对话连续性与删除冗余关系追踪
+### 2026-08-01 - 接通对话连续性/异常检测与删除冗余关系追踪
 
-**变更内容**：接通 canonical 写后话题标记、同 session 召回与同步状态生命周期；删除 `RelationshipTracker` 及其 `relationship_tracking.*` 配置、装配与测试。
+**变更内容**：接通 canonical 写后话题标记、同 session 召回与同步状态生命周期；异常检测按 UTC 日聚合 canonical 创建量并写脱敏诊断事件；删除 `RelationshipTracker` 及其 `relationship_tracking.*` 配置、装配与测试。
 **变更理由**：原 Tracker 无生产调用且构造参数错误；旧关系追踪与已接线的 `AffectionManager` 重复且无消费者。
-**影响范围**：MemoryEngine 生命周期、反思写入、召回临时上下文、配置契约（破坏性变更，旧配置被安全忽略）、模块文档与所有权契约测试。
+**影响范围**：MemoryEngine 生命周期、反思写入、召回临时上下文、异常检测装配/调度/诊断快照、配置契约（破坏性变更，旧配置被安全忽略）、模块文档与契约测试。
 **决策依据**：不新建状态或注入路径；按计划 16.1 决策 3，affection=Bot↔用户、social=用户间关系，JSON 死代码直接删除。

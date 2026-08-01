@@ -55,7 +55,7 @@ pageClass: config-reference-page
 
 ## 异常检测
 
-配置域：`"anomaly_detection"`。监控记忆创建速率的异常波动，3-sigma 阈值告警
+配置域：`"anomaly_detection"`。每日按 UTC 日聚合 SQLite canonical 创建量，与滚动窗口均值/标准差比较；超阈值时写入脱敏诊断事件并在健康页显示最近状态与 reason code。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|

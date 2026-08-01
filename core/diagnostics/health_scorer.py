@@ -136,6 +136,34 @@ class HealthScorer:
                 "Inspect index validation output and rebuild failed entries."
             )
 
+        anomaly = self._as_dict(data.get("anomaly"))
+        anomaly_reason = str(anomaly.get("reason_code", "")).lower()
+        if anomaly.get("available") is True and anomaly_reason == "memory_rate_anomaly":
+            score -= 10
+            domains.append(
+                self._domain(
+                    "anomaly",
+                    55,
+                    "watch",
+                    "Memory creation rate anomaly detected.",
+                )
+            )
+            recommended_actions.append(
+                "Review recent memory creation volume and upstream ingestion."
+            )
+        elif (
+            anomaly.get("available") is True
+            and anomaly_reason == "insufficient_history"
+        ):
+            domains.append(
+                self._domain(
+                    "anomaly",
+                    100,
+                    "info",
+                    "Anomaly detector has insufficient history; no alert.",
+                )
+            )
+
         prometheus = self._as_dict(data.get("prometheus"))
         if prometheus and prometheus.get("available") is False:
             domains.append(

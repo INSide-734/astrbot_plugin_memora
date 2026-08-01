@@ -59,6 +59,7 @@ flowchart LR
 
 - `event_id` 只是有界诊断关联码，不得复用用户、群组、会话、消息、记忆、source、revision 或 job ID；非法历史值读取为稳定占位符。
 - payload allowlist 是存储与 API 的共同隐私边界。禁止加入 query、Prompt、正文、原始身份、ID/ID 列表、Provider 请求信息、秘密、异常消息、堆栈或绝对路径；新增字段必须先定义低基数类型并补充 canary 测试。
+- 异常检测告警使用稳定 reason code `memory_rate_anomaly`，payload 只含 `direction/count/mean_7d/stdev_7d/z_score/window_size` 等标量；不记录记忆正文、身份或路径。
 - API 失败只返回稳定错误码，日志只允许固定阶段与异常类型，不得拼接 `str(exc)`、异常 `repr` 或 traceback。
 - 事件的 `domain`、`severity`、`source` 是不可信输入，必须继续使用参数化查询，不要拼接 SQL。
 - 健康分是启发式运维摘要，不应直接触发破坏性恢复动作；恢复端点必须在 API 层使用白名单，并保留鉴权/审计边界。

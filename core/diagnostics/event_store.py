@@ -102,11 +102,13 @@ _TEXT_PAYLOAD_CHOICES = {
             "diagnostics_event_failed",
             "diagnostics_events_failed",
             "diagnostics_health_failed",
+            "memory_rate_anomaly",
             "provider_unavailable",
             "recall_error",
             "task_error",
         }
     ),
+    "direction": frozenset({"drop", "spike"}),
     "route": frozenset(
         {"auto", "balanced", "hybrid", "low_cost", "manual", "quality", "tool_first"}
     ),
@@ -158,6 +160,7 @@ _NUMERIC_PAYLOAD_FIELDS = frozenset(
         "filtered_count",
         "injected_count",
         "latency_ms",
+        "mean_7d",
         "message_count",
         "payload_chars",
         "provider_calls",
@@ -165,8 +168,11 @@ _NUMERIC_PAYLOAD_FIELDS = frozenset(
         "retry_count",
         "selected_count",
         "skipped_count",
+        "stdev_7d",
         "success_count",
         "token_cost",
+        "window_size",
+        "z_score",
     }
 )
 _BOOLEAN_PAYLOAD_FIELDS = frozenset(

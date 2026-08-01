@@ -33,6 +33,7 @@ from .schema_migration import SchemaMigrationCoordinator
 from .write_coordinator import ConnectionRegistry
 
 if TYPE_CHECKING:
+    from .anomaly_detector import AnomalyDetector
     from .continuity_tracker import ContinuityTracker
 
 
@@ -63,6 +64,33 @@ def _build_continuity_tracker(
     )
     tracker.load_state()
     return tracker
+
+
+def _build_anomaly_detector(
+    config: Mapping[str, Any],
+    data_dir: str,
+) -> AnomalyDetector | None:
+    """按运行时配置构造并同步恢复异常检测器。
+
+    Args:
+        config: 已由工厂投影的引擎运行时配置。
+        data_dir: 状态文件所在数据目录。
+
+    Returns:
+        功能关闭时返回 ``None``；否则返回已恢复状态的真实检测器。
+    """
+
+    if not bool(config.get("anomaly_detection.enabled", False)):
+        return None
+    from .anomaly_detector import AnomalyDetector
+
+    detector = AnomalyDetector(
+        data_dir=data_dir,
+        window_days=int(config.get("anomaly_detection.window_days", 7)),
+        sigma_threshold=float(config.get("anomaly_detection.sigma_threshold", 3.0)),
+    )
+    detector.load_state()
+    return detector
 
 
 class MemoryEngineLifecycleMixin:
@@ -331,11 +359,11 @@ class MemoryEngineLifecycleMixin:
                 self.db_connection, self.llm_provider
             )
 
-        # 异常检测
-        if bool(self.config.get("anomaly_detection.enabled", False)):
-            from .anomaly_detector import AnomalyDetector
-
-            self.anomaly_detector = AnomalyDetector(self.db_path, self.config)
+        # 异常检测：记忆创建速率滚动统计
+        self.anomaly_detector = _build_anomaly_detector(
+            self.config,
+            str(configured_data_dir),
+        )
 
         # MAB 权重学习
         if bool(self.config.get("weight_learning.enabled", False)):
@@ -404,7 +432,7 @@ class MemoryEngineLifecycleMixin:
         if self.atom_lifecycle_manager is not None:
             await self.atom_lifecycle_manager.stop()
         # 持久化子系统状态
-        for attr_name in ("trait_tracker", "auto_learning", "anomaly_detector"):
+        for attr_name in ("trait_tracker", "auto_learning"):
             component = getattr(self, attr_name, None)
             if component is not None and hasattr(component, "save_state"):
                 with contextlib.suppress(Exception):
@@ -419,6 +447,10 @@ class MemoryEngineLifecycleMixin:
         if continuity_tracker is not None:
             with contextlib.suppress(Exception):
                 continuity_tracker.save_state()
+        anomaly_detector = getattr(self, "anomaly_detector", None)
+        if anomaly_detector is not None:
+            with contextlib.suppress(Exception):
+                anomaly_detector.save_state()
         if self.db_connection:
             await self.db_connection.close()
         if self.graph_vector_db is not None:

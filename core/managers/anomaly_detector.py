@@ -36,13 +36,23 @@ class AnomalyDetector:
         window_days: int = _DEFAULT_WINDOW_DAYS,
         sigma_threshold: float = _DEFAULT_SIGMA_THRESHOLD,
     ) -> None:
+        """初始化滚动窗口、阈值、已投喂日期与最近状态。"""
+
         self._data_dir = data_dir
         self._window_days = max(3, min(30, window_days))
         self._sigma_threshold = max(1.5, min(10.0, sigma_threshold))
         # (day_timestamp, count) 的滚动窗口
         self._window: deque[tuple[int, int]] = deque()
+        self._fed_days: set[int] = set()
         self._alert_count = 0
         self._last_alert_at: float = 0.0
+        self._last_reason_code = "insufficient_history"
+
+    @property
+    def window_days(self) -> int:
+        """返回当前滚动窗口天数。"""
+
+        return self._window_days
 
     # ---- 数据摄入 ----
 
@@ -63,9 +73,12 @@ class AnomalyDetector:
             self._window.popleft()
 
         if len(self._window) < 3:
+            self._last_reason_code = "insufficient_history"
             return None  # 不足 3 天，无法计算标准差
 
-        return self._check_anomaly(day_ts, count)
+        alert = self._check_anomaly(day_ts, count)
+        self._last_reason_code = "memory_rate_anomaly" if alert else "ok"
+        return alert
 
     def record_batch(self, day_counts: list[tuple[int, int]]) -> list[dict[str, Any]]:
         """批量记录多日数据，返回所有告警。"""
@@ -75,6 +88,18 @@ class AnomalyDetector:
             if alert:
                 alerts.append(alert)
         return alerts
+
+    def has_fed(self, day_ts: int) -> bool:
+        """判断某日是否已投喂，用于调度去重。"""
+
+        return day_ts in self._fed_days
+
+    def mark_fed(self, day_ts: int) -> None:
+        """记录某日已投喂，并清理窗口外的旧日期。"""
+
+        self._fed_days.add(day_ts)
+        cutoff = day_ts - self._window_days * 86400
+        self._fed_days = {fed for fed in self._fed_days if fed >= cutoff}
 
     # ---- 异常检测核心 ----
 
@@ -120,12 +145,18 @@ class AnomalyDetector:
             "sigma_threshold": self._sigma_threshold,
             "window_size": n,
             "alert_number": self._alert_count,
+            "reason_code": "memory_rate_anomaly",
         }
 
         logger.warning(
-            f"[Anomaly] 记忆创建速率{direction}: "
-            f"count={count}, mean={mean:.1f}, stdev={stdev:.1f}, "
-            f"z={z_score:.1f} > {self._sigma_threshold}σ"
+            "[异常检测] 记忆创建速率%s: count=%s, mean=%.1f, stdev=%.1f, "
+            "z=%.1f > %.1fσ",
+            direction,
+            count,
+            mean,
+            stdev,
+            z_score,
+            self._sigma_threshold,
         )
         return alert
 
@@ -140,6 +171,7 @@ class AnomalyDetector:
                 "mean": 0.0,
                 "stdev": 0.0,
                 "alerts": self._alert_count,
+                "reason_code": self._last_reason_code,
             }
 
         values = [c for _ts, c in self._window]
@@ -153,11 +185,14 @@ class AnomalyDetector:
             "alerts": self._alert_count,
             "latest_count": values[-1],
             "sigma_threshold": self._sigma_threshold,
+            "reason_code": self._last_reason_code,
         }
 
     # ---- 持久化 ----
 
     def _state_path(self) -> str:
+        """返回异常检测状态文件的固定路径。"""
+
         return os.path.join(self._data_dir, _ANOMALY_STATE_FILE)
 
     def save_state(self) -> None:
@@ -167,14 +202,16 @@ class AnomalyDetector:
         try:
             state = {
                 "window": list(self._window),
+                "fed_days": sorted(self._fed_days),
                 "alert_count": self._alert_count,
                 "last_alert_at": self._last_alert_at,
+                "last_reason_code": self._last_reason_code,
             }
             os.makedirs(self._data_dir, exist_ok=True)
             with open(self._state_path(), "w", encoding="utf-8") as f:
                 json.dump(state, f, ensure_ascii=False)
         except OSError:
-            logger.debug("[Anomaly] 持久化状态失败", exc_info=True)
+            logger.warning("[异常检测] 状态保存失败")
 
     def load_state(self) -> None:
         """从磁盘恢复滚动窗口状态。"""
@@ -191,14 +228,22 @@ class AnomalyDetector:
             now_ts = int(time.time())
             cutoff = now_ts - self._window_days * 86400
             self._window = deque((ts, cnt) for ts, cnt in raw_window if ts >= cutoff)
+            self._fed_days = {
+                int(fed) for fed in state.get("fed_days", []) if int(fed) >= cutoff
+            }
             self._alert_count = int(state.get("alert_count", 0))
             self._last_alert_at = float(state.get("last_alert_at", 0.0))
+            self._last_reason_code = str(
+                state.get("last_reason_code", "insufficient_history")
+            )
             logger.info(
-                f"[Anomaly] 已恢复状态: window={len(self._window)} days, "
-                f"alerts={self._alert_count}"
+                "[异常检测] 状态恢复完成: window=%s, fed_days=%s, alerts=%s",
+                len(self._window),
+                len(self._fed_days),
+                self._alert_count,
             )
         except Exception:
-            logger.debug("[Anomaly] 恢复状态失败", exc_info=True)
+            logger.warning("[异常检测] 状态恢复失败，使用空状态")
 
 
 __all__ = ["AnomalyDetector"]

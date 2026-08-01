@@ -429,6 +429,7 @@ class ComponentFactory:
                 or auto_cleanup
                 or backup_enabled
                 or memory_engine.semantic_compressor is not None
+                or memory_engine.anomaly_detector is not None
             )
         )
         if should_start_decay_scheduler:

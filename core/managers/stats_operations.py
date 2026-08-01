@@ -71,6 +71,27 @@ def _build_daily_memory_counts(
 class StatsOperationsMixin:
     """统计信息、存储维护和图索引重建。"""
 
+    async def count_canonical_created_on(self, day_ts: int) -> int:
+        """统计指定 UTC 日（00:00 时间戳）写入的 canonical 记忆数量。
+
+        Args:
+            day_ts: 当天 00:00:00 的 UTC Unix 时间戳。
+
+        Returns:
+            该日创建的 canonical 记忆条数；数据库未初始化时返回 0。
+        """
+
+        if self.db_connection is None:
+            return 0
+        day_str = datetime.fromtimestamp(day_ts, tz=UTC).strftime("%Y-%m-%d")
+        cursor = await self.db_connection.execute(
+            "SELECT COUNT(*) FROM documents WHERE date(created_at) = ?",
+            (day_str,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return int(row[0] or 0) if row else 0
+
     async def get_session_memories(
         self,
         session_id: str,

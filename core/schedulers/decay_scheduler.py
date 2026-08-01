@@ -9,7 +9,7 @@ import json
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
@@ -66,6 +66,7 @@ class DecayScheduler:
         self._task: asyncio.Task | None = None
         self._startup_task: asyncio.Task | None = None
         self._running = False
+        self._diagnostic_event_store: Any | None = None
         self.last_backup_result: dict[str, object] = {
             "status": "idle",
             "reason_code": None,
@@ -344,6 +345,71 @@ class DecayScheduler:
                     logger.info(f"[衰减调度] 前瞻记忆: {len(upcoming)} 条待注入")
         except Exception as e:
             logger.warning(f"[衰减调度] 前瞻记忆扫描异常: {e}")
+
+        # 异常检测：每日 canonical 创建量聚合（幂等，只写脱敏告警事件）
+        try:
+            await self._run_anomaly_feed()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[衰减调度] 异常检测日聚合失败，异常类型=%s",
+                type(exc).__name__,
+            )
+
+    async def _run_anomaly_feed(self) -> None:
+        """按稳定 UTC 日向异常检测器投喂 canonical 创建量，缺失日期补喂。"""
+
+        from ..managers.anomaly_detector import AnomalyDetector
+
+        detector = getattr(self.memory_engine, "anomaly_detector", None)
+        if not isinstance(detector, AnomalyDetector):
+            return
+        today_ts = (int(time.time()) // 86400) * 86400
+        window_days = max(3, min(30, int(getattr(detector, "window_days", 7) or 7)))
+        for offset in range(window_days - 1, -1, -1):
+            day_ts = today_ts - offset * 86400
+            if detector.has_fed(day_ts):
+                continue
+            count = await self.memory_engine.count_canonical_created_on(day_ts)
+            alert = detector.record_daily_count(day_ts, count)
+            detector.mark_fed(day_ts)
+            if alert:
+                await self._emit_anomaly_event(alert)
+
+    async def _emit_anomaly_event(self, alert: dict[str, Any]) -> None:
+        """把告警写入共享诊断事件库，只保留固定标量 allowlist。"""
+
+        store = await self._get_diagnostic_event_store()
+        await store.add_event(
+            {
+                "domain": "scheduler",
+                "severity": "warning",
+                "source": "scheduler",
+                "payload": {
+                    "component": "scheduler",
+                    "status": "completed",
+                    "reason_code": "memory_rate_anomaly",
+                    "direction": alert.get("direction"),
+                    "count": alert.get("count"),
+                    "mean_7d": alert.get("mean_7d"),
+                    "stdev_7d": alert.get("stdev_7d"),
+                    "z_score": alert.get("z_score"),
+                    "window_size": alert.get("window_size"),
+                },
+            }
+        )
+
+    async def _get_diagnostic_event_store(self) -> Any:
+        """懒加载与 Dashboard 诊断事件页共用的 SQLite 事件库。"""
+
+        if self._diagnostic_event_store is None:
+            from ..diagnostics.event_store import DiagnosticEventStore
+
+            store = DiagnosticEventStore(self.data_dir / "diagnostics_events.db")
+            await store.initialize()
+            self._diagnostic_event_store = store
+        return self._diagnostic_event_store
 
     async def _run_backup(self) -> None:
         """执行定时备份并委托管理器清理过期备份。"""
