@@ -340,8 +340,10 @@ const DYNAMIC_KEYS = [
   ...["open", "resolved"].map((state) => `intelligence.diagnostics.state.${state}`),
   ...["hostile", "disliked", "cold", "neutral", "warm", "friendly", "close", "intimate"]
     .map((level) => `affection.levelValue.${level}`),
-  ...["weight_adjust", "threshold_tune", "correction", "param_init"]
-    .map((action) => `learning.historyAction.${action}`),
+  ...["ready_for_review", "rejected", "published", "invalid_state"]
+    .map((status) => `learning.status.${status}`),
+  ...["candidate", "insufficient_evidence", "published", "invalid_state"]
+    .map((reason) => `learning.reason.${reason}`),
   ...["low_score", "topic_mismatch", "missing_fields"]
     .map((reason) => `intelligence.trace.filterReason.${reason}`),
   ...["search_memories", "query_parse", "bm25", "vector", "graph", "merge", "boost", "rerank"]

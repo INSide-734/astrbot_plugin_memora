@@ -1185,11 +1185,7 @@
         "hint": "从对话反馈中自动调整检索权重、记忆重要性、TTL 等参数",
         "type": "object",
         "items": {
-            "enabled": {"description": "启用自主学习", "hint": "开启后插件会根据记忆复用率和对话质量自动优化参数。", "type": "bool", "default": true},
-            "learning_rate": {"description": "学习率", "hint": "参数更新的步长。建议 0.01-0.05。", "type": "float", "default": 0.01},
-            "target_hit_rate_low": {"description": "目标命中率下限", "hint": "记忆召回命中率低于此值时自动降低 importance 阈值、提高 top_k。", "type": "float", "default": 0.3},
-            "target_hit_rate_high": {"description": "目标命中率上限", "hint": "记忆召回命中率高于此值时自动提高 importance 阈值、降低 top_k。", "type": "float", "default": 0.7},
-            "quality_ema_alpha": {"description": "质量评分 EMA 系数", "hint": "对话质量评分的指数移动平均平滑系数。0.2 表示新评分权重 20%。", "type": "float", "default": 0.2}
+            "enabled": {"description": "启用自主学习 shadow 候选", "hint": "开启后从统一反馈聚合生成参数候选并等待人工 CAS 发布，不自动修改生产配置。", "type": "bool", "default": false}
         }
     },
     "knowledge_base": {
@@ -1401,16 +1397,6 @@
         "items": {
             "enabled": {"description": "启用人格调制遗忘率", "hint": "开启后根据 decay_modifier 调整 TTL 计算。", "type": "bool", "default": true},
             "default_modifier": {"description": "默认遗忘倍率", "hint": "1.0=标准。2.0=两倍速遗忘。0.5=半速遗忘。建议 0.3-3.0。", "type": "float", "default": 1.0}
-        }
-    },
-    "weight_learning": {
-        "description": "MAB 权重学习",
-        "hint": "Epsilon-Greedy MAB 在线学习文档路/图路融合权重",
-        "type": "object",
-        "items": {
-            "enabled": {"description": "启用 MAB 权重学习", "type": "bool", "default": false},
-            "epsilon": {"description": "探索率 0-1", "type": "float", "default": 0.1},
-            "group_by_persona": {"description": "按人格分组学习", "type": "bool", "default": true}
         }
     },
     "reconsolidation": {

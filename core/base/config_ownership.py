@@ -190,11 +190,6 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
         ConfigOwnershipKind.EXPERIMENTAL,
         "core.models.memory_atom",
     ),
-    "weight_learning": _ownership(
-        "weight_learning",
-        ConfigOwnershipKind.EXPERIMENTAL,
-        "core.managers.weight_learner",
-    ),
     "reconsolidation": _ownership(
         "reconsolidation",
         ConfigOwnershipKind.EXPERIMENTAL,

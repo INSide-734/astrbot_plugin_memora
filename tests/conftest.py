@@ -323,10 +323,6 @@ def test_config_dict() -> dict[str, Any]:
         },
         "auto_learning": {
             "enabled": True,
-            "learning_rate": 0.01,
-            "target_hit_rate_low": 0.3,
-            "target_hit_rate_high": 0.7,
-            "quality_ema_alpha": 0.2,
         },
         "knowledge_base": {
             "enabled": True,

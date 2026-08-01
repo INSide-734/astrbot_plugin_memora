@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.managers.feedback_signal_manager import FeedbackSignalManager
 from core.managers.memory_engine import MemoryEngine
 
 
@@ -246,7 +248,8 @@ class TestMemoryEngineInitialize:
                 "write_reliability.repair_enabled": False,
                 "user_profile.enabled": False,
                 "auto_learning.enabled": True,
-                "auto_learning.learning_rate": 0.01,
+                "document_route_weight": 0.61,
+                "graph_route_weight": 0.39,
                 "knowledge_base.enabled": False,
                 "notes.enabled": False,
                 "reranker.enabled": False,
@@ -267,12 +270,20 @@ class TestMemoryEngineInitialize:
                 await engine.initialize()
 
             assert engine.auto_learning is not None
-            mock_al_cls.assert_called_once_with(
-                data_dir=tmp_db_path,
-                learning_rate=0.01,
-            )
+        mock_al_cls.assert_called_once()
+        call_args = mock_al_cls.call_args
+        assert isinstance(call_args.args[0], FeedbackSignalManager)
+        assert call_args.kwargs["enabled"] is True
+        assert call_args.kwargs["data_dir"] == str(Path(tmp_db_path).parent)
+        assert engine.feedback_signal_manager is not None
+        assert engine.feedback_signal_manager.policy.baseline_document_weight == 0.61
+        assert engine.feedback_signal_manager.policy.baseline_graph_weight == 0.39
+        feedback_manager = engine.feedback_signal_manager
 
         await engine.close()
+
+        with pytest.raises(RuntimeError, match="feedback_store_not_initialized"):
+            feedback_manager.store.safe_summary()
 
     @pytest.mark.asyncio
     async def test_initialize_reranker_failure_does_not_break(
@@ -336,7 +347,6 @@ class TestMemoryEngineInitialize:
                 "continuity_tracking.enabled": False,
                 "reconsolidation.enabled": False,
                 "anomaly_detection.enabled": False,
-                "weight_learning.enabled": False,
             },
         )
         engine._schema.create_tables = AsyncMock()
@@ -352,7 +362,6 @@ class TestMemoryEngineInitialize:
             or engine.continuity_tracker is None
         )
         assert not hasattr(engine, "reconsolidation") or engine.reconsolidation is None
-        assert not hasattr(engine, "weight_learner") or engine.weight_learner is None
 
         await engine.close()
 

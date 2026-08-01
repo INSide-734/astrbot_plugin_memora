@@ -100,12 +100,11 @@ def test_factory_projects_lifecycle_feature_sections() -> None:
     config = _build_engine_config(
         {
             "user_profile": {"enabled": False, "boost_strength": 0.31},
-            "auto_learning": {"enabled": False, "learning_rate": 0.07},
+            "auto_learning": {"enabled": False},
             "knowledge_base": {"enabled": False, "dedup_threshold": 0.73},
             "notes": {"enabled": False, "max_tags": 4},
             "continuity_tracking": {"enabled": True, "topic_ttl_days": 11},
             "anomaly_detection": {"enabled": True, "sigma_threshold": 2.4},
-            "weight_learning": {"enabled": True, "epsilon": 0.22},
             "reconsolidation": {"enabled": True, "min_recall_count": 8},
             "export": {"enabled": False},
         }
@@ -114,7 +113,6 @@ def test_factory_projects_lifecycle_feature_sections() -> None:
     assert config["user_profile.enabled"] is False
     assert config["user_profile.boost_strength"] == pytest.approx(0.31)
     assert config["auto_learning.enabled"] is False
-    assert config["auto_learning.learning_rate"] == pytest.approx(0.07)
     assert config["knowledge_base.enabled"] is False
     assert config["knowledge_base.dedup_threshold"] == pytest.approx(0.73)
     assert config["notes.enabled"] is False
@@ -123,8 +121,6 @@ def test_factory_projects_lifecycle_feature_sections() -> None:
     assert config["continuity_tracking.topic_ttl_days"] == 11
     assert config["anomaly_detection.enabled"] is True
     assert config["anomaly_detection.sigma_threshold"] == pytest.approx(2.4)
-    assert config["weight_learning.enabled"] is True
-    assert config["weight_learning.epsilon"] == pytest.approx(0.22)
     assert config["reconsolidation.enabled"] is True
     assert config["reconsolidation.min_recall_count"] == 8
     assert config["export.enabled"] is False
@@ -172,7 +168,6 @@ async def test_projected_lifecycle_flags_control_real_engine_components(
             "continuity_tracking": {"enabled": False},
             "reconsolidation": {"enabled": False},
             "anomaly_detection": {"enabled": True},
-            "weight_learning": {"enabled": False},
             "export": {"enabled": False},
             "reranker": {"enabled": False},
             "write_reliability": {"repair_enabled": False},

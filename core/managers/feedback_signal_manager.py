@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from ..models.feedback_signal import (
     FeedbackAdapterKind,
+    FeedbackOutcome,
     FeedbackSignalAggregate,
     FeedbackSignalPolicy,
     TrustedFeedbackEvent,
+    build_trusted_feedback_event,
 )
 from ..storage.feedback_signal_store import FeedbackSignalStore
 
@@ -20,6 +23,14 @@ class FeedbackIngestResult:
     """单事件处理的安全结果，不返回事件 key 或原始 payload。"""
 
     accepted: bool
+    reason_code: str
+
+
+@dataclass(frozen=True, slots=True)
+class FeedbackRevokeResult:
+    """反馈撤销的安全结果，不返回决策键或作用域。"""
+
+    revoked: bool
     reason_code: str
 
 
@@ -43,6 +54,11 @@ class FeedbackSignalManager:
         if not isinstance(adapter_kind, FeedbackAdapterKind):
             raise ValueError("feedback_adapter_invalid")
         self._registered_adapters.add(adapter_kind)
+
+    def close(self) -> None:
+        """关闭隔离反馈 Store；重复关闭保持安全。"""
+
+        self.store.close()
 
     def ingest_event(
         self,
@@ -72,6 +88,11 @@ class FeedbackSignalManager:
         if age > self.policy.max_event_age_seconds:
             return FeedbackIngestResult(False, "signal_expired")
         try:
+            retention_cutoff = now - timedelta(
+                seconds=self.policy.max_event_age_seconds
+            )
+            if self.store.delete_events_before(retention_cutoff):
+                self.store.clear_aggregates()
             existing = self.store.list_events(
                 scope_domain=event.scope_domain,
                 persona_domain=event.persona_domain,
@@ -92,10 +113,46 @@ class FeedbackSignalManager:
             return FeedbackIngestResult(False, "duplicate_event")
         return FeedbackIngestResult(True, "accepted")
 
+    def revoke_event(
+        self,
+        *,
+        adapter_kind: FeedbackAdapterKind,
+        decision_key: str,
+        variant_key: str,
+        scope_domain: str,
+        persona_domain: str | None,
+        trusted_scope: str,
+        trusted_persona: str | None,
+        reference_time: datetime,
+    ) -> FeedbackRevokeResult:
+        """验证来源和归因后撤销指定匿名决策，并同步重建聚合。"""
+
+        if adapter_kind not in self._registered_adapters:
+            return FeedbackRevokeResult(False, "untrusted_event_source")
+        if scope_domain != trusted_scope or persona_domain != trusted_persona:
+            return FeedbackRevokeResult(False, "scope_mismatch")
+        try:
+            now = _utc(reference_time)
+            deleted = self.store.delete_decision_events(
+                adapter_kind=adapter_kind,
+                decision_key=decision_key,
+                variant_key=variant_key,
+                scope_domain=scope_domain,
+                persona_domain=persona_domain,
+            )
+            if not deleted:
+                return FeedbackRevokeResult(False, "feedback_not_found")
+            self.rebuild(reference_time=now)
+        except (RuntimeError, ValueError):
+            return FeedbackRevokeResult(False, "evaluation_prerequisite_unmet")
+        return FeedbackRevokeResult(True, "revoked")
+
     def rebuild(self, *, reference_time: datetime) -> list[FeedbackSignalAggregate]:
         """从已提交事件按固定 reference time 完整重建聚合。"""
 
         now = _utc(reference_time)
+        retention_cutoff = now - timedelta(seconds=self.policy.max_event_age_seconds)
+        self.store.delete_events_before(retention_cutoff)
         groups: dict[tuple[str, str | None, str], list[TrustedFeedbackEvent]] = (
             defaultdict(list)
         )
@@ -189,6 +246,83 @@ class FeedbackSignalManager:
         }
 
 
+def record_explicit_correction(
+    manager: FeedbackSignalManager,
+    *,
+    decision_key: str,
+    scope_domain: str,
+    persona_domain: str | None = None,
+    outcome: FeedbackOutcome = FeedbackOutcome.NEGATIVE,
+    reference_time: datetime | None = None,
+) -> FeedbackIngestResult:
+    """由受控生产入口记录一条显式纠正反馈（如忘记/复核拒绝）。"""
+
+    observed_at = reference_time or datetime.now(timezone.utc)
+    opaque_decision = _opaque_feedback_token("decision", decision_key)
+    opaque_scope = _opaque_feedback_token("scope", scope_domain)
+    opaque_persona = (
+        _opaque_feedback_token("persona", persona_domain)
+        if persona_domain is not None
+        else None
+    )
+    event = build_trusted_feedback_event(
+        adapter_kind=FeedbackAdapterKind.REVIEW_DECISION,
+        decision_key=opaque_decision,
+        variant_key="doc_route",
+        outcome=outcome,
+        scope_domain=opaque_scope,
+        persona_domain=opaque_persona,
+        observed_at=observed_at,
+        window_seconds=manager.policy.window_seconds,
+    )
+    return manager.ingest_event(
+        event,
+        trusted_scope=opaque_scope,
+        trusted_persona=opaque_persona,
+        reference_time=observed_at,
+    )
+
+
+def revoke_explicit_correction(
+    manager: FeedbackSignalManager,
+    *,
+    decision_key: str,
+    scope_domain: str,
+    persona_domain: str | None = None,
+    reference_time: datetime | None = None,
+) -> FeedbackRevokeResult:
+    """按与写入相同的匿名键撤销显式纠正，并重建当前聚合。"""
+
+    observed_at = reference_time or datetime.now(timezone.utc)
+    opaque_decision = _opaque_feedback_token("decision", decision_key)
+    opaque_scope = _opaque_feedback_token("scope", scope_domain)
+    opaque_persona = (
+        _opaque_feedback_token("persona", persona_domain)
+        if persona_domain is not None
+        else None
+    )
+    return manager.revoke_event(
+        adapter_kind=FeedbackAdapterKind.REVIEW_DECISION,
+        decision_key=opaque_decision,
+        variant_key="doc_route",
+        scope_domain=opaque_scope,
+        persona_domain=opaque_persona,
+        trusted_scope=opaque_scope,
+        trusted_persona=opaque_persona,
+        reference_time=observed_at,
+    )
+
+
+def _opaque_feedback_token(namespace: str, value: str) -> str:
+    """把内部标识转换为稳定且不可逆的低敏 token。"""
+
+    normalized = str(value).strip() or "unknown"
+    digest = hashlib.sha256(
+        f"memora-feedback-v1|{namespace}|{normalized}".encode("utf-8")
+    ).hexdigest()
+    return f"{namespace}:{digest}"
+
+
 def _utc(value: datetime) -> datetime:
     """规范化带时区时间为 UTC。"""
 
@@ -221,4 +355,10 @@ def _bounded_delta(support: float, maximum: float) -> float:
     return max(-maximum, min(maximum, raw))
 
 
-__all__ = ["FeedbackIngestResult", "FeedbackSignalManager"]
+__all__ = [
+    "FeedbackIngestResult",
+    "FeedbackRevokeResult",
+    "FeedbackSignalManager",
+    "record_explicit_correction",
+    "revoke_explicit_correction",
+]

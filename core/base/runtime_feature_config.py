@@ -31,13 +31,9 @@ class AtomClassifierConfig(BaseModel):
 
 
 class AutoLearningConfig(BaseModel):
-    """自主学习状态与质量目标配置。"""
+    """自主学习 shadow 候选开关。"""
 
-    enabled: bool = True
-    learning_rate: float = 0.01
-    target_hit_rate_low: float = 0.3
-    target_hit_rate_high: float = 0.7
-    quality_ema_alpha: float = 0.2
+    enabled: bool = False
 
 
 class BackupSettingsConfig(BaseModel):
@@ -167,14 +163,6 @@ class UserProfileConfig(BaseModel):
     min_tag_confidence: float = 0.1
 
 
-class WeightLearningConfig(BaseModel):
-    """多臂老虎机权重学习配置。"""
-
-    enabled: bool = False
-    epsilon: float = 0.1
-    group_by_persona: bool = True
-
-
 class WriteReliabilityConfig(BaseModel):
     """canonical 写入日志修复配置。"""
 
@@ -220,7 +208,6 @@ class RuntimeFeatureConfigSections(BaseModel):
         default_factory=SemanticCompressionConfig
     )
     user_profile: UserProfileConfig = Field(default_factory=UserProfileConfig)
-    weight_learning: WeightLearningConfig = Field(default_factory=WeightLearningConfig)
     write_reliability: WriteReliabilityConfig = Field(
         default_factory=WriteReliabilityConfig
     )

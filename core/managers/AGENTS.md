@@ -9,7 +9,7 @@
 
 `core/managers/` 是业务生命周期与编排层。它把 SQLite 文档表、BM25、FAISS、记忆原子和图记忆组合成统一的 `MemoryEngine`，并提供会话、画像、知识、笔记、备份、导入导出、衰减、写故障恢复及 Memory Evolution 后台演化服务。
 
-`feedback_signal_manager.py` 只管理隔离评测 Store 中的可信反馈事件、限流、时间衰减和候选聚合；不得调用 `MABWeightLearner`、`AutoLearningManager`、`update_memory()` 或修改生产检索权重。
+`feedback_signal_manager.py` 只管理隔离评测 Store 中的可信反馈事件、限流、时间衰减和候选聚合；`auto_learning.py` 只从该聚合生成 shadow 候选并通过单一 CAS 写入口发布，不得直接修改生产检索权重或调用 `update_memory()`。
 
 本层负责“何时、按什么顺序、失败后如何补偿”；底层表 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，候选召回和排序属于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)，定时触发属于 [`core/schedulers/AGENTS.md`](../schedulers/AGENTS.md)。Memory Evolution 的关系/Projection 事务和 revision 校验由 manager 编排，具体 SQLite 表访问仍属于 storage。
 
@@ -150,11 +150,12 @@ sequenceDiagram
 | 知识/笔记 | `knowledge_manager.py`、`knowledge_proposal_pipeline.py`、`note_proposal_pipeline.py`、`memory_engine_domain_hooks.py`、`note_manager.py` | 知识与笔记 canonical 写后 proposal、来源约束幂等与失效；自动笔记可无 Provider 重建，人工 CRUD、软删和版本历史保持领域权威 |
 | 异常检测 | `anomaly_detector.py`、`stats_operations.py` | 按 UTC 日聚合 canonical 创建量，滚动窗口 3-sigma 告警；同一天幂等，告警只写脱敏诊断事件 |
 | 记忆再巩固 | `reconsolidation.py`、`reconsolidation_store.py` | 默认关闭；召回只生成 pending 候选，人工按来源 revision CAS 应用并可回滚旧正文，不直接改 canonical |
+| 自主学习 | `auto_learning.py`、`feedback_signal_manager.py`、`feedback_signal_store.py` | 统一 FeedbackSignal 事件只进入隔离 Store；shadow 候选经单一 CAS 写入口发布，可回滚，不直接修改生产权重 |
 | 可靠性 | `write_coordinator.py`、`write_op_*` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复 |
 | 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py`、`memory_evolution_projection.py`、`semantic_compressor.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验、外部 Projection proposal 二次校验及语义摘要生成 |
 | canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |
 | 连续性 | `continuity_tracker.py`、`memory_engine_lifecycle.py` | 使用 `data_dir` 同步恢复/保存，按配置 TTL 和单 session 上限保留话题；关闭时不创建或读写 |
-| 文件状态 | `auto_learning.py`、`weight_learner.py` | JSON 状态属于运行数据，不是配置；加载失败通常降级为空状态 |
+| 文件状态 | `auto_learning.py` | JSON 状态属于运行数据，不是配置；加载失败通常降级为空状态 |
 | 备份 | `backup_manager.py`、`backup_models.py`、`backup_snapshot.py` | SQLite 使用 Online Backup API；manifest 保存角色、大小、SHA-256 和 quick check；`pre_migration` 供启动迁移失败恢复，新恢复使用 `.restore/<operation_id>/restore_plan.json`、`payload/`、`previous/` 事务目录 |
 | 插件更新 | `update_manager.py`、`update_installer.py` | `update_manager.py` 检查 GitHub Release，按镜像到官方顺序下载 runtime 与校验清单，并只在 SHA-256 校验通过后写入暂存区；`update_installer.py` 严格校验 ZIP、在 AstrBot 插件目录同卷切换 runtime，安排单插件重载，失败时恢复旧目录并记录安全状态 |
 | 导入导出 | `memory_exporter.py` | JSONL/Markdown 包含正文与 metadata；导入按内容 SHA-256 短哈希去重后重新走 `add_memory` |

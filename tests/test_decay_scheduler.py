@@ -355,14 +355,33 @@ class TestDecayScheduler:
             return_value={"scanned": 1, "removed": 0, "failed": 0}
         )
         mock_engine.knowledge_manager.cleanup_expired = AsyncMock(return_value=0)
-        mock_engine.auto_learning.optimize = AsyncMock()
+        mock_engine.auto_learning.rebuild_candidates = AsyncMock()
         mock_engine.note_manager.prune_versions = AsyncMock(return_value=0)
         mock_engine.atom_store.query_upcoming_planned = AsyncMock(return_value=[])
         await s._run_optional_maintenance()
         mock_engine.profile_manager.decay_and_clean_all.assert_called_once()
         mock_engine.knowledge_manager.cleanup_expired.assert_called_once()
-        mock_engine.auto_learning.optimize.assert_called_once()
+        mock_engine.auto_learning.rebuild_candidates.assert_awaited_once()
         mock_engine.note_manager.prune_versions.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_optional_maintenance_propagates_learning_cancellation(
+        self, mock_engine, tmp_path
+    ):
+        """自主学习候选重建收到取消时必须中止维护链。"""
+
+        s = self._make_scheduler(mock_engine, tmp_path)
+        mock_engine.profile_manager = None
+        mock_engine.knowledge_manager = None
+        mock_engine.note_manager = None
+        mock_engine.atom_store = None
+        mock_engine.auto_learning = AsyncMock()
+        mock_engine.auto_learning.rebuild_candidates = AsyncMock(
+            side_effect=asyncio.CancelledError()
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await s._run_optional_maintenance()
 
     @pytest.mark.asyncio
     async def test_maintenance_isolates_failures(self, mock_engine, tmp_path):

@@ -121,6 +121,7 @@ class MemoryEngineLifecycleMixin:
         self.profile_manager = None
         self.personalized_ranker = None
         self.auto_learning = None
+        self.feedback_signal_manager = None
         self.knowledge_store = None
         self.knowledge_manager = None
         self.knowledge_retriever = None
@@ -129,7 +130,6 @@ class MemoryEngineLifecycleMixin:
         self.continuity_tracker = None
         self.reconsolidation = None
         self.anomaly_detector = None
-        self.weight_learner = None
         self.memory_exporter = None
         self.dual_route_retriever = None
         self.sse = None
@@ -251,16 +251,41 @@ class MemoryEngineLifecycleMixin:
             boost_strength = float(self.config.get("user_profile.boost_strength", 0.15))
             self.personalized_ranker = PersonalizedRanker(boost_strength)
 
-        # 自主学习初始化
-        if bool(self.config.get("auto_learning.enabled", True)):
-            from .auto_learning import AutoLearningManager
-
-            data_dir = str(self.config.get("data_dir", ""))
-            lr = float(self.config.get("auto_learning.learning_rate", 0.01))
-            self.auto_learning = AutoLearningManager(
-                data_dir=data_dir, learning_rate=lr
+        # 自主学习：统一 FeedbackSignal shadow 候选（默认关闭，不修改生产配置）
+        if bool(self.config.get("auto_learning.enabled", False)):
+            from ..models.feedback_signal import (
+                FeedbackAdapterKind,
+                FeedbackSignalPolicy,
             )
-            await self.auto_learning.load_state()
+            from ..storage.feedback_signal_store import FeedbackSignalStore
+            from .auto_learning import AutoLearningManager
+            from .feedback_signal_manager import FeedbackSignalManager
+
+            feedback_store = FeedbackSignalStore(
+                configured_data_dir / "feedback_signals.db"
+            )
+            feedback_store.initialize()
+            feedback_policy = FeedbackSignalPolicy(
+                baseline_document_weight=float(
+                    self.config.get("document_route_weight", 0.65)
+                ),
+                baseline_graph_weight=float(
+                    self.config.get("graph_route_weight", 0.35)
+                ),
+            )
+            feedback_manager = FeedbackSignalManager(
+                feedback_store,
+                policy=feedback_policy,
+            )
+            feedback_manager.register_adapter(FeedbackAdapterKind.REVIEW_DECISION)
+            self.feedback_signal_manager = feedback_manager
+            auto_learning = AutoLearningManager(
+                feedback_manager,
+                data_dir=str(configured_data_dir),
+                enabled=True,
+            )
+            await auto_learning.load_state()
+            self.auto_learning = auto_learning
 
         # 知识库初始化
         if bool(self.config.get("knowledge_base.enabled", True)):
@@ -370,12 +395,6 @@ class MemoryEngineLifecycleMixin:
             str(configured_data_dir),
         )
 
-        # MAB 权重学习
-        if bool(self.config.get("weight_learning.enabled", False)):
-            from .weight_learner import MABWeightLearner
-
-            self.weight_learner = MABWeightLearner(self.db_connection, self.config)
-
         # 记忆导入导出
         if bool(self.config.get("export.enabled", True)):
             import json as _json
@@ -456,6 +475,10 @@ class MemoryEngineLifecycleMixin:
         if anomaly_detector is not None:
             with contextlib.suppress(Exception):
                 anomaly_detector.save_state()
+        feedback_signal_manager = getattr(self, "feedback_signal_manager", None)
+        if feedback_signal_manager is not None:
+            with contextlib.suppress(Exception):
+                feedback_signal_manager.close()
         if self.db_connection:
             await self.db_connection.close()
         if self.graph_vector_db is not None:

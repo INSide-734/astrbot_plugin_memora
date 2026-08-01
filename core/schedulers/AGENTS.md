@@ -61,7 +61,7 @@ sequenceDiagram
     S->>E: 可选画像/知识/学习/笔记/前瞻/异常日聚合维护
 ```
 
-可选维护各自独立捕获异常：画像标签衰减、知识过期清理、自动学习优化、笔记版本裁剪、未来 24 小时 PLANNED 原子扫描、异常检测日聚合。单项失败不能阻止其他项。
+可选维护各自独立捕获异常：画像标签衰减、知识过期清理、自主学习 shadow 候选重建、笔记版本裁剪、未来 24 小时 PLANNED 原子扫描、异常检测日聚合。单项失败不能阻止其他项。
 
 当 `backup_settings.enabled` 为真，或异常检测已装配（`anomaly_detector` 非空）时，即使衰减率和自动清理都关闭，`DecayScheduler` 也会启动，以保证定时备份与异常日聚合独立运行。调度器不遍历或删除备份目录；创建和保留策略必须委托 `BackupManager.create_backup(kind="scheduled")` 与 `BackupManager.prune_backups(keep_days=...)`。公开状态只保留 succeeded/failed、备份名称和稳定 reason code，不输出路径或异常正文。
 

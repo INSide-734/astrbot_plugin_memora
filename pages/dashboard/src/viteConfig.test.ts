@@ -87,8 +87,8 @@ describe("vite config", () => {
       loaded!.slice("export default ".length, -1)
     ) as string;
     const schema = JSON.parse(schemaText) as Record<string, unknown>;
-    expect(Object.keys(schema)).toHaveLength(45);
-    expect(countSchemaLeaves(schema)).toBe(239);
+    expect(Object.keys(schema)).toHaveLength(42);
+    expect(countSchemaLeaves(schema)).toBe(229);
     expect(schema).toMatchObject({
       jargon: {
         type: "object",

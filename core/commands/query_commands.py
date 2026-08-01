@@ -11,6 +11,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
 from ..i18n_backend import t, t_list
+from ..managers.feedback_signal_manager import record_explicit_correction
 
 
 class QueryCommandMixin:
@@ -180,6 +181,7 @@ class QueryCommandMixin:
         try:
             success = await self.memory_engine.delete_memory(doc_id)
             if success:
+                await self._record_forget_correction(doc_id, event)
                 yield event.plain_result(t("forget.success", id=doc_id))
             else:
                 yield event.plain_result(t("forget.not_found", id=doc_id))
@@ -192,6 +194,25 @@ class QueryCommandMixin:
                     t_list("error.suggestions.forget"),
                 )
             )
+
+    async def _record_forget_correction(
+        self,
+        doc_id: int,
+        event: AstrMessageEvent,
+    ) -> None:
+        """把显式忘记作为可信负向反馈写入隔离管线，失败不影响命令结果。"""
+
+        manager = getattr(self.memory_engine, "feedback_signal_manager", None)
+        if manager is None:
+            return
+        try:
+            record_explicit_correction(
+                manager,
+                decision_key=f"forget:{doc_id}",
+                scope_domain=str(getattr(event, "unified_msg_origin", "") or "unknown"),
+            )
+        except Exception:
+            logger.warning("[忘记命令] 反馈记录失败")
 
     @staticmethod
     async def handle_webui(

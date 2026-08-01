@@ -16,7 +16,11 @@ from core.models.feedback_signal import (
 from core.storage.feedback_signal_store import FeedbackSignalStore
 
 
-def _event(decision: str = "decision-1"):
+def _event(
+    decision: str = "decision-1",
+    *,
+    observed_at: datetime | None = None,
+):
     """构造匿名可信事件。"""
 
     return build_trusted_feedback_event(
@@ -26,7 +30,7 @@ def _event(decision: str = "decision-1"):
         outcome=FeedbackOutcome.POSITIVE,
         scope_domain="scope-synthetic",
         persona_domain=None,
-        observed_at=datetime(2026, 7, 21, 10, tzinfo=timezone.utc),
+        observed_at=observed_at or datetime(2026, 7, 21, 10, tzinfo=timezone.utc),
         window_seconds=3600,
     )
 
@@ -97,6 +101,57 @@ def test_store_replaces_and_rebuilds_aggregates_without_event_loss(tmp_path) -> 
     try:
         assert before == {"event_count": 1, "aggregate_count": 1}
         assert after == {"event_count": 1, "aggregate_count": 0}
+    finally:
+        store.close()
+
+
+def test_store_prunes_only_events_before_cutoff(tmp_path) -> None:
+    """保留期清理只删除 cutoff 之前的事件并保留边界后的事件。"""
+
+    store = FeedbackSignalStore(tmp_path / "retention.db")
+    store.initialize()
+    store.insert_events(
+        [
+            _event(
+                "expired-decision",
+                observed_at=datetime(2026, 7, 21, 10, tzinfo=timezone.utc),
+            ),
+            _event(
+                "current-decision",
+                observed_at=datetime(2026, 7, 21, 12, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+
+    deleted = store.delete_events_before(datetime(2026, 7, 21, 11, tzinfo=timezone.utc))
+
+    try:
+        assert deleted == 1
+        remaining = store.list_events()
+        assert [item.decision_key for item in remaining] == ["current-decision"]
+    finally:
+        store.close()
+
+
+def test_store_revokes_only_exact_anonymous_decision_domain(tmp_path) -> None:
+    """决策撤销必须同时匹配适配器、variant、scope 和 persona。"""
+
+    store = FeedbackSignalStore(tmp_path / "revoke.db")
+    store.initialize()
+    store.insert_events([_event("decision-a"), _event("decision-b")])
+
+    deleted = store.delete_decision_events(
+        adapter_kind=FeedbackAdapterKind.RETRIEVAL_RESULT,
+        decision_key="decision-a",
+        variant_key="document_route",
+        scope_domain="scope-synthetic",
+        persona_domain=None,
+    )
+
+    try:
+        assert deleted == 1
+        remaining = store.list_events()
+        assert [item.decision_key for item in remaining] == ["decision-b"]
     finally:
         store.close()
 

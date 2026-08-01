@@ -374,6 +374,42 @@ class MetricsApiMixin:
             "sigma_threshold": _safe_float(stats.get("sigma_threshold")),
         }
 
+    def _build_learning_summary(self) -> dict[str, Any]:
+        """返回自主学习 shadow 候选与统一反馈管线的只读摘要。"""
+
+        initializer = getattr(getattr(self, "plugin", None), "initializer", None)
+        engine = getattr(initializer, "memory_engine", None)
+        auto_learning = getattr(engine, "auto_learning", None)
+        feedback = getattr(engine, "feedback_signal_manager", None)
+        feedback_summary: dict[str, Any] = {}
+        if feedback is not None:
+            try:
+                feedback_summary = feedback.safe_summary()
+            except Exception as exc:
+                logger.warning(
+                    "[指标接口] 读取反馈摘要失败，异常类型=%s",
+                    type(exc).__name__,
+                )
+        summary: dict[str, Any] = {
+            "available": auto_learning is not None,
+            "candidate_count": 0,
+            "ready_count": 0,
+            "rejected_count": 0,
+            "published_count": 0,
+            "reasons": [],
+            "feedback": feedback_summary,
+        }
+        if auto_learning is not None:
+            try:
+                summary.update(auto_learning.safe_summary())
+            except Exception as exc:
+                logger.warning(
+                    "[指标接口] 读取自主学习摘要失败，异常类型=%s",
+                    type(exc).__name__,
+                )
+                summary["status"] = "error"
+        return summary
+
     @staticmethod
     def _read_decay_state(decay: Any) -> dict[str, Any]:
         state_file = getattr(decay, "_state_file", None)

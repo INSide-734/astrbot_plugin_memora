@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..models.feedback_signal import (
+    FeedbackAdapterKind,
     FeedbackSignalAggregate,
     TrustedFeedbackEvent,
 )
@@ -141,7 +142,7 @@ class FeedbackSignalStore:
                 ),
             },
         ).fetchall()
-        from ..models.feedback_signal import FeedbackAdapterKind, FeedbackOutcome
+        from ..models.feedback_signal import FeedbackOutcome
 
         return [
             TrustedFeedbackEvent(
@@ -158,6 +159,59 @@ class FeedbackSignalStore:
             )
             for row in rows
         ]
+
+    def delete_events_before(self, cutoff: datetime) -> int:
+        """删除保留期之前的原始反馈事件并返回删除数量。"""
+
+        self._ensure_initialized()
+        try:
+            with self._connection:
+                cursor = self._connection.execute(
+                    "DELETE FROM feedback_events WHERE observed_at < ?",
+                    (_serialize_time(cutoff),),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("feedback_store_delete_failed") from exc
+        return max(0, int(cursor.rowcount))
+
+    def delete_decision_events(
+        self,
+        *,
+        adapter_kind: FeedbackAdapterKind,
+        decision_key: str,
+        variant_key: str,
+        scope_domain: str,
+        persona_domain: str | None,
+    ) -> int:
+        """按受控适配器与匿名决策域撤销对应事件。"""
+
+        self._ensure_initialized()
+        try:
+            with self._connection:
+                cursor = self._connection.execute(
+                    """
+                    DELETE FROM feedback_events
+                    WHERE adapter_kind = ?
+                      AND decision_key = ?
+                      AND variant_key = ?
+                      AND scope_domain = ?
+                      AND (
+                        (? IS NULL AND persona_domain IS NULL)
+                        OR persona_domain = ?
+                      )
+                    """,
+                    (
+                        adapter_kind.value,
+                        decision_key,
+                        variant_key,
+                        scope_domain,
+                        persona_domain,
+                        persona_domain,
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("feedback_store_delete_failed") from exc
+        return max(0, int(cursor.rowcount))
 
     def replace_aggregates(self, aggregates: Iterable[FeedbackSignalAggregate]) -> None:
         """原子替换当前 policy 下的聚合快照。"""

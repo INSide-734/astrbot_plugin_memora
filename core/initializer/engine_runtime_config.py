@@ -264,23 +264,7 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
         "user_profile.min_tag_confidence",
         0.1,
     ),
-    _field("auto_learning.enabled", "auto_learning.enabled", True),
-    _field("auto_learning.learning_rate", "auto_learning.learning_rate", 0.01),
-    _field(
-        "auto_learning.target_hit_rate_low",
-        "auto_learning.target_hit_rate_low",
-        0.3,
-    ),
-    _field(
-        "auto_learning.target_hit_rate_high",
-        "auto_learning.target_hit_rate_high",
-        0.7,
-    ),
-    _field(
-        "auto_learning.quality_ema_alpha",
-        "auto_learning.quality_ema_alpha",
-        0.2,
-    ),
+    _field("auto_learning.enabled", "auto_learning.enabled", False),
     _field("knowledge_base.enabled", "knowledge_base.enabled", True),
     _field(
         "knowledge_base.dedup_threshold",
@@ -309,13 +293,6 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
         "anomaly_detection.sigma_threshold",
         "anomaly_detection.sigma_threshold",
         3.0,
-    ),
-    _field("weight_learning.enabled", "weight_learning.enabled", False),
-    _field("weight_learning.epsilon", "weight_learning.epsilon", 0.1),
-    _field(
-        "weight_learning.group_by_persona",
-        "weight_learning.group_by_persona",
-        True,
     ),
     _field("reconsolidation.enabled", "reconsolidation.enabled", False),
     _field(

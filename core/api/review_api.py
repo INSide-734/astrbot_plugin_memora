@@ -12,6 +12,8 @@ import aiosqlite
 from astrbot.api import logger
 from quart import request
 
+from ..managers.feedback_signal_manager import record_explicit_correction
+from ..models.feedback_signal import FeedbackOutcome
 from ..review import ReviewAction, ReviewDetector, ReviewStore
 from ..review.models import ReviewStatus
 from ..storage.base import apply_perf_pragmas
@@ -180,6 +182,7 @@ class ReviewApiMixin:
                         payload=record_payload,
                     )
                 )
+            self._record_review_feedback(memory_engine, review_id, action)
             return self._ok(
                 {
                     "review_id": review_id,
@@ -192,6 +195,31 @@ class ReviewApiMixin:
         except Exception as exc:
             logger.error("[ReviewAPI] action failed: %s", exc, exc_info=True)
             return self._error(str(exc))
+
+    def _record_review_feedback(
+        self,
+        memory_engine: Any,
+        review_id: str,
+        action: str,
+    ) -> None:
+        """把管理员复核动作作为可信反馈写入隔离管线。"""
+
+        manager = getattr(memory_engine, "feedback_signal_manager", None)
+        if manager is None:
+            return
+        try:
+            record_explicit_correction(
+                manager,
+                decision_key=f"review:{review_id}",
+                scope_domain="review",
+                outcome=(
+                    FeedbackOutcome.POSITIVE
+                    if action in {"approve", "mark_safe"}
+                    else FeedbackOutcome.NEGATIVE
+                ),
+            )
+        except Exception:
+            logger.warning("[ReviewAPI] 反馈记录失败")
 
     async def _apply_review_memory_mutation(
         self,

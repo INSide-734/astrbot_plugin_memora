@@ -772,14 +772,36 @@ function bridgePayload(endpoint, params = {}, method = "GET") {
   if (pathOnly === "notes") return { notes: [{ id: 1, title: "Smoke note" }], total: 1, active_count: 1 };
   if (pathOnly === "learning/status") {
     return {
-      hit_rate: 0.83,
-      avg_quality: 0.812,
-      total_trials: 18,
-      total_corrections: 4,
-      parameters: { retrieval_weight: 0.8, style_bias: 0.35 },
-      history: [
-        { timestamp: "2026-07-12T08:30:00Z", action: "adjusted", detail: "Raised retrieval weight" },
-        { timestamp: "2026-07-12T08:00:00Z", action: "reviewed", detail: "Validated style preference" },
+      enabled: true,
+      available: true,
+      candidate_count: 2,
+      ready_count: 1,
+      rejected_count: 1,
+      published_count: 0,
+      reasons: ["candidate", "insufficient_evidence"],
+      current: { document_route_weight: 0.61, graph_route_weight: 0.39 },
+      baseline: { document_route_weight: 0.65, graph_route_weight: 0.35 },
+      candidates: [
+        {
+          proposed_document_weight: 0.69,
+          proposed_graph_weight: 0.31,
+          delta_from_baseline: 0.04,
+          accepted_count: 6,
+          independent_window_count: 3,
+          decayed_support: 0.82,
+          status: "ready_for_review",
+          reason_code: "candidate",
+        },
+        {
+          proposed_document_weight: 0.65,
+          proposed_graph_weight: 0.35,
+          delta_from_baseline: 0,
+          accepted_count: 1,
+          independent_window_count: 1,
+          decayed_support: 0.2,
+          status: "rejected",
+          reason_code: "insufficient_evidence",
+        },
       ],
     };
   }
@@ -2099,7 +2121,7 @@ async function waitForConfigReady(page, label) {
     ({ sections, fields }) =>
       document.querySelectorAll("[data-config-section]").length === sections
       && document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length === fields,
-    { sections: 45, fields: 239 },
+      { sections: 42, fields: 229 },
     { timeout: 10_000 },
   );
   const counts = await page.evaluate(() => ({
@@ -2113,7 +2135,7 @@ async function waitForConfigReady(page, label) {
     "Loading configuration",
     "Загрузка конфигурации",
   ].filter((text) => counts.text.includes(text));
-  if (counts.sections !== 45 || counts.fields !== 239 || lingeringLoading.length > 0) {
+  if (counts.sections !== 42 || counts.fields !== 229 || lingeringLoading.length > 0) {
     throw new Error(
       `${label} did not render the complete settled schema: ${JSON.stringify({
         sections: counts.sections,
@@ -3147,7 +3169,7 @@ try {
 
   const wideRoutes = [
     ["#/preview", ["数据预览", "记忆增长", "记忆构成", "模块资产", "group-smoke-primary"], "wide-preview.png", "wide-preview"],
-    ["#/learning", ["自主学习", "83.0%", "retrieval_weight", "Formal greeting"], "wide-learning.png", "wide-learning"],
+    ["#/learning", ["自主学习", "当前运行时权重", "Shadow 候选", "Formal greeting"], "wide-learning.png", "wide-learning"],
     ["#/affection", ["好感度与情绪", "开心", "群聊今天的氛围很积极。", "所有好感用户"], "wide-affection.png", "wide-affection"],
     ["#/social", ["社交关系", "alice", "bob", "pair", "project"], "wide-social.png", "wide-social"],
     ["#/profiles", ["用户画像", "Profile smoke 1", "Profile smoke 8"], "wide-profiles-table.png", "wide-profiles-table"],
@@ -3197,7 +3219,7 @@ try {
     page,
     "自主学习",
     "#/learning",
-    ["自主学习", "命中率", "学习参数", "表达模式"],
+    ["自主学习", "当前运行时权重", "Shadow 候选", "表达模式"],
   );
 
   await page.evaluate(() => {

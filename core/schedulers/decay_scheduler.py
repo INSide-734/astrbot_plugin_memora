@@ -300,13 +300,19 @@ class DecayScheduler:
         except Exception as e:
             logger.warning(f"[衰减调度] 知识库清理异常: {e}")
 
-        # 自主学习参数优化
+        # 自主学习：只重建 shadow 候选，不修改生产配置
         try:
             auto_learning = getattr(engine, "auto_learning", None)
             if auto_learning is not None:
-                await auto_learning.optimize()
-        except Exception as e:
-            logger.warning(f"[衰减调度] 自主学习优化异常: {e}")
+                await auto_learning.rebuild_candidates()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[衰减调度] 自主学习候选重建失败，"
+                "reason=learning_candidate_rebuild_failed，异常类型=%s",
+                type(exc).__name__,
+            )
 
         # 笔记版本清理
         try:

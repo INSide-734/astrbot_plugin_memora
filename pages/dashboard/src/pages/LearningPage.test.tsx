@@ -21,6 +21,32 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+/** 构造生产 learning/status DTO，并允许单测覆盖状态计数。 */
+function learningStatus(overrides: Record<string, unknown> = {}) {
+  return {
+    enabled: true,
+    available: true,
+    candidate_count: 1,
+    ready_count: 1,
+    rejected_count: 0,
+    published_count: 0,
+    reasons: ["candidate"],
+    current: { document_route_weight: 0.65, graph_route_weight: 0.35 },
+    baseline: { document_route_weight: 0.65, graph_route_weight: 0.35 },
+    candidates: [{
+      proposed_document_weight: 0.69,
+      proposed_graph_weight: 0.31,
+      delta_from_baseline: 0.04,
+      accepted_count: 6,
+      independent_window_count: 3,
+      decayed_support: 0.82,
+      status: "ready_for_review",
+      reason_code: "candidate",
+    }],
+    ...overrides,
+  };
+}
+
 describe("LearningPage", () => {
   let bridge: BridgeMock;
   let showToast: ReturnType<typeof vi.fn>;
@@ -52,7 +78,6 @@ describe("LearningPage", () => {
   });
 
   it("loads learning stats, groups, and expression patterns", async () => {
-    const localeSpy = vi.spyOn(Date.prototype, "toLocaleString");
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/groups") {
         return Promise.resolve(ok({
@@ -63,20 +88,36 @@ describe("LearningPage", () => {
         }));
       }
       if (path === "page/learning/status") {
-        return Promise.resolve(ok({
-          hit_rate: 0.83,
-          avg_quality: 0.81234,
-          total_trials: 18,
-          total_corrections: 4,
-          parameters: {
-            retrieval_weight: 0.8,
-            style_bias: 0.35,
-          },
-          history: [
-            { timestamp: "2026-06-28T10:30:00Z", action: "weight_adjust", detail: "Raised retrieval weight" },
-            { timestamp: "2026-06-27T10:30:00Z", action: "vendor_action", detail: "Vendor-defined action" },
+        return Promise.resolve(ok(learningStatus({
+          candidate_count: 2,
+          ready_count: 1,
+          rejected_count: 1,
+          current: { document_route_weight: 0.61, graph_route_weight: 0.39 },
+          baseline: { document_route_weight: 0.65, graph_route_weight: 0.35 },
+          reasons: ["candidate", "insufficient_evidence"],
+          candidates: [
+            {
+              proposed_document_weight: 0.69,
+              proposed_graph_weight: 0.31,
+              delta_from_baseline: 0.04,
+              accepted_count: 6,
+              independent_window_count: 3,
+              decayed_support: 0.82,
+              status: "ready_for_review",
+              reason_code: "candidate",
+            },
+            {
+              proposed_document_weight: 0.65,
+              proposed_graph_weight: 0.35,
+              delta_from_baseline: 0,
+              accepted_count: 1,
+              independent_window_count: 1,
+              decayed_support: 0.2,
+              status: "rejected",
+              reason_code: "insufficient_evidence",
+            },
           ],
-        }));
+        })));
       }
       if (path === "page/expression/patterns") {
         return Promise.resolve(ok({
@@ -100,7 +141,7 @@ describe("LearningPage", () => {
     const page = screen.getByRole("region", { name: /Learning|学习/ });
     expect(page.getAttribute("data-layout")).toBe("standard");
     expect(page.querySelector('[data-slot="page-header"]')).toBeTruthy();
-    expect(page.querySelector('[data-slot="metric-grid"]')).toBeTruthy();
+    expect(page.querySelector('[data-state="loading"]')).toBeTruthy();
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/groups", {});
@@ -112,21 +153,15 @@ describe("LearningPage", () => {
       });
     });
 
-    expect(await screen.findByText("83.0%")).toBeTruthy();
-    expect(screen.getByText("0.812")).toBeTruthy();
-    expect(screen.getByText("18")).toBeTruthy();
-    expect(screen.getByText("4")).toBeTruthy();
-    expect(screen.getByText("Learned Parameters")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Learned Parameters" })).toBeTruthy();
-    expect(screen.getByText("retrieval_weight")).toBeTruthy();
-    expect(screen.getByText("0.80")).toBeTruthy();
-    expect(screen.getByRole("progressbar", { name: "retrieval_weight" })).toBeTruthy();
-    expect(screen.getByText("Learning History")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Learning History" })).toBeTruthy();
-    expect(screen.getByText("Weight adjustment")).toBeTruthy();
-    expect(screen.getByText("vendor_action")).toBeTruthy();
-    expect(screen.getByText("Raised retrieval weight")).toBeTruthy();
-    expect(localeSpy).toHaveBeenCalledWith("en-US");
+    expect(await screen.findByText("Current runtime weights")).toBeTruthy();
+    expect(page.querySelector('[data-slot="metric-grid"]')).toBeTruthy();
+    expect(screen.getByText("Shadow baseline")).toBeTruthy();
+    expect(screen.getByText("Shadow candidates")).toBeTruthy();
+    expect(screen.getByText("Ready for manual review")).toBeTruthy();
+    expect(screen.getByText("Insufficient evidence")).toBeTruthy();
+    expect(screen.getByText("61%")).toBeTruthy();
+    expect(screen.getAllByText("65%").length).toBeGreaterThan(0);
+    expect(screen.getByText("82%")).toBeTruthy();
     expect(screen.getByText("Expression Patterns")).toBeTruthy();
     expect(screen.getByText("Greeting")).toBeTruthy();
     expect(screen.getByText("Formal greeting")).toBeTruthy();
@@ -134,7 +169,7 @@ describe("LearningPage", () => {
     expect(screen.getByRole("progressbar", { name: /Greeting.*weight/i })).toBeTruthy();
     expect(document.querySelector('[data-slot="learning-details"]')?.className).toContain("xl:grid-cols-2");
     expect(screen.getAllByRole("progressbar").every((meter) => meter.getAttribute("data-slot") === "progress")).toBe(true);
-    expect(screen.getByText("6")).toBeTruthy();
+    expect(screen.getAllByText("6").length).toBeGreaterThan(0);
   });
 
   it("sorts expression patterns on the server without persisting transient state", async () => {
@@ -144,7 +179,7 @@ describe("LearningPage", () => {
       if (path === "page/groups") {
         return Promise.resolve(ok({ groups: [{ group_id: "group-1", message_count: 1 }] }));
       }
-      if (path === "page/learning/status") return Promise.resolve(ok({ hit_rate: 0.5 }));
+      if (path === "page/learning/status") return Promise.resolve(ok(learningStatus()));
       if (path === "page/expression/patterns") {
         return params.sort_by === "usage_count" ? sorted.promise : initial.promise;
       }
@@ -208,19 +243,14 @@ describe("LearningPage", () => {
       if (path === "page/learning/status") {
         statusCalls += 1;
         if (statusCalls === 1) {
-          return Promise.resolve(ok({
-            hit_rate: 0.5,
-            avg_quality: 0.6,
-            total_trials: 10,
-            total_corrections: 2,
-          }));
+          return Promise.resolve(ok(learningStatus({ candidate_count: 1 })));
         }
-        return Promise.resolve(ok({
-          hit_rate: 0.92,
-          avg_quality: 0.95,
-          total_trials: 11,
-          total_corrections: 2,
-        }));
+        return Promise.resolve(ok(learningStatus({
+          candidate_count: 0,
+          ready_count: 0,
+          candidates: [],
+          reasons: [],
+        })));
       }
       if (path === "page/expression/patterns") {
         return Promise.resolve(ok({ patterns: [] }));
@@ -231,13 +261,13 @@ describe("LearningPage", () => {
 
     render(<LearningPage showToast={showToast} />);
 
-    expect(await screen.findByText("50.0%")).toBeTruthy();
+    expect(await screen.findByText("Shadow candidates")).toBeTruthy();
     expect(screen.getByText("No expression patterns")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /reset learning/i }));
 
     const dialog = await screen.findByRole("dialog", { name: /reset learning/i });
-    expect(dialog.textContent).toContain("Reset all learned parameters to defaults?");
+    expect(dialog.textContent).toContain("Production weights will not change.");
     expect(bridge.apiPost).not.toHaveBeenCalledWith("page/learning/reset", {});
 
     const confirm = within(dialog).getByRole("button", { name: /reset learning/i });
@@ -250,10 +280,10 @@ describe("LearningPage", () => {
       expect(bridge.apiPost).toHaveBeenCalledTimes(1);
       expect(bridge.apiPost).toHaveBeenCalledWith("page/learning/reset", {});
     });
-    expect(showToast).toHaveBeenCalledWith("Learning parameters reset!");
+    expect(showToast).toHaveBeenCalledWith("Shadow learning state reset.");
 
     await waitFor(() => {
-      expect(screen.getByText("92.0%")).toBeTruthy();
+      expect(screen.getByText("No shadow candidates yet")).toBeTruthy();
     });
   });
 
@@ -268,12 +298,7 @@ describe("LearningPage", () => {
         }));
       }
       if (path === "page/learning/status") {
-        return Promise.resolve(ok({
-          hit_rate: 0.75,
-          avg_quality: 0.81,
-          total_trials: 9,
-          total_corrections: 1,
-        }));
+        return Promise.resolve(ok(learningStatus()));
       }
       if (path === "page/expression/patterns" && params.group_id === "group-1") {
         return Promise.resolve(ok({
@@ -334,20 +359,44 @@ describe("LearningPage", () => {
     expect(await screen.findByText("Casual wrap-up")).toBeTruthy();
     expect(screen.getByText("Closing")).toBeTruthy();
     expect(screen.getByText("55%")).toBeTruthy();
-    expect(screen.getByText("3")).toBeTruthy();
+    expect(screen.getAllByText("3").length).toBeGreaterThan(0);
+  });
+
+  it("recovers autonomous learning status after retry", async () => {
+    let statusCalls = 0;
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/groups") return Promise.resolve(ok({ groups: [] }));
+      if (path === "page/learning/status") {
+        statusCalls += 1;
+        return statusCalls === 1
+          ? Promise.reject(new Error("status unavailable"))
+          : Promise.resolve(ok(learningStatus()));
+      }
+      return Promise.resolve(ok({ patterns: [] }));
+    });
+
+    render(<LearningPage showToast={showToast} />);
+
+    expect(await screen.findByText("Could not load autonomous learning status")).toBeTruthy();
+    expect(screen.getByText("status unavailable")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("Shadow candidates")).toBeTruthy();
+    expect(statusCalls).toBe(2);
+    expect(screen.queryByText("status unavailable")).toBe(null);
   });
 
   it("keeps learning stats and confirmation context when reset fails", async () => {
     bridge.apiGet.mockImplementation((path: string) => {
       if (path === "page/groups") return Promise.resolve(ok({ groups: [] }));
-      if (path === "page/learning/status") return Promise.resolve(ok({ hit_rate: 0.5, avg_quality: 0.6, total_trials: 10, total_corrections: 2 }));
+      if (path === "page/learning/status") return Promise.resolve(ok(learningStatus()));
       return Promise.resolve(ok({ patterns: [] }));
     });
     let resolveReset!: (value: { status: "error"; message: string }) => void;
     bridge.apiPost.mockReturnValue(new Promise((resolve) => { resolveReset = resolve; }));
 
     render(<LearningPage showToast={showToast} />);
-    expect(await screen.findByText("50.0%")).toBeTruthy();
+    expect(await screen.findByText("Shadow candidates")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /reset learning/i }));
     const dialog = await screen.findByRole("dialog", { name: /reset learning/i });
     const confirm = within(dialog).getByRole("button", { name: /reset learning/i });
@@ -362,7 +411,7 @@ describe("LearningPage", () => {
     await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("alert").textContent).toContain("reset unavailable");
     expect(screen.getByRole("dialog", { name: /reset learning/i })).toBeTruthy();
-    expect(screen.getByText("50.0%")).toBeTruthy();
+    expect(screen.getByText("Shadow candidates")).toBeTruthy();
   });
 
   it("keeps the latest group expressions when responses resolve out of order", async () => {
@@ -370,7 +419,7 @@ describe("LearningPage", () => {
     const group2 = deferred<ReturnType<typeof ok<{ patterns: Array<Record<string, unknown>> }>>>();
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/groups") return Promise.resolve(ok({ groups: [{ group_id: "group-1", message_count: 1 }, { group_id: "group-2", message_count: 1 }] }));
-      if (path === "page/learning/status") return Promise.resolve(ok({ hit_rate: 0.5 }));
+      if (path === "page/learning/status") return Promise.resolve(ok(learningStatus()));
       if (path === "page/expression/patterns") return params.group_id === "group-1" ? group1.promise : group2.promise;
       return Promise.resolve(ok({}));
     });
@@ -395,8 +444,8 @@ describe("LearningPage", () => {
   });
 
   it("ignores a stats response started before a successful reset refresh", async () => {
-    const staleStats = deferred<ReturnType<typeof ok<Record<string, number>>>>();
-    const freshStats = deferred<ReturnType<typeof ok<Record<string, number>>>>();
+    const staleStats = deferred<ReturnType<typeof ok<Record<string, unknown>>>>();
+    const freshStats = deferred<ReturnType<typeof ok<Record<string, unknown>>>>();
     let statusCalls = 0;
     bridge.apiGet.mockImplementation((path: string) => {
       if (path === "page/groups") return Promise.resolve(ok({ groups: [] }));
@@ -409,11 +458,11 @@ describe("LearningPage", () => {
     const dialog = await screen.findByRole("dialog", { name: /reset learning/i });
     fireEvent.click(within(dialog).getByRole("button", { name: /reset learning/i }));
     await waitFor(() => expect(statusCalls).toBe(2));
-    await act(async () => { staleStats.resolve(ok({ hit_rate: 0.5, avg_quality: 0.6, total_trials: 1, total_corrections: 0 })); });
-    expect(screen.queryByText("50.0%")).toBe(null);
+    await act(async () => { staleStats.resolve(ok(learningStatus({ candidate_count: 7 }))); });
+    expect(screen.queryByText("7")).toBe(null);
     expect(screen.getByText(/Loading|加载|Загрузка/i)).toBeTruthy();
-    await act(async () => { freshStats.resolve(ok({ hit_rate: 0.92, avg_quality: 0.95, total_trials: 2, total_corrections: 0 })); });
-    expect(await screen.findByText("92.0%")).toBeTruthy();
-    expect(screen.queryByText("50.0%")).toBe(null);
+    await act(async () => { freshStats.resolve(ok(learningStatus({ candidate_count: 2 }))); });
+    expect(await screen.findByText("2")).toBeTruthy();
+    expect(screen.queryByText("7")).toBe(null);
   });
 });

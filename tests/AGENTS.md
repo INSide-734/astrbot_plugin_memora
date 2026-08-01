@@ -105,6 +105,7 @@ flowchart LR
 | 连续性生命周期与闭环 | `test_continuity_closed_loop.py`、`test_managers_continuity.py` | `test_handlers.py`、`test_managers_memory_lifecycle.py`、`test_engine_runtime_config_contract.py` |
 | 异常检测闭环 | `test_anomaly_closed_loop.py`、`test_managers_anomaly.py` | `test_decay_scheduler.py`、`test_diagnostics_health_scorer.py`、`test_api_diagnostics.py`、`test_plugin_init.py` |
 | 再巩固候选闭环 | `test_reconsolidation_closed_loop.py` | `test_handlers.py`、`test_managers_memory_lifecycle.py`、`test_engine_runtime_config_contract.py` |
+| 学习与反馈闭环 | `test_learning_closed_loop.py`、`test_weight_ownership.py`、`test_api_learning.py` | `test_api_review.py`、`test_decay_scheduler.py`、`test_engine_runtime_config_contract.py` |
 | 话题分段与生产装配 | `test_topic_splitter.py`、`test_topic_production_wiring.py` | `test_integration_topic_segmentation.py`、`test_extra_llm_budget.py`、`test_plugin_init.py` |
 | 配置/schema | `test_base.py`、`test_config_contract.py`、`test_api_config.py` | `test_plugin_init.py`、`test_project_metadata.py` |
 | 插件初始化/导入 | `test_plugin_init.py`、`test_plugin_package_imports.py` | `test_event_handler.py` |

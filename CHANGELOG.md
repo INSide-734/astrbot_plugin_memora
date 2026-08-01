@@ -10,6 +10,8 @@ Memora 的所有重要变更都记录在此文件中。
 ### 破坏性变更
 
 - 删除从未接入生产且与好感度域重复的 `relationship_tracking` 配置（`enabled`、`warmth_decay_per_day`）。Bot 与用户的关系/好感度统一由好感度域权威维护，用户间关系由社交关系域维护；旧配置会被安全忽略，无需迁移数据。
+- 删除无收益证据且从未正确装配的 `weight_learning`（MAB）配置（`enabled`、`epsilon`、`group_by_persona`）与实现；统一反馈与参数候选改由 FeedbackSignal 管线和自主学习 shadow 候选承担。
+- 自主学习改为默认关闭的 shadow 候选模式：删除无消费者的 `learning_rate`、`target_hit_rate_low/high`、`quality_ema_alpha` 配置叶，`enabled` 默认从 `true` 改为 `false`。
 
 ### 修复
 

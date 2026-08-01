@@ -46,8 +46,8 @@ describe("createMockConfigServer", () => {
       server.handleGet("config/schema") as ConfigApiResponse<ConfigSchemaData>
     );
 
-    expect(Object.keys(first.schema)).toHaveLength(45);
-    expect(countSchemaLeaves(first.schema)).toBe(239);
+    expect(Object.keys(first.schema)).toHaveLength(42);
+    expect(countSchemaLeaves(first.schema)).toBe(229);
     expect(first.plugin_name).toBe("astrbot_plugin_memora");
     expect(first.provider_options).toEqual({
       llm: [

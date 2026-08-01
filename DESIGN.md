@@ -276,7 +276,7 @@ actual user-controlled Critical/High findings block delivery.
 
 Metrics use bounded labels and sanitized scalar counts. Recall observability records stage
 latency, cache behavior, candidate/selection counts, budget use, fallback outcomes, and
-recorder health without logging the source query or selected memory identifiers. 异常检测按 UTC 日聚合 canonical `created_at` 创建量并幂等投喂滚动窗口；告警只写脱敏诊断事件（固定 reason code 与标量）并进入健康快照。
+recorder health without logging the source query or selected memory identifiers. 异常检测按 UTC 日聚合 canonical `created_at` 创建量并幂等投喂滚动窗口；告警只写脱敏诊断事件（固定 reason code 与标量）并进入健康快照。自主学习默认关闭：统一 FeedbackSignal 事件（显式忘记/管理员复核）进入隔离 Store，`AutoLearningManager` 只生成 shadow 参数候选，发布必须走单一 CAS 写入口并可回滚；MAB 与在线自更新实现已删除。
 
 Performance gates include deterministic routing/execution metrics, a real
 `RecallHandler.handle_memory_recall` total-path p95 comparison against a recorded baseline,
@@ -320,6 +320,20 @@ unrelated local artifacts.
 - `tests/` and `scripts/check_all.py`: executable repository contract.
 
 ## 变更历史
+
+### 2026-08-02 - 统一可信反馈与自主学习 Shadow 闭环
+
+**变更内容**：将显式忘记和管理员复核接入匿名 FeedbackSignal Store，重写
+`AutoLearningManager` 为只读 shadow 候选，并删除旧在线自更新与 MAB 双轨。
+
+**变更理由**：原自主学习没有生产反馈输入，生成参数也没有可信消费方；MAB 另维护一套
+无人调用的反馈和权重状态，三条语义无法审计、撤销或证明收益。
+
+**影响范围**：反馈 Store/Manager、MemoryEngine 生命周期、每日维护、Learning API/指标/
+诊断、Dashboard 三语言页面、配置 Schema、网站参考与回归测试。
+
+**决策依据**：反馈标识先转为稳定 SHA-256 token，支持按匿名决策撤销并按保留期清理；
+候选默认关闭且不改变生产排序，公开 Dashboard 保持只读，发布和回滚只能经过 revision CAS。
 
 ### 2026-08-01 - 接通 Topic B 与 Hybrid 生产分段
 

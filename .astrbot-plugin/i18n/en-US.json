@@ -1428,21 +1428,40 @@
       "deleteUser": "Delete affection user"
     },
     "learning": {
-      "historyAction": {
-        "weight_adjust": "Weight adjustment",
-        "threshold_tune": "Threshold tuning",
-        "correction": "Correction",
-        "param_init": "Parameter initialization"
+      "status": {
+        "ready_for_review": "Ready for manual review",
+        "rejected": "Rejected",
+        "published": "Published",
+        "invalid_state": "Invalid state"
       },
-      "reset": "Reset Learning",
-      "hitRate": "Hit Rate",
-      "avgQuality": "Average Quality",
-      "trials": "Total Trials",
-      "corrections": "Corrections",
-      "params": "Learned Parameters",
-      "history": "Learning History",
-      "resetConfirm": "Reset all learned parameters to defaults?",
-      "resetDone": "Learning parameters reset!"
+      "reason": {
+        "candidate": "Evidence reached the candidate threshold",
+        "insufficient_evidence": "Insufficient evidence",
+        "published": "Published through CAS",
+        "invalid_state": "Restored state failed validation"
+      },
+      "reset": "Reset learning",
+      "resetConfirm": "Clear all shadow candidates and publication snapshots? Production weights will not change.",
+      "resetDone": "Shadow learning state reset.",
+      "loading": "Loading autonomous learning status",
+      "loadError": "Could not load autonomous learning status",
+      "candidates": "Candidates",
+      "ready": "Ready for review",
+      "rejected": "Rejected",
+      "published": "Published",
+      "current": "Current runtime weights",
+      "baseline": "Shadow baseline",
+      "documentRoute": "Document route",
+      "graphRoute": "Graph route",
+      "shadowCandidates": "Shadow candidates",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "noCandidates": "No shadow candidates yet",
+      "noCandidatesDescription": "Candidates appear after trusted feedback reaches the independent-window and sample thresholds.",
+      "delta": "Delta from baseline",
+      "support": "Decayed support",
+      "samples": "Accepted samples",
+      "windows": "Independent windows"
     },
     "relation": {
       "relatives": "Relatives",
