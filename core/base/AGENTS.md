@@ -23,28 +23,30 @@
 ```mermaid
 flowchart LR
     A[AstrBotConfig 可变映射] --> B[ConfigManager._read_source_state]
-    B --> C[运行时注入叶子安全降级]
-    C --> D[merge_config_with_defaults]
-    D --> E[MemoraConfig / Pydantic 校验]
-    E -->|局部分支无效| F[分支回退默认值]
-    F --> G[隔离配置快照 + SHA-256 revision]
-    E --> G
-    H[Dashboard / 调用方点号路径更新] --> I[apply_config_changes]
-    I --> J{expected_revision 匹配?}
-    J -->|否| K[ConfigConflictError]
-    J -->|是| L[Schema 叶子与 options 校验]
-    L --> M[Pydantic 整体校验]
-    M --> N[save_config 在线程中持久化]
-    N --> O[发布新快照或回滚/冲突]
+    B --> C[旧公开配置名一次迁移]
+    C --> D[运行时注入叶子安全降级]
+    D --> E[merge_config_with_defaults]
+    E --> F[MemoraConfig / Pydantic 校验]
+    F -->|局部分支无效| G[分支回退默认值]
+    G --> H[隔离配置快照 + SHA-256 revision]
+    F --> H
+    I[Dashboard / 调用方点号路径更新] --> J[apply_config_changes]
+    J --> K{expected_revision 匹配?}
+    K -->|否| L[ConfigConflictError]
+    K -->|是| M[Schema 叶子与 options 校验]
+    M --> N[Pydantic 整体校验]
+    N --> O[save_config 在线程中持久化]
+    O --> P[发布新快照或回滚/冲突]
 ```
 
 ### 配置读取
 
 1. `ConfigManager(user_config)` 保留传入 `MutableMapping` 作为唯一外部来源，不再维护第二份 Dashboard JSON 覆盖层。
-2. `_normalize_runtime_injection_config()` 只在内存副本上容忍无效的新注入策略叶子；不会迁移或改写源映射。保留天数与行上限分别回退为 `30`、`100_000`；策略组整体无效时回退到安全的手动/`balanced` 配置及 `extra_user_content`。
-3. `merge_config_with_defaults()` 以 Pydantic 默认树为底，递归覆盖用户字典。
-4. `_validate_with_branch_fallback()` 首先回退报错的顶层分支；仍失败才使用完整默认配置。降级记录通过 `validation_errors` 返回。
-5. `get()`、`get_section()`、`get_all()` 和快照 API 对可变值执行深拷贝，禁止调用方绕过 revision 修改内部状态。
+2. `migrate_legacy_config()` 只在内存深拷贝上把 `cross_encoder` 与旧权重键迁移到 `embedding_similarity` 单一契约；新键优先，运行时不保留旧别名，下一次正常保存会持久化新名称。
+3. `_normalize_runtime_injection_config()` 只在内存副本上容忍无效的新注入策略叶子；不会改写源映射。保留天数与行上限分别回退为 `30`、`100_000`；策略组整体无效时回退到安全的手动/`balanced` 配置及 `extra_user_content`。
+4. `merge_config_with_defaults()` 以 Pydantic 默认树为底，递归覆盖用户字典。
+5. `_validate_with_branch_fallback()` 首先回退报错的顶层分支；仍失败才使用完整默认配置。降级记录通过 `validation_errors` 返回。
+6. `get()`、`get_section()`、`get_all()` 和快照 API 对可变值执行深拷贝，禁止调用方绕过 revision 修改内部状态。
 
 ### 原子更新
 
@@ -59,6 +61,7 @@ flowchart LR
 | 文件 | 核心接口 | 约束 |
 |---|---|---|
 | `config_validator.py` | `MemoraConfig`、其余分支模型、`validate_config()`、`get_default_config()`、`merge_config_with_defaults()`、`validate_runtime_config_changes()` | 默认值唯一运行时来源；顶层允许额外字段以兼容旧配置，已声明字段仍受类型/范围约束 |
+| `config_migrations.py` | `migrate_legacy_config()` | 旧公开键只在配置载入边界迁移到当前单一命名；不得在消费者中维护运行时别名 |
 | `runtime_feature_config.py` | 运行时功能分支 Pydantic 模型 | 正式功能分支不得退回无类型字典；Hybrid/Graph 融合权重总和必须为 `1.0` |
 | `config_ownership.py` | `CONFIG_SECTION_OWNERSHIP`、`resolve_config_ownership()` | 每个 Schema 叶必须解析为 `runtime/dashboard_only/experimental/deprecated` 和唯一 owner；未知顶层分支不得静默归类 |
 | `config_runtime_effects.py` | `RuntimeConfigEffect`、`classify_config_effects()` | 非空保存保守要求重启；时序/因果图边变更还要求重建图派生数据 |

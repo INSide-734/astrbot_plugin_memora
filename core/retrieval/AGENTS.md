@@ -112,9 +112,9 @@ sequenceDiagram
 | 策略 | 实现 | 失败语义 |
 |---|---|---|
 | `mmr` | 词袋 Jaccard | 同步、无外部调用 |
-| `cross_encoder` | 实际为 query/doc embedding 余弦代理，不是真正 cross-encoder | 生产路径 FAISS/向量不可用回退 MMR；可信消融使用严格运行时探针 |
+| `embedding_similarity` | query/doc Embedding 余弦相似度与原始分数加权，不执行 Cross-Encoder 联合推理 | 生产路径 FAISS/向量不可用回退 MMR；可信消融使用严格运行时探针 |
 | `llm` | 通过请求级双门后，把 query 与最多 `2 * batch_size` 个正文预览交给 LLM 评分 | 额度拒绝、解析或调用失败保持输入顺序和分数不变；普通失败释放 reservation |
-| `hybrid` | CrossEncoder 窄化后 LLM 精排 | 组合两者语义 |
+| `hybrid` | Embedding 相似度窄化后 LLM 精排 | 组合两者语义 |
 
 `create_reranker()` 是 async 工厂；只有显式 `vector_access`/`sync_text_generation` 能力满足时才构造对应外部重排器，否则在工厂阶段返回带稳定原因码的 MMR。`DualRouteRetriever._apply_reranker()` 通过 `provider_privacy_prefilter` 兼容同步/异步返回，并在普通异常或返回非 list 时恢复安全候选的原始分数排序。注意 `HybridReranker.rerank()` 当前是同步方法但可能返回 LLM coroutine，调用方负责 await。
 
@@ -165,7 +165,7 @@ python -m pytest -q tests/test_bm25_retriever.py tests/test_vector_retriever.py 
 python -m pytest -q tests/test_graph_keyword_retriever.py tests/test_graph_vector_retriever.py tests/test_graph_retriever.py tests/test_dual_route_retriever.py
 python -m pytest -q tests/test_derived_relation_expander.py tests/test_projection_reader.py
 python -m pytest -q tests/test_adapter_capabilities.py tests/test_reranker_factory.py
-python -m pytest -q tests/test_query_rewriter.py tests/test_intent_keywords.py tests/test_personalized_ranker.py tests/test_reranker_factory.py tests/test_cross_encoder_reranker.py tests/test_llm_reranker.py
+python -m pytest -q tests/test_query_rewriter.py tests/test_intent_keywords.py tests/test_personalized_ranker.py tests/test_reranker_factory.py tests/test_embedding_similarity_reranker.py tests/test_llm_reranker.py
 python -m pytest -q tests/test_atom_retriever.py tests/test_knowledge_retriever.py tests/test_memory_lifecycle.py
 python -m pytest -q tests/test_api_recall_trace.py tests/test_p0_observability_privacy.py tests/test_recall_cost_benchmark.py
 python -m pytest -q tests/test_emotion_scorer.py tests/test_seasonal_recall.py

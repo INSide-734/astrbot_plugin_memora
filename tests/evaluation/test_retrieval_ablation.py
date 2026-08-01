@@ -18,7 +18,7 @@ def _engine(
         "recall_engine.chain_topic_expansion_enabled": True,
         "memory_evolution": {"enabled": True, "mode": "disabled"},
         "reranker.mmr_lambda": 0.7,
-        "reranker.cross_encoder_lambda": 0.7,
+        "reranker.embedding_similarity_lambda": 0.7,
     }
     hybrid = SimpleNamespace(mmr_lambda=0.7, config=config)
     keyword = SimpleNamespace(expansion_hops=hop)
@@ -274,7 +274,9 @@ def test_descriptors_reject_noop_config_and_reranker_variants() -> None:
     """已经生效的配置或同权重 reranker 不得再次标记为可消融。"""
 
     from core.evaluation.retrieval_ablation import RetrievalAblationController
-    from core.retrieval.cross_encoder_reranker import CrossEncoderReranker
+    from core.retrieval.embedding_similarity_reranker import (
+        EmbeddingSimilarityReranker,
+    )
     from core.retrieval.reranker_factory import MMRReranker
 
     graph_disabled = _engine()
@@ -297,7 +299,7 @@ def test_descriptors_reject_noop_config_and_reranker_variants() -> None:
     )
 
     embedding_engine = _engine()
-    embedding_engine.dual_route_retriever.reranker = CrossEncoderReranker(
+    embedding_engine.dual_route_retriever.reranker = EmbeddingSimilarityReranker(
         embedding_engine.faiss_db,
         0.7,
     )

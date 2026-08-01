@@ -1,4 +1,4 @@
-"""Cross-Encoder 重排序器 — 使用 query-doc 向量相似度进行重排。"""
+"""使用 query-doc Embedding 余弦相似度进行重排序。"""
 
 from __future__ import annotations
 
@@ -8,16 +8,20 @@ from typing import Any
 from .rrf_fusion import HybridResult
 
 
-class CrossEncoderReranker:
-    """使用 query-document 向量余弦相似度进行重排序。"""
+class EmbeddingSimilarityReranker:
+    """以 query-document 向量余弦相似度融合原始检索分数。"""
 
     def __init__(self, faiss_db=None, lambda_weight: float = 0.7) -> None:
+        """保存向量后端，并将融合权重限制在闭区间 ``[0, 1]``。"""
+
         self._faiss_db = faiss_db
         self._lambda = max(0.0, min(1.0, lambda_weight))
 
     def rerank(
         self, results: list[HybridResult], k: int, query: str = "", **kwargs: Any
     ) -> list[HybridResult]:
+        """融合向量相似度后降序返回最多 ``k`` 项，能力失败时回退 MMR。"""
+
         if len(results) <= k:
             return results
         if self._faiss_db is None or not query:
@@ -26,13 +30,14 @@ class CrossEncoderReranker:
             query_vec = self._faiss_db.encode_query(query)
         except Exception:
             return self._fallback_mmr(results, k)
-        for r in results:
+        for result in results:
             try:
-                doc_vec = self._get_doc_vector(r.doc_id)
+                doc_vec = self._get_doc_vector(result.doc_id)
                 if doc_vec is not None:
-                    ce_score = self._cosine_similarity(query_vec, doc_vec)
-                    r.final_score = (
-                        self._lambda * ce_score + (1 - self._lambda) * r.final_score
+                    similarity_score = self._cosine_similarity(query_vec, doc_vec)
+                    result.final_score = (
+                        self._lambda * similarity_score
+                        + (1 - self._lambda) * result.final_score
                     )
             except Exception:
                 pass
@@ -40,6 +45,8 @@ class CrossEncoderReranker:
         return results[:k]
 
     def _get_doc_vector(self, doc_id: int):
+        """读取文档向量；后端不可用或读取失败时返回 ``None``。"""
+
         if self._faiss_db is None:
             return None
         try:
@@ -49,6 +56,8 @@ class CrossEncoderReranker:
 
     @staticmethod
     def _cosine_similarity(a: list[float], b: list[float]) -> float:
+        """计算两个向量的余弦相似度，并限制为 ``[0, 1]``。"""
+
         dot = sum(x * y for x, y in zip(a, b, strict=False))
         norm_a = math.sqrt(sum(x * x for x in a))
         norm_b = math.sqrt(sum(x * x for x in b))
@@ -58,9 +67,11 @@ class CrossEncoderReranker:
 
     @staticmethod
     def _fallback_mmr(results: list[HybridResult], k: int) -> list[HybridResult]:
+        """使用既有 MMR 默认权重完成本地安全降级。"""
+
         from .mmr_reranker import apply_mmr
 
         return apply_mmr(results, k, 0.7)
 
 
-__all__ = ["CrossEncoderReranker"]
+__all__ = ["EmbeddingSimilarityReranker"]

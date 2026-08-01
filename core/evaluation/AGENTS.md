@@ -51,7 +51,7 @@ flowchart LR
 
 `EvaluationDatasetRepository` 限制 JSONL 文件名、1 MiB 大小、500 个用例、单用例 50 个相关 ID 与全文件 500 个相关 ID，拒绝重复 case 和跨文件逻辑名称。Page API 在原子写入前确认 `relevant_doc_ids` 是当前数据库中存在的 canonical 整数 ID；`__no_relevant__` 只能单独表示正确负例。相同文件名再次导入会原子替换旧版本。
 
-`evaluation/datasets` 返回 `name/available/reason_code/default_selected` descriptor。结果返回 `capability_status/reason_code/effective_settings`；与 baseline 等价、缺少实际组件、运行时 embedding 无有效文档向量或未真实执行目标策略时不得标记 `completed`。现有 `cross_encoder` 实现是 embedding 余弦代理，检索消融变体名称固定为 `embedding_similarity`。
+`evaluation/datasets` 返回 `name/available/reason_code/default_selected` descriptor。结果返回 `capability_status/reason_code/effective_settings`；与 baseline 等价、缺少实际组件、运行时 embedding 无有效文档向量或未真实执行目标策略时不得标记 `completed`。生产配置、实现与检索消融统一使用 `embedding_similarity`，其成本来自 Embedding 调用或本地向量计算，不是 Cross-Encoder 联合推理。
 
 `EvaluationReportStore` 独立于 AstrBot 存储模块，应用 WAL/NORMAL、busy timeout、cache 和 mmap PRAGMA。`evaluation_reports` 保存汇总与完整 payload，`evaluation_cases` 保存逐用例结果并以外键级联；报告 ID 使用毫秒时间与随机后缀。集合和 dataclass 在持久化前转换为稳定 JSON 值。
 

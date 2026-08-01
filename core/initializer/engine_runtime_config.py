@@ -209,8 +209,8 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
     _field("reranker.strategy", "reranker.strategy", "mmr"),
     _field("reranker.llm_batch_size", "reranker.llm_batch_size", 10),
     _field(
-        "reranker.cross_encoder_lambda",
-        "reranker.cross_encoder_lambda",
+        "reranker.embedding_similarity_lambda",
+        "reranker.embedding_similarity_lambda",
         0.7,
     ),
     _field("reranker.mmr_lambda", "reranker.mmr_lambda", 0.7),

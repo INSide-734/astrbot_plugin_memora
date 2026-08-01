@@ -99,7 +99,7 @@ reservation 在 Provider 成功返回后提交；即使返回内容无法解析�
 | `reranker.enabled` | `true` | 对融合后的候选执行最终排序。 |
 | `reranker.strategy` | `hybrid` | 先用向量缩小候选，再交给 LLM 精排。 |
 
-`hybrid` 重排序需要向量访问能力和同步文本生成能力；能力不足时运行时会安全降级为 MMR。若 Provider 延迟较高，可先使用 `cross_encoder`，它不执行 LLM 精排。
+`hybrid` 重排序需要向量访问能力和同步文本生成能力；能力不足时运行时会安全降级为 MMR。若 Provider 延迟较高，可先使用 `embedding_similarity`，它只执行 Embedding 调用或本地向量计算，不执行 Cross-Encoder 联合推理或 LLM 精排。
 
 ### 可选增强
 

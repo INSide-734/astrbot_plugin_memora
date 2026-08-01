@@ -1,4 +1,4 @@
-"""测试 reranker_factory — pluggable reranker strategy creation."""
+"""可插拔重排器策略工厂测试。"""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import pytest
 
 
 def _make_result(doc_id: int, final_score: float, content: str = "") -> Any:
+    """构造重排器工厂测试所需的最小检索结果。"""
+
     from core.retrieval.rrf_fusion import HybridResult
 
     return HybridResult(
@@ -25,6 +27,8 @@ def _make_result(doc_id: int, final_score: float, content: str = "") -> Any:
 class TestRerankerFactory:
     @pytest.fixture
     def faiss_db(self) -> MagicMock:
+        """构造显式声明文档向量访问能力的测试后端。"""
+
         from core.adapter_capabilities import (
             AdapterCapability,
             AdapterCapabilityContract,
@@ -42,6 +46,8 @@ class TestRerankerFactory:
 
     @pytest.fixture
     def llm_client(self) -> MagicMock:
+        """构造显式声明同步文本生成能力的测试客户端。"""
+
         from core.adapter_capabilities import (
             AdapterCapability,
             AdapterCapabilityContract,
@@ -58,7 +64,7 @@ class TestRerankerFactory:
 
     @pytest.mark.asyncio
     async def test_create_default_mmr(self) -> None:
-        """默认 strategy creates an MMRReranker."""
+        """未知默认策略应创建不依赖外部能力的 MMR 重排器。"""
         from core.retrieval.reranker_factory import MMRReranker, create_reranker
 
         r = await create_reranker("default")
@@ -66,24 +72,45 @@ class TestRerankerFactory:
 
     @pytest.mark.asyncio
     async def test_create_mmr_explicit(self) -> None:
-        """显式 'mmr' strategy creates an MMRReranker."""
+        """显式 ``mmr`` 策略应创建 MMR 重排器。"""
         from core.retrieval.reranker_factory import MMRReranker, create_reranker
 
         r = await create_reranker("mmr")
         assert isinstance(r, MMRReranker)
 
     @pytest.mark.asyncio
-    async def test_create_cross_encoder(self, faiss_db: MagicMock) -> None:
-        """'cross_encoder' strategy creates a CrossEncoderReranker."""
-        from core.retrieval.cross_encoder_reranker import CrossEncoderReranker
+    async def test_create_embedding_similarity(self, faiss_db: MagicMock) -> None:
+        """``embedding_similarity`` 应创建同名语义的重排器。"""
+        from core.retrieval.embedding_similarity_reranker import (
+            EmbeddingSimilarityReranker,
+        )
         from core.retrieval.reranker_factory import create_reranker
 
-        r = await create_reranker("cross_encoder", deps={"faiss_db": faiss_db})
-        assert isinstance(r, CrossEncoderReranker)
+        reranker = await create_reranker(
+            "embedding_similarity",
+            {"reranker.embedding_similarity_lambda": 0.7},
+            deps={"faiss_db": faiss_db},
+        )
+        assert isinstance(reranker, EmbeddingSimilarityReranker)
+
+    @pytest.mark.asyncio
+    async def test_legacy_strategy_is_not_a_runtime_alias(
+        self,
+        faiss_db: MagicMock,
+    ) -> None:
+        """绕过配置迁移的旧策略值应安全回退，而不是形成长期双轨。"""
+
+        from core.retrieval.reranker_factory import MMRReranker, create_reranker
+
+        reranker = await create_reranker(
+            "cross_encoder",
+            deps={"faiss_db": faiss_db},
+        )
+        assert isinstance(reranker, MMRReranker)
 
     @pytest.mark.asyncio
     async def test_create_llm(self, llm_client: MagicMock) -> None:
-        """'llm' strategy creates an LLMReranker."""
+        """具备同步生成能力时 ``llm`` 策略应创建 LLM 重排器。"""
         from core.retrieval.llm_reranker import LLMReranker
         from core.retrieval.reranker_factory import create_reranker
 
@@ -94,7 +121,7 @@ class TestRerankerFactory:
     async def test_create_hybrid(
         self, faiss_db: MagicMock, llm_client: MagicMock
     ) -> None:
-        """'hybrid' strategy creates a HybridReranker."""
+        """两类外部能力都满足时应创建 Hybrid 重排器。"""
         from core.retrieval.reranker_factory import HybridReranker, create_reranker
 
         r = await create_reranker(
@@ -104,7 +131,7 @@ class TestRerankerFactory:
         assert isinstance(r, HybridReranker)
 
     def test_mmr_reranker_rerank(self) -> None:
-        """MMRReranker.rerank delegates to apply_mmr."""
+        """MMR 包装器应返回不超过 ``k`` 项的重排结果。"""
         from core.retrieval.reranker_factory import MMRReranker
 
         r = MMRReranker(mmr_lambda=0.7)
@@ -115,20 +142,18 @@ class TestRerankerFactory:
     def test_hybrid_reranker_rerank(
         self, faiss_db: MagicMock, llm_client: MagicMock
     ) -> None:
-        """HybridReranker chains CE then LLM."""
-        from core.retrieval.cross_encoder_reranker import CrossEncoderReranker
+        """Hybrid 应先执行 Embedding 相似度窄化，再保留 LLM 阶段。"""
+        from core.retrieval.embedding_similarity_reranker import (
+            EmbeddingSimilarityReranker,
+        )
         from core.retrieval.llm_reranker import LLMReranker
         from core.retrieval.reranker_factory import HybridReranker
 
-        # Make LLMReranker.rerank return synchronously (bypass async for test)
         llm_client.complete_sync.return_value = "[]"
-        ce = CrossEncoderReranker(faiss_db=None)  # will fallback to MMR
+        embedding = EmbeddingSimilarityReranker(faiss_db=None)
         llm = LLMReranker(llm_client=llm_client)
-        h = HybridReranker(ce, llm)
+        hybrid = HybridReranker(embedding, llm)
 
         results = [_make_result(i, 0.9 - i * 0.05) for i in range(10)]
-        # HybridReranker.rerank is sync but LLMReranker.rerank is async
-        # In practice, the async method would need awaiting — test the CE step only
-        # Here we verify the structure is correct
-        output = h._ce.rerank(results, k=5, query="test")
+        output = hybrid._embedding.rerank(results, k=5, query="test")
         assert len(output) == 5

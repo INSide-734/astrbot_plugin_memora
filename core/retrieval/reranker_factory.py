@@ -1,4 +1,4 @@
-"""可插拔重排序策略工厂 — MMR / Cross-Encoder / LLM / Hybrid。"""
+"""可插拔重排序策略工厂 — MMR / Embedding 相似度 / LLM / Hybrid。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ async def create_reranker(
     """按策略和显式依赖能力构造重排器，能力不足时降级为 MMR。
 
     参数:
-        strategy: ``mmr``、``cross_encoder``、``llm`` 或 ``hybrid``。
+        strategy: ``mmr``、``embedding_similarity``、``llm`` 或 ``hybrid``。
         config: 重排器权重和批大小配置。
         deps: FAISS 与 LLM 协作对象；兼容旧调用方的嵌套 ``deps`` 字典。
 
@@ -43,8 +43,8 @@ async def create_reranker(
         direct_deps = {key: value for key, value in deps.items() if key != "deps"}
         deps = {**nested_deps, **direct_deps}
     cfg = config or {}
-    if strategy == "cross_encoder":
-        from .cross_encoder_reranker import CrossEncoderReranker
+    if strategy == "embedding_similarity":
+        from .embedding_similarity_reranker import EmbeddingSimilarityReranker
 
         faiss_db = deps.get("faiss_db")
         if not adapter_contract(faiss_db).supports(AdapterCapability.VECTOR_ACCESS):
@@ -52,9 +52,9 @@ async def create_reranker(
                 float(cfg.get("reranker.mmr_lambda", 0.7)),
                 degradation_reason_code="adapter_capability_unsupported",
             )
-        return CrossEncoderReranker(
+        return EmbeddingSimilarityReranker(
             faiss_db=faiss_db,
-            lambda_weight=float(cfg.get("reranker.cross_encoder_lambda", 0.7)),
+            lambda_weight=float(cfg.get("reranker.embedding_similarity_lambda", 0.7)),
         )
     if strategy == "llm":
         from .llm_reranker import LLMReranker
@@ -73,7 +73,7 @@ async def create_reranker(
             cost_control=deps.get("cost_control"),
         )
     if strategy == "hybrid":
-        from .cross_encoder_reranker import CrossEncoderReranker
+        from .embedding_similarity_reranker import EmbeddingSimilarityReranker
         from .llm_reranker import LLMReranker
 
         faiss_db = deps.get("faiss_db")
@@ -89,9 +89,11 @@ async def create_reranker(
             )
 
         return HybridReranker(
-            CrossEncoderReranker(
+            EmbeddingSimilarityReranker(
                 faiss_db=faiss_db,
-                lambda_weight=float(cfg.get("reranker.cross_encoder_lambda", 0.7)),
+                lambda_weight=float(
+                    cfg.get("reranker.embedding_similarity_lambda", 0.7)
+                ),
             ),
             LLMReranker(
                 llm_client=llm_client,
@@ -137,10 +139,10 @@ class MMRReranker:
 class HybridReranker:
     """先以向量相似度缩小候选，再交给 LLM 精排。"""
 
-    def __init__(self, ce_reranker, llm_reranker) -> None:
+    def __init__(self, embedding_reranker, llm_reranker) -> None:
         """保存向量重排器和 LLM 重排器。"""
 
-        self._ce = ce_reranker
+        self._embedding = embedding_reranker
         self._llm = llm_reranker
 
     def rerank(
@@ -148,7 +150,7 @@ class HybridReranker:
     ) -> list[HybridResult]:
         """先保留最多 ``3 * k`` 项，再执行 LLM 精排。"""
 
-        narrowed = self._ce.rerank(results, min(k * 3, len(results)), **kwargs)
+        narrowed = self._embedding.rerank(results, min(k * 3, len(results)), **kwargs)
         return self._llm.rerank(narrowed, k, **kwargs)
 
 

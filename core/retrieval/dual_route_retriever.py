@@ -89,7 +89,7 @@ class DualRouteRetriever:
         # v2.5: 个性化排序
         self.personalized_ranker = personalized_ranker
         self.profile_manager = profile_manager
-        # v2.5: 可插拔重排序器（MMR / Cross-Encoder / LLM / Hybrid）
+        # v2.5: 可插拔重排序器（MMR / Embedding 相似度 / LLM / Hybrid）
         self.reranker = reranker
         self.derived_expander = derived_expander
         self.projection_reader = projection_reader
@@ -293,7 +293,7 @@ class DualRouteRetriever:
                 merged = baseline
         projection_ms = (time.perf_counter() - _t_projection_start) * 1000.0
 
-        # v2.5 可插拔重排序 — MMR / Cross-Encoder / LLM / Hybrid
+        # v2.5 可插拔重排序 — MMR / Embedding 相似度 / LLM / Hybrid
         _t_rerank_start = time.perf_counter()
         if self.reranker and len(merged) > 1:
             merged = await self._apply_reranker(

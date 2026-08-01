@@ -15,6 +15,7 @@ from typing import Any
 from astrbot.api import logger
 from pydantic import ValidationError as PydanticValidationError
 
+from .config_migrations import migrate_legacy_config
 from .config_validator import (
     MemoraConfig,
     get_default_config,
@@ -74,6 +75,8 @@ class ConfigManager:
         self,
         user_config: MutableMapping[str, Any] | None = None,
     ) -> None:
+        """载入外部配置源，并建立隔离的已校验运行时快照。"""
+
         self._source_config = user_config if user_config is not None else {}
         self._config: dict[str, Any] = {}
         self._config_obj: MemoraConfig | None = None
@@ -81,6 +84,7 @@ class ConfigManager:
         self._source_revision = ""
         self._validation_errors: list[dict[str, Any]] = []
         self._runtime_injection_fallback = False
+        self._reported_config_migrations: set[str] = set()
         self._apply_lock = asyncio.Lock()
         self._persistence_capable = callable(
             getattr(self._source_config, "save_config", None)
@@ -110,7 +114,11 @@ class ConfigManager:
             raise ConfigurationError(f"配置加载失败: {exc}") from exc
 
     def _read_source_state(self) -> tuple[MemoraConfig, dict[str, Any], str]:
+        """读取源配置，执行旧键迁移并生成已校验快照与修订号。"""
+
         source_snapshot = copy.deepcopy(dict(self._source_config))
+        source_snapshot, migrations = migrate_legacy_config(source_snapshot)
+        self._report_config_migrations(migrations)
         source_snapshot, fallback_applied = self._normalize_runtime_injection_config(
             source_snapshot
         )
@@ -119,6 +127,15 @@ class ConfigManager:
         config_obj = self._validate_with_branch_fallback(merged_config)
         config = config_obj.model_dump()
         return config_obj, config, self._compute_revision(config)
+
+    def _report_config_migrations(self, migrations: tuple[str, ...]) -> None:
+        """每个 ConfigManager 实例仅记录一次已应用的稳定迁移标识。"""
+
+        for migration_id in migrations:
+            if migration_id in self._reported_config_migrations:
+                continue
+            logger.warning(f"已迁移旧配置运行时快照: {migration_id}")
+            self._reported_config_migrations.add(migration_id)
 
     @classmethod
     def _normalize_runtime_injection_config(

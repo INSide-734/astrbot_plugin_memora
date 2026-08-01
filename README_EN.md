@@ -36,7 +36,7 @@ With **MemoryAtom** as the core data unit, Memora enables fine-grained memory st
 - **RRF Fusion** — Reciprocal Rank Fusion merging BM25 + vector ranking
 - **Graph Retrieval** — Knowledge graph retrieval via networkx (keyword + vector dual-path → fusion)
 - **Dual-Route Retrieval** — Document path + Graph path → DualRouteRetriever, parallel recall
-- **Reranking** — CrossEncoder / LLM reranking for improved result precision
+- **Reranking** — Embedding-similarity / LLM reranking for improved result precision
 - **Personalized Ranking** — Personalized result ranking based on user profiles and interaction history
 
 ### Graph Memory
@@ -131,7 +131,7 @@ User Message → EventHandler → MessageContentExtractor → ConversationManage
                          └─── DualRouteRetriever (Doc+Graph)
                                       │
                                       ▼
-                              Reranker (CrossEncoder/LLM)
+                         Reranker (Embedding similarity/LLM)
                                       │
                                       ▼
                               PersonalizedRanker

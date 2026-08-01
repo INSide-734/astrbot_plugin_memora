@@ -128,9 +128,9 @@ pageClass: config-reference-page
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
 | `"reranker.enabled"` | `"bool"` | `true` | - | 启用重排序器<br><small>关闭后跳过所有重排序步骤，减少计算开销。</small> |
-| `"reranker.strategy"` | `"string"` | `"mmr"` | 可选：`"mmr"` / `"cross_encoder"` / `"llm"` / `"hybrid"` | 重排序策略<br><small>mmr: 最大边际相关性(推荐，无额外LLM调用); cross_encoder: Embedding打分; llm: LLM打分(高成本); hybrid: 两级排序</small> |
+| `"reranker.strategy"` | `"string"` | `"mmr"` | 可选：`"mmr"` / `"embedding_similarity"` / `"llm"` / `"hybrid"` | 重排序策略<br><small>mmr: 最大边际相关性(推荐，无额外LLM调用); embedding_similarity: Embedding余弦相似度; llm: LLM打分(高成本); hybrid: 两级排序</small> |
 | `"reranker.mmr_lambda"` | `"float"` | `0.7` | 最小值：`0`<br>最大值：`1` | MMR 相关性权重<br><small>值越高越偏向相关性。范围 0-1。</small> |
-| `"reranker.cross_encoder_lambda"` | `"float"` | `0.7` | 最小值：`0`<br>最大值：`1` | Cross-Encoder 融合权重<br><small>query-doc 相似度与原始得分的融合比例。</small> |
+| `"reranker.embedding_similarity_lambda"` | `"float"` | `0.7` | 最小值：`0`<br>最大值：`1` | Embedding 相似度融合权重<br><small>query-doc 余弦相似度与原始得分的融合比例。</small> |
 | `"reranker.llm_batch_size"` | `"int"` | `10` | 最小值：`1`<br>最大值：`50` | LLM 重排序批量大小<br><small>每次处理的候选记忆数量上限。LLM 策略会增加 token 消耗。</small> |
 
 ## 索引管理

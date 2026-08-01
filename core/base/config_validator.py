@@ -450,16 +450,16 @@ class RerankerConfig(BaseModel):
     )
     strategy: str = Field(
         default="mmr",
-        description="重排序策略: mmr(最大边际相关性), cross_encoder(Embedding打分), llm(LLM打分—高成本), hybrid(两级排序)",
+        description="重排序策略: mmr(最大边际相关性), embedding_similarity(Embedding相似度), llm(LLM打分—高成本), hybrid(两级排序)",
     )
     mmr_lambda: float = Field(
         default=0.7, ge=0.0, le=1.0, description="MMR 相关性权重。值越高越偏相关性"
     )
-    cross_encoder_lambda: float = Field(
+    embedding_similarity_lambda: float = Field(
         default=0.7,
         ge=0.0,
         le=1.0,
-        description="Cross-Encoder query-doc 相似度融合权重",
+        description="query-doc Embedding 余弦相似度融合权重",
     )
     llm_batch_size: int = Field(
         default=10, ge=1, le=50, description="LLM 重排序每批候选记忆数上限"

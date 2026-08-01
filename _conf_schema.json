@@ -1174,9 +1174,9 @@
         "type": "object",
         "items": {
             "enabled": {"description": "启用重排序器", "hint": "关闭后跳过所有重排序步骤，减少计算开销。", "type": "bool", "default": true},
-            "strategy": {"description": "重排序策略", "hint": "mmr: 最大边际相关性(推荐，无额外LLM调用); cross_encoder: Embedding打分; llm: LLM打分(高成本); hybrid: 两级排序", "type": "string", "options": ["mmr", "cross_encoder", "llm", "hybrid"], "default": "mmr"},
+            "strategy": {"description": "重排序策略", "hint": "mmr: 最大边际相关性(推荐，无额外LLM调用); embedding_similarity: Embedding余弦相似度; llm: LLM打分(高成本); hybrid: 两级排序", "type": "string", "options": ["mmr", "embedding_similarity", "llm", "hybrid"], "default": "mmr"},
             "mmr_lambda": {"description": "MMR 相关性权重", "hint": "值越高越偏向相关性。范围 0-1。", "type": "float", "default": 0.7, "min": 0.0, "max": 1.0},
-            "cross_encoder_lambda": {"description": "Cross-Encoder 融合权重", "hint": "query-doc 相似度与原始得分的融合比例。", "type": "float", "default": 0.7, "min": 0.0, "max": 1.0},
+            "embedding_similarity_lambda": {"description": "Embedding 相似度融合权重", "hint": "query-doc 余弦相似度与原始得分的融合比例。", "type": "float", "default": 0.7, "min": 0.0, "max": 1.0},
             "llm_batch_size": {"description": "LLM 重排序批量大小", "hint": "每次处理的候选记忆数量上限。LLM 策略会增加 token 消耗。", "type": "int", "default": 10, "min": 1, "max": 50}
         }
     },

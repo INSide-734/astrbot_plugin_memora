@@ -36,7 +36,7 @@
 - **RRF слияние** — Reciprocal Rank Fusion, объединяющее BM25 + векторное ранжирование
 - **Графовый поиск** — Поиск по графу знаний через networkx (ключевые слова + векторный двойной путь → слияние)
 - **Двухмаршрутный поиск** — Путь документов + путь графа → DualRouteRetriever, параллельный вызов
-- **Ранжирование** — CrossEncoder / LLM ранжирование для повышения точности результатов
+- **Ранжирование** — ранжирование по сходству Embedding / LLM для повышения точности результатов
 - **Персонализированное ранжирование** — Ранжирование на основе профилей пользователей и истории взаимодействий
 
 ### Графовая память
@@ -131,7 +131,7 @@ User Message → EventHandler → MessageContentExtractor → ConversationManage
                          └─── DualRouteRetriever (Doc+Graph)
                                       │
                                       ▼
-                              Reranker (CrossEncoder/LLM)
+                         Reranker (Embedding similarity/LLM)
                                       │
                                       ▼
                               PersonalizedRanker
