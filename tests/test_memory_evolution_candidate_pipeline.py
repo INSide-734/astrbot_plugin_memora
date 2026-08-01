@@ -136,7 +136,11 @@ async def test_episode_candidate_is_scheduled_and_written_without_llm(pipeline) 
     source = (await store.load_sources((2,)))[0]
 
     decision = await manager.schedule_consider(source)
-    claim = await store.claim_job(NOW, 30, worker_token="inspect")
+    claim = await store.claim_job(
+        datetime.now(UTC) + timedelta(seconds=1),
+        30,
+        worker_token="inspect",
+    )
 
     assert decision.should_enqueue is True
     assert claim is not None
