@@ -175,7 +175,6 @@ async def integration_engine(
             "reconsolidation": {"enabled": False},
             "anomaly_detection": {"enabled": False},
             "weight_learning": {"enabled": False},
-            "trait_evolution": {"enabled": False},
             "export": {"enabled": False},
             "write_reliability": {"repair_enabled": False, "max_retries": 1},
             "search_cache_enabled": False,

@@ -85,7 +85,6 @@ async def test_lifecycle_close_calls_sync_continuity_save() -> None:
     host = SimpleNamespace(
         atom_lifecycle_manager=None,
         continuity_tracker=tracker,
-        trait_tracker=None,
         auto_learning=None,
         anomaly_detector=None,
         _pending_tasks=set(),

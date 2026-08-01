@@ -314,45 +314,6 @@ class TestMemoryEngineInitialize:
         await engine.close()
 
     @pytest.mark.asyncio
-    async def test_initialize_with_trait_evolution(self, tmp_db_path: str) -> None:
-        mock_faiss = MagicMock()
-        engine = MemoryEngine(
-            db_path=tmp_db_path,
-            faiss_db=mock_faiss,
-            config={
-                "graph_memory_enabled": False,
-                "data_dir": tmp_db_path,
-                "recall_engine.stopwords_path": "",
-                "rrf_k": 60,
-                "write_reliability.repair_enabled": False,
-                "user_profile.enabled": False,
-                "auto_learning.enabled": False,
-                "knowledge_base.enabled": False,
-                "notes.enabled": False,
-                "reranker.enabled": False,
-                "export.enabled": False,
-                "trait_evolution.enabled": True,
-            },
-        )
-        engine._schema.create_tables = AsyncMock()
-        mock_trait_instance = MagicMock()
-        mock_trait_instance.load_state = AsyncMock()
-        with patch(
-            "core.managers.trait_evolution.TraitEvolutionTracker",
-            return_value=mock_trait_instance,
-        ) as mock_trait_cls:
-            with patch(
-                "core.managers.memory_engine_lifecycle.BM25Retriever"
-            ) as mock_bm25_cls:
-                mock_bm25_cls.return_value.initialize = AsyncMock()
-                await engine.initialize()
-
-            assert engine.trait_tracker is not None
-            mock_trait_cls.assert_called_once_with(data_dir=tmp_db_path)
-
-        await engine.close()
-
-    @pytest.mark.asyncio
     async def test_initialize_optional_subsystems_disabled(
         self, tmp_db_path: str
     ) -> None:
@@ -376,7 +337,6 @@ class TestMemoryEngineInitialize:
                 "reconsolidation.enabled": False,
                 "anomaly_detection.enabled": False,
                 "weight_learning.enabled": False,
-                "trait_evolution.enabled": False,
             },
         )
         engine._schema.create_tables = AsyncMock()
@@ -393,7 +353,6 @@ class TestMemoryEngineInitialize:
         )
         assert not hasattr(engine, "reconsolidation") or engine.reconsolidation is None
         assert not hasattr(engine, "weight_learner") or engine.weight_learner is None
-        assert engine.trait_tracker is None  # always set in MainEngine.__init__
 
         await engine.close()
 
@@ -427,16 +386,10 @@ class TestMemoryEngineLifecycleClose:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
-        # Add mock components with save_state
-        mock_trait = MagicMock()
-        mock_trait.save_state = AsyncMock()
-        engine.trait_tracker = mock_trait
-
         mock_al = MagicMock()
         mock_al.save_state = AsyncMock()
         engine.auto_learning = mock_al
 
         await engine.close()
 
-        mock_trait.save_state.assert_called_once()
         mock_al.save_state.assert_called_once()

@@ -92,8 +92,6 @@ class MemoryEngine(
         self.note_manager = None
         # 重排序器
         self.reranker = None
-        # 性格演化（可选）
-        self.trait_tracker = None
         # 由 ComponentFactory 在 canonical 组件创建完成后注入；为空时不影响主写链。
         self.memory_evolution_store = None
         self.memory_evolution_manager = None

@@ -126,7 +126,6 @@ class MemoryEngineLifecycleMixin:
         self.knowledge_retriever = None
         self.note_store = None
         self.note_manager = None
-        self.trait_tracker = None
         self.continuity_tracker = None
         self.reconsolidation = None
         self.anomaly_detector = None
@@ -298,14 +297,6 @@ class MemoryEngineLifecycleMixin:
                 max_tags=int(self.config.get("notes.max_tags", 10)),
             )
 
-        # 性格演化追踪器（可选 — 与自主学习联动）
-        if bool(self.config.get("trait_evolution.enabled", False)):
-            from .trait_evolution import TraitEvolutionTracker
-
-            data_dir = str(self.config.get("data_dir", ""))
-            self.trait_tracker = TraitEvolutionTracker(data_dir=data_dir)
-            await self.trait_tracker.load_state()
-
         # v2.5 重排序器初始化（成本控制门）
         from ..base.cost_control import CostControl
 
@@ -446,7 +437,7 @@ class MemoryEngineLifecycleMixin:
         if self.atom_lifecycle_manager is not None:
             await self.atom_lifecycle_manager.stop()
         # 持久化子系统状态
-        for attr_name in ("trait_tracker", "auto_learning"):
+        for attr_name in ("auto_learning",):
             component = getattr(self, attr_name, None)
             if component is not None and hasattr(component, "save_state"):
                 with contextlib.suppress(Exception):
