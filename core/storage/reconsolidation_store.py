@@ -35,6 +35,8 @@ class ReconsolidationStore:
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA busy_timeout = 5000")
+            await db.execute("BEGIN IMMEDIATE")
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS reconsolidation_candidates (
@@ -82,6 +84,45 @@ class ReconsolidationStore:
                 ON reconsolidation_actions(candidate_id, created_at, action_id)
                 """
             )
+            # 旧版本没有唯一约束，先合并历史重复 pending 行，再建立约束。
+            await db.execute(
+                """
+                DELETE FROM reconsolidation_actions
+                WHERE candidate_id IN (
+                    SELECT candidate_id
+                    FROM reconsolidation_candidates
+                    WHERE status='pending'
+                      AND rowid NOT IN (
+                          SELECT MAX(rowid)
+                          FROM reconsolidation_candidates
+                          WHERE status='pending'
+                          GROUP BY memory_id, source_revision, proposed_content
+                      )
+                )
+                """
+            )
+            await db.execute(
+                """
+                DELETE FROM reconsolidation_candidates
+                WHERE status='pending'
+                  AND rowid NOT IN (
+                      SELECT MAX(rowid)
+                      FROM reconsolidation_candidates
+                      WHERE status='pending'
+                      GROUP BY memory_id, source_revision, proposed_content
+                  )
+                """
+            )
+            await db.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                    idx_reconsolidation_candidates_pending_key
+                ON reconsolidation_candidates(
+                    memory_id, source_revision, proposed_content
+                )
+                WHERE status='pending'
+                """
+            )
             await db.commit()
 
     async def stage_candidate(
@@ -101,6 +142,9 @@ class ReconsolidationStore:
         candidate_id = uuid.uuid4().hex
         metadata_text = json.dumps(old_metadata, ensure_ascii=False)
         async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute("PRAGMA busy_timeout = 5000")
+            await db.execute("BEGIN IMMEDIATE")
             cursor = await db.execute(
                 """
                 SELECT * FROM reconsolidation_candidates
@@ -113,7 +157,9 @@ class ReconsolidationStore:
             row = await cursor.fetchone()
             await cursor.close()
             if row is not None:
-                return self._row_to_candidate(row)
+                existing = self._row_to_candidate(row)
+                await db.commit()
+                return existing
             await db.execute(
                 """
                 INSERT INTO reconsolidation_candidates (

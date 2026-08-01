@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -174,8 +175,7 @@ async def test_recall_proposes_candidate_but_never_writes_canonical() -> None:
 
     from core.handlers.recall_handler import RecallHandler
 
-    await RecallHandler._maybe_propose_reconsolidation(
-        handler,
+    normalized = RecallHandler._safe_candidates(
         [
             HybridResult(
                 doc_id=7,
@@ -186,11 +186,64 @@ async def test_recall_proposes_candidate_but_never_writes_canonical() -> None:
                 content="记忆",
                 metadata={},
             )
-        ],
+        ]
+    )
+
+    await RecallHandler._maybe_propose_reconsolidation(
+        handler,
+        normalized,
         "查询文本",
     )
 
     manager.maybe_propose.assert_awaited_once_with(7, context="查询文本")
+
+
+@pytest.mark.asyncio
+async def test_stage_candidate_reuses_existing_pending_row(tmp_path: Path) -> None:
+    """相同来源与提案重复写入时应复用同一条 pending 候选。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    payload = {
+        "memory_id": 7,
+        "source_revision": "r-7",
+        "old_content": "原始记忆正文",
+        "old_metadata": {"access_count": 8},
+        "proposed_content": "修正后的记忆正文内容",
+        "change_summary": "LLM 修订候选",
+        "evidence_type": "llm_revision",
+    }
+
+    first = await store.stage_candidate(**payload)
+    second = await store.stage_candidate(**payload)
+
+    assert second["candidate_id"] == first["candidate_id"]
+    assert len(await store.list_candidates()) == 1
+
+
+@pytest.mark.asyncio
+async def test_stage_candidate_serializes_concurrent_duplicates(tmp_path: Path) -> None:
+    """并发重复提案只能保留一条 pending 候选。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    payload = {
+        "memory_id": 7,
+        "source_revision": "r-7",
+        "old_content": "原始记忆正文",
+        "old_metadata": {"access_count": 8},
+        "proposed_content": "修正后的记忆正文内容",
+        "change_summary": "LLM 修订候选",
+        "evidence_type": "llm_revision",
+    }
+
+    results = await asyncio.gather(
+        *(store.stage_candidate(**payload) for _ in range(8)),
+        return_exceptions=True,
+    )
+
+    assert not [result for result in results if isinstance(result, Exception)]
+    assert len(await store.list_candidates()) == 1
 
 
 @pytest.mark.asyncio

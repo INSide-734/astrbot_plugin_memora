@@ -1284,12 +1284,20 @@ class RecallHandler:
         memories: list[Any],
         query: str,
     ) -> None:
-        """召回后为最高分记忆生成再巩固候选；永不直接写 canonical。"""
+        """召回后为最高分记忆生成再巩固候选；永不直接写 canonical。
+
+        ``_safe_candidates()`` 已将检索结果规范化为字典，因此这里优先读取
+        ``id``；保留对象属性回退只为兼容少量内部测试替身和旧调用者。
+        """
 
         manager = getattr(self._memory_engine, "reconsolidation", None)
         if manager is None or not memories:
             return
-        memory_id = getattr(memories[0], "doc_id", None)
+        candidate = memories[0]
+        if isinstance(candidate, dict):
+            memory_id = candidate.get("id")
+        else:
+            memory_id = getattr(candidate, "doc_id", None)
         if not memory_id:
             return
         try:
