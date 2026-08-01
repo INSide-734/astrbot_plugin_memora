@@ -11,12 +11,16 @@ pageClass: config-reference-page
 
 ## 数据库迁移
 
-配置域：`"migration_settings"`。控制插件启动时的数据库版本升级行为
+配置域：`"migration_settings"`。控制插件启动时的数据库版本升级行为。新数据库直接创建当前 Schema，不生成迁移备份；旧数据库先生成稳定迁移计划，再按以下开关决定是否执行。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"migration_settings.auto_migrate"` | `"bool"` | `true` | - | 自动迁移<br><small>插件启动时自动检测并升级旧版本数据库。建议保持开启。</small> |
-| `"migration_settings.create_backup"` | `"bool"` | `true` | - | 迁移前自动备份<br><small>执行数据库迁移前自动创建备份文件，防止迁移失败导致数据丢失。建议保持开启。</small> |
+| `"migration_settings.auto_migrate"` | `"bool"` | `true` | - | 自动迁移<br><small>开启时按迁移计划升级旧 Schema；关闭后检测到旧 Schema 会以 `schema_migration_required` 停止 MemoryEngine 启动，不执行 ALTER、UPDATE 或隐式升级。</small> |
+| `"migration_settings.create_backup"` | `"bool"` | `true` | - | 迁移前自动备份<br><small>仅旧 Schema 迁移时创建 `pre_migration` 校验后快照，且快照完成早于第一条变更 SQL。备份失败会以 `pre_migration_backup_failed` 停止启动。</small> |
+
+迁移在显式事务内逐步执行并验证目标版本与 canonical 数量。中途失败时，启用备份的流程会关闭启动连接并从迁移前快照原子恢复；恢复成功返回 `schema_migration_rolled_back`，恢复失败持久化为 `blocked` 并在后续启动返回 `schema_migration_blocked`。管理员应先从有效备份修复数据库、核对 canonical 数量和版本，再删除插件数据目录中的 `.schema_migration_state.json` 以显式解除阻断并重新启动；不要在未修复数据库时反复删除状态文件或重启。
+
+迁移观测只包含 migration ID、from/to version、阶段、reason code、canonical 数量和变更计数，不记录数据库路径、记忆正文、canonical ID 列表或原始异常堆栈。`pre_migration` 备份与定时备份、恢复前备份一样服从 `backup_settings.keep_days`；手动备份和版本变更备份仍需显式删除。
 
 ## 索引重建
 

@@ -246,6 +246,16 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
         "cost_control.llm_reranker_prompt_chars",
         3000,
     ),
+    _field(
+        "migration_settings.auto_migrate",
+        "migration_settings.auto_migrate",
+        True,
+    ),
+    _field(
+        "migration_settings.create_backup",
+        "migration_settings.create_backup",
+        True,
+    ),
     _field("user_profile.enabled", "user_profile.enabled", True),
     _field("user_profile.boost_strength", "user_profile.boost_strength", 0.15),
     _field("user_profile.tag_decay_rate", "user_profile.tag_decay_rate", 0.98),

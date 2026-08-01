@@ -132,6 +132,22 @@ def test_factory_projects_lifecycle_feature_sections() -> None:
     assert config["export.enabled"] is False
 
 
+def test_factory_projects_migration_settings() -> None:
+    """迁移开关必须从公开配置到达 MemoryEngine 运行时快照。"""
+
+    config = _build_engine_config(
+        {
+            "migration_settings": {
+                "auto_migrate": False,
+                "create_backup": False,
+            }
+        }
+    )
+
+    assert config["migration_settings.auto_migrate"] is False
+    assert config["migration_settings.create_backup"] is False
+
+
 def test_factory_projects_security_strict_mode_for_provider_prefilter() -> None:
     """安全严格模式必须进入引擎快照并控制 Provider 前预过滤降级。"""
 

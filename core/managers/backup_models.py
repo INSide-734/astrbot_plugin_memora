@@ -13,6 +13,7 @@ class BackupType(StrEnum):
     MANUAL = "manual"
     SCHEDULED = "scheduled"
     VERSION_CHANGE = "version_change"
+    PRE_MIGRATION = "pre_migration"
     PRE_RESTORE = "pre_restore"
 
 

@@ -415,7 +415,7 @@ class BackupManager:
     def prune_backups(
         self, keep_days: int, now: float | None = None
     ) -> dict[str, object]:
-        """清理到期 scheduled/pre_restore 备份，跳过活动事务引用。"""
+        """清理到期自动备份，跳过活动恢复事务引用。"""
         days = max(1, int(keep_days))
         cutoff = (time.time() if now is None else float(now)) - days * 86400
         referenced = self._referenced_backup_names()
@@ -426,6 +426,7 @@ class BackupManager:
             name = str(item.get("name", ""))
             if name in referenced or item.get("backup_type") not in {
                 BackupType.SCHEDULED.value,
+                BackupType.PRE_MIGRATION.value,
                 BackupType.PRE_RESTORE.value,
             }:
                 continue

@@ -114,7 +114,7 @@ class ComponentFactory:
 
         shared_embedding_provider = InFlightEmbeddingProviderProxy(embedding_provider)
 
-        # 并行初始化主 DB 和图 DB（两者完全独立，不同的文件）
+        # 只构造适配器；持久连接必须等待 canonical Schema 迁移完成。
         db = faiss_vec_db_cls(
             str(db_path),
             str(index_path),
@@ -128,12 +128,8 @@ class ComponentFactory:
                 str(graph_index_path),
                 shared_embedding_provider,
             )
-            await asyncio.gather(db.initialize(), graph_db.initialize())
-        else:
-            await db.initialize()
 
         memory_evolution_store = MemoryEvolutionStore(str(db_path))
-        await memory_evolution_store.initialize()
         derived_expander = None
         projection_reader = None
         if bool(evolution_config.get("enabled", False)) and str(
@@ -158,8 +154,6 @@ class ComponentFactory:
                 ),
             )
 
-        logger.info(f"数据库已初始化。数据目录: {self.data_dir}")
-
         backup_manager = BackupManager(self.data_dir)
 
         stopwords_dir = data_dir_path / "stopwords"
@@ -170,6 +164,7 @@ class ComponentFactory:
         engine_config["cost_control_runtime"] = cost_control
         engine_config["derived_expander"] = derived_expander
         engine_config["projection_reader"] = projection_reader
+        engine_config["backup_manager"] = backup_manager
         memory_engine = MemoryEngine(
             db_path=str(db_path),
             faiss_db=db,
@@ -177,7 +172,26 @@ class ComponentFactory:
             llm_provider=llm_provider,
             config=engine_config,
         )
-        await memory_engine.initialize()
+        try:
+            # canonical Schema 迁移必须早于任何其他 memora.db 持久连接。
+            await memory_engine.initialize()
+            if graph_memory_enabled:
+                await asyncio.gather(db.initialize(), graph_db.initialize())
+            else:
+                await db.initialize()
+            await memory_evolution_store.initialize()
+        except BaseException:
+            await self._rollback_build_components(
+                None,
+                None,
+                memory_engine,
+                graph_db,
+                db,
+                None,
+                memory_evolution_store,
+            )
+            raise
+        logger.info("数据库与索引组件已初始化")
         logger.info("MemoryEngine 已初始化")
 
         conversation_db_path = data_dir_path / "conversations.db"

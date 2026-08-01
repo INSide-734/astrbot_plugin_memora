@@ -102,6 +102,21 @@ Configuration writes use revision-protected compare-and-apply semantics. The Das
 only changed leaves with `base_revision`; conflicts preserve the local draft until the
 administrator explicitly accepts or rebases the remote state.
 
+## Schema migration contract
+
+Canonical SQLite startup separates fresh-schema creation from existing-schema migration.
+Existing databases are inspected into a stable migration plan before any mutation. When
+`migration_settings.auto_migrate` is false, a required migration blocks `MemoryEngine`
+startup with a stable reason code. When migration backup is enabled, a verified
+`pre_migration` snapshot must complete before the first transaction or mutation statement.
+
+Migration steps are idempotent and run in an explicit transaction. Completion requires both
+the target schema version and the original canonical row count to validate. A failed
+migration restores the verified pre-migration snapshot before startup can retry; a failed
+restore persists an explicit blocked state. Migration records expose only the migration ID,
+from/to versions, stage, reason code, canonical count, and bounded change counts. Database
+paths, memory bodies, canonical ID lists, and raw exception details are not observable fields.
+
 `recall_engine.injection_method` is a deliberate breaking removal. There is no compatibility
 migration or dual strategy system; rollback uses the supported Manual + Balanced settings or
 a version rollback.

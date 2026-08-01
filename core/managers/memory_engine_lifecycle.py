@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from pathlib import Path
 
 import aiosqlite
 from astrbot.api import logger
@@ -26,6 +27,7 @@ from ..retrieval.rrf_fusion import RRFFusion
 from ..retrieval.vector_retriever import VectorRetriever
 from ..storage.atom_store import AtomStore
 from ..storage.graph_store import GraphStore
+from .schema_migration import SchemaMigrationCoordinator
 from .write_coordinator import ConnectionRegistry
 
 
@@ -92,13 +94,30 @@ class MemoryEngineLifecycleMixin:
             self._schema,
         ):
             mod._db = self.db_connection
-        # 注册连接以便自动重连（L5 防御层）
+        configured_data_dir = Path(
+            self.config.get("data_dir") or Path(self.db_path).parent
+        )
+        if configured_data_dir == Path(self.db_path):
+            configured_data_dir = Path(self.db_path).parent
+        migration_coordinator = SchemaMigrationCoordinator(
+            self._schema,
+            db_path=self.db_path,
+            data_dir=configured_data_dir,
+            auto_migrate=bool(self.config.get("migration_settings.auto_migrate", True)),
+            create_backup=bool(
+                self.config.get("migration_settings.create_backup", True)
+            ),
+            backup_manager=self.config.get("backup_manager"),
+        )
+        self.schema_migration_status = await migration_coordinator.run(
+            self._write_journal.create_table
+        )
+        # Schema 完成后再注册连接，避免恢复流程留下已关闭连接。
         ConnectionRegistry.register(
             self.db_path,
             self.db_connection,
             [self._write_journal, self._retrieval, self._maintenance, self._schema],
         )
-        await self._schema.create_tables(self._write_journal.create_table)
         stopwords_path = self.config.get("recall_engine.stopwords_path")
         self.text_processor = TextProcessor(stopwords_path)
         rrf_k = self.config.get("rrf_k", 60)
