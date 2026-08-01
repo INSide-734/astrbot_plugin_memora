@@ -12,6 +12,7 @@ build/
 htmlcov/
 .pytest_cache/
 .pytest_memora_data/
+.pytest-*/
 .hypothesis/
 .mypy_cache/
 .ruff_cache/
