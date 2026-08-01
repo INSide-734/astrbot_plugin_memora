@@ -21,10 +21,15 @@ from ..adapter_capabilities import (
 from ..models.memory_evolution import ExpansionBudget, ScopeContext
 from ..models.recall_strategy import RecallStrategy
 from ..models.temporal import normalize_datetime
+from .dual_route_fusion import (
+    build_score_breakdown,
+    compute_strategy_weights,
+    merge_dual_results,
+    route_weights_for_query,
+)
 from .evidence_scorer import RetrievalEvidenceScorer
 from .graph_retriever import GraphRetriever
 from .hybrid_retriever import HybridRetriever
-from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
 from .multi_query_fusion import fuse_query_results, split_candidate_budget
 from .projection_reader import ProjectionBudget, ProjectionScope
 from .provider_privacy_prefilter import (
@@ -744,189 +749,22 @@ class DualRouteRetriever:
         atom_scores: dict[int, float] | None = None,
     ) -> list[HybridResult]:
         """把文档、图与 Atom 父级证据统一融合为 canonical 结果。"""
-
-        atom_scores = atom_scores or {}
-        if strategy is not None:
-            document_weight, graph_weight = self._compute_strategy_weights(strategy)
-            intent = "strategy"
-        elif query_intent is not None:
-            document_weight, graph_weight, intent = self._route_weights_for_query(
-                query,
-                query_intent=query_intent,
-            )
-        else:
-            document_weight, graph_weight, intent = self._route_weights_for_query(query)
-
-        document_max = (
-            max((item.final_score for item in doc_results), default=1.0) or 1.0
+        return await merge_dual_results(
+            doc_results,
+            graph_results,
+            query,
+            memory_loader=self.memory_loader,
+            document_route_weight=self.document_route_weight,
+            graph_route_weight=self.graph_route_weight,
+            cross_route_bonus=self.cross_route_bonus,
+            dynamic_route_weighting=self.dynamic_route_weighting,
+            atom_route_weight=float(self.config.get("atom_route_weight", 0.25)),
+            strategy=strategy,
+            query_intent=query_intent,
+            atom_scores=atom_scores,
         )
-        graph_max = (
-            max((item.final_score for item in graph_results), default=1.0) or 1.0
-        )
-        atom_max = max(atom_scores.values(), default=1.0) or 1.0
-        atom_weight = (
-            max(0.0, min(0.5, float(self.config.get("atom_route_weight", 0.25))))
-            if atom_scores
-            else 0.0
-        )
-        base_route_scale = 1.0 - atom_weight
-        document_weight *= base_route_scale
-        graph_weight *= base_route_scale
 
-        doc_map = {item.doc_id: item for item in doc_results}
-        graph_map = {item.doc_id: item for item in graph_results}
-        all_doc_ids = set(doc_map) | set(graph_map) | set(atom_scores)
-
-        # 阶段 1：找出需要通过 memory_loader 回填的 doc_id
-        need_load_ids: list[int] = []
-        for doc_id in all_doc_ids:
-            doc_result = doc_map.get(doc_id)
-            mem_content = doc_result.content if doc_result is not None else ""
-            mem_meta = (
-                dict(doc_result.metadata)
-                if doc_result is not None and isinstance(doc_result.metadata, dict)
-                else {}
-            )
-            if not mem_content or not mem_meta:
-                need_load_ids.append(doc_id)
-
-        # 阶段 2：并行批量加载缺失记忆（N+1 -> 1）
-        loaded: dict[int, dict[str, Any] | None] = {}
-        if need_load_ids:
-            loaded_list = await asyncio.gather(
-                *(self.memory_loader(doc_id) for doc_id in need_load_ids),
-                return_exceptions=True,
-            )
-            for doc_id, mem in zip(need_load_ids, loaded_list, strict=False):
-                if isinstance(mem, BaseException) or mem is None:
-                    loaded[doc_id] = None
-                else:
-                    loaded[doc_id] = mem
-
-        # 阶段 3：构建合并结果
-        merged_results: list[HybridResult] = []
-        for doc_id in all_doc_ids:
-            doc_result = doc_map.get(doc_id)
-            graph_result = graph_map.get(doc_id)
-
-            doc_signal = (
-                doc_result.final_score / document_max if doc_result is not None else 0.0
-            )
-            graph_signal = (
-                graph_result.final_score / graph_max
-                if graph_result is not None
-                else 0.0
-            )
-            atom_signal = atom_scores.get(doc_id, 0.0) / atom_max
-            route_bonus = (
-                self.cross_route_bonus
-                if doc_result is not None and graph_result is not None
-                else 0.0
-            )
-
-            memory_content = doc_result.content if doc_result is not None else ""
-            memory_metadata = (
-                dict(doc_result.metadata)
-                if doc_result is not None and isinstance(doc_result.metadata, dict)
-                else {}
-            )
-
-            if not memory_content or not memory_metadata:
-                memory = loaded.get(doc_id)
-                if not memory:
-                    continue
-                memory_content = str(memory.get("text") or memory_content)
-                raw_metadata = memory.get("metadata") or memory_metadata
-                memory_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
-
-            final_score = min(
-                1.0,
-                document_weight * doc_signal
-                + graph_weight * graph_signal
-                + atom_weight * atom_signal
-                + route_bonus,
-            )
-
-            score_breakdown = self._build_score_breakdown(
-                doc_result=doc_result,
-                graph_result=graph_result,
-                doc_signal=doc_signal,
-                graph_signal=graph_signal,
-                document_weight=document_weight,
-                graph_weight=graph_weight,
-                route_bonus=route_bonus,
-                final_score=final_score,
-                intent=intent,
-            )
-
-            merged_results.append(
-                HybridResult(
-                    doc_id=doc_id,
-                    final_score=final_score,
-                    rrf_score=max(
-                        doc_result.rrf_score if doc_result is not None else 0.0,
-                        graph_result.rrf_score if graph_result is not None else 0.0,
-                    ),
-                    bm25_score=doc_result.bm25_score
-                    if doc_result is not None
-                    else None,
-                    vector_score=(
-                        doc_result.vector_score if doc_result is not None else None
-                    ),
-                    content=memory_content,
-                    metadata=memory_metadata,
-                    score_breakdown=score_breakdown,
-                )
-            )
-
-        merged_results.sort(key=lambda item: (-item.final_score, item.doc_id))
-        return merged_results
-
-    @staticmethod
-    def _build_score_breakdown(
-        *,
-        doc_result: HybridResult | None,
-        graph_result: Any | None,
-        doc_signal: float,
-        graph_signal: float,
-        document_weight: float,
-        graph_weight: float,
-        route_bonus: float,
-        final_score: float,
-        intent: str,
-    ) -> dict[str, float]:
-        score_breakdown: dict[str, float] = {}
-        if doc_result and doc_result.score_breakdown:
-            score_breakdown.update(doc_result.score_breakdown)
-        if graph_result and graph_result.score_breakdown:
-            score_breakdown.update(graph_result.score_breakdown)
-        score_breakdown.update(
-            {
-                "document_route_score": round(doc_signal, 4),
-                "graph_route_score": round(graph_signal, 4),
-                "document_route_weight": round(document_weight, 4),
-                "graph_route_weight": round(graph_weight, 4),
-                "cross_route_bonus": round(route_bonus, 4),
-                "dual_route_final_score": round(final_score, 4),
-            }
-        )
-        if intent:
-            score_breakdown["query_intent"] = intent
-        if doc_result is not None:
-            score_breakdown["document_keyword_score"] = round(
-                float(doc_result.bm25_score or 0.0), 4
-            )
-            score_breakdown["document_vector_score"] = round(
-                float(doc_result.vector_score or 0.0), 4
-            )
-        if graph_result is not None:
-            score_breakdown["graph_keyword_score"] = round(
-                float(graph_result.keyword_score or 0.0), 4
-            )
-            score_breakdown["graph_vector_score"] = round(
-                float(graph_result.vector_score or 0.0), 4
-            )
-        return score_breakdown
+    _build_score_breakdown = staticmethod(build_score_breakdown)
 
     def _route_weights_for_query(
         self,
@@ -934,82 +772,15 @@ class DualRouteRetriever:
         query_intent: QueryIntent | None = None,
     ) -> tuple[float, float, str]:
         """根据 LLM 意图（R1）或关键词降级结果调整文档/图路权重。"""
-        base_document = self.document_route_weight
-        base_graph = self.graph_route_weight
-        if not self.dynamic_route_weighting:
-            return base_document, base_graph, "fixed"
+        return route_weights_for_query(
+            query,
+            document_route_weight=self.document_route_weight,
+            graph_route_weight=self.graph_route_weight,
+            dynamic_route_weighting=self.dynamic_route_weighting,
+            query_intent=query_intent,
+        )
 
-        # R1: 优先使用 LLM 意图
-        intent = "default"
-        if query_intent is not None and query_intent.intent != "default":
-            intent = query_intent.intent
-            if intent == "relationship":
-                return (
-                    max(0.15, base_document - 0.25),
-                    min(0.85, base_graph + 0.25),
-                    "llm:relationship",
-                )
-            if intent == "temporal":
-                return (
-                    max(0.15, base_document - 0.15),
-                    min(0.85, base_graph + 0.15),
-                    "llm:temporal",
-                )
-            if intent == "factual":
-                return (
-                    min(0.9, base_document + 0.2),
-                    max(0.1, base_graph - 0.2),
-                    "llm:factual",
-                )
-            if intent == "preference":
-                return (
-                    min(0.9, base_document + 0.1),
-                    max(0.1, base_graph - 0.1),
-                    "llm:preference",
-                )
-
-        # 回退：硬编码关键词匹配
-        normalized = query.casefold()
-        relation_terms = RELATION_TERMS
-        temporal_terms = TEMPORAL_TERMS
-        factual_terms = FACTUAL_TERMS
-
-        relation_hit = any(term in normalized for term in relation_terms)
-        temporal_hit = any(term in normalized for term in temporal_terms)
-        factual_hit = any(term in normalized for term in factual_terms)
-
-        document_weight = base_document
-        graph_weight = base_graph
-
-        if relation_hit:
-            graph_weight += 0.2
-            document_weight -= 0.2
-            intent = "relationship"
-        if temporal_hit:
-            graph_weight += 0.1
-            document_weight -= 0.1
-            intent = "temporal" if intent == "default" else f"{intent}+temporal"
-        if factual_hit and not relation_hit:
-            document_weight += 0.15
-            graph_weight -= 0.15
-            intent = "factual" if intent == "default" else f"{intent}+factual"
-
-        document_weight = max(0.15, min(0.9, document_weight))
-        graph_weight = max(0.1, min(0.85, graph_weight))
-        total = document_weight + graph_weight
-        if total <= 0:
-            return base_document, base_graph, "fixed"
-        return document_weight / total, graph_weight / total, intent
-
-    @staticmethod
-    def _compute_strategy_weights(strategy: RecallStrategy) -> tuple[float, float]:
-        weights = {
-            RecallStrategy.CONTEXTUAL_SIMILARITY: (0.70, 0.30),
-            RecallStrategy.TOPIC_ASSOCIATION: (0.65, 0.35),
-            RecallStrategy.PREFERENCE_QUERY: (0.80, 0.20),
-            RecallStrategy.RELATIONSHIP_REVIEW: (0.30, 0.70),
-        }
-        return weights.get(strategy, (0.50, 0.50))
+    _compute_strategy_weights = staticmethod(compute_strategy_weights)
 
 
 __all__ = ["DualRouteRetriever"]

@@ -93,7 +93,8 @@ sequenceDiagram
 - `GraphKeywordRetriever` 组合图 entry FTS、节点 token、0..2 hop 邻居扩展和可选 `EntityHierarchyStore` 层级展开，最终聚合到 `source_memory_id`。direct/matched-node 的内部距离为 0，一跳为 1，二跳为 2，层级路径为未知；多路径命中保留最小已知距离。
 - `GraphVectorRetriever` 查询独立图 FAISS；结果 metadata 必须映射回源记忆 ID。
 - `GraphRetriever` 并行两条图路并 RRF 融合，再组合 RRF、importance、recency 与 `compute_decay_score(atom)`；关键词路最小距离只进入内部 `score_breakdown.graph_min_distance`，不进入 metadata，也暂不改变默认评分。
-- `DualRouteRetriever` 默认文档/图权重为 `0.65/0.35`，双路同 ID 额外 `cross_route_bonus=0.08`；显式 `RecallStrategy` 优先，其次 `QueryIntent`，最后关键词规则。
+- `DualRouteRetriever` 只编排路由执行、派生扩展、重排、隐私过滤和反馈；`dual_route_fusion.py` 负责缺失 canonical 回填、文档/图/Atom 分数融合、解释字段与权重选择，依赖方向保持为 Retriever → Fusion。
+- 双路默认文档/图权重为 `0.65/0.35`，双路同 ID 额外 `cross_route_bonus=0.08`；显式 `RecallStrategy` 优先，其次 `QueryIntent`，最后关键词规则。
 - 缺正文或 metadata 的候选通过 `memory_loader` 并发回填；加载异常或 `None` 的候选被跳过。
 - 图路为空时直接使用文档路；当前实现先 await 文档任务再 await 图任务，协程对象已创建但不是 `create_task()`，修改计时/并发语义时须以测试为准。
 
