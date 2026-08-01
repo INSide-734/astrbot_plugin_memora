@@ -62,7 +62,13 @@ async def test_report_store_saves_and_loads_report(tmp_path):
         {
             "created_at": 1783150200.0,
             "baseline": "baseline",
-            "summary": {"total_cases": 2, "k": 5, "recall_at_k": 0.5},
+            "summary": {
+                "total_cases": 2,
+                "k": 5,
+                "recall_at_k": 0.5,
+                "p95_latency_ms": 18.0,
+                "provider_calls": 2,
+            },
             "datasets": ["private_basic"],
             "variants": [],
             "cases": [
@@ -74,6 +80,11 @@ async def test_report_store_saves_and_loads_report(tmp_path):
                     "reciprocal_rank": 1.0,
                     "ndcg_at_k": 1.0,
                     "latency_ms": 12.5,
+                    "advanced_metrics": {
+                        "answer_faithfulness": 0.75,
+                        "provider_calls": 2,
+                        "reported_provider_calls": 1,
+                    },
                 }
             ],
         }
@@ -83,11 +94,20 @@ async def test_report_store_saves_and_loads_report(tmp_path):
     assert loaded is not None
     assert loaded["report_id"] == report_id
     assert loaded["summary"]["total_cases"] == 2
+    assert loaded["summary"]["reported_p95_latency_ms"] == 18.0
+    assert loaded["summary"]["reported_provider_calls"] == 2
+    assert "p95_latency_ms" not in loaded["summary"]
     assert "query" not in loaded["cases"][0]
     assert "ranked_doc_ids" not in loaded["cases"][0]
+    assert loaded["cases"][0]["reported_latency_ms"] == 12.5
+    assert loaded["cases"][0]["advanced_metrics"] == {
+        "reported_answer_faithfulness": 0.75,
+        "reported_provider_calls": 1,
+    }
 
     reports = await store.list_reports(limit=10)
     assert reports[0]["report_id"] == report_id
+    assert reports[0]["summary"]["reported_p95_latency_ms"] == 18.0
 
 
 @pytest.mark.asyncio
@@ -101,7 +121,7 @@ async def test_report_store_saves_native_evaluation_report_with_relevant_sets(tm
         recall_at_k=1.0,
         mrr=1.0,
         ndcg_at_k=1.0,
-        p95_latency_ms=8.5,
+        observed_p95_latency_ms=8.5,
         cases=[
             EvaluationResult(
                 case_id="coffee",
@@ -111,7 +131,7 @@ async def test_report_store_saves_native_evaluation_report_with_relevant_sets(tm
                 recall_at_k=1.0,
                 reciprocal_rank=1.0,
                 ndcg_at_k=1.0,
-                latency_ms=8.5,
+                observed_latency_ms=8.5,
                 metadata={
                     "dataset": "private_basic",
                     "session_id": "session-secret-canary",
@@ -125,7 +145,7 @@ async def test_report_store_saves_native_evaluation_report_with_relevant_sets(tm
                 "recall_at_k": 1.0,
                 "mrr": 1.0,
                 "ndcg_at_k": 1.0,
-                "p95_latency_ms": 8.5,
+                "observed_p95_latency_ms": 8.5,
             }
         },
     )
@@ -672,5 +692,5 @@ async def test_evaluation_service_lists_gets_and_compares_saved_reports(tmp_path
         "recall_at_k",
         "mrr",
         "ndcg_at_k",
-        "p95_latency_ms",
+        "observed_p95_latency_ms",
     }

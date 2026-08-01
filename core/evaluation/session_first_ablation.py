@@ -79,10 +79,12 @@ class SessionFirstBranchMetrics:
     recall_at_k: float
     mrr: float
     ndcg_at_k: float
-    p50_latency_ms: float | None
-    p95_latency_ms: float | None
-    provider_calls: float
-    token_cost: float
+    observed_p50_latency_ms: float | None
+    observed_p95_latency_ms: float | None
+    annotated_p50_latency_ms: float | None
+    annotated_p95_latency_ms: float | None
+    annotated_provider_calls: float | None
+    annotated_token_cost: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,8 +103,8 @@ class SessionFirstReport:
     would_short_circuit: int = 0
     wrong_short_circuit: int = 0
     estimated_full_recall_savings: float = 0.0
-    provider_calls: float = 0.0
-    token_cost: float = 0.0
+    annotated_provider_calls: float | None = None
+    annotated_token_cost: float | None = None
     effective_settings: dict[str, float | int] = field(default_factory=dict)
 
 
@@ -180,19 +182,19 @@ async def run_session_first(
         except Exception:
             session_raw = []
             session_error = True
-        session_latency = _latency(case, session_started, branch="session")
+        session_latencies = _latencies(case, session_started, branch="session")
 
         baseline_started = time.perf_counter()
         baseline_raw = await _resolve(baseline_retriever(case, safe_k))
-        baseline_latency = _latency(case, baseline_started, branch="baseline")
+        baseline_latencies = _latencies(case, baseline_started, branch="baseline")
 
         session_candidates = _normalize_candidates(session_raw)
         baseline_candidates = _normalize_candidates(baseline_raw)
         session_rows.append(
-            _branch_row(case, session_candidates, session_latency, "session")
+            _branch_row(case, session_candidates, session_latencies, "session")
         )
         baseline_rows.append(
-            _branch_row(case, baseline_candidates, baseline_latency, "baseline")
+            _branch_row(case, baseline_candidates, baseline_latencies, "baseline")
         )
 
         if session_error:
@@ -245,8 +247,8 @@ async def run_session_first(
         would_short_circuit=short_circuits,
         wrong_short_circuit=wrong_short_circuits,
         estimated_full_recall_savings=(short_circuits / len(cases)) if cases else 0.0,
-        provider_calls=effective_metrics.provider_calls,
-        token_cost=effective_metrics.token_cost,
+        annotated_provider_calls=effective_metrics.annotated_provider_calls,
+        annotated_token_cost=effective_metrics.annotated_token_cost,
         effective_settings=_settings(active_preset, safe_k),
     )
 
@@ -313,9 +315,10 @@ class _BranchRow:
 
     case: EvaluationCase
     candidates: list[_Candidate]
-    latency_ms: float
-    provider_calls: float
-    token_cost: float
+    observed_latency_ms: float
+    annotated_latency_ms: float | None
+    annotated_provider_calls: float | None
+    annotated_token_cost: float | None
 
 
 async def _resolve(value: Sequence[Any] | Awaitable[Sequence[Any]]) -> Sequence[Any]:
@@ -491,7 +494,8 @@ def _branch_metrics(rows: Sequence[_BranchRow], k: int) -> SessionFirstBranchMet
     recalls: list[float] = []
     mrrs: list[float] = []
     ndcgs: list[float] = []
-    latencies: list[float] = []
+    observed_latencies: list[float] = []
+    annotated_latencies: list[float] = []
     for row in rows:
         case = row.case
         ranked = [
@@ -511,58 +515,82 @@ def _branch_metrics(rows: Sequence[_BranchRow], k: int) -> SessionFirstBranchMet
             recalls.append(recall_at_k(ranked, case.relevant_doc_ids, k=k))
             mrrs.append(reciprocal_rank(ranked, case.relevant_doc_ids))
             ndcgs.append(ndcg_at_k(ranked, case.relevant_doc_ids, k=k))
-        latencies.append(row.latency_ms)
+        observed_latencies.append(row.observed_latency_ms)
+        if row.annotated_latency_ms is not None:
+            annotated_latencies.append(row.annotated_latency_ms)
+    annotated_provider_calls = [
+        item.annotated_provider_calls
+        for item in rows
+        if item.annotated_provider_calls is not None
+    ]
+    annotated_token_cost = [
+        item.annotated_token_cost
+        for item in rows
+        if item.annotated_token_cost is not None
+    ]
     return SessionFirstBranchMetrics(
         recall_at_k=_mean(recalls),
         mrr=_mean(mrrs),
         ndcg_at_k=_mean(ndcgs),
-        p50_latency_ms=_percentile(latencies, 50),
-        p95_latency_ms=_percentile(latencies, 95),
-        provider_calls=round(sum(item.provider_calls for item in rows), 4),
-        token_cost=round(sum(item.token_cost for item in rows), 4),
+        observed_p50_latency_ms=_percentile(observed_latencies, 50),
+        observed_p95_latency_ms=_percentile(observed_latencies, 95),
+        annotated_p50_latency_ms=_percentile(annotated_latencies, 50),
+        annotated_p95_latency_ms=_percentile(annotated_latencies, 95),
+        annotated_provider_calls=(
+            round(sum(annotated_provider_calls), 4)
+            if annotated_provider_calls
+            else None
+        ),
+        annotated_token_cost=(
+            round(sum(annotated_token_cost), 4) if annotated_token_cost else None
+        ),
     )
 
 
 def _branch_row(
     case: EvaluationCase,
     candidates: list[_Candidate],
-    latency_ms: float,
+    latencies: tuple[float, float | None],
     branch: str,
 ) -> _BranchRow:
-    """从匿名 fixture 读取分支成本并构造进程内评测行。"""
+    """把实测延迟与匿名 fixture 标注成本分列到内部评测行。"""
 
     return _BranchRow(
         case=case,
         candidates=candidates,
-        latency_ms=latency_ms,
-        provider_calls=_non_negative_number(
-            case.metadata.get(f"{branch}_provider_calls", 0.0)
+        observed_latency_ms=latencies[0],
+        annotated_latency_ms=latencies[1],
+        annotated_provider_calls=_optional_non_negative_number(
+            case.metadata.get(f"annotated_{branch}_provider_calls")
         ),
-        token_cost=_non_negative_number(case.metadata.get(f"{branch}_token_cost", 0.0)),
+        annotated_token_cost=_optional_non_negative_number(
+            case.metadata.get(f"annotated_{branch}_token_cost")
+        ),
     )
 
 
-def _latency(case: EvaluationCase, started: float, *, branch: str) -> float:
-    """优先使用分支专用匿名延迟，否则测量本地调用耗时。"""
+def _latencies(
+    case: EvaluationCase, started: float, *, branch: str
+) -> tuple[float, float | None]:
+    """返回墙钟实测延迟和可选的分支人工标注延迟。"""
 
-    try:
-        fallback = case.metadata.get(
-            "latency_ms",
-            (time.perf_counter() - started) * 1000,
-        )
-        return max(0.0, float(case.metadata.get(f"{branch}_latency_ms", fallback)))
-    except (TypeError, ValueError):
-        return max(0.0, (time.perf_counter() - started) * 1000)
+    observed = max(0.0, (time.perf_counter() - started) * 1000)
+    annotated = _optional_non_negative_number(
+        case.metadata.get(f"annotated_{branch}_latency_ms")
+    )
+    return observed, annotated
 
 
-def _non_negative_number(value: Any) -> float:
-    """把 fixture 成本规范化为非负有限数值。"""
+def _optional_non_negative_number(value: Any) -> float | None:
+    """把可选 fixture 标注规范化为非负有限数值。"""
 
+    if value is None or isinstance(value, bool):
+        return None
     try:
         number = float(value)
     except (TypeError, ValueError):
-        return 0.0
-    return number if math.isfinite(number) and number >= 0.0 else 0.0
+        return None
+    return number if math.isfinite(number) and number >= 0.0 else None
 
 
 def _mean(values: Sequence[float]) -> float:

@@ -10,8 +10,9 @@ function formatPercent(value: number, locale: string): string {
   return formatDashboardPercent(value, locale, { maximumFractionDigits: 0 });
 }
 
-function formatMs(value: number, locale: string): string {
-  return `${formatDashboardNumber(value, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}ms`;
+function formatMs(value: number | null | undefined, locale: string): string {
+  const formatted = formatDashboardNumber(value, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return formatted === "--" ? formatted : `${formatted}ms`;
 }
 
 export function EvaluationCaseTable({ cases }: EvaluationCaseTableProps) {
@@ -35,14 +36,16 @@ export function EvaluationCaseTable({ cases }: EvaluationCaseTableProps) {
         </span>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-[520px] w-full text-left text-xs">
+        <table className="min-w-[760px] w-full text-left text-xs">
           <thead className="text-[var(--text-tertiary)]">
             <tr>
               <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.table.case")}</th>
               <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.table.recall")}</th>
               <th className="px-4 py-2 font-medium">RR</th>
               <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.table.gain")}</th>
-              <th className="px-4 py-2 text-right font-medium">{t("intelligence.evaluation.table.latency")}</th>
+              <th className="px-4 py-2 text-right font-medium">{t("intelligence.evaluation.table.observedLatency")}</th>
+              <th className="px-4 py-2 text-right font-medium">{t("intelligence.evaluation.table.annotatedLatency")}</th>
+              <th className="px-4 py-2 text-right font-medium">{t("intelligence.evaluation.table.reportedLatency")}</th>
             </tr>
           </thead>
           <tbody>
@@ -63,7 +66,9 @@ export function EvaluationCaseTable({ cases }: EvaluationCaseTableProps) {
                   <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{formatPercent(row.recall_at_k, locale)}</td>
                   <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{formatDashboardNumber(row.reciprocal_rank, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="px-4 py-3 align-top tabular-nums text-[var(--text-secondary)]">{formatDashboardNumber(row.ndcg_at_k, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-3 text-right align-top tabular-nums text-[var(--text-secondary)]">{formatMs(row.latency_ms, locale)}</td>
+                  <td className="px-4 py-3 text-right align-top tabular-nums text-[var(--text-secondary)]">{formatMs(row.observed_latency_ms, locale)}</td>
+                  <td className="px-4 py-3 text-right align-top tabular-nums text-[var(--text-secondary)]">{formatMs(row.annotated_latency_ms, locale)}</td>
+                  <td className="px-4 py-3 text-right align-top tabular-nums text-[var(--text-secondary)]">{formatMs(row.reported_latency_ms, locale)}</td>
                 </tr>
               );
             })}

@@ -30,7 +30,9 @@ _SAFE_CASE_NUMERIC_FIELDS: tuple[str, ...] = (
     "precision_at_k",
     "reciprocal_rank",
     "ndcg_at_k",
-    "latency_ms",
+    "observed_latency_ms",
+    "annotated_latency_ms",
+    "reported_latency_ms",
 )
 _SAFE_ADVANCED_METRICS: frozenset[str] = frozenset(
     {
@@ -40,10 +42,16 @@ _SAFE_ADVANCED_METRICS: frozenset[str] = frozenset(
         "temporal_consistency",
         "conflict_accuracy",
         "source_supported_projection_rate",
-        "answer_faithfulness",
-        "answer_relevancy",
-        "provider_calls",
-        "token_cost",
+        "annotated_answer_faithfulness",
+        "annotated_answer_relevancy",
+        "reported_answer_faithfulness",
+        "reported_answer_relevancy",
+        "observed_provider_calls",
+        "observed_token_cost",
+        "annotated_provider_calls",
+        "annotated_token_cost",
+        "reported_provider_calls",
+        "reported_token_cost",
     }
 )
 
@@ -209,7 +217,9 @@ class EvaluationReportStore:
         report["report_id"] = row["report_id"]
         report["created_at"] = row["created_at"]
         report["baseline"] = row["baseline"]
-        report["summary"] = self._from_json(row["summary_json"])
+        report["summary"] = self._normalize_summary_provenance(
+            self._from_json(row["summary_json"])
+        )
         report["datasets"] = self._from_json(row["datasets_json"])
         report["variants"] = self._from_json(row["variants_json"])
         report["cases"] = [
@@ -245,7 +255,9 @@ class EvaluationReportStore:
                 "report_id": row["report_id"],
                 "created_at": row["created_at"],
                 "baseline": row["baseline"],
-                "summary": self._from_json(row["summary_json"]),
+                "summary": self._normalize_summary_provenance(
+                    self._from_json(row["summary_json"])
+                ),
                 "datasets": self._from_json(row["datasets_json"]),
                 "variants": self._from_json(row["variants_json"]),
                 "case_count": row["case_count"],
@@ -270,7 +282,7 @@ class EvaluationReportStore:
     def _report_summary(cls, report: dict[str, Any]) -> dict[str, Any]:
         summary = report.get("summary")
         if isinstance(summary, Mapping):
-            return dict(summary)
+            return cls._normalize_summary_provenance(summary)
 
         summary_fields = (
             "total_cases",
@@ -285,6 +297,24 @@ class EvaluationReportStore:
             "temporal_consistency",
             "conflict_accuracy",
             "source_supported_projection_rate",
+            "observed_p50_latency_ms",
+            "observed_p95_latency_ms",
+            "annotated_p50_latency_ms",
+            "annotated_p95_latency_ms",
+            "reported_p50_latency_ms",
+            "reported_p95_latency_ms",
+            "annotated_answer_faithfulness",
+            "annotated_answer_relevancy",
+            "judged_answer_faithfulness",
+            "judged_answer_relevancy",
+            "reported_answer_faithfulness",
+            "reported_answer_relevancy",
+            "observed_provider_calls",
+            "observed_token_cost",
+            "annotated_provider_calls",
+            "annotated_token_cost",
+            "reported_provider_calls",
+            "reported_token_cost",
             "answer_faithfulness",
             "answer_relevancy",
             "p50_latency_ms",
@@ -294,7 +324,30 @@ class EvaluationReportStore:
             "reason_code_aggregates",
             "dataset_breakdown",
         )
-        return {key: report[key] for key in summary_fields if key in report}
+        return cls._normalize_summary_provenance(
+            {key: report[key] for key in summary_fields if key in report}
+        )
+
+    @classmethod
+    def _normalize_summary_provenance(
+        cls, summary: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """将旧报告的无来源高级指标降级标记为 reported。"""
+
+        normalized = dict(summary)
+        legacy_mapping = {
+            "answer_faithfulness": "reported_answer_faithfulness",
+            "answer_relevancy": "reported_answer_relevancy",
+            "p50_latency_ms": "reported_p50_latency_ms",
+            "p95_latency_ms": "reported_p95_latency_ms",
+            "provider_calls": "reported_provider_calls",
+            "token_cost": "reported_token_cost",
+        }
+        for legacy, replacement in legacy_mapping.items():
+            if replacement not in normalized and legacy in normalized:
+                normalized[replacement] = normalized[legacy]
+            normalized.pop(legacy, None)
+        return normalized
 
     @classmethod
     def _normalize_json_value(cls, value: Any) -> Any:
@@ -342,12 +395,25 @@ class EvaluationReportStore:
             if value is not None:
                 payload[key] = value
 
+        legacy_latency = cls._finite_number(normalized.get("latency_ms"))
+        if "reported_latency_ms" not in payload and legacy_latency is not None:
+            payload["reported_latency_ms"] = legacy_latency
+
         advanced = normalized.get("advanced_metrics")
         if isinstance(advanced, Mapping):
             safe_advanced: dict[str, int | float] = {}
+            legacy_mapping = {
+                "answer_faithfulness": "reported_answer_faithfulness",
+                "answer_relevancy": "reported_answer_relevancy",
+                "provider_calls": "reported_provider_calls",
+                "token_cost": "reported_token_cost",
+            }
             for key, value in advanced.items():
-                key_text = str(key)
+                source_key = str(key)
+                key_text = legacy_mapping.get(source_key, source_key)
                 number = cls._finite_number(value)
+                if source_key in legacy_mapping and key_text in safe_advanced:
+                    continue
                 if key_text in _SAFE_ADVANCED_METRICS and number is not None:
                     safe_advanced[key_text] = number
             if safe_advanced:

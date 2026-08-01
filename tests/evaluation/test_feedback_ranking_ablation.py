@@ -45,8 +45,8 @@ def _case() -> EvaluationCase:
             "group_label": "group-a",
             "scope_domain": "scope-synthetic",
             "persona_domain": None,
-            "baseline_latency_ms": 4.0,
-            "shadow_latency_ms": 4.1,
+            "annotated_baseline_latency_ms": 4.0,
+            "annotated_shadow_latency_ms": 4.1,
         },
     )
 
@@ -74,8 +74,9 @@ async def test_candidate_shadow_reweights_routes_without_online_cost() -> None:
     assert report.reason_code == "accepted"
     assert report.baseline.recall_at_k == 0.0
     assert report.shadow.recall_at_k == 1.0
-    assert report.shadow.provider_calls == 0.0
-    assert report.shadow.token_cost == 0.0
+    assert report.shadow.observed_provider_calls is None
+    assert report.shadow.observed_token_cost is None
+    assert report.shadow.annotated_p50_latency_ms == 4.1
     assert report.weight_delta == 0.1
     assert report.attack_drift <= 0.1
 

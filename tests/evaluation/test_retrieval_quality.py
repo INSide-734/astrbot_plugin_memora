@@ -7,6 +7,7 @@ import pytest
 from core.evaluation.retrieval_quality import (
     AblationReport,
     EvaluationCase,
+    RetrievalObservation,
     RetrievedDocument,
     compare_reports,
     evaluate_cases,
@@ -205,13 +206,13 @@ async def test_evaluate_cases_reports_quality_and_latency_metrics() -> None:
             RetrievedDocument("noise", 0.1),
         ],
     }
-    latencies = {
+    annotated_latencies = {
         "用户喜欢喝什么咖啡": 12.0,
         "周末计划去哪里": 20.0,
     }
 
     async def fake_retriever(case: EvaluationCase, k: int) -> list[RetrievedDocument]:
-        case.metadata["latency_ms"] = latencies[case.query]
+        case.metadata["annotated_latency_ms"] = annotated_latencies[case.query]
         return responses[case.query][:k]
 
     report = await evaluate_cases(cases, fake_retriever, k=2)
@@ -220,7 +221,8 @@ async def test_evaluate_cases_reports_quality_and_latency_metrics() -> None:
     assert report.recall_at_k == 1.0
     assert report.mrr == 0.75
     assert report.ndcg_at_k == pytest.approx(0.8155, rel=1e-3)
-    assert report.p95_latency_ms == pytest.approx(19.6, rel=1e-3)
+    assert report.observed_p95_latency_ms is not None
+    assert report.annotated_p95_latency_ms == pytest.approx(19.6, rel=1e-3)
     assert report.dataset_breakdown["private_basic"]["case_count"] == 2
     assert [item.case_id for item in report.cases] == ["coffee", "trip"]
 
@@ -237,7 +239,7 @@ async def test_evaluate_cases_scores_expected_no_hit_when_retriever_returns_noth
             metadata={
                 "dataset": "noise_negative",
                 "expected_no_hit": True,
-                "latency_ms": 8.0,
+                "annotated_latency_ms": 8.0,
             },
         )
     ]
@@ -261,14 +263,21 @@ async def test_evaluate_cases_reports_evolution_quality_and_cost_metrics() -> No
 
     cases = load_fixture_dir(FIXTURE_ROOT)["memory_evolution"]
 
-    async def fake_retriever(case: EvaluationCase, _k: int) -> list[RetrievedDocument]:
+    async def fake_retriever(case: EvaluationCase, _k: int) -> RetrievalObservation:
         """返回夹具声明的 canonical 相关项，不为 Projection 伪造独立文档。"""
 
         if case.metadata.get("expected_no_hit"):
-            return []
-        return [
+            return RetrievalObservation(documents=[])
+        documents = [
             RetrievedDocument(doc_id, 1.0) for doc_id in sorted(case.relevant_doc_ids)
         ]
+        if case.case_id == "evolution_retry_recovery":
+            return RetrievalObservation(
+                documents=documents,
+                observed_provider_calls=2,
+                observed_token_cost=12.5,
+            )
+        return RetrievalObservation(documents=documents)
 
     report = await evaluate_cases(cases, fake_retriever, k=3)
 
@@ -280,10 +289,14 @@ async def test_evaluate_cases_reports_evolution_quality_and_cost_metrics() -> No
     assert report.temporal_consistency == 1.0
     assert report.conflict_accuracy == 1.0
     assert report.source_supported_projection_rate == 1.0
-    assert report.answer_faithfulness == 1.0
-    assert report.answer_relevancy == 1.0
-    assert report.provider_calls == 2.0
-    assert report.token_cost == 12.5
+    assert report.annotated_answer_faithfulness == 1.0
+    assert report.annotated_answer_relevancy == 1.0
+    assert report.judged_answer_faithfulness is None
+    assert report.judged_answer_relevancy is None
+    assert report.observed_provider_calls == 2.0
+    assert report.observed_token_cost == 12.5
+    assert report.annotated_provider_calls == 2.0
+    assert report.annotated_token_cost == 12.5
     assert report.reason_code_aggregates == {
         "conflict_source_roles": 1,
         "privacy_mismatch": 1,
@@ -305,9 +318,104 @@ async def test_evaluate_cases_reports_evolution_quality_and_cost_metrics() -> No
         "temporal_consistency",
         "conflict_accuracy",
         "source_supported_projection_rate",
-        "provider_calls",
-        "token_cost",
+        "observed_provider_calls",
+        "observed_token_cost",
+        "annotated_provider_calls",
+        "annotated_token_cost",
     }
+
+
+@pytest.mark.asyncio
+async def test_evaluate_cases_keeps_reported_fixture_values_out_of_observed_metrics() -> (
+    None
+):
+    """旧外部字段只能标为 reported，不能冒充 observed 或 judged。"""
+
+    case = EvaluationCase(
+        case_id="legacy-metrics",
+        query="匿名查询",
+        relevant_doc_ids={"memory-1"},
+        metadata={
+            "answer_faithfulness": 0.8,
+            "answer_relevancy": 0.7,
+            "provider_calls": 3,
+            "token_cost": 42,
+            "latency_ms": 9,
+        },
+    )
+
+    report = await evaluate_cases(
+        [case],
+        lambda _case, _k: [RetrievedDocument("memory-1")],
+        k=1,
+    )
+
+    assert report.reported_answer_faithfulness == 0.8
+    assert report.reported_answer_relevancy == 0.7
+    assert report.reported_provider_calls == 3.0
+    assert report.reported_token_cost == 42.0
+    assert report.reported_p95_latency_ms == 9.0
+    assert report.observed_provider_calls is None
+    assert report.observed_token_cost is None
+    assert report.judged_answer_faithfulness is None
+    assert report.judged_answer_relevancy is None
+    assert "answer_faithfulness" not in report.metrics
+    assert "provider_calls" not in report.metrics
+
+
+@pytest.mark.asyncio
+async def test_retrieval_observation_preserves_zero_and_rejects_invalid_costs() -> None:
+    """显式零调用是实测值，负数和非有限 instrumentation 必须视为不可用。"""
+
+    cases = [
+        EvaluationCase("zero", "zero", {"doc-zero"}),
+        EvaluationCase("invalid", "invalid", {"doc-invalid"}),
+    ]
+
+    def retriever(case: EvaluationCase, _k: int) -> RetrievalObservation:
+        """按用例返回零值或非法 instrumentation。"""
+
+        if case.case_id == "zero":
+            return RetrievalObservation(
+                [RetrievedDocument("doc-zero")],
+                observed_provider_calls=0,
+                observed_token_cost=0,
+            )
+        return RetrievalObservation(
+            [RetrievedDocument("doc-invalid")],
+            observed_provider_calls=-1,
+            observed_token_cost=float("nan"),
+        )
+
+    report = await evaluate_cases(cases, retriever, k=1)
+
+    assert report.observed_provider_calls == 0.0
+    assert report.observed_token_cost == 0.0
+    assert report.cases[1].advanced_metrics == {}
+
+
+@pytest.mark.asyncio
+async def test_optional_metric_doc_ids_ignore_empty_values() -> None:
+    """空文档标识不得制造时态、冲突或 Projection 指标。"""
+
+    case = EvaluationCase(
+        case_id="empty-optional-ids",
+        query="匿名查询",
+        relevant_doc_ids={"memory-1"},
+        metadata={
+            "temporal_expected_doc_ids": [None, ""],
+            "conflict_doc_ids": [None, ""],
+            "projection_source_ids": [None, ""],
+        },
+    )
+
+    report = await evaluate_cases(
+        [case],
+        lambda _case, _k: [RetrievedDocument("memory-1")],
+        k=1,
+    )
+
+    assert report.cases[0].advanced_metrics == {}
 
 
 def test_compare_reports_returns_ablation_deltas() -> None:
@@ -316,14 +424,14 @@ def test_compare_reports_returns_ablation_deltas() -> None:
         recall_at_k=0.60,
         mrr=0.50,
         ndcg_at_k=0.55,
-        p95_latency_ms=120.0,
+        observed_p95_latency_ms=120.0,
     )
     variant = AblationReport.from_metrics(
         name="graph_expansion_on",
         recall_at_k=0.80,
         mrr=0.65,
         ndcg_at_k=0.70,
-        p95_latency_ms=150.0,
+        observed_p95_latency_ms=150.0,
     )
 
     delta = compare_reports(baseline, variant)
@@ -333,7 +441,7 @@ def test_compare_reports_returns_ablation_deltas() -> None:
     assert delta["recall_at_k_delta"] == pytest.approx(0.20)
     assert delta["mrr_delta"] == pytest.approx(0.15)
     assert delta["ndcg_at_k_delta"] == pytest.approx(0.15)
-    assert delta["p95_latency_ms_delta"] == pytest.approx(30.0)
+    assert delta["observed_p95_latency_ms_delta"] == pytest.approx(30.0)
 
 
 @pytest.mark.asyncio

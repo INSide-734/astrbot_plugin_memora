@@ -49,16 +49,17 @@ function defaultVariantSelection(descriptors: EvaluationVariantDescriptor[]): st
   return (baseline ? [baseline] : available.slice(0, 1)).map((descriptor) => descriptor.name);
 }
 
-function formatPercent(value: number, locale: string): string {
+function formatPercent(value: number | null | undefined, locale: string): string {
   return formatDashboardPercent(value, locale, { maximumFractionDigits: 0 });
 }
 
-function formatMs(value: number, locale: string): string {
-  return `${formatDashboardNumber(value, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}ms`;
+function formatMs(value: number | null | undefined, locale: string): string {
+  const formatted = formatDashboardNumber(value, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return formatted === "--" ? formatted : `${formatted}ms`;
 }
 
-function formatDelta(value: number | null, locale: string, notAvailable: string, suffix = ""): string {
-  if (value === null) return notAvailable;
+function formatDelta(value: number | null | undefined, locale: string, notAvailable: string, suffix = ""): string {
+  if (value === null || value === undefined) return notAvailable;
   return `${formatDashboardNumber(value, locale, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -84,7 +85,7 @@ function VariantDeltaRow({ name, delta }: { name: string; delta: EvaluationVaria
       <td className="px-4 py-2 tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.recall_at_k, locale, notAvailable)}</td>
       <td className="px-4 py-2 tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.mrr, locale, notAvailable)}</td>
       <td className="px-4 py-2 tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.ndcg_at_k, locale, notAvailable)}</td>
-      <td className="px-4 py-2 text-right tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.p95_latency_ms, locale, notAvailable, "ms")}</td>
+      <td className="px-4 py-2 text-right tabular-nums text-[var(--text-secondary)]">{formatDelta(delta.observed_p95_latency_ms, locale, notAvailable, "ms")}</td>
     </tr>
   );
 }
@@ -498,13 +499,19 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
       <div className="space-y-4">
         {report ? (
           <>
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               {[
                 [t("intelligence.evaluation.metric.cases"), String(report.summary.total_cases)],
                 ["Recall@K", formatPercent(report.summary.recall_at_k, locale)],
                 ["MRR", formatPercent(report.summary.mrr, locale)],
                 ["nDCG@K", formatPercent(report.summary.ndcg_at_k, locale)],
-                ["p95", formatMs(report.summary.p95_latency_ms, locale)],
+                [t("intelligence.evaluation.metric.observedP95"), formatMs(report.summary.observed_p95_latency_ms, locale)],
+                [t("intelligence.evaluation.metric.annotatedP95"), formatMs(report.summary.annotated_p95_latency_ms ?? null, locale)],
+                [t("intelligence.evaluation.metric.reportedP95"), formatMs(report.summary.reported_p95_latency_ms ?? null, locale)],
+                [t("intelligence.evaluation.metric.annotatedFaithfulness"), formatPercent(report.summary.annotated_answer_faithfulness ?? null, locale)],
+                [t("intelligence.evaluation.metric.judgedFaithfulness"), formatPercent(report.summary.judged_answer_faithfulness ?? null, locale)],
+                [t("intelligence.evaluation.metric.observedProviderCalls"), formatDashboardNumber(report.summary.observed_provider_calls, locale)],
+                [t("intelligence.evaluation.metric.observedTokenCost"), formatDashboardNumber(report.summary.observed_token_cost, locale)],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)] p-3">
                   <p className="text-2xs uppercase text-[var(--text-tertiary)]">{label}</p>
@@ -576,7 +583,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
                         <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.recallDelta")}</th>
                         <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.rrDelta")}</th>
                         <th className="px-4 py-2 font-medium">{t("intelligence.evaluation.gainDelta")}</th>
-                        <th className="px-4 py-2 text-right font-medium">{t("intelligence.evaluation.p95Delta")}</th>
+                        <th className="px-4 py-2 text-right font-medium">{t("intelligence.evaluation.observedP95Delta")}</th>
                       </tr>
                     </thead>
                     <tbody>

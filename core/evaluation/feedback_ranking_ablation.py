@@ -22,10 +22,12 @@ class FeedbackRankingMetrics:
     recall_at_k: float
     mrr: float
     ndcg_at_k: float
-    p50_latency_ms: float | None
-    p95_latency_ms: float | None
-    provider_calls: float
-    token_cost: float
+    observed_p50_latency_ms: float | None
+    observed_p95_latency_ms: float | None
+    annotated_p50_latency_ms: float | None
+    annotated_p95_latency_ms: float | None
+    observed_provider_calls: float | None = None
+    observed_token_cost: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,8 +83,8 @@ async def run_feedback_ranking_ablation(
         except asyncio.CancelledError:
             raise
         baseline_candidates = _normalize_candidates(raw)
-        baseline_latency = _latency(case, started, "baseline")
-        baseline_rows.append(_Row(case, baseline_candidates, baseline_latency))
+        baseline_latencies = _latencies(case, started, "baseline")
+        baseline_rows.append(_Row(case, baseline_candidates, *baseline_latencies))
         if top_reason == "accepted" and aggregate is not None:
             shadow_candidates = _apply_shadow_weights(
                 baseline_candidates,
@@ -92,12 +94,12 @@ async def run_feedback_ranking_ablation(
             )
         else:
             shadow_candidates = list(baseline_candidates)
-        shadow_latency = (
-            _latency(case, started, "shadow")
+        shadow_latencies = (
+            _latencies(case, started, "shadow")
             if top_reason == "accepted"
-            else baseline_latency
+            else baseline_latencies
         )
-        shadow_rows.append(_Row(case, shadow_candidates, shadow_latency))
+        shadow_rows.append(_Row(case, shadow_candidates, *shadow_latencies))
 
     baseline_metrics = _metrics(baseline_rows, safe_k)
     shadow_metrics = _metrics(shadow_rows, safe_k)
@@ -133,7 +135,8 @@ class _Row:
 
     case: EvaluationCase
     candidates: list[_Candidate]
-    latency_ms: float
+    observed_latency_ms: float
+    annotated_latency_ms: float | None
 
 
 def _normalize_candidates(items: Sequence[Any] | None) -> list[_Candidate]:
@@ -209,7 +212,8 @@ def _metrics(rows: Sequence[_Row], k: int) -> FeedbackRankingMetrics:
     recalls: list[float] = []
     mrrs: list[float] = []
     ndcgs: list[float] = []
-    latencies: list[float] = []
+    observed_latencies: list[float] = []
+    annotated_latencies: list[float] = []
     for row in rows:
         ranked = [item.doc_id for item in row.candidates]
         if row.case.metadata.get("expected_no_hit") is True:
@@ -221,15 +225,17 @@ def _metrics(rows: Sequence[_Row], k: int) -> FeedbackRankingMetrics:
             recalls.append(recall_at_k(ranked, row.case.relevant_doc_ids, k=k))
             mrrs.append(reciprocal_rank(ranked, row.case.relevant_doc_ids))
             ndcgs.append(ndcg_at_k(ranked, row.case.relevant_doc_ids, k=k))
-        latencies.append(row.latency_ms)
+        observed_latencies.append(row.observed_latency_ms)
+        if row.annotated_latency_ms is not None:
+            annotated_latencies.append(row.annotated_latency_ms)
     return FeedbackRankingMetrics(
-        _mean(recalls),
-        _mean(mrrs),
-        _mean(ndcgs),
-        _percentile(latencies, 50),
-        _percentile(latencies, 95),
-        0.0,
-        0.0,
+        recall_at_k=_mean(recalls),
+        mrr=_mean(mrrs),
+        ndcg_at_k=_mean(ndcgs),
+        observed_p50_latency_ms=_percentile(observed_latencies, 50),
+        observed_p95_latency_ms=_percentile(observed_latencies, 95),
+        annotated_p50_latency_ms=_percentile(annotated_latencies, 50),
+        annotated_p95_latency_ms=_percentile(annotated_latencies, 95),
     )
 
 
@@ -250,14 +256,22 @@ def _group_recall_gap(rows: Sequence[_Row], k: int) -> float:
     return round(max(means) - min(means), 4) if means else 0.0
 
 
-def _latency(case: EvaluationCase, started: float, branch: str) -> float:
-    """读取匿名分支延迟，缺失时使用本地测量。"""
+def _latencies(
+    case: EvaluationCase, started: float, branch: str
+) -> tuple[float, float | None]:
+    """返回墙钟实测延迟和可选的分支人工标注延迟。"""
 
-    fallback = (time.perf_counter() - started) * 1000
+    observed = max(0.0, (time.perf_counter() - started) * 1000)
+    raw = case.metadata.get(f"annotated_{branch}_latency_ms")
     try:
-        return max(0.0, float(case.metadata.get(f"{branch}_latency_ms", fallback)))
+        annotated = (
+            float(raw) if raw is not None and not isinstance(raw, bool) else None
+        )
     except (TypeError, ValueError):
-        return max(0.0, fallback)
+        annotated = None
+    if annotated is not None and (not math.isfinite(annotated) or annotated < 0.0):
+        annotated = None
+    return observed, annotated
 
 
 def _mean(values: Sequence[float]) -> float:

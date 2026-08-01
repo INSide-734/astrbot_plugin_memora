@@ -63,7 +63,8 @@ def _single_case(**metadata_overrides: Any) -> EvaluationCase:
         "source_revision": "rev-current",
         "source_revision_required": True,
         "critical_long_term_doc_ids": ["mem-relevant"],
-        "latency_ms": 1.0,
+        "annotated_baseline_latency_ms": 1.0,
+        "annotated_session_latency_ms": 1.0,
     }
     metadata.update(metadata_overrides)
     return EvaluationCase(
@@ -154,9 +155,10 @@ async def test_double_run_keeps_baseline_and_blocks_mixed_false_shortcut() -> No
     assert report.baseline is not None and report.baseline.recall_at_k == 1.0
     assert report.effective is not None and report.effective.recall_at_k == 1.0
     assert report.session is not None and report.session.recall_at_k < 1.0
-    assert report.effective.p50_latency_ms == 9.0
-    assert report.provider_calls == 2.0
-    assert report.token_cost == 30.0
+    assert report.effective.observed_p50_latency_ms is not None
+    assert report.effective.annotated_p50_latency_ms == 9.0
+    assert report.annotated_provider_calls == 2.0
+    assert report.annotated_token_cost == 30.0
 
 
 @pytest.mark.asyncio

@@ -203,10 +203,12 @@ class DerivedMetadataBranchMetrics:
     recall_at_k: float
     mrr: float
     ndcg_at_k: float
-    p50_latency_ms: float | None
-    p95_latency_ms: float | None
-    provider_calls: float
-    token_cost: float
+    observed_p50_latency_ms: float | None
+    observed_p95_latency_ms: float | None
+    annotated_p50_latency_ms: float | None
+    annotated_p95_latency_ms: float | None
+    observed_provider_calls: float | None = None
+    observed_token_cost: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,10 +270,10 @@ async def run_derived_metadata_ablation(
             raw = await raw if inspect.isawaitable(raw) else raw
         except asyncio.CancelledError:
             raise
-        baseline_latency = _latency(case, started, "baseline")
+        baseline_latencies = _latencies(case, started, "baseline")
         baseline_candidates = _normalize_candidates(raw)
         baseline_rows.append(
-            _BranchRow(case, baseline_candidates, baseline_latency, "baseline")
+            _BranchRow(case, baseline_candidates, *baseline_latencies, "baseline")
         )
         try:
             matches = index.match(case.query, case.metadata)
@@ -288,9 +290,9 @@ async def run_derived_metadata_ablation(
             index._record_failure("variant_execution_failed")
             reason_counts["variant_execution_failed"] += 1
             variant_candidates = list(baseline_candidates)
-        variant_latency = _latency(case, started, "variant")
+        variant_latencies = _latencies(case, started, "variant")
         variant_rows.append(
-            _BranchRow(case, variant_candidates, variant_latency, "variant")
+            _BranchRow(case, variant_candidates, *variant_latencies, "variant")
         )
         if case.metadata.get("metadata_dependent") is True:
             dependent_baseline.append(_case_recall(case, baseline_candidates, safe_k))
@@ -340,7 +342,8 @@ class _BranchRow:
 
     case: EvaluationCase
     candidates: list[_Candidate]
-    latency_ms: float
+    observed_latency_ms: float
+    annotated_latency_ms: float | None
     branch: str
 
 
@@ -500,7 +503,8 @@ def _branch_metrics(rows: Sequence[_BranchRow], k: int) -> DerivedMetadataBranch
     recalls: list[float] = []
     mrrs: list[float] = []
     ndcgs: list[float] = []
-    latencies: list[float] = []
+    observed_latencies: list[float] = []
+    annotated_latencies: list[float] = []
     for row in rows:
         ranked = [item.doc_id for item in row.candidates]
         if row.case.metadata.get("expected_no_hit") is True:
@@ -512,15 +516,17 @@ def _branch_metrics(rows: Sequence[_BranchRow], k: int) -> DerivedMetadataBranch
             recalls.append(recall_at_k(ranked, row.case.relevant_doc_ids, k=k))
             mrrs.append(reciprocal_rank(ranked, row.case.relevant_doc_ids))
             ndcgs.append(ndcg_at_k(ranked, row.case.relevant_doc_ids, k=k))
-        latencies.append(row.latency_ms)
+        observed_latencies.append(row.observed_latency_ms)
+        if row.annotated_latency_ms is not None:
+            annotated_latencies.append(row.annotated_latency_ms)
     return DerivedMetadataBranchMetrics(
-        _mean(recalls),
-        _mean(mrrs),
-        _mean(ndcgs),
-        _percentile(latencies, 50),
-        _percentile(latencies, 95),
-        0.0,
-        0.0,
+        recall_at_k=_mean(recalls),
+        mrr=_mean(mrrs),
+        ndcg_at_k=_mean(ndcgs),
+        observed_p50_latency_ms=_percentile(observed_latencies, 50),
+        observed_p95_latency_ms=_percentile(observed_latencies, 95),
+        annotated_p50_latency_ms=_percentile(annotated_latencies, 50),
+        annotated_p95_latency_ms=_percentile(annotated_latencies, 95),
     )
 
 
@@ -532,14 +538,22 @@ def _case_recall(
     return recall_at_k([item.doc_id for item in candidates], case.relevant_doc_ids, k=k)
 
 
-def _latency(case: EvaluationCase, started: float, branch: str) -> float:
-    """读取分支专用匿名延迟，缺失时测量本地调用耗时。"""
+def _latencies(
+    case: EvaluationCase, started: float, branch: str
+) -> tuple[float, float | None]:
+    """返回墙钟实测延迟和可选的分支人工标注延迟。"""
 
-    fallback = (time.perf_counter() - started) * 1000
+    observed = max(0.0, (time.perf_counter() - started) * 1000)
+    raw = case.metadata.get(f"annotated_{branch}_latency_ms")
     try:
-        return max(0.0, float(case.metadata.get(f"{branch}_latency_ms", fallback)))
+        annotated = (
+            float(raw) if raw is not None and not isinstance(raw, bool) else None
+        )
     except (TypeError, ValueError):
-        return max(0.0, fallback)
+        annotated = None
+    if annotated is not None and (not math.isfinite(annotated) or annotated < 0.0):
+        annotated = None
+    return observed, annotated
 
 
 def _finite_score(value: Any) -> float:

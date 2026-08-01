@@ -77,8 +77,8 @@ def _case(case_id: str, query: str, relevant: str) -> EvaluationCase:
             "privacy_level": "shared",
             "role": "user",
             "metadata_dependent": True,
-            "baseline_latency_ms": 5.0,
-            "variant_latency_ms": 5.5,
+            "annotated_baseline_latency_ms": 5.0,
+            "annotated_variant_latency_ms": 5.5,
         },
     )
 
@@ -198,8 +198,9 @@ async def test_ablation_improves_metadata_dependent_slice_without_online_cost() 
     assert report.bounded_variant.recall_at_k == 1.0
     assert report.metadata_dependent_recall_delta == 1.0
     assert report.macro_precision == 1.0
-    assert report.bounded_variant.provider_calls == 0.0
-    assert report.bounded_variant.token_cost == 0.0
+    assert report.bounded_variant.observed_provider_calls is None
+    assert report.bounded_variant.observed_token_cost is None
+    assert report.bounded_variant.annotated_p50_latency_ms == 5.5
 
 
 @pytest.mark.asyncio
