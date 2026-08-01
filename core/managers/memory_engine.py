@@ -79,6 +79,7 @@ class MemoryEngine(
         self.profile_proposal_pipeline = None
         self.knowledge_proposal_pipeline = None
         self.note_proposal_pipeline = None
+        self.semantic_compressor = None
         self.personalized_ranker = None
         # 自主学习
         self.auto_learning = None

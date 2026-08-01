@@ -160,15 +160,9 @@ class RelationshipTrackingConfig(BaseModel):
 class SemanticCompressionConfig(BaseModel):
     """语义摘要 Projection 候选配置。"""
 
-    enabled: bool = True
+    enabled: bool = False
     age_days: float = 60.0
     similarity_threshold: float = 0.85
-
-
-class SemanticCompressorConfig(BaseModel):
-    """语义压缩器语言配置。"""
-
-    seed_language: Literal["auto", "zh", "en", "ru"] = "auto"
 
 
 class UserProfileConfig(BaseModel):
@@ -234,9 +228,6 @@ class RuntimeFeatureConfigSections(BaseModel):
     )
     semantic_compression: SemanticCompressionConfig = Field(
         default_factory=SemanticCompressionConfig
-    )
-    semantic_compressor: SemanticCompressorConfig = Field(
-        default_factory=SemanticCompressorConfig
     )
     user_profile: UserProfileConfig = Field(default_factory=UserProfileConfig)
     weight_learning: WeightLearningConfig = Field(default_factory=WeightLearningConfig)

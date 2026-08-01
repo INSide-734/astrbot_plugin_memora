@@ -78,6 +78,8 @@ class DecayScheduler:
 
     @staticmethod
     def _log_task_exception(task: asyncio.Task) -> None:
+        """记录后台任务的普通异常，并忽略已取消任务。"""
+
         if task.cancelled():
             return
         try:
@@ -313,6 +315,24 @@ class DecayScheduler:
                 await note_mgr.prune_versions(max_versions)
         except Exception as e:
             logger.warning(f"[衰减调度] 笔记版本清理异常: {e}")
+
+        # 语义压缩只生成带来源证据的 Projection，不修改 canonical。
+        try:
+            compressor = vars(engine).get("semantic_compressor")
+            if compressor is not None:
+                result = await compressor.compress_old_memories()
+                applied = int(result.get("projections_applied", 0))
+                failed = int(result.get("failed_groups", 0))
+                if applied or failed:
+                    logger.info(
+                        "[衰减调度] 语义摘要完成: applied=%s, failed=%s",
+                        applied,
+                        failed,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("[衰减调度] 语义摘要异常，已保留 canonical")
 
         # 前瞻记忆：扫描未来 24 小时内的 PLANNED 原子并缓存待注入
         try:

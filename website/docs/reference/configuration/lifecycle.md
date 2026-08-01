@@ -58,21 +58,13 @@ pageClass: config-reference-page
 
 ## 语义压缩
 
-配置域：`"semantic_compression"`。将 60 天以上旧记忆按主题相似度合并为抽象摘要，控制记忆库规模
+配置域：`"semantic_compression"`。把同边界旧 canonical 记忆按 topic 聚合为带 source revision 的 `semantic_summary` Projection；原记忆不会被删除或替换。该功能要求同时启用 Memory Evolution，配置变更后需重启。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"semantic_compression.enabled"` | `"bool"` | `true` | - | 启用语义压缩<br><small>开启后定期扫描旧记忆，将 topic 高度重叠的记忆合并为精简摘要。</small> |
+| `"semantic_compression.enabled"` | `"bool"` | `false` | - | 启用语义压缩<br><small>开启并启用 Memory Evolution 后，每日生成派生摘要；关闭后已有语义摘要不再进入召回，canonical 保持可用。</small> |
 | `"semantic_compression.age_days"` | `"float"` | `60` | - | 压缩年龄阈值<br><small>记忆创建超过此天数后才进入压缩候选。建议 45-90 天。</small> |
-| `"semantic_compression.similarity_threshold"` | `"float"` | `0.85` | - | 合并相似度阈值<br><small>两条记忆 topic Jaccard 重叠超过该值才合并。建议 0.75-0.92。</small> |
-
-## 语义压缩设置
-
-配置域：`"semantic_compressor"`。控制旧记忆语义压缩的种子词语言
-
-| 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
-|---|---|---|---|---|
-| `"semantic_compressor.seed_language"` | `"string"` | `"auto"` | 可选：`"auto"` / `"zh"` / `"en"` / `"ru"` | 种子词语言<br><small>压缩扫描时使用的种子词语言。auto=自动跟随 bot_language，zh=中文，en=English，ru=Русский。</small> |
+| `"semantic_compression.similarity_threshold"` | `"float"` | `0.85` | - | 聚类相似度阈值<br><small>同 scope、privacy 和 role 的记忆 topic Jaccard 重叠达到该值才生成摘要。建议 0.75-0.92。</small> |
 
 ## 情景聚类
 

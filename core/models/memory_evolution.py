@@ -26,6 +26,7 @@ class RelationType(str, Enum):
 
 class ProjectionType(str, Enum):
     EPISODE_SUMMARY = "episode_summary"
+    SEMANTIC_SUMMARY = "semantic_summary"
     PREFERENCE_STATE = "preference_state"
     RELATIONSHIP_STATE = "relationship_state"
     CONFLICT_SET = "conflict_set"

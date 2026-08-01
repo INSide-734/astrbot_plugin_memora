@@ -23,6 +23,7 @@ from ..managers.memory_evolution_gate import MemoryEvolutionGate
 from ..managers.memory_evolution_manager import MemoryEvolutionManager
 from ..managers.note_proposal_pipeline import NoteProposalPipeline
 from ..managers.profile_proposal_pipeline import ProfileProposalPipeline
+from ..managers.semantic_compressor import SemanticCompressor
 from ..processors.knowledge_extractor import KnowledgeExtractor
 from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
@@ -94,6 +95,9 @@ class ComponentFactory:
         graph_doc_path = data_dir_path / "memora_graph_documents.db"
         graph_index_path = data_dir_path / "memora_graph.index"
         graph_memory_enabled = self.config_manager.get("graph_memory.enabled", True)
+        semantic_compression_enabled = bool(
+            self.config_manager.get("semantic_compression.enabled", False)
+        )
         evolution_config = self.config_manager.get_section("memory_evolution")
         if not isinstance(evolution_config, dict):
             evolution_config = {}
@@ -166,6 +170,9 @@ class ComponentFactory:
                 projection_limit=max(
                     0,
                     int(evolution_config.get("max_query_expansions", 8)),
+                ),
+                disabled_types=(
+                    () if semantic_compression_enabled else ("semantic_summary",)
                 ),
             )
 
@@ -314,6 +321,25 @@ class ComponentFactory:
         # MemoryEngine/DocumentStorage 唯一写入，避免形成第二套正文权威。
         memory_engine.memory_evolution_store = memory_evolution_store
         memory_engine.memory_evolution_manager = memory_evolution_manager
+        if semantic_compression_enabled and memory_evolution_manager.mode in {
+            "shadow",
+            "readonly",
+            "active",
+        }:
+            memory_engine.semantic_compressor = SemanticCompressor(
+                source_store=memory_evolution_store,
+                proposal_applier=memory_evolution_manager.apply_projection_proposal,
+                enabled=True,
+                age_days=float(
+                    engine_config.get("semantic_compression.age_days", 60.0)
+                ),
+                similarity_threshold=float(
+                    engine_config.get(
+                        "semantic_compression.similarity_threshold",
+                        0.85,
+                    )
+                ),
+            )
         if memory_engine.profile_manager is not None:
             memory_engine.profile_proposal_pipeline = ProfileProposalPipeline(
                 profile_manager=memory_engine.profile_manager,
@@ -397,7 +423,13 @@ class ComponentFactory:
         backup_enabled = bool(self.config_manager.get("backup_settings.enabled", True))
         decay_scheduler = None
         should_start_decay_scheduler = bool(
-            memory_engine and (decay_rate > 0 or auto_cleanup or backup_enabled)
+            memory_engine
+            and (
+                decay_rate > 0
+                or auto_cleanup
+                or backup_enabled
+                or memory_engine.semantic_compressor is not None
+            )
         )
         if should_start_decay_scheduler:
             backup_keep_days = int(

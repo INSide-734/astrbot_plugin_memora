@@ -24,6 +24,7 @@ SQLite 不支持把表标识符作为绑定参数。`RelationStore` 因此只用
 - `load_candidate_sources()` 必须在 SQL 限流前按 canonical metadata 的 scope 过滤，再保持 primary 首项；不得先截取全库最近 ID 后在 Python 中过滤，避免其他租户记录挤掉真实候选。
 - `memory_relations.revision` 是高影响候选动作的 CAS 值，不是 canonical source revision。approve/replay 在同一写事务内重新验证两侧 source；reject 保持终态，普通 upsert 不得无审计重开。动作表只保存 action、前后状态、候选 revision、reason code 和时间，不保存 source ID/revision、scope、identity 或正文。
 - `active_projection_bundles_for_seeds()` 先去重 seed，再批量读取 active projection 与完整 source mapping；支持 `scope_key` 和 projection limit，禁止 N+1 source 查询。读取侧再核对 primary/supporting/conflict role、revision、privacy 和 validity。
+- 普通非冲突 Projection 可在 supporting source 失效且 primary 仍有效时保留；`semantic_summary` 的正文合成自全部 mappings，因此任一来源 revision 变化、删除或 orphan cleanup 移除 mapping 时必须整条失效，等待从当前 canonical revision 幂等重建。
 - SQL 动态片段仅来自固定 allowlist，值全部参数绑定；读取失败由上层回退 canonical/relation baseline，不把 query、prompt、正文、source ID 列表或身份写入日志/决策记录。
 
 ```mermaid

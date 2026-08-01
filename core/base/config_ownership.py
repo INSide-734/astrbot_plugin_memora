@@ -162,7 +162,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     ),
     "semantic_compression": _ownership(
         "semantic_compression",
-        ConfigOwnershipKind.EXPERIMENTAL,
+        ConfigOwnershipKind.RUNTIME,
         "core.managers.semantic_compressor",
     ),
     "episode_clustering": _ownership(
@@ -207,11 +207,6 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     ),
     "export": _ownership(
         "export", ConfigOwnershipKind.RUNTIME, "core.managers.memory_exporter"
-    ),
-    "semantic_compressor": _ownership(
-        "semantic_compressor",
-        ConfigOwnershipKind.EXPERIMENTAL,
-        "core.managers.semantic_compressor",
     ),
     "topic_segmentation": _ownership(
         "topic_segmentation",

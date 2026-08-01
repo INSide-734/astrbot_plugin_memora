@@ -124,6 +124,7 @@ sequenceDiagram
 - `MemoryEngine` 在 canonical add/语义 metadata update 提交后统一重载 source 并调度；`ReflectionHandler` 仍覆盖反思链兼容调度，重复触发由稳定 idempotency key 去重。派生计划写入 `origin_job_id`，启动时先做 orphan/stale cleanup；回滚 job 只能失效自身派生对象，不能删除 canonical。
 - 处理 proposal 时先运行本地 `MemoryEvolutionCandidateGenerator`：episode/conflict 候选非空时不调用 LLM，只有确定性候选为空才回退 Consolidator。随后必须再次读取 source 并比较每个 revision；source 缺失、scope 不一致、alias 未知、自关系、重复/成环边、冲突 Projection 少于三类角色均拒绝，不能污染派生表。
 - 关系按低/高影响分类：低影响且达到阈值的允许按配置自动 `active`，`updates`/`contradicts`/`preference_change`/`supersedes` 始终是 `candidate`。高影响 relation 的 approve/reject/replay 使用候选 revision CAS；approve/replay 再次验证 canonical source，后台重复 proposal 不得覆盖人工 rejected 状态。Projection 共享 scope，privacy 取所有 source 中最严格值，状态由置信度和冲突类型决定。
+- `SemanticCompressor` 只读取达到年龄门槛的 canonical source，按完全相同的 scope/privacy/role 分区并以 topic Jaccard 聚类；摘要通过 `apply_projection_proposal()` 二次核对全部 source revision 后写入 `semantic_summary`，不得调用 canonical add/delete。扫描普通失败只降级当前维护项，取消必须传播。
 - Relation/Projection 是 SQLite 中的派生解释平面；稳定 ID 由 source memory ID、revision 和类型计算，但不创建第二套 canonical memory 或向量索引。更新/删除 canonical 后由 Store 的 revision invalidation 隔离旧派生结果。
 - `get_status_snapshot()` 只能返回模式、计数、reason code 和延迟桶等 allowlist 标量；不得把 query、prompt、正文、原始身份、source ID 列表或 provider 信息写入日志/指标。
 
@@ -148,7 +149,7 @@ sequenceDiagram
 | 画像 | `profile_manager.py`、`profile_proposal_pipeline.py`、`memory_engine_profile_hooks.py` | 管理员编辑使用修订值冲突检测；canonical 写后自动 proposal 仅绑定唯一可信主体，标签与偏好携带 derived provenance 并走存储层原子事务 |
 | 知识/笔记 | `knowledge_manager.py`、`knowledge_proposal_pipeline.py`、`note_proposal_pipeline.py`、`memory_engine_domain_hooks.py`、`note_manager.py` | 知识与笔记 canonical 写后 proposal、来源约束幂等与失效；自动笔记可无 Provider 重建，人工 CRUD、软删和版本历史保持领域权威 |
 | 可靠性 | `write_coordinator.py`、`write_op_*` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复 |
-| 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验及原子应用 |
+| 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py`、`memory_evolution_projection.py`、`semantic_compressor.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验、外部 Projection proposal 二次校验及语义摘要生成 |
 | canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |
 | 文件状态 | `auto_learning.py`、`anomaly_detector.py`、`continuity_tracker.py`、`relationship_tracker.py`、`trait_evolution.py`、`weight_learner.py` | JSON 状态属于运行数据，不是配置；加载失败通常降级为空状态 |
 | 备份 | `backup_manager.py`、`backup_models.py`、`backup_snapshot.py` | SQLite 使用 Online Backup API；manifest 保存角色、大小、SHA-256 和 quick check；`pre_migration` 供启动迁移失败恢复，新恢复使用 `.restore/<operation_id>/restore_plan.json`、`payload/`、`previous/` 事务目录 |

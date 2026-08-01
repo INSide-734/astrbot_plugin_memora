@@ -145,6 +145,12 @@ revision 的 `same_episode` relation proposal；`ContradictionDetector` 只产�
 source revision 和类型；Projection 仍只是有 source mapping 的派生解释，不形成第二套
 canonical ID。
 
+可选 `SemanticCompressor` 只读取达到年龄门槛的 canonical source，并在完全相同的 scope、
+privacy 与 role 分区内按 topic Jaccard 聚类。它通过 Manager 的外部 Projection proposal 边界
+二次核对全部 source revision，再写入 `semantic_summary`；不会调用 canonical add/delete。
+任何摘要来源更新、删除或 orphan cleanup 都使整条摘要失效，统一派生重建和每日维护可幂等
+重建当前 revision。关闭语义压缩后读取器屏蔽已有 `semantic_summary`，canonical 仍正常召回。
+
 高影响 relation 使用独立复核状态机和动作审计表，不复用 canonical review 或 pre-canonical
 quarantine 的 ID/状态。`approve`、`reject`、`replay` 都要求候选 revision CAS；approve/replay
 还会再次验证 source revision、scope 与 privacy。人工拒绝是持久终态，后台重复 proposal 不得

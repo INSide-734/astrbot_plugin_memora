@@ -15,7 +15,7 @@ graph TD
     Start --> Backfill[BackfillScheduler]
     Decay --> Engine[MemoryEngine]
     Decay --> Backup[BackupManager]
-    Decay --> Optional[画像/知识/学习/笔记/原子维护]
+    Decay --> Optional[画像/知识/学习/笔记/语义摘要/原子维护]
     Backfill --> Fetch[DocumentStorage 或 SQLite documents]
     Backfill --> Split[EmbeddingClusteringStrategy]
     Split --> Add[MemoryEngine.add_memory]
@@ -30,6 +30,7 @@ graph TD
 - `stop()` 取消并 await 两个任务，清空引用。
 - 主循环按本地时间计算下一次 `check_hour:check_minute`；普通循环异常后等待 1 小时重试。
 - 默认触发时间由构造参数决定，源码默认 `00:05`；不要在循环内硬编码另一时间。
+- 每日可选维护会调用已装配的 `SemanticCompressor`；它只生成 source-backed `semantic_summary` Projection，不删除或修改 canonical。普通失败只记录安全计数并继续其他维护项，`CancelledError` 必须传播。
 
 ### 状态与幂等
 

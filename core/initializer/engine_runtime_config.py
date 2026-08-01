@@ -401,7 +401,7 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
         "episode_clustering.topic_overlap_threshold",
         0.5,
     ),
-    _field("semantic_compression.enabled", "semantic_compression.enabled", True),
+    _field("semantic_compression.enabled", "semantic_compression.enabled", False),
     _field("semantic_compression.age_days", "semantic_compression.age_days", 60.0),
     _field(
         "semantic_compression.similarity_threshold",

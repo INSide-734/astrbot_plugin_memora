@@ -26,17 +26,17 @@ from ..models.memory_evolution import (
     RelationView,
     RetrySpec,
 )
-
-
-class EvolutionProposalRejected(ValueError):
-    """表示 proposal 没有通过确定性安全校验。"""
+from .memory_evolution_projection import (
+    EvolutionProposalRejected,
+    MemoryEvolutionProjectionProposalMixin,
+)
 
 
 class EvolutionLeaseLost(RuntimeError):
     """表示当前 worker 已失去 job lease，不能继续写入派生结果。"""
 
 
-class MemoryEvolutionManager:
+class MemoryEvolutionManager(MemoryEvolutionProjectionProposalMixin):
     """编排本地 evolution job，并把通过校验的 proposal 原子应用到 Store。"""
 
     _HIGH_IMPACT = frozenset(
