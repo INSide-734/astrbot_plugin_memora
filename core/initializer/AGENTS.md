@@ -2,7 +2,7 @@
 
 # 初始化与组件装配
 
-**最后核对：** 2026-07-21
+**最后核对：** 2026-08-01
 **公共入口：** `core/initializer/__init__.py`  
 **上游编排：** `core/plugin_initializer.py`
 
@@ -64,7 +64,7 @@ flowchart TD
 3. 构造尚未打开连接的 `MemoryEvolutionStore`。只有 `memory_evolution.enabled=true` 且 mode 为 `readonly` 或 `active` 时，才构造 `DerivedRelationExpander` 和 `ProjectionReader` 并注入引擎配置；`disabled` 与 `shadow` 均传入空读取器。
 4. 构造并初始化 `MemoryEngine`；`engine_runtime_config.py` 使用唯一显式映射表把 `ConfigManager` 投影为不可变语义的白名单快照，覆盖召回、图扩展、重排、成本控制、迁移、索引重建、缓存及 Memory Evolution 读取器等，而不是在工厂内再次合并或由组件猜测配置形状。工厂把同一个 `BackupManager` 注入引擎，供 `SchemaMigrationCoordinator` 在旧库迁移前创建 `pre_migration` 快照；fresh install 不创建该快照。canonical Schema 创建或迁移成功后，工厂才依次打开主/图 FAISS Store 与 `MemoryEvolutionStore`，确保迁移失败恢复时没有其他 `memora.db` 持久连接。`ComponentFactory` 另从 typed `CostControlConfig` 构造唯一 `CostControl` 对象，并同时注入引擎、处理器和事件链。
 5. 初始化 `conversations.db` 与 `ConversationManager`，随后修复 `message_count`。
-6. 构造 `MemoryProcessor`，显式投影 `persona_interpretation.enabled` 并复用同一 `CostControl`；再以其带重试 LLM 调用构造 `MemoryConsolidator`，并从正式 episode 配置构造不调用 Provider 的 `MemoryEvolutionCandidateGenerator`。Manager 先消费本地 episode/conflict 候选，候选为空才回退 Consolidator。`MemoryEvolutionGate` 会把 `enabled=false` 归一为 disabled，Manager 仅在归一后的 mode 非 disabled 时启动单 worker。
+6. 构造 `MemoryProcessor`，显式投影 `persona_interpretation.enabled` 与完整 topic strategy/B/Hybrid 配置，复用同一 `CostControl`，并把共享 Embedding Provider 的冻结批量适配器注入 A/B/Hybrid 后置分段链；C/D 仍由 handlers 预切分。再以处理器的带重试 LLM 调用构造 `MemoryConsolidator`，并从正式 episode 配置构造不调用 Provider 的 `MemoryEvolutionCandidateGenerator`。Manager 先消费本地 episode/conflict 候选，候选为空才回退 Consolidator。`MemoryEvolutionGate` 会把 `enabled=false` 归一为 disabled，Manager 仅在归一后的 mode 非 disabled 时启动单 worker。
 7. 构造 `IndexValidator`；若索引需要重建，由 `DerivedRebuildCoordinator` 按 canonical → FTS5/FAISS → graph → relation/projection 顺序执行，并异步加载停用词。
 8. 当衰减、自动清理或 `backup_settings.enabled` 启用时启动 `DecayScheduler`；自动备份可以独立于衰减运行。
 9. 在 `memora.db` 上初始化 `InjectionDecisionStore` 和有界异步 `InjectionDecisionRecorder`，应用保留天数与最大行数并安排清理。

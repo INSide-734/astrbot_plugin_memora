@@ -119,6 +119,9 @@ class ComponentFactory:
             )
 
         shared_embedding_provider = InFlightEmbeddingProviderProxy(embedding_provider)
+        topic_embedding_adapter = EmbeddingProviderAdapter.from_provider(
+            shared_embedding_provider
+        )
 
         # 只构造适配器；持久连接必须等待 canonical Schema 迁移完成。
         db = faiss_vec_db_cls(
@@ -247,11 +250,37 @@ class ComponentFactory:
                 "topic_segmentation.enabled": self.config_manager.get(
                     "topic_segmentation.enabled", True
                 ),
+                "topic_segmentation.strategy": self.config_manager.get(
+                    "topic_segmentation.strategy", "a_b_hybrid"
+                ),
+                "topic_segmentation.strategy_b.similarity_threshold": (
+                    self.config_manager.get(
+                        "topic_segmentation.strategy_b.similarity_threshold",
+                        0.5,
+                    )
+                ),
+                "topic_segmentation.strategy_b.min_cluster_size": (
+                    self.config_manager.get(
+                        "topic_segmentation.strategy_b.min_cluster_size",
+                        1,
+                    )
+                ),
+                "topic_segmentation.strategy_b.max_clusters": self.config_manager.get(
+                    "topic_segmentation.strategy_b.max_clusters",
+                    5,
+                ),
+                "topic_segmentation.hybrid_fallback_fact_threshold": (
+                    self.config_manager.get(
+                        "topic_segmentation.hybrid_fallback_fact_threshold",
+                        3,
+                    )
+                ),
                 "persona_interpretation.enabled": self.config_manager.get(
                     "persona_interpretation.enabled", False
                 ),
             },
             cost_control=cost_control,
+            topic_embed_fn=topic_embedding_adapter.embed,
         )
         logger.info("MemoryProcessor 已初始化")
 

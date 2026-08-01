@@ -29,6 +29,10 @@ from .memory_grounding import GroundingResult, MemoryGroundingValidator
 from .prompt_builder import PromptBuilder
 from .quality_validator import QualityValidator
 from .storage_builder import StorageBuilder
+from .topic_segmentation_pipeline import (
+    TOPIC_SEGMENTATION_OBSERVABILITY_FIELDS,
+    TopicSegmentationPipeline,
+)
 
 
 class MemoryProcessor:
@@ -47,8 +51,19 @@ class MemoryProcessor:
         cost_control: CostControl | None = None,
         grounding_judge: Callable[[dict[str, Any]], Awaitable[bool | Mapping[str, Any]]]
         | None = None,
+        topic_embed_fn: Callable[[list[str]], Awaitable[list[list[float]]]]
+        | None = None,
     ):
-        """初始化 LLM、Prompt、解析、质量校验与存储格式协作对象。"""
+        """初始化结构化抽取、话题分段、质量校验与存储格式协作对象。
+
+        参数:
+            context: AstrBot 运行时上下文。
+            llm_provider: 固定 Provider 或由上下文解析的 Provider 标识。
+            config: 处理器运行时配置快照。
+            cost_control: 共享的请求级成本门。
+            grounding_judge: 可选的来源可信度 Judge。
+            topic_embed_fn: 策略 B 使用的批量 Embedding 入口。
+        """
 
         self.context = context
         self.config = config or {}
@@ -71,6 +86,10 @@ class MemoryProcessor:
         self._topic_guidance = self._load_topic_guidance(prompt_dir)
         self._topic_segmentation_enabled = self.config.get(
             "topic_segmentation.enabled", True
+        )
+        self.topic_segmentation = TopicSegmentationPipeline(
+            self.config,
+            embed_fn=topic_embed_fn,
         )
 
     @staticmethod
@@ -170,6 +189,11 @@ class MemoryProcessor:
                     "[MemoryProcessor] 总结质量不达标（low），候选将进入隔离队列"
                 )
             structured_data["_quality"] = quality
+            memories_raw = await self.topic_segmentation.prepare_candidates(
+                structured_data,
+                messages,
+                is_group_chat=is_group_chat,
+            )
 
             fallback_excerpt = (
                 conversation_text[:200] + "..."
@@ -218,24 +242,6 @@ class MemoryProcessor:
                 if len(snippet) < 80:
                     snippet = conversation_text.strip()[:150]
             metadata["source_snippet"] = snippet[:150].strip()
-
-            # 提取 memories 数组（新格式）或包装旧格式
-            if "memories" in structured_data:
-                memories_raw = structured_data["memories"]
-            else:
-                memories_raw = [
-                    {
-                        "summary": structured_data.get("summary", ""),
-                        "key_facts": structured_data.get("key_facts", []),
-                        "topics": structured_data.get("topics", []),
-                        "importance": structured_data.get("importance", 0.5),
-                        "sentiment": structured_data.get("sentiment", "neutral"),
-                        "emotion_tags": structured_data.get("emotion_tags"),
-                        "causal_relations": structured_data.get("causal_relations"),
-                        "participants": structured_data.get("participants"),
-                        "source_refs": structured_data.get("source_refs"),
-                    }
-                ]
 
             results: list[dict[str, Any]] = []
             for mem in memories_raw:
@@ -288,6 +294,9 @@ class MemoryProcessor:
                     mem_metadata["atom_type"] = str(mem["atom_type"])
                 if mem.get("confidence") is not None:
                     mem_metadata["atom_confidence"] = float(mem["confidence"])
+                for field in TOPIC_SEGMENTATION_OBSERVABILITY_FIELDS:
+                    if field in mem:
+                        mem_metadata[field] = mem[field]
                 causal = (mem.get("causal_relations") or [])[:3]
                 if causal:
                     mem_metadata["causal_relations"] = [

@@ -24,7 +24,8 @@ flowchart LR
     E -->|"否"| G["JsonParser: 直接/修复/正则/默认"]
     F --> H["QualityValidator"]
     G --> H
-    H --> I["StorageBuilder"]
+    H --> T["TopicSegmentationPipeline: A/B/Hybrid"]
+    T --> I["StorageBuilder"]
     I --> J["逐条 memories[] 调整重要性与元数据"]
     J --> K["MemoryGroundingValidator"]
     K -->|"grounded 且非 low"| L["classify_atoms"]
@@ -34,7 +35,11 @@ flowchart LR
     N --> O["ReflectionHandler / MemoryQualityGate"]
 ```
 
-重要边界：`MemoryProcessor` 本身不调用 `TopicSegmentationRouter`。反思链对 C/D 策略在调用主管道前预切批次；A/混合提示词策略可通过 LLM 返回的 `memories[]` 让主管道一次产生多条记忆。不要再添加第二套隐藏分割步骤。
+重要边界：`MemoryProcessor` 在结构化解析与 `StorageBuilder` 之间通过
+`TopicSegmentationPipeline` 调用 A/B/Hybrid Router。B 复用初始化器注入的共享
+Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不能跨 participant、
+稳定身份来源或后续 scope 合并。C/D 仍只由反思链在主管道调用前预切批次，处理器内保持
+透传，不形成重复分割。
 
 ## 主管道协议
 
@@ -70,6 +75,8 @@ flowchart LR
 - C `TopicChunkingStrategy`：在抽取前按相邻消息 embedding 边界切块；无 embed 函数时使用确定性伪向量回退。
 - D `TwoStageLLMStrategy`：第一阶段以单次 Provider 请求识别 1-based `line_range`，第二阶段由上游逐批抽取；预算调用方可要求普通失败向上传播以释放 reservation。
 - `TopicSegmentationRouter` 接受 `a`、`b`、`c`、`d`、`a_b_hybrid` 及别名；非法策略稳定回退 `a_b_hybrid`。
+- `TopicSegmentationPipeline` 只在 A/B/Hybrid 下调用 Router；C/D 和 `enabled=false` 使用旧的单批候选提取语义。
+- Router 为候选附加 strategy、fallback reason、输入/输出计数；这些字段不包含正文、身份、scope 或 source ID。
 
 策略输出必须保持输入顺序、边界合法和至少可回退为单段；C/D 的运行成本门控由 handlers 中的 `TopicBatchPreparer` 负责。
 
@@ -119,13 +126,13 @@ flowchart LR
 ## 文件清单
 
 主管道：`memory_processor.py`、`llm_client.py`、`prompt_builder.py`、`conversation_formatter.py`、`json_parser.py`、`quality_validator.py`、`storage_builder.py`。  
-话题：`topic_splitter.py`。  
+话题：`topic_splitter.py`、`topic_segmentation_pipeline.py`。
 派生与图：`memory_consolidator.py`、`memory_evolution_candidates.py`、`atom_classifier.py`、`graph_extractor.py`、`atom_graph_extractor.py`、`entity_resolver.py`、`contradiction_detector.py`、`episode_clusterer.py`、`profile_extractor.py`、`knowledge_extractor.py`、`note_generator.py`、`human_like_formatter.py`。
 文本/兼容：`text_processor.py`、`chatroom_parser.py`、`message_utils.py`、`__init__.py`。
 
 ## 测试定位与验证
 
-主管道和直接组件分别位于 `tests/test_memory_processor.py`、`test_memory_grounding.py`、`test_llm_client.py`、`test_json_parser.py`、`test_prompt_builder.py`、`test_conversation_formatter.py`、`test_atom_classifier.py`、`test_text_processor.py`、`test_message_utils.py`。Memory Evolution proposal 契约位于 `tests/test_memory_consolidator.py`，本地 episode/conflict 生产闭环位于 `tests/test_memory_evolution_candidate_pipeline.py`；话题策略在 `test_topic_splitter.py` 与 `test_integration_topic_segmentation.py`。派生处理器有同名测试，包括 graph/entity/contradiction/episode/profile/knowledge/note/human-like/chatroom。
+主管道和直接组件分别位于 `tests/test_memory_processor.py`、`test_memory_grounding.py`、`test_llm_client.py`、`test_json_parser.py`、`test_prompt_builder.py`、`test_conversation_formatter.py`、`test_atom_classifier.py`、`test_text_processor.py`、`test_message_utils.py`。Memory Evolution proposal 契约位于 `tests/test_memory_consolidator.py`，本地 episode/conflict 生产闭环位于 `tests/test_memory_evolution_candidate_pipeline.py`；话题策略在 `test_topic_splitter.py` 与 `test_integration_topic_segmentation.py`，A/B/Hybrid 生产装配在 `test_topic_production_wiring.py`。派生处理器有同名测试，包括 graph/entity/contradiction/episode/profile/knowledge/note/human-like/chatroom。
 
 精确模块验证命令：
 

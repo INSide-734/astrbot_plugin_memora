@@ -52,6 +52,19 @@ SQLite is authoritative for structured durable state. FAISS and graph indexes ac
 retrieval but must not become the only copy of a memory. Multi-step writes use the shared
 write coordinator or a store-local transaction following the same serialization contract.
 
+### 话题分段闭环
+
+`TopicBatchPreparer` 只在结构化抽取前执行策略 C/D：C 使用相邻消息 Embedding 边界，
+D 使用请求级额外 LLM 预算识别话题范围。`MemoryProcessor` 在结构化解析和
+`StorageBuilder` 之间执行 A/B/Hybrid：A 直接消费 `memories[]`；Hybrid 仅在 A 返回
+单条且事实数达到门槛时运行 B；纯 B 和 Hybrid 的 B 回退都复用初始化器注入的共享
+Embedding Provider。
+
+B 只能在每条原始 memory 边界内聚类，分段继承原 participant 和 source refs；稳定身份
+provenance 继续由可信 `Message` 元数据在分段后统一锚定，session/scope 继续由反思存储
+边界附加。Router 只记录 strategy、稳定 fallback reason、输入/输出计数，不记录对话正文、
+身份、scope、source ID 或 Provider 配置。C/D 在 `MemoryProcessor` 内保持透传，避免重复分割。
+
 ### Pre-canonical quality gate
 
 LLM extraction output is not canonical merely because its JSON structure is valid. Every
@@ -253,6 +266,19 @@ unrelated local artifacts.
 - `tests/` and `scripts/check_all.py`: executable repository contract.
 
 ## 变更历史
+
+### 2026-08-01 - 接通 Topic B 与 Hybrid 生产分段
+
+**变更内容**：在 `MemoryProcessor` 的结构化解析与存储构建之间接入 A/B/Hybrid Router，
+并由初始化器注入共享 Embedding Provider；C/D 继续由反思预切分层负责。
+
+**变更理由**：原 Router 和 B 策略只有孤立单测，默认 Hybrid 的 B fallback 在真实写入链中
+从未执行，配置与实现没有形成闭环。
+
+**影响范围**：处理器话题分段、组件装配、低敏决策元数据、模块说明和定向回归测试。
+
+**决策依据**：B 按原始 memory/participant 边界分别聚类并继承 source refs；稳定身份与 scope
+仍由可信消息和存储边界决定，不能从事实正文猜测。
 
 ### 2026-08-01 - 接通 Episode 与 Conflict 派生闭环
 

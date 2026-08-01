@@ -68,6 +68,8 @@ class PromptSegmentationStrategy(TopicSegmentationStrategy):
         messages: list | None = None,
         is_group_chat: bool = False,
     ) -> list[MemorySegment]:
+        """把模型输出的 memories[] 转换为保持原顺序的独立片段。"""
+
         if "memories" in structured_data:
             raw_list: list[dict[str, Any]] = structured_data["memories"]
             logger.debug(f"[提示词分割] LLM 返回了 {len(raw_list)} 条独立记忆")
@@ -88,15 +90,7 @@ class PromptSegmentationStrategy(TopicSegmentationStrategy):
             segments.append(
                 MemorySegment(
                     content=summary,
-                    metadata={
-                        "topics": topics,
-                        "key_facts": key_facts,
-                        "sentiment": mem.get("sentiment", "neutral"),
-                        "emotion_tags": mem.get("emotion_tags") or [],
-                        "causal_relations": mem.get("causal_relations") or [],
-                        "participants": mem.get("participants") or [],
-                        "schema_version": "v3",
-                    },
+                    metadata=_segment_metadata(mem, key_facts, topics),
                     importance=float(mem.get("importance", 0.5)),
                     key_facts=key_facts,
                     topics=topics,
@@ -130,6 +124,24 @@ class EmbeddingClusteringStrategy(TopicSegmentationStrategy):
         messages: list | None = None,
         is_group_chat: bool = False,
     ) -> list[MemorySegment]:
+        """在每条原始 memory 内分别执行事实向量聚类。"""
+
+        raw_memories = structured_data.get("memories")
+        if isinstance(raw_memories, list):
+            segments: list[MemorySegment] = []
+            for memory in raw_memories:
+                if isinstance(memory, dict):
+                    segments.extend(await self._segment_single(memory))
+            return segments
+
+        return await self._segment_single(structured_data)
+
+    async def _segment_single(
+        self,
+        structured_data: dict[str, Any],
+    ) -> list[MemorySegment]:
+        """仅在单个原始 memory 边界内聚类，避免跨参与者合并。"""
+
         key_facts: list[str] = [
             str(f) for f in (structured_data.get("key_facts") or []) if f
         ]
@@ -230,6 +242,8 @@ class HybridSegmentationStrategy(TopicSegmentationStrategy):
         messages: list | None = None,
         is_group_chat: bool = False,
     ) -> list[MemorySegment]:
+        """优先采用 A 的结果，必要时对唯一 memory 执行 B 回退。"""
+
         segments = await self._strategy_a.segment(
             structured_data, messages, is_group_chat
         )
@@ -238,7 +252,15 @@ class HybridSegmentationStrategy(TopicSegmentationStrategy):
             return segments
 
         # 检查原始数据是否具备足够多的事实，值得再跑一次聚类
-        raw_facts: list[str] = structured_data.get("key_facts") or []
+        fallback_data = structured_data
+        raw_memories = structured_data.get("memories")
+        if (
+            isinstance(raw_memories, list)
+            and len(raw_memories) == 1
+            and isinstance(raw_memories[0], dict)
+        ):
+            fallback_data = raw_memories[0]
+        raw_facts: list[str] = fallback_data.get("key_facts") or []
         if len(raw_facts) < self._fallback_fact_threshold:
             return segments
 
@@ -248,7 +270,16 @@ class HybridSegmentationStrategy(TopicSegmentationStrategy):
             len(segments),
             len(raw_facts),
         )
-        return await self._strategy_b.segment(structured_data, messages, is_group_chat)
+        fallback_segments = await self._strategy_b.segment(
+            fallback_data,
+            messages,
+            is_group_chat,
+        )
+        for segment in fallback_segments:
+            segment.metadata["topic_segmentation_fallback_reason"] = (
+                "a_single_mixed_facts"
+            )
+        return fallback_segments
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +532,32 @@ class TopicSegmentationRouter:
         messages: list | None = None,
         is_group_chat: bool = False,
     ) -> list[MemorySegment]:
-        return await self._strategy.segment(structured_data, messages, is_group_chat)
+        """调用当前策略并附加不含正文的稳定决策观测字段。"""
+
+        segments = await self._strategy.segment(
+            structured_data,
+            messages,
+            is_group_chat,
+        )
+        input_count = _memory_input_count(structured_data)
+        output_count = len(segments)
+        fallback_reason = ""
+        for segment in segments:
+            segment.metadata["topic_segmentation_strategy"] = self._strategy_key
+            segment.metadata["topic_segmentation_input_count"] = input_count
+            segment.metadata["topic_segmentation_output_count"] = output_count
+            if not fallback_reason:
+                fallback_reason = str(
+                    segment.metadata.get("topic_segmentation_fallback_reason") or ""
+                )
+        logger.info(
+            "[话题分割路由] strategy=%s, fallback_reason=%s, input_count=%d, output_count=%d",
+            self._strategy_key,
+            fallback_reason or "none",
+            input_count,
+            output_count,
+        )
+        return segments
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +582,7 @@ def _parse_topic_identification_response(
     max_topics: int,
     line_count: int,
 ) -> list[dict[str, Any]]:
-    """Parse strategy-D topic ranges from JSON array, wrapped dict, or code block."""
+    """从 JSON 数组、包装对象或代码块解析策略 D 的话题范围。"""
     text = str(raw or "").strip()
     if not text:
         return []
@@ -657,22 +713,15 @@ def _build_segments_from_clusters(
             continue
         prefix = f"[话题{i + 1}] " if len(clusters) > 1 else ""
         summary = prefix + "；".join(facts)
-        metadata = {
-            "topics": data.get("topics") or [],
-            "key_facts": facts,
-            "sentiment": data.get("sentiment", "neutral"),
-            "emotion_tags": data.get("emotion_tags") or [],
-            "causal_relations": data.get("causal_relations") or [],
-            "participants": data.get("participants") or [],
-            "schema_version": "v3",
-        }
+        topics = [str(topic) for topic in (data.get("topics") or []) if topic]
+        metadata = _segment_metadata(data, facts, topics)
         segments.append(
             MemorySegment(
                 content=summary,
                 metadata=metadata,
                 importance=float(data.get("importance", 0.5)),
                 key_facts=facts,
-                topics=data.get("topics") or [],
+                topics=topics,
             )
         )
     return segments
@@ -683,20 +732,44 @@ def _single_segment(data: dict[str, Any], key_facts: list[str]) -> list[MemorySe
     summary = str(data.get("summary", "") or "")
     if not summary and not key_facts:
         return []
+    topics = [str(topic) for topic in (data.get("topics") or []) if topic]
     return [
         MemorySegment(
             content=summary,
-            metadata={
-                "topics": data.get("topics") or [],
-                "key_facts": key_facts,
-                "sentiment": data.get("sentiment", "neutral"),
-                "emotion_tags": data.get("emotion_tags") or [],
-                "causal_relations": data.get("causal_relations") or [],
-                "participants": data.get("participants") or [],
-                "schema_version": "v3",
-            },
+            metadata=_segment_metadata(data, key_facts, topics),
             importance=float(data.get("importance", 0.5)),
             key_facts=key_facts,
-            topics=data.get("topics") or [],
+            topics=topics,
         )
     ]
+
+
+def _segment_metadata(
+    data: dict[str, Any],
+    key_facts: list[str],
+    topics: list[str],
+) -> dict[str, Any]:
+    """复制分段允许继承的内容元数据，不推断身份或作用域。"""
+
+    metadata: dict[str, Any] = {
+        "topics": list(topics),
+        "key_facts": list(key_facts),
+        "sentiment": data.get("sentiment", "neutral"),
+        "emotion_tags": data.get("emotion_tags") or [],
+        "causal_relations": data.get("causal_relations") or [],
+        "participants": data.get("participants") or [],
+        "schema_version": "v3",
+    }
+    for key in ("source_refs", "atom_type", "confidence"):
+        if data.get(key) is not None:
+            metadata[key] = data[key]
+    return metadata
+
+
+def _memory_input_count(structured_data: dict[str, Any]) -> int:
+    """返回 Router 接收的原始 memory 数量，仅用于低敏计数观测。"""
+
+    raw_memories = structured_data.get("memories")
+    if isinstance(raw_memories, list):
+        return len([item for item in raw_memories if isinstance(item, dict)])
+    return 1
