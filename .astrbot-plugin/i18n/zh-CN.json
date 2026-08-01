@@ -985,7 +985,14 @@
       },
       "evaluation": {
         "metric": {
-          "cases": "用例"
+          "cases": "用例",
+          "observedP95": "实测 p95",
+          "annotatedP95": "标注 p95",
+          "reportedP95": "外部报告 p95",
+          "annotatedFaithfulness": "标注忠实度",
+          "judgedFaithfulness": "Judge 忠实度",
+          "observedProviderCalls": "实测 Provider 调用",
+          "observedTokenCost": "实测 token 成本"
         },
         "runs": "评测运行",
         "baseline": "基线配置",
@@ -1045,6 +1052,7 @@
         "rrDelta": "RR 差异",
         "gainDelta": "增益差异",
         "p95Delta": "p95 差异",
+        "observedP95Delta": "实测 p95 差异",
         "emptyPrompt": "运行一次评测，或打开已保存的报告。",
         "noFailedCases": "暂无失败用例",
         "failedCases": "失败用例",
@@ -1054,7 +1062,10 @@
           "rankedDocs": "排序文档",
           "recall": "召回",
           "gain": "增益",
-          "latency": "延迟"
+          "latency": "延迟",
+          "observedLatency": "实测延迟",
+          "annotatedLatency": "标注延迟",
+          "reportedLatency": "外部报告延迟"
         },
         "miss": "未命中"
       },

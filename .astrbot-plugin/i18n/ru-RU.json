@@ -981,7 +981,14 @@
       },
       "evaluation": {
         "metric": {
-          "cases": "Кейсы"
+          "cases": "Кейсы",
+          "observedP95": "Измеренный p95",
+          "annotatedP95": "Аннотированный p95",
+          "reportedP95": "Заявленный p95",
+          "annotatedFaithfulness": "Аннотированная достоверность",
+          "judgedFaithfulness": "Judge-достоверность",
+          "observedProviderCalls": "Измеренные вызовы провайдера",
+          "observedTokenCost": "Измеренная стоимость токенов"
         },
         "runs": "Запуски оценки",
         "baseline": "Базовая линия",
@@ -1041,6 +1048,7 @@
         "rrDelta": "Разница RR",
         "gainDelta": "Разница gain",
         "p95Delta": "Разница p95",
+        "observedP95Delta": "Разница измеренного p95",
         "emptyPrompt": "Запустите оценку или откройте сохранённый отчёт.",
         "noFailedCases": "Нет неудачных кейсов",
         "failedCases": "Неудачные кейсы",
@@ -1050,7 +1058,10 @@
           "rankedDocs": "Документы",
           "recall": "Recall",
           "gain": "Gain",
-          "latency": "Задержка"
+          "latency": "Задержка",
+          "observedLatency": "Измеренная задержка",
+          "annotatedLatency": "Аннотированная задержка",
+          "reportedLatency": "Заявленная задержка"
         },
         "miss": "промах"
       },

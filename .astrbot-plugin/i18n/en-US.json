@@ -985,7 +985,14 @@
       },
       "evaluation": {
         "metric": {
-          "cases": "Cases"
+          "cases": "Cases",
+          "observedP95": "Observed p95",
+          "annotatedP95": "Annotated p95",
+          "reportedP95": "Reported p95",
+          "annotatedFaithfulness": "Annotated faithfulness",
+          "judgedFaithfulness": "Judged faithfulness",
+          "observedProviderCalls": "Observed provider calls",
+          "observedTokenCost": "Observed token cost"
         },
         "runs": "Evaluation Runs",
         "baseline": "Baseline",
@@ -1045,6 +1052,7 @@
         "rrDelta": "RR delta",
         "gainDelta": "Gain delta",
         "p95Delta": "p95 delta",
+        "observedP95Delta": "Observed p95 delta",
         "emptyPrompt": "Run an evaluation or open a saved report.",
         "noFailedCases": "No failed cases",
         "failedCases": "Failed cases",
@@ -1054,7 +1062,10 @@
           "rankedDocs": "Ranked docs",
           "recall": "Recall",
           "gain": "Gain",
-          "latency": "Latency"
+          "latency": "Latency",
+          "observedLatency": "Observed latency",
+          "annotatedLatency": "Annotated latency",
+          "reportedLatency": "Reported latency"
         },
         "miss": "miss"
       },
