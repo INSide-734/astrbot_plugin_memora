@@ -52,6 +52,27 @@ SQLite is authoritative for structured durable state. FAISS and graph indexes ac
 retrieval but must not become the only copy of a memory. Multi-step writes use the shared
 write coordinator or a store-local transaction following the same serialization contract.
 
+### Pre-canonical quality gate
+
+LLM extraction output is not canonical merely because its JSON structure is valid. Every
+candidate carries anonymous `S<n>` source offsets and passes deterministic grounding checks
+for range, numeric anchors, negation polarity, and group-chat subjects. An uncertain claim may
+use the request-scoped extra-LLM budget for a Judge; the Judge receives only the current claim
+and its referenced snippets. Ordinary Judge failure conservatively quarantines the candidate,
+while cancellation propagates.
+
+`MemoryQualityGate` is the only production boundary between extracted candidates and
+`MemoryEngine.add_memory()`. Low-quality or ungrounded candidates are stored in the independent
+`memory_quarantine.sqlite3` queue and never enter canonical SQLite documents, FTS, FAISS, Atom,
+graph, or Memory Evolution. The quarantine candidate ID is not a canonical memory ID.
+
+Approval uses revision CAS, reloads the original `ConversationStore` window, revalidates the
+stored message fingerprints and offsets, rebuilds Atom data, and then performs one normal
+canonical write. Rejection preserves the original messages. Cancellation before canonical
+submission returns the candidate to a blocked state; cancellation after submission begins
+leaves it `approving` to represent an unknown commit result and prevent automatic duplicates.
+Page API responses expose only allowlisted candidate fields and anonymous offsets.
+
 ## Retrieval and adaptive injection
 
 `RecallHandler` remains the request-event orchestrator. It performs content extraction,

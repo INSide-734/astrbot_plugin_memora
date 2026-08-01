@@ -26,6 +26,8 @@ from ..provider_adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..retrieval.derived_relation_expander import DerivedRelationExpander
 from ..retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
 from ..retrieval.projection_reader import ProjectionReader
+from ..review.memory_quality_gate import MemoryQualityGate
+from ..review.quarantine_store import MemoryQuarantineStore
 from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
@@ -249,6 +251,11 @@ class ComponentFactory:
         )
         logger.info("MemoryProcessor 已初始化")
 
+        memory_quarantine_store = MemoryQuarantineStore(
+            data_dir_path / "memory_quarantine.sqlite3"
+        )
+        memory_quality_gate = None
+
         memory_evolution_gate = MemoryEvolutionGate(evolution_config)
         memory_evolution_consolidator = MemoryConsolidator(
             memory_processor.llm_client.call_llm_with_retry,
@@ -271,6 +278,14 @@ class ComponentFactory:
             memory_evolution_manager,
         )
         try:
+            await memory_quarantine_store.initialize()
+            memory_quality_gate = MemoryQualityGate(
+                memory_quarantine_store,
+                memory_engine=memory_engine,
+                memory_processor=memory_processor,
+                conversation_manager=conversation_manager,
+            )
+            logger.info("记忆质量隔离门已初始化")
             await db_setup.auto_rebuild_index_if_needed(
                 index_validator,
                 memory_engine,
@@ -359,6 +374,8 @@ class ComponentFactory:
             "graph_db": graph_db,
             "memory_engine": memory_engine,
             "memory_processor": memory_processor,
+            "memory_quarantine_store": memory_quarantine_store,
+            "memory_quality_gate": memory_quality_gate,
             "backup_manager": backup_manager,
             "conversation_manager": conversation_manager,
             "identity_runtime": identity_runtime,

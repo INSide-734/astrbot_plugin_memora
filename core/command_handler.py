@@ -35,6 +35,7 @@ class CommandHandler(
         conversation_manager: ConversationManager | None,
         index_validator: IndexValidator | None,
         memory_processor=None,
+        memory_quality_gate=None,
         initialization_status_callback=None,
         summary_window_locker=None,
         write_guard_cb=None,
@@ -54,6 +55,7 @@ class CommandHandler(
             conversation_manager: 会话管理器
             index_validator: 索引验证器
             memory_processor: 记忆处理器（用于手动总结）
+            memory_quality_gate: canonical 写入前的记忆质量门
             initialization_status_callback: 初始化状态回调函数
             diagnostics_health_provider: 健康评分异步提供器
             diagnostics_metrics_provider: 实时指标异步提供器
@@ -67,6 +69,7 @@ class CommandHandler(
         self.conversation_manager = conversation_manager
         self.index_validator = index_validator
         self._memory_processor = memory_processor
+        self._memory_quality_gate = memory_quality_gate
         self.get_initialization_status = initialization_status_callback
         self._summary_window_locker = summary_window_locker
         self._write_guard_cb = write_guard_cb
@@ -208,6 +211,17 @@ class CommandHandler(
                     "triggered_by": "manual",
                 }
                 try:
+                    if self._memory_quality_gate is not None:
+                        gate_result = await self._memory_quality_gate.route_candidate(
+                            mem,
+                            session_id=session_id,
+                            persona_id=persona_id,
+                            source_window=metadata["source_window"],
+                            is_group_chat=is_group_chat,
+                        )
+                        if gate_result.action == "quarantined":
+                            stored_count += 1
+                            continue
                     await self.memory_engine.add_memory(
                         content=mem["content"],
                         session_id=session_id,

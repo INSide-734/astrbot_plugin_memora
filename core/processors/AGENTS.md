@@ -2,7 +2,7 @@
 
 # 对话到结构化记忆处理管道
 
-**最后更新：** 2026-07-19
+**最后更新：** 2026-08-01
 **主入口：** `MemoryProcessor.process_conversation()`  
 **包级公开导出：** `MemoryProcessor`、`TextProcessor`、`ChatroomContextParser`、`store_round_with_length_check`、`EntityResolver`、`GraphExtractor`
 
@@ -26,9 +26,12 @@ flowchart LR
     G --> H
     H --> I["StorageBuilder"]
     I --> J["逐条 memories[] 调整重要性与元数据"]
-    J --> K["classify_atoms"]
-    K --> L["list[{content, metadata, importance, atoms}]"]
-    L --> M["ReflectionHandler / MemoryEngine 持久化"]
+    J --> K["MemoryGroundingValidator"]
+    K -->|"grounded 且非 low"| L["classify_atoms"]
+    K -->|"low / 未忠实"| M["quality_gate_action=quarantine；不生成 Atom"]
+    L --> N["list[{content, metadata, importance, atoms}]"]
+    M --> N
+    N --> O["ReflectionHandler / MemoryQualityGate"]
 ```
 
 重要边界：`MemoryProcessor` 本身不调用 `TopicSegmentationRouter`。反思链对 C/D 策略在调用主管道前预切批次；A/混合提示词策略可通过 LLM 返回的 `memories[]` 让主管道一次产生多条记忆。不要再添加第二套隐藏分割步骤。
@@ -41,7 +44,8 @@ flowchart LR
 - `conversation_formatter` 与 `llm_client_instance` 是给 `TopicBatchPreparer` 使用的只读协作接口。
 - Prompt 模板优先级由 `PromptBuilder` 实现：配置自定义模板 > `core/prompts/*.txt` > 最小硬编码回退；系统提示可含当前时间、人格、连续性、兴趣与话题引导。
 - 输出解析优先 `MemoryExtractionResult` guardrail；验证失败才进入旧 JSON 解析器，并写入 `_guardrail_fallback`。不要把“回退成功”误标为已通过 guardrail。
-- 低质量总结仍返回，但写 `summary_quality=low`；调用方决定是否持久化。
+- 每条模型结果必须带当前窗口的匿名 `S<n>` source offset；旧输出仅允许由当前窗口唯一推断受控引用。数字、否定极性、群聊主体和引用边界先走确定性校验，不确定路径才使用请求级预算保护的 Judge。
+- 低质量或来源未通过的候选仍返回，但写 `quality_gate_action=quarantine`、稳定原因码和内部证据；此时不提前生成 Atom。生产调用方必须交给 `MemoryQualityGate`，不得直接写 canonical、FTS、FAISS、图或 Evolution。
 - 每条记忆写 `schema_version=v3`、最多 150 字符 `source_snippet`；`StorageBuilder` 同时维护 `summary_schema_version=v2` 的摘要元数据，这是不同层级的版本字段。
 - 重要性可受情感强度、首因/近因和兴趣命中影响，并始终上限钳制到 1.0。
 - `build_memory_from_structured_data()` 用于已有结构化数据；`classify_atoms_from_metadata()` 尊重 `atom_enabled`；`generate_persona_interpretations()` 是可选逐 persona 额外 LLM 调用，每个 persona 必须分别取得请求预算并固定单次 Provider 请求，单个失败释放 reservation 且不影响其他 persona。
@@ -53,6 +57,7 @@ flowchart LR
 - `JsonParser` 顺序：直接 JSON → 补括号/引号与去尾逗号后解析 → 正则提取 → `QualityValidator` 默认结构。
 - `QualityValidator` 规范 `summary/topics/key_facts/sentiment/importance`；重要性范围为 `[0,1]`，非法值回退 `0.5`。
 - `ConversationFormatter` 的普通格式保留发送者、ID、秒级时间并给 bot 加前缀；compact 格式用于成本敏感路径。
+- `format_conversation_with_source_refs()` 只增加稳定 `S0..S<n>` 标签；持久化证据使用消息指纹和字符 offset，Judge 只接收当前候选实际引用的片段。
 - `StorageBuilder`：群聊 `privacy_level=public`，私聊 `confidential`；内容优先 canonical summary，否则使用对话摘录。
 
 ## 话题分割协议
@@ -104,6 +109,7 @@ flowchart LR
 - `process_conversation(llm_max_retries=...)` 的默认重试只服务基础反思；额外反思批次必须由上游传入 `1`，避免一个 reservation 对应多次物理 Provider 请求。
 - `asyncio.CancelledError` 属于控制流，必须穿透处理器与 LLM 重试。新增异步异常处理时先单独 `except asyncio.CancelledError: raise`，不要把关闭取消转成重试、空结果或 pending 业务失败。
 - LLM 文本是不可信输入：优先 guardrail，回退解析后仍需规范字段、长度、枚举与数值范围。Prompt 中只放完成抽取所需的对话片段，避免在日志输出正文或人格秘密。
+- 来源 Judge 服从同一请求的 `ExtraLlmBudget`；普通失败保守隔离，取消必须继续传播。不得把窗口外消息、会话身份、Provider 配置或内部证据映射传给 Judge。
 - 图、画像、知识、笔记属于不同派生模型；不要把它们加入 `MemoryProcessor` 的关键同步路径，除非上游契约明确要求。
 - `TextProcessor` 是检索预处理边界；不要在抽取模块另造分词规则。
 - 包级 `__init__.py` 只导出已列出的六个符号。内部类需要成为稳定 API 时同步更新导出契约和测试。
@@ -117,7 +123,7 @@ flowchart LR
 
 ## 测试定位与验证
 
-主管道和直接组件分别位于 `tests/test_memory_processor.py`、`test_llm_client.py`、`test_json_parser.py`、`test_prompt_builder.py`、`test_conversation_formatter.py`、`test_atom_classifier.py`、`test_text_processor.py`、`test_message_utils.py`。Memory Evolution proposal 契约位于 `tests/test_memory_consolidator.py`；话题策略在 `test_topic_splitter.py` 与 `test_integration_topic_segmentation.py`。派生处理器有同名测试，包括 graph/entity/contradiction/episode/profile/knowledge/note/human-like/chatroom。
+主管道和直接组件分别位于 `tests/test_memory_processor.py`、`test_memory_grounding.py`、`test_llm_client.py`、`test_json_parser.py`、`test_prompt_builder.py`、`test_conversation_formatter.py`、`test_atom_classifier.py`、`test_text_processor.py`、`test_message_utils.py`。Memory Evolution proposal 契约位于 `tests/test_memory_consolidator.py`；话题策略在 `test_topic_splitter.py` 与 `test_integration_topic_segmentation.py`。派生处理器有同名测试，包括 graph/entity/contradiction/episode/profile/knowledge/note/human-like/chatroom。
 
 精确模块验证命令：
 

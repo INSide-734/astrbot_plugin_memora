@@ -38,12 +38,17 @@ flowchart TD
     L -->|"否"| M["结束"]
     L -->|"是"| N["TopicBatchPreparer"]
     N --> O["MemoryProcessor 结构化抽取"]
-    O --> P["MemoryEngine.add_memory"]
-    P --> Q["canonical 写入成功后调度 Memory Evolution"]
-    Q --> R["提交 last_summarized_index / 清除 pending_summary"]
+    O --> P{"MemoryQualityGate"}
+    P -->|"allow"| Q["MemoryEngine.add_memory"]
+    P -->|"quarantine"| R["独立隔离队列；不进入索引/派生"]
+    Q --> S["canonical 写入成功后调度 Memory Evolution"]
+    R --> T["提交 last_summarized_index / 清除 pending_summary"]
+    S --> T
 ```
 
 聊天主链路必须保持：`main.py` 的 `@filter.on_llm_request()` / `@filter.on_llm_response()` 只在插件就绪且 `EventHandler` 存在时委托；处理器不能自行注册钩子，也不能把动态记忆写进长期 System Prompt。群聊用户消息由全量捕获钩子写入；其中 `is_at_or_wake_command=false` 的环境消息落库后调用共享总结入口，唤醒 Bot 的消息继续等待响应钩子；私聊用户消息在召回链写入；assistant 消息在反思链写入。
+
+反思和 `/memora summarize` 必须复用同一个 `MemoryQualityGate`。quarantine 成功表示当前窗口已经安全处理，可以推进滑动窗口；它不算 canonical 写入，也不得调度 Evolution。批量写入中的 `CancelledError` 必须从 `asyncio.gather(return_exceptions=True)` 结果中重新抛出，不能被记为普通部分失败。
 
 ## 关键接口与协议
 

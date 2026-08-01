@@ -55,6 +55,7 @@ class ReflectionHandler:
         prompt_protection_service: Any | None = None,
         write_guard_cb: Any | None = None,
         memory_evolution_manager: Any | None = None,
+        memory_quality_gate: Any | None = None,
         cost_control: CostControl | None = None,
     ) -> None:
         """装配响应清洗、反思存储及可选认知组件。"""
@@ -72,6 +73,7 @@ class ReflectionHandler:
         self._prompt_protection = prompt_protection_service
         self._write_guard_cb = write_guard_cb
         self._memory_evolution_manager = memory_evolution_manager
+        self._memory_quality_gate = memory_quality_gate
         self._cost_control = cost_control or CostControl()
 
         self._storage_tasks: set[asyncio.Task] = set()
@@ -962,17 +964,34 @@ class ReflectionHandler:
                     )
 
                     async def _store_one(mem: dict[str, Any]) -> bool:
+                        """在质量门通过后写入一条 canonical memory。"""
+
                         metadata = mem.setdefault("metadata", {})
                         idempotency_key = str(metadata.get("idempotency_key") or "")
                         if idempotency_key in completed_idempotency_keys:
                             return True
-                        metadata["source_window"] = {
+                        source_window = {
                             "session_id": session_id,
                             "start_index": start_index,
                             "end_index": end_index,
                             "message_count": end_index - start_index,
                         }
+                        metadata["source_window"] = source_window
                         try:
+                            if self._memory_quality_gate is not None:
+                                gate_result = (
+                                    await self._memory_quality_gate.route_candidate(
+                                        mem,
+                                        session_id=session_id,
+                                        persona_id=persona_id,
+                                        source_window=source_window,
+                                        is_group_chat=is_group_chat,
+                                    )
+                                )
+                                if gate_result.action == "quarantined":
+                                    if idempotency_key:
+                                        successful_keys.add(idempotency_key)
+                                    return True
                             memory_id = await self._memory_engine.add_memory(
                                 content=mem["content"],
                                 session_id=session_id,
@@ -994,7 +1013,9 @@ class ReflectionHandler:
 
                     sem = asyncio.Semaphore(_MAX_CONCURRENT_WRITES)
 
-                    async def _store_with_sem(mem):
+                    async def _store_with_sem(mem: dict[str, Any]) -> bool:
+                        """在单窗口并发上限内执行一条质量门与写入任务。"""
+
                         async with sem:
                             return await _store_one(mem)
 
@@ -1003,6 +1024,8 @@ class ReflectionHandler:
                         return_exceptions=True,
                     )
                     for r in write_results:
+                        if isinstance(r, asyncio.CancelledError):
+                            raise r
                         if isinstance(r, BaseException):
                             logger.error(
                                 f"[{session_id}] 批量写入异常：{r}",

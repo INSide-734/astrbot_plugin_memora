@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -120,6 +120,72 @@ class TestHandleSummarizeErrors:
             results.append(result)
 
         assert results == ["备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。"]
+
+    @pytest.mark.asyncio
+    async def test_quarantined_candidate_advances_window_without_canonical_write(
+        self,
+    ) -> None:
+        """手动总结隔离低质量候选后不得写 canonical，但应安全推进窗口。"""
+
+        from core.command_handler import CommandHandler
+        from core.review.memory_quality_gate import MemoryGateResult
+
+        conversation_manager = MagicMock()
+        conversation_manager.store.get_message_count = AsyncMock(return_value=2)
+        conversation_manager.get_session_metadata = AsyncMock(return_value=0)
+        messages = [MagicMock(group_id=None), MagicMock(group_id=None)]
+        conversation_manager.get_messages_range = AsyncMock(return_value=messages)
+        conversation_manager.update_session_metadata = AsyncMock()
+        processor = MagicMock()
+        processor.process_conversation = AsyncMock(
+            return_value=[
+                {
+                    "content": "低质量候选",
+                    "importance": 0.2,
+                    "metadata": {"summary_quality": "low"},
+                    "atoms": [],
+                }
+            ]
+        )
+        gate = MagicMock()
+        gate.route_candidate = AsyncMock(
+            return_value=MemoryGateResult(
+                action="quarantined",
+                candidate_id="qc-one",
+                reason_codes=("summary_quality_low",),
+            )
+        )
+        engine = MagicMock()
+        engine.add_memory = AsyncMock()
+        handler = CommandHandler(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            memory_engine=engine,
+            conversation_manager=conversation_manager,
+            index_validator=None,
+            memory_processor=processor,
+            memory_quality_gate=gate,
+        )
+        event = MagicMock()
+        event.unified_msg_origin = "session-1"
+        event.plain_result = MagicMock(side_effect=lambda message: message)
+
+        with patch("core.utils.get_persona_id", AsyncMock(return_value="persona-1")):
+            results = [result async for result in handler.handle_summarize(event)]
+
+        assert len(results) == 2
+        engine.add_memory.assert_not_awaited()
+        gate.route_candidate.assert_awaited_once()
+        conversation_manager.update_session_metadata.assert_any_await(
+            "session-1",
+            "last_summarized_index",
+            2,
+        )
+        conversation_manager.update_session_metadata.assert_any_await(
+            "session-1",
+            "pending_summary",
+            None,
+        )
 
 
 class TestMaintenanceWriteGuard:

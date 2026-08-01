@@ -495,6 +495,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     memory_evolution_manager=getattr(
                         self.initializer, "memory_evolution_manager", None
                     ),
+                    memory_quality_gate=getattr(
+                        self.initializer, "memory_quality_gate", None
+                    ),
                 )
 
             # 创建命令处理器（幂等）
@@ -506,6 +509,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     conversation_manager=self.initializer.conversation_manager,
                     index_validator=self.initializer.index_validator,
                     memory_processor=self.initializer.memory_processor,
+                    memory_quality_gate=getattr(
+                        self.initializer, "memory_quality_gate", None
+                    ),
                     initialization_status_callback=self._get_initialization_status_message,
                     summary_window_locker=self.event_handler.summary_window_locker
                     if self.event_handler

@@ -45,6 +45,8 @@ async def test_runtime_write_and_quality_api_share_one_scorer(
             "graph_db": None,
             "memory_engine": engine,
             "memory_processor": memory_processor,
+            "memory_quarantine_store": MagicMock(),
+            "memory_quality_gate": MagicMock(),
             "conversation_manager": MagicMock(),
             "index_validator": MagicMock(),
             "decay_scheduler": None,

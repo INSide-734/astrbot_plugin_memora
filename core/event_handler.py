@@ -70,6 +70,7 @@ class EventHandler:
         injection_recorder: InjectionDecisionRecorder | None = None,
         memory_tool_available: bool = False,
         memory_evolution_manager: Any | None = None,
+        memory_quality_gate: Any | None = None,
     ) -> None:
         """绑定事件主链依赖，并复用会话管理器持有的协议身份运行时。"""
 
@@ -145,6 +146,7 @@ class EventHandler:
             prompt_protection_service=prompt_protection_service,
             write_guard_cb=write_guard_cb,
             memory_evolution_manager=memory_evolution_manager,
+            memory_quality_gate=memory_quality_gate,
             cost_control=self._cost_control,
         )
 

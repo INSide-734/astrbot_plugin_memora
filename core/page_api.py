@@ -32,6 +32,7 @@ from .api.metrics_api import MetricsApiMixin
 from .api.note_api import NoteApiMixin
 from .api.profile_api import ProfileApiMixin
 from .api.quality_api import QualityApiMixin
+from .api.quarantine_api import QuarantineApiMixin
 from .api.recall_trace_api import RecallTraceApiMixin
 from .api.response_utils import error_response, ok_response
 from .api.review_api import ReviewApiMixin
@@ -64,6 +65,7 @@ class PluginPageApi(
     ConfigApiMixin,
     TopicSegmentationApiMixin,
     QualityApiMixin,
+    QuarantineApiMixin,
     RecallTraceApiMixin,
     InjectionStrategyApiMixin,
     ReviewApiMixin,
@@ -736,6 +738,24 @@ class PluginPageApi(
             self.apply_review_action,
             ["POST"],
             "页面接口：执行记忆审查动作",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/quarantine",
+            self.list_quarantine_candidates,
+            ["GET"],
+            "页面接口：pre-canonical 记忆隔离队列",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/quarantine/detail",
+            self.get_quarantine_candidate_detail,
+            ["GET"],
+            "页面接口：pre-canonical 记忆隔离详情",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/quarantine/action",
+            self.apply_quarantine_action,
+            ["POST"],
+            "页面接口：处置 pre-canonical 记忆隔离候选",
         )
 
         # ---- 黑话 ----

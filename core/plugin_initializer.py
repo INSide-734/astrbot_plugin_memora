@@ -26,6 +26,8 @@ from .managers.memory_engine import MemoryEngine
 from .monitoring import report_debug_event, report_debug_exception
 from .monitoring.quality_scorer import MemoryQualityScorer
 from .processors.memory_processor import MemoryProcessor
+from .review.memory_quality_gate import MemoryQualityGate
+from .review.quarantine_store import MemoryQuarantineStore
 from .schedulers.backfill_scheduler import BackfillScheduler
 from .schedulers.decay_scheduler import DecayScheduler
 from .security import PromptProtectionService
@@ -61,6 +63,8 @@ class PluginInitializer:
         self.memory_engine: MemoryEngine | None = None
         self.quality_scorer: MemoryQualityScorer = MemoryQualityScorer(window_size=100)
         self.memory_processor: MemoryProcessor | None = None
+        self.memory_quarantine_store: MemoryQuarantineStore | None = None
+        self.memory_quality_gate: MemoryQualityGate | None = None
         self.conversation_manager: ConversationManager | None = None
         self.index_validator: IndexValidator | None = None
         self.decay_scheduler: DecayScheduler | None = None
@@ -258,6 +262,8 @@ class PluginInitializer:
             self.memory_engine = components["memory_engine"]
             self.memory_engine._quality_scorer = self.quality_scorer
             self.memory_processor = components["memory_processor"]
+            self.memory_quarantine_store = components["memory_quarantine_store"]
+            self.memory_quality_gate = components["memory_quality_gate"]
             self.conversation_manager = components["conversation_manager"]
             self.index_validator = components["index_validator"]
             self.decay_scheduler = components["decay_scheduler"]
@@ -277,6 +283,8 @@ class PluginInitializer:
                 ("graph_database", self.graph_db),
                 ("memory_engine", self.memory_engine),
                 ("memory_processor", self.memory_processor),
+                ("memory_quarantine_store", self.memory_quarantine_store),
+                ("memory_quality_gate", self.memory_quality_gate),
                 ("conversation_manager", self.conversation_manager),
                 ("index_validator", self.index_validator),
                 ("decay_scheduler", self.decay_scheduler),
@@ -655,6 +663,8 @@ class PluginInitializer:
                 "graph_db": self.graph_db is not None,
                 "memory_engine": self.memory_engine is not None,
                 "memory_processor": self.memory_processor is not None,
+                "memory_quarantine_store": self.memory_quarantine_store is not None,
+                "memory_quality_gate": self.memory_quality_gate is not None,
                 "conversation_manager": self.conversation_manager is not None,
                 "index_validator": self.index_validator is not None,
                 "memory_evolution_store": self.memory_evolution_store is not None,
