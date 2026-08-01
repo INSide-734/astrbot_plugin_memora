@@ -36,6 +36,7 @@ def source(
         "shared",
         datetime(2026, 7, 18, tzinfo=UTC),
         f"证据 {memory_id}",
+        subject_key="subject:a",
     )
 
 
@@ -214,6 +215,7 @@ async def test_high_impact_is_candidate_and_privacy_uses_strictest_source(manage
         "confidential",
         datetime(2026, 7, 18, tzinfo=UTC),
         "机密证据",
+        subject_key="subject:a",
     )
     proposal = EvolutionProposal(
         relations=(

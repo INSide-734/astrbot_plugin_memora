@@ -73,6 +73,28 @@ submission returns the candidate to a blocked state; cancellation after submissi
 leaves it `approving` to represent an unknown commit result and prevent automatic duplicates.
 Page API responses expose only allowlisted candidate fields and anonymous offsets.
 
+## 派生记忆演化闭环
+
+canonical memory 成功提交后，`MemoryEvolutionManager` 从同 scope 的近期记录中有界选择
+最多 6 条 source，并把创建时 revision 固化到 job。`MemoryEvolutionCandidateGenerator`
+先运行不调用 Provider 的确定性候选链：`EpisodeClusterer` 产生带 topic overlap、时间窗口和
+revision 的 `same_episode` relation proposal；`ContradictionDetector` 只产生同匿名主体的
+`updates`/`contradicts` 候选。只有本地候选为空时才回退 `MemoryConsolidator`，避免为已经
+确定的 episode/conflict 再付出一次 LLM 调用。
+
+处理器不写 canonical metadata、正文或状态。Manager 在应用 proposal 前重新读取全部 source，
+校验 revision、scope、privacy、主体、role、自关系、重复边和环，再把低影响高置信 relation
+写为 `active`，把高影响 relation 写为 `candidate`。relation 的稳定键绑定 canonical ID、
+source revision 和类型；Projection 仍只是有 source mapping 的派生解释，不形成第二套
+canonical ID。
+
+高影响 relation 使用独立复核状态机和动作审计表，不复用 canonical review 或 pre-canonical
+quarantine 的 ID/状态。`approve`、`reject`、`replay` 都要求候选 revision CAS；approve/replay
+还会再次验证 source revision、scope 与 privacy。人工拒绝是持久终态，后台重复 proposal 不得
+无审计重开，只有显式 replay 能重新进入 `candidate`。Page API 只返回 relation candidate ID、
+候选 revision、类型、状态、置信度和动作标量，不返回 source ID/revision、scope、privacy、
+正文、身份或 origin job。
+
 ## Retrieval and adaptive injection
 
 `RecallHandler` remains the request-event orchestrator. It performs content extraction,
@@ -229,3 +251,19 @@ unrelated local artifacts.
 - `docs/superpowers/specs/`: approved feature designs.
 - `docs/superpowers/plans/`: executable implementation plans.
 - `tests/` and `scripts/check_all.py`: executable repository contract.
+
+## 变更历史
+
+### 2026-08-01 - 接通 Episode 与 Conflict 派生闭环
+
+**变更内容**：把 Episode/Contradiction 确定性候选接入 Memory Evolution worker，并新增高影响
+relation 的 CAS 复核、拒绝、重放和低敏审计链。
+
+**变更理由**：原实现只有孤立处理器或 candidate 状态，没有生产 source 选择、持久化与人工处置
+入口，仍属于“功能已写、闭环未接上”。
+
+**影响范围**：Memory Evolution 组件装配、candidate source 读取、relation schema、Page API、
+模块文档和定向回归测试。
+
+**决策依据**：canonical SQLite 继续保持唯一权威；episode/conflict 只进入可失效派生平面；
+高影响结果默认不可见并必须经 source 二次校验和 revision CAS 后激活。

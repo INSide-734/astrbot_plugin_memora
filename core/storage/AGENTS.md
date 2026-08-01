@@ -17,10 +17,12 @@ SQLite 不支持把表标识符作为绑定参数。`RelationStore` 因此只用
 
 ## Memory Evolution 派生解释平面
 
-`memory_evolution_store.py` 与 canonical `memora.db` 共用连接生命周期，但只保存可失效、可重建的演化数据：job/lease 队列、`memory_relations`、`memory_projections` 及 projection source mapping 四类解释平面。relation/projection 写入保留 source revision、`reference_at`/`discovered_at`/`invalid_at` 和时间来源/精度；source mapping 可保存自己的 occurred/valid 窗口。旧库由初始化迁移补列，缺失时间保持 NULL，不从 `updated_at` 推断事实时间。canonical memory 的整数 ID、正文和 revision 仍由主记忆表权威维护，Projection 不创建第二套 canonical ID。
+`memory_evolution_store.py` 与 canonical `memora.db` 共用连接生命周期，但只保存可失效、可重建的演化数据：job/lease 队列、`memory_relations`、`memory_projections`、projection source mapping，以及独立的 `memory_derived_review_actions` 低敏复核审计。relation/projection 写入保留 source revision、`reference_at`/`discovered_at`/`invalid_at` 和时间来源/精度；source mapping 可保存自己的 occurred/valid 窗口。旧库由初始化迁移补列，缺失时间保持 NULL，不从 `updated_at` 推断事实时间。canonical memory 的整数 ID、正文和 revision 仍由主记忆表权威维护，Projection 不创建第二套 canonical ID。
 
 - Job 写入必须使用 idempotency key，并保存入队时 `source_revisions_json`；claim/renew/retry/reject/complete/dead 状态转换同时校验 worker token，过期 lease 可恢复为 pending。旧库初始化时必须补齐 revision 列，不能删除已有 job。
 - `apply_derived_plan()` 在一个事务内写入 relation、projection、mapping 和 source revision；source revision 变化、非法 seed、scope 不一致、坏 mapping 或不支持 role 必须隔离/失效，不能污染其他 bundle。
+- `load_candidate_sources()` 必须在 SQL 限流前按 canonical metadata 的 scope 过滤，再保持 primary 首项；不得先截取全库最近 ID 后在 Python 中过滤，避免其他租户记录挤掉真实候选。
+- `memory_relations.revision` 是高影响候选动作的 CAS 值，不是 canonical source revision。approve/replay 在同一写事务内重新验证两侧 source；reject 保持终态，普通 upsert 不得无审计重开。动作表只保存 action、前后状态、候选 revision、reason code 和时间，不保存 source ID/revision、scope、identity 或正文。
 - `active_projection_bundles_for_seeds()` 先去重 seed，再批量读取 active projection 与完整 source mapping；支持 `scope_key` 和 projection limit，禁止 N+1 source 查询。读取侧再核对 primary/supporting/conflict role、revision、privacy 和 validity。
 - SQL 动态片段仅来自固定 allowlist，值全部参数绑定；读取失败由上层回退 canonical/relation baseline，不把 query、prompt、正文、source ID 列表或身份写入日志/决策记录。
 

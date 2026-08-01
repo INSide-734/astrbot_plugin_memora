@@ -21,6 +21,7 @@ from ..managers.memory_engine import MemoryEngine
 from ..managers.memory_evolution_gate import MemoryEvolutionGate
 from ..managers.memory_evolution_manager import MemoryEvolutionManager
 from ..processors.memory_consolidator import MemoryConsolidator
+from ..processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
 from ..processors.memory_processor import MemoryProcessor
 from ..provider_adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..retrieval.derived_relation_expander import DerivedRelationExpander
@@ -90,6 +91,9 @@ class ComponentFactory:
         evolution_config = self.config_manager.get_section("memory_evolution")
         if not isinstance(evolution_config, dict):
             evolution_config = {}
+        episode_config = self.config_manager.get_section("episode_clustering")
+        if not isinstance(episode_config, dict):
+            episode_config = {}
         cost_control_section = self.config_manager.get_section("cost_control")
         if not isinstance(cost_control_section, dict):
             cost_control_section = {}
@@ -261,11 +265,15 @@ class ComponentFactory:
             memory_processor.llm_client.call_llm_with_retry,
             evolution_config,
         )
+        memory_evolution_candidate_generator = MemoryEvolutionCandidateGenerator(
+            episode_config=episode_config,
+        )
         memory_evolution_manager = MemoryEvolutionManager(
             memory_evolution_store,
             memory_evolution_gate,
             memory_evolution_consolidator,
             evolution_config,
+            candidate_generator=memory_evolution_candidate_generator,
         )
         # CRUD 提交后只注入同一 SQLite 上的派生 Store；canonical 仍由
         # MemoryEngine/DocumentStorage 唯一写入，避免形成第二套正文权威。

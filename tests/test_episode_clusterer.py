@@ -1,165 +1,185 @@
-"""episode_clusterer.py 测试 — EpisodeClusterer。"""
+"""EpisodeClusterer 的派生候选契约测试。"""
 
 from __future__ import annotations
 
-import asyncio
-import time
-from unittest.mock import AsyncMock
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from core.models.memory_evolution import MemorySourceRef
 from core.processors.episode_clusterer import EpisodeClusterer
 
+UTC = timezone.utc
+NOW = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)
 
-class TestEpisodeClusterer:
-    @pytest.fixture
-    def now(self) -> float:
-        return time.time()
 
-    @pytest.fixture
-    def recent_memories(self, now: float) -> list[dict]:
-        return [
-            {
-                "id": 1,
-                "metadata": {
-                    "create_time": now - 3600,
-                    "topics": ["coffee", "cafe"],
-                },
-            },
-            {
-                "id": 2,
-                "metadata": {
-                    "create_time": now - 3600,
-                    "topics": ["coffee", "espresso"],
-                },
-            },
-            {
-                "id": 3,
-                "metadata": {
-                    "create_time": now - 7200,
-                    "topics": ["hiking", "mountain"],
-                },
-            },
-            {
-                "id": 4,
-                "metadata": {
-                    "create_time": now - 3600,
-                    "topics": ["hiking", "trail"],
-                },
-            },
+def source(
+    memory_id: int,
+    *,
+    minutes_ago: int,
+    topics: tuple[str, ...],
+    subject_key: str = "subject:a",
+    scope_key: str = "private:scope-a",
+    privacy_level: str = "confidential",
+    revision: str | None = None,
+) -> MemorySourceRef:
+    """构造带主题和匿名主体证据的 canonical source。"""
+
+    return MemorySourceRef(
+        memory_id=memory_id,
+        revision_token=revision or f"r-{memory_id}",
+        scope_key=scope_key,
+        privacy_level=privacy_level,
+        occurred_at=NOW - timedelta(minutes=minutes_ago),
+        content=f"证据 {memory_id}",
+        topic_keys=topics,
+        subject_key=subject_key,
+    )
+
+
+@pytest.mark.asyncio
+async def test_disabled_or_single_source_returns_no_candidates() -> None:
+    """关闭功能或只有单 source 时不得产生 episode。"""
+
+    disabled = EpisodeClusterer(enabled=False)
+    enabled = EpisodeClusterer(enabled=True)
+
+    assert (
+        await disabled.cluster_memories([source(1, minutes_ago=1, topics=("咖啡",))])
+        == ()
+    )
+    assert (
+        await enabled.cluster_memories([source(1, minutes_ago=1, topics=("咖啡",))])
+        == ()
+    )
+
+
+@pytest.mark.asyncio
+async def test_same_event_produces_source_backed_candidate_without_mutation() -> None:
+    """同 scope、相近时间和重叠主题应生成只读候选证据。"""
+
+    first = source(1, minutes_ago=20, topics=("咖啡", "拿铁"))
+    second = source(2, minutes_ago=10, topics=("咖啡", "浓缩"))
+    clusterer = EpisodeClusterer(
+        time_window_sec=3600,
+        topic_overlap_threshold=0.3,
+    )
+
+    candidates = await clusterer.cluster_memories([first, second])
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.source_ids == (1, 2)
+    assert candidate.source_revisions == {1: "r-1", 2: "r-2"}
+    assert candidate.topic_overlap == pytest.approx(1 / 3)
+    assert candidate.window_start == first.occurred_at
+    assert candidate.window_end == second.occurred_at
+    assert first.revision_token == "r-1"
+    assert second.revision_token == "r-2"
+
+
+@pytest.mark.asyncio
+async def test_private_sources_with_different_subjects_do_not_cluster() -> None:
+    """同一私聊 scope 内的不同可信主体也不能被聚为同一 episode。"""
+
+    clusterer = EpisodeClusterer(
+        time_window_sec=3600,
+        topic_overlap_threshold=0.3,
+    )
+    candidates = await clusterer.cluster_memories(
+        [
+            source(1, minutes_ago=20, topics=("咖啡",), subject_key="subject:a"),
+            source(2, minutes_ago=10, topics=("咖啡",), subject_key="subject:b"),
         ]
+    )
 
-    def test_disabled_returns_empty(self) -> None:
-        clusterer = EpisodeClusterer(enabled=False)
-        result = asyncio.run(clusterer.cluster_memories([]))
-        assert result == {}
+    assert candidates == ()
 
-    def test_single_memory_returns_empty(self, now: float) -> None:
-        clusterer = EpisodeClusterer()
-        memories: list[dict] = [
-            {"id": 1, "metadata": {"create_time": now, "topics": ["test"]}}
+
+@pytest.mark.asyncio
+async def test_scope_time_and_topic_boundaries_remain_negative() -> None:
+    """跨 scope、超时窗或主题不相交均不得形成候选。"""
+
+    clusterer = EpisodeClusterer(
+        time_window_sec=3600,
+        topic_overlap_threshold=0.5,
+    )
+
+    assert (
+        await clusterer.cluster_memories(
+            [
+                source(1, minutes_ago=20, topics=("咖啡",), scope_key="private:a"),
+                source(2, minutes_ago=10, topics=("咖啡",), scope_key="private:b"),
+            ]
+        )
+        == ()
+    )
+    assert (
+        await clusterer.cluster_memories(
+            [
+                source(1, minutes_ago=200, topics=("咖啡",)),
+                source(2, minutes_ago=10, topics=("咖啡",)),
+            ]
+        )
+        == ()
+    )
+    assert (
+        await clusterer.cluster_memories(
+            [
+                source(1, minutes_ago=20, topics=("咖啡",)),
+                source(2, minutes_ago=10, topics=("徒步",)),
+            ]
+        )
+        == ()
+    )
+
+
+@pytest.mark.asyncio
+async def test_rebuild_is_deterministic_and_revision_sensitive() -> None:
+    """相同 canonical 快照可重放，source revision 变化会生成新证据键。"""
+
+    clusterer = EpisodeClusterer(
+        time_window_sec=3600,
+        topic_overlap_threshold=0.3,
+    )
+    original_sources = [
+        source(1, minutes_ago=20, topics=("咖啡", "拿铁")),
+        source(2, minutes_ago=10, topics=("咖啡", "浓缩")),
+    ]
+
+    first = await clusterer.cluster_memories(original_sources)
+    replay = await clusterer.cluster_memories(original_sources)
+    revised = await clusterer.cluster_memories(
+        [
+            original_sources[0],
+            source(
+                2,
+                minutes_ago=10,
+                topics=("咖啡", "浓缩"),
+                revision="r-2-new",
+            ),
         ]
-        result = asyncio.run(clusterer.cluster_memories(memories))
-        assert result == {}
+    )
 
-    def test_empty_list_returns_empty(self) -> None:
-        clusterer = EpisodeClusterer()
-        result = asyncio.run(clusterer.cluster_memories([]))
-        assert result == {}
+    assert first == replay
+    assert first[0].candidate_key != revised[0].candidate_key
 
-    def test_clusters_by_topic_overlap(self, now: float) -> None:
-        clusterer = EpisodeClusterer(time_window_sec=86400, topic_overlap_threshold=0.3)
-        memories: list[dict] = [
-            {
-                "id": 1,
-                "metadata": {
-                    "create_time": now - 100,
-                    "topics": ["coffee", "espresso"],
-                },
-            },
-            {
-                "id": 2,
-                "metadata": {"create_time": now - 200, "topics": ["coffee", "latte"]},
-            },
+
+@pytest.mark.asyncio
+async def test_transitive_cluster_links_the_actual_matching_sources() -> None:
+    """传递聚类只能连接实际达到主题阈值的 source 对。"""
+
+    clusterer = EpisodeClusterer(
+        time_window_sec=3600,
+        topic_overlap_threshold=0.3,
+    )
+    candidates = await clusterer.cluster_memories(
+        [
+            source(1, minutes_ago=30, topics=("a", "b")),
+            source(2, minutes_ago=20, topics=("b", "c")),
+            source(3, minutes_ago=10, topics=("c", "d")),
         ]
-        result = asyncio.run(clusterer.cluster_memories(memories))
-        assert len(result) > 0
+    )
 
-    def test_no_cluster_when_topics_disjoint(self, now: float) -> None:
-        clusterer = EpisodeClusterer(time_window_sec=86400, topic_overlap_threshold=0.5)
-        memories: list[dict] = [
-            {"id": 1, "metadata": {"create_time": now - 100, "topics": ["coffee"]}},
-            {"id": 2, "metadata": {"create_time": now - 200, "topics": ["hiking"]}},
-        ]
-        result = asyncio.run(clusterer.cluster_memories(memories))
-        assert result == {}
-
-    def test_no_cluster_when_time_too_far(self, now: float) -> None:
-        clusterer = EpisodeClusterer(time_window_sec=60, topic_overlap_threshold=0.1)
-        memories: list[dict] = [
-            {"id": 1, "metadata": {"create_time": now - 10000, "topics": ["coffee"]}},
-            {"id": 2, "metadata": {"create_time": now - 20000, "topics": ["coffee"]}},
-        ]
-        result = asyncio.run(clusterer.cluster_memories(memories))
-        assert result == {}
-
-    def test_old_memories_excluded(self, now: float) -> None:
-        clusterer = EpisodeClusterer()
-        memories: list[dict] = [
-            {"id": 1, "metadata": {"create_time": now - 100, "topics": ["topic"]}},
-            {
-                "id": 2,
-                "metadata": {"create_time": now - 40 * 86400, "topics": ["topic"]},
-            },
-        ]
-        result = asyncio.run(clusterer.cluster_memories(memories))
-        # Only memory 1 is in the 30-day window; single memories don't get episodes
-        assert result == {}
-
-    def test_update_metadata_called(self, now: float) -> None:
-        update_fn = AsyncMock(return_value=True)
-        clusterer = EpisodeClusterer(time_window_sec=86400, topic_overlap_threshold=0.5)
-        memories: list[dict] = [
-            {"id": 1, "metadata": {"create_time": now - 100, "topics": ["coffee"]}},
-            {"id": 2, "metadata": {"create_time": now - 200, "topics": ["coffee"]}},
-        ]
-        result = asyncio.run(clusterer.cluster_memories(memories, update_fn))
-        assert len(result) > 0
-        assert update_fn.called
-
-    def test_update_exception_suppressed(self, now: float) -> None:
-        update_fn = AsyncMock(side_effect=RuntimeError("update failed"))
-        clusterer = EpisodeClusterer(time_window_sec=86400, topic_overlap_threshold=0.5)
-        memories: list[dict] = [
-            {"id": 1, "metadata": {"create_time": now - 100, "topics": ["coffee"]}},
-            {"id": 2, "metadata": {"create_time": now - 200, "topics": ["coffee"]}},
-        ]
-        result = asyncio.run(clusterer.cluster_memories(memories, update_fn))
-        assert len(result) > 0  # Clusters still assigned, update failures logged
-
-    def test_enabled_setter(self) -> None:
-        clusterer = EpisodeClusterer(enabled=True)
-        clusterer.enabled = False
-        assert clusterer.enabled is False
-
-    def test_memory_with_string_metadata(self, now: float) -> None:
-        import json
-
-        clusterer = EpisodeClusterer()
-        metadata_str = json.dumps({"create_time": now - 100, "topics": ["coffee"]})
-        memories: list[dict] = [
-            {"id": 1, "metadata": metadata_str},
-            {"id": 2, "metadata": metadata_str},
-        ]
-        result = asyncio.run(clusterer.cluster_memories(memories))
-        assert len(result) > 0
-
-    def test_zero_id_memory_skipped(self, now: float) -> None:
-        clusterer = EpisodeClusterer()
-        memories: list[dict] = [
-            {"id": 0, "metadata": {"create_time": now - 100, "topics": ["coffee"]}},
-            {"id": 2, "metadata": {"create_time": now - 200, "topics": ["coffee"]}},
-        ]
-        result = asyncio.run(clusterer.cluster_memories(memories))
-        # Only one valid ID -> can't form a cluster of 2+
-        assert result == {}
+    assert [candidate.source_ids for candidate in candidates] == [(1, 2), (2, 3)]
+    assert all(candidate.topic_overlap >= 0.3 for candidate in candidates)

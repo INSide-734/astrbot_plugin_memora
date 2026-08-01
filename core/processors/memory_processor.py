@@ -313,6 +313,13 @@ class MemoryProcessor:
                 mem_metadata["grounding_status"] = grounding.status
                 mem_metadata["grounding_reason_codes"] = list(grounding.reason_codes)
                 mem_metadata["source_evidence"] = grounding.evidence
+                subject_ids = _referenced_subject_ids(
+                    grounding.evidence,
+                    messages,
+                    identity_metadata,
+                )
+                if subject_ids:
+                    mem_metadata["subject_ids"] = list(subject_ids)
                 should_quarantine = quality == "low" or not grounding.allowed
                 mem_metadata["quality_gate_action"] = (
                     "quarantine" if should_quarantine else "allow"
@@ -653,3 +660,31 @@ class MemoryProcessor:
                 )
 
         return interpretations
+
+
+def _referenced_subject_ids(
+    evidence: list[dict[str, Any]],
+    messages: list[Message],
+    identity_metadata: dict[str, Any],
+) -> tuple[str, ...]:
+    """从候选实际引用的消息提取可信 canonical 参与者。"""
+
+    raw_trusted = identity_metadata.get("participant_ids")
+    if not isinstance(raw_trusted, list):
+        return ()
+    trusted = {
+        item.strip() for item in raw_trusted if isinstance(item, str) and item.strip()
+    }
+    if not trusted:
+        return ()
+    subjects: list[str] = []
+    for item in evidence:
+        index = item.get("message_index") if isinstance(item, dict) else None
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        if index < 0 or index >= len(messages):
+            continue
+        sender_id = messages[index].sender_id
+        if sender_id in trusted and sender_id not in subjects:
+            subjects.append(sender_id)
+    return tuple(subjects)

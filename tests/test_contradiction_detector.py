@@ -1,12 +1,10 @@
-"""contradiction_detector.py 测试 — ContradictionDetector。"""
+"""ContradictionDetector 的只读冲突候选测试。"""
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock
+from datetime import datetime, timedelta, timezone
 
-import pytest
-
+from core.models.memory_evolution import MemorySourceRef
 from core.processors.contradiction_detector import (
     ContradictionDetector,
     _detect_semantic_contradiction,
@@ -14,149 +12,137 @@ from core.processors.contradiction_detector import (
     _tokenize,
 )
 
+UTC = timezone.utc
+NOW = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)
 
-class TestTokenize:
-    def test_tokenize_chinese(self) -> None:
-        tokens = _tokenize("我喜欢咖啡")
-        assert "喜" in tokens or "欢" in tokens
-        assert len(tokens) > 0
 
-    def test_tokenize_english_mixed(self) -> None:
-        tokens = _tokenize("I like coffee and 咖啡")
-        assert "i" in tokens or "like" in tokens or "coffee" in tokens
+def source(
+    memory_id: int,
+    content: str,
+    *,
+    hours_ago: int,
+    subject_key: str = "subject:a",
+    revision: str | None = None,
+) -> MemorySourceRef:
+    """构造用于冲突预筛的 canonical source。"""
 
-    def test_tokenize_empty(self) -> None:
+    return MemorySourceRef(
+        memory_id=memory_id,
+        revision_token=revision or f"r-{memory_id}",
+        scope_key="private:scope-a",
+        privacy_level="confidential",
+        occurred_at=NOW - timedelta(hours=hours_ago),
+        content=content,
+        topic_keys=("咖啡",),
+        subject_key=subject_key,
+    )
+
+
+class TestTextHeuristics:
+    """验证低成本词面预筛的稳定边界。"""
+
+    def test_tokenize_chinese_and_english(self) -> None:
+        """中英文文本都应产生可比较 token。"""
+
+        assert _tokenize("我喜欢咖啡")
+        assert _tokenize("I like coffee and 咖啡")
         assert _tokenize("") == []
+        assert _tokenize("。。。") == []
 
-    def test_tokenize_punctuation_only(self) -> None:
-        tokens = _tokenize("。。。")
-        # Punctuation is not captured by the regex
-        assert tokens == []
+    def test_jaccard_boundaries(self) -> None:
+        """Jaccard 对相同、相离和空集合返回稳定值。"""
 
-
-class TestJaccard:
-    def test_identical_sets(self) -> None:
-        assert _jaccard({"a", "b", "c"}, {"a", "b", "c"}) == 1.0
-
-    def test_disjoint_sets(self) -> None:
-        assert _jaccard({"a", "b"}, {"c", "d"}) == 0.0
-
-    def test_partial_overlap(self) -> None:
-        result = _jaccard({"a", "b", "c"}, {"b", "c", "d"})
-        assert result == pytest.approx(2.0 / 4.0)
-
-    def test_empty_set(self) -> None:
+        assert _jaccard({"a", "b"}, {"a", "b"}) == 1.0
+        assert _jaccard({"a"}, {"b"}) == 0.0
         assert _jaccard(set(), {"a"}) == 0.0
-        assert _jaccard({"a"}, set()) == 0.0
-        assert _jaccard(set(), set()) == 0.0
+
+    def test_semantic_polarity_prefilter(self) -> None:
+        """一肯定一否定才通过冲突预筛。"""
+
+        assert _detect_semantic_contradiction("我不喜欢咖啡", "我喜欢咖啡")
+        assert not _detect_semantic_contradiction("我喜欢咖啡", "我也喜欢咖啡")
+        assert not _detect_semantic_contradiction("我不喝咖啡", "我也不喝咖啡")
 
 
-class TestSemanticContradiction:
-    def test_new_negation_old_affirmative(self) -> None:
-        assert _detect_semantic_contradiction("我不喜欢咖啡", "我喜欢咖啡") is True
+def test_detector_returns_stable_source_evidence_without_writes() -> None:
+    """冲突检测只返回稳定 ID/revision/主体/时间证据，不修改 canonical。"""
 
-    def test_old_negation_new_affirmative(self) -> None:
-        assert _detect_semantic_contradiction("我喜欢咖啡", "我不喜欢咖啡") is True
+    older = source(1, "我一直喜欢喝咖啡", hours_ago=1)
+    newer = source(2, "我现在不再喜欢喝咖啡", hours_ago=0)
+    detector = ContradictionDetector(jaccard_threshold=0.3)
 
-    def test_both_affirmative_no_contradiction(self) -> None:
-        assert _detect_semantic_contradiction("我喜欢咖啡", "我也喜欢喝茶") is False
+    candidates = detector.detect_candidates([older, newer])
 
-    def test_both_negation_no_contradiction(self) -> None:
-        assert _detect_semantic_contradiction("我不喝咖啡", "我也不喝茶") is False
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.source_id == 2
+    assert candidate.source_revision == "r-2"
+    assert candidate.target_id == 1
+    assert candidate.target_revision == "r-1"
+    assert candidate.subject_key == "subject:a"
+    assert candidate.conflict_type == "polarity_conflict"
+    assert candidate.source_occurred_at == newer.occurred_at
+    assert candidate.target_occurred_at == older.occurred_at
+    assert older.revision_token == "r-1"
 
-    def test_neutral_no_keywords(self) -> None:
-        assert _detect_semantic_contradiction("今天天气不错", "昨天去了公园") is False
 
-    def test_quit_keyword_triggers_negation(self) -> None:
-        assert (
-            _detect_semantic_contradiction("我已经戒咖啡三个月了", "我喜欢喝咖啡")
-            is True
-        )
+def test_different_subjects_are_not_compared() -> None:
+    """多主体文本相似也不能生成同一人的冲突候选。"""
+
+    detector = ContradictionDetector(jaccard_threshold=0.3)
+    candidates = detector.detect_candidates(
+        [
+            source(1, "我一直喜欢喝咖啡", hours_ago=1, subject_key="subject:a"),
+            source(2, "我现在不再喜欢喝咖啡", hours_ago=0, subject_key="subject:b"),
+        ]
+    )
+
+    assert candidates == ()
 
 
-class TestContradictionDetector:
-    @pytest.fixture
-    def detector(self) -> ContradictionDetector:
-        search_fn = AsyncMock(return_value=[])
-        update_fn = AsyncMock(return_value=True)
-        return ContradictionDetector(search_fn=search_fn, update_fn=update_fn)
+def test_historical_state_change_is_classified_as_update_not_conflict() -> None:
+    """显式历史状态变化应进入 update 候选，不应伪装成同时矛盾。"""
 
-    def test_default_enabled(self) -> None:
-        d = ContradictionDetector()
-        assert d.enabled is True
+    detector = ContradictionDetector(jaccard_threshold=0.3)
+    candidates = detector.detect_candidates(
+        [
+            source(1, "以前我一直喜欢喝咖啡", hours_ago=72),
+            source(2, "现在我不再喜欢喝咖啡", hours_ago=0),
+        ]
+    )
 
-    def test_disabled_returns_empty(self) -> None:
-        d = ContradictionDetector(enabled=False)
-        result = asyncio.run(d.check_and_mark("test", ["topic"], "session1"))
-        assert result == []
+    assert len(candidates) == 1
+    assert candidates[0].conflict_type == "temporal_update"
 
-    def test_no_search_fn_returns_empty(self) -> None:
-        d = ContradictionDetector(search_fn=None)
-        result = asyncio.run(d.check_and_mark("test", ["topic"]))
-        assert result == []
 
-    def test_empty_content_returns_empty(self, detector: ContradictionDetector) -> None:
-        result = asyncio.run(detector.check_and_mark("", ["topic"]))
-        assert result == []
+def test_disabled_empty_or_non_conflicting_inputs_return_empty() -> None:
+    """关闭、空正文和同极性内容均不得产生候选。"""
 
-    def test_empty_topics_returns_empty(self, detector: ContradictionDetector) -> None:
-        result = asyncio.run(detector.check_and_mark("有内容", []))
-        assert result == []
+    disabled = ContradictionDetector(enabled=False)
+    enabled = ContradictionDetector(jaccard_threshold=0.3)
+    pair = [
+        source(1, "我喜欢喝咖啡", hours_ago=1),
+        source(2, "我也喜欢喝咖啡", hours_ago=0),
+    ]
 
-    def test_no_candidates_found(self) -> None:
-        search_fn = AsyncMock(return_value=[])
-        detector = ContradictionDetector(search_fn=search_fn, update_fn=AsyncMock())
-        result = asyncio.run(detector.check_and_mark("message", ["topic"]))
-        assert result == []
+    assert disabled.detect_candidates(pair) == ()
+    assert enabled.detect_candidates(pair) == ()
 
-    def test_candidates_with_contradiction_marked(self) -> None:
-        # Use short, overlapping tokens to ensure Jaccard >= 0.40
-        search_fn = AsyncMock(
-            return_value=[
-                {"id": 1, "text": "我喜欢喝咖啡", "metadata": {}},
-            ]
-        )
-        update_fn = AsyncMock(return_value=True)
-        detector = ContradictionDetector(search_fn=search_fn, update_fn=update_fn)
 
-        result = asyncio.run(
-            detector.check_and_mark("我不再喝咖啡了", ["咖啡", "饮食"])
-        )
-        assert len(result) >= 1
-        assert update_fn.called
+def test_candidate_key_changes_with_revision() -> None:
+    """任一 canonical revision 变化都必须改变冲突候选幂等键。"""
 
-    def test_candidates_no_contradiction_not_marked(self) -> None:
-        search_fn = AsyncMock(
-            return_value=[
-                {"id": 1, "text": "我喜欢喝咖啡", "metadata": {}},
-            ]
-        )
-        update_fn = AsyncMock(return_value=True)
-        detector = ContradictionDetector(search_fn=search_fn, update_fn=update_fn)
+    detector = ContradictionDetector(jaccard_threshold=0.3)
+    older = source(1, "我一直喜欢喝咖啡", hours_ago=1)
+    newer = source(2, "我现在不再喜欢喝咖啡", hours_ago=0)
+    revised = source(
+        2,
+        "我现在不再喜欢喝咖啡",
+        hours_ago=0,
+        revision="r-2-new",
+    )
 
-        result = asyncio.run(detector.check_and_mark("我也喜欢喝咖啡", ["咖啡"]))
-        assert result == []
-        assert not update_fn.called
+    first = detector.detect_candidates([older, newer])
+    second = detector.detect_candidates([older, revised])
 
-    def test_candidate_without_id_skipped(self) -> None:
-        search_fn = AsyncMock(
-            return_value=[
-                {"text": "我喜欢喝咖啡"},
-            ]
-        )
-        update_fn = AsyncMock(return_value=True)
-        detector = ContradictionDetector(search_fn=search_fn, update_fn=update_fn)
-
-        result = asyncio.run(detector.check_and_mark("我不喜欢喝咖啡", ["咖啡"]))
-        assert result == []
-
-    def test_enabled_setter(self) -> None:
-        d = ContradictionDetector(enabled=True)
-        d.enabled = False
-        assert d.enabled is False
-
-    def test_search_exception_returns_empty(self) -> None:
-        search_fn = AsyncMock(side_effect=RuntimeError("search failed"))
-        detector = ContradictionDetector(search_fn=search_fn)
-        result = asyncio.run(detector.check_and_mark("msg", ["topic"]))
-        assert result == []
+    assert first[0].candidate_key != second[0].candidate_key

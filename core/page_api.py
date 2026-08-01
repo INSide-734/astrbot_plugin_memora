@@ -25,6 +25,7 @@ from .api.knowledge_api import KnowledgeApiMixin
 from .api.learning_api import LearningApiMixin
 from .api.maintenance_api import MaintenanceApiMixin
 from .api.memory_batch_api import MemoryBatchApiMixin
+from .api.memory_evolution_review_api import MemoryEvolutionReviewApiMixin
 from .api.memory_read_api import MemoryReadApiMixin
 from .api.memory_stats_recall_api import MemoryStatsRecallApiMixin
 from .api.memory_write_api import MemoryWriteApiMixin
@@ -69,6 +70,7 @@ class PluginPageApi(
     RecallTraceApiMixin,
     InjectionStrategyApiMixin,
     ReviewApiMixin,
+    MemoryEvolutionReviewApiMixin,
     JargonApiMixin,
     DelegationApiMixin,
     EvaluationApiMixin,
@@ -738,6 +740,24 @@ class PluginPageApi(
             self.apply_review_action,
             ["POST"],
             "页面接口：执行记忆审查动作",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/derived",
+            self.list_memory_evolution_review_candidates,
+            ["GET"],
+            "页面接口：高影响派生候选复核队列",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/derived/detail",
+            self.get_memory_evolution_review_candidate,
+            ["GET"],
+            "页面接口：高影响派生候选复核详情",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/derived/action",
+            self.apply_memory_evolution_review_action,
+            ["POST"],
+            "页面接口：处置高影响派生候选",
         )
         register(
             f"{PAGE_API_PREFIX}/review/quarantine",

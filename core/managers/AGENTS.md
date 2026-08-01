@@ -105,10 +105,10 @@ sequenceDiagram
 `memory_evolution_gate.py`、`memory_evolution_manager.py` 负责 canonical 写入后的派生演化，不替代 `MemoryEngine` 的主写路径：
 
 - `MemoryEvolutionGate` 仅基于 source revision、scope、topic/entity 信号、阈值、去抖桶和待处理上限生成稳定 idempotency key；`enabled=false` 或非法 mode 必须返回 `mode_disabled`。
-- `MemoryEvolutionManager.schedule_consider()` 只在 canonical 写入成功后入队，并把创建时 source revision 写入 job provenance。worker 以单任务循环领取 job，持有可续租 lease；领取后先核对 job revision，stale job 进入 invalidated；取消会恢复 pending，普通异常按指数退避重试，超过 `max_attempts` 进入 dead，proposal 规则拒绝进入 rejected。
+- `MemoryEvolutionManager.schedule_consider()` 只在 canonical 写入成功后入队；Store 在 SQL 限流前按同 scope 选择最多 6 条近期 source，并把创建时全部 revision 写入 job provenance，其他 scope 的新记录不能挤掉同 scope 证据。worker 以单任务循环领取 job，持有可续租 lease；领取后先核对 job revision，stale job 进入 invalidated；取消会恢复 pending，普通异常按指数退避重试，超过 `max_attempts` 进入 dead，proposal 规则拒绝进入 rejected。
 - `MemoryEngine` 在 canonical add/语义 metadata update 提交后统一重载 source 并调度；`ReflectionHandler` 仍覆盖反思链兼容调度，重复触发由稳定 idempotency key 去重。派生计划写入 `origin_job_id`，启动时先做 orphan/stale cleanup；回滚 job 只能失效自身派生对象，不能删除 canonical。
-- 处理 proposal 时必须先读取 source，再在应用前重新读取并比较每个 source 的 revision；source 缺失、scope 不一致、alias 未知、自关系、重复/成环边、冲突 Projection 少于三类角色均拒绝，不能污染派生表。
-- 关系按低/高影响分类：低影响且达到阈值的允许按配置自动 `active`，高影响默认 `candidate` 并要求复核；Projection 共享 scope，privacy 取所有 source 中最严格值，状态由置信度和冲突类型决定。
+- 处理 proposal 时先运行本地 `MemoryEvolutionCandidateGenerator`：episode/conflict 候选非空时不调用 LLM，只有确定性候选为空才回退 Consolidator。随后必须再次读取 source 并比较每个 revision；source 缺失、scope 不一致、alias 未知、自关系、重复/成环边、冲突 Projection 少于三类角色均拒绝，不能污染派生表。
+- 关系按低/高影响分类：低影响且达到阈值的允许按配置自动 `active`，`updates`/`contradicts`/`preference_change`/`supersedes` 始终是 `candidate`。高影响 relation 的 approve/reject/replay 使用候选 revision CAS；approve/replay 再次验证 canonical source，后台重复 proposal 不得覆盖人工 rejected 状态。Projection 共享 scope，privacy 取所有 source 中最严格值，状态由置信度和冲突类型决定。
 - Relation/Projection 是 SQLite 中的派生解释平面；稳定 ID 由 source memory ID、revision 和类型计算，但不创建第二套 canonical memory 或向量索引。更新/删除 canonical 后由 Store 的 revision invalidation 隔离旧派生结果。
 - `get_status_snapshot()` 只能返回模式、计数、reason code 和延迟桶等 allowlist 标量；不得把 query、prompt、正文、原始身份、source ID 列表或 provider 信息写入日志/指标。
 

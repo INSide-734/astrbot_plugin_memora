@@ -29,8 +29,14 @@ from ..models.memory_evolution import (
 )
 from ..models.temporal import infer_time_precision, parse_datetime, serialize_datetime
 from .base_store import BaseStore
+from .memory_evolution_candidate_sources import MemoryEvolutionCandidateSourceMixin
 from .memory_evolution_derived import MemoryEvolutionDerivedMixin, _serialized_write
 from .memory_evolution_derived_helpers import _metadata_dict
+from .memory_evolution_review import MemoryEvolutionReviewMixin
+from .memory_evolution_source_helpers import (
+    subject_key_from_metadata,
+    topic_keys_from_metadata,
+)
 
 
 def _dt(value: datetime | None) -> str | None:
@@ -92,7 +98,12 @@ _SOURCE_MIGRATION_SQL = {
 }
 
 
-class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
+class MemoryEvolutionStore(
+    MemoryEvolutionCandidateSourceMixin,
+    MemoryEvolutionReviewMixin,
+    MemoryEvolutionDerivedMixin,
+    BaseStore,
+):
     """保存 job、relation、projection 和 source mapping 的本地 Store。"""
 
     def __init__(self, db_path: str) -> None:
@@ -129,6 +140,7 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
               ON memory_evolution_jobs(state, not_before, lease_until);
             CREATE TABLE IF NOT EXISTS memory_relations (
               relation_id TEXT PRIMARY KEY, relation_key TEXT NOT NULL UNIQUE,
+              revision INTEGER NOT NULL DEFAULT 1,
               source_memory_id INTEGER NOT NULL, target_memory_id INTEGER NOT NULL,
               source_revision TEXT NOT NULL, target_revision TEXT NOT NULL,
               relation_type TEXT NOT NULL, state TEXT NOT NULL, confidence REAL NOT NULL,
@@ -200,6 +212,7 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                 "ALTER TABLE memory_evolution_jobs "
                 "ADD COLUMN source_revisions_json TEXT NOT NULL DEFAULT '{}'"
             )
+        await self._create_relation_review_tables()
         await self.connection.commit()
 
     @_serialized_write
@@ -309,6 +322,8 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                     if parsed_occurred is not None
                     else "unknown"
                 ),
+                topic_keys=topic_keys_from_metadata(metadata),
+                subject_key=subject_key_from_metadata(metadata),
             )
             sources_by_id[source.memory_id] = source
         return [
@@ -376,6 +391,52 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
         except BaseException:
             await self.connection.rollback()
             raise
+
+    @_serialized_write
+    async def requeue_job(self, spec: JobSpec) -> MemoryEvolutionJob:
+        """重建时重新打开同幂等键的终态 job，保留其审计身份。"""
+
+        now = datetime.now(timezone.utc)
+        await self._execute(
+            """INSERT INTO memory_evolution_jobs
+            (job_id,scope_key,bucket_key,state,attempt_count,source_ids_json,
+             source_revisions_json,not_before,idempotency_key,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(idempotency_key) DO UPDATE SET
+              scope_key=excluded.scope_key,bucket_key=excluded.bucket_key,
+              state=excluded.state,attempt_count=0,
+              source_ids_json=excluded.source_ids_json,
+              source_revisions_json=excluded.source_revisions_json,
+              not_before=excluded.not_before,lease_until=NULL,worker_token=NULL,
+              last_error_code=NULL,updated_at=excluded.updated_at
+            WHERE memory_evolution_jobs.state IN (?,?,?,?)""",
+            (
+                spec.job_id or uuid.uuid4().hex,
+                spec.scope_key,
+                spec.bucket_key,
+                JobState.PENDING.value,
+                0,
+                _json_ids(spec.source_ids),
+                _json_revisions(spec.source_revisions),
+                _dt(spec.not_before),
+                spec.idempotency_key,
+                _dt(now),
+                _dt(now),
+                JobState.COMPLETED.value,
+                JobState.REJECTED.value,
+                JobState.INVALIDATED.value,
+                JobState.DEAD.value,
+            ),
+        )
+        await self._commit()
+        row = await self._fetch_one(
+            "SELECT * FROM memory_evolution_jobs WHERE idempotency_key=?",
+            (spec.idempotency_key,),
+        )
+        job = _job(row)
+        if job is None:
+            raise RuntimeError("演化 job 重新排队后无法读取")
+        return job
 
     @_serialized_write
     async def renew_lease(
@@ -497,9 +558,10 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                 )
                 await self.connection.execute(
                     """INSERT INTO memory_relations
-                    (relation_id,relation_key,source_memory_id,target_memory_id,source_revision,target_revision,relation_type,state,confidence,scope_key,privacy_level,valid_from,valid_to,reference_at,discovered_at,invalid_at,time_source,time_precision,origin_job_id,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?)
+                    (relation_id,relation_key,revision,source_memory_id,target_memory_id,source_revision,target_revision,relation_type,state,confidence,scope_key,privacy_level,valid_from,valid_to,reference_at,discovered_at,invalid_at,time_source,time_precision,origin_job_id,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(relation_key) DO UPDATE SET
+                      revision=memory_relations.revision+1,
                       state=excluded.state,
                       confidence=excluded.confidence,
                       scope_key=excluded.scope_key,
@@ -512,10 +574,12 @@ class MemoryEvolutionStore(MemoryEvolutionDerivedMixin, BaseStore):
                       time_source=excluded.time_source,
                       time_precision=excluded.time_precision,
                       origin_job_id=excluded.origin_job_id,
-                      updated_at=excluded.updated_at""",
+                      updated_at=excluded.updated_at
+                    WHERE memory_relations.state <> 'rejected'""",
                     (
                         rel.relation_id,
                         key,
+                        1,
                         rel.source_memory_id,
                         rel.target_memory_id,
                         source_revision,

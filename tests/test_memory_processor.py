@@ -226,8 +226,9 @@ class TestProcessConversation:
         import asyncio
 
         response = (
-            '{"summary":"身份测试","topics":["测试"],'
-            '"key_facts":["事实"],"participants":["模型伪造名称"],'
+            '{"summary":"改名后的消息","topics":["测试"],'
+            '"key_facts":["改名后的消息"],"participants":["模型伪造名称"],'
+            '"source_refs":[{"message_index":2,"start":0,"end":6}],'
             '"importance":0.7}'
         )
         processor = make_processor(
@@ -298,6 +299,7 @@ class TestProcessConversation:
             "10001": "新昵称",
             "10002": "成员乙",
         }
+        assert metadata["subject_ids"] == ["10001"]
         prompt = processor.llm_client.call_llm_with_retry.await_args.kwargs["prompt"]
         assert "新昵称（QQ:10001）" in prompt
         assert "禁止猜测、改写或交换稳定标识" in prompt

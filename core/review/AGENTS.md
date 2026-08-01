@@ -6,7 +6,7 @@
 
 ## 职责与边界
 
-`core/review/` 提供两条明确分离的人工审查边界：既有 `ReviewStore` 分诊已经存在的 canonical memory；`MemoryQuarantineStore` 与 `MemoryQualityGate` 处理 canonical 写入前的低质量或来源未验证候选。两条队列不得共用 memory ID、状态机或持久化表，也不得让 quarantine candidate ID 冒充 canonical `doc_id`。
+`core/review/` 提供两条明确分离的人工审查边界：既有 `ReviewStore` 分诊已经存在的 canonical memory；`MemoryQuarantineStore` 与 `MemoryQualityGate` 处理 canonical 写入前的低质量或来源未验证候选。Memory Evolution 的高影响 relation 复核由 `core/storage/memory_evolution_review.py` 和专用 Page API 持有，属于第三条独立队列。三者不得共用 memory/candidate/relation ID、状态机或持久化表，也不得让 quarantine 或 derived candidate ID 冒充 canonical `doc_id`。
 
 ## 架构与数据流
 
@@ -28,6 +28,9 @@ flowchart LR
     Q --> R[重新验证来源并生成 Atom]
     R -->|通过| M
     R -->|失败| S[blocked]
+    T[高影响 relation candidate] --> U[derived revision CAS]
+    U -->|approve| V[active relation]
+    U -->|reject / replay| W[(derived review actions)]
 ```
 
 ## 检测模型
@@ -82,9 +85,10 @@ flowchart LR
 - `tests/test_api_review.py`：队列刷新、详情与操作 API、底层记忆动作协调和失败契约。
 - `tests/test_memory_quarantine.py`：幂等 stage、终态、批准复核、取消语义、Atom 重建和原始证据保留。
 - `tests/test_api_quarantine.py`：路由、revision 冲突、修正后批准和响应 allowlist。
+- `tests/test_memory_evolution_review.py`、`tests/test_api_memory_evolution_review.py`：高影响 relation 的 source 二次校验、revision CAS、reject/replay、动作审计、后台 upsert 隔离和 API allowlist。
 
 精确验证命令：
 
 ```bash
-python -m pytest -q tests/test_review_detector.py tests/test_api_review.py tests/test_memory_quarantine.py tests/test_api_quarantine.py
+python -m pytest -q tests/test_review_detector.py tests/test_api_review.py tests/test_memory_quarantine.py tests/test_api_quarantine.py tests/test_memory_evolution_review.py tests/test_api_memory_evolution_review.py
 ```
