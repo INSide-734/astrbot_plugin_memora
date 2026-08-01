@@ -144,7 +144,7 @@ describe("ReviewQueue", () => {
     const { container } = render(<ReviewQueue showToast={() => undefined} />);
 
     expect((await screen.findAllByText(/duplicate|重复/i)).length).toBeGreaterThan(0);
-    expect(screen.getByLabelText(/Status|状态/i)).toBeTruthy();
+    expect(screen.getByLabelText(/^(Status|状态)$/i)).toBeTruthy();
     expect(screen.getByLabelText(/Reason|原因/i)).toBeTruthy();
     expect(screen.getByLabelText(/Severity|严重/i)).toBeTruthy();
     expect(screen.getByPlaceholderText(/Search|搜索/i)).toBeTruthy();

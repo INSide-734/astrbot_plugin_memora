@@ -22,6 +22,11 @@ import {
   handleEvaluationRun,
 } from "./evaluationServer";
 import { createSafeRecallTraceResponse } from "./recallTrace";
+import {
+  handleReconsolidationGet,
+  handleReconsolidationPost,
+  resetReconsolidationMockState,
+} from "./reconsolidationServer";
 import type { MockProfile, MockProfilePreferences, MockProfileTag, MockProfileTagCategory } from "./data";
 import {
   handleUpdateGet,
@@ -137,6 +142,7 @@ export function resetMockServerState(): void {
   Object.assign(AFFECTION_DATA, seeds.AFFECTION_DATA);
   for (const key of Object.keys(REVIEW_ACTIONS)) delete REVIEW_ACTIONS[key];
   Object.assign(REVIEW_ACTIONS, seeds.REVIEW_ACTIONS);
+  resetReconsolidationMockState();
   nextEntityRevision = 1;
   mockRestoreStatus = null;
   mockRestorePollCount = 0;
@@ -1597,6 +1603,8 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   if (configResponse) return configResponse;
   const updateResponse = handleUpdateGet(p, params);
   if (updateResponse) return updateResponse;
+  const reconsolidationResponse = handleReconsolidationGet(p, params);
+  if (reconsolidationResponse) return reconsolidationResponse;
 
   if (p === "injection-strategy/catalog") return handleInjectionCatalog();
   if (p === "injection-strategy/summary" || p.startsWith("injection-strategy/summary?")) {
@@ -1707,6 +1715,8 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   const data = body as Record<string, unknown>;
   const updateResponse = handleUpdatePost(p, data);
   if (updateResponse) return updateResponse;
+  const reconsolidationResponse = handleReconsolidationPost(p, data);
+  if (reconsolidationResponse) return reconsolidationResponse;
 
   if (p === "recall/test") return handleRecallTest(data);
   if (p === "recall/trace") return ok(createSafeRecallTraceResponse(RECALL_TRACE_SAMPLE, data));

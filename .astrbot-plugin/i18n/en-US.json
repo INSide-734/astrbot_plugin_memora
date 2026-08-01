@@ -1058,6 +1058,59 @@
         },
         "miss": "miss"
       },
+      "reconsolidation": {
+        "title": "Reconsolidation candidates",
+        "subtitle": "Review high-impact memory revisions with a rollback-aware action history.",
+        "statusLabel": "Candidate status",
+        "allStatuses": "All statuses",
+        "loading": "Loading candidates",
+        "loadingDetail": "Loading candidate details",
+        "noMatches": "No reconsolidation candidates",
+        "selectCandidate": "Select a candidate to compare its content.",
+        "items": "Candidate list",
+        "detail": "Candidate details",
+        "detailMismatch": "Candidate detail does not match the current selection",
+        "oldContent": "Original content",
+        "proposedContent": "Proposed content",
+        "evidenceLabel": "Evidence type",
+        "reasonLabel": "Reason code",
+        "actions": "Review actions",
+        "approve": "Approve",
+        "reject": "Reject",
+        "rollback": "Rollback",
+        "actionHistory": "Action history",
+        "noActions": "No action history",
+        "confirmTitle": "Confirm {0}",
+        "confirmDescription": "This changes candidate {0} and may update canonical memory.",
+        "confirm": "Confirm action",
+        "submitting": "Submitting…",
+        "toastActionSubmitted": "Reconsolidation action submitted: {0}",
+        "status": {
+          "pending": "Pending",
+          "approved": "Approved",
+          "rejected": "Rejected",
+          "failed": "Failed",
+          "rolled_back": "Rolled back"
+        },
+        "action": {
+          "approve": "Approve",
+          "reject": "Reject",
+          "rollback": "Rollback",
+          "stage": "Stage",
+          "apply": "Apply"
+        },
+        "evidence": {
+          "llm_revision": "Model revision evidence"
+        },
+        "reason": {
+          "proposed": "Revision proposed",
+          "applied": "Revision applied",
+          "manual_reject": "Manually rejected",
+          "rolled_back": "Previous revision restored",
+          "source_revision_mismatch": "Source revision changed",
+          "candidate_changed": "Candidate changed"
+        }
+      },
       "review": {
         "status": {
           "open": "Open",

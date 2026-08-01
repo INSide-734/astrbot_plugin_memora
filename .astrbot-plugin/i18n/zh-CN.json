@@ -1058,6 +1058,59 @@
         },
         "miss": "未命中"
       },
+      "reconsolidation": {
+        "title": "再巩固候选",
+        "subtitle": "人工审查高影响记忆修订，并保留可回滚的动作历史。",
+        "statusLabel": "候选状态",
+        "allStatuses": "全部状态",
+        "loading": "正在加载候选",
+        "loadingDetail": "正在加载候选详情",
+        "noMatches": "暂无再巩固候选",
+        "selectCandidate": "选择候选以查看正文对照。",
+        "items": "候选列表",
+        "detail": "候选详情",
+        "detailMismatch": "候选详情与当前选择不匹配",
+        "oldContent": "旧正文",
+        "proposedContent": "拟议正文",
+        "evidenceLabel": "证据类型",
+        "reasonLabel": "原因码",
+        "actions": "人工动作",
+        "approve": "批准",
+        "reject": "拒绝",
+        "rollback": "回滚",
+        "actionHistory": "动作历史",
+        "noActions": "暂无动作历史",
+        "confirmTitle": "确认{0}",
+        "confirmDescription": "此操作将更新候选 {0} 的复核状态，并可能修改 canonical 记忆。",
+        "confirm": "确认操作",
+        "submitting": "正在提交…",
+        "toastActionSubmitted": "已提交再巩固操作：{0}",
+        "status": {
+          "pending": "待复核",
+          "approved": "已批准",
+          "rejected": "已拒绝",
+          "failed": "失败",
+          "rolled_back": "已回滚"
+        },
+        "action": {
+          "approve": "批准",
+          "reject": "拒绝",
+          "rollback": "回滚",
+          "stage": "创建候选",
+          "apply": "应用候选"
+        },
+        "evidence": {
+          "llm_revision": "模型修订证据"
+        },
+        "reason": {
+          "proposed": "已提出修订",
+          "applied": "修订已应用",
+          "manual_reject": "人工拒绝",
+          "rolled_back": "已恢复旧版本",
+          "source_revision_mismatch": "来源版本已变化",
+          "candidate_changed": "候选已变化"
+        }
+      },
       "review": {
         "status": {
           "open": "待处理",

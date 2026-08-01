@@ -29,6 +29,7 @@ import {
   openEvaluationReportForSmoke,
 } from "./evaluation_smoke_helpers.mjs";
 import { recallTracePayload } from "./recall_trace_smoke_fixture.mjs";
+import { reconsolidationSmokePayload } from "./reconsolidation_smoke_fixture.mjs";
 
 const dashboardRoot = process.cwd();
 const htmlPath = path.join(dashboardRoot, "index.html");
@@ -605,6 +606,8 @@ function bridgePayload(endpoint, params = {}, method = "GET") {
   const pathOnly = String(endpoint || "").replace(/^page\/?/, "");
   const configResponse = configSmokeFixture.handle(method, pathOnly, params);
   if (configResponse !== undefined) return configResponse;
+  const reconsolidationResponse = reconsolidationSmokePayload(method, pathOnly, params);
+  if (reconsolidationResponse !== undefined) return reconsolidationResponse;
   if (pathOnly === "injection-strategy/catalog") return injectionCatalogPayload();
   if (pathOnly === "injection-strategy/summary") return injectionSummaryPayload(params);
   if (pathOnly === "injection-strategy/decisions") return injectionDecisionPagePayload(params);
@@ -3070,7 +3073,7 @@ try {
     [
       "复核队列",
       "reviewQueue",
-      ["复核队列", "mem-smoke-duplicate", "duplicate", "重复记忆"],
+      ["再巩固候选", "recon-smoke-pending", "修正用户近期工作地点偏好", "复核队列", "mem-smoke-duplicate", "duplicate", "重复记忆"],
       "intelligence-review.png",
     ],
   ];

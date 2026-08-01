@@ -147,6 +147,55 @@ export interface ReviewItemDetailResponse {
   actions: ReviewAction[];
 }
 
+export type ReconsolidationReviewStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "failed"
+  | "rolled_back"
+  | string;
+
+export type ReconsolidationReviewActionValue = "approve" | "reject" | "rollback";
+
+export interface ReconsolidationReviewItem {
+  candidate_id: string;
+  status: ReconsolidationReviewStatus;
+  change_summary: string;
+  evidence_type: string;
+  reason_code: string;
+  created_at: string | number;
+  updated_at: string | number;
+}
+
+export interface ReconsolidationReviewDetail extends ReconsolidationReviewItem {
+  old_content: string;
+  proposed_content: string;
+}
+
+export interface ReconsolidationReviewAction {
+  action: string;
+  reason_code: string;
+  created_at: string | number;
+}
+
+export interface ReconsolidationReviewItemsResponse {
+  items: ReconsolidationReviewItem[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface ReconsolidationReviewDetailResponse {
+  candidate: ReconsolidationReviewDetail;
+  actions: ReconsolidationReviewAction[];
+}
+
+export interface ReconsolidationReviewActionResponse {
+  candidate_id: string;
+  action: ReconsolidationReviewActionValue;
+  status: ReconsolidationReviewStatus;
+}
+
 export interface EvaluationDataset {
   name: string;
   case_count: number;
