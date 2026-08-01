@@ -208,7 +208,13 @@ class MemoryEngineLifecycleMixin:
 
             self.knowledge_store = KnowledgeStore(self.db_path)
             await self.knowledge_store.init_table()
-            self.knowledge_manager = KnowledgeManager(self.knowledge_store)
+            self.knowledge_manager = KnowledgeManager(
+                self.knowledge_store,
+                dedup_threshold=float(
+                    self.config.get("knowledge_base.dedup_threshold", 0.85)
+                ),
+                expire_days=int(self.config.get("knowledge_base.expire_days", 365)),
+            )
             self.knowledge_retriever = KnowledgeRetriever(
                 self.knowledge_store, self.config
             )

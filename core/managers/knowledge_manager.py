@@ -19,11 +19,17 @@ from ..storage.knowledge_store import KnowledgeStore
 class KnowledgeManager:
     """管理结构化知识：提取、去重、合并、清理。"""
 
-    def __init__(self, store: KnowledgeStore, dedup_threshold: float = 0.85) -> None:
-        """保存 Store 与文本去重阈值。"""
+    def __init__(
+        self,
+        store: KnowledgeStore,
+        dedup_threshold: float = 0.85,
+        expire_days: int = 365,
+    ) -> None:
+        """保存 Store、去重阈值和派生知识过期策略。"""
 
         self._store = store
-        self._dedup_threshold = dedup_threshold
+        self._dedup_threshold = max(0.0, min(1.0, float(dedup_threshold)))
+        self._expire_days = max(0, int(expire_days))
 
     async def add_entry(self, entry: KnowledgeEntry) -> int | None:
         """去重合并或插入知识条目。"""
@@ -51,6 +57,12 @@ class KnowledgeManager:
             if merged_id is not None:
                 return merged_id
 
+        if (
+            entry.origin is DomainObjectOrigin.DERIVED
+            and self._expire_days > 0
+            and entry.expires_at <= 0
+        ):
+            entry.expires_at = _time.time() + self._expire_days * 86400.0
         return await self._store.insert(entry)
 
     async def _merge_duplicate(
@@ -61,6 +73,8 @@ class KnowledgeManager:
         """把相似候选合并到既有条目，并返回其内部 ID。"""
 
         for ex in candidates:
+            if not self._merge_compatible(ex, entry):
+                continue
             if (
                 self._text_similarity(entry.content, ex.content)
                 >= self._dedup_threshold
@@ -91,6 +105,31 @@ class KnowledgeManager:
                 await self._store.update(ex)
                 return ex.entry_id
         return None
+
+    @staticmethod
+    def _merge_compatible(
+        existing: KnowledgeEntry,
+        incoming: KnowledgeEntry,
+    ) -> bool:
+        """判断两个条目是否拥有可合并的人工/来源权威。"""
+
+        if (
+            existing.origin is DomainObjectOrigin.MANUAL
+            and incoming.origin is DomainObjectOrigin.DERIVED
+        ):
+            return False
+        if (
+            existing.origin is DomainObjectOrigin.DERIVED
+            and incoming.origin is DomainObjectOrigin.DERIVED
+        ):
+            if existing.provenance is None or incoming.provenance is None:
+                return False
+            return (
+                existing.provenance.scope_key == incoming.provenance.scope_key
+                and existing.provenance.privacy_level
+                == incoming.provenance.privacy_level
+            )
+        return True
 
     async def add_derived_entry(
         self,

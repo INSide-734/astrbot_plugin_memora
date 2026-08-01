@@ -213,6 +213,7 @@ class MemoryEngineCRUDMixin:
         )
         await self._schedule_evolution_after_write(doc_id)
         self._schedule_profile_proposal_after_write(doc_id)
+        self._schedule_knowledge_proposal_after_write(doc_id)
         return doc_id
 
     @staticmethod

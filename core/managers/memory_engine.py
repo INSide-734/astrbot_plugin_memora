@@ -16,6 +16,7 @@ from .maintenance_operations import MaintenanceOperations
 from .memory_engine_batch import MemoryEngineBatchMixin
 from .memory_engine_crud import MemoryEngineCRUDMixin
 from .memory_engine_evolution_hooks import MemoryEngineEvolutionHooksMixin
+from .memory_engine_knowledge_hooks import MemoryEngineKnowledgeHooksMixin
 from .memory_engine_lifecycle import MemoryEngineLifecycleMixin
 from .memory_engine_profile_hooks import MemoryEngineProfileHooksMixin
 from .retrieval_optimizer import RetrievalOptimizer
@@ -26,6 +27,7 @@ from .write_op_journal import WriteOpJournal
 class MemoryEngine(
     MemoryEngineLifecycleMixin,
     MemoryEngineEvolutionHooksMixin,
+    MemoryEngineKnowledgeHooksMixin,
     MemoryEngineProfileHooksMixin,
     MemoryEngineCRUDMixin,
     MemoryEngineBatchMixin,
@@ -77,6 +79,7 @@ class MemoryEngine(
         self.profile_store = None
         self.profile_manager = None
         self.profile_proposal_pipeline = None
+        self.knowledge_proposal_pipeline = None
         self.personalized_ranker = None
         # 自主学习
         self.auto_learning = None

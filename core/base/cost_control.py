@@ -42,6 +42,7 @@ class CostControl:
         - "reflection_extra_batch": 第 2 个及后续反思批次
         - "persona_interpretation": 人设解释生成
         - "profile_extraction": canonical 写后的自动画像提取
+        - "knowledge_extraction": canonical 写后的自动知识提取
         - "llm_query_rewrite": LLM 查询改写
         - "memory_grounding_judge": 高风险记忆来源忠实性判断
         """
@@ -57,6 +58,7 @@ class CostControl:
             "reflection_extra_batch": self.allow_llm_topic_strategy_d,
             "persona_interpretation": False,
             "profile_extraction": False,
+            "knowledge_extraction": False,
             "llm_query_rewrite": False,
             "memory_grounding_judge": False,
         }

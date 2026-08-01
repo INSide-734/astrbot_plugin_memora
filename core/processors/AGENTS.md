@@ -14,6 +14,10 @@
 生产调用由 manager 层的 `ProfileProposalPipeline` 编排；LLM 入口使用单次物理请求并由
 `profile_extraction` 额外预算控制，普通不可用时只能使用无 Provider 的关键词 fallback。
 
+`KnowledgeExtractor` 只负责把有限 canonical evidence 转成 `KnowledgeEntry`，不写入 Store。
+生产调用由 manager 层的 `KnowledgeProposalPipeline` 编排；LLM 入口使用单次物理请求并由
+`knowledge_extraction` 额外预算控制，没有请求预算时不得裸调用 Provider。
+
 本模块不捕获 AstrBot 事件、不决定何时触发总结、不直接持久化主管道产物，也不执行召回。触发与批次编排见 [`../handlers/AGENTS.md`](../handlers/AGENTS.md)；消息组件标准化见 [`../extractors/AGENTS.md`](../extractors/AGENTS.md)；存储、图 CRUD 与检索属于相应 manager/store/retrieval 模块。
 
 ## 真实主管道
@@ -110,7 +114,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 | `human_like_formatter.py` | 按 atom 类型生成拟人片段并去重 | 无内容返回空片段 |
 | `chatroom_parser.py` | 从 AstrBot 群聊上下文包装中取最新消息 | 不匹配或异常时原样返回 prompt |
 | `profile_extractor.py` | LLM 提取用户标签/偏好，最多 5 个标签 | 无 client/调用失败返回空；另有关键词 fallback |
-| `knowledge_extractor.py` | 记忆 → `KnowledgeEntry` | 输入过短、无 client 或 JSON 无法恢复时 `None` |
+| `knowledge_extractor.py` | 有限 canonical evidence → `KnowledgeEntry` | 输入过短、无 client 或 JSON 无法恢复时 `None`；结构和长度边界由 proposal 管线再次校验 |
 | `note_generator.py` | 重要对话 → note dict | 未达长度、无 client 或 JSON 无法恢复时 `None` |
 | `memory_consolidator.py` | canonical evidence → 受约束的 relation/projection proposal | JSON/Schema/数量/字符预算失败抛出，由 manager 负责重试或拒绝 |
 | `message_utils.py` | 30KB 单消息截断；将一轮对话写成记忆 | 返回 `(success, error)`，不抛普通存储异常 |

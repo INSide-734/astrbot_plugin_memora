@@ -17,10 +17,12 @@ from ..identity.service import ProtocolIdentityService
 from ..injection.recorder import InjectionDecisionRecorder
 from ..managers.backup_manager import BackupManager
 from ..managers.conversation_manager import ConversationManager
+from ..managers.knowledge_proposal_pipeline import KnowledgeProposalPipeline
 from ..managers.memory_engine import MemoryEngine
 from ..managers.memory_evolution_gate import MemoryEvolutionGate
 from ..managers.memory_evolution_manager import MemoryEvolutionManager
 from ..managers.profile_proposal_pipeline import ProfileProposalPipeline
+from ..processors.knowledge_extractor import KnowledgeExtractor
 from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
 from ..processors.memory_processor import MemoryProcessor
@@ -320,6 +322,15 @@ class ComponentFactory:
                 min_tag_confidence=float(
                     engine_config.get("user_profile.min_tag_confidence", 0.1)
                 ),
+            )
+        if memory_engine.knowledge_manager is not None:
+            memory_engine.knowledge_proposal_pipeline = KnowledgeProposalPipeline(
+                knowledge_manager=memory_engine.knowledge_manager,
+                source_store=memory_evolution_store,
+                get_memory=memory_engine.get_memory,
+                extractor=KnowledgeExtractor(memory_processor.llm_client),
+                cost_control=cost_control,
+                expire_days=int(engine_config.get("knowledge_base.expire_days", 365)),
             )
         index_validator = IndexValidator(str(db_path), db)
         derived_rebuild_coordinator = DerivedRebuildCoordinator(

@@ -103,7 +103,12 @@ sequenceDiagram
   `ProfileProposalPipeline` 重新读取 source 并校验稳定身份、revision、scope 和 privacy。
   自动标签/偏好携带 derived provenance，普通失败隔离主写，取消必须传播。画像 Store
   读取时过滤失效来源；偏好是整份 provenance 快照，已有 manual 来源时自动 proposal
-  整体让位，不能覆盖人工字段。
+整体让位，不能覆盖人工字段。
+- `MemoryEngineKnowledgeHooksMixin` 只在 canonical add 成功后创建受跟踪知识任务；
+  `KnowledgeProposalPipeline` 先执行重要性/置信度/稳定状态门和 `knowledge_extraction`
+  额外预算门，再二次校验 source revision、scope、privacy。知识条目携带不含正文的
+  derived provenance，人工条目优先，普通失败隔离主写，取消必须传播；Knowledge Store
+  读取时过滤失效来源，自动知识不进入被动召回。
 
 ## Memory Evolution 生命周期与安全边界
 
@@ -136,7 +141,7 @@ sequenceDiagram
 | 原子生命周期 | `atom_lifecycle_manager.py`、`atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理 |
 | 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护 |
 | 画像 | `profile_manager.py`、`profile_proposal_pipeline.py`、`memory_engine_profile_hooks.py` | 管理员编辑使用修订值冲突检测；canonical 写后自动 proposal 仅绑定唯一可信主体，标签与偏好携带 derived provenance 并走存储层原子事务 |
-| 知识/笔记 | `knowledge_manager.py`、`note_manager.py` | 知识去重与过期；显式 derived proposal 需 source revision，笔记 CRUD、软删和版本裁剪保持领域权威 |
+| 知识/笔记 | `knowledge_manager.py`、`knowledge_proposal_pipeline.py`、`memory_engine_knowledge_hooks.py`、`note_manager.py` | 知识 canonical 写后 proposal、来源约束去重与过期；显式 derived proposal 需 source revision，笔记 CRUD、软删和版本裁剪保持领域权威 |
 | 可靠性 | `write_coordinator.py`、`write_op_*` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复 |
 | 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验及原子应用 |
 | canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |

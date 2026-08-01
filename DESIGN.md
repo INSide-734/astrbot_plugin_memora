@@ -67,6 +67,20 @@ reservation。偏好目前以整份快照记录 provenance；已有人工来源�
 避免值被覆盖而来源仍伪装为 manual。Dashboard 详情同时展示标签和偏好的 manual/derived
 来源，旧数据兼容既有 `source` 字段。
 
+### 自动知识 proposal 闭环
+
+canonical memory 成功提交后，`MemoryEngine` 将任务交给受生命周期跟踪的
+`KnowledgeProposalPipeline`。管线先按重要性、置信度、稳定状态筛选 source，再在
+`knowledge_extraction` 请求级额外预算允许时调用 `KnowledgeExtractor`；没有预算时不调用
+Provider。抽取结果必须通过 category、title、content、confidence 和 tags 的结构/长度校验，
+随后重新读取 source 并比较 revision、scope、privacy，才以不含正文的
+`DomainProvenance` 调用 `KnowledgeManager.add_derived_entry()`。
+
+`knowledge_base.dedup_threshold` 与 `expire_days` 由运行时配置投影到 Manager；合并要求相同
+scope/privacy，人工知识始终优先，重复 derived proposal 保持幂等。Knowledge Store 的读取
+边界继续过滤失效 source revision；自动知识只通过既有 Agent Tool/API/Dashboard 显式读取，
+不进入被动召回。派生失败隔离 canonical 主写，取消继续传播。
+
 ### 话题分段闭环
 
 `TopicBatchPreparer` 只在结构化抽取前执行策略 C/D：C 使用相邻消息 Embedding 边界，
@@ -322,3 +336,18 @@ Dashboard 三语言资源和定向回归测试。
 
 **决策依据**：canonical 仍是唯一权威；派生失败隔离主写，人工偏好整份快照优先，取消和
 预算生命周期保持请求级约束。
+
+### 2026-08-01 - 接通自动知识 proposal 闭环
+
+**变更内容**：将 `KnowledgeExtractor` 接入 canonical 写后任务，增加质量门、额外 LLM 预算、
+source revision 二次校验和 derived provenance；同时让知识去重与过期策略消费统一运行时配置。
+
+**变更理由**：原知识抽取器与 `KnowledgeManager.add_derived_entry()` 仅能被测试或手工调用，
+没有从 canonical memory 到知识 Store 的生产闭环，且旧合并逻辑可能改变人工条目或混合不同
+scope/privacy 的来源。
+
+**影响范围**：MemoryEngine 写后 hook、组件工厂、知识 Manager、额外预算 allowlist、知识
+proposal 测试和模块文档。自动知识保持显式 Agent Tool/API/Dashboard 读取，不接入被动召回。
+
+**决策依据**：canonical SQLite 仍是唯一权威；派生对象只保存不含正文的 source revision 证据，
+人工知识优先，source 变化或隐私/作用域不兼容时拒绝合并。

@@ -55,6 +55,7 @@ _ALLOWED_FEATURES = frozenset(
         "memory_grounding_judge",
         "persona_interpretation",
         "profile_extraction",
+        "knowledge_extraction",
         "reflection_extra_batch",
         "topic_strategy_d",
     }
