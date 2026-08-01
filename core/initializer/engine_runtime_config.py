@@ -303,12 +303,6 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
         "continuity_tracking.max_pending_topics",
         10,
     ),
-    _field("relationship_tracking.enabled", "relationship_tracking.enabled", True),
-    _field(
-        "relationship_tracking.warmth_decay_per_day",
-        "relationship_tracking.warmth_decay_per_day",
-        0.005,
-    ),
     _field("anomaly_detection.enabled", "anomaly_detection.enabled", True),
     _field("anomaly_detection.window_days", "anomaly_detection.window_days", 7),
     _field(

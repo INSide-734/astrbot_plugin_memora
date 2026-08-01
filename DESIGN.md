@@ -109,9 +109,9 @@ provenance 继续由可信 `Message` 元数据在分段后统一锚定，session
 边界附加。Router 只记录 strategy、稳定 fallback reason、输入/输出计数，不记录对话正文、
 身份、scope、source ID 或 Provider 配置。C/D 在 `MemoryProcessor` 内保持透传，避免重复分割。
 
-### 对话连续性闭环
+### 对话连续性与关系所有权
 
-`ContinuityTracker` 只接收通过质量门且 canonical 写入成功的 topics，按稳定 session 隔离并在启动/关闭同步恢复和保存。召回读取结果复用既有 cognitive budget、Prompt 保护与 `InjectionExecutor` 临时请求路径；quarantine、关闭配置、其他 session、System Prompt 和 canonical 均不得接收该上下文。
+`ContinuityTracker` 只接收通过质量门且 canonical 写入成功的 topics，按稳定 session 隔离并在启动/关闭同步恢复和保存；召回读取结果复用既有 cognitive budget、Prompt 保护与 `InjectionExecutor` 临时请求路径，不写 System Prompt 或 canonical。`core/affection/` 是 Bot 与用户好感度（warmth、层级、情绪）的唯一权威，`core/social/` 是用户间显式关系的唯一权威；遗留 `RelationshipTracker`（JSON 状态、无生产消费者）已删除，不得再引入第三套关系状态，好感度或关系分值不改变 privacy、scope 与注入权限。
 
 ### Pre-canonical quality gate
 
@@ -391,9 +391,9 @@ DerivedRebuildCoordinator、自动笔记定向测试和模块文档；不新增 
 **决策依据**：canonical SQLite 继续保持唯一来源，自动笔记只保存 derived provenance；重建不调用
 Provider，同 provenance 重放不覆盖人工或派生版本历史。
 
-### 2026-08-01 - 接通对话连续性闭环
+### 2026-08-01 - 接通对话连续性与删除冗余关系追踪
 
-**变更内容**：接通 canonical 写后话题标记、同 session 召回与同步状态生命周期。
-**变更理由**：原 Tracker 已实现但没有生产调用，且生命周期构造参数错误。
-**影响范围**：MemoryEngine 生命周期、反思写入、召回临时上下文、模块文档和定向测试。
-**决策依据**：不新建状态或注入路径；关闭配置不读写，quarantine 不标记，System Prompt 不变。
+**变更内容**：接通 canonical 写后话题标记、同 session 召回与同步状态生命周期；删除 `RelationshipTracker` 及其 `relationship_tracking.*` 配置、装配与测试。
+**变更理由**：原 Tracker 无生产调用且构造参数错误；旧关系追踪与已接线的 `AffectionManager` 重复且无消费者。
+**影响范围**：MemoryEngine 生命周期、反思写入、召回临时上下文、配置契约（破坏性变更，旧配置被安全忽略）、模块文档与所有权契约测试。
+**决策依据**：不新建状态或注入路径；按计划 16.1 决策 3，affection=Bot↔用户、social=用户间关系，JSON 死代码直接删除。

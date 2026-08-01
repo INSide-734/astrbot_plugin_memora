@@ -1,6 +1,6 @@
 """Memora 社交关系类型化模块。
 
-在现有图记忆系统 (GraphMemoryManager + RelationshipTracker)
+在现有图记忆系统 (GraphMemoryManager)
 之上叠加显式的关系类型标注层。
 """
 

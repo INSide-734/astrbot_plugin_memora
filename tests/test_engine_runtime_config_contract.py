@@ -104,7 +104,6 @@ def test_factory_projects_lifecycle_feature_sections() -> None:
             "knowledge_base": {"enabled": False, "dedup_threshold": 0.73},
             "notes": {"enabled": False, "max_tags": 4},
             "continuity_tracking": {"enabled": True, "topic_ttl_days": 11},
-            "relationship_tracking": {"enabled": True},
             "anomaly_detection": {"enabled": True, "sigma_threshold": 2.4},
             "weight_learning": {"enabled": True, "epsilon": 0.22},
             "reconsolidation": {"enabled": True, "min_recall_count": 8},
@@ -122,7 +121,6 @@ def test_factory_projects_lifecycle_feature_sections() -> None:
     assert config["notes.max_tags"] == 4
     assert config["continuity_tracking.enabled"] is True
     assert config["continuity_tracking.topic_ttl_days"] == 11
-    assert config["relationship_tracking.enabled"] is True
     assert config["anomaly_detection.enabled"] is True
     assert config["anomaly_detection.sigma_threshold"] == pytest.approx(2.4)
     assert config["weight_learning.enabled"] is True
@@ -172,7 +170,6 @@ async def test_projected_lifecycle_flags_control_real_engine_components(
             "knowledge_base": {"enabled": False},
             "notes": {"enabled": False},
             "continuity_tracking": {"enabled": False},
-            "relationship_tracking": {"enabled": False},
             "reconsolidation": {"enabled": False},
             "anomaly_detection": {"enabled": True},
             "weight_learning": {"enabled": False},
@@ -309,7 +306,7 @@ def test_every_schema_leaf_has_an_explicit_owner_classification() -> None:
         ownership["recall_engine.top_k"].kind,
         ownership["dashboard.allow_runtime_build"].kind,
         ownership["episode_clustering.enabled"].kind,
-        ownership["relationship_tracking.enabled"].kind,
+        ownership["index_management.ivf_switch_threshold"].kind,
     } == {
         ConfigOwnershipKind.RUNTIME,
         ConfigOwnershipKind.DASHBOARD_ONLY,

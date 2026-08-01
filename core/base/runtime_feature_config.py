@@ -150,13 +150,6 @@ class ReconsolidationConfig(BaseModel):
     min_recall_count: int = 5
 
 
-class RelationshipTrackingConfig(BaseModel):
-    """旧关系阶段追踪配置。"""
-
-    enabled: bool = True
-    warmth_decay_per_day: float = 0.005
-
-
 class SemanticCompressionConfig(BaseModel):
     """语义摘要 Projection 候选配置。"""
 
@@ -222,9 +215,6 @@ class RuntimeFeatureConfigSections(BaseModel):
     )
     reconsolidation: ReconsolidationConfig = Field(
         default_factory=ReconsolidationConfig
-    )
-    relationship_tracking: RelationshipTrackingConfig = Field(
-        default_factory=RelationshipTrackingConfig
     )
     semantic_compression: SemanticCompressionConfig = Field(
         default_factory=SemanticCompressionConfig

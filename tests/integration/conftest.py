@@ -172,7 +172,6 @@ async def integration_engine(
             "notes": {"enabled": False},
             "reranker": {"enabled": False},
             "continuity_tracking": {"enabled": False},
-            "relationship_tracking": {"enabled": False},
             "reconsolidation": {"enabled": False},
             "anomaly_detection": {"enabled": False},
             "weight_learning": {"enabled": False},

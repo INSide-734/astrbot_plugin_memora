@@ -100,7 +100,6 @@ class MemoryEngineLifecycleMixin:
         self.note_manager = None
         self.trait_tracker = None
         self.continuity_tracker = None
-        self.relationship_tracker = None
         self.reconsolidation = None
         self.anomaly_detector = None
         self.weight_learner = None
@@ -323,14 +322,6 @@ class MemoryEngineLifecycleMixin:
             self.config,
             self.db_path,
         )
-
-        # 关系阶段追踪
-        if bool(self.config.get("relationship_tracking.enabled", False)):
-            from .relationship_tracker import RelationshipTracker
-
-            self.relationship_tracker = RelationshipTracker(
-                self.db_path, self.db_connection
-            )
 
         # 记忆再巩固
         if bool(self.config.get("reconsolidation.enabled", False)):

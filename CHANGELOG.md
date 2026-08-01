@@ -5,6 +5,12 @@ Memora 的所有重要变更都记录在此文件中。
 本文档遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 破坏性变更
+
+- 删除从未接入生产且与好感度域重复的 `relationship_tracking` 配置（`enabled`、`warmth_decay_per_day`）。Bot 与用户的关系/好感度统一由好感度域权威维护，用户间关系由社交关系域维护；旧配置会被安全忽略，无需迁移数据。
+
 ## [1.1.0] — 2026-07-31
 
 Memora 1.1.0 聚焦召回准确性、LLM 首字响应关键路径、请求内证据覆盖和隐私安全观测，并同步加强提示词保护的配置一致性与并发隔离，适配新版 Dashboard 构建工具链。

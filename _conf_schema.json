@@ -1223,15 +1223,6 @@
             "sigma_threshold": {"description": "Sigma 告警阈值", "hint": "当日创建量偏离均值超过 sigma 倍标准差时触发告警。3.0 为标准 3-sigma。", "type": "float", "default": 3.0}
         }
     },
-    "relationship_tracking": {
-        "description": "关系阶段追踪",
-        "hint": "追踪用户与 Bot 的亲密度变化，从陌生人到密友",
-        "type": "object",
-        "items": {
-            "enabled": {"description": "启用关系追踪", "hint": "开启后根据互动频率和情感极性累积用户亲密度 warmth score。", "type": "bool", "default": true},
-            "warmth_decay_per_day": {"description": "温暖度日衰减率", "hint": "每天自然的亲密度衰减。0.005 表示每天降低 0.5%（极慢）。设为 0 可停用。", "type": "float", "default": 0.005}
-        }
-    },
     "continuity_tracking": {
         "description": "对话连续性追踪",
         "hint": "追踪未完成话题，下次对话时优先恢复上下文",

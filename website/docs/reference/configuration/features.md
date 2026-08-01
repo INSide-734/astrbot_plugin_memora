@@ -63,15 +63,6 @@ pageClass: config-reference-page
 | `"anomaly_detection.window_days"` | `"int"` | `7` | - | 滚动窗口天数<br><small>计算基线均值与标准差所用的历史天数。</small> |
 | `"anomaly_detection.sigma_threshold"` | `"float"` | `3` | - | Sigma 告警阈值<br><small>当日创建量偏离均值超过 sigma 倍标准差时触发告警。3.0 为标准 3-sigma。</small> |
 
-## 关系阶段追踪
-
-配置域：`"relationship_tracking"`。追踪用户与 Bot 的亲密度变化，从陌生人到密友
-
-| 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
-|---|---|---|---|---|
-| `"relationship_tracking.enabled"` | `"bool"` | `true` | - | 启用关系追踪<br><small>开启后根据互动频率和情感极性累积用户亲密度 warmth score。</small> |
-| `"relationship_tracking.warmth_decay_per_day"` | `"float"` | `0.005` | - | 温暖度日衰减率<br><small>每天自然的亲密度衰减。0.005 表示每天降低 0.5%（极慢）。设为 0 可停用。</small> |
-
 ## 对话连续性追踪
 
 配置域：`"continuity_tracking"`。只从通过质量门并成功写入 canonical 的 topics 追踪同 session 未完成话题；启动时恢复未过期状态，召回结果仅进入受预算与保护的临时请求上下文。关闭后不读取、不写入、不注入。

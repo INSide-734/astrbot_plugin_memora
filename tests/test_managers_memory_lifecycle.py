@@ -373,7 +373,6 @@ class TestMemoryEngineInitialize:
                 "reranker.enabled": False,
                 "export.enabled": False,
                 "continuity_tracking.enabled": False,
-                "relationship_tracking.enabled": False,
                 "reconsolidation.enabled": False,
                 "anomaly_detection.enabled": False,
                 "weight_learning.enabled": False,
@@ -391,10 +390,6 @@ class TestMemoryEngineInitialize:
         assert (
             not hasattr(engine, "continuity_tracker")
             or engine.continuity_tracker is None
-        )
-        assert (
-            not hasattr(engine, "relationship_tracker")
-            or engine.relationship_tracker is None
         )
         assert not hasattr(engine, "reconsolidation") or engine.reconsolidation is None
         assert not hasattr(engine, "weight_learner") or engine.weight_learner is None

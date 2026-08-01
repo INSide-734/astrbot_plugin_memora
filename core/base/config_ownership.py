@@ -150,11 +150,6 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
         ConfigOwnershipKind.EXPERIMENTAL,
         "core.managers.anomaly_detector",
     ),
-    "relationship_tracking": _ownership(
-        "relationship_tracking",
-        ConfigOwnershipKind.DEPRECATED,
-        "core.managers.relationship_tracker",
-    ),
     "continuity_tracking": _ownership(
         "continuity_tracking",
         ConfigOwnershipKind.EXPERIMENTAL,
