@@ -1604,6 +1604,11 @@
       "avoidedTopics": "回避话题",
       "preferredTopics": "偏好话题",
       "replyStyle": "回复风格",
+      "source": {
+        "derived": "自动派生",
+        "manual": "人工维护"
+      },
+      "sourceLabel": "来源",
       "tagCategory": "标签类别",
       "tagConfidence": "标签置信度",
       "tagConfidenceRange": "标签置信度必须在 0 到 1 之间",

@@ -20,9 +20,11 @@ from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..managers.memory_evolution_gate import MemoryEvolutionGate
 from ..managers.memory_evolution_manager import MemoryEvolutionManager
+from ..managers.profile_proposal_pipeline import ProfileProposalPipeline
 from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
 from ..processors.memory_processor import MemoryProcessor
+from ..processors.profile_extractor import ProfileExtractor
 from ..provider_adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..retrieval.derived_relation_expander import DerivedRelationExpander
 from ..retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
@@ -308,6 +310,17 @@ class ComponentFactory:
         # MemoryEngine/DocumentStorage 唯一写入，避免形成第二套正文权威。
         memory_engine.memory_evolution_store = memory_evolution_store
         memory_engine.memory_evolution_manager = memory_evolution_manager
+        if memory_engine.profile_manager is not None:
+            memory_engine.profile_proposal_pipeline = ProfileProposalPipeline(
+                profile_manager=memory_engine.profile_manager,
+                source_store=memory_evolution_store,
+                get_memory=memory_engine.get_memory,
+                extractor=ProfileExtractor(memory_processor.llm_client),
+                cost_control=cost_control,
+                min_tag_confidence=float(
+                    engine_config.get("user_profile.min_tag_confidence", 0.1)
+                ),
+            )
         index_validator = IndexValidator(str(db_path), db)
         derived_rebuild_coordinator = DerivedRebuildCoordinator(
             index_validator,

@@ -152,6 +152,10 @@ Injection 页面固定为 `dense`：PageHeader 下有 Overview、Strategy Config
 ## 服务端筛选、分页与选择清理
 
 - Knowledge 普通列表与 Profiles 使用服务端 `limit` / `offset` 真分页，服务端返回 total/边界决定翻页；不要先拉全量再在客户端伪分页。
+- Profiles 详情中的标签与偏好来源以服务端 provenance 为准，分别显示 `manual`/`derived`；
+  旧数据可回退既有 `source` 字段，但不得把 source mapping、revision、scope、privacy 或
+  canonical 正文展示给模型或普通观测链。新增来源文案必须同步 Mock 字典与
+  `.astrbot-plugin/i18n/{zh-CN,en-US,ru-RU}.json`，并通过生产 i18n 契约测试。
 - Knowledge search 没有 `offset`；Jargon candidates/meanings 也没有 `offset`。不得向这些端点虚构 offset 或展示无法兑现的页码。
 - 查询、范围、筛选、排序、数据集、page size 或页码变化时，清除已经不可见的选择；刷新/删除/写回后也要按返回数据收敛 selection。
 - 批量动作只能作用于当前可验证的选中 ID，绝不能保留隐藏页选择并对用户不可见的数据执行。

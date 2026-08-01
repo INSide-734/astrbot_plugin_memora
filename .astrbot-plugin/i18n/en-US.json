@@ -1604,6 +1604,11 @@
       "avoidedTopics": "Avoided topics",
       "preferredTopics": "Preferred topics",
       "replyStyle": "Reply style",
+      "source": {
+        "derived": "Derived",
+        "manual": "Manual"
+      },
+      "sourceLabel": "Source",
       "tagCategory": "Tag category",
       "tagConfidence": "Tag confidence",
       "tagConfidenceRange": "Tag confidence must be between 0 and 1",

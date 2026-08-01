@@ -75,6 +75,19 @@ class TestLLMClient:
         assert result == "test response"
         mock_provider.text_chat.assert_called_once()
 
+    def test_complete_uses_one_physical_provider_call(
+        self, mock_provider: MagicMock
+    ) -> None:
+        """通用单次入口失败时不得为同一预算 reservation 重试。"""
+
+        mock_provider.text_chat = AsyncMock(side_effect=RuntimeError("调用失败"))
+        client = LLMClient(context=None, llm_provider=mock_provider)
+
+        with pytest.raises(RuntimeError, match="调用失败"):
+            asyncio.run(client.complete("test prompt"))
+
+        mock_provider.text_chat.assert_awaited_once()
+
     def test_call_llm_no_provider_raises(self) -> None:
         client = LLMClient(context=None, llm_provider=None)
         with pytest.raises(RuntimeError):

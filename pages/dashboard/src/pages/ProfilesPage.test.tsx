@@ -121,10 +121,10 @@ describe("ProfilesPage", () => {
             user_id: "alice",
             display_name: "Alice",
             revision: "rev-1",
-            preferences: {},
+            preferences: { provenance: { origin: "derived" } },
             tags: [
-              { category: "knowledge", value: "Python", confidence: 0.95 },
-              { category: "custom", value: "Backend", confidence: 0.8 },
+              { category: "knowledge", value: "Python", confidence: 0.95, provenance: { origin: "manual" } },
+              { category: "custom", value: "Backend", confidence: 0.8, provenance: { origin: "derived" } },
             ],
           }
         : { total: 1, profiles: [{ user_id: "alice", display_name: "Alice", revision: "rev-1" }] },
@@ -140,6 +140,8 @@ describe("ProfilesPage", () => {
     expect(within(drawer).getByText("knowledge")).toBeTruthy();
     expect(within(drawer).getByText("Python")).toBeTruthy();
     expect(within(drawer).getByText("95%")).toBeTruthy();
+    expect(within(drawer).getByText("Manual")).toBeTruthy();
+    expect(within(drawer).getAllByText("Derived")).toHaveLength(2);
   });
 
   it("recovers corrupt table preferences with required and pinned profile columns", async () => {

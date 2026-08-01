@@ -52,6 +52,21 @@ SQLite is authoritative for structured durable state. FAISS and graph indexes ac
 retrieval but must not become the only copy of a memory. Multi-step writes use the shared
 write coordinator or a store-local transaction following the same serialization contract.
 
+### 自动画像 proposal 闭环
+
+canonical memory 成功提交后，`MemoryEngine` 通过受生命周期跟踪的写后任务调用
+`ProfileProposalPipeline`。管线重新读取 canonical memory 和 source revision，只接受
+`stable-identity-v1`、唯一可信 `subject_id` 与匹配的身份来源；匿名、多主体、非法身份或
+缺失 source 均直接跳过。标签和偏好写入 `ProfileManager` 时携带不含正文的
+`DomainProvenance`，`ProfileStore` 在事务内再次校验 revision/scope/privacy，并在读取时
+过滤失效 derived 对象，因此个性化排序只消费当前有效来源。
+
+画像 LLM 调用使用请求级 `profile_extraction` 额外预算；没有额度时只运行保守关键词
+fallback，不裸调用 Provider。普通派生失败不回滚 canonical，取消继续向上传播并释放
+reservation。偏好目前以整份快照记录 provenance；已有人工来源时整份自动 proposal 让位，
+避免值被覆盖而来源仍伪装为 manual。Dashboard 详情同时展示标签和偏好的 manual/derived
+来源，旧数据兼容既有 `source` 字段。
+
 ### 话题分段闭环
 
 `TopicBatchPreparer` 只在结构化抽取前执行策略 C/D：C 使用相邻消息 Embedding 边界，
@@ -293,3 +308,17 @@ relation 的 CAS 复核、拒绝、重放和低敏审计链。
 
 **决策依据**：canonical SQLite 继续保持唯一权威；episode/conflict 只进入可失效派生平面；
 高影响结果默认不可见并必须经 source 二次校验和 revision CAS 后激活。
+
+### 2026-08-01 - 接通自动画像 proposal 闭环
+
+**变更内容**：在 canonical memory 写后接入来源约束的画像 proposal 管线、额外 LLM 预算
+与关键词降级，并在 Dashboard 展示画像对象的 manual/derived 来源。
+
+**变更理由**：`ProfileExtractor` 和 `ProfileManager` 原本各自可用但没有生产触发；自动结果
+需要稳定身份、source revision、隐私边界和人工权威保护才能进入画像读取与个性化排序。
+
+**影响范围**：MemoryEngine 写后任务、画像 Store/Manager、ProfileExtractor、组件工厂、
+Dashboard 三语言资源和定向回归测试。
+
+**决策依据**：canonical 仍是唯一权威；派生失败隔离主写，人工偏好整份快照优先，取消和
+预算生命周期保持请求级约束。

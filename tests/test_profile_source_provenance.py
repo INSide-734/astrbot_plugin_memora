@@ -195,6 +195,33 @@ async def test_automatic_preferences_recheck_current_canonical_source(
 
 
 @pytest.mark.asyncio
+async def test_derived_preferences_do_not_override_manual_authority(tmp_path) -> None:
+    """自动偏好 proposal 不得覆盖管理员维护的偏好快照。"""
+
+    store = ProfileStore(str(tmp_path / "profile.db"))
+    await store.init_table()
+    await _create_canonical_source(store.db_path)
+    manager = ProfileManager(store)
+    await manager.ensure_profile("user-a")
+    await manager.update_profile_fields(
+        "user-a",
+        preferences={"reply_style": "concise"},
+    )
+
+    await manager.update_preferences(
+        "user-a",
+        {"reply_style": "formal", "preferred_topics": ["数据库"]},
+        provenance=_derived_provenance(),
+    )
+
+    profile = await manager.get_profile("user-a")
+    assert profile is not None
+    assert profile.preferences.reply_style == "concise"
+    assert profile.preferences.preferred_topics == []
+    assert profile.preferences.provenance == DomainProvenance(DomainObjectOrigin.MANUAL)
+
+
+@pytest.mark.asyncio
 async def test_manual_profile_fields_receive_manual_origin(tmp_path) -> None:
     """管理员创建的画像字段保持领域内人工权威。"""
 

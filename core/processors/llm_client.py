@@ -15,7 +15,7 @@ from ..provider_adapters import LLMProviderAdapter
 
 
 class LLMClient:
-    """动态解析 LLM Provider + 带指数退避的调用"""
+    """动态解析 LLM Provider，并提供带指数退避或单次调用的文本生成入口。"""
 
     adapter_capabilities = AdapterCapabilityContract(
         kind=AdapterKind.LLM_CLIENT,
@@ -136,3 +136,12 @@ class LLMClient:
         if last_error:
             raise last_error
         raise RuntimeError("LLM 调用失败，未捕获到具体异常")
+
+    async def complete(self, prompt: str) -> str:
+        """以单次物理 Provider 调用完成处理器的通用文本生成协议。
+
+        额外 LLM 的功能许可和请求额度由调用方在进入本方法前完成；本方法
+        不自行重试，避免一个 reservation 对应多次物理请求。
+        """
+
+        return await self.call_llm_with_retry(prompt, "", max_retries=1)

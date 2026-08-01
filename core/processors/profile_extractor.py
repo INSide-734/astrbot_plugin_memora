@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -32,14 +33,18 @@ Rules:
 
 
 class ProfileExtractor:
-    """Extract user tags and preferences from conversations via LLM."""
+    """通过 LLM 从对话证据中提取用户标签和偏好。"""
 
     def __init__(self, llm_client: Any = None) -> None:
+        """保存实现 ``complete(prompt)`` 的可选 LLM 客户端。"""
+
         self._llm_client = llm_client
 
     async def extract(
         self, user_message: str, bot_response: str = "", context: str = ""
     ) -> tuple[list[UserTag], dict[str, Any]]:
+        """调用 LLM 提取结构化画像；普通失败返回空 proposal。"""
+
         if not self._llm_client:
             return [], {}
 
@@ -54,8 +59,13 @@ class ProfileExtractor:
         try:
             raw = await self._llm_client.complete(prompt)
             result = self._parse_response(raw)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            logger.debug(f"[ProfileExtractor] LLM call failed: {exc}")
+            logger.debug(
+                "[画像提取] LLM 调用失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
             return [], {}
 
         tags = self._build_tags(result.get("tags", []))
@@ -64,6 +74,8 @@ class ProfileExtractor:
 
     @staticmethod
     def extract_keywords_fallback(user_message: str) -> list[UserTag]:
+        """在不调用 Provider 时提取有限的显式关键词标签。"""
+
         message_lower = user_message.lower()
         tags: list[UserTag] = []
 
@@ -92,6 +104,8 @@ class ProfileExtractor:
 
     @staticmethod
     def _parse_response(raw: str) -> dict[str, Any]:
+        """解析纯 JSON 或 Markdown 代码块中的首个 JSON 对象。"""
+
         raw = raw.strip()
         if raw.startswith("```"):
             lines = [line for line in raw.split("\n") if not line.startswith("```")]
@@ -109,6 +123,8 @@ class ProfileExtractor:
 
     @staticmethod
     def _build_tags(tag_data: list[dict[str, Any]]) -> list[UserTag]:
+        """把不可信标签数据规范为最多五个领域模型。"""
+
         tags: list[UserTag] = []
         for item in tag_data or []:
             try:

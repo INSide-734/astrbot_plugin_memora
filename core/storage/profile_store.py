@@ -408,6 +408,14 @@ class ProfileStore(BaseStore):
                     await db.commit()
                     return None
                 preferences = current.preferences
+                if (
+                    preferences.provenance is not None
+                    and preferences.provenance.origin is DomainObjectOrigin.MANUAL
+                ):
+                    # 偏好当前以整份快照记录来源；在具备字段级 provenance 前，
+                    # 自动 proposal 必须整体让位，避免覆盖人工值后仍伪装为人工来源。
+                    await db.commit()
+                    return current
                 if "reply_style" in preferences_update:
                     preferences.reply_style = str(preferences_update["reply_style"])
                 if "preferred_topics" in preferences_update:

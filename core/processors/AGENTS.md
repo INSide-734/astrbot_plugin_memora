@@ -10,6 +10,10 @@
 
 `core/processors/` 将已经进入会话存储的 `list[Message]` 格式化、提交给 LLM、校验/修复响应，并构造成持久化层可消费的记忆、元数据与原子。目录还包含话题策略、图结构提取、文本检索预处理、Memory Evolution proposal 整理器，以及画像/知识/笔记等独立派生处理器。
 
+`ProfileExtractor` 只负责把受限 evidence 转成标签和偏好，不写入 Store，也不决定画像主键。
+生产调用由 manager 层的 `ProfileProposalPipeline` 编排；LLM 入口使用单次物理请求并由
+`profile_extraction` 额外预算控制，普通不可用时只能使用无 Provider 的关键词 fallback。
+
 本模块不捕获 AstrBot 事件、不决定何时触发总结、不直接持久化主管道产物，也不执行召回。触发与批次编排见 [`../handlers/AGENTS.md`](../handlers/AGENTS.md)；消息组件标准化见 [`../extractors/AGENTS.md`](../extractors/AGENTS.md)；存储、图 CRUD 与检索属于相应 manager/store/retrieval 模块。
 
 ## 真实主管道

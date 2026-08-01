@@ -1600,6 +1600,11 @@
       "avoidedTopics": "Избегаемые темы",
       "preferredTopics": "Предпочитаемые темы",
       "replyStyle": "Стиль ответов",
+      "source": {
+        "derived": "Производный",
+        "manual": "Ручной"
+      },
+      "sourceLabel": "Источник",
       "tagCategory": "Категория тега",
       "tagConfidence": "Уверенность тега",
       "tagConfidenceRange": "Уверенность тега должна быть от 0 до 1",

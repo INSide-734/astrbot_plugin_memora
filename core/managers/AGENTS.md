@@ -99,6 +99,11 @@ sequenceDiagram
 - 原子批量失败后逐条补写，仅仍失败的原子进入修复载荷。图失败不撤销已建文档，而是标记修复。
 - 删除先调用 `HybridRetriever.delete_memory()`；随后图或原子清理失败不会把主删除改成失败，但日志保留 `needs_repair`。
 - `WriteOpJournal.start_op()` 失败时可能返回 `None`；业务路径仍继续，因此不能把日志存在等同于事务已保证。
+- `MemoryEngineProfileHooksMixin` 只在 canonical add 成功后创建受跟踪画像任务；
+  `ProfileProposalPipeline` 重新读取 source 并校验稳定身份、revision、scope 和 privacy。
+  自动标签/偏好携带 derived provenance，普通失败隔离主写，取消必须传播。画像 Store
+  读取时过滤失效来源；偏好是整份 provenance 快照，已有 manual 来源时自动 proposal
+  整体让位，不能覆盖人工字段。
 
 ## Memory Evolution 生命周期与安全边界
 
@@ -130,7 +135,7 @@ sequenceDiagram
 | 图同步 | `graph_memory_manager.py` | 删除旧图产物后重建节点/边/条目与图向量；向量 ID 最终回写 SQLite |
 | 原子生命周期 | `atom_lifecycle_manager.py`、`atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理 |
 | 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护 |
-| 画像 | `profile_manager.py` | 管理员编辑使用修订值冲突检测；自动标签与偏好携带 derived provenance 并走存储层原子事务 |
+| 画像 | `profile_manager.py`、`profile_proposal_pipeline.py`、`memory_engine_profile_hooks.py` | 管理员编辑使用修订值冲突检测；canonical 写后自动 proposal 仅绑定唯一可信主体，标签与偏好携带 derived provenance 并走存储层原子事务 |
 | 知识/笔记 | `knowledge_manager.py`、`note_manager.py` | 知识去重与过期；显式 derived proposal 需 source revision，笔记 CRUD、软删和版本裁剪保持领域权威 |
 | 可靠性 | `write_coordinator.py`、`write_op_*` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复 |
 | 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验及原子应用 |
