@@ -2111,7 +2111,17 @@ async function openBundledConfigPage(
   return { context, page };
 }
 
+/**
+ * 等待配置页完整渲染并核对权威 Schema 的浏览器契约。
+ *
+ * @param {import("playwright").Page} page Playwright 页面实例。
+ * @param {string} label 用于失败诊断的场景标签。
+ * @returns {Promise<{sections: number, fields: number, hasIndexManagement: boolean, text: string}>}
+ *   返回稳定后的配置域、字段数量及已删除配置域的可见性。
+ */
 async function waitForConfigReady(page, label) {
+  const expectedSections = 41;
+  const expectedFields = 227;
   await waitForRootText(
     page,
     ["配置", "单次召回数量", "recall_engine.top_k", "已同步"],
@@ -2121,12 +2131,15 @@ async function waitForConfigReady(page, label) {
     ({ sections, fields }) =>
       document.querySelectorAll("[data-config-section]").length === sections
       && document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length === fields,
-      { sections: 42, fields: 229 },
+      { sections: expectedSections, fields: expectedFields },
     { timeout: 10_000 },
   );
   const counts = await page.evaluate(() => ({
     sections: document.querySelectorAll("[data-config-section]").length,
     fields: document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length,
+    hasIndexManagement: Array.from(document.querySelectorAll("code")).some((element) =>
+      element.textContent?.includes("index_management"),
+    ),
     text: document.querySelector("#root")?.innerText ?? "",
   }));
   const lingeringLoading = [
@@ -2135,11 +2148,17 @@ async function waitForConfigReady(page, label) {
     "Loading configuration",
     "Загрузка конфигурации",
   ].filter((text) => counts.text.includes(text));
-  if (counts.sections !== 42 || counts.fields !== 229 || lingeringLoading.length > 0) {
+  if (
+    counts.sections !== expectedSections
+    || counts.fields !== expectedFields
+    || counts.hasIndexManagement
+    || lingeringLoading.length > 0
+  ) {
     throw new Error(
       `${label} did not render the complete settled schema: ${JSON.stringify({
         sections: counts.sections,
         fields: counts.fields,
+        hasIndexManagement: counts.hasIndexManagement,
         lingeringLoading,
       })}`,
     );
