@@ -21,11 +21,13 @@ from ..managers.knowledge_proposal_pipeline import KnowledgeProposalPipeline
 from ..managers.memory_engine import MemoryEngine
 from ..managers.memory_evolution_gate import MemoryEvolutionGate
 from ..managers.memory_evolution_manager import MemoryEvolutionManager
+from ..managers.note_proposal_pipeline import NoteProposalPipeline
 from ..managers.profile_proposal_pipeline import ProfileProposalPipeline
 from ..processors.knowledge_extractor import KnowledgeExtractor
 from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
 from ..processors.memory_processor import MemoryProcessor
+from ..processors.note_generator import NoteGenerator
 from ..processors.profile_extractor import ProfileExtractor
 from ..provider_adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..retrieval.derived_relation_expander import DerivedRelationExpander
@@ -331,6 +333,19 @@ class ComponentFactory:
                 extractor=KnowledgeExtractor(memory_processor.llm_client),
                 cost_control=cost_control,
                 expire_days=int(engine_config.get("knowledge_base.expire_days", 365)),
+            )
+        if memory_engine.note_manager is not None:
+            note_min_length = int(engine_config.get("notes.auto_create_min_length", 50))
+            memory_engine.note_proposal_pipeline = NoteProposalPipeline(
+                note_manager=memory_engine.note_manager,
+                source_store=memory_evolution_store,
+                generator=NoteGenerator(
+                    memory_processor.llm_client,
+                    min_length=note_min_length,
+                ),
+                cost_control=cost_control,
+                auto_create_min_length=note_min_length,
+                max_tags=int(engine_config.get("notes.max_tags", 10)),
             )
         index_validator = IndexValidator(str(db_path), db)
         derived_rebuild_coordinator = DerivedRebuildCoordinator(

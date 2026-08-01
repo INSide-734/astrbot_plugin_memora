@@ -63,12 +63,17 @@ class NoteStore(BaseStore):
             await db.commit()
 
     async def create(self, note: Note) -> int:
-        """校验来源后创建笔记及首个版本。"""
+        """校验来源后创建笔记及首个版本，派生 provenance 保持幂等。"""
 
         now = time.time()
         note.created_at = now
         note.updated_at = now
         note.version = 1
+        provenance_json = (
+            self._to_json(note.provenance.to_dict())
+            if note.provenance is not None
+            else None
+        )
         async with self._connect() as db:
             try:
                 await db.execute("BEGIN IMMEDIATE")
@@ -77,6 +82,21 @@ class NoteStore(BaseStore):
                     note.origin,
                     note.provenance,
                 )
+                if note.origin is DomainObjectOrigin.DERIVED:
+                    cursor = await db.execute(
+                        """SELECT id FROM notes
+                           WHERE origin = ? AND provenance_json = ? AND status != ?
+                           ORDER BY id ASC LIMIT 1""",
+                        (
+                            DomainObjectOrigin.DERIVED.value,
+                            provenance_json,
+                            NoteStatus.DELETED.value,
+                        ),
+                    )
+                    existing = await cursor.fetchone()
+                    if existing is not None:
+                        await db.rollback()
+                        return int(existing[0])
                 cursor = await db.execute(
                     """INSERT INTO notes (title, content, tags, status, version,
                    created_at, updated_at, user_id, source_memory_ids,
@@ -93,11 +113,7 @@ class NoteStore(BaseStore):
                         note.user_id,
                         json.dumps(note.source_memory_ids),
                         note.origin.value,
-                        (
-                            self._to_json(note.provenance.to_dict())
-                            if note.provenance is not None
-                            else None
-                        ),
+                        provenance_json,
                     ),
                 )
                 note_id = cursor.lastrowid

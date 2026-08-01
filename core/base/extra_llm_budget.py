@@ -56,6 +56,7 @@ _ALLOWED_FEATURES = frozenset(
         "persona_interpretation",
         "profile_extraction",
         "knowledge_extraction",
+        "note_generation",
         "reflection_extra_batch",
         "topic_strategy_d",
     }

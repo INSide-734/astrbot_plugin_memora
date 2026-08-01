@@ -43,6 +43,7 @@ class CostControl:
         - "persona_interpretation": 人设解释生成
         - "profile_extraction": canonical 写后的自动画像提取
         - "knowledge_extraction": canonical 写后的自动知识提取
+        - "note_generation": canonical 写后的自动笔记生成
         - "llm_query_rewrite": LLM 查询改写
         - "memory_grounding_judge": 高风险记忆来源忠实性判断
         """
@@ -59,6 +60,7 @@ class CostControl:
             "persona_interpretation": False,
             "profile_extraction": False,
             "knowledge_extraction": False,
+            "note_generation": False,
             "llm_query_rewrite": False,
             "memory_grounding_judge": False,
         }

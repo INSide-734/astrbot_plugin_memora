@@ -114,7 +114,7 @@ stateDiagram-v2
 ### 知识与笔记
 
 - `knowledge_entries`：title/content/category/confidence/source_ids/tags、时间、过期和访问计数，并以 `origin`/`provenance_json` 区分人工与派生；搜索是参数化 `LIKE`，不是 FTS。派生写入和读取会重新校验 source revision/scope/privacy。
-- `notes` + `note_versions`：创建时同事务写 v1；更新以 `WHERE id=? AND version=?` 乐观锁，成功后插入下一版本；notes 以 `origin`/`provenance_json` 保存派生来源，primary 仍有效时 supporting source 可在读取投影中裁剪。
+- `notes` + `note_versions`：创建时同事务写 v1；更新以 `WHERE id=? AND version=?` 乐观锁，成功后插入下一版本；notes 以 `origin`/`provenance_json` 保存派生来源，primary 仍有效时 supporting source 可在读取投影中裁剪。自动派生创建在 `BEGIN IMMEDIATE` 中按完整 provenance 幂等命中当前记录，不更新人工笔记或已有版本。
 - `idx_note_versions_note_version` 对 `(note_id, version)` 唯一；健康检查仍检测旧数据或损坏造成的重复版本。
 - `soft_delete()` 仅改状态；`delete()` 同事务删版本和主笔记；`prune_versions()` 按创建时间保留最新 N 个。
 

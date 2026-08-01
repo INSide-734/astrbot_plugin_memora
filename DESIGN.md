@@ -81,6 +81,21 @@ scope/privacy，人工知识始终优先，重复 derived proposal 保持幂等�
 边界继续过滤失效 source revision；自动知识只通过既有 Agent Tool/API/Dashboard 显式读取，
 不进入被动召回。派生失败隔离 canonical 主写，取消继续传播。
 
+### 自动笔记 proposal 闭环
+
+达到 `notes.auto_create_min_length` 的 canonical memory 成功提交后，`MemoryEngine` 通过统一领域
+写后钩子调度 `NoteProposalPipeline`。请求级 `note_generation` 预算允许时调用 `NoteGenerator`；
+balanced/low-cost、缺少请求预算或生成结构不可用时使用确定性的 canonical 来源标题与正文，
+重建路径始终禁用 Provider。标题和正文执行固定领域长度限制，tags 按 `notes.max_tags` 过滤、
+去重和截断；`notes.max_versions` 由同一运行时配置注入 `NoteManager`。
+
+自动入口必须携带不含正文的 `DomainProvenance`，并在生成后重新校验 source revision、scope 和
+privacy。`NoteStore` 在 `BEGIN IMMEDIATE` 事务中按完整 provenance 幂等命中当前 derived note，
+不会更新人工笔记或其版本；source 更新/删除后旧自动笔记在读取面失效，但 `note_versions`
+继续保留审计历史。`DerivedRebuildCoordinator` 在 canonical、索引、graph、evolution 后运行独立
+notes 阶段，以 Provider-free 方式从当前 source 重建。自动笔记不新增 Agent 写入口，也不进入
+被动召回。
+
 ### 话题分段闭环
 
 `TopicBatchPreparer` 只在结构化抽取前执行策略 C/D：C 使用相邻消息 Embedding 边界，
@@ -351,3 +366,17 @@ proposal 测试和模块文档。自动知识保持显式 Agent Tool/API/Dashboa
 
 **决策依据**：canonical SQLite 仍是唯一权威；派生对象只保存不含正文的 source revision 证据，
 人工知识优先，source 变化或隐私/作用域不兼容时拒绝合并。
+
+### 2026-08-01 - 接通自动笔记 proposal 闭环
+
+**变更内容**：将 `NoteGenerator` 与 `NoteManager.auto_create_from_memory()` 接入 canonical 写后任务，
+增加请求预算、确定性 fallback、source 二次校验、配置限制、事务幂等和统一派生重建阶段。
+
+**变更理由**：原自动笔记处理器与 Manager 只有测试调用，长度、tag 和版本配置没有完整消费；
+自动结果还必须与人工笔记分权，并在 canonical source 变化后失效而不是悬空可见。
+
+**影响范围**：MemoryEngine 领域写后 hook、组件工厂、Note Manager/Store、额外预算 allowlist、
+DerivedRebuildCoordinator、自动笔记定向测试和模块文档；不新增 Agent 写权限或被动召回路径。
+
+**决策依据**：canonical SQLite 继续保持唯一来源，自动笔记只保存 derived provenance；重建不调用
+Provider，同 provenance 重放不覆盖人工或派生版本历史。

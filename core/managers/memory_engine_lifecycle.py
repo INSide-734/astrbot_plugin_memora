@@ -226,7 +226,14 @@ class MemoryEngineLifecycleMixin:
 
             self.note_store = NoteStore(self.db_path)
             await self.note_store.init_table()
-            self.note_manager = NoteManager(self.note_store)
+            self.note_manager = NoteManager(
+                self.note_store,
+                max_versions=int(self.config.get("notes.max_versions", 20)),
+                auto_create_min_length=int(
+                    self.config.get("notes.auto_create_min_length", 50)
+                ),
+                max_tags=int(self.config.get("notes.max_tags", 10)),
+            )
 
         # 性格演化追踪器（可选 — 与自主学习联动）
         if bool(self.config.get("trait_evolution.enabled", False)):

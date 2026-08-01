@@ -210,6 +210,9 @@ class TestMemoryEngineInitialize:
                 "auto_learning.enabled": False,
                 "knowledge_base.enabled": False,
                 "notes.enabled": True,
+                "notes.auto_create_min_length": 73,
+                "notes.max_tags": 3,
+                "notes.max_versions": 7,
                 "reranker.enabled": False,
                 "export.enabled": False,
             },
@@ -223,6 +226,9 @@ class TestMemoryEngineInitialize:
 
         assert engine.note_store is not None
         assert engine.note_manager is not None
+        assert engine.note_manager._auto_create_min_length == 73
+        assert engine.note_manager._max_tags == 3
+        assert engine.note_manager._max_versions == 7
 
         await engine.close()
 

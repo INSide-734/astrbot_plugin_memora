@@ -47,7 +47,7 @@ flowchart TD
 | `FaissChecker` | `check_runtime()` / `load_vec_db_class()` | 父进程已加载 FAISS 时复用成功状态；冷启动用固定参数 `[sys.executable, "-c", "import faiss"]`、30 秒超时探测，再动态导入 AstrBot `FaissVecDB` |
 | `FaissChecker` | `check_and_fix_dimension_mismatch(path, provider)` | 维度不匹配删除旧索引；不可读索引尽量原子隔离为 `.corrupt_<timestamp>` |
 | `DatabaseSetup` | `auto_rebuild_index_if_needed(...)` | 检查 `IndexValidator`，仅在 `needs_rebuild` 时调用统一协调器；失败记录并返回稳定降级结果 |
-| `DerivedRebuildCoordinator` | `rebuild_all()` | 只读确认 canonical 后，按 FTS5/FAISS、graph、relation/projection 顺序重建；阶段失败不删除 canonical |
+| `DerivedRebuildCoordinator` | `rebuild_all()` | 只读确认 canonical 后，按 FTS5/FAISS、graph、relation/projection、自动笔记顺序重建；阶段失败不删除 canonical |
 | `DatabaseSetup` | `repair_message_counts(store)` | 调用 `sync_message_counts()` 修复会话计数；失败记录但不阻断启动 |
 | `ComponentFactory` | `build_all(...) -> dict` | 在任何索引/数据库 I/O 前验证 LLM/Embedding 必需入口，再返回数据库、引擎、处理器、备份/会话/索引/衰减、Memory Evolution 及注入决策组件字典 |
 
@@ -64,8 +64,8 @@ flowchart TD
 3. 构造尚未打开连接的 `MemoryEvolutionStore`。只有 `memory_evolution.enabled=true` 且 mode 为 `readonly` 或 `active` 时，才构造 `DerivedRelationExpander` 和 `ProjectionReader` 并注入引擎配置；`disabled` 与 `shadow` 均传入空读取器。
 4. 构造并初始化 `MemoryEngine`；`engine_runtime_config.py` 使用唯一显式映射表把 `ConfigManager` 投影为不可变语义的白名单快照，覆盖召回、图扩展、重排、成本控制、迁移、索引重建、缓存及 Memory Evolution 读取器等，而不是在工厂内再次合并或由组件猜测配置形状。工厂把同一个 `BackupManager` 注入引擎，供 `SchemaMigrationCoordinator` 在旧库迁移前创建 `pre_migration` 快照；fresh install 不创建该快照。canonical Schema 创建或迁移成功后，工厂才依次打开主/图 FAISS Store 与 `MemoryEvolutionStore`，确保迁移失败恢复时没有其他 `memora.db` 持久连接。`ComponentFactory` 另从 typed `CostControlConfig` 构造唯一 `CostControl` 对象，并同时注入引擎、处理器和事件链。
 5. 初始化 `conversations.db` 与 `ConversationManager`，随后修复 `message_count`。
-6. 构造 `MemoryProcessor`，显式投影 `persona_interpretation.enabled` 与完整 topic strategy/B/Hybrid 配置，复用同一 `CostControl`，并把共享 Embedding Provider 的冻结批量适配器注入 A/B/Hybrid 后置分段链；C/D 仍由 handlers 预切分。再以处理器的带重试 LLM 调用构造 `MemoryConsolidator`，并从正式 episode 配置构造不调用 Provider 的 `MemoryEvolutionCandidateGenerator`。Manager 先消费本地 episode/conflict 候选，候选为空才回退 Consolidator。`MemoryEvolutionGate` 会把 `enabled=false` 归一为 disabled，Manager 仅在归一后的 mode 非 disabled 时启动单 worker。画像启用时，工厂在 MemoryEngine 初始化完成并拿到 `ProfileManager` 后装配 `ProfileProposalPipeline`；知识库启用时同时装配 `KnowledgeProposalPipeline`，二者复用同一 `CostControl` 与 canonical `MemoryEvolutionStore`，均由 canonical 写后任务触发。
-7. 构造 `IndexValidator`；若索引需要重建，由 `DerivedRebuildCoordinator` 按 canonical → FTS5/FAISS → graph → relation/projection 顺序执行，并异步加载停用词。
+6. 构造 `MemoryProcessor`，显式投影 `persona_interpretation.enabled` 与完整 topic strategy/B/Hybrid 配置，复用同一 `CostControl`，并把共享 Embedding Provider 的冻结批量适配器注入 A/B/Hybrid 后置分段链；C/D 仍由 handlers 预切分。再以处理器的带重试 LLM 调用构造 `MemoryConsolidator`，并从正式 episode 配置构造不调用 Provider 的 `MemoryEvolutionCandidateGenerator`。Manager 先消费本地 episode/conflict 候选，候选为空才回退 Consolidator。`MemoryEvolutionGate` 会把 `enabled=false` 归一为 disabled，Manager 仅在归一后的 mode 非 disabled 时启动单 worker。画像、知识库和笔记启用时，工厂在对应 Manager 与 canonical `MemoryEvolutionStore` 可用后分别装配 `ProfileProposalPipeline`、`KnowledgeProposalPipeline` 和 `NoteProposalPipeline`；三者复用同一 `CostControl`，由 canonical 写后任务触发。自动笔记的长度、tag 与版本上限来自唯一 engine runtime config，重建强制使用无 Provider fallback。
+7. 构造 `IndexValidator`；若索引需要重建，由 `DerivedRebuildCoordinator` 按 canonical → FTS5/FAISS → graph → relation/projection → 自动笔记顺序执行，并异步加载停用词。notes 阶段按完整 provenance 幂等，不覆盖人工笔记。
 8. 当衰减、自动清理或 `backup_settings.enabled` 启用时启动 `DecayScheduler`；自动备份可以独立于衰减运行。
 9. 在 `memora.db` 上初始化 `InjectionDecisionStore` 和有界异步 `InjectionDecisionRecorder`，应用保留天数与最大行数并安排清理。
 
