@@ -101,13 +101,6 @@ class HybridScoringConfig(BaseModel):
         return self
 
 
-class IndexManagementConfig(BaseModel):
-    """索引规模阈值配置。"""
-
-    ivf_switch_threshold: int = 10_000
-    incremental_rebuild_threshold: int = 500
-
-
 class KnowledgeBaseConfig(BaseModel):
     """显式知识库配置。"""
 
@@ -192,9 +185,6 @@ class RuntimeFeatureConfigSections(BaseModel):
         default_factory=HumanLikeMemoryConfig
     )
     hybrid_scoring: HybridScoringConfig = Field(default_factory=HybridScoringConfig)
-    index_management: IndexManagementConfig = Field(
-        default_factory=IndexManagementConfig
-    )
     knowledge_base: KnowledgeBaseConfig = Field(default_factory=KnowledgeBaseConfig)
     notes: NotesConfig = Field(default_factory=NotesConfig)
     persona_decay: PersonaDecayConfig = Field(default_factory=PersonaDecayConfig)

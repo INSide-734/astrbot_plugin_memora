@@ -1249,15 +1249,6 @@
             "topic_overlap_threshold": {"description": "主题重叠阈值", "hint": "两条记忆 topic Jaccard 重叠超过该值才归为同一 episode。", "type": "float", "default": 0.50}
         }
     },
-    "index_management": {
-        "description": "索引管理",
-        "hint": "控制 FAISS 向量索引的增量更新和 IVF 自动切换策略",
-        "type": "object",
-        "items": {
-            "ivf_switch_threshold": {"description": "IVF 切换阈值", "hint": "向量总数超过该值后建议切换至 IVF 索引以提升大规模检索性能。建议 8000-50000。", "type": "int", "default": 10000},
-            "incremental_rebuild_threshold": {"description": "增量重建阈值", "hint": "自上次全量重建以来新增向量超过该值后触发自动重建。", "type": "int", "default": 500}
-        }
-    },
     "agent_tools": {
         "description": "Agent 工具",
         "hint": "控制注册到 AstrBot Agent 的 LLM 工具",

@@ -165,11 +165,6 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
         ConfigOwnershipKind.EXPERIMENTAL,
         "core.processors.episode_clusterer",
     ),
-    "index_management": _ownership(
-        "index_management",
-        ConfigOwnershipKind.DEPRECATED,
-        "core.managers.index_manager",
-    ),
     "agent_tools": _ownership(
         "agent_tools", ConfigOwnershipKind.RUNTIME, "main.MemoraPlugin"
     ),

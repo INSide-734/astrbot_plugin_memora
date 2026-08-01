@@ -133,13 +133,4 @@ pageClass: config-reference-page
 | `"reranker.embedding_similarity_lambda"` | `"float"` | `0.7` | 最小值：`0`<br>最大值：`1` | Embedding 相似度融合权重<br><small>query-doc 余弦相似度与原始得分的融合比例。</small> |
 | `"reranker.llm_batch_size"` | `"int"` | `10` | 最小值：`1`<br>最大值：`50` | LLM 重排序批量大小<br><small>每次处理的候选记忆数量上限。LLM 策略会增加 token 消耗。</small> |
 
-## 索引管理
-
-配置域：`"index_management"`。控制 FAISS 向量索引的增量更新和 IVF 自动切换策略
-
-| 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
-|---|---|---|---|---|
-| `"index_management.ivf_switch_threshold"` | `"int"` | `10000` | - | IVF 切换阈值<br><small>向量总数超过该值后建议切换至 IVF 索引以提升大规模检索性能。建议 8000-50000。</small> |
-| `"index_management.incremental_rebuild_threshold"` | `"int"` | `500` | - | 增量重建阈值<br><small>自上次全量重建以来新增向量超过该值后触发自动重建。</small> |
-
 返回[配置参考总览](/reference/configuration)。

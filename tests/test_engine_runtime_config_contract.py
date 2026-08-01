@@ -301,13 +301,22 @@ def test_every_schema_leaf_has_an_explicit_owner_classification() -> None:
         ownership["recall_engine.top_k"].kind,
         ownership["dashboard.allow_runtime_build"].kind,
         ownership["episode_clustering.enabled"].kind,
-        ownership["index_management.ivf_switch_threshold"].kind,
     } == {
         ConfigOwnershipKind.RUNTIME,
         ConfigOwnershipKind.DASHBOARD_ONLY,
         ConfigOwnershipKind.EXPERIMENTAL,
-        ConfigOwnershipKind.DEPRECATED,
     }
+
+
+def test_removed_index_management_branch_is_not_published() -> None:
+    """孤立索引控制面不得继续出现在默认配置、Schema 或所有权表。"""
+
+    schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
+
+    assert "index_management" not in schema
+    assert "index_management" not in get_default_config()
+    with pytest.raises(KeyError, match="index_management"):
+        resolve_config_ownership("index_management.ivf_switch_threshold")
 
 
 def test_pydantic_models_runtime_sections_and_rejects_fake_llm_mode() -> None:
