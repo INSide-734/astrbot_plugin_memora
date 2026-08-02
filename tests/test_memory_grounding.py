@@ -150,6 +150,56 @@ def test_grounding_accepts_supported_date_normalization(
 
 
 @pytest.mark.parametrize(
+    ("source", "claim"),
+    [
+        (
+            "Observation date: 8:56 pm on 20 July, 2023. 记录日期。",
+            "记录日期是2023年7月20日。",
+        ),
+        (
+            "Observation date: 1:51 pm on 15 July, 2023. "
+            "The workshop was the previous Friday.",
+            "The workshop was on 2023-07-14.",
+        ),
+    ],
+)
+def test_grounding_accepts_unambiguous_two_digit_dates(
+    source: str,
+    claim: str,
+) -> None:
+    """两位中文日期和明确的 previous weekday 应按正文锚点规范化。"""
+
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            claim,
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        [_message(0, source)],
+        is_group_chat=False,
+    )
+
+    assert result.allowed is True
+
+
+def test_grounding_rejects_clock_date_with_source_observation_date() -> None:
+    """正文已有观察日期时，不得用插件当前日期替代来源锚点。"""
+
+    source = "Observation date: 8 May, 2023. The event happened yesterday."
+    claim = "The event happened on 2026-08-01."
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            claim,
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        [_message(0, source)],
+        is_group_chat=False,
+    )
+
+    assert result.allowed is False
+    assert "grounding_numeric_conflict" in result.reason_codes
+
+
+@pytest.mark.parametrize(
     ("source", "claim", "reason"),
     [
         ("这次预算是300元。", "这次预算是500元。", "grounding_numeric_conflict"),
@@ -262,6 +312,8 @@ def test_grounding_prompt_requires_source_language_and_exact_offsets() -> None:
     assert "主要语言" in contract
     assert "chars" in contract
     assert "消息头中的时间" in contract
+    assert "Observation date/观察日期/对话日期优先于插件当前时间" in contract
+    assert "不得猜测绝对年月日" in contract
 
 
 @pytest.mark.asyncio

@@ -16,8 +16,8 @@ _ISO_DATE_RE = re.compile(
 )
 _CHINESE_DATE_RE = re.compile(
     r"(?<!\d)(?P<year>(?:19|20)\d{2})年"
-    r"(?P<month>0?[1-9]|1[0-2])月"
-    r"(?P<day>0?[1-9]|[12]\d|3[01])日?"
+    r"(?P<month>1[0-2]|0?[1-9])月"
+    r"(?P<day>3[01]|[12]\d|0?[1-9])日?(?!\d)"
 )
 _MONTH_PATTERN = (
     r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
@@ -53,8 +53,8 @@ _YEARS_AGO_RE = re.compile(
     re.IGNORECASE,
 )
 _CHINESE_YEARS_AGO_RE = re.compile(r"(?P<count>[一二三四五六七八九十\d]+)年前")
-_LAST_WEEKDAY_RE = re.compile(
-    r"\blast\s+(?P<weekday>monday|tuesday|wednesday|thursday|friday|"
+_PREVIOUS_WEEKDAY_RE = re.compile(
+    r"\b(?:last|previous)\s+(?P<weekday>monday|tuesday|wednesday|thursday|friday|"
     r"saturday|sunday)\b",
     re.IGNORECASE,
 )
@@ -244,7 +244,7 @@ def _derive_relative_dates(text: str, anchor: date) -> tuple[set[date], set[int]
         if count is not None:
             years.add(anchor.year - count)
 
-    for match in _LAST_WEEKDAY_RE.finditer(text):
+    for match in _PREVIOUS_WEEKDAY_RE.finditer(text):
         dates.add(
             _previous_weekday(anchor, _WEEKDAYS[match.group("weekday").casefold()])
         )
