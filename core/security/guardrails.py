@@ -89,7 +89,7 @@ class MemoryAtomSchema(BaseModel):
     )
     source_refs: list[SourceReferenceSchema] = Field(
         default_factory=list,
-        max_length=10,
+        max_length=8,
         description="当前匿名消息窗口中的受控来源引用",
     )
 
