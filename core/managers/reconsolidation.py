@@ -133,20 +133,14 @@ class ReconsolidationManager:
         candidate = await self._store.get_candidate(candidate_id)
         if candidate is None:
             raise ReconsolidationCandidateNotFoundError(candidate_id)
-        if candidate["status"] != "pending":
-            raise ReconsolidationCandidateConflictError("candidate_status_changed")
-        new_metadata = dict(candidate["old_metadata"])
-        new_metadata["reconsolidation_count"] = (
-            int(new_metadata.get("reconsolidation_count", 0)) + 1
+        candidate = await self._store.begin_apply(
+            candidate_id,
+            expected_revision=candidate["source_revision"],
         )
-        new_metadata["last_reconsolidated_at"] = time.time()
-        new_metadata.pop("reconsolidation_history", None)
+        payload = self._build_apply_payload(candidate)
         applied = await update_memory_cb(
             candidate["memory_id"],
-            {
-                "content": candidate["proposed_content"],
-                "metadata": new_metadata,
-            },
+            payload,
             expected_revision=candidate["source_revision"],
         )
         if not applied:
@@ -154,22 +148,121 @@ class ReconsolidationManager:
                 getattr(update_memory_cb, "_last_write_reason_code", None)
                 or "apply_failed"
             )
-            await self._store.transition(
+            await self._store.complete_apply(
                 candidate_id,
-                expected_status="pending",
-                new_status="rejected",
+                applied=False,
                 reason_code=reason_code,
-                action="reject",
             )
             return {"applied": False, "reason_code": reason_code}
-        updated = await self._store.transition(
+        updated = await self._store.complete_apply(
             candidate_id,
-            expected_status="pending",
-            new_status="approved",
+            applied=True,
             reason_code="applied",
-            action="apply",
         )
         return {"applied": True, "candidate": updated}
+
+    @staticmethod
+    def _build_apply_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+        """从候选旧 metadata 构造 canonical apply payload。"""
+
+        metadata = dict(candidate["old_metadata"])
+        metadata["reconsolidation_count"] = (
+            int(metadata.get("reconsolidation_count", 0)) + 1
+        )
+        metadata["last_reconsolidated_at"] = time.time()
+        metadata.pop("reconsolidation_history", None)
+        return {
+            "content": candidate["proposed_content"],
+            "metadata": metadata,
+        }
+
+    async def recover_incomplete_applies(self) -> dict[str, int]:
+        """在启动时依据 canonical 事实恢复未收口的 apply intent。
+
+        当前正文已经等于候选提案时只补 Store 收口；仍是旧正文且 revision 未变时
+        重试一次 CAS；其他 revision/正文组合进入失败状态，不覆盖后续编辑。
+
+        Returns:
+            已恢复和已阻断的 intent 数量。
+
+        Raises:
+            asyncio.CancelledError: 恢复被取消时继续传播。
+        """
+
+        if self._get_memory is None or self._update_memory is None:
+            return {"recovered": 0, "blocked": 0}
+        operations = await self._store.list_incomplete_applies()
+        recovered = 0
+        blocked = 0
+        for operation in operations:
+            candidate_id = str(operation["candidate_id"])
+            try:
+                candidate = await self._store.get_candidate(candidate_id)
+                memory = (
+                    await self._get_memory(candidate["memory_id"])
+                    if candidate is not None
+                    else None
+                )
+                current_revision = memory_revision(memory) if memory else None
+                current_content = str(
+                    (memory or {}).get("text") or (memory or {}).get("content") or ""
+                )
+                expected_revision = str(operation["expected_revision"])
+                if candidate is None or current_revision is None:
+                    await self._store.mark_apply_blocked(
+                        candidate_id,
+                        reason_code="source_not_found",
+                    )
+                    blocked += 1
+                    continue
+                if current_content == str(candidate["proposed_content"]):
+                    await self._store.complete_apply(
+                        candidate_id,
+                        applied=True,
+                        reason_code="recovered_applied",
+                    )
+                    recovered += 1
+                    continue
+                if current_revision != expected_revision or current_content != str(
+                    candidate["old_content"]
+                ):
+                    await self._store.mark_apply_blocked(
+                        candidate_id,
+                        reason_code="source_revision_mismatch",
+                    )
+                    blocked += 1
+                    continue
+                applied = await self._update_memory(
+                    candidate["memory_id"],
+                    self._build_apply_payload(candidate),
+                    expected_revision=expected_revision,
+                )
+                if applied:
+                    await self._store.complete_apply(
+                        candidate_id,
+                        applied=True,
+                        reason_code="recovered_applied",
+                    )
+                    recovered += 1
+                else:
+                    reason_code = str(
+                        getattr(self._update_memory, "_last_write_reason_code", None)
+                        or "apply_failed"
+                    )
+                    await self._store.complete_apply(
+                        candidate_id,
+                        applied=False,
+                        reason_code=reason_code,
+                    )
+                    blocked += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error(
+                    "[再巩固] apply 恢复失败，reason_code=apply_recovery_failed"
+                )
+                blocked += 1
+        return {"recovered": recovered, "blocked": blocked}
 
     async def reject_candidate(
         self,

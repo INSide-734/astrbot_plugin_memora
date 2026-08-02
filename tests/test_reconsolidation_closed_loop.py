@@ -94,6 +94,211 @@ async def test_apply_candidate_rejects_stale_revision(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_concurrent_apply_claims_canonical_once(tmp_path: Path) -> None:
+    """并发审批只能有一个 apply intent 进入 canonical 写入口。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    manager = ReconsolidationManager(
+        store=store,
+        get_memory_cb=AsyncMock(return_value=_memory_dict("原始记忆正文")),
+        llm_caller=AsyncMock(return_value="修正后的记忆正文内容"),
+        enabled=True,
+    )
+    proposed = await manager.maybe_propose(7, context="上下文")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def update_memory(*args: object, **kwargs: object) -> bool:
+        """阻塞第一个 canonical 更新，制造可控的并发窗口。"""
+
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return True
+
+    first = asyncio.create_task(
+        manager.apply_candidate(proposed["candidate_id"], update_memory)
+    )
+    await entered.wait()
+    second_update = AsyncMock(return_value=True)
+
+    with pytest.raises(RuntimeError, match="apply_in_progress"):
+        await manager.apply_candidate(proposed["candidate_id"], second_update)
+
+    release.set()
+    result = await first
+
+    assert result["applied"] is True
+    assert calls == 1
+    second_update.assert_not_awaited()
+    candidate = await store.get_candidate(proposed["candidate_id"])
+    assert candidate["status"] == "approved"
+    assert await store.list_incomplete_applies() == []
+
+
+@pytest.mark.asyncio
+async def test_restart_recovers_apply_after_canonical_commit_before_finalize(
+    tmp_path: Path,
+) -> None:
+    """canonical 已写入但 Store 未收口时，重启应把 apply intent 终结为 approved。"""
+
+    db_path = tmp_path / "reconsolidation.db"
+    store = ReconsolidationStore(db_path)
+    await store.initialize()
+    manager = ReconsolidationManager(
+        store=store,
+        get_memory_cb=AsyncMock(return_value=_memory_dict("原始记忆正文")),
+        llm_caller=AsyncMock(return_value="修正后的记忆正文内容"),
+        enabled=True,
+    )
+    proposed = await manager.maybe_propose(7, context="上下文")
+    await store.begin_apply(
+        proposed["candidate_id"],
+        expected_revision="r-7",
+    )
+    restarted = ReconsolidationManager(
+        store=ReconsolidationStore(db_path),
+        get_memory_cb=AsyncMock(
+            return_value=_memory_dict("修正后的记忆正文内容", revision="r-8")
+        ),
+        update_memory_cb=AsyncMock(return_value=True),
+        enabled=True,
+    )
+    await restarted._store.initialize()
+
+    result = await restarted.recover_incomplete_applies()
+
+    assert result == {"recovered": 1, "blocked": 0}
+    restarted._update_memory.assert_not_awaited()
+    candidate = await restarted._store.get_candidate(proposed["candidate_id"])
+    assert candidate["status"] == "approved"
+    assert await restarted._store.list_incomplete_applies() == []
+
+
+@pytest.mark.asyncio
+async def test_restart_blocks_apply_after_unrelated_canonical_edit(
+    tmp_path: Path,
+) -> None:
+    """恢复发现 canonical 已被其他编辑修改时不得覆盖新正文。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    manager = ReconsolidationManager(
+        store=store,
+        get_memory_cb=AsyncMock(return_value=_memory_dict("原始记忆正文")),
+        llm_caller=AsyncMock(return_value="修正后的记忆正文内容"),
+        enabled=True,
+    )
+    proposed = await manager.maybe_propose(7, context="上下文")
+    await store.begin_apply(proposed["candidate_id"], expected_revision="r-7")
+    update_cb = AsyncMock(return_value=True)
+    restarted = ReconsolidationManager(
+        store=store,
+        get_memory_cb=AsyncMock(
+            return_value=_memory_dict("另一位编辑提交的新正文", revision="r-10")
+        ),
+        update_memory_cb=update_cb,
+        enabled=True,
+    )
+
+    result = await restarted.recover_incomplete_applies()
+
+    assert result == {"recovered": 0, "blocked": 1}
+    update_cb.assert_not_awaited()
+    candidate = await store.get_candidate(proposed["candidate_id"])
+    assert candidate["status"] == "failed"
+    assert candidate["reason_code"] == "source_revision_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_complete_apply_is_atomic_when_action_audit_fails(tmp_path: Path) -> None:
+    """apply 审计写失败时，候选和 intent 必须一起保留待恢复。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    candidate = await store.stage_candidate(
+        memory_id=7,
+        source_revision="r-7",
+        old_content="原始记忆正文",
+        old_metadata={"access_count": 8},
+        proposed_content="修正后的记忆正文内容",
+        change_summary="LLM 修订候选",
+        evidence_type="llm_revision",
+    )
+    await store.begin_apply(candidate["candidate_id"], expected_revision="r-7")
+    async with aiosqlite.connect(store.db_path) as db:
+        await db.execute(
+            """
+            CREATE TRIGGER reject_apply_action
+            BEFORE INSERT ON reconsolidation_actions
+            WHEN NEW.action='apply'
+            BEGIN
+                SELECT RAISE(ABORT, 'apply audit blocked');
+            END
+            """
+        )
+        await db.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await store.complete_apply(
+            candidate["candidate_id"],
+            applied=True,
+            reason_code="applied",
+        )
+
+    persisted = await store.get_candidate(candidate["candidate_id"])
+    assert persisted["status"] == "pending"
+    assert [item["candidate_id"] for item in await store.list_incomplete_applies()] == [
+        candidate["candidate_id"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mark_apply_blocked_is_atomic_when_action_audit_fails(
+    tmp_path: Path,
+) -> None:
+    """恢复失败审计写入失败时，候选仍保持 pending 并可由后续恢复处理。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    candidate = await store.stage_candidate(
+        memory_id=7,
+        source_revision="r-7",
+        old_content="原始记忆正文",
+        old_metadata={"access_count": 8},
+        proposed_content="修正后的记忆正文内容",
+        change_summary="LLM 修订候选",
+        evidence_type="llm_revision",
+    )
+    await store.begin_apply(candidate["candidate_id"], expected_revision="r-7")
+    async with aiosqlite.connect(store.db_path) as db:
+        await db.execute(
+            """
+            CREATE TRIGGER reject_apply_block_action
+            BEFORE INSERT ON reconsolidation_actions
+            WHEN NEW.action='apply'
+            BEGIN
+                SELECT RAISE(ABORT, 'apply block audit blocked');
+            END
+            """
+        )
+        await db.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await store.mark_apply_blocked(
+            candidate["candidate_id"],
+            reason_code="source_revision_mismatch",
+        )
+
+    persisted = await store.get_candidate(candidate["candidate_id"])
+    assert persisted["status"] == "pending"
+    assert await store.list_incomplete_applies()
+
+
+@pytest.mark.asyncio
 async def test_rollback_restores_old_content_with_cas(tmp_path: Path) -> None:
     """批准后的候选可按当前 revision CAS 回滚到旧正文。"""
 

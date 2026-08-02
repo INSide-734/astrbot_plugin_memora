@@ -391,6 +391,7 @@ class MemoryEngineLifecycleMixin:
                     self.config.get("reconsolidation.min_recall_count", 5)
                 ),
             )
+            await self.reconsolidation.recover_incomplete_applies()
             await self.reconsolidation.recover_incomplete_rollbacks()
 
         # 异常检测：记忆创建速率滚动统计
