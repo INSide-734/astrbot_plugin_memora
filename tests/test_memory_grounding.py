@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -23,6 +24,7 @@ def _message(
     sender_id: str = "user-1",
     sender_name: str = "Alice",
     group_id: str | None = None,
+    timestamp: float | None = None,
 ) -> Message:
     """构造带稳定顺序的测试消息。"""
 
@@ -34,7 +36,7 @@ def _message(
         sender_id=sender_id,
         sender_name=sender_name,
         group_id=group_id,
-        timestamp=time.time() + index,
+        timestamp=time.time() + index if timestamp is None else timestamp,
     )
 
 
@@ -93,9 +95,74 @@ def test_grounding_accepts_reasonable_paraphrase() -> None:
 
 
 @pytest.mark.parametrize(
+    ("source", "claim", "timestamp"),
+    [
+        (
+            "The meeting is on 8 May, 2023.",
+            "The meeting is on 2023-05-08.",
+            None,
+        ),
+        (
+            "Observation date: 8 May, 2023. Caroline visited the museum yesterday.",
+            "Caroline visited the museum on 2023-05-07.",
+            None,
+        ),
+        (
+            "Observation date: 8 May, 2023. Melanie moved to Spain last year.",
+            "Melanie moved to Spain in 2022.",
+            None,
+        ),
+        (
+            "Observation date: 8 May, 2023. Melanie moved to Spain three years ago.",
+            "Melanie moved to Spain in 2020.",
+            None,
+        ),
+        (
+            "Observation date: 8 May, 2023. Caroline visited the museum last Saturday.",
+            "Caroline visited the museum on 2023-05-06.",
+            None,
+        ),
+        (
+            "Caroline visited the museum yesterday.",
+            "Caroline visited the museum on 2023-05-07.",
+            datetime(2023, 5, 8, 12, 0).timestamp(),
+        ),
+    ],
+)
+def test_grounding_accepts_supported_date_normalization(
+    source: str,
+    claim: str,
+    timestamp: float | None,
+) -> None:
+    """绝对日期和有可靠锚点的相对日期允许确定性规范化。"""
+
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            claim,
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        [_message(0, source, timestamp=timestamp)],
+        is_group_chat=False,
+    )
+
+    assert result.allowed is True
+    assert result.status == "grounded"
+
+
+@pytest.mark.parametrize(
     ("source", "claim", "reason"),
     [
         ("这次预算是300元。", "这次预算是500元。", "grounding_numeric_conflict"),
+        (
+            "Observation date: 8 May, 2023. The budget is 300.",
+            "The budget is 5.",
+            "grounding_numeric_conflict",
+        ),
+        (
+            "Observation date: 8 May, 2023. The budget changed last year.",
+            "The budget is 2022.",
+            "grounding_numeric_conflict",
+        ),
         ("我喜欢香菜。", "用户不喜欢香菜。", "grounding_negation_conflict"),
     ],
 )
@@ -181,10 +248,20 @@ def test_grounded_conversation_uses_stable_anonymous_source_labels() -> None:
     )
 
     lines = formatted.splitlines()
-    assert lines[0].startswith("[S0] ")
-    assert lines[1].startswith("[S1] ")
+    assert lines[0].startswith("[S0 chars=3] ")
+    assert lines[1].startswith("[S1 chars=3] ")
     assert "第一条" in lines[0]
     assert "第二条" in lines[1]
+
+
+def test_grounding_prompt_requires_source_language_and_exact_offsets() -> None:
+    """抽取 Prompt 必须约束来源主语言，并解释 chars 与正文 offset 边界。"""
+
+    contract = MemoryGroundingValidator().prompt_contract(2)
+
+    assert "主要语言" in contract
+    assert "chars" in contract
+    assert "消息头中的时间" in contract
 
 
 @pytest.mark.asyncio

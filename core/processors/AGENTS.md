@@ -75,7 +75,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 - `JsonParser` 顺序：直接 JSON → 补括号/引号与去尾逗号后解析 → 正则提取 → `QualityValidator` 默认结构。
 - `QualityValidator` 规范 `summary/topics/key_facts/sentiment/importance`；重要性范围为 `[0,1]`，非法值回退 `0.5`。
 - `ConversationFormatter` 的普通格式保留发送者、ID、秒级时间并给 bot 加前缀；compact 格式用于成本敏感路径。
-- `format_conversation_with_source_refs()` 只增加稳定 `S0..S<n>` 标签；持久化证据使用消息指纹和字符 offset，Judge 只接收当前候选实际引用的片段。
+- `format_conversation_with_source_refs()` 增加稳定 `S0..S<n>` 标签和原始正文 `chars` 长度；持久化证据使用消息指纹和字符 offset，Judge 只接收当前候选实际引用的片段。抽取结果保持引用正文的主要语言；日期规范化只接受正文绝对日期、明确相对日期或消息时间戳锚定的确定性推导，普通数字继续严格匹配。
 - `StorageBuilder`：群聊 `privacy_level=public`，私聊 `confidential`；内容优先 canonical summary，否则使用对话摘录。
 
 ## 话题分割协议
@@ -141,7 +141,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 主管道：`memory_processor.py`、`llm_client.py`、`prompt_builder.py`、`conversation_formatter.py`、`json_parser.py`、`quality_validator.py`、`storage_builder.py`。  
 话题：`topic_splitter.py`、`topic_segmentation_pipeline.py`。
 派生与图：`memory_consolidator.py`、`memory_evolution_candidates.py`、`atom_classifier.py`、`graph_extractor.py`、`atom_graph_extractor.py`、`entity_resolver.py`、`contradiction_detector.py`、`episode_clusterer.py`、`profile_extractor.py`、`knowledge_extractor.py`、`note_generator.py`、`human_like_formatter.py`。
-文本/兼容：`text_processor.py`、`chatroom_parser.py`、`message_utils.py`、`__init__.py`。
+文本/兼容：`text_processor.py`、`chatroom_parser.py`、`message_utils.py`、`grounding_dates.py`、`__init__.py`。
 
 ## 测试定位与验证
 

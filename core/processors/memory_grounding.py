@@ -10,6 +10,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from ..models.conversation_models import Message
+from .grounding_dates import supported_claim_date_numbers
 
 _MAX_REFERENCES = 8
 _MIN_INFERENCE_SCORE = 0.2
@@ -94,11 +95,15 @@ class MemoryGroundingValidator:
         upper = max(0, int(message_count) - 1)
         return (
             "\n\n# 来源证据要求（必须遵守）\n"
-            "对每条 memories[] 结果返回 source_refs 数组。每个引用只能使用当前对话中的 "
-            f"S0..S{upper} 标签，并写成 "
+            "每行以 [S<n> chars=N] 标出原始消息正文字符数。对每条 memories[] 结果返回 "
+            f"source_refs 数组，每个引用只能使用当前对话中的 S0..S{upper} 标签，并写成 "
             '{"message_index": 0, "start": 0, "end": 12}。'
-            "start/end 是该条原始消息正文中的字符区间，左闭右开；禁止引用当前窗口以外的消息，"
-            "禁止编造未在引用片段中出现或无法由其合理改写得到的事实。"
+            "start/end 是该条原始消息正文中的字符区间，左闭右开，必须满足 "
+            "0 <= start < end <= chars；引用整条正文时使用 start=0、end=chars。"
+            "消息头中的时间、昵称和 ID 不属于正文 offset，不得仅据消息头中的时间生成事实。"
+            "summary、topics、key_facts 必须保持所引用正文的主要语言，不要把英文事实翻译成中文"
+            "或把中文事实翻译成英文。禁止引用当前窗口以外的消息，禁止编造未在引用片段中出现"
+            "或无法由其合理改写得到的事实。"
         )
 
     def validate(
@@ -153,7 +158,11 @@ class MemoryGroundingValidator:
                 claim_text=claim_text,
             )
 
-        numeric_reason = self._validate_numbers(claim_text, source_text)
+        numeric_reason = self._validate_numbers(
+            claim_text,
+            source_text,
+            referenced_messages,
+        )
         if numeric_reason:
             return self._rejected(
                 numeric_reason,
@@ -362,15 +371,38 @@ class MemoryGroundingValidator:
             return "grounding_subject_mismatch"
         return None
 
-    @staticmethod
-    def _validate_numbers(claim_text: str, source_text: str) -> str | None:
-        """要求候选中的数值锚点全部能在引用片段中找到。"""
+    @classmethod
+    def _validate_numbers(
+        cls,
+        claim_text: str,
+        source_text: str,
+        referenced_messages: list[Message],
+    ) -> str | None:
+        """严格匹配普通数值，仅放行有可靠来源支持的日期规范化。"""
 
-        claim_numbers = set(_NUMBER_RE.findall(claim_text))
-        source_numbers = set(_NUMBER_RE.findall(source_text))
-        if claim_numbers - source_numbers:
+        claim_numbers = cls._canonical_numbers(claim_text)
+        source_numbers = cls._canonical_numbers(source_text)
+        supported_date_numbers = supported_claim_date_numbers(
+            claim_text,
+            source_text,
+            referenced_messages,
+        )
+        if claim_numbers - source_numbers - supported_date_numbers:
             return "grounding_numeric_conflict"
         return None
+
+    @staticmethod
+    def _canonical_numbers(text: str) -> set[str]:
+        """规范前导零和小数尾零，避免同一数值因书写形式不同而冲突。"""
+
+        canonical: set[str] = set()
+        for raw_value in _NUMBER_RE.findall(text):
+            integer, separator, fraction = raw_value.partition(".")
+            integer = integer.lstrip("0") or "0"
+            if separator:
+                fraction = fraction.rstrip("0")
+            canonical.add(f"{integer}.{fraction}" if fraction else integer)
+        return canonical
 
     @staticmethod
     def _validate_negation(claim_text: str, source_text: str) -> str | None:
@@ -425,12 +457,12 @@ class MemoryGroundingValidator:
 
     @staticmethod
     def _normalize_text(value: str) -> str:
-        """统一大小写、兼容字符和少量稳定同义表达。"""
+        """统一大小写、兼容字符和同义表达，并保留英文词元边界。"""
 
         normalized = unicodedata.normalize("NFKC", str(value)).casefold()
         for source, target in _SYNONYM_REPLACEMENTS:
             normalized = normalized.replace(source, target)
-        return re.sub(r"[^a-z0-9\u3400-\u9fff]+", "", normalized)
+        return re.sub(r"[^a-z0-9\u3400-\u9fff]+", " ", normalized).strip()
 
     @staticmethod
     def _tokens(normalized: str) -> set[str]:

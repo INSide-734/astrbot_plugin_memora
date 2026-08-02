@@ -37,13 +37,16 @@ class ConversationFormatter:
         return "\n".join(formatted_lines)
 
     def format_conversation_with_source_refs(self, messages: list[Message]) -> str:
-        """给每条消息添加匿名 ``S<n>`` 标签，供抽取结果引用。"""
+        """给每条消息添加匿名标签和正文字符数，供抽取结果精确引用。"""
 
         formatted_lines: list[str] = []
         for index, message in enumerate(messages):
             content_text = self._message_content_to_text(message.content)
             sender_info = self._format_sender_info(message)
-            formatted_lines.append(f"[S{index}] {sender_info} {content_text}".rstrip())
+            formatted_lines.append(
+                f"[S{index} chars={len(content_text)}] "
+                f"{sender_info} {content_text}".rstrip()
+            )
         return "\n".join(formatted_lines)
 
     @staticmethod
