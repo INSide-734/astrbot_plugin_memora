@@ -29,6 +29,7 @@ from .continuity_hooks import (
     record_continuity_topics,
     resolve_continuity_session,
 )
+from .reflection_backlog import ReflectionBacklogMixin
 from .reflection_llm_budget import (
     fit_batches_to_extra_llm_budget,
     process_reflection_batches,
@@ -41,7 +42,7 @@ if TYPE_CHECKING:
     from astrbot.api.provider import LLMResponse
 
 
-class ReflectionHandler:
+class ReflectionHandler(ReflectionBacklogMixin):
     """在 LLM 响应后执行反思与后台记忆存储。"""
 
     def __init__(
@@ -357,16 +358,7 @@ class ReflectionHandler:
                 return
 
             try:
-                task = asyncio.create_task(
-                    self._storage_task(
-                        request.session_id,
-                        request.history_messages,
-                        request.persona_id,
-                        request.start_index,
-                        request.end_index,
-                        request.retry_count,
-                    )
-                )
+                task = asyncio.create_task(self._drain_summary_backlog(request))
             except Exception:
                 self.finish_summary_window(session_id)
                 raise
