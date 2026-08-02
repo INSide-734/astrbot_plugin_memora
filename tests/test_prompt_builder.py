@@ -3,12 +3,32 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from core.processors.prompt_builder import PromptBuilder
+from core.security.guardrails import MemoryExtractionResult
+
+# Prompt A 的提交基线；Prompt B 必须在保留安全与结构化输出契约的同时明显缩短。
+_PROMPT_A_LENGTHS = {
+    "private": 5078,
+    "group": 6458,
+}
+_REQUIRED_OUTPUT_FIELDS = (
+    '"summary"',
+    '"topics"',
+    '"key_facts"',
+    '"sentiment"',
+    '"importance"',
+    '"emotion_tags"',
+    '"causal_relations"',
+    '"source_refs"',
+    '"confidence"',
+    '"extraction_quality"',
+)
 
 
 class TestPromptBuilder:
@@ -62,6 +82,63 @@ class TestPromptBuilder:
         assert '"participants": ["张三", "李四", "王五", "我(Bot)"]' not in (
             builder.group_chat_prompt
         )
+
+    def test_default_templates_bound_generation_and_grounding_contract(
+        self, prompt_dir: Path
+    ) -> None:
+        """默认 Prompt B 应限制输出规模并保留安全、溯源与日期契约。"""
+
+        builder = PromptBuilder(prompt_dir=prompt_dir)
+        templates = {
+            "private": builder.private_chat_prompt,
+            "group": builder.group_chat_prompt,
+        }
+        for kind, prompt in templates.items():
+            assert len(prompt) <= int(_PROMPT_A_LENGTHS[kind] * 0.65)
+            assert "只输出一个 JSON 对象" in prompt
+            assert "没有长期价值时返回 memories: []" in prompt
+            assert "memories 最多 4 条" in prompt
+            assert "summary 最多 500 个 Unicode 字符" in prompt
+            assert "topics 最多 5 项" in prompt
+            assert "key_facts 最多 5 项" in prompt
+            assert "source_refs 最多 10 项" in prompt
+            assert "每条事实必须由 source_refs 正文支持" in prompt
+            assert "保持引用正文的主要语言，不得翻译后存储" in prompt
+            assert "Observation date/观察日期/对话日期优先于 {current_date}" in prompt
+            assert "正文无日期锚点时才可使用 {current_date}" in prompt
+            assert "无法唯一确定的相对日期保持原表达，不得猜测绝对日期" in prompt
+            assert "保留原文否定极性" in prompt
+            assert "不跨当前" in prompt
+            assert "privacy" in prompt
+            assert "sentiment 只能是 positive|neutral|negative" in prompt
+            assert "causal_relations 最多 3 项" in prompt
+            for field in _REQUIRED_OUTPUT_FIELDS:
+                assert field in prompt
+
+        assert '"participants"' in builder.group_chat_prompt
+        assert "处理所有群消息，不只看 @Bot" in builder.group_chat_prompt
+        assert "[Bot:" in builder.private_chat_prompt
+        assert "计划/承诺 importance 至少 0.7" in builder.private_chat_prompt
+
+    def test_default_template_examples_use_top_level_quality_fields(
+        self, prompt_dir: Path
+    ) -> None:
+        """模板示例应把整体置信度与抽取质量放在顶层。"""
+
+        builder = PromptBuilder(prompt_dir=prompt_dir)
+        for prompt in (builder.private_chat_prompt, builder.group_chat_prompt):
+            schema_line = next(
+                line.removeprefix("格式：")
+                for line in prompt.splitlines()
+                if line.startswith("格式：")
+            )
+            example = json.loads(schema_line)
+            validated = MemoryExtractionResult.model_validate(example)
+            assert example["confidence"] == 0.8
+            assert example["extraction_quality"] == "high"
+            assert "confidence" in example["memories"][0]
+            assert "extraction_quality" not in example["memories"][0]
+            assert validated.extraction_quality == "high"
 
     def test_load_with_custom_templates(self, prompt_dir: Path) -> None:
         config = {

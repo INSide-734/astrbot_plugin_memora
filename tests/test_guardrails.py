@@ -79,6 +79,21 @@ class TestMemoryAtomSchema:
         assert atom.emotion_tags == []
         assert atom.confidence is None
 
+    def test_source_refs_accept_ten_and_reject_eleven(self) -> None:
+        """来源引用上限应与 Prompt B 的十项契约保持一致。"""
+
+        references = [
+            {"message_index": index, "start": 0, "end": 1} for index in range(11)
+        ]
+
+        atom = MemoryAtomSchema(
+            content="包含完整来源证据的记忆", source_refs=references[:10]
+        )
+        assert len(atom.source_refs) == 10
+
+        with pytest.raises(ValidationError):
+            MemoryAtomSchema(content="来源引用数量超限的记忆", source_refs=references)
+
 
 # =============================================================================
 # MemoryExtractionResult
