@@ -30,7 +30,7 @@ graph TD
 - `stop()` 取消并 await 两个任务，清空引用。
 - 主循环按本地时间计算下一次 `check_hour:check_minute`；普通循环异常后等待 1 小时重试。
 - 默认触发时间由构造参数决定，源码默认 `00:05`；不要在循环内硬编码另一时间。
-- 每日可选维护会调用已装配的 `SemanticCompressor`（只生成 source-backed `semantic_summary` Projection）与 `AnomalyDetector` 日聚合（按 UTC 日幂等投喂 canonical 创建量，告警写脱敏诊断事件）。普通失败只记录安全计数并继续其他维护项，`CancelledError` 必须传播。
+- 每日可选维护会调用已装配的 `SemanticCompressor`（只生成 source-backed `semantic_summary` Projection）与 `AnomalyDetector` 日聚合（按 UTC 日幂等投喂 canonical 创建量，告警以稳定日期键写脱敏诊断事件）。异常事件成功持久化后才能把该日标记为已投喂；失败保留待投递状态供下一轮重试。普通失败只记录安全计数并继续其他维护项，`CancelledError` 必须传播。
 
 ### 状态与幂等
 

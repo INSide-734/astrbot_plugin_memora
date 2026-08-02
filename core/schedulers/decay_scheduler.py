@@ -373,22 +373,27 @@ class DecayScheduler:
             return
         today_ts = (int(time.time()) // 86400) * 86400
         window_days = max(3, min(30, int(getattr(detector, "window_days", 7) or 7)))
-        for offset in range(window_days - 1, -1, -1):
+        # 首次启动额外读取一个当前日之前的完整窗口，确保当前日不参与自身基线。
+        for offset in range(window_days, -1, -1):
             day_ts = today_ts - offset * 86400
             if detector.has_fed(day_ts):
                 continue
-            count = await self.memory_engine.count_canonical_created_on(day_ts)
-            alert = detector.record_daily_count(day_ts, count)
-            detector.mark_fed(day_ts)
+            alert = detector.pending_alert(day_ts)
+            if alert is None:
+                count = await self.memory_engine.count_canonical_created_on(day_ts)
+                alert = detector.record_daily_count(day_ts, count)
             if alert:
                 await self._emit_anomaly_event(alert)
+            detector.mark_fed(day_ts)
 
     async def _emit_anomaly_event(self, alert: dict[str, Any]) -> None:
         """把告警写入共享诊断事件库，只保留固定标量 allowlist。"""
 
         store = await self._get_diagnostic_event_store()
+        event_day = max(0, int(alert.get("day_ts", 0) or 0))
         await store.add_event(
             {
+                "event_id": f"anomaly-{event_day}",
                 "domain": "scheduler",
                 "severity": "warning",
                 "source": "scheduler",

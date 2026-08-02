@@ -42,7 +42,7 @@ flowchart LR
 ### `DiagnosticEventStore`
 
 - `initialize()` 创建父目录、`diagnostic_events` 表和按新到旧查询的索引。
-- `add_event(event)` 生成或校验诊断关联码与 UTC ISO 时间，并把 domain、severity、source 和 payload 收窄到固定允许列表；`title`、`message` 统一为安全 `reason_code`，不保留调用方自由文本。
+- `add_event(event)` 生成或校验诊断关联码与 UTC ISO 时间，并把 domain、severity、source 和 payload 收窄到固定允许列表；显式提供的稳定关联码按主键幂等，重复写返回已持久化事件；`title`、`message` 统一为安全 `reason_code`，不保留调用方自由文本。
 - `list_events(limit, domain, severity, include_resolved)` 参数化筛选并稳定排序；非法 limit 回退 50。
 - `get_event(event_id)` / `resolve_event(event_id)` 查询与幂等标记解决时间。
 - payload 只允许固定文本枚举、安全异常类型、非负有界数值和布尔字段；dict、list、任意嵌套 JSON 与未知字段都会被丢弃。

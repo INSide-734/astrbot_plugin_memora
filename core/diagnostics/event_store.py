@@ -216,7 +216,7 @@ class DiagnosticEventStore:
             await db.commit()
 
     async def add_event(self, event: dict[str, Any] | None) -> dict[str, Any]:
-        """保存一条脱敏事件，并返回与持久化内容一致的副本。"""
+        """幂等保存脱敏事件，并返回与持久化内容一致的副本。"""
         event_data = event if isinstance(event, dict) else {}
         event_id = self._safe_event_id(event_data.get("event_id"))
         created_at = self._safe_timestamp(event_data.get("created_at")) or self._now()
@@ -231,9 +231,9 @@ class DiagnosticEventStore:
 
         payload_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
+            cursor = await db.execute(
                 """
-                INSERT INTO diagnostic_events (
+                INSERT OR IGNORE INTO diagnostic_events (
                     event_id, created_at, domain, severity, title, message,
                     source, payload, resolved_at
                 )
@@ -251,7 +251,14 @@ class DiagnosticEventStore:
                     resolved_at_text,
                 ),
             )
+            inserted = cursor.rowcount > 0
+            await cursor.close()
             await db.commit()
+
+        if not inserted:
+            existing = await self.get_event(event_id)
+            if existing is not None:
+                return existing
 
         return {
             "event_id": event_id,
