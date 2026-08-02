@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import secrets
 import time
 import uuid
 from collections.abc import Mapping
@@ -56,6 +58,7 @@ class MemoryQuarantineStore:
                     source_window_json TEXT NOT NULL,
                     is_group_chat INTEGER NOT NULL,
                     canonical_memory_id INTEGER,
+                    approval_token_hash TEXT,
                     failure_reason TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
@@ -81,6 +84,16 @@ class MemoryQuarantineStore:
                 ON memory_quarantine_actions(candidate_id, created_at, action_id);
                 """
             )
+            cursor = await db.execute("PRAGMA table_info(memory_quarantine_candidates)")
+            columns = {str(row[1]) for row in await cursor.fetchall()}
+            await cursor.close()
+            if "approval_token_hash" not in columns:
+                await db.execute(
+                    """
+                    ALTER TABLE memory_quarantine_candidates
+                    ADD COLUMN approval_token_hash TEXT
+                    """
+                )
             await db.commit()
 
     async def stage_candidate(
@@ -194,11 +207,13 @@ class MemoryQuarantineStore:
         *,
         expected_revision: int,
         actor_id: str | None,
+        approval_token: str,
         content: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """用 revision CAS 声明批准，并可原子保存管理员修正正文。"""
 
+        token_hash = self._approval_token_digest(approval_token)
         return await self._transition(
             candidate_id,
             expected_revision=expected_revision,
@@ -206,6 +221,7 @@ class MemoryQuarantineStore:
             next_status="approving",
             action="approve_claimed",
             actor_id=actor_id,
+            approval_token_hash=token_hash,
             failure_reason=None,
             content=content,
             metadata=metadata,
@@ -219,9 +235,11 @@ class MemoryQuarantineStore:
         expected_revision: int,
         canonical_memory_id: int,
         actor_id: str | None,
+        approval_token: str,
     ) -> dict[str, Any]:
         """把已声明候选终结为 approved 并绑定 canonical 整数 ID。"""
 
+        token_hash = self._approval_token_digest(approval_token)
         return await self._transition(
             candidate_id,
             expected_revision=expected_revision,
@@ -231,6 +249,31 @@ class MemoryQuarantineStore:
             actor_id=actor_id,
             canonical_memory_id=int(canonical_memory_id),
             failure_reason=None,
+            verify_approval_token_hash=token_hash,
+        )
+
+    async def finalize_repaired_approval(
+        self,
+        candidate_id: str,
+        *,
+        expected_revision: int,
+        canonical_memory_id: int,
+        actor_id: str | None,
+        approval_token: str,
+    ) -> dict[str, Any]:
+        """仅凭匹配 token、revision 的 canonical 事实收口 approving 候选。"""
+
+        token_hash = self._approval_token_digest(approval_token)
+        return await self._transition(
+            candidate_id,
+            expected_revision=expected_revision,
+            allowed_statuses={"approving"},
+            next_status="approved",
+            action="approval_repaired",
+            actor_id=actor_id,
+            canonical_memory_id=int(canonical_memory_id),
+            failure_reason=None,
+            verify_approval_token_hash=token_hash,
         )
 
     async def block_approval(
@@ -302,6 +345,8 @@ class MemoryQuarantineStore:
         action_payload: Mapping[str, Any] | None = None,
         content: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        approval_token_hash: str | None = None,
+        verify_approval_token_hash: str | None = None,
     ) -> dict[str, Any]:
         """在单个立即事务中完成状态 CAS 与动作历史写入。"""
 
@@ -328,6 +373,13 @@ class MemoryQuarantineStore:
                     raise ValueError("quarantine_revision_conflict")
                 if str(current["status"]) not in allowed_statuses:
                     raise ValueError("quarantine_status_conflict")
+                if verify_approval_token_hash is not None:
+                    current_token_hash = str(current["approval_token_hash"] or "")
+                    if not secrets.compare_digest(
+                        current_token_hash,
+                        str(verify_approval_token_hash),
+                    ):
+                        raise ValueError("quarantine_approval_token_invalid")
                 next_revision = int(current["revision"]) + 1
                 normalized_content = None
                 if content is not None:
@@ -341,6 +393,7 @@ class MemoryQuarantineStore:
                     """
                     UPDATE memory_quarantine_candidates
                     SET revision = ?, status = ?, canonical_memory_id = ?,
+                        approval_token_hash = COALESCE(?, approval_token_hash),
                         failure_reason = ?,
                         content = COALESCE(?, content),
                         metadata_json = COALESCE(?, metadata_json),
@@ -351,6 +404,7 @@ class MemoryQuarantineStore:
                         next_revision,
                         next_status,
                         canonical_memory_id,
+                        approval_token_hash,
                         failure_reason,
                         normalized_content,
                         metadata_json,
@@ -438,6 +492,15 @@ class MemoryQuarantineStore:
         """反序列化受本 Store 控制的 JSON 列。"""
 
         return json.loads(value)
+
+    @staticmethod
+    def _approval_token_digest(approval_token: str) -> str:
+        """规范化一次性 repair token，并返回不可逆 SHA-256 摘要。"""
+
+        token = str(approval_token).strip()
+        if not token:
+            raise ValueError("quarantine_approval_token_required")
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 __all__ = ["MemoryQuarantineStore"]

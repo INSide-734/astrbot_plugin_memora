@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.page_api import PAGE_API_PREFIX, PluginPageApi
+from core.review.memory_quality_gate import QuarantineApprovalPendingError
 from core.review.quarantine_store import MemoryQuarantineStore
 
 
@@ -79,6 +80,7 @@ def test_quarantine_routes_are_registered() -> None:
     assert (f"{PAGE_API_PREFIX}/review/quarantine", ("GET",)) in routes
     assert (f"{PAGE_API_PREFIX}/review/quarantine/detail", ("GET",)) in routes
     assert (f"{PAGE_API_PREFIX}/review/quarantine/action", ("POST",)) in routes
+    assert (f"{PAGE_API_PREFIX}/review/quarantine/repair", ("POST",)) in routes
 
 
 @pytest.mark.asyncio
@@ -173,3 +175,120 @@ async def test_action_returns_stable_revision_conflict_code() -> None:
 
     assert response["status"] == "error"
     assert response["code"] == "quarantine_revision_conflict"
+
+
+@pytest.mark.asyncio
+async def test_repair_approve_forwards_token_and_canonical_id() -> None:
+    """repair approve 必须把 token、canonical ID 和 revision 原样交给质量门。"""
+
+    result = {
+        "candidate_id": "qc-one",
+        "revision": 4,
+        "status": "approved",
+        "reason_codes": ["summary_quality_low"],
+        "content": "用户喜欢手冲咖啡。",
+        "metadata": {},
+        "importance": 0.8,
+        "canonical_memory_id": 91,
+        "failure_reason": None,
+        "created_at": 1.0,
+        "updated_at": 2.0,
+    }
+    gate = MagicMock()
+    gate.repair_approval = AsyncMock(return_value=result)
+    api = _api(gate)
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={
+            "candidate_id": "qc-one",
+            "expected_revision": 3,
+            "action": "approve",
+            "canonical_memory_id": 91,
+            "approval_token": "opaque-token",
+        }
+    )
+
+    with patch("core.api.quarantine_api.request", request_mock):
+        response = await api.repair_quarantine_approval()
+
+    assert response["status"] == "ok"
+    gate.repair_approval.assert_awaited_once_with(
+        "qc-one",
+        expected_revision=3,
+        canonical_memory_id=91,
+        approval_token="opaque-token",
+        actor_id="dashboard",
+    )
+    assert "opaque-token" not in str(response)
+
+
+@pytest.mark.asyncio
+async def test_repair_block_requires_explicit_canonical_absence_confirmation() -> None:
+    """repair block 必须显式确认 canonical 未写入。"""
+
+    result = {
+        "candidate_id": "qc-one",
+        "revision": 4,
+        "status": "blocked",
+        "reason_codes": ["summary_quality_low"],
+        "content": "用户喜欢咖啡。",
+        "metadata": {},
+        "importance": 0.8,
+        "canonical_memory_id": None,
+        "failure_reason": "canonical_write_not_found_confirmed",
+        "created_at": 1.0,
+        "updated_at": 2.0,
+    }
+    gate = MagicMock()
+    gate.repair_blocked = AsyncMock(return_value=result)
+    api = _api(gate)
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={
+            "candidate_id": "qc-one",
+            "expected_revision": 3,
+            "action": "block",
+            "confirm_canonical_absent": True,
+        }
+    )
+
+    with patch("core.api.quarantine_api.request", request_mock):
+        response = await api.repair_quarantine_approval()
+
+    assert response["status"] == "ok"
+    gate.repair_blocked.assert_awaited_once_with(
+        "qc-one",
+        expected_revision=3,
+        actor_id="dashboard",
+        confirm_canonical_absent=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_approval_finalize_pending_returns_repair_token() -> None:
+    """canonical 已写入而 finalize 未完成时 API 返回脱离 candidate key 的 repair token。"""
+
+    gate = MagicMock()
+    gate.approve = AsyncMock(
+        side_effect=QuarantineApprovalPendingError("qc-one", 2, "opaque-token")
+    )
+    api = _api(gate)
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={
+            "candidate_id": "qc-one",
+            "expected_revision": 1,
+            "action": "approve",
+        }
+    )
+
+    with patch("core.api.quarantine_api.request", request_mock):
+        response = await api.apply_quarantine_action()
+
+    assert response["status"] == "error"
+    assert response["code"] == "quarantine_approval_pending"
+    assert response["data"] == {
+        "candidate_id": "qc-one",
+        "revision": 2,
+        "approval_token": "opaque-token",
+    }

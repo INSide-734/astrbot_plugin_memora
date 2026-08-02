@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import secrets
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,18 @@ class MemoryGateResult:
     action: str
     candidate_id: str | None = None
     reason_codes: tuple[str, ...] = ()
+
+
+class QuarantineApprovalPendingError(RuntimeError):
+    """canonical 已写入但 quarantine finalize 未完成，需要管理员 repair。"""
+
+    def __init__(self, candidate_id: str, revision: int, approval_token: str) -> None:
+        """记录 repair 所需的候选 revision 和不含候选 ID 语义的 token。"""
+
+        super().__init__("quarantine_approval_finalize_pending")
+        self.candidate_id = candidate_id
+        self.revision = int(revision)
+        self.approval_token = approval_token
 
 
 class MemoryQualityGate:
@@ -110,10 +123,13 @@ class MemoryQualityGate:
             corrected_metadata["key_facts"] = [corrected_content]
             corrected_metadata["summary_quality"] = "reviewed"
 
+        approval_token = secrets.token_urlsafe(32)
+        approval_token_hash = hashlib.sha256(approval_token.encode("utf-8")).hexdigest()
         claimed = await self.store.claim_approval(
             candidate_id,
             expected_revision=expected_revision,
             actor_id=actor_id,
+            approval_token=approval_token,
             content=corrected_content,
             metadata=corrected_metadata,
         )
@@ -168,6 +184,8 @@ class MemoryQualityGate:
         metadata["source_evidence"] = validation.evidence
         metadata["quality_gate_action"] = "approved"
         metadata["quarantine_approved"] = True
+        metadata["_quarantine_approval_token_hash"] = approval_token_hash
+        metadata["_quarantine_approval_status"] = "committed"
         try:
             atoms = self.memory_processor.classify_atoms_from_metadata(
                 metadata=metadata,
@@ -211,11 +229,99 @@ class MemoryQualityGate:
                 reason_code="canonical_write_failed",
             )
             raise
-        return await self.store.finalize_approval(
+        try:
+            return await self.store.finalize_approval(
+                candidate_id,
+                expected_revision=claimed["revision"],
+                canonical_memory_id=int(canonical_memory_id),
+                actor_id=actor_id,
+                approval_token=approval_token,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise QuarantineApprovalPendingError(
+                candidate_id,
+                claimed["revision"],
+                approval_token,
+            ) from exc
+
+    async def repair_approval(
+        self,
+        candidate_id: str,
+        *,
+        expected_revision: int,
+        canonical_memory_id: int,
+        approval_token: str,
+        actor_id: str | None,
+    ) -> dict[str, Any]:
+        """核对 canonical token、状态和正文后收口 approving 候选。"""
+
+        current = await self.store.get_candidate(candidate_id)
+        if current is None:
+            raise KeyError("quarantine_candidate_not_found")
+        if current["status"] != "approving":
+            raise ValueError("quarantine_status_conflict")
+        if int(current["revision"]) != int(expected_revision):
+            raise ValueError("quarantine_revision_conflict")
+        token = str(approval_token).strip()
+        if not token:
+            raise ValueError("quarantine_approval_token_required")
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        canonical = await self.memory_engine.get_memory(int(canonical_memory_id))
+        if canonical is None:
+            raise ValueError("quarantine_canonical_not_found")
+        metadata = canonical.get("metadata") if isinstance(canonical, dict) else None
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (TypeError, json.JSONDecodeError):
+                metadata = None
+        if not isinstance(metadata, dict):
+            raise ValueError("quarantine_canonical_status_invalid")
+        canonical_token_hash = metadata.get("_quarantine_approval_token_hash")
+        if not isinstance(canonical_token_hash, str) or not secrets.compare_digest(
+            canonical_token_hash,
+            token_hash,
+        ):
+            raise ValueError("quarantine_approval_token_invalid")
+        if metadata.get("_quarantine_approval_status") != "committed":
+            raise ValueError("quarantine_canonical_status_invalid")
+        canonical_content = str(canonical.get("text") or canonical.get("content") or "")
+        if canonical_content != str(current["content"]):
+            raise ValueError("quarantine_canonical_mismatch")
+        return await self.store.finalize_repaired_approval(
             candidate_id,
-            expected_revision=claimed["revision"],
+            expected_revision=expected_revision,
             canonical_memory_id=int(canonical_memory_id),
             actor_id=actor_id,
+            approval_token=token,
+        )
+
+    async def repair_blocked(
+        self,
+        candidate_id: str,
+        *,
+        expected_revision: int,
+        actor_id: str | None,
+        confirm_canonical_absent: bool,
+    ) -> dict[str, Any]:
+        """在管理员明确确认未写入时安全退回 blocked。"""
+
+        if confirm_canonical_absent is not True:
+            raise ValueError("quarantine_canonical_absence_confirmation_required")
+        current = await self.store.get_candidate(candidate_id)
+        if current is None:
+            raise KeyError("quarantine_candidate_not_found")
+        if current["status"] != "approving":
+            raise ValueError("quarantine_status_conflict")
+        if current.get("canonical_memory_id") is not None:
+            raise ValueError("quarantine_canonical_presence_conflict")
+        return await self.store.block_approval(
+            candidate_id,
+            expected_revision=expected_revision,
+            actor_id=actor_id,
+            reason_code="canonical_write_not_found_confirmed",
         )
 
     async def reject(
@@ -280,4 +386,8 @@ class MemoryQualityGate:
         return f"quality:{hashlib.sha256(encoded).hexdigest()}"
 
 
-__all__ = ["MemoryGateResult", "MemoryQualityGate"]
+__all__ = [
+    "MemoryGateResult",
+    "MemoryQualityGate",
+    "QuarantineApprovalPendingError",
+]

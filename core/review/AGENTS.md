@@ -57,8 +57,8 @@ flowchart LR
 `MemoryQuarantineStore` 使用独立的 `memory_quarantine.sqlite3`：
 
 - `stage_candidate()` 按稳定 `candidate_key` 幂等插入；候选尚未拥有 canonical ID，也不进入任何召回或派生索引。
-- 状态为 `pending -> approving -> approved`、`pending/blocked -> rejected` 或 `approving -> blocked`；所有动作使用 `expected_revision` CAS，并在同一事务追加低敏动作历史。
-- `approved` 与 `rejected` 是终态。canonical 写入开始前取消会转为 `blocked` 后传播；写入开始后取消保留 `approving` 表示提交结果未知，禁止自动重试造成重复 canonical。
+- 状态为 `pending -> approving -> approved`、`pending/blocked -> rejected` 或 `approving -> blocked`；所有动作使用 `expected_revision` CAS，并在同一事务追加低敏动作历史。`approving` claim 同时持久化不含候选 ID 的 opaque approval token 摘要，canonical 写入 metadata 只携带 token 摘要和 committed 状态，管理员 repair 必须重新核对 token、正文和 canonical 状态后才能收口。
+- `approved` 与 `rejected` 是终态。canonical 写入开始前取消会转为 `blocked` 后传播；写入开始后取消保留 `approving` 表示提交结果未知，禁止自动重试造成重复 canonical；管理员明确确认 canonical 未写入后才允许 repair 回到 `blocked`。
 - 批准必须重新读取原会话窗口，按持久化消息指纹和 offset 复核；缺失、变化或越界证据一律 `blocked`。通过后重新生成 Atom，并且只调用一次正常 `MemoryEngine.add_memory()`。
 - 拒绝只改变候选状态，不删除或改写 `ConversationStore` 原始消息。
 

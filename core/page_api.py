@@ -797,6 +797,12 @@ class PluginPageApi(
             ["POST"],
             "页面接口：处置 pre-canonical 记忆隔离候选",
         )
+        register(
+            f"{PAGE_API_PREFIX}/review/quarantine/repair",
+            self.repair_quarantine_approval,
+            ["POST"],
+            "页面接口：修复 pre-canonical 隔离批准收口",
+        )
 
         # ---- 黑话 ----
         register(

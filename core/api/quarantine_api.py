@@ -8,6 +8,7 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
+from ..review.memory_quality_gate import QuarantineApprovalPendingError
 from .response_utils import error_response
 
 _VALID_STATUSES = {"pending", "approving", "approved", "rejected", "blocked"}
@@ -195,6 +196,16 @@ class QuarantineApiMixin:
             if code not in allowed_codes:
                 code = "quarantine_action_invalid"
             return error_response("隔离候选状态冲突", code=code)
+        except QuarantineApprovalPendingError as exc:
+            return error_response(
+                "canonical 已写入但隔离状态尚未收口，请执行 repair",
+                code="quarantine_approval_pending",
+                data={
+                    "candidate_id": exc.candidate_id,
+                    "revision": exc.revision,
+                    "approval_token": exc.approval_token,
+                },
+            )
         except Exception as exc:
             logger.error(
                 "[QuarantineAPI] 动作执行失败，异常类型=%s",
@@ -203,6 +214,120 @@ class QuarantineApiMixin:
             return error_response(
                 "隔离候选动作执行失败",
                 code="quarantine_action_failed",
+            )
+
+    async def repair_quarantine_approval(self) -> dict[str, Any]:
+        """由管理员核对 canonical 事实，收口 approving 或安全退回 blocked。"""
+
+        payload = await request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return error_response(
+                "请求体必须为 JSON 对象",
+                code="quarantine_repair_payload_invalid",
+            )
+        candidate_id = str(payload.get("candidate_id") or "").strip()
+        action = str(payload.get("action") or "").strip()
+        expected_revision = payload.get("expected_revision")
+        if not candidate_id:
+            return error_response(
+                "candidate_id 不能为空",
+                code="quarantine_candidate_id_required",
+            )
+        if action not in {"approve", "block"}:
+            return error_response(
+                "repair 动作不受支持",
+                code="quarantine_repair_action_unsupported",
+            )
+        if isinstance(expected_revision, bool) or not isinstance(
+            expected_revision, int
+        ):
+            return error_response(
+                "expected_revision 必须为整数",
+                code="quarantine_revision_required",
+            )
+
+        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
+        if guard:
+            return guard
+        _, ready_error = await self._ensure_plugin_ready()
+        if ready_error:
+            return ready_error
+
+        try:
+            gate = self._get_memory_quality_gate()
+            if action == "approve":
+                canonical_memory_id = payload.get("canonical_memory_id")
+                approval_token = payload.get("approval_token")
+                if (
+                    isinstance(canonical_memory_id, bool)
+                    or not isinstance(canonical_memory_id, int)
+                    or canonical_memory_id <= 0
+                ):
+                    return error_response(
+                        "canonical_memory_id 必须为正整数",
+                        code="quarantine_canonical_id_required",
+                    )
+                if not isinstance(approval_token, str) or not approval_token.strip():
+                    return error_response(
+                        "approval_token 不能为空",
+                        code="quarantine_approval_token_required",
+                    )
+                result = await gate.repair_approval(
+                    candidate_id,
+                    expected_revision=expected_revision,
+                    canonical_memory_id=canonical_memory_id,
+                    approval_token=approval_token,
+                    actor_id="dashboard",
+                )
+            else:
+                result = await gate.repair_blocked(
+                    candidate_id,
+                    expected_revision=expected_revision,
+                    actor_id="dashboard",
+                    confirm_canonical_absent=(
+                        payload.get("confirm_canonical_absent") is True
+                    ),
+                )
+            return self._ok(
+                {
+                    "candidate": self._public_quarantine_candidate(
+                        result,
+                        include_content=True,
+                    ),
+                    "action": action,
+                }
+            )
+        except asyncio.CancelledError:
+            raise
+        except KeyError:
+            return error_response(
+                "隔离候选不存在",
+                code="quarantine_candidate_not_found",
+            )
+        except ValueError as exc:
+            code = str(exc)
+            allowed_codes = {
+                "quarantine_revision_conflict",
+                "quarantine_status_conflict",
+                "quarantine_approval_token_required",
+                "quarantine_approval_token_invalid",
+                "quarantine_canonical_not_found",
+                "quarantine_canonical_mismatch",
+                "quarantine_canonical_status_invalid",
+                "quarantine_canonical_presence_conflict",
+                "quarantine_canonical_absence_confirmation_required",
+            }
+            if code not in allowed_codes:
+                code = "quarantine_repair_invalid"
+            return error_response("隔离候选 repair 被拒绝", code=code)
+        except Exception as exc:
+            logger.error(
+                "[QuarantineAPI] repair 执行失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return error_response(
+                "隔离候选 repair 失败",
+                code="quarantine_repair_failed",
             )
 
     @staticmethod
