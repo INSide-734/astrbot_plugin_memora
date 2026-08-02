@@ -42,7 +42,7 @@ flowchart TD
 | 图谱 | `GraphApiMixin` 与 `PluginPageApi` 图视图辅助 | `/graph/overview`、POST `/graph/query`、GET `/graph/search` |
 | 画像/知识/笔记 | `ProfileApiMixin`、`KnowledgeApiMixin`、`NoteApiMixin` | 各领域 list/detail/create/update/delete/batch；笔记另有 versions/archive |
 | 情感与社交 | `AffectionApiMixin`、`SocialApiMixin`、`ExpressionApiMixin`、`JargonApiMixin` | `/affection/*`、`/social/*`、`/expression/patterns`、`/jargon/*` |
-| 质量与审查 | `QualityApiMixin`、`ReviewApiMixin`、`QuarantineApiMixin`、`MemoryEvolutionReviewApiMixin` | `/quality/*`、`/review/items*`、`/review/refresh`、`/review/action`、`/review/quarantine*`、`/review/derived*` |
+| 质量与审查 | `QualityApiMixin`、`ReviewApiMixin`、`QuarantineApiMixin`、`MemoryEvolutionReviewApiMixin`、`ReconsolidationReviewApiMixin` | `/quality/*`、`/review/items*`、`/review/refresh`、`/review/action`、`/review/quarantine*`、`/review/derived*`、`/review/reconsolidation*` |
 | 诊断/评测/指标 | `DiagnosticsApiMixin`、`EvaluationApiMixin`、`MetricsApiMixin` | `/diagnostics/*`、`/evaluation/*`、`/metrics/summary` |
 | 运维/备份 | `MaintenanceApiMixin`、`BackupApiMixin` | `/maintenance/*`、`/health/persistence*`、`/backup/list|create|restore|status|restore/cancel|delete|batch-delete`、`/system/*` 兼容路径、`/dashboard/install|build` |
 | 配置/回填 | `ConfigApiMixin`、`TopicSegmentationApiMixin` | `/config/schema`、`/config/state`、`/config/apply`、`/config/topic-segmentation`、`/backfill/*` |
@@ -79,6 +79,7 @@ flowchart TD
 - `/review/quarantine/action` 只接受 `approve`/`reject`、整数 `expected_revision` 和可选修正正文；批准由 `MemoryQualityGate` 重新取证，不得由 API 直接调用 `MemoryEngine`。canonical 已写入但状态收口失败时只返回候选 revision 与 opaque repair token，不回显正文或内部身份。
 - `/review/quarantine/repair` 是 approving 的唯一管理员收口入口：`approve` 必须提交正整数 canonical ID、token、revision 并由 Gate 重读 canonical 校验正文/状态；`block` 必须显式确认 canonical 未写入。错误 ID、token、revision 和状态均 fail-closed，响应不返回 candidate key、session/persona、消息指纹或 token 之外的内部字段。
 - `/review/derived/action` 只接受 `candidate_id`、`approve|reject|replay` 和正整数候选 `expected_revision`；写操作受维护守卫保护。列表/详情/动作响应只允许 candidate ID/revision、relation type、状态、confidence、动作前后状态、reason code 和时间，不得返回 canonical source ID/revision、scope、privacy、正文、身份或 origin job。
+- `/review/reconsolidation` 在功能关闭时返回 `enabled=false` 的空页，供 Dashboard 展示禁用态；配置已启用但 Store 缺失仍返回 `reconsolidation_unavailable`。详情和人工动作在关闭态继续 fail-closed，不能把未装配功能伪装成可写。
 - 注入策略目录与决策 API 是只读的：目录来自不可变 registry，不查询 SQLite；列表/详情只返回 allowlist 脱敏字段，绝不返回 query、记忆内容或会话身份。`InjectionStrategyApiMixin` 的决策列表只接受 `offset>=0`、`1<=limit<=100`、固定筛选枚举与 allowlist `sort_by`，`sort_order` 只能是小写 `asc/desc`。
 - `InjectionDecisionStore.list_decisions()` 返回稳定的 `{items,total,offset,limit}` 页面；`total` 是筛选后的未分页总数，排序列来自固定 SQL allowlist，并以 `decision_id ASC` 作为确定性并列键。列表/详情均不得把 `reason_codes_json` 原文、内部 query/prompt、正文、ID 列表、身份或堆栈带出响应。
 - 召回 trace 只预览路由/检索，不执行 `InjectionExecutor`、不写决策记录；空白 `session_id`、`persona_id`、`user_id` 必须规范化为未提供，不能下传为空字符串过滤器。创建和详情端点只返回 `sanitize_trace_payload()` 的安全 DTO，不得返回 query、正文/preview、canonical ID、候选 ID、request metadata、source/revision/scope/privacy/role/job 信息。

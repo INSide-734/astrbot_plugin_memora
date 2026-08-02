@@ -6,6 +6,7 @@ const RECONSOLIDATION_COPY: Record<string, [string, string, string]> = {
   "intelligence.reconsolidation.loading": ["正在加载候选", "Loading candidates", "Загрузка кандидатов"],
   "intelligence.reconsolidation.loadingDetail": ["正在加载候选详情", "Loading candidate details", "Загрузка сведений о кандидате"],
   "intelligence.reconsolidation.noMatches": ["暂无再巩固候选", "No reconsolidation candidates", "Нет кандидатов для реконсолидирования"],
+  "intelligence.reconsolidation.disabled": ["记忆再巩固功能未启用", "Reconsolidation is not enabled", "Реконсолидация памяти не включена"],
   "intelligence.reconsolidation.selectCandidate": ["选择候选以查看正文对照。", "Select a candidate to compare its content.", "Выберите кандидата для сравнения текста."],
   "intelligence.reconsolidation.items": ["候选列表", "Candidate list", "Список кандидатов"],
   "intelligence.reconsolidation.detail": ["候选详情", "Candidate details", "Сведения о кандидате"],

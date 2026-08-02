@@ -1077,6 +1077,7 @@
         "loading": "Loading candidates",
         "loadingDetail": "Loading candidate details",
         "noMatches": "No reconsolidation candidates",
+        "disabled": "Reconsolidation is not enabled",
         "selectCandidate": "Select a candidate to compare its content.",
         "items": "Candidate list",
         "detail": "Candidate details",

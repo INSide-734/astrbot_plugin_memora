@@ -502,6 +502,7 @@ async def test_real_engine_wires_reconsolidation_when_enabled(tmp_path: Path) ->
             await engine.initialize()
 
         assert isinstance(engine.reconsolidation, ReconsolidationManager)
+        assert isinstance(engine.reconsolidation_store, ReconsolidationStore)
         assert engine.reconsolidation._enabled is True
         assert engine.reconsolidation._refresh_derived is not None
     finally:

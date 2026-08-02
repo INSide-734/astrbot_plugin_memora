@@ -120,6 +120,7 @@ export function ReconsolidationQueue({ showToast }: ReconsolidationQueueProps) {
   const [total, setTotal] = useState(0);
   const [pageOffset, setPageOffset] = useState(0);
   const [pageLimit, setPageLimit] = useState(PAGE_SIZE);
+  const [featureEnabled, setFeatureEnabled] = useState(true);
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<ReconsolidationReviewDetail | null>(null);
   const [actions, setActions] = useState<ReconsolidationReviewAction[]>([]);
@@ -174,10 +175,13 @@ export function ReconsolidationQueue({ showToast }: ReconsolidationQueueProps) {
         await apiRequest(buildListPath(status, offset)),
       );
       if (listRequestRef.current !== requestId) return;
-      const normalized = Array.isArray(data.items)
+      const enabled = data.enabled !== false;
+      const normalized = enabled && Array.isArray(data.items)
         ? data.items.map(normalizeCandidate).filter((item) => item.candidate_id)
         : [];
-      const nextTotal = Number.isFinite(data.total) ? Math.max(0, Number(data.total)) : normalized.length;
+      const nextTotal = enabled && Number.isFinite(data.total)
+        ? Math.max(0, Number(data.total))
+        : normalized.length;
       const reportedOffset = Number.isFinite(data.offset) && data.offset >= 0
         ? Number(data.offset)
         : offset;
@@ -188,6 +192,7 @@ export function ReconsolidationQueue({ showToast }: ReconsolidationQueueProps) {
       setTotal(nextTotal);
       setPageOffset(reportedOffset);
       setPageLimit(reportedLimit);
+      setFeatureEnabled(enabled);
       if (normalized.length === 0 && nextTotal > 0 && reportedOffset >= nextTotal) {
         setOffset(Math.floor((nextTotal - 1) / reportedLimit) * reportedLimit);
         return;
@@ -330,7 +335,7 @@ export function ReconsolidationQueue({ showToast }: ReconsolidationQueueProps) {
           <span className="text-xs font-medium text-muted-foreground">
             {t("intelligence.reconsolidation.statusLabel")}
           </span>
-          <Select value={status} onValueChange={(value) => { if (value) changeStatus(value); }}>
+          <Select disabled={!featureEnabled} value={status} onValueChange={(value) => { if (value) changeStatus(value); }}>
             <SelectTrigger aria-label={t("intelligence.reconsolidation.statusLabel")} className="mt-1 w-full">
               <span>{status === "all" ? t("intelligence.reconsolidation.allStatuses") : statusLabel(status)}</span>
             </SelectTrigger>
@@ -356,6 +361,8 @@ export function ReconsolidationQueue({ showToast }: ReconsolidationQueueProps) {
               <p className="px-3 py-5 text-sm text-muted-foreground">{t("intelligence.reconsolidation.loading")}</p>
             ) : listError ? (
               <p role="alert" className="break-words px-3 py-5 text-sm text-destructive">{listError}</p>
+            ) : !featureEnabled ? (
+              <p className="px-3 py-5 text-sm text-muted-foreground">{t("intelligence.reconsolidation.disabled")}</p>
             ) : items.length === 0 ? (
               <p className="px-3 py-5 text-sm text-muted-foreground">{t("intelligence.reconsolidation.noMatches")}</p>
             ) : items.map((item) => {
@@ -405,6 +412,8 @@ export function ReconsolidationQueue({ showToast }: ReconsolidationQueueProps) {
             <p className="text-sm text-muted-foreground">{t("intelligence.reconsolidation.loadingDetail")}</p>
           ) : detailError ? (
             <p role="alert" className="break-words text-sm text-destructive">{detailError}</p>
+          ) : !featureEnabled ? (
+            <p className="text-sm text-muted-foreground">{t("intelligence.reconsolidation.disabled")}</p>
           ) : !detail ? (
             <p className="text-sm text-muted-foreground">{t("intelligence.reconsolidation.selectCandidate")}</p>
           ) : (

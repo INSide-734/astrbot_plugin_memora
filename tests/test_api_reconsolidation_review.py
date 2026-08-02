@@ -125,6 +125,7 @@ async def test_list_uses_true_server_pagination_and_safe_fields(tmp_path: Path) 
         response = await api.list_reconsolidation_review_candidates()
 
     assert response["status"] == "ok"
+    assert response["data"]["enabled"] is True
     assert response["data"]["total"] == 3
     assert response["data"]["offset"] == 1
     assert response["data"]["limit"] == 1
@@ -350,14 +351,15 @@ async def test_action_honors_maintenance_write_guard(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_handlers_report_feature_unavailable_when_disabled(
+async def test_handlers_report_disabled_list_state_and_reject_actions(
     tmp_path: Path,
 ) -> None:
-    """未装配 Store/Manager 时读写接口都应返回统一不可用错误码。"""
+    """功能关闭时列表应返回可渲染空态，写动作仍保持不可用。"""
 
     api, store, engine, _ = await _api_with_candidates(tmp_path)
     engine.reconsolidation_store = None
     engine.reconsolidation = None
+    engine.config = {"reconsolidation.enabled": False}
     with patch(
         "core.api.reconsolidation_review_api.request",
         _mock_request(),
@@ -365,12 +367,46 @@ async def test_handlers_report_feature_unavailable_when_disabled(
         listed = await api.list_reconsolidation_review_candidates()
     with patch(
         "core.api.reconsolidation_review_api.request",
+        _mock_request(args={"candidate_id": "one"}),
+    ):
+        detailed = await api.get_reconsolidation_review_candidate()
+    with patch(
+        "core.api.reconsolidation_review_api.request",
         _mock_request(payload={"candidate_id": "one", "action": "reject"}),
     ):
         acted = await api.apply_reconsolidation_review_action()
 
-    assert listed["code"] == "reconsolidation_unavailable"
+    assert listed == {
+        "status": "ok",
+        "data": {
+            "enabled": False,
+            "items": [],
+            "total": 0,
+            "offset": 0,
+            "limit": 50,
+        },
+    }
+    assert detailed["code"] == "reconsolidation_unavailable"
     assert acted["code"] == "reconsolidation_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_list_reports_enabled_store_gap_as_unavailable(tmp_path: Path) -> None:
+    """配置已启用但 Store 缺失时必须保留真实初始化故障。"""
+
+    api, store, engine, _ = await _api_with_candidates(tmp_path)
+    engine.reconsolidation_store = None
+    engine.config = {"reconsolidation.enabled": True}
+
+    with patch(
+        "core.api.reconsolidation_review_api.request",
+        _mock_request(),
+    ):
+        listed = await api.list_reconsolidation_review_candidates()
+
+    assert listed["status"] == "error"
+    assert listed["code"] == "reconsolidation_unavailable"
+    assert listed["message"] == "再巩固候选 Store 未初始化"
 
 
 @pytest.mark.asyncio

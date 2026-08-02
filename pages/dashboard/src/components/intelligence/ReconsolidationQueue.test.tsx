@@ -272,6 +272,26 @@ describe("ReconsolidationQueue", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("list unavailable");
   });
 
+  it("renders a disabled feature state without requesting detail or showing an error", async () => {
+    const showToast = vi.fn();
+    bridge.apiGet.mockReset();
+    bridge.apiGet.mockResolvedValueOnce(ok({
+      enabled: false,
+      items: [],
+      total: 0,
+      offset: 0,
+      limit: 10,
+    }));
+
+    render(<ReconsolidationQueue showToast={showToast} />);
+
+    expect((await screen.findAllByText(
+      /Reconsolidation is not enabled|记忆再巩固功能未启用|Реконсолидация памяти не включена/i,
+    )).length).toBe(2);
+    expect(bridge.apiGet).toHaveBeenCalledTimes(1);
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["zh-CN", "再巩固候选", "旧正文", "拟议正文"],
     ["en-US", "Reconsolidation candidates", "Original content", "Proposed content"],

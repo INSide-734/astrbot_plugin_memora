@@ -179,6 +179,7 @@ export interface ReconsolidationReviewAction {
 }
 
 export interface ReconsolidationReviewItemsResponse {
+  enabled?: boolean;
   items: ReconsolidationReviewItem[];
   total: number;
   offset: number;

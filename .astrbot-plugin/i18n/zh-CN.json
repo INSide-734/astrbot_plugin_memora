@@ -1077,6 +1077,7 @@
         "loading": "正在加载候选",
         "loadingDetail": "正在加载候选详情",
         "noMatches": "暂无再巩固候选",
+        "disabled": "记忆再巩固功能未启用",
         "selectCandidate": "选择候选以查看正文对照。",
         "items": "候选列表",
         "detail": "候选详情",

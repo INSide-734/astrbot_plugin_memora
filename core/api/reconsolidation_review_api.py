@@ -18,6 +18,10 @@ _ACTIONS = frozenset({"approve", "reject", "rollback"})
 _ACTION_FIELDS = frozenset({"candidate_id", "action"})
 
 
+class _ReconsolidationStoreUnavailableError(RuntimeError):
+    """表示配置已启用但再巩固 Store 未完成装配。"""
+
+
 class ReconsolidationReviewApiMixin:
     """Mixin：再巩固候选列表、详情和人工动作。"""
 
@@ -28,7 +32,6 @@ class ReconsolidationReviewApiMixin:
         if error:
             return error
         try:
-            store = _store_from_engine(ready["memory_engine"])
             status = str(request.args.get("status") or "pending").strip().lower()
             if status != "all" and status not in _STATUSES:
                 return error_response("再巩固状态无效", code="invalid_request")
@@ -37,6 +40,20 @@ class ReconsolidationReviewApiMixin:
                 request.args.get("offset", 0),
                 name="offset",
             )
+            engine = ready["memory_engine"]
+            store = getattr(engine, "reconsolidation_store", None)
+            if store is None:
+                if _reconsolidation_enabled(engine):
+                    raise _ReconsolidationStoreUnavailableError
+                return self._ok(
+                    {
+                        "enabled": False,
+                        "items": [],
+                        "total": 0,
+                        "offset": offset,
+                        "limit": min(200, limit),
+                    }
+                )
             page = await store.list_candidates_page(
                 status=None if status == "all" else status,
                 offset=offset,
@@ -44,11 +61,12 @@ class ReconsolidationReviewApiMixin:
             )
             return self._ok(
                 {
+                    "enabled": True,
                     **page,
                     "items": [_candidate_summary(item) for item in page["items"]],
                 }
             )
-        except RuntimeError:
+        except _ReconsolidationStoreUnavailableError:
             return error_response(
                 "再巩固候选 Store 未初始化",
                 code="reconsolidation_unavailable",
@@ -86,7 +104,7 @@ class ReconsolidationReviewApiMixin:
                     "actions": [_action_summary(action) for action in actions],
                 }
             )
-        except RuntimeError:
+        except _ReconsolidationStoreUnavailableError:
             return error_response(
                 "再巩固候选 Store 未初始化",
                 code="reconsolidation_unavailable",
@@ -184,8 +202,18 @@ def _store_from_engine(engine: Any):
 
     store = getattr(engine, "reconsolidation_store", None)
     if store is None:
-        raise RuntimeError("reconsolidation store unavailable")
+        raise _ReconsolidationStoreUnavailableError
     return store
+
+
+def _reconsolidation_enabled(engine: Any) -> bool:
+    """读取引擎的再巩固开关，缺失配置按默认关闭处理。"""
+
+    config = getattr(engine, "config", None)
+    getter = getattr(config, "get", None)
+    if not callable(getter):
+        return False
+    return bool(getter("reconsolidation.enabled", False))
 
 
 def _parse_action_payload(payload: Any) -> tuple[str, str]:
