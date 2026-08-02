@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,7 +11,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.auto_learning import AutoLearningManager
+from core.managers.auto_learning import (
+    AutoLearningManager,
+    AutoLearningStatePersistenceError,
+)
 from core.managers.feedback_signal_manager import FeedbackSignalManager
 from core.models.feedback_signal import (
     FeedbackAdapterKind,
@@ -181,6 +185,270 @@ async def test_publish_failure_keeps_production_revision(tmp_path: Path) -> None
     assert result["published"] is False
     assert result["reason_code"] == "source_revision_mismatch"
     assert manager.last_published_snapshot(ready["candidate_key"]) is None
+
+
+@pytest.mark.asyncio
+async def test_publish_intent_persistence_failure_does_not_call_writer(
+    tmp_path: Path,
+) -> None:
+    """发布 intent 无法落盘时必须停在生产 writer 之前。"""
+
+    feedback = await _make_feedback_manager(tmp_path)
+    manager = AutoLearningManager(
+        feedback,
+        data_dir=str(tmp_path),
+        enabled=True,
+        min_independent_windows=1,
+        min_samples=1,
+    )
+    now = datetime.now(UTC)
+    for offset in range(2):
+        _seed_event(
+            feedback,
+            decision_key=f"intent-write-failure:{offset}",
+            scope="private:u",
+            reference_time=now - timedelta(hours=offset),
+        )
+    ready = next(
+        candidate
+        for candidate in await manager.rebuild_candidates(reference_time=now)
+        if candidate["status"] == "ready_for_review"
+    )
+    writer = AsyncMock()
+
+    async def fail_save() -> None:
+        raise AutoLearningStatePersistenceError("simulated")
+
+    manager._save_state = fail_save
+    result = await manager.publish_candidate(
+        ready["candidate_key"],
+        config_writer=writer,
+        expected_revision="cfg-1",
+        current_values={
+            "document_route_weight": 0.61,
+            "graph_route_weight": 0.39,
+        },
+    )
+
+    assert result == {
+        "published": False,
+        "reason_code": "state_persistence_failed",
+    }
+    writer.assert_not_awaited()
+    assert manager.last_published_snapshot(ready["candidate_key"]) is None
+
+
+@pytest.mark.asyncio
+async def test_final_state_persistence_failure_keeps_restart_rollback_snapshot(
+    tmp_path: Path,
+) -> None:
+    """生产 writer 成功但最终状态保存失败时不得报告 published，并保留 intent。"""
+
+    feedback = await _make_feedback_manager(tmp_path)
+    manager = AutoLearningManager(
+        feedback,
+        data_dir=str(tmp_path),
+        enabled=True,
+        min_independent_windows=1,
+        min_samples=1,
+    )
+    now = datetime.now(UTC)
+    for offset in range(2):
+        _seed_event(
+            feedback,
+            decision_key=f"final-write-failure:{offset}",
+            scope="private:u",
+            reference_time=now - timedelta(hours=offset),
+        )
+    ready = next(
+        candidate
+        for candidate in await manager.rebuild_candidates(reference_time=now)
+        if candidate["status"] == "ready_for_review"
+    )
+    real_save = manager._save_state
+    save_calls = 0
+
+    async def fail_final_save() -> None:
+        nonlocal save_calls
+        save_calls += 1
+        if save_calls == 2:
+            raise AutoLearningStatePersistenceError("simulated")
+        await real_save()
+
+    manager._save_state = fail_final_save
+    writer = AsyncMock(return_value=True)
+    result = await manager.publish_candidate(
+        ready["candidate_key"],
+        config_writer=writer,
+        expected_revision="cfg-1",
+        current_values={
+            "document_route_weight": 0.61,
+            "graph_route_weight": 0.39,
+        },
+    )
+
+    assert result["published"] is False
+    assert result["reason_code"] == "state_persistence_failed"
+    assert result["recovery_required"] is True
+    writer.assert_awaited_once()
+    snapshot = manager.last_published_snapshot(ready["candidate_key"])
+    assert snapshot is not None
+    assert snapshot["previous_document_weight"] == 0.61
+
+    restarted = AutoLearningManager(
+        feedback,
+        data_dir=str(tmp_path),
+        enabled=True,
+    )
+    await restarted.load_state()
+    recovered_snapshot = restarted.last_published_snapshot(ready["candidate_key"])
+    assert recovered_snapshot is not None
+    assert recovered_snapshot["previous_document_weight"] == 0.61
+    rollback_writer = AsyncMock(return_value=True)
+    rollback = await restarted.rollback_last_publish(
+        ready["candidate_key"],
+        config_writer=rollback_writer,
+        expected_revision="cfg-2",
+    )
+
+    assert rollback == {"restored": True, "reason_code": "restored"}
+    rollback_writer.assert_awaited_once_with(
+        {
+            "graph_memory.document_route_weight": 0.61,
+            "graph_memory.graph_route_weight": 0.39,
+        },
+        expected_revision="cfg-2",
+    )
+    assert restarted.last_published_snapshot(ready["candidate_key"]) is None
+
+
+@pytest.mark.asyncio
+async def test_publish_lock_serializes_rebuild_and_publish(tmp_path: Path) -> None:
+    """rebuild 不能在发布 writer 持锁期间覆盖发布中的状态。"""
+
+    feedback = await _make_feedback_manager(tmp_path)
+    manager = AutoLearningManager(
+        feedback,
+        data_dir=str(tmp_path),
+        enabled=True,
+        min_independent_windows=1,
+        min_samples=1,
+    )
+    now = datetime.now(UTC)
+    for offset in range(2):
+        _seed_event(
+            feedback,
+            decision_key=f"rebuild-lock:{offset}",
+            scope="private:u",
+            reference_time=now - timedelta(hours=offset),
+        )
+    ready = next(
+        candidate
+        for candidate in await manager.rebuild_candidates(reference_time=now)
+        if candidate["status"] == "ready_for_review"
+    )
+    writer_entered = asyncio.Event()
+    release_writer = asyncio.Event()
+    rebuild_entered = asyncio.Event()
+    writer_calls: list[dict] = []
+    original_rebuild = feedback.rebuild
+
+    def observe_rebuild(*, reference_time: datetime) -> list[object]:
+        rebuild_entered.set()
+        return original_rebuild(reference_time=reference_time)
+
+    feedback.rebuild = observe_rebuild
+
+    async def writer(changes: dict, *, expected_revision: str) -> bool:
+        writer_calls.append(changes)
+        writer_entered.set()
+        if len(writer_calls) == 1:
+            await release_writer.wait()
+        return True
+
+    publish_task = asyncio.create_task(
+        manager.publish_candidate(
+            ready["candidate_key"],
+            config_writer=writer,
+            expected_revision="cfg-1",
+            current_values={
+                "document_route_weight": 0.61,
+                "graph_route_weight": 0.39,
+            },
+        )
+    )
+    await writer_entered.wait()
+    rebuild_task = asyncio.create_task(manager.rebuild_candidates(reference_time=now))
+    rollback_task = asyncio.create_task(
+        manager.rollback_last_publish(
+            ready["candidate_key"],
+            config_writer=writer,
+            expected_revision="cfg-2",
+        )
+    )
+    assert not rebuild_entered.is_set()
+    assert len(writer_calls) == 1
+    release_writer.set()
+    published, rollback, rebuilt = await asyncio.gather(
+        publish_task,
+        rollback_task,
+        rebuild_task,
+    )
+
+    assert published["published"] is True
+    assert rollback == {"restored": True, "reason_code": "restored"}
+    assert len(writer_calls) == 2
+    assert rebuilt
+    assert rebuild_entered.is_set()
+
+
+@pytest.mark.asyncio
+async def test_reset_state_persistence_failure_preserves_recovery_state(
+    tmp_path: Path,
+) -> None:
+    """reset 落盘失败时不能在内存中静默丢弃可回滚快照。"""
+
+    feedback = await _make_feedback_manager(tmp_path)
+    manager = AutoLearningManager(
+        feedback,
+        data_dir=str(tmp_path),
+        enabled=True,
+        min_independent_windows=1,
+        min_samples=1,
+    )
+    now = datetime.now(UTC)
+    for offset in range(2):
+        _seed_event(
+            feedback,
+            decision_key=f"reset-write-failure:{offset}",
+            scope="private:u",
+            reference_time=now - timedelta(hours=offset),
+        )
+    ready = next(
+        candidate
+        for candidate in await manager.rebuild_candidates(reference_time=now)
+        if candidate["status"] == "ready_for_review"
+    )
+    published = await manager.publish_candidate(
+        ready["candidate_key"],
+        config_writer=AsyncMock(return_value=True),
+        expected_revision="cfg-1",
+        current_values={
+            "document_route_weight": 0.61,
+            "graph_route_weight": 0.39,
+        },
+    )
+    assert published["published"] is True
+
+    async def fail_save() -> None:
+        raise AutoLearningStatePersistenceError("simulated")
+
+    manager._save_state = fail_save
+    with pytest.raises(AutoLearningStatePersistenceError):
+        await manager.reset()
+
+    assert manager.get_candidates()
+    assert manager.last_published_snapshot(ready["candidate_key"]) is not None
 
 
 @pytest.mark.asyncio

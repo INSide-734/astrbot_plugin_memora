@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -20,13 +21,19 @@ _CANDIDATE_STATUSES = frozenset(
 _CANDIDATE_REASONS = frozenset(
     {"candidate", "insufficient_evidence", "published", "invalid_state"}
 )
+_PUBLISH_INTENT_PHASES = frozenset({"prepared"})
+
+
+class AutoLearningStatePersistenceError(RuntimeError):
+    """自主学习状态文件无法原子持久化。"""
 
 
 class AutoLearningManager:
     """基于 FeedbackSignalManager 聚合生成影子参数候选并支持 CAS 发布。
 
-    候选只写入本地状态文件；``publish_candidate()`` 必须通过单一配置写入口
-    并携带 revision，失败时保持生产配置不变。
+    候选只写入本地状态文件；``publish_candidate()`` 必须先持久化包含真实旧权重
+    的 intent，再通过携带 revision 的单一配置写入口。最终状态保存失败时保留
+    intent，重启后仍可显式回滚；状态变更入口共用同一把锁。
     """
 
     def __init__(
@@ -47,6 +54,8 @@ class AutoLearningManager:
         self._min_samples = max(1, int(min_samples))
         self._candidates: dict[str, dict[str, Any]] = {}
         self._published: dict[str, dict[str, Any]] = {}
+        self._publish_intents: dict[str, dict[str, Any]] = {}
+        self._state_lock = asyncio.Lock()
 
     @property
     def enabled(self) -> bool:
@@ -63,37 +72,47 @@ class AutoLearningManager:
 
         if not self._enabled:
             return []
-        reference_time = reference_time or datetime.now().astimezone()
-        aggregates = self._feedback_manager.rebuild(reference_time=reference_time)
-        rebuilt: dict[str, dict[str, Any]] = {}
-        for aggregate in aggregates:
-            key = _candidate_key(aggregate.scope_domain, aggregate.persona_domain)
-            if aggregate.status == "candidate" and (
-                aggregate.accepted_count >= self._min_samples
-                and aggregate.independent_window_count >= self._min_independent_windows
-            ):
-                status = "ready_for_review"
-                reason_code = "candidate"
-            else:
-                status = "rejected"
-                reason_code = "insufficient_evidence"
-            rebuilt[key] = {
-                "candidate_key": key,
-                "scope_domain": aggregate.scope_domain,
-                "persona_domain": aggregate.persona_domain,
-                "proposed_document_weight": aggregate.proposed_document_weight,
-                "proposed_graph_weight": aggregate.proposed_graph_weight,
-                "delta_from_baseline": aggregate.delta_from_baseline,
-                "accepted_count": aggregate.accepted_count,
-                "independent_window_count": aggregate.independent_window_count,
-                "decayed_support": aggregate.decayed_support,
-                "status": status,
-                "reason_code": reason_code,
-                "policy_version": aggregate.policy_version,
-            }
-        self._candidates = rebuilt
-        await self._save_state()
-        return list(rebuilt.values())
+        async with self._state_lock:
+            reference_time = reference_time or datetime.now().astimezone()
+            aggregates = self._feedback_manager.rebuild(reference_time=reference_time)
+            previous_candidates = self._candidates
+            rebuilt: dict[str, dict[str, Any]] = {}
+            for aggregate in aggregates:
+                key = _candidate_key(aggregate.scope_domain, aggregate.persona_domain)
+                if aggregate.status == "candidate" and (
+                    aggregate.accepted_count >= self._min_samples
+                    and aggregate.independent_window_count
+                    >= self._min_independent_windows
+                ):
+                    status = "ready_for_review"
+                    reason_code = "candidate"
+                else:
+                    status = "rejected"
+                    reason_code = "insufficient_evidence"
+                if key in self._published:
+                    status = "published"
+                    reason_code = "published"
+                rebuilt[key] = {
+                    "candidate_key": key,
+                    "scope_domain": aggregate.scope_domain,
+                    "persona_domain": aggregate.persona_domain,
+                    "proposed_document_weight": aggregate.proposed_document_weight,
+                    "proposed_graph_weight": aggregate.proposed_graph_weight,
+                    "delta_from_baseline": aggregate.delta_from_baseline,
+                    "accepted_count": aggregate.accepted_count,
+                    "independent_window_count": aggregate.independent_window_count,
+                    "decayed_support": aggregate.decayed_support,
+                    "status": status,
+                    "reason_code": reason_code,
+                    "policy_version": aggregate.policy_version,
+                }
+            self._candidates = rebuilt
+            try:
+                await self._save_state()
+            except AutoLearningStatePersistenceError:
+                self._candidates = previous_candidates
+                raise
+            return list(rebuilt.values())
 
     async def publish_candidate(
         self,
@@ -105,40 +124,90 @@ class AutoLearningManager:
     ) -> dict[str, Any]:
         """按 revision CAS 发布候选，并记录调用方提供的真实发布前权重。"""
 
-        candidate = self._candidates.get(candidate_key)
-        if candidate is None or candidate["status"] != "ready_for_review":
-            return {
-                "published": False,
-                "reason_code": "insufficient_evidence",
+        async with self._state_lock:
+            candidate = self._candidates.get(candidate_key)
+            if candidate is None or candidate["status"] != "ready_for_review":
+                return {
+                    "published": False,
+                    "reason_code": "insufficient_evidence",
+                }
+            if candidate_key in self._publish_intents:
+                return {"published": False, "reason_code": "publish_in_progress"}
+            previous = _normalized_weights(current_values)
+            if previous is None:
+                return {"published": False, "reason_code": "invalid_current_values"}
+            intent = {
+                "candidate_key": candidate_key,
+                "phase": "prepared",
+                "created_at": datetime.now().astimezone().isoformat(),
+                "revision": expected_revision,
+                "previous_document_weight": previous["document_route_weight"],
+                "previous_graph_weight": previous["graph_route_weight"],
+                "document_route_weight": candidate["proposed_document_weight"],
+                "graph_route_weight": candidate["proposed_graph_weight"],
             }
-        previous = _normalized_weights(current_values)
-        if previous is None:
-            return {"published": False, "reason_code": "invalid_current_values"}
-        updates = {
-            "graph_memory.document_route_weight": candidate["proposed_document_weight"],
-            "graph_memory.graph_route_weight": candidate["proposed_graph_weight"],
-        }
-        applied = await config_writer(updates, expected_revision=expected_revision)
-        if not applied:
-            reason_code = str(
-                getattr(config_writer, "_last_write_reason_code", None)
-                or "publish_rejected"
-            )
-            return {"published": False, "reason_code": reason_code}
-        snapshot = {
-            "candidate_key": candidate_key,
-            "published_at": datetime.now().astimezone().isoformat(),
-            "revision": expected_revision,
-            "previous_document_weight": previous["document_route_weight"],
-            "previous_graph_weight": previous["graph_route_weight"],
-            "document_route_weight": candidate["proposed_document_weight"],
-            "graph_route_weight": candidate["proposed_graph_weight"],
-        }
-        self._published[candidate_key] = snapshot
-        candidate["status"] = "published"
-        candidate["reason_code"] = "published"
-        await self._save_state()
-        return {"published": True, "snapshot": snapshot}
+            self._publish_intents[candidate_key] = intent
+            try:
+                await self._save_state()
+            except AutoLearningStatePersistenceError:
+                self._publish_intents.pop(candidate_key, None)
+                return {
+                    "published": False,
+                    "reason_code": "state_persistence_failed",
+                }
+
+            updates = {
+                "graph_memory.document_route_weight": candidate[
+                    "proposed_document_weight"
+                ],
+                "graph_memory.graph_route_weight": candidate["proposed_graph_weight"],
+            }
+            try:
+                applied = await config_writer(
+                    updates,
+                    expected_revision=expected_revision,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return {"published": False, "reason_code": "publish_failed"}
+            if not applied:
+                reason_code = str(
+                    getattr(config_writer, "_last_write_reason_code", None)
+                    or "publish_rejected"
+                )
+                self._publish_intents.pop(candidate_key, None)
+                try:
+                    await self._save_state()
+                except AutoLearningStatePersistenceError:
+                    self._publish_intents[candidate_key] = intent
+                return {"published": False, "reason_code": reason_code}
+
+            snapshot = {
+                "candidate_key": candidate_key,
+                "published_at": datetime.now().astimezone().isoformat(),
+                "revision": expected_revision,
+                "previous_document_weight": previous["document_route_weight"],
+                "previous_graph_weight": previous["graph_route_weight"],
+                "document_route_weight": candidate["proposed_document_weight"],
+                "graph_route_weight": candidate["proposed_graph_weight"],
+            }
+            self._published[candidate_key] = snapshot
+            self._publish_intents.pop(candidate_key, None)
+            candidate["status"] = "published"
+            candidate["reason_code"] = "published"
+            try:
+                await self._save_state()
+            except AutoLearningStatePersistenceError:
+                # 生产配置已经更新；保留内存中的 intent，磁盘上的 pre-intent
+                # 也仍包含真实旧权重，供重启后的显式 rollback 使用。
+                self._publish_intents[candidate_key] = intent
+                return {
+                    "published": False,
+                    "reason_code": "state_persistence_failed",
+                    "recovery_required": True,
+                }
+            return {"published": True, "snapshot": dict(snapshot)}
 
     async def rollback_last_publish(
         self,
@@ -149,25 +218,59 @@ class AutoLearningManager:
     ) -> dict[str, Any]:
         """用最后发布的快照恢复生产权重，同样走 revision CAS。"""
 
-        snapshot = self._published.get(candidate_key)
-        if snapshot is None:
-            return {"restored": False, "reason_code": "no_published_snapshot"}
-        updates = {
-            "graph_memory.document_route_weight": snapshot["previous_document_weight"],
-            "graph_memory.graph_route_weight": snapshot["previous_graph_weight"],
-        }
-        applied = await config_writer(updates, expected_revision=expected_revision)
-        if not applied:
-            return {
-                "restored": False,
-                "reason_code": str(
-                    getattr(config_writer, "_last_write_reason_code", None)
-                    or "rollback_rejected"
-                ),
+        async with self._state_lock:
+            snapshot = self._published.get(candidate_key)
+            intent = self._publish_intents.get(candidate_key)
+            if snapshot is None and intent is not None:
+                snapshot = _snapshot_from_intent(intent)
+            if snapshot is None:
+                return {"restored": False, "reason_code": "no_published_snapshot"}
+            updates = {
+                "graph_memory.document_route_weight": snapshot[
+                    "previous_document_weight"
+                ],
+                "graph_memory.graph_route_weight": snapshot["previous_graph_weight"],
             }
-        self._published.pop(candidate_key, None)
-        await self._save_state()
-        return {"restored": True, "reason_code": "restored"}
+            try:
+                applied = await config_writer(
+                    updates,
+                    expected_revision=expected_revision,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return {"restored": False, "reason_code": "rollback_failed"}
+            if not applied:
+                return {
+                    "restored": False,
+                    "reason_code": str(
+                        getattr(config_writer, "_last_write_reason_code", None)
+                        or "rollback_rejected"
+                    ),
+                }
+            previous_published = self._published.pop(candidate_key, None)
+            previous_intent = self._publish_intents.pop(candidate_key, None)
+            candidate = self._candidates.get(candidate_key)
+            previous_candidate = dict(candidate) if candidate is not None else None
+            if candidate is not None and candidate.get("status") == "published":
+                candidate["status"] = "ready_for_review"
+                candidate["reason_code"] = "candidate"
+            try:
+                await self._save_state()
+            except AutoLearningStatePersistenceError:
+                if previous_published is not None:
+                    self._published[candidate_key] = previous_published
+                if previous_intent is not None:
+                    self._publish_intents[candidate_key] = previous_intent
+                if candidate is not None and previous_candidate is not None:
+                    candidate.clear()
+                    candidate.update(previous_candidate)
+                return {
+                    "restored": False,
+                    "reason_code": "state_persistence_failed",
+                    "recovery_required": True,
+                }
+            return {"restored": True, "reason_code": "restored"}
 
     def get_candidates(self) -> list[dict[str, Any]]:
         """返回当前 shadow 候选副本。"""
@@ -175,17 +278,32 @@ class AutoLearningManager:
         return [dict(item) for item in self._candidates.values()]
 
     def last_published_snapshot(self, candidate_key: str) -> dict[str, Any] | None:
-        """返回指定候选最后发布快照；未发布返回 None。"""
+        """返回指定候选的发布或未收口 intent 快照；不存在时返回 None。"""
 
         snapshot = self._published.get(candidate_key)
+        if snapshot is None:
+            intent = self._publish_intents.get(candidate_key)
+            if intent is not None:
+                snapshot = _snapshot_from_intent(intent)
         return dict(snapshot) if snapshot is not None else None
 
     async def reset(self) -> None:
         """清空 shadow 候选与发布快照，不触碰生产配置。"""
 
-        self._candidates = {}
-        self._published = {}
-        await self._save_state()
+        async with self._state_lock:
+            previous = self._candidates, self._published, self._publish_intents
+            self._candidates = {}
+            self._published = {}
+            self._publish_intents = {}
+            try:
+                await self._save_state()
+            except AutoLearningStatePersistenceError:
+                (
+                    self._candidates,
+                    self._published,
+                    self._publish_intents,
+                ) = previous
+                raise
 
     def safe_summary(self) -> dict[str, Any]:
         """返回不含事件正文或身份细节的候选摘要。"""
@@ -223,12 +341,19 @@ class AutoLearningManager:
             state = {
                 "candidates": self._candidates,
                 "published": self._published,
+                "publish_intents": self._publish_intents,
             }
             with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(state, f, ensure_ascii=False)
             os.replace(temp_path, self._state_path())
-        except OSError:
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
             logger.warning("[自主学习] 候选状态保存失败")
+            raise AutoLearningStatePersistenceError(
+                "learning_state_write_failed"
+            ) from exc
+        finally:
             try:
                 os.unlink(temp_path)
             except OSError:
@@ -236,6 +361,12 @@ class AutoLearningManager:
 
     async def load_state(self) -> None:
         """从磁盘恢复 shadow 候选与发布快照。"""
+
+        async with self._state_lock:
+            await self._load_state_unlocked()
+
+    async def _load_state_unlocked(self) -> None:
+        """在状态锁内从磁盘恢复候选、快照和未收口 intent。"""
 
         if not self._data_dir:
             return
@@ -249,8 +380,10 @@ class AutoLearningManager:
                 raise ValueError("learning_state_invalid")
             candidates = state.get("candidates", {}) or {}
             published = state.get("published", {}) or {}
+            intents = state.get("publish_intents", {}) or {}
             self._candidates = self._normalize_candidates(candidates)
             self._published = self._normalize_published(published)
+            self._publish_intents = self._normalize_publish_intents(intents)
             logger.info(
                 "[自主学习] 状态恢复完成: candidates=%s, published=%s",
                 len(self._candidates),
@@ -259,6 +392,7 @@ class AutoLearningManager:
         except Exception:
             self._candidates = {}
             self._published = {}
+            self._publish_intents = {}
             logger.warning("[自主学习] 状态恢复失败，使用空状态")
 
     def _normalize_candidates(self, value: object) -> dict[str, dict[str, Any]]:
@@ -372,6 +506,47 @@ class AutoLearningManager:
             }
         return normalized
 
+    def _normalize_publish_intents(self, value: object) -> dict[str, dict[str, Any]]:
+        """恢复带真实旧权重的未收口发布 intent。"""
+
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, dict[str, Any]] = {}
+        for raw_key, raw_item in value.items():
+            if not isinstance(raw_key, str) or not isinstance(raw_item, dict):
+                continue
+            phase = raw_item.get("phase")
+            revision = raw_item.get("revision")
+            created_at = raw_item.get("created_at")
+            previous = _normalized_weights(
+                {
+                    "document_route_weight": raw_item.get("previous_document_weight"),
+                    "graph_route_weight": raw_item.get("previous_graph_weight"),
+                }
+            )
+            current = _normalized_weights(raw_item)
+            if (
+                phase not in _PUBLISH_INTENT_PHASES
+                or not isinstance(revision, str)
+                or not revision.strip()
+                or not isinstance(created_at, str)
+                or not created_at.strip()
+                or previous is None
+                or current is None
+            ):
+                continue
+            normalized[raw_key] = {
+                "candidate_key": raw_key,
+                "phase": "prepared",
+                "created_at": created_at,
+                "revision": revision,
+                "previous_document_weight": previous["document_route_weight"],
+                "previous_graph_weight": previous["graph_route_weight"],
+                "document_route_weight": current["document_route_weight"],
+                "graph_route_weight": current["graph_route_weight"],
+            }
+        return normalized
+
 
 def _candidate_key(scope_domain: str, persona_domain: str | None) -> str:
     """以长度前缀组合 scope/persona，避免同作用域候选互相覆盖。"""
@@ -439,4 +614,18 @@ def _normalized_weights(value: Mapping[str, object]) -> dict[str, float] | None:
     return {"document_route_weight": document, "graph_route_weight": graph}
 
 
-__all__ = ["AutoLearningManager"]
+def _snapshot_from_intent(intent: Mapping[str, object]) -> dict[str, Any]:
+    """把未收口 intent 转换为 rollback 所需的最小快照。"""
+
+    return {
+        "candidate_key": str(intent.get("candidate_key", "")),
+        "published_at": str(intent.get("created_at", "")),
+        "revision": str(intent.get("revision", "")),
+        "previous_document_weight": float(intent["previous_document_weight"]),
+        "previous_graph_weight": float(intent["previous_graph_weight"]),
+        "document_route_weight": float(intent["document_route_weight"]),
+        "graph_route_weight": float(intent["graph_route_weight"]),
+    }
+
+
+__all__ = ["AutoLearningManager", "AutoLearningStatePersistenceError"]
