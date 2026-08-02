@@ -128,6 +128,7 @@ def test_storage_event_accepts_named_non_negative_counts(tmp_path: Path) -> None
         attempt_count=2,
         skipped_count=2,
         queue_depth=4,
+        threshold_rounds=5,
     )
 
     path = tmp_path / "diagnostics" / "memora-debug.jsonl"
@@ -145,6 +146,7 @@ def test_storage_event_accepts_named_non_negative_counts(tmp_path: Path) -> None
     assert record["attempt_count"] == 2
     assert record["skipped_count"] == 2
     assert record["queue_depth"] == 4
+    assert record["threshold_rounds"] == 5
 
 
 @pytest.mark.parametrize(
@@ -157,6 +159,7 @@ def test_storage_event_accepts_named_non_negative_counts(tmp_path: Path) -> None
         ("canonical_count", -1),
         ("quarantine_count", True),
         ("skipped_idempotent_count", float("inf")),
+        ("threshold_rounds", True),
     ],
 )
 def test_named_counts_reject_negative_boolean_and_non_finite_values(

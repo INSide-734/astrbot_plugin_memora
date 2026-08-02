@@ -91,6 +91,7 @@ ALLOWED_FIELDS = frozenset(
         "attempt_count",
         "skipped_count",
         "queue_depth",
+        "threshold_rounds",
     }
 )
 
@@ -122,6 +123,7 @@ _NUMERIC_FIELDS = frozenset(
         "attempt_count",
         "skipped_count",
         "queue_depth",
+        "threshold_rounds",
     }
 )
 _ENUM_FIELDS = {

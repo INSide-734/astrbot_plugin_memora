@@ -70,10 +70,7 @@ class ReflectionBacklogMixin:
                 )
                 continue
 
-            current_request = await self._summary_trigger.prepare_for_persona(
-                current_request.session_id,
-                current_request.persona_id,
-            )
+            return
 
 
 __all__ = ["ReflectionBacklogMixin"]

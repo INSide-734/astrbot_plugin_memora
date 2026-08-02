@@ -235,6 +235,7 @@ class ReflectionTrigger:
                 else "summary_threshold_not_reached"
             ),
             count=max(0, int(unsummarized_rounds)),
+            threshold_rounds=progress.trigger_rounds,
         )
 
         if unsummarized_rounds < progress.trigger_rounds:
@@ -359,6 +360,7 @@ class ReflectionTrigger:
                     status="skipped",
                     reason_code="pending_retry_exhausted",
                     count=max(0, int(retry_count)),
+                    threshold_rounds=progress.trigger_rounds,
                 )
                 logger.warning(
                     f"[{session_id}] 待处理总结已连续失败 {retry_count} 次，放弃该范围 "

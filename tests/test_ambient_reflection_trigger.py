@@ -235,8 +235,76 @@ async def test_summary_trigger_bounds_each_window_to_trigger_rounds() -> None:
 
 
 @pytest.mark.asyncio
+async def test_summary_gate_reports_effective_five_round_threshold() -> None:
+    """四轮应跳过、五轮应触发，诊断必须暴露实际配置阈值。"""
+
+    config = MagicMock()
+    config.get.side_effect = lambda key, default=None: {
+        "reflection_engine.summary_trigger_rounds": 5,
+    }.get(key, default)
+    message_count = {"value": 8}
+    conversation = MagicMock()
+    conversation.get_session_info = AsyncMock(
+        side_effect=lambda session_id: SimpleNamespace(
+            message_count=message_count["value"]
+        )
+    )
+    conversation.store = MagicMock()
+    conversation.store.get_message_count = AsyncMock(
+        side_effect=lambda session_id: message_count["value"]
+    )
+    conversation.get_session_metadata = AsyncMock(
+        side_effect=lambda session_id, key, default=None: (
+            0 if key == "last_summarized_index" else None
+        )
+    )
+    conversation.get_messages_range = AsyncMock(
+        return_value=[MagicMock(group_id=None) for _ in range(10)]
+    )
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=config,
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=conversation,
+        enforce_limit_cb=AsyncMock(),
+    )
+
+    with (
+        patch("core.handlers.reflection_trigger.report_debug_event") as report,
+        patch(
+            "core.handlers.reflection_trigger.get_persona_id",
+            new=AsyncMock(return_value="persona-1"),
+        ),
+    ):
+        assert (
+            await handler._summary_trigger.prepare(
+                _group_event(),
+                "test:GroupMessage:group-1",
+            )
+            is None
+        )
+        message_count["value"] = 10
+        request = await handler._summary_trigger.prepare(
+            _group_event(),
+            "test:GroupMessage:group-1",
+        )
+
+    assert request is not None
+    assert request.end_index == 10
+    gate_events = [
+        call.kwargs
+        for call in report.call_args_list
+        if call.args == ("reflection_state",)
+        and call.kwargs.get("stage") == "summary_gate"
+    ]
+    assert [event["status"] for event in gate_events] == ["skipped", "completed"]
+    assert all(event["threshold_rounds"] == 5 for event in gate_events)
+
+
+@pytest.mark.asyncio
 async def test_summary_backlog_drains_in_bounded_windows() -> None:
-    """一次达到阈值后应连续清空当时积压，且每批保持有界。"""
+    """单任务只清空初始积压，新到消息必须留给下一次触发。"""
 
     config = MagicMock()
     config.get.side_effect = lambda key, default=None: {
@@ -244,11 +312,16 @@ async def test_summary_backlog_drains_in_bounded_windows() -> None:
     }.get(key, default)
     progress = {"last_summarized_index": 0}
     conversation = MagicMock()
+    message_count = {"value": 6}
     conversation.get_session_info = AsyncMock(
-        return_value=SimpleNamespace(message_count=6)
+        side_effect=lambda session_id: SimpleNamespace(
+            message_count=message_count["value"]
+        )
     )
     conversation.store = MagicMock()
-    conversation.store.get_message_count = AsyncMock(return_value=6)
+    conversation.store.get_message_count = AsyncMock(
+        side_effect=lambda session_id: message_count["value"]
+    )
 
     async def get_metadata(session_id, key, default=None):
         """返回测试内维护的总结进度。"""
@@ -258,7 +331,7 @@ async def test_summary_backlog_drains_in_bounded_windows() -> None:
         return None
 
     conversation.get_session_metadata = AsyncMock(side_effect=get_metadata)
-    messages = [MagicMock(group_id=None) for _ in range(6)]
+    messages = [MagicMock(group_id=None) for _ in range(10)]
     conversation.get_messages_range = AsyncMock(
         side_effect=lambda session_id, start_index, end_index: messages[
             start_index:end_index
@@ -284,6 +357,8 @@ async def test_summary_backlog_drains_in_bounded_windows() -> None:
         """模拟成功提交一个有界窗口。"""
 
         assert len(history_messages) <= 2
+        if start_index == 0:
+            message_count["value"] = 10
         progress["last_summarized_index"] = end_index
 
     handler._storage_task = AsyncMock(side_effect=store_window)
@@ -298,6 +373,10 @@ async def test_summary_backlog_drains_in_bounded_windows() -> None:
         )
     assert request is not None
 
+    original_prepare = handler._summary_trigger.prepare_for_persona
+    handler._summary_trigger.prepare_for_persona = AsyncMock(
+        side_effect=original_prepare
+    )
     await handler._drain_summary_backlog(request)
 
     assert [call.args[3:5] for call in handler._storage_task.await_args_list] == [
@@ -305,6 +384,11 @@ async def test_summary_backlog_drains_in_bounded_windows() -> None:
         (2, 4),
         (4, 6),
     ]
+    assert len(handler._summary_trigger.prepare_for_persona.await_args_list) == 2
+    assert all(
+        call.kwargs == {"drain_end_index": 6}
+        for call in handler._summary_trigger.prepare_for_persona.await_args_list
+    )
 
 
 @pytest.mark.asyncio
