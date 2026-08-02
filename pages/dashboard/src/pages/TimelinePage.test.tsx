@@ -90,6 +90,29 @@ describe("TimelinePage", () => {
     expect(screen.getAllByText("Week").length).toBeGreaterThan(0);
   });
 
+  it("refreshes the timeline on demand and preserves the loaded memories on failure", async () => {
+    bridge.apiGet
+      .mockResolvedValueOnce(ok({
+        items: [{
+          id: "mem-refresh",
+          content: "Refreshable memory",
+          created_at: "2026-06-28T10:00:00Z",
+        }],
+      }))
+      .mockRejectedValueOnce(new Error("backend offline"));
+
+    render(<TimelinePage showToast={showToast} />);
+
+    expect(await screen.findByText("Refreshable memory")).toBeTruthy();
+    const refresh = screen.getByRole("button", { name: "Refresh" });
+    fireEvent.click(refresh);
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith("Failed to load memories", true));
+    expect(screen.getByText("Refreshable memory")).toBeTruthy();
+    expect(refresh).not.toHaveProperty("disabled", true);
+    expect(bridge.apiGet).toHaveBeenCalledTimes(2);
+  });
+
   it("switches zoom levels and toggles the expanded memory detail panel", async () => {
     bridge.t?.mockImplementation((key: string) => key === "dashboard.memory.type.fact" ? "Fact memory" : key);
     bridge.apiGet.mockResolvedValue(ok({

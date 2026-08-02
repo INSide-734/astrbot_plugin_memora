@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { apiGet, unwrapApiData } from "@/lib/bridge";
 import { useI18n } from "@/hooks/useI18n";
 import type { MemoryItem } from "@/types";
-import { Clock, Calendar } from "lucide-react";
+import { Calendar, Clock, RefreshCw } from "lucide-react";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { Button } from "@/components/ui/Button";
 import { selectionStateVariants } from "@/components/ui/selection-state";
@@ -86,23 +86,34 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
   return (
     <PageFrame variant="standard">
       <PageHeader title={t("nav.timeline")} icon={<Clock size={20} />} actions={
-        <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
-          {zoomLabels.map(([z, label]) => (
-            <Button
-              key={z}
-              variant={zoom === z ? "default" : "ghost"}
-              size="sm"
-              onClick={() => setZoom(z)}
-            >
-              {label}
-            </Button>
-          ))}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={() => void loadMemories()}
+          >
+            <RefreshCw data-icon="inline-start" className={loading ? "animate-spin" : undefined} />
+            {t("common.refresh")}
+          </Button>
+          <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+            {zoomLabels.map(([z, label]) => (
+              <Button
+                key={z}
+                variant={zoom === z ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setZoom(z)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
         </div>}
       />
       <PageContent className="flex flex-col overflow-hidden p-0 sm:p-0 lg:p-0">
 
       <div className="flex-1 overflow-auto">
-        {loading ? (
+        {loading && memories.length === 0 ? (
           <div className="flex h-full items-center justify-center text-muted-foreground animate-pulse-soft">
             {t("timeline.loading")}
           </div>

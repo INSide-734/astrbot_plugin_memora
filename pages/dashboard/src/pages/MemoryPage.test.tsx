@@ -131,6 +131,26 @@ describe("MemoryPage", () => {
     expect(screen.getByText("Page 2/2 · 25 total")).toBeTruthy();
   });
 
+  it("refreshes the current memory page on demand and keeps the loaded rows on failure", async () => {
+    bridge.apiGet
+      .mockResolvedValueOnce(ok({
+        items: [{ id: "mem-1", summary: "Loaded memory", status: "active" }],
+        total: 1,
+      }))
+      .mockRejectedValueOnce(new Error("backend offline"));
+
+    render(<MemoryPage showToast={showToast} />);
+
+    expect(await screen.findByText("Loaded memory")).toBeTruthy();
+    const refresh = screen.getByRole("button", { name: "Refresh" });
+    fireEvent.click(refresh);
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith("Error: backend offline", true));
+    expect(screen.getByText("Loaded memory")).toBeTruthy();
+    expect(refresh).not.toHaveProperty("disabled", true);
+    expect(bridge.apiGet).toHaveBeenCalledTimes(2);
+  });
+
   it("shows the selected page size with the same label inside and outside the menu", async () => {
     bridge.apiGet.mockResolvedValue(ok({ items: [], total: 0 }));
 
