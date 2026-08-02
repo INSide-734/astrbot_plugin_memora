@@ -102,7 +102,18 @@ class CommandHandler(
     async def handle_summarize(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
-        """处理 /memora summarize 命令 - 立即触发记忆总结"""
+        """立即总结当前会话，并分别反馈 canonical 写入与隔离结果。
+
+        参数:
+            event: 提供当前会话来源、身份上下文和命令结果构造能力的事件。
+
+        生成:
+            总结开始、成功、隔离或失败阶段的 AstrBot 消息结果。
+
+        副作用:
+            通过质量门写入 canonical 记忆；全部候选安全处理后推进会话总结进度，
+            真实写入失败时保留 ``pending_summary``，并始终释放已取得的窗口锁。
+        """
         blocked_message = self._maintenance_write_guard_message()
         if blocked_message:
             yield event.plain_result(blocked_message)
@@ -200,7 +211,9 @@ class CommandHandler(
             )
 
             all_topics: list[str] = []
-            stored_count = 0
+            canonical_count = 0
+            canonical_importance_total = 0.0
+            quarantined_count = 0
             for mem in memories:
                 metadata = mem.setdefault("metadata", {})
                 metadata["source_window"] = {
@@ -220,7 +233,7 @@ class CommandHandler(
                             is_group_chat=is_group_chat,
                         )
                         if gate_result.action == "quarantined":
-                            stored_count += 1
+                            quarantined_count += 1
                             continue
                     await self.memory_engine.add_memory(
                         content=mem["content"],
@@ -230,7 +243,8 @@ class CommandHandler(
                         metadata=metadata,
                         atoms=mem.get("atoms", []),
                     )
-                    stored_count += 1
+                    canonical_count += 1
+                    canonical_importance_total += mem.get("importance", 0)
                     all_topics.extend(metadata.get("topics", []))
                 except Exception as write_err:
                     logger.error(
@@ -238,7 +252,8 @@ class CommandHandler(
                         exc_info=True,
                     )
 
-            if stored_count < len(memories):
+            processed_count = canonical_count + quarantined_count
+            if processed_count < len(memories):
                 await self.conversation_manager.update_session_metadata(
                     session_id,
                     "pending_summary",
@@ -247,11 +262,11 @@ class CommandHandler(
                         "end_index": actual_count,
                         "retry_count": 1,
                         "failed_stage": "manual_memory_write",
-                        "failed_count": len(memories) - stored_count,
+                        "failed_count": len(memories) - processed_count,
                     },
                 )
                 raise RuntimeError(
-                    f"仅成功写入 {stored_count}/{len(memories)} 条记忆，窗口未推进"
+                    f"仅安全处理 {processed_count}/{len(memories)} 条候选，窗口未推进"
                 )
 
             await self.conversation_manager.update_session_metadata(
@@ -262,18 +277,32 @@ class CommandHandler(
             )
 
             avg_importance = (
-                sum(m.get("importance", 0) for m in memories) / len(memories)
-                if memories
-                else 0.0
+                canonical_importance_total / canonical_count if canonical_count else 0.0
             )
-            yield event.plain_result(
-                t(
-                    "summarize.success",
+            if canonical_count == 0 and quarantined_count:
+                feedback = t(
+                    "summarize.quarantined_only",
+                    quarantined_count=quarantined_count,
+                    count=actual_count,
+                )
+            elif quarantined_count:
+                feedback = t(
+                    "summarize.partial_quarantine",
+                    canonical_count=canonical_count,
+                    quarantined_count=quarantined_count,
                     importance=round(avg_importance, 2),
                     topics=", ".join(all_topics) or t("common.none"),
-                    count=len(memories),
+                    count=actual_count,
                 )
-            )
+            else:
+                feedback = t(
+                    "summarize.success",
+                    canonical_count=canonical_count,
+                    importance=round(avg_importance, 2),
+                    topics=", ".join(all_topics) or t("common.none"),
+                    count=actual_count,
+                )
+            yield event.plain_result(feedback)
 
         except Exception as e:
             logger.error(f"手动触发记忆总结失败: {e}", exc_info=True)

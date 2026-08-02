@@ -157,6 +157,8 @@ uv run --locked pre-commit run --files path/to/file.py path/to/config.toml
 
 `/memora status`、`/memora health`、`/memora diagnostics`、`/memora search <query>`、`/memora trace <query> [k]`、`/memora forget <id>`、`/memora rebuild-index`、`/memora rebuild-graph`、`/memora webui`、`/memora summarize`、`/memora reset`、`/memora cleanup`、`/memora update [check|download|apply]`、`/memora help`。
 
+`/memora summarize` 必须分别反馈 canonical 写入数与 quarantine 数；隔离候选不得伪装成长期记忆写入成功，真实写入失败仍保留 `pending_summary` 且不推进窗口。
+
 ## 验证入口
 
 按范围选择最窄命令；Python 命令统一通过锁定 uv 环境执行。完整运行时门禁由 `scripts/check_all.py` 编排，schema validator 仅在对应脚本存在时执行；代码变更还必须通过本轮文件的 pre-commit：

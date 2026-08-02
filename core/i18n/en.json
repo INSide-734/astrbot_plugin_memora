@@ -68,7 +68,9 @@
     "no_new": "No new conversations to summarize currently.\nTotal messages: {total}\nLast summarized message index: {index}",
     "starting": "Starting manual memory summarization...\nMessage range: [{start}:{end}], total {count} items",
     "fetch_failed": "Failed to fetch messages: no summarizable messages read.\nPlease confirm the current session has historical messages and retry.",
-    "success": "Memory summarization complete.\nImportance: {importance:.2f}\nTopics: {topics}\nUpdated summarization progress to message {count}"
+    "success": "Memory summarization complete. Wrote {canonical_count} item(s) to long-term memory.\nImportance: {importance:.2f}\nTopics: {topics}\nUpdated summarization progress to message {count}",
+    "quarantined_only": "Memory summarization was processed, but nothing was written to long-term memory.\nQuarantined candidates: {quarantined_count}\nThese candidates did not enter long-term memory. Review them in the Memora management page review queue.\nUpdated summarization progress to message {count}",
+    "partial_quarantine": "Memory summarization was processed.\nWritten to long-term memory: {canonical_count}\nQuarantined candidates: {quarantined_count} (not written to long-term memory; review them in the Memora management page review queue)\nImportance: {importance:.2f}\nTopics: {topics}\nUpdated summarization progress to message {count}"
   },
   "reset": {
     "action_name": "Reset memory context",

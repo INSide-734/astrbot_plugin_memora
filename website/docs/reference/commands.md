@@ -13,7 +13,7 @@
 | `/memora rebuild-index` | 重建向量与 BM25/FTS 索引。 |
 | `/memora rebuild-graph` | 重建图记忆索引。 |
 | `/memora webui` | 输出 Dashboard 访问信息。 |
-| `/memora summarize` | 立即触发当前会话的记忆总结。 |
+| `/memora summarize` | 立即总结当前会话，分别报告长期记忆写入数与隔离候选数。 |
 | `/memora reset` | 重置当前会话的长期记忆上下文。 |
 | `/memora cleanup [preview 或 exec]` | 清理历史消息中的记忆注入片段，默认预演。 |
 | `/memora update [check、download 或 apply]` | 检查、下载或安装经校验的 runtime 包，默认检查。 |
@@ -32,6 +32,7 @@
 ## 有副作用的命令
 
 - `forget` 删除 canonical 记忆，执行前确认目标 ID。
+- `summarize` 只有通过质量门的候选才写入长期记忆；隔离候选会进入管理页面的复核队列，命令会明确报告但仍推进已安全处理的消息窗口。真实写入失败时窗口不推进。
 - `cleanup exec` 修改历史消息；先运行 `cleanup preview` 查看范围。
 - `update apply` 切换插件 runtime；生产实例应先备份。
 - 索引重建只重建派生数据，不应删除 canonical SQLite 记录。
