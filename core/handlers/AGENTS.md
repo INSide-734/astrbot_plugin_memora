@@ -119,6 +119,8 @@ flowchart TD
 |---|---|
 | `recall_handler.py` | 请求前召回、路由、注入、安全关联和可观测性 |
 | `reflection_handler.py` | 响应清洗、会话记录、窗口控制、后台抽取与幂等写入 |
+| `reflection_candidate_writer.py` | 质量路由后的限流写入、取消传播与单候选终态归一化 |
+| `reflection_storage_outcomes.py` | canonical、quarantine、失败与幂等跳过的互斥结果及窗口汇总 |
 | `continuity_hooks.py` | canonical 写后话题标记、窗口收尾和只读临时连续性上下文边界 |
 | `reflection_llm_budget.py` | 按请求额度拟合反思批次，并执行基础/额外批次的并发与 reservation 协议 |
 | `reflection_trigger.py` | 共享反思阈值判断、pending 兼容与窗口参数准备 |

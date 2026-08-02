@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import core.handlers.reflection_handler as reflection_handler_module
 from core.handlers.reflection_handler import ReflectionHandler
 from core.models.conversation_models import Message
 from core.processors.memory_processor import MemoryProcessor
@@ -141,6 +142,137 @@ async def test_reflection_preserves_canonical_path_for_allowed_candidate() -> No
     )
 
     engine.add_memory.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reflection_reports_canonical_and_quarantine_separately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """混合窗口必须分别报告 canonical 与 quarantine，不能合并为成功存储。"""
+
+    conversation_manager = MagicMock()
+    conversation_manager.get_session_metadata = AsyncMock(return_value=0)
+    conversation_manager.update_session_metadata = AsyncMock()
+    processor = MagicMock()
+    processor.process_conversation = AsyncMock(
+        return_value=[
+            {
+                "content": "需要隔离的候选",
+                "importance": 0.2,
+                "metadata": {"summary_quality": "low"},
+                "atoms": [],
+            },
+            {
+                "content": "允许写入的候选",
+                "importance": 0.8,
+                "metadata": {"summary_quality": "high"},
+                "atoms": [],
+            },
+        ]
+    )
+    engine = MagicMock()
+    engine.add_memory = AsyncMock(return_value=11)
+    quality_gate = MagicMock()
+    quality_gate.route_candidate = AsyncMock(
+        side_effect=[
+            MemoryGateResult(action="quarantined", candidate_id="candidate-1"),
+            MemoryGateResult(action="allow"),
+        ]
+    )
+    events: list[tuple[str, dict[str, object]]] = []
+
+    def capture_event(event_name: str, **fields: object) -> None:
+        """捕获不含正文的诊断标量供断言。"""
+
+        events.append((event_name, fields))
+
+    monkeypatch.setattr(reflection_handler_module, "report_debug_event", capture_event)
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=MagicMock(),
+        memory_engine=engine,
+        memory_processor=processor,
+        conversation_manager=conversation_manager,
+        enforce_limit_cb=MagicMock(),
+        memory_quality_gate=quality_gate,
+    )
+    handler._prepare_message_batches = AsyncMock(
+        return_value=[[MagicMock(group_id=None)]]
+    )
+
+    await handler._storage_task(
+        session_id="session-1",
+        history_messages=[MagicMock(group_id=None), MagicMock(group_id=None)],
+        persona_id=None,
+        start_index=0,
+        end_index=2,
+    )
+
+    engine.add_memory.assert_awaited_once()
+    write_event = next(
+        fields
+        for name, fields in events
+        if name == "storage_task"
+        and fields.get("reason_code") == "memory_write_completed"
+    )
+    assert write_event["canonical_count"] == 1
+    assert write_event["quarantine_count"] == 1
+    assert write_event["failed_count"] == 0
+    assert write_event["skipped_idempotent_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reflection_canonical_failure_preserves_pending_window() -> None:
+    """真实 canonical 写入失败时必须保留重试状态且不得推进窗口。"""
+
+    conversation_manager = MagicMock()
+    conversation_manager.get_session_metadata = AsyncMock(return_value=0)
+    conversation_manager.update_session_metadata = AsyncMock()
+    processor = MagicMock()
+    processor.process_conversation = AsyncMock(
+        return_value=[
+            {
+                "content": "写入失败的候选",
+                "importance": 0.8,
+                "metadata": {"summary_quality": "high"},
+                "atoms": [],
+            }
+        ]
+    )
+    engine = MagicMock()
+    engine.add_memory = AsyncMock(side_effect=RuntimeError("write failed"))
+    quality_gate = MagicMock()
+    quality_gate.route_candidate = AsyncMock(
+        return_value=MemoryGateResult(action="allow")
+    )
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=MagicMock(),
+        memory_engine=engine,
+        memory_processor=processor,
+        conversation_manager=conversation_manager,
+        enforce_limit_cb=MagicMock(),
+        memory_quality_gate=quality_gate,
+    )
+    handler._prepare_message_batches = AsyncMock(
+        return_value=[[MagicMock(group_id=None)]]
+    )
+
+    await handler._storage_task(
+        session_id="session-1",
+        history_messages=[MagicMock(group_id=None), MagicMock(group_id=None)],
+        persona_id=None,
+        start_index=0,
+        end_index=2,
+    )
+
+    metadata_updates = conversation_manager.update_session_metadata.await_args_list
+    assert not any(call.args[1] == "last_summarized_index" for call in metadata_updates)
+    pending_call = next(
+        call for call in metadata_updates if call.args[1] == "pending_summary"
+    )
+    assert pending_call.args[2]["failed_count"] == 1
+    assert pending_call.args[2]["failed_stage"] == "memory_write"
 
 
 @pytest.mark.asyncio

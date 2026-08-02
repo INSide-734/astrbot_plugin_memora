@@ -25,14 +25,17 @@ from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
 from ..utils import OperationContext, get_persona_id
-from .continuity_hooks import (
-    record_continuity_topics,
-    resolve_continuity_session,
-)
+from .continuity_hooks import resolve_continuity_session
 from .reflection_backlog import ReflectionBacklogMixin
+from .reflection_candidate_writer import store_reflection_candidates
 from .reflection_llm_budget import (
     fit_batches_to_extra_llm_budget,
     process_reflection_batches,
+)
+from .reflection_storage_outcomes import (
+    ReflectionStoreOutcome,
+    ReflectionStoreResult,
+    summarize_store_results,
 )
 from .reflection_trigger import ReflectionTrigger
 from .topic_batch_preparer import TopicBatchPreparer
@@ -938,15 +941,6 @@ class ReflectionHandler(ReflectionBacklogMixin):
                     return
 
                 if self._memory_engine:
-                    # 并行写入记忆（受写锁串行化约束，但消除了 await 调度开销）
-                    stored_count = 0
-                    successful_keys = set(completed_idempotency_keys)
-                    skipped_memory_count = sum(
-                        str(memory.get("metadata", {}).get("idempotency_key") or "")
-                        in completed_idempotency_keys
-                        for memory in memories
-                    )
-                    _MAX_CONCURRENT_WRITES = 3
                     write_started = time.perf_counter()
                     report_debug_event(
                         "storage_task",
@@ -956,110 +950,64 @@ class ReflectionHandler(ReflectionBacklogMixin):
                         reason_code="memory_write_started",
                         task_type="storage",
                         count=len(memories),
-                        skipped_count=skipped_memory_count,
                     )
 
-                    async def _store_one(mem: dict[str, Any]) -> bool:
-                        """在质量门通过后写入一条 canonical memory。"""
-
-                        metadata = mem.setdefault("metadata", {})
-                        idempotency_key = str(metadata.get("idempotency_key") or "")
-                        if idempotency_key in completed_idempotency_keys:
-                            return True
-                        source_window = {
-                            "session_id": session_id,
-                            "start_index": start_index,
-                            "end_index": end_index,
-                            "message_count": end_index - start_index,
-                        }
-                        metadata["source_window"] = source_window
-                        try:
-                            if self._memory_quality_gate is not None:
-                                gate_result = (
-                                    await self._memory_quality_gate.route_candidate(
-                                        mem,
-                                        session_id=session_id,
-                                        persona_id=persona_id,
-                                        source_window=source_window,
-                                        is_group_chat=is_group_chat,
-                                    )
-                                )
-                                if gate_result.action == "quarantined":
-                                    if idempotency_key:
-                                        successful_keys.add(idempotency_key)
-                                    return True
-                            memory_id = await self._memory_engine.add_memory(
-                                content=mem["content"],
-                                session_id=session_id,
-                                persona_id=persona_id,
-                                importance=mem["importance"],
-                                metadata=metadata,
-                                atoms=mem.get("atoms", []),
-                            )
-                            record_continuity_topics(
-                                self._memory_engine,
-                                session_id,
-                                mem,
-                            )
-                            await self._schedule_evolution_after_write(memory_id)
-                            if idempotency_key:
-                                successful_keys.add(idempotency_key)
-                            return True
-                        except Exception as e:
-                            logger.error(
-                                f"[{session_id}] 记忆写入失败：{e}",
-                                exc_info=True,
-                            )
-                            return False
-
-                    sem = asyncio.Semaphore(_MAX_CONCURRENT_WRITES)
-
-                    async def _store_with_sem(mem: dict[str, Any]) -> bool:
-                        """在单窗口并发上限内执行一条质量门与写入任务。"""
-
-                        async with sem:
-                            return await _store_one(mem)
-
-                    write_results = await asyncio.gather(
-                        *[_store_with_sem(m) for m in memories],
-                        return_exceptions=True,
+                    write_results = await store_reflection_candidates(
+                        memories,
+                        completed_idempotency_keys=completed_idempotency_keys,
+                        session_id=session_id,
+                        persona_id=persona_id,
+                        start_index=start_index,
+                        end_index=end_index,
+                        is_group_chat=is_group_chat,
+                        memory_engine=self._memory_engine,
+                        memory_quality_gate=self._memory_quality_gate,
+                        schedule_evolution_after_write=(
+                            self._schedule_evolution_after_write
+                        ),
                     )
-                    for r in write_results:
-                        if isinstance(r, asyncio.CancelledError):
-                            raise r
-                        if isinstance(r, BaseException):
-                            logger.error(
-                                f"[{session_id}] 批量写入异常：{r}",
-                                exc_info=True,
-                            )
-                        elif r is True:
-                            stored_count += 1
+                    store_summary = summarize_store_results(write_results)
+                    successful_keys = set(store_summary.completed_idempotency_keys)
 
                     logger.info(
-                        f"[{session_id}] 成功存储 {stored_count}/{len(memories)} 条记忆"
-                        f"（{len(history_messages)}条消息）"
+                        "[%s] 反思候选处理完成：canonical=%d，quarantine=%d，"
+                        "幂等跳过=%d，失败=%d（%d条消息）",
+                        session_id,
+                        store_summary.canonical_count,
+                        store_summary.quarantine_count,
+                        store_summary.skipped_idempotent_count,
+                        store_summary.failed_count,
+                        len(history_messages),
                     )
                     report_debug_event(
                         "storage_task",
                         component="reflection",
                         stage="memory_write",
                         status="completed"
-                        if stored_count == len(memories)
+                        if store_summary.failed_count == 0
                         else "degraded",
                         reason_code="memory_write_completed"
-                        if stored_count == len(memories)
+                        if store_summary.failed_count == 0
                         else "memory_write_partial",
                         task_type="storage",
                         duration_ms=max(
                             0.0, (time.perf_counter() - write_started) * 1000.0
                         ),
-                        success_count=max(0, int(stored_count - skipped_memory_count)),
-                        failed_count=max(0, int(len(memories) - stored_count)),
-                        skipped_count=skipped_memory_count,
+                        success_count=store_summary.canonical_count,
+                        canonical_count=store_summary.canonical_count,
+                        quarantine_count=store_summary.quarantine_count,
+                        failed_count=store_summary.failed_count,
+                        skipped_count=store_summary.skipped_idempotent_count,
+                        skipped_idempotent_count=(
+                            store_summary.skipped_idempotent_count
+                        ),
                     )
                 else:
-                    stored_count = len(memories)
-                    successful_keys = set(completed_idempotency_keys)
+                    store_summary = summarize_store_results(
+                        ReflectionStoreResult(ReflectionStoreOutcome.FAILED)
+                        for _ in memories
+                    )
+                    successful_keys = set()
                     report_debug_event(
                         "storage_task",
                         component="reflection",
@@ -1070,10 +1018,10 @@ class ReflectionHandler(ReflectionBacklogMixin):
                         count=len(memories),
                     )
 
-                if stored_count < len(memories):
+                if store_summary.failed_count > 0:
                     logger.warning(
-                        f"[{session_id}] 记忆仅部分落库，保留待重试窗口："
-                        f"{stored_count}/{len(memories)}，范围=[{start_index}:{end_index}]"
+                        f"[{session_id}] 有 {store_summary.failed_count} 条候选写入失败，"
+                        f"保留待重试窗口：范围=[{start_index}:{end_index}]"
                     )
                     await self._record_pending_summary(
                         session_id,
@@ -1081,7 +1029,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                         end_index,
                         retry_count,
                         failed_stage="memory_write",
-                        failed_count=len(memories) - stored_count,
+                        failed_count=store_summary.failed_count,
                         completed_idempotency_keys=successful_keys,
                     )
                     return
@@ -1168,7 +1116,11 @@ class ReflectionHandler(ReflectionBacklogMixin):
                     status="completed",
                     reason_code="memories_stored",
                     task_type="storage",
-                    count=max(0, int(stored_count)),
+                    count=store_summary.canonical_count,
+                    canonical_count=store_summary.canonical_count,
+                    quarantine_count=store_summary.quarantine_count,
+                    failed_count=store_summary.failed_count,
+                    skipped_idempotent_count=(store_summary.skipped_idempotent_count),
                     duration_ms=max(
                         0.0, (time.perf_counter() - storage_started) * 1000.0
                     ),
