@@ -21,6 +21,7 @@
 | `benchmark_recall_cost.py` | 运行注入预设与 RecallHandler 全路径确定性基准 | 可选写 JSON 报告；启动隔离 worker |
 | `recall_total_path_benchmark.py` | 全路径测量、基线校验、回归判定和基线记录支持 | 记录基线时读取 Git 状态并写 JSON |
 | `benchmark_injection_decisions.py` | 对 100,000 条脱敏决策测量摘要、分页、入队和清理 | 仅使用临时目录中的 SQLite |
+| `analyze_reflection_ab.py` | 汇总 Prompt A/B 反思诊断的时延、token、成功率与互斥写入结果 | 只读 JSONL，写入不含原始事件的聚合 JSON |
 | `baselines/recall_total_path.json` | 固化全路径 p95 与注入契约基线 | 只应由受控基线记录流程更新 |
 
 不在本目录承担：运行时业务逻辑、生产配置默认值、测试 fixture、Dashboard 源码或普通文档。脚本发现问题时应让命令非零退出，不要在脚本中修补或吞掉被检对象的错误。
@@ -143,6 +144,14 @@ python scripts/benchmark_injection_decisions.py
 ```
 
 该命令会在临时 SQLite 中写入 100,000 条记录并执行预热/多轮测量，适合专用基准，不应塞进普通单元测试。阈值包括 summary 中位数、分页中位数、enqueue p95 与 cleanup 总时长；任一达到或超过限制即返回 1。
+
+### `analyze_reflection_ab.py`
+
+```bash
+python scripts/analyze_reflection_ab.py --baseline a.jsonl --candidate b.jsonl --output comparison.json
+```
+
+脚本忽略空行，将 JSON 错误和非对象行计入 `malformed_line_count`；p50 使用中位数，p95 使用 nearest-rank。报告只保留 Provider 时延/字符/token 分位数、parse/grounding 成功率、四类互斥写入计数及 B 相对 A 的百分比变化，不复制任何原始事件、正文或标识符。Provider 未提供 usage 时保持缺失，不能按字符估算 token。
 
 ## 精确验证命令
 
