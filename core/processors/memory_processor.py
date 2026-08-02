@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,9 @@ from .llm_client import LLMClient
 from .memory_grounding import GroundingResult, MemoryGroundingValidator
 from .prompt_builder import PromptBuilder
 from .quality_validator import QualityValidator
+from .reflection_generation_observability import (
+    report_generation_stage as _report_generation_stage,
+)
 from .storage_builder import StorageBuilder
 from .topic_segmentation_pipeline import (
     TOPIC_SEGMENTATION_OBSERVABILITY_FIELDS,
@@ -136,6 +140,9 @@ class MemoryProcessor:
         if not messages:
             raise ValueError("消息列表不能为空")
 
+        total_started = time.perf_counter()
+        stage_started = total_started
+        current_stage = "prompt_build"
         conversation_text = self.formatter.format_conversation(messages)
         grounded_conversation_text = (
             self.formatter.format_conversation_with_source_refs(messages)
@@ -170,17 +177,40 @@ class MemoryProcessor:
                 topic_segmentation_enabled=self._topic_segmentation_enabled,
                 topic_segmentation_guidance=self._topic_guidance,
             )
+            _report_generation_stage(
+                "prompt_build",
+                "completed",
+                "reflection_prompt_built",
+                stage_started,
+                prompt_chars=len(prompt),
+                message_count=len(messages),
+            )
 
-            llm_response_text = await self.llm_client.call_llm_with_retry(
+            current_stage = "provider"
+            stage_started = time.perf_counter()
+            generation_result = await self.llm_client.call_llm_with_retry_result(
                 prompt=prompt,
                 system_prompt=system_prompt,
                 max_retries=max(1, int(llm_max_retries)),
+            )
+            llm_response_text = generation_result.text
+            _report_generation_stage(
+                "provider",
+                "completed",
+                "reflection_provider_completed",
+                stage_started,
+                prompt_chars=len(prompt),
+                response_chars=len(llm_response_text),
+                prompt_tokens=generation_result.prompt_tokens,
+                completion_tokens=generation_result.completion_tokens,
             )
 
             logger.info(
                 f"[MemoryProcessor] LLM 响应成功，响应长度={len(llm_response_text)}"
             )
 
+            current_stage = "parse"
+            stage_started = time.perf_counter()
             structured_data = self._parse_llm_response(llm_response_text, is_group_chat)
 
             quality = self.quality.validate_summary_quality(structured_data)
@@ -189,10 +219,29 @@ class MemoryProcessor:
                     "[MemoryProcessor] 总结质量不达标（low），候选将进入隔离队列"
                 )
             structured_data["_quality"] = quality
+            raw_candidates = structured_data.get("memories")
+            _report_generation_stage(
+                "parse",
+                "completed",
+                "reflection_parse_completed",
+                stage_started,
+                candidate_count=(
+                    len(raw_candidates) if isinstance(raw_candidates, list) else 0
+                ),
+            )
+            current_stage = "segmentation"
+            stage_started = time.perf_counter()
             memories_raw = await self.topic_segmentation.prepare_candidates(
                 structured_data,
                 messages,
                 is_group_chat=is_group_chat,
+            )
+            _report_generation_stage(
+                "segmentation",
+                "completed",
+                "reflection_segmentation_completed",
+                stage_started,
+                candidate_count=len(memories_raw),
             )
 
             fallback_excerpt = (
@@ -243,6 +292,8 @@ class MemoryProcessor:
                     snippet = conversation_text.strip()[:150]
             metadata["source_snippet"] = snippet[:150].strip()
 
+            current_stage = "grounding"
+            stage_started = time.perf_counter()
             results: list[dict[str, Any]] = []
             for mem in memories_raw:
                 if isinstance(mem, str):
@@ -371,14 +422,54 @@ class MemoryProcessor:
                     }
                 )
 
+            _report_generation_stage(
+                "grounding",
+                "completed",
+                "reflection_grounding_completed",
+                stage_started,
+                candidate_count=len(results),
+            )
             logger.info(
                 f"[MemoryProcessor] 成功生成 {len(results)} 条记忆, "
                 f"类型={conversation_type}"
             )
+            _report_generation_stage(
+                "window_total",
+                "completed",
+                "reflection_window_completed",
+                total_started,
+                candidate_count=len(results),
+                prompt_chars=len(prompt),
+                response_chars=len(llm_response_text),
+            )
             return results
 
+        except asyncio.CancelledError:
+            _report_generation_stage(
+                current_stage,
+                "cancelled",
+                "reflection_generation_cancelled",
+                stage_started,
+            )
+            raise
         except Exception as e:
-            logger.error(f"[MemoryProcessor] 处理对话历史失败: {e}", exc_info=True)
+            _report_generation_stage(
+                current_stage,
+                "failed",
+                "reflection_generation_failed",
+                stage_started,
+            )
+            _report_generation_stage(
+                "window_total",
+                "failed",
+                "reflection_generation_failed",
+                total_started,
+            )
+            logger.error(
+                "[MemoryProcessor] 处理对话历史失败，异常类型=%s",
+                e.__class__.__name__,
+                exc_info=True,
+            )
             raise
 
     async def _resolve_grounding_with_judge(

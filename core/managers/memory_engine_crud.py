@@ -19,20 +19,25 @@ from .atom_source_binding import bind_atoms_to_canonical_source
 from .canonical_memory_reader import load_canonical_memory
 from .memory_engine_atom_support import (
     prepare_atoms_for_write,
-    record_quality_samples,
     reinforce_existing_atoms,
     successful_atoms,
 )
 from .memory_engine_evolution_hooks import memory_revision
+from .memory_engine_write_observability import (
+    MemoryEngineWriteObservabilityMixin,
+    measure_memory_write_stage,
+    observe_memory_write,
+)
 from .retrieval_timing import RetrievalTimingSink
 from .write_op_serialization import serialize_atom_for_repair
 
 
-class MemoryEngineCRUDMixin:
+class MemoryEngineCRUDMixin(MemoryEngineWriteObservabilityMixin):
     """MemoryEngine 核心 CRUD 方法"""
 
     # ==================== 核心 CRUD ====================
 
+    @observe_memory_write
     async def add_memory(
         self,
         content: str,
@@ -80,7 +85,11 @@ class MemoryEngineCRUDMixin:
             self._record_add_memory_failure("not_initialized")
             raise RuntimeError("混合检索器未初始化")
         try:
-            doc_id = await self.hybrid_retriever.add_memory(content, full_metadata)
+            with measure_memory_write_stage("document_vector"):
+                doc_id = await self.hybrid_retriever.add_memory(
+                    content,
+                    full_metadata,
+                )
             await self._write_journal.advance_op(
                 op_id,
                 "document_indexed",
@@ -95,101 +104,104 @@ class MemoryEngineCRUDMixin:
             )
             self._record_add_memory_failure("document")
             raise
-        atom_write_failed = False
-        if prepared_atoms and self.atom_store is not None and self.atom_enabled:
-            sources_bound = False
-            try:
-                canonical_memory = await self.get_memory(doc_id)
-                prepared_atoms = bind_atoms_to_canonical_source(
-                    prepared_atoms,
-                    canonical_memory,
-                    fallback_metadata=full_metadata,
-                )
-                sources_bound = True
-                await reinforce_existing_atoms(
-                    self.atom_lifecycle_manager,
-                    prepared_atoms,
-                )
-                await self.atom_store.insert_many(prepared_atoms)
-                await self._write_journal.advance_op(
-                    op_id, "atoms_indexed", memory_id=doc_id
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.error("[MemoryEngine] 批量写入记忆原子失败", exc_info=True)
-                failed_atoms: list[dict[str, Any]] = []
-                if sources_bound:
-                    for atom in prepared_atoms:
-                        if getattr(atom, "atom_id", 0):
-                            continue
-                        try:
-                            await self.atom_store.insert(atom)
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception:
-                            failed_atoms.append(serialize_atom_for_repair(atom))
-                else:
-                    failed_atoms = [
-                        serialize_atom_for_repair(atom) for atom in prepared_atoms
-                    ]
-                if failed_atoms:
-                    await self._write_journal.advance_op(
-                        op_id,
-                        "atoms_partial",
-                        status="needs_repair",
-                        memory_id=doc_id,
-                        error="atom insert failed",
-                        payload_patch={"failed_atoms": failed_atoms},
+        with measure_memory_write_stage("atom"):
+            atom_write_failed = False
+            if prepared_atoms and self.atom_store is not None and self.atom_enabled:
+                sources_bound = False
+                try:
+                    canonical_memory = await self.get_memory(doc_id)
+                    prepared_atoms = bind_atoms_to_canonical_source(
+                        prepared_atoms,
+                        canonical_memory,
+                        fallback_metadata=full_metadata,
                     )
-                    self._record_add_memory_failure("atom")
-                    atom_write_failed = True
-                else:
+                    sources_bound = True
+                    await reinforce_existing_atoms(
+                        self.atom_lifecycle_manager,
+                        prepared_atoms,
+                    )
+                    await self.atom_store.insert_many(prepared_atoms)
                     await self._write_journal.advance_op(
                         op_id, "atoms_indexed", memory_id=doc_id
                     )
-        else:
-            await self._write_journal.advance_op(
-                op_id, "atoms_skipped", memory_id=doc_id
-            )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.error("[MemoryEngine] 批量写入记忆原子失败", exc_info=True)
+                    failed_atoms: list[dict[str, Any]] = []
+                    if sources_bound:
+                        for atom in prepared_atoms:
+                            if getattr(atom, "atom_id", 0):
+                                continue
+                            try:
+                                await self.atom_store.insert(atom)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                failed_atoms.append(serialize_atom_for_repair(atom))
+                    else:
+                        failed_atoms = [
+                            serialize_atom_for_repair(atom) for atom in prepared_atoms
+                        ]
+                    if failed_atoms:
+                        await self._write_journal.advance_op(
+                            op_id,
+                            "atoms_partial",
+                            status="needs_repair",
+                            memory_id=doc_id,
+                            error="atom insert failed",
+                            payload_patch={"failed_atoms": failed_atoms},
+                        )
+                        self._record_add_memory_failure("atom")
+                        atom_write_failed = True
+                    else:
+                        await self._write_journal.advance_op(
+                            op_id, "atoms_indexed", memory_id=doc_id
+                        )
+            else:
+                await self._write_journal.advance_op(
+                    op_id, "atoms_skipped", memory_id=doc_id
+                )
         persisted_atoms = successful_atoms(prepared_atoms)
         needs_repair = atom_write_failed
-        if self.graph_memory_manager is not None:
-            try:
-                await self.graph_memory_manager.index_memory(
-                    doc_id,
-                    content,
-                    full_metadata,
-                    persisted_atoms or None,
-                )
+        with measure_memory_write_stage("graph"):
+            if self.graph_memory_manager is not None:
+                try:
+                    await self.graph_memory_manager.index_memory(
+                        doc_id,
+                        content,
+                        full_metadata,
+                        persisted_atoms or None,
+                    )
+                    await self._write_journal.advance_op(
+                        op_id,
+                        "graph_indexed",
+                        status="needs_repair" if needs_repair else "pending",
+                        memory_id=doc_id,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    await self._write_journal.advance_op(
+                        op_id,
+                        "graph_failed",
+                        status="needs_repair",
+                        memory_id=doc_id,
+                        error=str(e),
+                    )
+                    self._record_add_memory_failure("graph")
+                    needs_repair = True
+                    logger.error(
+                        f"[MemoryEngine] 图记忆索引失败 (memory_id={doc_id})",
+                        exc_info=True,
+                    )
+            else:
                 await self._write_journal.advance_op(
                     op_id,
-                    "graph_indexed",
+                    "graph_skipped",
                     status="needs_repair" if needs_repair else "pending",
                     memory_id=doc_id,
                 )
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                await self._write_journal.advance_op(
-                    op_id,
-                    "graph_failed",
-                    status="needs_repair",
-                    memory_id=doc_id,
-                    error=str(e),
-                )
-                self._record_add_memory_failure("graph")
-                needs_repair = True
-                logger.error(
-                    f"[MemoryEngine] 图记忆索引失败 (memory_id={doc_id})", exc_info=True
-                )
-        else:
-            await self._write_journal.advance_op(
-                op_id,
-                "graph_skipped",
-                status="needs_repair" if needs_repair else "pending",
-                memory_id=doc_id,
-            )
         if not needs_repair:
             await self._write_journal.advance_op(
                 op_id, "completed", status="completed", memory_id=doc_id
@@ -214,52 +226,6 @@ class MemoryEngineCRUDMixin:
         await self._schedule_evolution_after_write(doc_id)
         self._schedule_domain_proposals_after_write(doc_id)
         return doc_id
-
-    @staticmethod
-    def _record_add_memory_failure(stage: str) -> None:
-        """按固定阶段记录 canonical 写入失败计数。"""
-
-        try:
-            from ..monitoring.metrics import MEMORY_WRITE_FAILURES_TOTAL
-
-            MEMORY_WRITE_FAILURES_TOTAL.labels(stage=stage).inc()
-        except Exception:
-            logger.debug("[MemoryEngine] 写入失败指标记录失败", exc_info=True)
-
-    def _record_add_memory_observability(
-        self,
-        *,
-        doc_id: int,
-        content: str,
-        metadata: dict[str, Any],
-        atoms: list | None,
-        duration_s: float,
-    ) -> None:
-        """canonical 提交后记录低成本写入指标与质量样本。"""
-        try:
-            from ..monitoring.metrics import MEMORY_ATOMS_TOTAL, MEMORY_WRITE_DURATION
-
-            MEMORY_WRITE_DURATION.observe(max(0.0, duration_s))
-            if atoms:
-                MEMORY_ATOMS_TOTAL.inc(len(atoms))
-        except Exception:
-            logger.debug("[MemoryEngine] 写入指标记录失败", exc_info=True)
-
-        scorer = getattr(self, "_quality_scorer", None) or getattr(
-            self, "quality_scorer", None
-        )
-        if scorer is None:
-            return
-        try:
-            record_quality_samples(
-                scorer,
-                doc_id=doc_id,
-                content=content,
-                metadata=metadata,
-                atoms=list(atoms or []),
-            )
-        except Exception:
-            logger.warning("[MemoryEngine] 质量评分记录失败", exc_info=True)
 
     async def search_memories(
         self,

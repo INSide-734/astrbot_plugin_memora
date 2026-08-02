@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -235,7 +236,13 @@ class TestProcessConversation:
             llm_response=response,
             config={"atom_enabled": False},
         )
-        processor.llm_client.call_llm_with_retry = AsyncMock(return_value=response)
+        processor.llm_client.call_llm_with_retry_result = AsyncMock(
+            return_value=SimpleNamespace(
+                text=response,
+                prompt_tokens=None,
+                completion_tokens=None,
+            )
+        )
         messages = [
             Message(
                 id=1,
@@ -300,7 +307,9 @@ class TestProcessConversation:
             "10002": "成员乙",
         }
         assert metadata["subject_ids"] == ["10001"]
-        prompt = processor.llm_client.call_llm_with_retry.await_args.kwargs["prompt"]
+        prompt = processor.llm_client.call_llm_with_retry_result.await_args.kwargs[
+            "prompt"
+        ]
         assert "新昵称（QQ:10001）" in prompt
         assert "禁止猜测、改写或交换稳定标识" in prompt
 

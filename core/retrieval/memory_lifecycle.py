@@ -12,6 +12,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..monitoring.memory_write_timing import measure_memory_write_stage
 from .bm25_retriever import BM25Retriever
 from .vector_retriever import VectorRetriever
 
@@ -71,10 +72,12 @@ class MemoryLifecycleManager:
             metadata["persona_id"] = None
 
         # 先写入向量库以获取 doc_id
-        doc_id = await self.vector_retriever.add_document(content, metadata)
+        with measure_memory_write_stage("document_vector"):
+            doc_id = await self.vector_retriever.add_document(content, metadata)
 
         # 使用同一个 doc_id 写入 BM25 索引
-        await self.bm25_retriever.add_document(doc_id, content, metadata)
+        with measure_memory_write_stage("fts"):
+            await self.bm25_retriever.add_document(doc_id, content, metadata)
 
         return doc_id
 

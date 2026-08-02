@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -74,6 +75,50 @@ class TestLLMClient:
         result = asyncio.run(client.call_llm_with_retry("test prompt", "system prompt"))
         assert result == "test response"
         mock_provider.text_chat.assert_called_once()
+
+    def test_call_llm_result_preserves_provider_usage(self) -> None:
+        """结果入口必须保留 Provider 文本与真实输入输出 token。"""
+
+        provider = MagicMock()
+        provider.text_chat = AsyncMock(
+            return_value=SimpleNamespace(
+                completion_text="result text",
+                usage=SimpleNamespace(input=120, output=40),
+            )
+        )
+        client = LLMClient(context=None, llm_provider=provider)
+
+        result = asyncio.run(
+            client.call_llm_with_retry_result("private prompt", "system prompt")
+        )
+
+        assert result.text == "result text"
+        assert result.prompt_tokens == 120
+        assert result.completion_tokens == 40
+
+    def test_call_llm_result_does_not_guess_missing_usage(self) -> None:
+        """Provider 未返回 usage 时应保留缺失状态，不能按字符数猜测。"""
+
+        provider = MagicMock()
+        provider.text_chat = AsyncMock(
+            return_value=SimpleNamespace(completion_text="result text")
+        )
+        client = LLMClient(context=None, llm_provider=provider)
+
+        result = asyncio.run(client.call_llm_with_retry_result("prompt", "system"))
+
+        assert result.prompt_tokens is None
+        assert result.completion_tokens is None
+
+    def test_call_llm_result_propagates_cancellation(self) -> None:
+        """结果入口不得把 Provider 取消转换为重试或普通失败。"""
+
+        provider = MagicMock()
+        provider.text_chat = AsyncMock(side_effect=asyncio.CancelledError)
+        client = LLMClient(context=None, llm_provider=provider)
+
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(client.call_llm_with_retry_result("prompt", "system"))
 
     def test_complete_uses_one_physical_provider_call(
         self, mock_provider: MagicMock

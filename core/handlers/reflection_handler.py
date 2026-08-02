@@ -1214,7 +1214,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         """从 canonical Store 重读 source 后再通知记忆演化管理器。"""
 
         manager = self._memory_evolution_manager
-        if manager is None:
+        if manager is None or getattr(manager, "mode", None) == "disabled":
             report_debug_event(
                 "storage_task",
                 component="reflection",
@@ -1227,15 +1227,18 @@ class ReflectionHandler(ReflectionBacklogMixin):
         try:
             sources = await manager.store.load_sources((int(memory_id),))
             if sources:
-                await manager.schedule_consider(sources[0])
+                decision = await manager.schedule_consider(sources[0])
+                should_enqueue = getattr(decision, "should_enqueue", False) is True
                 report_debug_event(
                     "storage_task",
                     component="reflection",
                     stage="evolution_schedule",
-                    status="completed",
-                    reason_code="evolution_scheduled",
+                    status="completed" if should_enqueue else "skipped",
+                    reason_code=(
+                        "evolution_scheduled" if should_enqueue else "evolution_skipped"
+                    ),
                     task_type="evolution",
-                    count=1,
+                    count=1 if should_enqueue else 0,
                 )
             else:
                 report_debug_event(

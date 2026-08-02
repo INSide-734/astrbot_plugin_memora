@@ -54,6 +54,10 @@ flowchart LR
 
 `instrumented_call` 只记录被 `@monitored` 包装函数的安全函数名、调用深度、状态和耗时，不记录参数或返回值。禁止记录对话、查询、Prompt、记忆正文、用户/群组/会话/消息/记忆标识、Provider 请求或凭据、异常消息、绝对路径和完整 traceback。异常摘要最多包含异常类型、插件内模块、函数和行号；找不到插件栈帧时只记录类型。未知事件、字段或值整条拒绝，文件 sink 失败只停用文件输出，不得影响聊天主链路。
 
+### `memory_write_timing.py`
+
+使用 `ContextVar` 聚合同一次 canonical 写入的 `document_vector`、`fts`、`atom`、`graph` 与 `evolution` 阶段耗时。嵌套的同名阶段以内层实际计时为准；只有写入口成功返回时才按固定顺序发射 completed 事件，失败或取消不得伪装为完成。
+
 隐私诊断的威胁模型、信任边界、allowlist 决策和残余风险记录在本目录的 [`DESIGN.md`](DESIGN.md)。
 
 ## 依赖方向

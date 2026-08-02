@@ -8,6 +8,8 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..monitoring import report_debug_event, report_debug_exception
+from .memory_engine_write_observability import measure_memory_write_stage
 from .write_coordinator import write_with_retry
 
 
@@ -61,21 +63,70 @@ class MemoryEngineEvolutionHooksMixin:
     async def _schedule_evolution_after_write(self, memory_id: int) -> None:
         """canonical 提交后重新读取 source，并隔离演化调度失败。"""
 
-        manager = getattr(self, "memory_evolution_manager", None)
-        if manager is None:
-            return
-        try:
-            sources = await manager.store.load_sources((int(memory_id),))
-            if sources:
-                await write_with_retry(lambda: manager.schedule_consider(sources[0]))
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            # Evolution 是派生维护链；调度异常不能回滚已经提交的 canonical。
-            logger.warning(
-                f"[写入] canonical 已提交但演化调度失败 (memory_id={memory_id})",
-                exc_info=True,
-            )
+        with measure_memory_write_stage("evolution"):
+            manager = getattr(self, "memory_evolution_manager", None)
+            if manager is None or getattr(manager, "mode", None) == "disabled":
+                report_debug_event(
+                    "storage_task",
+                    component="memory_engine",
+                    stage="evolution_schedule",
+                    status="skipped",
+                    reason_code="evolution_disabled",
+                    task_type="evolution",
+                )
+                return
+            try:
+                sources = await manager.store.load_sources((int(memory_id),))
+                if not sources:
+                    report_debug_event(
+                        "storage_task",
+                        component="memory_engine",
+                        stage="evolution_schedule",
+                        status="skipped",
+                        reason_code="evolution_source_missing",
+                        task_type="evolution",
+                    )
+                    return
+                decision = await write_with_retry(
+                    lambda: manager.schedule_consider(sources[0])
+                )
+                should_enqueue = getattr(decision, "should_enqueue", False) is True
+                report_debug_event(
+                    "storage_task",
+                    component="memory_engine",
+                    stage="evolution_schedule",
+                    status="completed" if should_enqueue else "skipped",
+                    reason_code=(
+                        "evolution_scheduled" if should_enqueue else "evolution_skipped"
+                    ),
+                    task_type="evolution",
+                    count=1 if should_enqueue else 0,
+                )
+            except asyncio.CancelledError:
+                report_debug_event(
+                    "storage_task",
+                    component="memory_engine",
+                    stage="evolution_schedule",
+                    status="cancelled",
+                    reason_code="evolution_cancelled",
+                    task_type="evolution",
+                )
+                raise
+            except Exception as error:
+                report_debug_exception(
+                    "storage_task",
+                    error,
+                    component="memory_engine",
+                    stage="evolution_schedule",
+                    status="failed",
+                    reason_code="evolution_schedule_error",
+                    task_type="evolution",
+                )
+                # Evolution 是派生维护链；调度异常不能回滚已经提交的 canonical。
+                logger.warning(
+                    "[写入] canonical 已提交但演化调度失败，异常类型=%s",
+                    error.__class__.__name__,
+                )
 
     async def _invalidate_evolution_after_delete(self, memory_id: int) -> None:
         """canonical 删除提交后标记关联 relation/projection 不可见。"""
