@@ -51,6 +51,8 @@ flowchart TD
 
 `core/api/__init__.py` 仅公开常用 mixin、`HistoryTracker` 与响应函数，并非 `PluginPageApi` 的完整基类清单；调用方通常应使用 `PluginPageApi` 而不是自己重组 mixin。
 
+`/stats` 的 canonical 数量、状态、重要性、图和 Atom 统计继续来自 `MemoryEngine`；`sessions` 与 `recent_sessions` 优先使用同一 ready context 中 `ConversationManager.get_recent_sessions()` 的真实会话及消息数。会话管理器缺失或普通读取失败时回退 canonical metadata 聚合，取消信号必须传播。
+
 ## 配置合并、修订与冲突
 
 `ConfigApiMixin` 不依赖引擎即可读取 AstrBot 注入 Schema、Provider 选项与隔离的配置快照。`GET /config/state?revision=...` 总是返回当前 `revision`、`instance_id`、`changed`，仅在修订不同才附完整 config。

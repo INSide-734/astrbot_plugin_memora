@@ -1,5 +1,6 @@
-"""记忆统计 + 召回测试 API"""
+"""记忆统计与召回测试 Page API。"""
 
+import asyncio
 import time
 
 from astrbot.api import logger
@@ -7,6 +8,15 @@ from quart import request
 
 
 def _coerce_count(value, default: int = 0) -> int:
+    """将统计值转为非布尔整数，失败时返回默认值。
+
+    参数:
+        value: 待转换的内部统计值。
+        default: 转换失败时使用的值。
+
+    返回:
+        转换后的整数或默认值。
+    """
     if isinstance(value, bool):
         return default
     try:
@@ -16,16 +26,19 @@ def _coerce_count(value, default: int = 0) -> int:
 
 
 def _normalize_count_map(value) -> dict:
+    """把统计映射的键转为字符串，并安全规范化所有计数。"""
     if not isinstance(value, dict):
         return {}
     return {str(key): _coerce_count(count, 0) for key, count in value.items()}
 
 
 def _default_importance_distribution() -> dict[str, int]:
+    """返回前端要求的十个空重要性区间。"""
     return {f"{i}-{i + 1}": 0 for i in range(0, 10)}
 
 
 def _coerce_score(value, default=None):
+    """将非布尔评分转为浮点数，失败时返回默认值。"""
     if value is None or isinstance(value, bool):
         return default
     try:
@@ -35,6 +48,7 @@ def _coerce_score(value, default=None):
 
 
 def _safe_result_list(results):
+    """将召回结果转为列表，不可迭代时返回空列表。"""
     try:
         return list(results or [])
     except Exception:
@@ -42,6 +56,7 @@ def _safe_result_list(results):
 
 
 def _safe_score_breakdown_items(value):
+    """读取评分分解项，容器不兼容时返回空列表。"""
     try:
         return list((value or {}).items())
     except Exception:
@@ -49,6 +64,7 @@ def _safe_score_breakdown_items(value):
 
 
 def _safe_recent_sessions(value) -> list[dict[str, int | str]]:
+    """将 canonical 会话计数映射转换为兼容的最近会话列表。"""
     if not isinstance(value, dict):
         return []
     normalized = [
@@ -59,16 +75,35 @@ def _safe_recent_sessions(value) -> list[dict[str, int | str]]:
 
 
 class MemoryStatsRecallApiMixin:
-    """混入类：统计信息 / 召回测试"""
+    """提供统计信息与召回测试端点的 Page API 混入类。"""
 
     @staticmethod
     def _coerce_limit(raw_value) -> int:
-        """将外部传入的数值上限转换为整数，同时拒绝 JSON 布尔值。"""
+        """将外部上限转为整数，同时拒绝 JSON 布尔值。
+
+        参数:
+            raw_value: 请求载荷中的原始上限。
+
+        返回:
+            转换后的整数。
+
+        异常:
+            TypeError: 原始值为布尔值。
+            ValueError: 原始值不能转换为整数。
+        """
         if isinstance(raw_value, bool):
-            raise TypeError("boolean values are not valid integer limits")
+            raise TypeError("布尔值不能作为整数上限")
         return int(raw_value)
 
     async def get_stats(self):
+        """返回 canonical 统计，并用 ConversationStore 的真实会话覆盖会话面板。
+
+        返回:
+            Page API 成功或失败响应；会话管理器普通失败时保留 canonical 聚合。
+
+        异常:
+            asyncio.CancelledError: 会话读取或下游统计被取消时继续向上传播。
+        """
         try:
             ready, error = await self._ensure_plugin_ready()
         except Exception as exc:
@@ -104,13 +139,13 @@ class MemoryStatsRecallApiMixin:
                 try:
                     entry_stats = await graph_store.get_memory_entry_stats()
                     if not isinstance(entry_stats, dict):
-                        raise TypeError("graph entry stats must be a mapping")
+                        raise TypeError("图记忆条目统计必须是映射")
                     stats["graph_nodes"] = entry_stats.get("graph_nodes", 0)
                     stats["graph_edges"] = entry_stats.get("graph_edges", 0)
                     stats["graph_entries"] = entry_stats.get("graph_entries", 0)
                 except Exception as exc:
                     logger.debug(
-                        "[MemoryStatsRecallApi] graph stats unavailable: %s",
+                        "[MemoryStatsRecallApi] 图记忆统计不可用: %s",
                         exc,
                         exc_info=True,
                     )
@@ -148,15 +183,56 @@ class MemoryStatsRecallApiMixin:
             else:
                 stats["importance_distribution"] = _default_importance_distribution()
 
-            session_data = stats.get("sessions", {})
-            stats["recent_sessions"] = _safe_recent_sessions(session_data)
+            canonical_sessions = _normalize_count_map(stats.get("sessions", {}))
+            stats["sessions"] = canonical_sessions
+            stats["recent_sessions"] = _safe_recent_sessions(canonical_sessions)
+
+            conversation_manager = ready.get("conversation_manager")
+            if conversation_manager is not None:
+                try:
+                    live_sessions = await conversation_manager.get_recent_sessions(
+                        limit=10
+                    )
+                    live_session_map: dict[str, int] = {}
+                    live_recent_sessions: list[dict[str, int | str]] = []
+                    for session in live_sessions:
+                        session_id = getattr(session, "session_id", None)
+                        if not isinstance(session_id, str) or not session_id.strip():
+                            raise TypeError("真实会话缺少有效的会话 ID")
+                        message_count = _coerce_count(
+                            getattr(session, "message_count", 0), 0
+                        )
+                        live_session_map[session_id] = message_count
+                        live_recent_sessions.append(
+                            {
+                                "session_id": session_id,
+                                "message_count": message_count,
+                            }
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.debug(
+                        "[MemoryStatsRecallApi] 真实会话统计不可用，回退 canonical 聚合: %s",
+                        type(exc).__name__,
+                    )
+                else:
+                    stats["sessions"] = live_session_map
+                    stats["recent_sessions"] = live_recent_sessions
 
             return self._ok(stats)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             logger.error(f"[PageAPI] 获取统计信息失败: {exc}", exc_info=True)
             return self._error(str(exc))
 
     async def test_recall(self):
+        """执行一次管理员召回测试并返回前端兼容的评分结果。
+
+        返回:
+            参数错误、运行失败或包含安全召回结果的 Page API 响应。
+        """
         ready, error = await self._ensure_plugin_ready()
         if error:
             return error
