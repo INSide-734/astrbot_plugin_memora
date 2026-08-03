@@ -100,8 +100,8 @@ flowchart TD
 - 响应保护采用 fail-closed：要求保护却没有有效 scope、scope 查询失败、清洗异常或二次验证失败时，将 `resp.completion_text` 置空并清理事件标记。
 - 反思 LLM 任一批次失败时不提交窗口，写 `pending_summary`；部分落库记录成功的幂等键，重试跳过已完成项。
 - 自动反思单窗最多读取 `summary_trigger_rounds * 2` 条消息；达到阈值后由同一后台任务按固定高水位串行续跑，待重试窗口保持原始 `end_index`，不得吸收新积压。关闭开始后只允许当前窗口完成，不再拉取下一窗。
-- 幂等键由 session、窗口范围、批次/记忆索引和内容 SHA-256 组成。连续失败最多 3 次；达到上限后清除 pending 并推进窗口，明确放弃该范围。
-- 所有记忆成功后先推进 `last_summarized_index` 再清 pending；元数据提交失败会再尝试一次，仍失败时存在重复总结风险并记录错误。
+- 幂等键由 session、窗口范围、批次/记忆索引和内容 SHA-256 组成。连续失败最多 3 次；达到上限后原子清除 `pending_summary` 并推进窗口，明确放弃该范围。已被游标覆盖的旧待重试窗口只清理、不重放，清理失败时停止当前续跑。
+- 所有记忆成功后原子提交 `last_summarized_index` 与 `pending_summary=None`；元数据提交失败会再尝试一次，两次均失败时保留携带已完成幂等键的恢复窗口，并停止 continuity 与 backlog 成功路径。
 
 ## 依赖方向与安全边界
 

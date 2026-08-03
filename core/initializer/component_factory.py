@@ -9,12 +9,17 @@ from astrbot.core.provider.provider import Provider
 from ..base.config_validator import CostControlConfig
 from ..base.cost_control import build_cost_control_from_config
 from ..base.exceptions import ProviderNotReadyError
+from ..evaluation.feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
+    FeedbackLearningEvidenceProvider,
+)
 from ..identity.conversation_sync import ConversationIdentitySynchronizer
 from ..identity.memory import MemoryIdentityEnricher
 from ..identity.resolver import ProtocolIdentityResolver
 from ..identity.runtime import ProtocolIdentityRuntime
 from ..identity.service import ProtocolIdentityService
 from ..injection.recorder import InjectionDecisionRecorder
+from ..managers.auto_learning_actions import aggregation_revision_for
 from ..managers.backup_manager import BackupManager
 from ..managers.conversation_manager import ConversationManager
 from ..managers.knowledge_proposal_pipeline import KnowledgeProposalPipeline
@@ -187,6 +192,14 @@ class ComponentFactory:
         engine_config["derived_expander"] = derived_expander
         engine_config["projection_reader"] = projection_reader
         engine_config["backup_manager"] = backup_manager
+        engine_config["auto_learning_evidence_provider"] = (
+            FeedbackLearningEvidenceProvider(
+                FeedbackLearningEvidenceInbox(self.data_dir),
+                aggregation_revision_provider=aggregation_revision_for,
+                source_config_revision_provider=self._get_current_config_revision,
+                quality_gate_version="quality-gate-v1",
+            )
+        )
         memory_engine = MemoryEngine(
             db_path=str(db_path),
             faiss_db=db,
@@ -428,6 +441,7 @@ class ComponentFactory:
                 decay_rate > 0
                 or auto_cleanup
                 or backup_enabled
+                or bool(engine_config.get("auto_learning.enabled", False))
                 or memory_engine.semantic_compressor is not None
                 or memory_engine.anomaly_detector is not None
             )
@@ -629,3 +643,9 @@ class ComponentFactory:
             stopwords_dir=stopwords_dir,
             graph_memory_enabled=graph_memory_enabled,
         )
+
+    async def _get_current_config_revision(self) -> str:
+        """从 ConfigManager 权威快照取得当前配置 revision。"""
+
+        _snapshot, revision = await self.config_manager.get_config_snapshot_async()
+        return revision

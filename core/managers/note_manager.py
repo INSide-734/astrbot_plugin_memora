@@ -65,12 +65,29 @@ class NoteManager:
 
         return await self._store.get(note_id)
 
+    async def get_note_for_scope(
+        self,
+        note_id: int,
+        *,
+        scope_key: str,
+        user_id: str,
+    ) -> Note | None:
+        """按会话来源或人工所有者读取笔记，拒绝跨作用域正文。"""
+
+        note = await self._store.get(note_id)
+        return note if self._note_visible_in_scope(note, scope_key, user_id) else None
+
     async def update_note(self, note_id: int, **fields: Any) -> Note | None:
         """更新人工或来源仍有效的笔记。"""
 
         note = await self._store.get(note_id)
         if note is None:
             return None
+        return await self._update_loaded_note(note, **fields)
+
+    async def _update_loaded_note(self, note: Note, **fields: Any) -> Note | None:
+        """持久化已完成可见性校验的笔记修改并裁剪旧版本。"""
+
         if "title" in fields:
             note.title = str(fields["title"])
         if "content" in fields:
@@ -84,6 +101,25 @@ class NoteManager:
             return None
         await self._store.prune_versions(self._max_versions)
         return note
+
+    async def update_note_for_scope(
+        self,
+        note_id: int,
+        *,
+        scope_key: str,
+        user_id: str,
+        **fields: Any,
+    ) -> Note | None:
+        """只更新当前作用域可见笔记，避免按 ID 修改其他用户记录。"""
+
+        note = await self.get_note_for_scope(
+            note_id,
+            scope_key=scope_key,
+            user_id=user_id,
+        )
+        if note is None:
+            return None
+        return await self._update_loaded_note(note, **fields)
 
     async def delete_note(self, note_id: int) -> bool:
         """优先软删除笔记，兼容不支持软删除的 Store。"""
@@ -101,6 +137,24 @@ class NoteManager:
         """搜索可见笔记。"""
 
         return await self._store.search(query, limit=limit)
+
+    async def search_for_scope(
+        self,
+        query: str,
+        *,
+        scope_key: str,
+        user_id: str,
+        limit: int = 20,
+    ) -> tuple[list[Note], int]:
+        """按会话来源或人工所有者搜索笔记，拒绝跨作用域正文。"""
+
+        notes, _ = await self._store.search(query, limit=limit)
+        visible = [
+            note
+            for note in notes
+            if self._note_visible_in_scope(note, scope_key, user_id)
+        ]
+        return visible, len(visible)
 
     async def list_notes(
         self, limit: int = 50, offset: int = 0, status: str = ""
@@ -165,6 +219,24 @@ class NoteManager:
             user_id=user_id,
             provenance=provenance,
         )
+
+    @staticmethod
+    def _note_visible_in_scope(
+        note: Note | None,
+        scope_key: str,
+        user_id: str,
+    ) -> bool:
+        """判断笔记是否属于当前来源会话或人工所有者；空所有者的旧记录拒绝读取。"""
+
+        if note is None:
+            return False
+        if note.origin is DomainObjectOrigin.DERIVED:
+            return bool(
+                scope_key
+                and note.provenance is not None
+                and note.provenance.scope_key == scope_key
+            )
+        return bool(user_id and note.user_id and note.user_id == user_id)
 
 
 def _fallback_note(content: str) -> tuple[str, str]:

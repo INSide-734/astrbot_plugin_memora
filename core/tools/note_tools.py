@@ -11,6 +11,8 @@ from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 from pydantic.dataclasses import dataclass
 
+from .agent_scope import resolve_agent_read_scope
+
 
 @dataclass
 class NoteSearchTool(FunctionTool[AstrAgentContext]):
@@ -45,11 +47,22 @@ class NoteSearchTool(FunctionTool[AstrAgentContext]):
         query: str,
         limit: int = 10,
     ) -> ToolExecResult:
+        """在当前事件作用域中搜索可见笔记。"""
+
         mgr = self.note_manager
         if mgr is None:
             return "Error: note_manager not available"
 
-        notes, total = await mgr.search(query, limit=limit)
+        read_scope = resolve_agent_read_scope(context)
+        if read_scope is None:
+            return "Error: note scope is unavailable"
+
+        notes, total = await mgr.search_for_scope(
+            query,
+            scope_key=read_scope.session_id,
+            user_id=read_scope.user_id,
+            limit=limit,
+        )
         if not notes:
             return f"No notes found for: {query}"
         lines = [f"Found {total} note(s):"]
@@ -83,11 +96,21 @@ class NoteReadTool(FunctionTool[AstrAgentContext]):
         context: ContextWrapper[AstrAgentContext],
         note_id: int = 0,
     ) -> ToolExecResult:
+        """在当前事件作用域中读取单条可见笔记。"""
+
         mgr = self.note_manager
         if mgr is None:
             return "Error: note_manager not available"
 
-        note = await mgr.get_note(note_id)
+        read_scope = resolve_agent_read_scope(context)
+        if read_scope is None:
+            return "Error: note scope is unavailable"
+
+        note = await mgr.get_note_for_scope(
+            note_id,
+            scope_key=read_scope.session_id,
+            user_id=read_scope.user_id,
+        )
         if note is None:
             return f"Note {note_id} not found."
         return (
@@ -137,6 +160,8 @@ class NoteWriteTool(FunctionTool[AstrAgentContext]):
         note_id: int | None = None,
         tags: list[str] | None = None,
     ) -> ToolExecResult:
+        """在当前事件作用域中创建或更新人工笔记。"""
+
         mgr = self.note_manager
         if mgr is None:
             return "Error: note_manager not available"
@@ -145,17 +170,31 @@ class NoteWriteTool(FunctionTool[AstrAgentContext]):
         if validation_error:
             return f"Error: {validation_error}"
 
+        read_scope = resolve_agent_read_scope(context)
+        if read_scope is None:
+            return "Error: note scope is unavailable"
+
         title = title.strip()
         content = content.strip()
         tags = [tag.strip() for tag in (tags or [])]
         if note_id is not None:
-            note = await mgr.update_note(
-                int(note_id), title=title, content=content, tags=tags
+            note = await mgr.update_note_for_scope(
+                int(note_id),
+                scope_key=read_scope.session_id,
+                user_id=read_scope.user_id,
+                title=title,
+                content=content,
+                tags=tags,
             )
             if note is None:
                 return f"Note {note_id} not found."
             return f"Note {note.note_id} updated (v{note.version}): {title}"
-        new_id = await mgr.create_note(title=title, content=content, tags=tags)
+        new_id = await mgr.create_note(
+            title=title,
+            content=content,
+            tags=tags,
+            user_id=read_scope.user_id,
+        )
         return f"Note {new_id} created: {title}"
 
     @staticmethod

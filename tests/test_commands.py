@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from astrbot.api.platform import MessageType
 
 # ============================================================================
 # QueryCommandMixin tests
@@ -119,6 +120,8 @@ class TestHandleSearch:
         mixin = TestMixin()
         event = MagicMock()
         event.unified_msg_origin = "test-session"
+        event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+        event.get_sender_id.return_value = "user-001"
         event.plain_result = MagicMock(return_value="no results")
 
         # k=0 should be clamped to 1
@@ -141,6 +144,8 @@ class TestHandleSearch:
         mixin = TestMixin()
         event = MagicMock()
         event.unified_msg_origin = "test-session"
+        event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+        event.get_sender_id.return_value = "user-001"
         event.plain_result = MagicMock(return_value="no results")
 
         results = []
@@ -148,6 +153,56 @@ class TestHandleSearch:
             results.append(result)
         engine.search_memories.assert_awaited_once()
         assert engine.search_memories.call_args[1]["k"] == 100
+
+    @pytest.mark.asyncio
+    async def test_group_search_passes_privacy_scope_to_engine(self) -> None:
+        """群聊命令检索必须传递群聊和发送者作用域以过滤机密记忆。"""
+        from core.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=[])
+
+        class TestMixin(QueryCommandMixin):
+            memory_engine = engine
+
+        event = MagicMock()
+        event.unified_msg_origin = "group:42"
+        event.get_message_type.return_value = MessageType.GROUP_MESSAGE
+        event.get_sender_id.return_value = "user-001"
+        event.plain_result = MagicMock(return_value="no results")
+
+        async for _ in TestMixin().handle_search(event, "private fact"):
+            pass
+
+        kwargs = engine.search_memories.call_args.kwargs
+        assert kwargs["chat_type"] == "group"
+        assert kwargs["user_id"] == "user-001"
+
+    @pytest.mark.asyncio
+    async def test_unknown_message_type_fails_closed(self) -> None:
+        """无法确认消息类型时不得把请求伪装成私聊检索。"""
+
+        from core.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=[])
+
+        class TestMixin(QueryCommandMixin):
+            memory_engine = engine
+
+        mixin = TestMixin()
+        event = MagicMock()
+        event.unified_msg_origin = "unknown:session"
+        event.get_message_type.return_value = object()
+        event.get_sender_id.return_value = "user-001"
+        event.plain_result = MagicMock(return_value="no results")
+
+        results = []
+        async for result in mixin.handle_search(event, "private fact"):
+            results.append(result)
+
+        assert results == ["no results"]
+        engine.search_memories.assert_not_awaited()
 
 
 class TestHandleForget:

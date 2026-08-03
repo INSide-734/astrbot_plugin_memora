@@ -37,6 +37,10 @@ from .core.monitoring import (
     set_debug_mode,
 )
 from .core.plugin_initializer import PluginInitializer
+from .core.plugin_reload_lifecycle import (
+    run_scheduled_plugin_reload,
+    supports_learning_reload_callback,
+)
 from .core.tools import MemoryMemorizeTool, MemorySearchTool
 from .core.utils.version import PLUGIN_VERSION
 from .core.version_check import (  # noqa: F401
@@ -176,8 +180,22 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         """安排备份恢复后的延迟插件重载。"""
         return self._schedule_plugin_reload("backup_restore", operation_id)
 
+    def schedule_learning_reload(self, operation_id: str) -> bool:
+        """安排自主学习配置提交后的可观察延迟重载。"""
+
+        if not supports_learning_reload_callback(self):
+            return False
+        return self._schedule_plugin_reload(
+            "auto_learning",
+            learning_operation_id=operation_id,
+        )
+
     def _schedule_plugin_reload(
-        self, reason: str, operation_id: str | None = None
+        self,
+        reason: str,
+        operation_id: str | None = None,
+        *,
+        learning_operation_id: str | None = None,
     ) -> bool:
         """安排延迟且不纳入关停追踪的插件重载。"""
         star_manager = getattr(self.context, "_star_manager", None)
@@ -185,21 +203,15 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         if not callable(reload_plugin):
             return False
 
-        async def _delayed_reload() -> None:
-            await asyncio.sleep(0.5)
-            if self._terminating:
-                logger.debug("插件正在停止，跳过延迟重载")
-                return
-            result = await reload_plugin("astrbot_plugin_memora")
-            failed = result is False
-            if isinstance(result, tuple):
-                failed = not result or not bool(result[0])
-            if failed:
-                logger.warning("插件重载返回失败 reason=%s", reason)
-                if operation_id:
-                    self._backup_manager.mark_reload_scheduled(operation_id, False)
-
-        task = asyncio.create_task(_delayed_reload())
+        task = asyncio.create_task(
+            run_scheduled_plugin_reload(
+                self,
+                reload_plugin,
+                reason=reason,
+                backup_operation_id=operation_id,
+                learning_operation_id=learning_operation_id,
+            )
+        )
         task.add_done_callback(self._consume_reload_task_result)
         return True
 
@@ -210,11 +222,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         except asyncio.CancelledError:
             logger.debug("延迟插件重载任务已取消")
         except Exception as exc:
-            logger.error(
-                "延迟插件重载失败: %s",
-                exc,
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
+            logger.error("延迟插件重载失败 type=%s", type(exc).__name__)
 
     async def _initialize_plugin(self):
         """初始化插件"""

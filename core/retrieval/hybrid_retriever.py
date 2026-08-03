@@ -405,14 +405,23 @@ class HybridRetriever:
         doc_id: int,
         metadata: dict[str, Any],
         expected_revision: str | None = None,
+        advance_revision: bool = True,
     ) -> bool:
-        """同步更新所有存储层的元数据，并可执行 revision CAS。"""
+        """同步更新元数据并可执行 revision CAS；维护字段可保留原 revision。"""
+        update_kwargs: dict[str, Any] = {}
+        if not advance_revision:
+            update_kwargs["advance_revision"] = False
         if expected_revision is None:
-            return await self.memory_lifecycle.update_metadata(doc_id, metadata)
+            return await self.memory_lifecycle.update_metadata(
+                doc_id,
+                metadata,
+                **update_kwargs,
+            )
         return await self.memory_lifecycle.update_metadata(
             doc_id,
             metadata,
             expected_revision=expected_revision,
+            **update_kwargs,
         )
 
     async def update_content_if_revision(

@@ -728,17 +728,26 @@ async def test_approval_cancellation_before_write_blocks_and_propagates(
 
 
 @pytest.mark.asyncio
-async def test_cancellation_during_canonical_write_prevents_automatic_retry(
+@pytest.mark.parametrize(
+    ("write_error", "expected_error"),
+    [
+        (asyncio.CancelledError(), asyncio.CancelledError),
+        (RuntimeError("post_commit_failure"), QuarantineApprovalPendingError),
+    ],
+)
+async def test_unknown_canonical_write_result_prevents_automatic_retry(
     quarantine_store: MemoryQuarantineStore,
+    write_error: BaseException,
+    expected_error: type[BaseException],
 ) -> None:
-    """canonical 提交结果未知时保留 approving，防止自动重复写入。"""
+    """canonical 写入取消或失败且结果未知时保留 approving，防止重复写入。"""
 
     message = _source_message()
     candidate = _candidate()
     processor = MagicMock()
     processor.classify_atoms_from_metadata.return_value = []
     engine = MagicMock()
-    engine.add_memory = AsyncMock(side_effect=asyncio.CancelledError)
+    engine.add_memory = AsyncMock(side_effect=write_error)
     conversation_manager = MagicMock()
     conversation_manager.get_messages_range = AsyncMock(return_value=[message])
     gate = MemoryQualityGate(
@@ -767,7 +776,7 @@ async def test_cancellation_during_canonical_write_prevents_automatic_retry(
     )
     pending = await quarantine_store.get_candidate(staged.candidate_id)
 
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(expected_error):
         await gate.approve(
             staged.candidate_id,
             expected_revision=pending["revision"],

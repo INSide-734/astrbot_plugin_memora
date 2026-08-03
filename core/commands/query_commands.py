@@ -9,6 +9,7 @@ from datetime import datetime
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
+from astrbot.api.platform import MessageType
 
 from ..i18n_backend import t, t_list
 from ..managers.feedback_signal_manager import record_explicit_correction
@@ -48,6 +49,48 @@ class QueryCommandMixin:
     def _component_not_ready_message(component: str, command: str) -> str:
         """构建一致的组件未就绪响应消息。"""
         return t("error.component_not_ready", component=component, command=command)
+
+    @staticmethod
+    def _event_chat_type(event: AstrMessageEvent) -> str | None:
+        """根据明确的平台事件类型返回群聊或私聊，未知类型拒绝检索。"""
+
+        try:
+            value = event.get_message_type()
+        except Exception:
+            return None
+        if value == getattr(MessageType, "GROUP_MESSAGE", None):
+            return "group"
+        private_values = (
+            getattr(MessageType, "FRIEND_MESSAGE", None),
+            getattr(MessageType, "PRIVATE_MESSAGE", None),
+        )
+        if any(
+            value == candidate for candidate in private_values if candidate is not None
+        ):
+            return "private"
+        value_name = getattr(value, "name", None)
+        value_text = getattr(value, "value", None)
+        if value_name in {"FRIEND_MESSAGE", "PRIVATE_MESSAGE"} or value_text in {
+            "FriendMessage",
+            "PrivateMessage",
+            "FRIEND_MESSAGE",
+            "PRIVATE_MESSAGE",
+        }:
+            return "private"
+        return None
+
+    @staticmethod
+    def _event_sender_id(event: AstrMessageEvent) -> str | None:
+        """读取稳定发送者标识；缺失或非标量输入不参与用户级检索。"""
+
+        try:
+            value = event.get_sender_id()
+        except Exception:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (str, int)):
+            return None
+        user_id = str(value).strip()
+        return user_id or None
 
     async def handle_status(
         self, event: AstrMessageEvent
@@ -115,8 +158,16 @@ class QueryCommandMixin:
 
         try:
             session_id = event.unified_msg_origin
+            chat_type = self._event_chat_type(event)
+            if chat_type is None or not session_id:
+                yield event.plain_result(t("search.no_results", query=query))
+                return
             results = await self.memory_engine.search_memories(
-                query=query.strip(), k=k, session_id=session_id
+                query=query.strip(),
+                k=k,
+                session_id=session_id,
+                chat_type=chat_type,
+                user_id=self._event_sender_id(event),
             )
 
             if not results:

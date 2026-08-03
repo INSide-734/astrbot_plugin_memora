@@ -148,6 +148,17 @@ class KnowledgeManager:
 
         return await self._store.get(entry_id)
 
+    async def get_entry_for_scope(
+        self,
+        entry_id: int,
+        *,
+        scope_key: str,
+    ) -> KnowledgeEntry | None:
+        """按来源作用域读取知识，拒绝其他会话的派生正文。"""
+
+        entry = await self._store.get(entry_id)
+        return entry if self._entry_visible_in_scope(entry, scope_key) else None
+
     async def search(
         self,
         query: str,
@@ -163,6 +174,28 @@ class KnowledgeManager:
             category=category,
             sort=sort,
         )
+
+    async def search_for_scope(
+        self,
+        query: str,
+        *,
+        scope_key: str,
+        limit: int = 20,
+        category: str = "",
+        sort: SortQuery = SortQuery("updated_at", "desc"),
+    ) -> tuple[list[KnowledgeEntry], int]:
+        """按来源作用域搜索知识，拒绝其他会话的派生正文。"""
+
+        entries, _ = await self._store.search(
+            query,
+            limit=limit,
+            category=category,
+            sort=sort,
+        )
+        visible = [
+            entry for entry in entries if self._entry_visible_in_scope(entry, scope_key)
+        ]
+        return visible, len(visible)
 
     async def list_entries(
         self,
@@ -220,6 +253,23 @@ class KnowledgeManager:
         if removed:
             logger.info("[知识库] 已清理过期条目，数量=%s", removed)
         return removed
+
+    @staticmethod
+    def _entry_visible_in_scope(
+        entry: KnowledgeEntry | None,
+        scope_key: str,
+    ) -> bool:
+        """判断知识是否可在当前会话读取；人工知识作为管理员维护的全局条目保留。"""
+
+        if entry is None:
+            return False
+        if entry.origin is DomainObjectOrigin.MANUAL:
+            return True
+        return bool(
+            scope_key
+            and entry.provenance is not None
+            and entry.provenance.scope_key == scope_key
+        )
 
     @staticmethod
     def _text_similarity(a: str, b: str) -> float:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -27,11 +26,15 @@ from ..security.prompt_sanitizer import (
 from ..utils import OperationContext, get_persona_id
 from .continuity_hooks import resolve_continuity_session
 from .reflection_backlog import ReflectionBacklogMixin
-from .reflection_candidate_writer import store_reflection_candidates
+from .reflection_candidate_writer import (
+    build_reflection_idempotency_key,
+    store_reflection_candidates,
+)
 from .reflection_llm_budget import (
     fit_batches_to_extra_llm_budget,
     process_reflection_batches,
 )
+from .reflection_metadata import commit_summary_metadata, persist_pending_summary
 from .reflection_storage_outcomes import (
     ReflectionStoreOutcome,
     ReflectionStoreResult,
@@ -1035,77 +1038,24 @@ class ReflectionHandler(ReflectionBacklogMixin):
                     return
 
                 if self._conversation_manager:
-                    metadata_started = time.perf_counter()
-                    try:
-                        await self._conversation_manager.update_session_metadata(
+                    metadata_committed = await commit_summary_metadata(
+                        self._conversation_manager,
+                        session_id=session_id,
+                        end_index=end_index,
+                        record_pending_summary=lambda: self._record_pending_summary(
                             session_id,
-                            "last_summarized_index",
+                            start_index,
                             end_index,
-                        )
-                        await self._conversation_manager.update_session_metadata(
-                            session_id,
-                            "pending_summary",
-                            None,
-                        )
-                        logger.info(
-                            f"[{session_id}] 更新滑动窗口位置："
-                            f"last_summarized_index = {end_index}"
-                        )
-                        report_debug_event(
-                            "storage_task",
-                            component="reflection",
-                            stage="metadata_commit",
-                            status="completed",
-                            reason_code="summary_metadata_committed",
-                            task_type="storage",
-                            duration_ms=max(
-                                0.0, (time.perf_counter() - metadata_started) * 1000.0
-                            ),
-                        )
-                    except Exception as meta_err:
-                        report_debug_exception(
-                            "storage_task",
-                            meta_err,
-                            component="reflection",
-                            stage="metadata_commit",
-                            status="degraded",
-                            reason_code="summary_metadata_retrying",
-                            task_type="storage",
-                        )
-                        logger.error(
-                            f"[{session_id}] 记忆已存储但元数据更新失败：{meta_err}。"
-                            "下次触发时将跳过本段消息，避免重复总结。",
-                            exc_info=True,
-                        )
-                        try:
-                            await self._conversation_manager.update_session_metadata(
-                                session_id,
-                                "last_summarized_index",
-                                end_index,
-                            )
-                            await self._conversation_manager.update_session_metadata(
-                                session_id,
-                                "pending_summary",
-                                None,
-                            )
-                        except Exception:
-                            report_debug_event(
-                                "storage_task",
-                                component="reflection",
-                                stage="metadata_commit",
-                                status="failed",
-                                reason_code="summary_metadata_failed",
-                                task_type="storage",
-                                duration_ms=max(
-                                    0.0,
-                                    (time.perf_counter() - metadata_started) * 1000.0,
-                                ),
-                            )
-                            logger.error(
-                                f"[{session_id}] 重试元数据更新仍然失败，"
-                                "可能出现重复总结。",
-                                exc_info=True,
-                            )
+                            retry_count,
+                            failed_stage="metadata_commit",
+                            failed_count=0,
+                            completed_idempotency_keys=successful_keys,
+                        ),
+                    )
+                    if not metadata_committed:
+                        # 元数据未完成时不能把 canonical 写入误报为完整成功，
+                        # 也不能让积压 drain 根据旧游标继续下一窗口。
+                        return
 
                 resolve_continuity_session(self._memory_engine, session_id)
 
@@ -1169,45 +1119,34 @@ class ReflectionHandler(ReflectionBacklogMixin):
         failed_stage: str = "unknown",
         failed_count: int | None = None,
         completed_idempotency_keys: set[str] | list[str] | None = None,
-    ) -> None:
-        """记录待处理的失败总结信息"""
-        if not self._conversation_manager:
-            return
+    ) -> bool:
+        """委托共享 helper 持久化待重试总结窗口。
 
-        new_retry_count = current_retry_count + 1
-        pending_summary = {
-            "start_index": start_index,
-            "end_index": end_index,
-            "retry_count": new_retry_count,
-            "failed_stage": failed_stage,
-        }
-        if failed_count is not None:
-            pending_summary["failed_count"] = failed_count
-        if completed_idempotency_keys:
-            pending_summary["completed_idempotency_keys"] = sorted(
-                str(item) for item in completed_idempotency_keys
-            )
+        Args:
+            session_id: 统一会话标识。
+            start_index: 失败窗口起始索引。
+            end_index: 失败窗口结束索引（不包含）。
+            current_retry_count: 当前已重试次数。
+            failed_stage: 失败阶段标识。
+            failed_count: 本次失败的候选数量。
+            completed_idempotency_keys: 已成功写入、重试时应跳过的候选键。
 
-        await self._conversation_manager.update_session_metadata(
-            session_id,
-            "pending_summary",
-            pending_summary,
-        )
+        Returns:
+            ``True`` 表示待重试状态已提交；没有会话管理器或提交失败时返回
+            ``False``，且不会发出“已记录”诊断事件。
 
-        report_debug_event(
-            "storage_task",
-            component="reflection",
-            stage="retry",
-            status="waiting",
-            reason_code="summary_retry_recorded",
-            task_type="storage",
-            retry_count=max(0, int(new_retry_count)),
-            failed_count=max(0, int(failed_count or 0)),
-        )
-
-        logger.warning(
-            f"[{session_id}] 记录待重试总结：范围=[{start_index}:{end_index}]，"
-            f"重试次数={new_retry_count}/3"
+        Raises:
+            asyncio.CancelledError: 调用方取消持久化时原样传播。
+        """
+        return await persist_pending_summary(
+            self._conversation_manager,
+            session_id=session_id,
+            start_index=start_index,
+            end_index=end_index,
+            current_retry_count=current_retry_count,
+            failed_stage=failed_stage,
+            failed_count=failed_count,
+            completed_idempotency_keys=completed_idempotency_keys,
         )
 
     async def _schedule_evolution_after_write(self, memory_id: int) -> None:
@@ -1281,12 +1220,16 @@ class ReflectionHandler(ReflectionBacklogMixin):
         memory_index: int,
         content: str,
     ) -> str:
-        content_hash = hashlib.sha256(content.strip().encode("utf-8")).hexdigest()
-        raw = (
-            f"{session_id}:{start_index}:{end_index}:"
-            f"{batch_index}:{memory_index}:{content_hash}"
+        """兼容现有调用方，委托共享候选幂等键实现。"""
+
+        return build_reflection_idempotency_key(
+            session_id=session_id,
+            start_index=start_index,
+            end_index=end_index,
+            batch_index=batch_index,
+            memory_index=memory_index,
+            content=content,
         )
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def shutdown(self) -> None:
         """关闭反思处理器，并等待所有存储任务完成。"""

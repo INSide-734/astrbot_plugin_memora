@@ -103,7 +103,7 @@ class MemoryQualityGate:
         actor_id: str | None,
         content: str | None = None,
     ) -> dict[str, Any]:
-        """保存可选修正、重新加载原始窗口并生成唯一 canonical 记录。"""
+        """保存可选修正并生成唯一 canonical；写入结果未知时保留 approving。"""
 
         current = await self.store.get_candidate(candidate_id)
         if current is None:
@@ -221,14 +221,13 @@ class MemoryQualityGate:
         except asyncio.CancelledError:
             # approving 表示 canonical 提交结果未知，禁止自动重试造成重复写入。
             raise
-        except Exception:
-            await self.store.block_approval(
+        except Exception as exc:
+            # add_memory 可能在 canonical 提交后的日志或派生阶段失败，不能据此允许重试。
+            raise QuarantineApprovalPendingError(
                 candidate_id,
-                expected_revision=claimed["revision"],
-                actor_id=actor_id,
-                reason_code="canonical_write_failed",
-            )
-            raise
+                claimed["revision"],
+                approval_token,
+            ) from exc
         try:
             return await self.store.finalize_approval(
                 candidate_id,

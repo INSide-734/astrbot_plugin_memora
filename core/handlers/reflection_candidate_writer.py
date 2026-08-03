@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -15,6 +16,37 @@ from .reflection_storage_outcomes import (
 )
 
 _MAX_CONCURRENT_WRITES = 3
+
+
+def build_reflection_idempotency_key(
+    *,
+    session_id: str,
+    start_index: int,
+    end_index: int,
+    batch_index: int,
+    memory_index: int,
+    content: str,
+) -> str:
+    """为固定反思窗口中的候选生成稳定幂等键。
+
+    Args:
+        session_id: 候选来源会话标识。
+        start_index: 来源窗口起始索引。
+        end_index: 来源窗口结束索引（不包含）。
+        batch_index: 候选所属反思批次索引。
+        memory_index: 候选在合并结果中的索引。
+        content: 候选正文，仅以 SHA-256 摘要参与键计算。
+
+    Returns:
+        不暴露候选正文的稳定 SHA-256 十六进制键。
+    """
+
+    content_hash = hashlib.sha256(content.strip().encode("utf-8")).hexdigest()
+    raw = (
+        f"{session_id}:{start_index}:{end_index}:"
+        f"{batch_index}:{memory_index}:{content_hash}"
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 async def store_reflection_candidates(
@@ -146,4 +178,4 @@ async def store_reflection_candidates(
     return results
 
 
-__all__ = ["store_reflection_candidates"]
+__all__ = ["build_reflection_idempotency_key", "store_reflection_candidates"]

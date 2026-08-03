@@ -443,6 +443,168 @@ async def test_pending_retry_keeps_original_bounded_end() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stale_pending_is_cleared_before_next_bounded_window() -> None:
+    """已由游标覆盖的旧 pending 只清理，不得重新播放旧窗口。"""
+
+    config = MagicMock()
+    config.get.side_effect = lambda key, default=None: {
+        "reflection_engine.summary_trigger_rounds": 1,
+    }.get(key, default)
+    conversation = MagicMock()
+    conversation.get_session_info = AsyncMock(
+        return_value=SimpleNamespace(message_count=6)
+    )
+    conversation.store = MagicMock()
+    conversation.store.get_message_count = AsyncMock(return_value=6)
+    conversation.get_session_metadata = AsyncMock(
+        side_effect=lambda _session_id, key, default=None: {
+            "last_summarized_index": 2,
+            "pending_summary": {
+                "start_index": 0,
+                "end_index": 2,
+                "retry_count": 1,
+            },
+        }.get(key, default)
+    )
+    conversation.update_session_metadata = AsyncMock(return_value=True)
+    conversation.get_messages_range = AsyncMock(
+        return_value=[MagicMock(group_id=None), MagicMock(group_id=None)]
+    )
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=config,
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=conversation,
+        enforce_limit_cb=AsyncMock(),
+    )
+
+    request = await handler._summary_trigger.prepare_for_persona(
+        "test:GroupMessage:group-1",
+        "persona-1",
+        drain_end_index=6,
+    )
+
+    assert request is not None
+    assert request.start_index == 2
+    assert request.end_index == 4
+    conversation.update_session_metadata.assert_awaited_once_with(
+        "test:GroupMessage:group-1",
+        "pending_summary",
+        None,
+    )
+    conversation.get_messages_range.assert_awaited_once_with(
+        session_id="test:GroupMessage:group-1",
+        start_index=2,
+        end_index=4,
+    )
+
+
+@pytest.mark.asyncio
+async def test_stale_pending_clear_failure_stops_backlog_without_replay() -> None:
+    """旧 pending 清理未提交时停止续跑，避免同窗紧循环。"""
+
+    config = MagicMock()
+    config.get.side_effect = lambda key, default=None: {
+        "reflection_engine.summary_trigger_rounds": 1,
+    }.get(key, default)
+    conversation = MagicMock()
+    conversation.get_session_info = AsyncMock(
+        return_value=SimpleNamespace(message_count=6)
+    )
+    conversation.store = MagicMock()
+    conversation.store.get_message_count = AsyncMock(return_value=6)
+    conversation.get_session_metadata = AsyncMock(
+        side_effect=lambda _session_id, key, default=None: {
+            "last_summarized_index": 2,
+            "pending_summary": {
+                "start_index": 0,
+                "end_index": 2,
+                "retry_count": 1,
+            },
+        }.get(key, default)
+    )
+    conversation.update_session_metadata = AsyncMock(return_value=False)
+    conversation.get_messages_range = AsyncMock()
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=config,
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=conversation,
+        enforce_limit_cb=AsyncMock(),
+    )
+
+    request = await handler._summary_trigger.prepare_for_persona(
+        "test:GroupMessage:group-1",
+        "persona-1",
+        drain_end_index=6,
+    )
+
+    assert request is None
+    conversation.update_session_metadata.assert_awaited_once_with(
+        "test:GroupMessage:group-1",
+        "pending_summary",
+        None,
+    )
+    conversation.get_messages_range.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retry_exhaustion_advances_and_clears_in_one_commit() -> None:
+    """放弃耗尽窗口时游标推进与 pending 清理必须原子提交。"""
+
+    config = MagicMock()
+    config.get.side_effect = lambda key, default=None: {
+        "reflection_engine.summary_trigger_rounds": 1,
+    }.get(key, default)
+    conversation = MagicMock()
+    conversation.get_session_info = AsyncMock(
+        return_value=SimpleNamespace(message_count=6)
+    )
+    conversation.store = MagicMock()
+    conversation.store.get_message_count = AsyncMock(return_value=6)
+    conversation.get_session_metadata = AsyncMock(
+        side_effect=lambda _session_id, key, default=None: {
+            "last_summarized_index": 0,
+            "pending_summary": {
+                "start_index": 0,
+                "end_index": 2,
+                "retry_count": 3,
+            },
+        }.get(key, default)
+    )
+    conversation.update_session_metadata = AsyncMock()
+    conversation.update_session_metadata_fields = AsyncMock(return_value=True)
+    conversation.get_messages_range = AsyncMock()
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=config,
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=conversation,
+        enforce_limit_cb=AsyncMock(),
+    )
+
+    request = await handler._summary_trigger.prepare_for_persona(
+        "test:GroupMessage:group-1",
+        "persona-1",
+        drain_end_index=6,
+    )
+
+    assert request is None
+    conversation.update_session_metadata_fields.assert_awaited_once_with(
+        "test:GroupMessage:group-1",
+        {
+            "last_summarized_index": 2,
+            "pending_summary": None,
+        },
+    )
+    conversation.update_session_metadata.assert_not_awaited()
+    conversation.get_messages_range.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_summary_backlog_stops_after_current_window_during_shutdown() -> None:
     """关闭开始后只完成当前窗口，不得继续拉取后续 LLM 总结窗口。"""
 

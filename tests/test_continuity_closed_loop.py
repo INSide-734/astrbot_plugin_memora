@@ -202,6 +202,7 @@ async def test_reflection_pipeline_marks_only_canonical_topics(
     conversation_manager = MagicMock()
     conversation_manager.get_session_metadata = AsyncMock(return_value=0)
     conversation_manager.update_session_metadata = AsyncMock()
+    conversation_manager.update_session_metadata_fields = AsyncMock(return_value=True)
     processor = MagicMock()
     processor.process_conversation = AsyncMock(
         return_value=[

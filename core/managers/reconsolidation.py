@@ -133,32 +133,33 @@ class ReconsolidationManager:
         candidate = await self._store.get_candidate(candidate_id)
         if candidate is None:
             raise ReconsolidationCandidateNotFoundError(candidate_id)
+        payload = self._build_apply_payload(candidate)
         candidate = await self._store.begin_apply(
             candidate_id,
             expected_revision=candidate["source_revision"],
+            target_metadata=payload["metadata"],
         )
-        payload = self._build_apply_payload(candidate)
         applied = await update_memory_cb(
             candidate["memory_id"],
             payload,
             expected_revision=candidate["source_revision"],
         )
         if not applied:
-            reason_code = str(
-                getattr(update_memory_cb, "_last_write_reason_code", None)
-                or "apply_failed"
-            )
+            reason_code = self._write_reason_code(update_memory_cb, "apply_failed")
             await self._store.complete_apply(
                 candidate_id,
                 applied=False,
                 reason_code=reason_code,
             )
             return {"applied": False, "reason_code": reason_code}
-        updated = await self._store.complete_apply(
+        updated = await self._finalize_applied_candidate(
             candidate_id,
-            applied=True,
+            candidate,
+            target_metadata=payload["metadata"],
             reason_code="applied",
         )
+        if updated is None:
+            return {"applied": False, "reason_code": "apply_result_unverified"}
         return {"applied": True, "candidate": updated}
 
     @staticmethod
@@ -171,6 +172,7 @@ class ReconsolidationManager:
         )
         metadata["last_reconsolidated_at"] = time.time()
         metadata.pop("reconsolidation_history", None)
+        metadata.pop("updated_at", None)
         return {
             "content": candidate["proposed_content"],
             "metadata": metadata,
@@ -207,7 +209,9 @@ class ReconsolidationManager:
                 current_content = str(
                     (memory or {}).get("text") or (memory or {}).get("content") or ""
                 )
+                current_metadata = self._memory_metadata(memory)
                 expected_revision = str(operation["expected_revision"])
+                target_metadata = operation.get("target_metadata")
                 if candidate is None or current_revision is None:
                     await self._store.mark_apply_blocked(
                         candidate_id,
@@ -215,16 +219,39 @@ class ReconsolidationManager:
                     )
                     blocked += 1
                     continue
-                if current_content == str(candidate["proposed_content"]):
+                if not isinstance(target_metadata, dict) or not target_metadata:
+                    await self._store.mark_apply_blocked(
+                        candidate_id,
+                        reason_code="apply_target_missing",
+                    )
+                    blocked += 1
+                    continue
+                if current_content == str(
+                    candidate["proposed_content"]
+                ) and self._metadata_matches(current_metadata, target_metadata):
+                    if current_revision == expected_revision:
+                        await self._store.mark_apply_blocked(
+                            candidate_id,
+                            reason_code="apply_revision_not_advanced",
+                        )
+                        blocked += 1
+                        continue
                     await self._store.complete_apply(
                         candidate_id,
                         applied=True,
                         reason_code="recovered_applied",
+                        applied_revision=current_revision,
+                        applied_metadata=current_metadata,
                     )
                     recovered += 1
                     continue
-                if current_revision != expected_revision or current_content != str(
-                    candidate["old_content"]
+                if (
+                    current_revision != expected_revision
+                    or current_content != str(candidate["old_content"])
+                    or not self._metadata_matches(
+                        current_metadata,
+                        candidate["old_metadata"],
+                    )
                 ):
                     await self._store.mark_apply_blocked(
                         candidate_id,
@@ -234,20 +261,27 @@ class ReconsolidationManager:
                     continue
                 applied = await self._update_memory(
                     candidate["memory_id"],
-                    self._build_apply_payload(candidate),
+                    {
+                        "content": candidate["proposed_content"],
+                        "metadata": target_metadata,
+                    },
                     expected_revision=expected_revision,
                 )
                 if applied:
-                    await self._store.complete_apply(
+                    updated = await self._finalize_applied_candidate(
                         candidate_id,
-                        applied=True,
+                        candidate,
+                        target_metadata=target_metadata,
                         reason_code="recovered_applied",
                     )
-                    recovered += 1
+                    if updated is None:
+                        blocked += 1
+                    else:
+                        recovered += 1
                 else:
-                    reason_code = str(
-                        getattr(self._update_memory, "_last_write_reason_code", None)
-                        or "apply_failed"
+                    reason_code = self._write_reason_code(
+                        self._update_memory,
+                        "apply_failed",
                     )
                     await self._store.complete_apply(
                         candidate_id,
@@ -263,6 +297,90 @@ class ReconsolidationManager:
                 )
                 blocked += 1
         return {"recovered": recovered, "blocked": blocked}
+
+    async def _finalize_applied_candidate(
+        self,
+        candidate_id: str,
+        candidate: dict[str, Any],
+        *,
+        target_metadata: dict[str, Any],
+        reason_code: str,
+    ) -> dict[str, Any] | None:
+        """核验 apply 结果；未知提交状态保留 pending intent 供启动对账。"""
+
+        if self._get_memory is None:
+            await self._store.mark_apply_recovery_required(
+                candidate_id,
+                reason_code="apply_verification_unavailable",
+            )
+            return None
+        memory = await self._get_memory(candidate["memory_id"])
+        revision = memory_revision(memory) if memory else ""
+        content = self._memory_content(memory)
+        metadata = self._memory_metadata(memory)
+        if (
+            not revision
+            or revision == str(candidate["source_revision"])
+            or content != str(candidate["proposed_content"])
+            or not self._metadata_matches(metadata, target_metadata)
+        ):
+            await self._store.mark_apply_recovery_required(
+                candidate_id,
+                reason_code="apply_result_unverified",
+            )
+            return None
+        return await self._store.complete_apply(
+            candidate_id,
+            applied=True,
+            reason_code=reason_code,
+            applied_revision=revision,
+            applied_metadata=metadata,
+        )
+
+    @staticmethod
+    def _write_reason_code(
+        update_memory_cb: Callable[..., Awaitable[bool]],
+        fallback: str,
+    ) -> str:
+        """从真实 bound method 所属引擎读取同步写入原因码。"""
+
+        owner = getattr(update_memory_cb, "__self__", None)
+        getter = getattr(owner, "get_last_write_reason_code", None)
+        reason = getter() if callable(getter) else None
+        if not reason:
+            reason = getattr(update_memory_cb, "_last_write_reason_code", None)
+        return str(reason or fallback)
+
+    @staticmethod
+    def _memory_content(memory: dict[str, Any] | None) -> str:
+        """从 canonical 读取结果提取正文。"""
+
+        return str((memory or {}).get("text") or (memory or {}).get("content") or "")
+
+    @staticmethod
+    def _memory_metadata(memory: dict[str, Any] | None) -> dict[str, Any]:
+        """从 canonical 读取结果解析独立 metadata 字典。"""
+
+        metadata = (memory or {}).get("metadata", {})
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (TypeError, json.JSONDecodeError):
+                return {}
+        return dict(metadata) if isinstance(metadata, dict) else {}
+
+    @staticmethod
+    def _metadata_matches(
+        current: dict[str, Any],
+        expected: dict[str, Any],
+    ) -> bool:
+        """比较语义 metadata，忽略每次 canonical 写都会推进的时间字段。"""
+
+        current_copy = dict(current)
+        expected_copy = dict(expected)
+        current_copy.pop("updated_at", None)
+        expected_copy.pop("updated_at", None)
+        return current_copy == expected_copy
 
     async def reject_candidate(
         self,
@@ -304,7 +422,7 @@ class ReconsolidationManager:
         get_memory_cb: Callable[..., Awaitable[dict[str, Any] | None]],
         update_memory_cb: Callable[..., Awaitable[bool]],
     ) -> dict[str, Any]:
-        """把已批准候选回滚到旧正文；按当前 revision CAS，避免覆盖新编辑。
+        """把已批准候选回滚到旧状态；仅接受 apply 后原始 revision。
 
         Returns:
             ``{"restored": bool, "reason_code": str}``。
@@ -315,13 +433,29 @@ class ReconsolidationManager:
             raise ReconsolidationCandidateNotFoundError(candidate_id)
         if candidate["status"] != "approved":
             raise ReconsolidationCandidateConflictError("candidate_status_changed")
+        applied_revision = str(candidate.get("applied_revision") or "").strip()
+        applied_metadata = candidate.get("applied_metadata")
+        if not applied_revision or not isinstance(applied_metadata, dict):
+            return {"restored": False, "reason_code": "apply_revision_missing"}
         memory = await get_memory_cb(candidate["memory_id"])
         current_revision = memory_revision(memory) if memory else None
         if not current_revision:
             return {"restored": False, "reason_code": "source_not_found"}
+        if (
+            current_revision != applied_revision
+            or self._memory_content(memory) != str(candidate["proposed_content"])
+            or not self._metadata_matches(
+                self._memory_metadata(memory),
+                applied_metadata,
+            )
+        ):
+            return {
+                "restored": False,
+                "reason_code": "source_revision_mismatch",
+            }
         await self._store.begin_rollback(
             candidate_id,
-            expected_revision=current_revision,
+            expected_revision=applied_revision,
         )
         restored = await update_memory_cb(
             candidate["memory_id"],
@@ -329,18 +463,39 @@ class ReconsolidationManager:
                 "content": candidate["old_content"],
                 "metadata": candidate["old_metadata"],
             },
-            expected_revision=current_revision,
+            expected_revision=applied_revision,
         )
         if not restored:
-            reason_code = str(
-                getattr(update_memory_cb, "_last_write_reason_code", None)
-                or "rollback_failed"
+            reason_code = self._write_reason_code(
+                update_memory_cb,
+                "rollback_failed",
             )
             await self._store.cancel_rollback(candidate_id)
             return {"restored": False, "reason_code": reason_code}
+        restored_memory = await get_memory_cb(candidate["memory_id"])
+        restored_revision = memory_revision(restored_memory) if restored_memory else ""
+        if (
+            not restored_revision
+            or restored_revision == applied_revision
+            or self._memory_content(restored_memory) != str(candidate["old_content"])
+            or not self._metadata_matches(
+                self._memory_metadata(restored_memory),
+                candidate["old_metadata"],
+            )
+        ):
+            await self._store.mark_rollback_blocked(
+                candidate_id,
+                reason_code="rollback_result_unverified",
+            )
+            return {
+                "restored": False,
+                "reason_code": "rollback_result_unverified",
+            }
         if self._refresh_derived is not None:
             refreshed = await self._refresh_derived(candidate["memory_id"])
             if not refreshed:
+                # canonical 已经恢复，但派生索引尚未收口；保留 pending intent，
+                # 让后续生命周期按当前旧正文重试刷新，不能伪装成安全终态。
                 return {"restored": False, "reason_code": "derived_refresh_failed"}
         await self._store.complete_rollback(candidate_id)
         return {"restored": True, "reason_code": "restored"}
@@ -348,9 +503,9 @@ class ReconsolidationManager:
     async def recover_incomplete_rollbacks(self) -> dict[str, int]:
         """在启动时安全重放跨 Store 未完成回滚。
 
-        仅当 canonical revision 仍等于开始值，或当前正文已经等于目标旧正文时
-        才允许重放。后者会再次走正常更新入口，用于补刷 FTS、FAISS、graph 和
-        evolution 派生状态；其他 revision/正文组合标记为 blocked。
+        revision 未变且仍是 apply 快照时才允许重放 canonical CAS；若当前状态
+        已精确等于回滚目标，只补刷派生并收口。其他 revision、正文或 metadata
+        组合一律 blocked，不覆盖后续编辑。
 
         Returns:
             已恢复和已阻塞操作数，不包含候选 ID 或正文。
@@ -383,51 +538,89 @@ class ReconsolidationManager:
                     else None
                 )
                 current_revision = memory_revision(memory) if memory else None
-                current_content = str(
-                    (memory or {}).get("text") or (memory or {}).get("content") or ""
-                )
+                current_content = self._memory_content(memory)
+                current_metadata = self._memory_metadata(memory)
                 expected_revision = str(operation["expected_revision"])
                 if candidate is None or candidate.get("status") != "approved":
                     reason_code = "candidate_status_changed"
                 elif not current_revision:
                     reason_code = "source_not_found"
-                elif current_revision != expected_revision and current_content != str(
-                    candidate["old_content"]
+                elif str(
+                    candidate.get("applied_revision") or ""
+                ) != expected_revision or not isinstance(
+                    candidate.get("applied_metadata"), dict
                 ):
                     reason_code = "source_revision_mismatch"
-                else:
+                elif current_revision == expected_revision:
+                    if current_content != str(
+                        candidate["proposed_content"]
+                    ) or not self._metadata_matches(
+                        current_metadata,
+                        candidate["applied_metadata"],
+                    ):
+                        reason_code = "source_revision_mismatch"
+                        await self._store.mark_rollback_blocked(
+                            candidate_id,
+                            reason_code=reason_code,
+                        )
+                        blocked += 1
+                        continue
                     restored = await self._update_memory(
                         candidate["memory_id"],
                         {
                             "content": candidate["old_content"],
                             "metadata": candidate["old_metadata"],
                         },
-                        expected_revision=current_revision,
+                        expected_revision=expected_revision,
                     )
                     if restored:
-                        if self._refresh_derived is not None:
-                            refreshed = await self._refresh_derived(
-                                candidate["memory_id"]
+                        memory = await self._get_memory(candidate["memory_id"])
+                        current_revision = memory_revision(memory) if memory else None
+                        current_content = self._memory_content(memory)
+                        current_metadata = self._memory_metadata(memory)
+                        if (
+                            not current_revision
+                            or current_revision == expected_revision
+                            or current_content != str(candidate["old_content"])
+                            or not self._metadata_matches(
+                                current_metadata,
+                                candidate["old_metadata"],
                             )
-                            if not refreshed:
-                                reason_code = "derived_refresh_failed"
-                                await self._store.mark_rollback_blocked(
-                                    candidate_id,
-                                    reason_code=reason_code,
-                                )
-                                blocked += 1
-                                continue
-                        await self._store.complete_rollback(candidate_id)
+                        ):
+                            reason_code = "rollback_result_unverified"
+                        elif await self._refresh_and_complete_rollback(
+                            candidate_id,
+                            candidate["memory_id"],
+                        ):
+                            recovered += 1
+                            continue
+                        else:
+                            reason_code = "derived_refresh_failed"
+                    else:
+                        reason_code = self._write_reason_code(
+                            self._update_memory,
+                            "rollback_failed",
+                        )
+                elif current_content == str(
+                    candidate["old_content"]
+                ) and self._metadata_matches(
+                    current_metadata,
+                    candidate["old_metadata"],
+                ):
+                    if await self._refresh_and_complete_rollback(
+                        candidate_id,
+                        candidate["memory_id"],
+                    ):
                         recovered += 1
                         continue
-                    reason_code = str(
-                        getattr(self._update_memory, "_last_write_reason_code", None)
-                        or "rollback_failed"
+                    reason_code = "derived_refresh_failed"
+                else:
+                    reason_code = "source_revision_mismatch"
+                if reason_code != "derived_refresh_failed":
+                    await self._store.mark_rollback_blocked(
+                        candidate_id,
+                        reason_code=reason_code,
                     )
-                await self._store.mark_rollback_blocked(
-                    candidate_id,
-                    reason_code=reason_code,
-                )
                 blocked += 1
             except asyncio.CancelledError:
                 raise
@@ -437,6 +630,20 @@ class ReconsolidationManager:
                 )
                 blocked += 1
         return {"recovered": recovered, "blocked": blocked}
+
+    async def _refresh_and_complete_rollback(
+        self,
+        candidate_id: str,
+        memory_id: int,
+    ) -> bool:
+        """刷新当前 canonical 派生数据并原子收口 rollback intent。"""
+
+        if self._refresh_derived is not None:
+            refreshed = await self._refresh_derived(memory_id)
+            if not refreshed:
+                return False
+        await self._store.complete_rollback(candidate_id)
+        return True
 
     async def _call_llm(self, text: str, context: str) -> str | None:
         """调用 LLM 生成修订文本；失败或输出过短返回 None。"""

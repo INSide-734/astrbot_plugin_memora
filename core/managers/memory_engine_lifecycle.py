@@ -252,41 +252,50 @@ class MemoryEngineLifecycleMixin:
             boost_strength = float(self.config.get("user_profile.boost_strength", 0.15))
             self.personalized_ranker = PersonalizedRanker(boost_strength)
 
-        # 自主学习：统一 FeedbackSignal shadow 候选（默认关闭，不修改生产配置）
-        if bool(self.config.get("auto_learning.enabled", False)):
-            from ..models.feedback_signal import (
-                FeedbackAdapterKind,
-                FeedbackSignalPolicy,
-            )
-            from ..storage.feedback_signal_store import FeedbackSignalStore
-            from .auto_learning import AutoLearningManager
-            from .feedback_signal_manager import FeedbackSignalManager
+        # 自主学习关闭时仍恢复状态，确保已有发布或中断 intent 可显式回滚。
+        from ..models.feedback_signal import FeedbackAdapterKind, FeedbackSignalPolicy
+        from ..storage.feedback_signal_store import FeedbackSignalStore
+        from .auto_learning import AutoLearningManager
+        from .auto_learning_state import AutoLearningStatePersistenceError
+        from .feedback_signal_manager import FeedbackSignalManager
 
-            feedback_store = FeedbackSignalStore(
-                configured_data_dir / "feedback_signals.db"
-            )
-            feedback_store.initialize()
-            feedback_policy = FeedbackSignalPolicy(
-                baseline_document_weight=float(
+        auto_learning_enabled = bool(self.config.get("auto_learning.enabled", False))
+        feedback_store = FeedbackSignalStore(
+            configured_data_dir / "feedback_signals.db"
+        )
+        feedback_store.initialize()
+        feedback_policy = FeedbackSignalPolicy(
+            baseline_document_weight=float(
+                self.config.get("document_route_weight", 0.65)
+            ),
+            baseline_graph_weight=float(self.config.get("graph_route_weight", 0.35)),
+        )
+        feedback_manager = FeedbackSignalManager(
+            feedback_store,
+            policy=feedback_policy,
+        )
+        feedback_manager.register_adapter(FeedbackAdapterKind.REVIEW_DECISION)
+        self.feedback_signal_manager = feedback_manager
+        auto_learning = AutoLearningManager(
+            feedback_manager,
+            data_dir=str(configured_data_dir),
+            enabled=auto_learning_enabled,
+            evidence_provider=self.config.get("auto_learning_evidence_provider"),
+        )
+        await auto_learning.load_state()
+        try:
+            await auto_learning.reconcile_reload_operation(
+                effective_document_weight=float(
                     self.config.get("document_route_weight", 0.65)
                 ),
-                baseline_graph_weight=float(
+                effective_graph_weight=float(
                     self.config.get("graph_route_weight", 0.35)
                 ),
             )
-            feedback_manager = FeedbackSignalManager(
-                feedback_store,
-                policy=feedback_policy,
-            )
-            feedback_manager.register_adapter(FeedbackAdapterKind.REVIEW_DECISION)
-            self.feedback_signal_manager = feedback_manager
-            auto_learning = AutoLearningManager(
-                feedback_manager,
-                data_dir=str(configured_data_dir),
-                enabled=True,
-            )
-            await auto_learning.load_state()
-            self.auto_learning = auto_learning
+        except AutoLearningStatePersistenceError:
+            # 自主学习状态恢复失败时保持 fail-closed；不得阻断记忆主链启动。
+            logger.warning("自主学习 reload 状态仍需恢复，继续启动记忆引擎")
+        self.auto_learning = auto_learning
 
         # 知识库初始化
         if bool(self.config.get("knowledge_base.enabled", True)):

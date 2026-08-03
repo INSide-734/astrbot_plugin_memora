@@ -301,3 +301,29 @@ def test_affection_editing_contract_uses_read_only_history_and_post_only_mutatio
         "get_affection_mood_history",
     ):
         assert callable(getattr(api, method_name))
+
+
+def test_learning_action_is_one_post_handler_under_every_page_prefix() -> None:
+    """生产发布与回滚必须复用同一管理员写入口和别名 handler。"""
+
+    plugin = MagicMock()
+    api = PluginPageApi(plugin)
+    api.register_routes()
+
+    registrations = {
+        (call.args[0], tuple(call.args[2])): call.args[1]
+        for call in plugin.context.register_web_api.call_args_list
+    }
+    canonical_handler = registrations[(f"{PAGE_API_PREFIX}/learning/action", ("POST",))]
+    for prefix in (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES):
+        path = f"{prefix}/learning/action"
+        assert (path, ("POST",)) in registrations
+        assert (path, ("GET",)) not in registrations
+        assert registrations[(path, ("POST",))] == canonical_handler
+
+    metadata = {item["path"]: item for item in api.get_route_metadata()}
+    action_metadata = metadata[f"{PAGE_API_PREFIX}/learning/action"]
+    assert action_metadata["handler_name"] == "learning_action"
+    assert action_metadata["auth"] == "admin"
+    assert action_metadata["risk"] == "write"
+    assert action_metadata["write_guard"] is True

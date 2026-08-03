@@ -288,6 +288,7 @@ class VectorRetriever:
         doc_id: int,
         metadata: dict[str, Any],
         expected_revision: str | None = None,
+        advance_revision: bool = True,
     ) -> bool:
         """
         更新文档元数据（使用 ORM 方式）
@@ -296,6 +297,8 @@ class VectorRetriever:
             doc_id: 文档 ID（整数 id）
             metadata: 新的元数据字典
             expected_revision: 可选的 source revision；提供时使用 SQLite 原子比较更新
+            advance_revision: 是否推进 canonical source revision。运行态计数更新
+                传入 False，以免无语义变化的维护写入使派生对象失效。
 
         返回:
             是否成功更新。
@@ -308,6 +311,7 @@ class VectorRetriever:
                 doc_id,
                 metadata,
                 expected_revision,
+                advance_revision=advance_revision,
             )
 
         import json
@@ -347,23 +351,37 @@ class VectorRetriever:
                 try:
                     from sqlalchemy import text
 
-                    stmt = text(
-                        "UPDATE documents SET metadata = :metadata, "
-                        "updated_at = :updated_at WHERE id = :id"
+                    stmt = (
+                        text(
+                            "UPDATE documents SET metadata = :metadata, "
+                            "updated_at = :updated_at WHERE id = :id"
+                        )
+                        if advance_revision
+                        else text(
+                            "UPDATE documents SET metadata = :metadata WHERE id = :id"
+                        )
                     )
                 except ModuleNotFoundError:
                     stmt = (
-                        "UPDATE documents SET metadata = :metadata, "
-                        "updated_at = :updated_at WHERE id = :id"
+                        (
+                            "UPDATE documents SET metadata = :metadata, "
+                            "updated_at = :updated_at WHERE id = :id"
+                        )
+                        if advance_revision
+                        else (
+                            "UPDATE documents SET metadata = :metadata WHERE id = :id"
+                        )
                     )
 
+                parameters = {
+                    "metadata": json.dumps(current_metadata, ensure_ascii=False),
+                    "id": doc_id,
+                }
+                if advance_revision:
+                    parameters["updated_at"] = datetime.now(timezone.utc).isoformat()
                 await session.execute(
                     stmt,
-                    {
-                        "metadata": json.dumps(current_metadata, ensure_ascii=False),
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                        "id": doc_id,
-                    },
+                    parameters,
                 )
 
             logger.debug("[元数据更新] 成功")
@@ -383,6 +401,8 @@ class VectorRetriever:
         doc_id: int,
         metadata: dict[str, Any],
         expected_revision: str,
+        *,
+        advance_revision: bool = True,
     ) -> bool:
         """在 SQLite 写锁内校验 revision 后更新 metadata。"""
 
@@ -426,20 +446,25 @@ class VectorRetriever:
                 if not isinstance(current_metadata, dict):
                     current_metadata = {}
                 current_metadata.update(metadata)
-                updated_at = datetime.now(timezone.utc).isoformat()
-                update_result = await session.execute(
-                    text(
+                if advance_revision:
+                    statement = text(
                         "UPDATE documents SET metadata = :metadata, "
                         "updated_at = :updated_at "
                         "WHERE id = :id AND CAST(updated_at AS TEXT) = :revision"
-                    ),
-                    {
-                        "metadata": json.dumps(current_metadata, ensure_ascii=False),
-                        "updated_at": updated_at,
-                        "id": doc_id,
-                        "revision": str(expected_revision),
-                    },
-                )
+                    )
+                else:
+                    statement = text(
+                        "UPDATE documents SET metadata = :metadata "
+                        "WHERE id = :id AND CAST(updated_at AS TEXT) = :revision"
+                    )
+                parameters = {
+                    "metadata": json.dumps(current_metadata, ensure_ascii=False),
+                    "id": doc_id,
+                    "revision": str(expected_revision),
+                }
+                if advance_revision:
+                    parameters["updated_at"] = datetime.now(timezone.utc).isoformat()
+                update_result = await session.execute(statement, parameters)
                 if update_result.rowcount != 1:
                     await session.rollback()
                     return False

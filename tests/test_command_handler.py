@@ -135,7 +135,10 @@ class TestHandleSummarizeErrors:
         conversation_manager.get_session_metadata = AsyncMock(return_value=0)
         messages = [MagicMock(group_id=None), MagicMock(group_id=None)]
         conversation_manager.get_messages_range = AsyncMock(return_value=messages)
-        conversation_manager.update_session_metadata = AsyncMock()
+        conversation_manager.update_session_metadata = AsyncMock(return_value=True)
+        conversation_manager.update_session_metadata_fields = AsyncMock(
+            return_value=True
+        )
         processor = MagicMock()
         processor.process_conversation = AsyncMock(
             return_value=[
@@ -176,15 +179,12 @@ class TestHandleSummarizeErrors:
         assert len(results) == 2
         engine.add_memory.assert_not_awaited()
         gate.route_candidate.assert_awaited_once()
-        conversation_manager.update_session_metadata.assert_any_await(
+        conversation_manager.update_session_metadata_fields.assert_awaited_once_with(
             "session-1",
-            "last_summarized_index",
-            2,
-        )
-        conversation_manager.update_session_metadata.assert_any_await(
-            "session-1",
-            "pending_summary",
-            None,
+            {
+                "last_summarized_index": 2,
+                "pending_summary": None,
+            },
         )
 
 

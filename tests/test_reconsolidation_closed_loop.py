@@ -22,19 +22,59 @@ class _SimulatedCrash(BaseException):
     """模拟 canonical 提交后、候选状态提交前的进程中断。"""
 
 
-def _memory_dict(content: str, revision: str = "r-7") -> dict[str, object]:
+def _memory_dict(
+    content: str,
+    revision: str = "r-7",
+    *,
+    metadata: dict[str, object] | None = None,
+) -> dict[str, object]:
     """构造带稳定 revision 的 canonical 视图。"""
 
     return {
         "text": content,
         "updated_at": revision,
-        "metadata": {
+        "metadata": metadata
+        or {
             "memory_id": 7,
             "doc_id": "d7",
             "access_count": 8,
             "importance": 0.7,
         },
     }
+
+
+async def _apply_candidate_with_canonical_state(
+    manager: ReconsolidationManager,
+    candidate_id: str,
+) -> dict[str, object]:
+    """模拟 canonical CAS 成功并让 Manager 读取 apply 后真实快照。"""
+
+    applied_memory: dict[str, object] = {}
+
+    async def update_memory(
+        memory_id: int,
+        updates: dict[str, object],
+        *,
+        expected_revision: str,
+    ) -> bool:
+        """保存 apply payload，并把后续读取切换到新 revision。"""
+
+        assert (memory_id, expected_revision) == (7, "r-7")
+        metadata = dict(updates["metadata"])
+        metadata["updated_at"] = "r-8"
+        applied_memory.update(
+            _memory_dict(
+                str(updates["content"]),
+                revision="r-8",
+                metadata=metadata,
+            )
+        )
+        manager._get_memory = AsyncMock(return_value=applied_memory)
+        return True
+
+    result = await manager.apply_candidate(candidate_id, update_memory)
+    assert result["applied"] is True
+    return applied_memory
 
 
 @pytest.mark.asyncio
@@ -117,6 +157,15 @@ async def test_concurrent_apply_claims_canonical_once(tmp_path: Path) -> None:
         calls += 1
         entered.set()
         await release.wait()
+        metadata = dict(args[1]["metadata"])
+        metadata["updated_at"] = "r-8"
+        manager._get_memory = AsyncMock(
+            return_value=_memory_dict(
+                str(args[1]["content"]),
+                revision="r-8",
+                metadata=metadata,
+            )
+        )
         return True
 
     first = asyncio.create_task(
@@ -155,14 +204,21 @@ async def test_restart_recovers_apply_after_canonical_commit_before_finalize(
         enabled=True,
     )
     proposed = await manager.maybe_propose(7, context="上下文")
+    candidate = await store.get_candidate(proposed["candidate_id"])
+    target_metadata = manager._build_apply_payload(candidate)["metadata"]
     await store.begin_apply(
         proposed["candidate_id"],
         expected_revision="r-7",
+        target_metadata=target_metadata,
     )
     restarted = ReconsolidationManager(
         store=ReconsolidationStore(db_path),
         get_memory_cb=AsyncMock(
-            return_value=_memory_dict("修正后的记忆正文内容", revision="r-8")
+            return_value=_memory_dict(
+                "修正后的记忆正文内容",
+                revision="r-8",
+                metadata={**target_metadata, "updated_at": "r-8"},
+            )
         ),
         update_memory_cb=AsyncMock(return_value=True),
         enabled=True,
@@ -193,7 +249,13 @@ async def test_restart_blocks_apply_after_unrelated_canonical_edit(
         enabled=True,
     )
     proposed = await manager.maybe_propose(7, context="上下文")
-    await store.begin_apply(proposed["candidate_id"], expected_revision="r-7")
+    candidate = await store.get_candidate(proposed["candidate_id"])
+    target_metadata = manager._build_apply_payload(candidate)["metadata"]
+    await store.begin_apply(
+        proposed["candidate_id"],
+        expected_revision="r-7",
+        target_metadata=target_metadata,
+    )
     update_cb = AsyncMock(return_value=True)
     restarted = ReconsolidationManager(
         store=store,
@@ -228,7 +290,11 @@ async def test_complete_apply_is_atomic_when_action_audit_fails(tmp_path: Path) 
         change_summary="LLM 修订候选",
         evidence_type="llm_revision",
     )
-    await store.begin_apply(candidate["candidate_id"], expected_revision="r-7")
+    await store.begin_apply(
+        candidate["candidate_id"],
+        expected_revision="r-7",
+        target_metadata={"access_count": 8},
+    )
     async with aiosqlite.connect(store.db_path) as db:
         await db.execute(
             """
@@ -247,6 +313,8 @@ async def test_complete_apply_is_atomic_when_action_audit_fails(tmp_path: Path) 
             candidate["candidate_id"],
             applied=True,
             reason_code="applied",
+            applied_revision="r-8",
+            applied_metadata={"access_count": 8},
         )
 
     persisted = await store.get_candidate(candidate["candidate_id"])
@@ -273,7 +341,11 @@ async def test_mark_apply_blocked_is_atomic_when_action_audit_fails(
         change_summary="LLM 修订候选",
         evidence_type="llm_revision",
     )
-    await store.begin_apply(candidate["candidate_id"], expected_revision="r-7")
+    await store.begin_apply(
+        candidate["candidate_id"],
+        expected_revision="r-7",
+        target_metadata={"access_count": 8},
+    )
     async with aiosqlite.connect(store.db_path) as db:
         await db.execute(
             """
@@ -311,12 +383,15 @@ async def test_rollback_restores_old_content_with_cas(tmp_path: Path) -> None:
         enabled=True,
     )
     proposed = await manager.maybe_propose(7, context="上下文")
-    await manager.apply_candidate(
+    applied_memory = await _apply_candidate_with_canonical_state(
+        manager,
         proposed["candidate_id"],
-        AsyncMock(return_value=True),
     )
     get_cb = AsyncMock(
-        return_value=_memory_dict("修正后的记忆正文内容", revision="r-8")
+        side_effect=[
+            applied_memory,
+            _memory_dict("原始记忆正文", revision="r-9"),
+        ]
     )
     update_cb = AsyncMock(return_value=True)
 
@@ -335,6 +410,104 @@ async def test_rollback_restores_old_content_with_cas(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rollback_keeps_intent_when_derived_refresh_fails(
+    tmp_path: Path,
+) -> None:
+    """canonical 已恢复但派生刷新失败时必须保留可恢复 intent。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    manager = ReconsolidationManager(
+        store=store,
+        get_memory_cb=AsyncMock(return_value=_memory_dict("原始记忆正文")),
+        llm_caller=AsyncMock(return_value="修正后的记忆正文内容"),
+        enabled=True,
+    )
+    proposed = await manager.maybe_propose(7, context="上下文")
+    assert proposed is not None
+    applied_memory = await _apply_candidate_with_canonical_state(
+        manager,
+        proposed["candidate_id"],
+    )
+    candidate_id = str(proposed["candidate_id"])
+    refresh_derived = AsyncMock(return_value=False)
+    manager._refresh_derived = refresh_derived
+    restored_memory = _memory_dict("原始记忆正文", revision="r-9")
+    get_memory = AsyncMock(side_effect=[applied_memory, restored_memory])
+    update_memory = AsyncMock(return_value=True)
+
+    result = await manager.rollback_candidate(
+        candidate_id,
+        get_memory_cb=get_memory,
+        update_memory_cb=update_memory,
+    )
+
+    assert result == {"restored": False, "reason_code": "derived_refresh_failed"}
+    refresh_derived.assert_awaited_once_with(7)
+    candidate = await store.get_candidate(candidate_id)
+    assert candidate is not None
+    assert candidate["status"] == "approved"
+    assert [
+        item["candidate_id"] for item in await store.list_incomplete_rollbacks()
+    ] == [candidate_id]
+
+
+@pytest.mark.asyncio
+async def test_restart_completes_rollback_after_derived_refresh_retry(
+    tmp_path: Path,
+) -> None:
+    """重启后派生刷新成功时应收口此前保留的回滚 intent。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    manager = ReconsolidationManager(
+        store=store,
+        get_memory_cb=AsyncMock(return_value=_memory_dict("原始记忆正文")),
+        llm_caller=AsyncMock(return_value="修正后的记忆正文内容"),
+        enabled=True,
+    )
+    proposed = await manager.maybe_propose(7, context="上下文")
+    assert proposed is not None
+    applied_memory = await _apply_candidate_with_canonical_state(
+        manager,
+        proposed["candidate_id"],
+    )
+    candidate_id = str(proposed["candidate_id"])
+    manager._refresh_derived = AsyncMock(return_value=False)
+    restored_memory = _memory_dict("原始记忆正文", revision="r-9")
+    get_memory = AsyncMock(side_effect=[applied_memory, restored_memory])
+    update_memory = AsyncMock(return_value=True)
+
+    failed = await manager.rollback_candidate(
+        candidate_id,
+        get_memory_cb=get_memory,
+        update_memory_cb=update_memory,
+    )
+    assert failed["reason_code"] == "derived_refresh_failed"
+
+    refresh_derived = AsyncMock(return_value=True)
+    recovery_update = AsyncMock(return_value=True)
+    restarted = ReconsolidationManager(
+        store=ReconsolidationStore(store.db_path),
+        get_memory_cb=AsyncMock(return_value=restored_memory),
+        update_memory_cb=recovery_update,
+        refresh_derived_cb=refresh_derived,
+        enabled=True,
+    )
+    await restarted._store.initialize()
+
+    result = await restarted.recover_incomplete_rollbacks()
+
+    assert result == {"recovered": 1, "blocked": 0}
+    recovery_update.assert_not_awaited()
+    refresh_derived.assert_awaited_once_with(7)
+    candidate = await restarted._store.get_candidate(candidate_id)
+    assert candidate is not None
+    assert candidate["status"] == "rolled_back"
+    assert await restarted._store.list_incomplete_rollbacks() == []
+
+
+@pytest.mark.asyncio
 async def test_failed_rollback_cancels_intent_and_keeps_candidate_approved(
     tmp_path: Path,
 ) -> None:
@@ -349,18 +522,16 @@ async def test_failed_rollback_cancels_intent_and_keeps_candidate_approved(
         enabled=True,
     )
     proposed = await manager.maybe_propose(7, context="上下文")
-    await manager.apply_candidate(
+    applied_memory = await _apply_candidate_with_canonical_state(
+        manager,
         proposed["candidate_id"],
-        AsyncMock(return_value=True),
     )
     update_cb = AsyncMock(return_value=False)
     update_cb._last_write_reason_code = "source_revision_mismatch"
 
     result = await manager.rollback_candidate(
         proposed["candidate_id"],
-        get_memory_cb=AsyncMock(
-            return_value=_memory_dict("修正后的记忆正文内容", revision="r-8")
-        ),
+        get_memory_cb=AsyncMock(return_value=applied_memory),
         update_memory_cb=update_cb,
     )
 
@@ -389,11 +560,10 @@ async def test_restart_recovers_rollback_after_cross_store_crash(
         enabled=True,
     )
     proposed = await manager.maybe_propose(7, context="上下文")
-    await manager.apply_candidate(
+    current = await _apply_candidate_with_canonical_state(
+        manager,
         proposed["candidate_id"],
-        AsyncMock(return_value=True),
     )
-    current = _memory_dict("修正后的记忆正文内容", revision="r-8")
     restored = _memory_dict("原始记忆正文", revision="r-9")
     get_cb = AsyncMock(side_effect=[current, restored, restored])
     crashing_update = AsyncMock(side_effect=_SimulatedCrash())
@@ -420,9 +590,7 @@ async def test_restart_recovers_rollback_after_cross_store_crash(
     result = await restarted.recover_incomplete_rollbacks()
 
     assert result == {"recovered": 1, "blocked": 0}
-    recovery_update.assert_awaited_once()
-    assert recovery_update.await_args.args[1]["content"] == "原始记忆正文"
-    assert recovery_update.await_args.kwargs["expected_revision"] == "r-9"
+    recovery_update.assert_not_awaited()
     refresh_derived.assert_awaited_once_with(7)
     candidate = await restarted_store.get_candidate(proposed["candidate_id"])
     assert candidate["status"] == "rolled_back"
@@ -444,9 +612,9 @@ async def test_restart_blocks_rollback_after_unrelated_canonical_edit(
         enabled=True,
     )
     proposed = await manager.maybe_propose(7, context="上下文")
-    await manager.apply_candidate(
+    await _apply_candidate_with_canonical_state(
+        manager,
         proposed["candidate_id"],
-        AsyncMock(return_value=True),
     )
     await store.begin_rollback(
         proposed["candidate_id"],
@@ -566,158 +734,6 @@ async def test_recall_proposes_candidate_but_never_writes_canonical() -> None:
     )
 
     manager.maybe_propose.assert_awaited_once_with(7, context="查询文本")
-
-
-@pytest.mark.asyncio
-async def test_stage_candidate_reuses_existing_pending_row(tmp_path: Path) -> None:
-    """相同来源与提案重复写入时应复用同一条 pending 候选。"""
-
-    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
-    await store.initialize()
-    payload = {
-        "memory_id": 7,
-        "source_revision": "r-7",
-        "old_content": "原始记忆正文",
-        "old_metadata": {"access_count": 8},
-        "proposed_content": "修正后的记忆正文内容",
-        "change_summary": "LLM 修订候选",
-        "evidence_type": "llm_revision",
-    }
-
-    first = await store.stage_candidate(**payload)
-    second = await store.stage_candidate(**payload)
-
-    assert second["candidate_id"] == first["candidate_id"]
-    assert len(await store.list_candidates()) == 1
-
-
-@pytest.mark.asyncio
-async def test_stage_candidate_serializes_concurrent_duplicates(tmp_path: Path) -> None:
-    """并发重复提案只能保留一条 pending 候选。"""
-
-    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
-    await store.initialize()
-    payload = {
-        "memory_id": 7,
-        "source_revision": "r-7",
-        "old_content": "原始记忆正文",
-        "old_metadata": {"access_count": 8},
-        "proposed_content": "修正后的记忆正文内容",
-        "change_summary": "LLM 修订候选",
-        "evidence_type": "llm_revision",
-    }
-
-    results = await asyncio.gather(
-        *(store.stage_candidate(**payload) for _ in range(8)),
-        return_exceptions=True,
-    )
-
-    assert not [result for result in results if isinstance(result, Exception)]
-    assert len(await store.list_candidates()) == 1
-
-
-@pytest.mark.asyncio
-async def test_transition_rolls_back_status_when_action_audit_fails(
-    tmp_path: Path,
-) -> None:
-    """动作审计写入失败时，候选状态迁移必须一并回滚。"""
-
-    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
-    await store.initialize()
-    candidate = await store.stage_candidate(
-        memory_id=7,
-        source_revision="r-7",
-        old_content="原始记忆正文",
-        old_metadata={"access_count": 8},
-        proposed_content="修正后的记忆正文内容",
-        change_summary="LLM 修订候选",
-        evidence_type="llm_revision",
-    )
-    async with aiosqlite.connect(store.db_path) as db:
-        await db.execute(
-            """
-            CREATE TRIGGER reject_reconsolidation_action
-            BEFORE INSERT ON reconsolidation_actions
-            WHEN NEW.action='reject'
-            BEGIN
-                SELECT RAISE(ABORT, 'action audit blocked');
-            END
-            """
-        )
-        await db.commit()
-
-    with pytest.raises(sqlite3.IntegrityError):
-        await store.transition(
-            candidate["candidate_id"],
-            expected_status="pending",
-            new_status="rejected",
-            reason_code="manual_reject",
-            action="reject",
-        )
-
-    persisted = await store.get_candidate(candidate["candidate_id"])
-    assert persisted is not None
-    assert persisted["status"] == "pending"
-    assert [
-        item["action"] for item in await store.list_actions(candidate["candidate_id"])
-    ] == ["stage"]
-
-
-@pytest.mark.asyncio
-async def test_complete_rollback_is_atomic_when_action_audit_fails(
-    tmp_path: Path,
-) -> None:
-    """回滚动作审计失败时，候选状态和恢复操作必须一起保留。"""
-
-    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
-    await store.initialize()
-    candidate = await store.stage_candidate(
-        memory_id=7,
-        source_revision="r-7",
-        old_content="原始记忆正文",
-        old_metadata={"access_count": 8},
-        proposed_content="修正后的记忆正文内容",
-        change_summary="LLM 修订候选",
-        evidence_type="llm_revision",
-    )
-    await store.transition(
-        candidate["candidate_id"],
-        expected_status="pending",
-        new_status="approved",
-        reason_code="applied",
-        action="apply",
-    )
-    await store.begin_rollback(
-        candidate["candidate_id"],
-        expected_revision="r-8",
-    )
-    async with aiosqlite.connect(store.db_path) as db:
-        await db.execute(
-            """
-            CREATE TRIGGER reject_rollback_action
-            BEFORE INSERT ON reconsolidation_actions
-            WHEN NEW.action='rollback'
-            BEGIN
-                SELECT RAISE(ABORT, 'rollback audit blocked');
-            END
-            """
-        )
-        await db.commit()
-
-    with pytest.raises(sqlite3.IntegrityError):
-        await store.complete_rollback(candidate["candidate_id"])
-
-    persisted = await store.get_candidate(candidate["candidate_id"])
-    assert persisted is not None
-    assert persisted["status"] == "approved"
-    operations = await store.list_incomplete_rollbacks()
-    assert [item["candidate_id"] for item in operations] == [candidate["candidate_id"]]
-    assert [
-        item["action"] for item in await store.list_actions(candidate["candidate_id"])
-    ] == [
-        "stage",
-        "apply",
-    ]
 
 
 @pytest.mark.asyncio

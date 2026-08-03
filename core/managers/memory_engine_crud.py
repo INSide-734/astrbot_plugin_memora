@@ -23,6 +23,7 @@ from .memory_engine_atom_support import (
     successful_atoms,
 )
 from .memory_engine_evolution_hooks import memory_revision
+from .memory_engine_semantic_updates import has_semantic_metadata_change
 from .memory_engine_write_observability import (
     MemoryEngineWriteObservabilityMixin,
     measure_memory_write_stage,
@@ -563,6 +564,9 @@ class MemoryEngineCRUDMixin(MemoryEngineWriteObservabilityMixin):
                     self._last_write_reason_code = "not_initialized"
                     return False
                 guarded_metadata = current_metadata.copy()
+                requested_metadata = updates.get("metadata")
+                if isinstance(requested_metadata, dict):
+                    guarded_metadata.update(requested_metadata)
                 guarded_metadata["updated_at"] = time.time()
                 success = await self.hybrid_retriever.update_content_if_revision(
                     memory_id,
@@ -575,6 +579,7 @@ class MemoryEngineCRUDMixin(MemoryEngineWriteObservabilityMixin):
                     return False
                 await self._invalidate_evolution_after_revision(memory_id)
                 await self._schedule_evolution_after_write(memory_id)
+                self._schedule_domain_proposals_after_write(memory_id)
                 self._retrieval.invalidate_cache()
                 if self.graph_memory_manager is not None and not skip_graph_reindex:
                     try:
@@ -634,6 +639,10 @@ class MemoryEngineCRUDMixin(MemoryEngineWriteObservabilityMixin):
         if "metadata" in updates:
             metadata_updates.update(updates["metadata"])
         if metadata_updates:
+            semantic_metadata_changed = has_semantic_metadata_change(
+                current_metadata,
+                metadata_updates,
+            )
             if not isinstance(current_metadata, dict):
                 try:
                     current_metadata = (
@@ -648,20 +657,27 @@ class MemoryEngineCRUDMixin(MemoryEngineWriteObservabilityMixin):
             if self.hybrid_retriever is None:
                 logger.error("混合检索器未初始化")
                 return False
+            update_kwargs: dict[str, Any] = {}
+            if not semantic_metadata_changed:
+                update_kwargs["advance_revision"] = False
             if expected_revision is None:
                 success = await self.hybrid_retriever.update_metadata(
                     memory_id,
                     metadata_updates,
+                    **update_kwargs,
                 )
             else:
                 success = await self.hybrid_retriever.update_metadata(
                     memory_id,
                     metadata_updates,
                     expected_revision=expected_revision,
+                    **update_kwargs,
                 )
             if success:
-                await self._invalidate_evolution_after_revision(memory_id)
-                await self._schedule_evolution_after_write(memory_id)
+                if semantic_metadata_changed:
+                    await self._invalidate_evolution_after_revision(memory_id)
+                    await self._schedule_evolution_after_write(memory_id)
+                    self._schedule_domain_proposals_after_write(memory_id)
                 self._retrieval.invalidate_cache()
                 if self.graph_memory_manager is not None and not skip_graph_reindex:
                     op_id = await self._write_journal.start_op(

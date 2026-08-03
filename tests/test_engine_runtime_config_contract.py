@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
 import pytest
+from astrbot.api.platform import MessageType
 
 from core.base.config_manager import ConfigApplyResult, ConfigManager
 from core.base.config_ownership import (
@@ -174,6 +175,7 @@ async def test_projected_lifecycle_flags_control_real_engine_components(
         }
     )
     config["graph_memory_enabled"] = False
+    config["data_dir"] = str(Path(tmp_db_path).parent)
     engine = MemoryEngine(
         db_path=tmp_db_path,
         faiss_db=MagicMock(),
@@ -540,7 +542,9 @@ async def test_type_aware_decay_uses_only_the_public_dotted_key() -> None:
 def _tool_context() -> MagicMock:
     """构造 MemorySearchTool 所需的最小工具上下文。"""
 
-    event = SimpleNamespace(unified_msg_origin="session-1")
+    event = MagicMock(unified_msg_origin="session-1")
+    event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
+    event.get_sender_id.return_value = "user-1"
     return MagicMock(context=SimpleNamespace(event=event))
 
 

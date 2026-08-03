@@ -93,6 +93,45 @@ class TestGetNote:
         result = await mgr.get_note(999)
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_scoped_get_rejects_other_user_note(self) -> None:
+        """按 ID 读取笔记时，其他用户的人工正文必须不可见。"""
+        note = Note(note_id=1, user_id="user-a", content="secret")
+        store = MagicMock()
+        store.get = AsyncMock(return_value=note)
+        mgr = NoteManager(store=store)
+
+        assert (
+            await mgr.get_note_for_scope(
+                1,
+                scope_key="private:user-b",
+                user_id="user-b",
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_scoped_get_rejects_other_session_derived_note(self) -> None:
+        """按 ID 读取笔记时，其他会话的派生正文必须不可见。"""
+        note = Note(
+            note_id=1,
+            origin=DomainObjectOrigin.DERIVED,
+            provenance=_provenance(),
+            content="secret",
+        )
+        store = MagicMock()
+        store.get = AsyncMock(return_value=note)
+        mgr = NoteManager(store=store)
+
+        assert (
+            await mgr.get_note_for_scope(
+                1,
+                scope_key="session:other",
+                user_id="user-a",
+            )
+            is None
+        )
+
 
 # ---------------------------------------------------------------------------
 # 更新笔记
@@ -197,6 +236,24 @@ class TestSearch:
         assert len(result) == 2
         assert total == 2
         store.search.assert_called_once_with("query", limit=10)
+
+    @pytest.mark.asyncio
+    async def test_scoped_search_rejects_cross_user_note(self) -> None:
+        """搜索笔记时，其他用户的人工正文必须从结果中移除。"""
+        notes = [Note(note_id=1, user_id="user-a"), Note(note_id=2, user_id="user-b")]
+        store = MagicMock()
+        store.search = AsyncMock(return_value=(notes, 2))
+        mgr = NoteManager(store=store)
+
+        result, total = await mgr.search_for_scope(
+            "query",
+            scope_key="private:user-b",
+            user_id="user-b",
+            limit=10,
+        )
+
+        assert [note.note_id for note in result] == [2]
+        assert total == 1
 
 
 # ---------------------------------------------------------------------------

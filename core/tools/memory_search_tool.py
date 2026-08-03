@@ -14,6 +14,7 @@ from pydantic.dataclasses import dataclass
 from ..base.config_manager import ConfigManager
 from ..processors.human_like_formatter import HumanLikeMemoryFormatter
 from ..utils import get_persona_id
+from .agent_scope import resolve_agent_read_scope
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -109,6 +110,17 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
 
         try:
             event = context.context.event
+            read_scope = resolve_agent_read_scope(context)
+            if read_scope is None:
+                return _json_result(
+                    {
+                        "query": cleaned_query,
+                        "count": 0,
+                        "results": [],
+                        "formatted_recall": [],
+                        "error": "event_scope_unavailable",
+                    }
+                )
             filtering_config = self.config_manager.filtering_settings
             use_persona_filtering = filtering_config.get("use_persona_filtering", True)
             use_session_filtering = filtering_config.get("use_session_filtering", True)
@@ -139,6 +151,8 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
                 session_id=recall_session_id,
                 persona_id=recall_persona_id,
                 emotion_context=emotion_context,
+                chat_type=read_scope.chat_type,
+                user_id=read_scope.user_id,
             )
 
             serialized_results = []

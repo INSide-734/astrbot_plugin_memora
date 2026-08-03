@@ -297,6 +297,7 @@ def test_runtime_dependency_imports_are_declared_or_allowlisted() -> None:
         "gc",
         "hashlib",
         "heapq",
+        "hmac",
         "html",
         "importlib",
         "inspect",

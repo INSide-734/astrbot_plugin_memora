@@ -36,7 +36,8 @@ async def test_reflection_quarantines_low_quality_before_engine_and_evolution() 
 
     conversation_manager = MagicMock()
     conversation_manager.get_session_metadata = AsyncMock(return_value=0)
-    conversation_manager.update_session_metadata = AsyncMock()
+    conversation_manager.update_session_metadata = AsyncMock(return_value=True)
+    conversation_manager.update_session_metadata_fields = AsyncMock(return_value=True)
     processor = MagicMock()
     processor.process_conversation = AsyncMock(
         return_value=[
@@ -84,15 +85,12 @@ async def test_reflection_quarantines_low_quality_before_engine_and_evolution() 
 
     engine.add_memory.assert_not_awaited()
     evolution.schedule_consider.assert_not_awaited()
-    conversation_manager.update_session_metadata.assert_any_await(
+    conversation_manager.update_session_metadata_fields.assert_awaited_once_with(
         "session-1",
-        "last_summarized_index",
-        2,
-    )
-    conversation_manager.update_session_metadata.assert_any_await(
-        "session-1",
-        "pending_summary",
-        None,
+        {
+            "last_summarized_index": 2,
+            "pending_summary": None,
+        },
     )
 
 
@@ -102,7 +100,8 @@ async def test_reflection_preserves_canonical_path_for_allowed_candidate() -> No
 
     conversation_manager = MagicMock()
     conversation_manager.get_session_metadata = AsyncMock(return_value=0)
-    conversation_manager.update_session_metadata = AsyncMock()
+    conversation_manager.update_session_metadata = AsyncMock(return_value=True)
+    conversation_manager.update_session_metadata_fields = AsyncMock(return_value=True)
     processor = MagicMock()
     processor.process_conversation = AsyncMock(
         return_value=[
@@ -152,7 +151,8 @@ async def test_reflection_reports_canonical_and_quarantine_separately(
 
     conversation_manager = MagicMock()
     conversation_manager.get_session_metadata = AsyncMock(return_value=0)
-    conversation_manager.update_session_metadata = AsyncMock()
+    conversation_manager.update_session_metadata = AsyncMock(return_value=True)
+    conversation_manager.update_session_metadata_fields = AsyncMock(return_value=True)
     processor = MagicMock()
     processor.process_conversation = AsyncMock(
         return_value=[
@@ -227,7 +227,8 @@ async def test_reflection_canonical_failure_preserves_pending_window() -> None:
 
     conversation_manager = MagicMock()
     conversation_manager.get_session_metadata = AsyncMock(return_value=0)
-    conversation_manager.update_session_metadata = AsyncMock()
+    conversation_manager.update_session_metadata = AsyncMock(return_value=True)
+    conversation_manager.update_session_metadata_fields = AsyncMock(return_value=True)
     processor = MagicMock()
     processor.process_conversation = AsyncMock(
         return_value=[
@@ -305,7 +306,8 @@ async def test_grounded_fact_reaches_canonical_write_end_to_end() -> None:
     ]
     conversation_manager = MagicMock()
     conversation_manager.get_session_metadata = AsyncMock(return_value=0)
-    conversation_manager.update_session_metadata = AsyncMock()
+    conversation_manager.update_session_metadata = AsyncMock(return_value=True)
+    conversation_manager.update_session_metadata_fields = AsyncMock(return_value=True)
     engine = MagicMock()
     engine.add_memory = AsyncMock(return_value=11)
     quality_gate = MagicMock()
@@ -348,6 +350,7 @@ async def test_reflection_write_cancellation_propagates_from_gather() -> None:
     conversation_manager = MagicMock()
     conversation_manager.get_session_metadata = AsyncMock(return_value=0)
     conversation_manager.update_session_metadata = AsyncMock()
+    conversation_manager.update_session_metadata_fields = AsyncMock(return_value=True)
     processor = MagicMock()
     processor.process_conversation = AsyncMock(
         return_value=[

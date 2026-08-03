@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from astrbot.api.platform import MessageType
 
 from core.tools.note_tools import NoteReadTool, NoteSearchTool, NoteWriteTool
 
@@ -30,7 +31,15 @@ def _make_mock_note(
 
 
 def _make_mock_ctx() -> MagicMock:
-    return MagicMock()
+    event = MagicMock()
+    event.unified_msg_origin = "private:user-001"
+    event.get_sender_id.return_value = "user-001"
+    event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
+    inner = MagicMock()
+    inner.event = event
+    wrapper = MagicMock()
+    wrapper.context = inner
+    return wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +72,7 @@ class TestNoteSearchTool:
         )
 
         mock_mgr = MagicMock()
-        mock_mgr.search = AsyncMock(return_value=([note1, note2], 2))
+        mock_mgr.search_for_scope = AsyncMock(return_value=([note1, note2], 2))
 
         tool = NoteSearchTool(note_manager=mock_mgr)
         result = await tool.call(_make_mock_ctx(), query="shop")
@@ -77,7 +86,7 @@ class TestNoteSearchTool:
     async def test_search_empty_results(self):
         """当 search returns no notes, tool should report no notes found."""
         mock_mgr = MagicMock()
-        mock_mgr.search = AsyncMock(return_value=([], 0))
+        mock_mgr.search_for_scope = AsyncMock(return_value=([], 0))
 
         tool = NoteSearchTool(note_manager=mock_mgr)
         result = await tool.call(_make_mock_ctx(), query="nothing")
@@ -96,12 +105,17 @@ class TestNoteSearchTool:
     async def test_search_passes_limit_parameter(self):
         """工具 should forward the limit parameter to the manager."""
         mock_mgr = MagicMock()
-        mock_mgr.search = AsyncMock(return_value=([], 0))
+        mock_mgr.search_for_scope = AsyncMock(return_value=([], 0))
 
         tool = NoteSearchTool(note_manager=mock_mgr)
         await tool.call(_make_mock_ctx(), query="q", limit=5)
 
-        mock_mgr.search.assert_called_once_with("q", limit=5)
+        mock_mgr.search_for_scope.assert_called_once_with(
+            "q",
+            scope_key="private:user-001",
+            user_id="user-001",
+            limit=5,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +144,7 @@ class TestNoteReadTool:
         )
 
         mock_mgr = MagicMock()
-        mock_mgr.get_note = AsyncMock(return_value=note)
+        mock_mgr.get_note_for_scope = AsyncMock(return_value=note)
 
         tool = NoteReadTool(note_manager=mock_mgr)
         result = await tool.call(_make_mock_ctx(), note_id=3)
@@ -144,7 +158,7 @@ class TestNoteReadTool:
     async def test_read_note_not_found(self):
         """当 get_note returns None, tool should report not found."""
         mock_mgr = MagicMock()
-        mock_mgr.get_note = AsyncMock(return_value=None)
+        mock_mgr.get_note_for_scope = AsyncMock(return_value=None)
 
         tool = NoteReadTool(note_manager=mock_mgr)
         result = await tool.call(_make_mock_ctx(), note_id=999)
@@ -197,7 +211,7 @@ class TestNoteWriteTool:
 
         assert "Note 42 created: New Note" == result
         mock_mgr.create_note.assert_called_once_with(
-            title="New Note", content="Some content", tags=[]
+            title="New Note", content="Some content", tags=[], user_id="user-001"
         )
 
     @pytest.mark.asyncio
@@ -208,7 +222,7 @@ class TestNoteWriteTool:
         )
 
         mock_mgr = MagicMock()
-        mock_mgr.update_note = AsyncMock(return_value=updated_note)
+        mock_mgr.update_note_for_scope = AsyncMock(return_value=updated_note)
 
         tool = NoteWriteTool(note_manager=mock_mgr)
         result = await tool.call(
@@ -220,15 +234,20 @@ class TestNoteWriteTool:
         )
 
         assert "Note 7 updated (v4): Updated Title" == result
-        mock_mgr.update_note.assert_called_once_with(
-            7, title="Updated Title", content="New content", tags=["updated"]
+        mock_mgr.update_note_for_scope.assert_called_once_with(
+            7,
+            scope_key="private:user-001",
+            user_id="user-001",
+            title="Updated Title",
+            content="New content",
+            tags=["updated"],
         )
 
     @pytest.mark.asyncio
     async def test_write_update_note_not_found(self):
         """当 update returns None, tool should report not found."""
         mock_mgr = MagicMock()
-        mock_mgr.update_note = AsyncMock(return_value=None)
+        mock_mgr.update_note_for_scope = AsyncMock(return_value=None)
 
         tool = NoteWriteTool(note_manager=mock_mgr)
         result = await tool.call(
@@ -267,7 +286,10 @@ class TestNoteWriteTool:
         )
 
         mock_mgr.create_note.assert_called_once_with(
-            title="Tagged Note", content="content", tags=["tag1", "tag2"]
+            title="Tagged Note",
+            content="content",
+            tags=["tag1", "tag2"],
+            user_id="user-001",
         )
 
     @pytest.mark.asyncio

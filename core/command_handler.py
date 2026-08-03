@@ -3,6 +3,7 @@
 负责处理插件命令
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
 
 from astrbot.api import logger
@@ -13,6 +14,7 @@ from .commands.diagnostic_commands import DiagnosticCommandMixin, DiagnosticProv
 from .commands.maintenance_commands import MaintenanceCommandMixin
 from .commands.query_commands import QueryCommandMixin
 from .commands.update_commands import UpdateCommandMixin
+from .handlers.reflection_candidate_writer import build_reflection_idempotency_key
 from .i18n_backend import t, t_list
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
@@ -214,8 +216,18 @@ class CommandHandler(
             canonical_count = 0
             canonical_importance_total = 0.0
             quarantined_count = 0
-            for mem in memories:
+            completed_idempotency_keys: set[str] = set()
+            for memory_index, mem in enumerate(memories):
                 metadata = mem.setdefault("metadata", {})
+                idempotency_key = build_reflection_idempotency_key(
+                    session_id=session_id,
+                    start_index=last_summarized_index,
+                    end_index=actual_count,
+                    batch_index=int(metadata.get("batch_index", 0) or 0),
+                    memory_index=memory_index,
+                    content=str(mem.get("content", "") or ""),
+                )
+                metadata["idempotency_key"] = idempotency_key
                 metadata["source_window"] = {
                     "session_id": session_id,
                     "start_index": last_summarized_index,
@@ -234,6 +246,7 @@ class CommandHandler(
                         )
                         if gate_result.action == "quarantined":
                             quarantined_count += 1
+                            completed_idempotency_keys.add(idempotency_key)
                             continue
                     await self.memory_engine.add_memory(
                         content=mem["content"],
@@ -244,6 +257,7 @@ class CommandHandler(
                         atoms=mem.get("atoms", []),
                     )
                     canonical_count += 1
+                    completed_idempotency_keys.add(idempotency_key)
                     canonical_importance_total += mem.get("importance", 0)
                     all_topics.extend(metadata.get("topics", []))
                 except Exception as write_err:
@@ -254,27 +268,75 @@ class CommandHandler(
 
             processed_count = canonical_count + quarantined_count
             if processed_count < len(memories):
-                await self.conversation_manager.update_session_metadata(
-                    session_id,
-                    "pending_summary",
-                    {
-                        "start_index": last_summarized_index,
-                        "end_index": actual_count,
-                        "retry_count": 1,
-                        "failed_stage": "manual_memory_write",
-                        "failed_count": len(memories) - processed_count,
-                    },
+                pending_persisted = (
+                    await self.conversation_manager.update_session_metadata(
+                        session_id,
+                        "pending_summary",
+                        {
+                            "start_index": last_summarized_index,
+                            "end_index": actual_count,
+                            "retry_count": 1,
+                            "failed_stage": "manual_memory_write",
+                            "failed_count": len(memories) - processed_count,
+                            "completed_idempotency_keys": sorted(
+                                completed_idempotency_keys
+                            ),
+                        },
+                    )
                 )
+                if pending_persisted is not True:
+                    logger.error(
+                        f"[{session_id}] 手动总结失败窗口未能持久化，将拒绝报告为已处理"
+                    )
                 raise RuntimeError(
                     f"仅安全处理 {processed_count}/{len(memories)} 条候选，窗口未推进"
                 )
 
-            await self.conversation_manager.update_session_metadata(
-                session_id, "last_summarized_index", actual_count
-            )
-            await self.conversation_manager.update_session_metadata(
-                session_id, "pending_summary", None
-            )
+            try:
+                metadata_persisted = (
+                    await self.conversation_manager.update_session_metadata_fields(
+                        session_id,
+                        {
+                            "last_summarized_index": actual_count,
+                            "pending_summary": None,
+                        },
+                    )
+                )
+                if metadata_persisted is not True:
+                    raise RuntimeError("总结游标与待重试状态原子持久化失败")
+            except asyncio.CancelledError:
+                raise
+            except Exception as metadata_error:
+                pending_persisted = False
+                try:
+                    pending_persisted = (
+                        await self.conversation_manager.update_session_metadata(
+                            session_id,
+                            "pending_summary",
+                            {
+                                "start_index": last_summarized_index,
+                                "end_index": actual_count,
+                                "retry_count": 1,
+                                "failed_stage": "metadata_commit",
+                                "failed_count": 0,
+                                "completed_idempotency_keys": sorted(
+                                    completed_idempotency_keys
+                                ),
+                            },
+                        )
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as pending_error:
+                    logger.error(
+                        f"[{session_id}] 元数据失败窗口写入异常：{pending_error}",
+                        exc_info=True,
+                    )
+                if pending_persisted is not True:
+                    logger.error(
+                        f"[{session_id}] 元数据失败窗口未能持久化，无法确认后续重试状态"
+                    )
+                raise RuntimeError("总结元数据持久化失败") from metadata_error
 
             avg_importance = (
                 canonical_importance_total / canonical_count if canonical_count else 0.0

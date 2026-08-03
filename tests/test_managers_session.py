@@ -293,10 +293,20 @@ class TestSessionLifecycleMixin:
         mgr = _TestSessionManager()
         mgr.store.delete_session_messages = AsyncMock()
         # Mock reset_session_metadata from RangeAndMetadataMixin
-        mgr.reset_session_metadata = AsyncMock()
+        mgr.reset_session_metadata = AsyncMock(return_value=True)
 
         await mgr.clear_session("s1")
         mgr.store.delete_session_messages.assert_called_once_with("s1")
+
+    @pytest.mark.asyncio
+    async def test_clear_session_rejects_unpersisted_metadata_reset(self) -> None:
+        """元数据重置未提交时不得报告会话清理成功。"""
+        mgr = _TestSessionManager()
+        mgr.store.delete_session_messages = AsyncMock()
+        mgr.reset_session_metadata = AsyncMock(return_value=False)
+
+        with pytest.raises(RuntimeError, match="元数据"):
+            await mgr.clear_session("s1")
 
     @pytest.mark.asyncio
     async def test_cleanup_expired_sessions(self) -> None:

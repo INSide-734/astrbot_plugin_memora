@@ -1,39 +1,65 @@
-"""自主学习 shadow 候选 — 从统一反馈聚合生成参数候选，不直接改生产配置。"""
+"""自主学习全局候选、生产发布链与显式恢复编排入口。"""
 
 from __future__ import annotations
 
 import asyncio
-import json
-import math
+import copy
+import inspect
 import os
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Any
 
-from astrbot.api import logger
-
+from ..evaluation.feedback_learning_evidence import (
+    LearningEvidenceArtifact,
+    artifact_from_record,
+    artifact_to_record,
+    validate_learning_evidence,
+)
+from ..models.feedback_signal import FeedbackSignalAggregate
+from .auto_learning_actions import (
+    CandidateBinding,
+    aggregation_revision_for,
+    reduce_global_candidate,
+)
+from .auto_learning_operations import AutoLearningOperationsMixin
+from .auto_learning_persistence import AutoLearningPersistenceMixin
+from .auto_learning_records import (
+    candidate_status_view,
+    claim_view,
+    parse_datetime,
+    publication_view,
+    safe_reason,
+    safe_status,
+)
+from .auto_learning_reload import AutoLearningReloadMixin
+from .auto_learning_retention import AutoLearningRetentionMixin
+from .auto_learning_state import (
+    AutoLearningStatePersistenceError,
+    AutoLearningStateStore,
+)
 from .feedback_signal_manager import FeedbackSignalManager
 
 _STATE_FILE = "auto_learning.json"
-_CANDIDATE_STATUSES = frozenset(
-    {"ready_for_review", "rejected", "published", "invalid_state"}
+_BINDING_FIELDS = (
+    "aggregation_revision",
+    "source_config_revision",
+    "evidence_revision",
+    "quality_gate_version",
 )
-_CANDIDATE_REASONS = frozenset(
-    {"candidate", "insufficient_evidence", "published", "invalid_state"}
-)
-_PUBLISH_INTENT_PHASES = frozenset({"prepared"})
 
 
-class AutoLearningStatePersistenceError(RuntimeError):
-    """自主学习状态文件无法原子持久化。"""
+class AutoLearningManager(
+    AutoLearningOperationsMixin,
+    AutoLearningPersistenceMixin,
+    AutoLearningReloadMixin,
+    AutoLearningRetentionMixin,
+):
+    """生成唯一全局候选并编排可恢复的配置 CAS 发布与回滚。
 
-
-class AutoLearningManager:
-    """基于 FeedbackSignalManager 聚合生成影子参数候选并支持 CAS 发布。
-
-    候选只写入本地状态文件；``publish_candidate()`` 必须先持久化包含真实旧权重
-    的 intent，再通过携带 revision 的单一配置写入口。最终状态保存失败时保留
-    intent，重启后仍可显式回滚；状态变更入口共用同一把锁。
+    state lock 只覆盖内存状态和状态文件；外部 ConfigManager adapter 调用始终
+    在锁外执行。每次生产动作先持久化 prepared intent，再执行一次 writer，
+    最后以 operation ID CAS 收口 publication 或恢复记录。
     """
 
     def __init__(
@@ -44,22 +70,55 @@ class AutoLearningManager:
         enabled: bool = False,
         min_independent_windows: int = 2,
         min_samples: int = 3,
+        evidence_provider: Callable[
+            [Sequence[FeedbackSignalAggregate]],
+            LearningEvidenceArtifact
+            | Awaitable[LearningEvidenceArtifact | None]
+            | None,
+        ]
+        | None = None,
+        quality_gate_version: str = "quality-gate-v1",
     ) -> None:
-        """初始化统一反馈聚合来源与 shadow 候选状态。"""
+        """初始化反馈来源、证据绑定入口及单一状态权威。"""
 
         self._feedback_manager = feedback_manager
         self._data_dir = data_dir
-        self._enabled = enabled
+        self._enabled = bool(enabled)
         self._min_independent_windows = max(1, int(min_independent_windows))
         self._min_samples = max(1, int(min_samples))
+        if (
+            not isinstance(quality_gate_version, str)
+            or not quality_gate_version.strip()
+        ):
+            raise ValueError("learning_quality_gate_version_invalid")
+        self._evidence_provider = evidence_provider
+        self._quality_gate_version = quality_gate_version.strip()
         self._candidates: dict[str, dict[str, Any]] = {}
-        self._published: dict[str, dict[str, Any]] = {}
+        self._evidence_artifacts: dict[str, dict[str, Any]] = {}
+        self._publications: dict[str, dict[str, Any]] = {}
         self._publish_intents: dict[str, dict[str, Any]] = {}
+        self._operation_claims: dict[str, dict[str, Any]] = {}
+        self._terminal_operations: dict[str, dict[str, Any]] = {}
+        self._tombstones: dict[str, dict[str, Any]] = {}
+        self._tombstone_ttl_days = 30
+        self._tombstone_max_entries = 10_000
+        self._recovery_records: dict[str, dict[str, Any]] = {}
+        self._reload_operation: dict[str, Any] | None = None
+        self._active_publication_revision: str | None = None
+        self._state_revision: str | None = None
+        self._state_corrupt = False
+        self._state_recovery_required = False
+        self._state_reason_code = "learning_state_missing"
         self._state_lock = asyncio.Lock()
+        self._state_store = (
+            AutoLearningStateStore(os.path.join(data_dir, _STATE_FILE))
+            if data_dir
+            else None
+        )
 
     @property
     def enabled(self) -> bool:
-        """返回功能开关状态。"""
+        """返回是否允许新 rebuild 与 publish；不影响已有显式 rollback。"""
 
         return self._enabled
 
@@ -67,565 +126,407 @@ class AutoLearningManager:
         self,
         *,
         reference_time: datetime | None = None,
+        evidence_artifact: LearningEvidenceArtifact | None = None,
     ) -> list[dict[str, Any]]:
-        """从统一反馈聚合重建 shadow 候选；低样本只报告原因，不改生产配置。"""
+        """把 scoped/window 聚合与受信离线 artifact 归并为全局候选。"""
 
         if not self._enabled:
             return []
         async with self._state_lock:
-            reference_time = reference_time or datetime.now().astimezone()
-            aggregates = self._feedback_manager.rebuild(reference_time=reference_time)
-            previous_candidates = self._candidates
-            rebuilt: dict[str, dict[str, Any]] = {}
-            for aggregate in aggregates:
-                key = _candidate_key(aggregate.scope_domain, aggregate.persona_domain)
-                if aggregate.status == "candidate" and (
-                    aggregate.accepted_count >= self._min_samples
-                    and aggregate.independent_window_count
-                    >= self._min_independent_windows
+            if self._writes_blocked_unlocked() or self._operation_claims:
+                return self.get_candidates()
+
+        evaluation_time = reference_time or datetime.now().astimezone()
+        aggregates = self._feedback_manager.rebuild(reference_time=evaluation_time)
+        if not aggregates:
+            return await self._replace_with_referenced_candidates()
+
+        aggregation_revision = aggregation_revision_for(aggregates)
+        artifact = evidence_artifact or await self._resolve_evidence(aggregates)
+        artifact_record: dict[str, Any] | None = None
+        if artifact is None:
+            resolved_binding = CandidateBinding(
+                source_config_revision="config-revision-unavailable",
+                evidence_revision="evidence-revision-unavailable",
+                quality_gate_version=self._quality_gate_version,
+                evidence_passed=False,
+            )
+        else:
+            gate = validate_learning_evidence(
+                artifact,
+                aggregation_revision=aggregation_revision,
+                source_config_revision=artifact.source_config_revision
+                or "config-revision-invalid",
+                quality_gate_version=self._quality_gate_version,
+            )
+            resolved_binding = CandidateBinding(
+                source_config_revision=artifact.source_config_revision
+                or "config-revision-invalid",
+                evidence_revision=artifact.evidence_revision
+                or "evidence-revision-invalid",
+                quality_gate_version=artifact.quality_gate_version
+                or "quality-gate-invalid",
+                evidence_passed=gate.passed,
+            )
+            artifact_record = artifact_to_record(artifact)
+        baseline_document, baseline_graph = await self._baseline_for_binding(
+            resolved_binding
+        )
+        candidate = reduce_global_candidate(
+            aggregates,
+            binding=resolved_binding,
+            min_samples=self._min_samples,
+            min_independent_windows=self._min_independent_windows,
+            baseline_document_weight=baseline_document,
+            baseline_graph_weight=baseline_graph,
+        )
+
+        async with self._state_lock:
+            if self._writes_blocked_unlocked() or self._operation_claims:
+                return self.get_candidates()
+            candidate_record = candidate.to_record()
+            existing_artifact = self._evidence_artifacts.get(
+                candidate.evidence_revision
+            )
+            if (
+                artifact_record is not None
+                and existing_artifact is not None
+                and existing_artifact != artifact_record
+            ):
+                candidate_record["status"] = "rejected"
+                candidate_record["reason_code"] = "quality_gate_failed"
+            existing = self._find_same_candidate_unlocked(candidate_record)
+            if existing is not None:
+                candidate = reduce_global_candidate(
+                    aggregates,
+                    binding=resolved_binding,
+                    min_samples=self._min_samples,
+                    min_independent_windows=self._min_independent_windows,
+                    baseline_document_weight=baseline_document,
+                    baseline_graph_weight=baseline_graph,
+                    candidate_id=existing["candidate_id"],
+                    created_at=parse_datetime(existing.get("created_at")),
+                )
+                candidate_record = candidate.to_record()
+                if (
+                    artifact_record is not None
+                    and existing_artifact is not None
+                    and existing_artifact != artifact_record
                 ):
-                    status = "ready_for_review"
-                    reason_code = "candidate"
-                else:
-                    status = "rejected"
-                    reason_code = "insufficient_evidence"
-                if key in self._published:
-                    status = "published"
-                    reason_code = "published"
-                rebuilt[key] = {
-                    "candidate_key": key,
-                    "scope_domain": aggregate.scope_domain,
-                    "persona_domain": aggregate.persona_domain,
-                    "proposed_document_weight": aggregate.proposed_document_weight,
-                    "proposed_graph_weight": aggregate.proposed_graph_weight,
-                    "delta_from_baseline": aggregate.delta_from_baseline,
-                    "accepted_count": aggregate.accepted_count,
-                    "independent_window_count": aggregate.independent_window_count,
-                    "decayed_support": aggregate.decayed_support,
-                    "status": status,
-                    "reason_code": reason_code,
-                    "policy_version": aggregate.policy_version,
-                }
-            self._candidates = rebuilt
+                    candidate_record["status"] = "rejected"
+                    candidate_record["reason_code"] = "quality_gate_failed"
+            previous = copy.deepcopy(self._candidates)
+            previous_evidence = copy.deepcopy(self._evidence_artifacts)
+            self._candidates = {
+                key: value
+                for key, value in self._candidates.items()
+                if self._candidate_is_referenced_unlocked(key)
+            }
+            self._candidates[candidate.candidate_id] = candidate_record
+            if artifact_record is not None and existing_artifact is None:
+                self._evidence_artifacts[candidate.evidence_revision] = artifact_record
+            self._prune_evidence_artifacts_unlocked()
             try:
                 await self._save_state()
             except AutoLearningStatePersistenceError:
-                self._candidates = previous_candidates
+                self._candidates = previous
+                self._evidence_artifacts = previous_evidence
                 raise
-            return list(rebuilt.values())
-
-    async def publish_candidate(
-        self,
-        candidate_key: str,
-        *,
-        config_writer: Any,
-        expected_revision: str,
-        current_values: Mapping[str, object],
-    ) -> dict[str, Any]:
-        """按 revision CAS 发布候选，并记录调用方提供的真实发布前权重。"""
-
-        async with self._state_lock:
-            candidate = self._candidates.get(candidate_key)
-            if candidate is None or candidate["status"] != "ready_for_review":
-                return {
-                    "published": False,
-                    "reason_code": "insufficient_evidence",
-                }
-            if candidate_key in self._publish_intents:
-                return {"published": False, "reason_code": "publish_in_progress"}
-            previous = _normalized_weights(current_values)
-            if previous is None:
-                return {"published": False, "reason_code": "invalid_current_values"}
-            intent = {
-                "candidate_key": candidate_key,
-                "phase": "prepared",
-                "created_at": datetime.now().astimezone().isoformat(),
-                "revision": expected_revision,
-                "previous_document_weight": previous["document_route_weight"],
-                "previous_graph_weight": previous["graph_route_weight"],
-                "document_route_weight": candidate["proposed_document_weight"],
-                "graph_route_weight": candidate["proposed_graph_weight"],
-            }
-            self._publish_intents[candidate_key] = intent
-            try:
-                await self._save_state()
-            except AutoLearningStatePersistenceError:
-                self._publish_intents.pop(candidate_key, None)
-                return {
-                    "published": False,
-                    "reason_code": "state_persistence_failed",
-                }
-
-            updates = {
-                "graph_memory.document_route_weight": candidate[
-                    "proposed_document_weight"
-                ],
-                "graph_memory.graph_route_weight": candidate["proposed_graph_weight"],
-            }
-            try:
-                applied = await config_writer(
-                    updates,
-                    expected_revision=expected_revision,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                return {"published": False, "reason_code": "publish_failed"}
-            if not applied:
-                reason_code = str(
-                    getattr(config_writer, "_last_write_reason_code", None)
-                    or "publish_rejected"
-                )
-                self._publish_intents.pop(candidate_key, None)
-                try:
-                    await self._save_state()
-                except AutoLearningStatePersistenceError:
-                    self._publish_intents[candidate_key] = intent
-                return {"published": False, "reason_code": reason_code}
-
-            snapshot = {
-                "candidate_key": candidate_key,
-                "published_at": datetime.now().astimezone().isoformat(),
-                "revision": expected_revision,
-                "previous_document_weight": previous["document_route_weight"],
-                "previous_graph_weight": previous["graph_route_weight"],
-                "document_route_weight": candidate["proposed_document_weight"],
-                "graph_route_weight": candidate["proposed_graph_weight"],
-            }
-            self._published[candidate_key] = snapshot
-            self._publish_intents.pop(candidate_key, None)
-            candidate["status"] = "published"
-            candidate["reason_code"] = "published"
-            try:
-                await self._save_state()
-            except AutoLearningStatePersistenceError:
-                # 生产配置已经更新；保留内存中的 intent，磁盘上的 pre-intent
-                # 也仍包含真实旧权重，供重启后的显式 rollback 使用。
-                self._publish_intents[candidate_key] = intent
-                return {
-                    "published": False,
-                    "reason_code": "state_persistence_failed",
-                    "recovery_required": True,
-                }
-            return {"published": True, "snapshot": dict(snapshot)}
-
-    async def rollback_last_publish(
-        self,
-        candidate_key: str,
-        *,
-        config_writer: Any,
-        expected_revision: str,
-    ) -> dict[str, Any]:
-        """用最后发布的快照恢复生产权重，同样走 revision CAS。"""
-
-        async with self._state_lock:
-            snapshot = self._published.get(candidate_key)
-            intent = self._publish_intents.get(candidate_key)
-            if snapshot is None and intent is not None:
-                snapshot = _snapshot_from_intent(intent)
-            if snapshot is None:
-                return {"restored": False, "reason_code": "no_published_snapshot"}
-            updates = {
-                "graph_memory.document_route_weight": snapshot[
-                    "previous_document_weight"
-                ],
-                "graph_memory.graph_route_weight": snapshot["previous_graph_weight"],
-            }
-            try:
-                applied = await config_writer(
-                    updates,
-                    expected_revision=expected_revision,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                return {"restored": False, "reason_code": "rollback_failed"}
-            if not applied:
-                return {
-                    "restored": False,
-                    "reason_code": str(
-                        getattr(config_writer, "_last_write_reason_code", None)
-                        or "rollback_rejected"
-                    ),
-                }
-            previous_published = self._published.pop(candidate_key, None)
-            previous_intent = self._publish_intents.pop(candidate_key, None)
-            candidate = self._candidates.get(candidate_key)
-            previous_candidate = dict(candidate) if candidate is not None else None
-            if candidate is not None and candidate.get("status") == "published":
-                candidate["status"] = "ready_for_review"
-                candidate["reason_code"] = "candidate"
-            try:
-                await self._save_state()
-            except AutoLearningStatePersistenceError:
-                if previous_published is not None:
-                    self._published[candidate_key] = previous_published
-                if previous_intent is not None:
-                    self._publish_intents[candidate_key] = previous_intent
-                if candidate is not None and previous_candidate is not None:
-                    candidate.clear()
-                    candidate.update(previous_candidate)
-                return {
-                    "restored": False,
-                    "reason_code": "state_persistence_failed",
-                    "recovery_required": True,
-                }
-            return {"restored": True, "reason_code": "restored"}
+            return self.get_candidates()
 
     def get_candidates(self) -> list[dict[str, Any]]:
-        """返回当前 shadow 候选副本。"""
+        """返回候选记录的深副本；Page API 仍必须应用外部 allowlist。"""
 
-        return [dict(item) for item in self._candidates.values()]
+        return [copy.deepcopy(item) for item in self._candidates.values()]
 
-    def last_published_snapshot(self, candidate_key: str) -> dict[str, Any] | None:
-        """返回指定候选的发布或未收口 intent 快照；不存在时返回 None。"""
+    def last_published_snapshot(self, candidate_id: str) -> dict[str, Any] | None:
+        """返回候选最近 publication 或未收口 intent 的隔离副本。"""
 
-        snapshot = self._published.get(candidate_key)
-        if snapshot is None:
-            intent = self._publish_intents.get(candidate_key)
-            if intent is not None:
-                snapshot = _snapshot_from_intent(intent)
-        return dict(snapshot) if snapshot is not None else None
+        publications = [
+            item
+            for item in self._publications.values()
+            if item.get("candidate_id") == candidate_id
+        ]
+        if publications:
+            publications.sort(key=lambda item: str(item.get("published_at", "")))
+            return copy.deepcopy(publications[-1])
+        intent = self._recoverable_publish_intent_unlocked(candidate_id)
+        return copy.deepcopy(intent) if intent is not None else None
 
-    async def reset(self) -> None:
-        """清空 shadow 候选与发布快照，不触碰生产配置。"""
+    async def reset(self) -> dict[str, Any]:
+        """仅清除未引用 shadow 候选，保留 publication、intent 与恢复证据。"""
 
         async with self._state_lock:
-            previous = self._candidates, self._published, self._publish_intents
-            self._candidates = {}
-            self._published = {}
-            self._publish_intents = {}
+            if not self._enabled:
+                return {"reset": False, "reason_code": "disabled"}
+            if self._writes_blocked_unlocked():
+                return {
+                    "reset": False,
+                    "reason_code": "learning_state_recovery_required",
+                }
+            if self._operation_claims:
+                return {"reset": False, "reason_code": "learning_action_in_progress"}
+            previous = copy.deepcopy(self._candidates)
+            previous_evidence = copy.deepcopy(self._evidence_artifacts)
+            previous_tombstones = copy.deepcopy(self._tombstones)
+            previous_terminal = copy.deepcopy(self._terminal_operations)
+            self._candidates = {
+                key: value
+                for key, value in self._candidates.items()
+                if self._candidate_is_referenced_unlocked(key)
+            }
+            retention = self._prune_tombstones_unlocked()
+            self._prune_evidence_artifacts_unlocked()
             try:
                 await self._save_state()
             except AutoLearningStatePersistenceError:
-                (
-                    self._candidates,
-                    self._published,
-                    self._publish_intents,
-                ) = previous
+                self._candidates = previous
+                self._evidence_artifacts = previous_evidence
+                self._tombstones = previous_tombstones
+                self._terminal_operations = previous_terminal
                 raise
+            return {
+                "reset": True,
+                "reason_code": "reset",
+                "removed_count": len(previous) - len(self._candidates),
+                "tombstones_removed": retention.tombstones_removed,
+            }
+
+    async def get_status_snapshot(self) -> dict[str, Any]:
+        """在状态锁内返回低敏且自洽的 candidate/publication/recovery 快照。"""
+
+        async with self._state_lock:
+            active = self._active_publication_unlocked()
+            candidates = [
+                candidate_status_view(item) for item in self._candidates.values()
+            ]
+            statuses = [safe_status(item.get("status")) for item in candidates]
+            reasons = {safe_reason(item.get("reason_code")) for item in candidates}
+            return {
+                "enabled": self._enabled,
+                "state_revision": self._state_revision,
+                "available": not self._state_corrupt,
+                "candidate_count": len(self._candidates),
+                "evidence_count": len(self._evidence_artifacts),
+                "publication_count": len(self._publications),
+                "ready_count": statuses.count("ready_for_review"),
+                "rejected_count": statuses.count("rejected")
+                + statuses.count("invalid_state")
+                + statuses.count("stale"),
+                "published_count": sum(
+                    item.get("status") in {"active", "superseded"}
+                    for item in self._publications.values()
+                ),
+                "reasons": sorted(reasons),
+                "candidates": candidates,
+                "active_publication": publication_view(active),
+                "recovery": {
+                    "state_corrupt": self._state_corrupt,
+                    "state_recovery_required": self._state_recovery_required,
+                    "reason_code": self._state_reason_code,
+                    "intent_count": len(self._publish_intents),
+                    "record_count": len(self._recovery_records),
+                    "operation": claim_view(self._first_claim_unlocked()),
+                },
+                "reload": copy.deepcopy(self._reload_operation),
+            }
 
     def safe_summary(self) -> dict[str, Any]:
-        """返回不含事件正文或身份细节的候选摘要。"""
+        """返回不含内部 key、作用域或反馈事件的稳定低基数摘要。"""
 
         statuses = [
-            _safe_status(item.get("status")) for item in self._candidates.values()
+            safe_status(item.get("status")) for item in self._candidates.values()
         ]
-        ready = statuses.count("ready_for_review")
-        rejected = statuses.count("rejected") + statuses.count("invalid_state")
         reasons = {
-            _safe_reason(item.get("reason_code")) for item in self._candidates.values()
+            safe_reason(item.get("reason_code")) for item in self._candidates.values()
         }
         return {
-            "available": True,
+            "available": not self._state_corrupt,
             "candidate_count": len(self._candidates),
-            "ready_count": ready,
-            "rejected_count": rejected,
-            "published_count": len(self._published),
+            "ready_count": statuses.count("ready_for_review"),
+            "rejected_count": statuses.count("rejected")
+            + statuses.count("invalid_state")
+            + statuses.count("stale"),
+            "published_count": sum(
+                item.get("status") in {"active", "superseded"}
+                for item in self._publications.values()
+            ),
             "reasons": sorted(reasons),
         }
 
-    def _state_path(self) -> str:
-        """返回 shadow 候选状态文件路径。"""
-
-        return os.path.join(self._data_dir, _STATE_FILE)
-
-    async def _save_state(self) -> None:
-        """把候选与发布快照原子写入状态文件。"""
-
-        if not self._data_dir:
-            return
-        temp_path = f"{self._state_path()}.tmp"
-        try:
-            os.makedirs(self._data_dir, exist_ok=True)
-            state = {
-                "candidates": self._candidates,
-                "published": self._published,
-                "publish_intents": self._publish_intents,
-            }
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False)
-            os.replace(temp_path, self._state_path())
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning("[自主学习] 候选状态保存失败")
-            raise AutoLearningStatePersistenceError(
-                "learning_state_write_failed"
-            ) from exc
-        finally:
-            try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
-
-    async def load_state(self) -> None:
-        """从磁盘恢复 shadow 候选与发布快照。"""
+    async def _replace_with_referenced_candidates(self) -> list[dict[str, Any]]:
+        """无聚合时只保留 publication/intent 引用候选并可靠落盘。"""
 
         async with self._state_lock:
-            await self._load_state_unlocked()
+            if self._operation_claims:
+                return self.get_candidates()
+            previous = copy.deepcopy(self._candidates)
+            previous_evidence = copy.deepcopy(self._evidence_artifacts)
+            self._candidates = {
+                key: value
+                for key, value in self._candidates.items()
+                if self._candidate_is_referenced_unlocked(key)
+            }
+            self._prune_evidence_artifacts_unlocked()
+            try:
+                await self._save_state()
+            except AutoLearningStatePersistenceError:
+                self._candidates = previous
+                self._evidence_artifacts = previous_evidence
+                raise
+            return self.get_candidates()
 
-    async def _load_state_unlocked(self) -> None:
-        """在状态锁内从磁盘恢复候选、快照和未收口 intent。"""
+    async def _resolve_evidence(
+        self,
+        aggregates: Sequence[FeedbackSignalAggregate],
+    ) -> LearningEvidenceArtifact | None:
+        """调用受信 provider 取得当前不可变 evidence 绑定。"""
 
-        if not self._data_dir:
-            return
+        if self._evidence_provider is None:
+            return None
+        value = self._evidence_provider(tuple(aggregates))
+        if inspect.isawaitable(value):
+            value = await value
+        return value if isinstance(value, LearningEvidenceArtifact) else None
+
+    async def _candidate_evidence_is_current(self, candidate_id: str) -> bool:
+        """在状态锁外复核生产 Provider 当前指针仍选择候选 artifact。"""
+
+        async with self._state_lock:
+            candidate = copy.deepcopy(self._candidates.get(candidate_id))
+            provider = self._evidence_provider
+            artifact_record = (
+                copy.deepcopy(
+                    self._evidence_artifacts.get(candidate.get("evidence_revision"))
+                )
+                if isinstance(candidate, dict)
+                else None
+            )
+        if candidate is None:
+            return False
+        validator = getattr(provider, "validate_current", None)
+        if not callable(validator):
+            return True
+        artifact = artifact_from_record(artifact_record)
+        if artifact is None:
+            return False
         try:
-            path = self._state_path()
-            if not os.path.exists(path):
-                return
-            with open(path, encoding="utf-8") as f:
-                state = json.load(f)
-            if not isinstance(state, dict):
-                raise ValueError("learning_state_invalid")
-            candidates = state.get("candidates", {}) or {}
-            published = state.get("published", {}) or {}
-            intents = state.get("publish_intents", {}) or {}
-            self._candidates = self._normalize_candidates(candidates)
-            self._published = self._normalize_published(published)
-            self._publish_intents = self._normalize_publish_intents(intents)
-            logger.info(
-                "[自主学习] 状态恢复完成: candidates=%s, published=%s",
-                len(self._candidates),
-                len(self._published),
-            )
+            result = validator(artifact)
+            if inspect.isawaitable(result):
+                result = await result
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            self._candidates = {}
-            self._published = {}
-            self._publish_intents = {}
-            logger.warning("[自主学习] 状态恢复失败，使用空状态")
+            return False
+        return result is True
 
-    def _normalize_candidates(self, value: object) -> dict[str, dict[str, Any]]:
-        """把磁盘候选限制到固定字段、类型和状态集合。"""
+    async def _baseline_for_binding(
+        self,
+        binding: CandidateBinding,
+    ) -> tuple[float, float]:
+        """为 child candidate 选择 active publication 的真实 after 权重。"""
 
-        if not isinstance(value, dict):
-            return {}
-        normalized: dict[str, dict[str, Any]] = {}
-        for raw_key, raw_item in value.items():
-            if not isinstance(raw_key, str) or not isinstance(raw_item, dict):
-                continue
-            scope = raw_item.get("scope_domain")
-            persona = raw_item.get("persona_domain")
-            if not isinstance(scope, str) or not scope.strip():
-                continue
-            if persona is not None and (
-                not isinstance(persona, str) or not persona.strip()
-            ):
-                persona = None
-            candidate_key = raw_item.get("candidate_key")
-            if not isinstance(candidate_key, str) or not candidate_key.strip():
-                candidate_key = _candidate_key(scope, persona)
-            document_weight = _finite_number(
-                raw_item.get("proposed_document_weight"), 0.0, 1.0
-            )
-            graph_weight = _finite_number(
-                raw_item.get("proposed_graph_weight"), 0.0, 1.0
-            )
-            delta = _finite_number(raw_item.get("delta_from_baseline"), -0.4, 0.4)
-            accepted = _nonnegative_int(raw_item.get("accepted_count"))
-            windows = _nonnegative_int(raw_item.get("independent_window_count"))
-            support = _finite_number(raw_item.get("decayed_support"), 0.0, 1.0)
-            policy_version = _positive_int(raw_item.get("policy_version"))
-            status = _safe_status(raw_item.get("status"))
-            reason = _safe_reason(raw_item.get("reason_code"))
-            valid_weights = (
-                document_weight is not None
-                and graph_weight is not None
-                and math.isclose(document_weight + graph_weight, 1.0, abs_tol=1e-6)
-            )
+        async with self._state_lock:
+            active = self._active_publication_unlocked()
             if (
-                not valid_weights
-                or delta is None
-                or accepted is None
-                or windows is None
-                or support is None
-                or policy_version is None
-                or status == "invalid_state"
-                or reason == "invalid_state"
+                active is not None
+                and active.get("applied_revision") == binding.source_config_revision
             ):
-                status = "invalid_state"
-                reason = "invalid_state"
-                document_weight = self._feedback_manager.policy.baseline_document_weight
-                graph_weight = self._feedback_manager.policy.baseline_graph_weight
-                delta = 0.0
-                accepted = 0
-                windows = 0
-                support = 0.0
-                policy_version = self._feedback_manager.policy.policy_version
-            normalized[candidate_key] = {
-                "candidate_key": candidate_key,
-                "scope_domain": scope,
-                "persona_domain": persona,
-                "proposed_document_weight": document_weight,
-                "proposed_graph_weight": graph_weight,
-                "delta_from_baseline": delta,
-                "accepted_count": accepted,
-                "independent_window_count": windows,
-                "decayed_support": support,
-                "status": status,
-                "reason_code": reason,
-                "policy_version": policy_version,
-            }
-        return normalized
+                return (
+                    float(active["after_document_weight"]),
+                    float(active["after_graph_weight"]),
+                )
+        return (
+            float(self._feedback_manager.policy.baseline_document_weight),
+            float(self._feedback_manager.policy.baseline_graph_weight),
+        )
 
-    def _normalize_published(self, value: object) -> dict[str, dict[str, Any]]:
-        """只恢复具备真实前值和有限权重的发布快照。"""
+    def _candidate_is_referenced_unlocked(self, candidate_id: str) -> bool:
+        """判断 candidate 是否仍属于 publication、intent 或恢复链。"""
 
-        if not isinstance(value, dict):
-            return {}
-        normalized: dict[str, dict[str, Any]] = {}
-        for raw_key, raw_item in value.items():
-            if not isinstance(raw_key, str) or not isinstance(raw_item, dict):
-                continue
-            previous = _normalized_weights(
-                {
-                    "document_route_weight": raw_item.get("previous_document_weight"),
-                    "graph_route_weight": raw_item.get("previous_graph_weight"),
-                }
+        return any(
+            item.get("candidate_id") == candidate_id
+            for item in self._publications.values()
+        ) or any(
+            item.get("candidate_id") == candidate_id
+            for item in self._publish_intents.values()
+        )
+
+    def _candidate_evidence_is_valid_unlocked(
+        self,
+        candidate: dict[str, Any],
+    ) -> bool:
+        """复核候选引用 artifact 的结构、内容哈希、Gate 与三项绑定。"""
+
+        evidence_revision = candidate.get("evidence_revision")
+        aggregation_revision = candidate.get("aggregation_revision")
+        source_config_revision = candidate.get("source_config_revision")
+        quality_gate_version = candidate.get("quality_gate_version")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                evidence_revision,
+                aggregation_revision,
+                source_config_revision,
+                quality_gate_version,
             )
-            current = _normalized_weights(raw_item)
-            revision = raw_item.get("revision")
-            published_at = raw_item.get("published_at")
-            if (
-                previous is None
-                or current is None
-                or not isinstance(revision, str)
-                or not revision.strip()
-                or not isinstance(published_at, str)
-                or not published_at.strip()
-            ):
-                continue
-            normalized[raw_key] = {
-                "candidate_key": raw_key,
-                "published_at": published_at,
-                "revision": revision,
-                "previous_document_weight": previous["document_route_weight"],
-                "previous_graph_weight": previous["graph_route_weight"],
-                "document_route_weight": current["document_route_weight"],
-                "graph_route_weight": current["graph_route_weight"],
-            }
-        return normalized
+        ):
+            return False
+        if quality_gate_version != self._quality_gate_version:
+            return False
+        artifact = artifact_from_record(self._evidence_artifacts.get(evidence_revision))
+        if artifact is None or artifact.evidence_revision != evidence_revision:
+            return False
+        result = validate_learning_evidence(
+            artifact,
+            aggregation_revision=aggregation_revision,
+            source_config_revision=source_config_revision,
+            quality_gate_version=quality_gate_version,
+        )
+        return result.passed
 
-    def _normalize_publish_intents(self, value: object) -> dict[str, dict[str, Any]]:
-        """恢复带真实旧权重的未收口发布 intent。"""
+    def _prune_evidence_artifacts_unlocked(self) -> None:
+        """只保留 candidate、publication 或 intent 仍引用的不可变 artifact。"""
 
-        if not isinstance(value, dict):
-            return {}
-        normalized: dict[str, dict[str, Any]] = {}
-        for raw_key, raw_item in value.items():
-            if not isinstance(raw_key, str) or not isinstance(raw_item, dict):
-                continue
-            phase = raw_item.get("phase")
-            revision = raw_item.get("revision")
-            created_at = raw_item.get("created_at")
-            previous = _normalized_weights(
-                {
-                    "document_route_weight": raw_item.get("previous_document_weight"),
-                    "graph_route_weight": raw_item.get("previous_graph_weight"),
-                }
+        referenced = {
+            value
+            for collection in (
+                self._candidates.values(),
+                self._publications.values(),
+                self._publish_intents.values(),
             )
-            current = _normalized_weights(raw_item)
-            if (
-                phase not in _PUBLISH_INTENT_PHASES
-                or not isinstance(revision, str)
-                or not revision.strip()
-                or not isinstance(created_at, str)
-                or not created_at.strip()
-                or previous is None
-                or current is None
+            for item in collection
+            if isinstance((value := item.get("evidence_revision")), str)
+        }
+        self._evidence_artifacts = {
+            key: value
+            for key, value in self._evidence_artifacts.items()
+            if key in referenced
+        }
+
+    def _find_same_candidate_unlocked(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """按四项不可变绑定查找同一候选，以稳定重建幂等 ID。"""
+
+        for candidate in self._candidates.values():
+            if all(
+                candidate.get(field) == record.get(field) for field in _BINDING_FIELDS
             ):
-                continue
-            normalized[raw_key] = {
-                "candidate_key": raw_key,
-                "phase": "prepared",
-                "created_at": created_at,
-                "revision": revision,
-                "previous_document_weight": previous["document_route_weight"],
-                "previous_graph_weight": previous["graph_route_weight"],
-                "document_route_weight": current["document_route_weight"],
-                "graph_route_weight": current["graph_route_weight"],
-            }
-        return normalized
-
-
-def _candidate_key(scope_domain: str, persona_domain: str | None) -> str:
-    """以长度前缀组合 scope/persona，避免同作用域候选互相覆盖。"""
-
-    persona = persona_domain or ""
-    return f"{len(scope_domain)}:{scope_domain}|{len(persona)}:{persona}"
-
-
-def _finite_number(value: object, minimum: float, maximum: float) -> float | None:
-    """只接受给定闭区间内的有限数字，拒绝布尔值。"""
-
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return candidate
         return None
-    numeric = float(value)
-    if not math.isfinite(numeric) or not minimum <= numeric <= maximum:
-        return None
-    return numeric
+
+    def _first_claim_unlocked(self) -> dict[str, Any] | None:
+        """返回唯一活动 claim；多 claim 损坏态取稳定首项供只读展示。"""
+
+        if not self._operation_claims:
+            return None
+        key = sorted(self._operation_claims)[0]
+        return self._operation_claims[key]
 
 
-def _nonnegative_int(value: object) -> int | None:
-    """只接受非负整数计数，拒绝布尔值。"""
-
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return None
-    return value
-
-
-def _positive_int(value: object) -> int | None:
-    """只接受正整数版本号，拒绝布尔值。"""
-
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        return None
-    return value
-
-
-def _safe_status(value: object) -> str:
-    """把未知候选状态收敛为固定 invalid_state。"""
-
-    return (
-        value
-        if isinstance(value, str) and value in _CANDIDATE_STATUSES
-        else "invalid_state"
-    )
-
-
-def _safe_reason(value: object) -> str:
-    """把未知候选原因收敛为固定 invalid_state。"""
-
-    return (
-        value
-        if isinstance(value, str) and value in _CANDIDATE_REASONS
-        else "invalid_state"
-    )
-
-
-def _normalized_weights(value: Mapping[str, object]) -> dict[str, float] | None:
-    """校验真实路由权重快照并返回标准字段。"""
-
-    document = _finite_number(value.get("document_route_weight"), 0.0, 1.0)
-    graph = _finite_number(value.get("graph_route_weight"), 0.0, 1.0)
-    if document is None or graph is None:
-        return None
-    if not math.isclose(document + graph, 1.0, abs_tol=1e-6):
-        return None
-    return {"document_route_weight": document, "graph_route_weight": graph}
-
-
-def _snapshot_from_intent(intent: Mapping[str, object]) -> dict[str, Any]:
-    """把未收口 intent 转换为 rollback 所需的最小快照。"""
-
-    return {
-        "candidate_key": str(intent.get("candidate_key", "")),
-        "published_at": str(intent.get("created_at", "")),
-        "revision": str(intent.get("revision", "")),
-        "previous_document_weight": float(intent["previous_document_weight"]),
-        "previous_graph_weight": float(intent["previous_graph_weight"]),
-        "document_route_weight": float(intent["document_route_weight"]),
-        "graph_route_weight": float(intent["graph_route_weight"]),
-    }
-
-
-__all__ = ["AutoLearningManager", "AutoLearningStatePersistenceError"]
+__all__ = [
+    "AutoLearningManager",
+    "AutoLearningStatePersistenceError",
+]

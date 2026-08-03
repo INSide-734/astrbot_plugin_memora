@@ -133,6 +133,11 @@ class MemoryEngine(
 
     # ==================== 委托封装（公开 API 不变） ====================
 
+    def get_last_write_reason_code(self) -> str | None:
+        """返回最近一次同步 canonical 写入的稳定原因码。"""
+
+        return self._last_write_reason_code
+
     async def update_importance(self, memory_id: int, new_importance: float) -> bool:
         return await self.update_memory(memory_id, {"importance": new_importance})
 

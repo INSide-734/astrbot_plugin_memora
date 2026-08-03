@@ -10,6 +10,8 @@ from typing import Any
 
 import aiosqlite
 
+from .reconsolidation_schema import initialize_reconsolidation_schema
+
 _STATUSES = frozenset({"pending", "approved", "rejected", "failed", "rolled_back"})
 _ACTIONS = frozenset({"stage", "apply", "reject", "rollback"})
 
@@ -33,133 +35,7 @@ class ReconsolidationStore:
     async def initialize(self) -> None:
         """创建候选表、动作审计表与稳定索引。"""
 
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("PRAGMA busy_timeout = 5000")
-            await db.execute("BEGIN IMMEDIATE")
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS reconsolidation_candidates (
-                    candidate_id TEXT PRIMARY KEY,
-                    memory_id INTEGER NOT NULL,
-                    source_revision TEXT NOT NULL,
-                    old_content TEXT NOT NULL,
-                    old_metadata TEXT NOT NULL,
-                    proposed_content TEXT NOT NULL,
-                    change_summary TEXT NOT NULL,
-                    evidence_type TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    reason_code TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_reconsolidation_candidates_status
-                ON reconsolidation_candidates(status, updated_at, candidate_id)
-                """
-            )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_reconsolidation_candidates_memory
-                ON reconsolidation_candidates(memory_id, status)
-                """
-            )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS reconsolidation_actions (
-                    action_id TEXT PRIMARY KEY,
-                    candidate_id TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    reason_code TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_reconsolidation_actions_candidate
-                ON reconsolidation_actions(candidate_id, created_at, action_id)
-                """
-            )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS reconsolidation_rollback_ops (
-                    candidate_id TEXT PRIMARY KEY,
-                    expected_revision TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    reason_code TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS reconsolidation_apply_ops (
-                    candidate_id TEXT PRIMARY KEY,
-                    expected_revision TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    reason_code TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_reconsolidation_rollback_ops_status
-                ON reconsolidation_rollback_ops(status, updated_at, candidate_id)
-                """
-            )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_reconsolidation_apply_ops_status
-                ON reconsolidation_apply_ops(status, updated_at, candidate_id)
-                """
-            )
-            # 旧版本没有唯一约束，先合并历史重复 pending 行，再建立约束。
-            await db.execute(
-                """
-                DELETE FROM reconsolidation_actions
-                WHERE candidate_id IN (
-                    SELECT candidate_id
-                    FROM reconsolidation_candidates
-                    WHERE status='pending'
-                      AND rowid NOT IN (
-                          SELECT MAX(rowid)
-                          FROM reconsolidation_candidates
-                          WHERE status='pending'
-                          GROUP BY memory_id, source_revision, proposed_content
-                      )
-                )
-                """
-            )
-            await db.execute(
-                """
-                DELETE FROM reconsolidation_candidates
-                WHERE status='pending'
-                  AND rowid NOT IN (
-                      SELECT MAX(rowid)
-                      FROM reconsolidation_candidates
-                      WHERE status='pending'
-                      GROUP BY memory_id, source_revision, proposed_content
-                  )
-                """
-            )
-            await db.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS
-                    idx_reconsolidation_candidates_pending_key
-                ON reconsolidation_candidates(
-                    memory_id, source_revision, proposed_content
-                )
-                WHERE status='pending'
-                """
-            )
-            await db.commit()
+        await initialize_reconsolidation_schema(self.db_path)
 
     async def stage_candidate(
         self,
@@ -418,7 +294,8 @@ class ReconsolidationStore:
             await db.execute("PRAGMA busy_timeout = 5000")
             await db.execute("BEGIN IMMEDIATE")
             cursor = await db.execute(
-                "SELECT status FROM reconsolidation_candidates WHERE candidate_id=?",
+                "SELECT status, applied_revision "
+                "FROM reconsolidation_candidates WHERE candidate_id=?",
                 (candidate_id,),
             )
             candidate = await cursor.fetchone()
@@ -427,6 +304,9 @@ class ReconsolidationStore:
                 raise ReconsolidationCandidateNotFoundError(candidate_id)
             if str(candidate["status"]) != "approved":
                 raise ReconsolidationCandidateConflictError("candidate_status_changed")
+            applied_revision = str(candidate["applied_revision"] or "").strip()
+            if not applied_revision or applied_revision != str(expected_revision):
+                raise ReconsolidationCandidateConflictError("source_revision_mismatch")
             cursor = await db.execute(
                 "SELECT 1 FROM reconsolidation_rollback_ops WHERE candidate_id=?",
                 (candidate_id,),
@@ -565,8 +445,9 @@ class ReconsolidationStore:
         candidate_id: str,
         *,
         expected_revision: str,
+        target_metadata: dict[str, Any],
     ) -> dict[str, Any]:
-        """在 canonical CAS 前原子声明 apply intent，并返回候选副本。"""
+        """在 canonical CAS 前持久化 revision 与目标 metadata。"""
 
         now = self._now()
         async with aiosqlite.connect(self.db_path) as db:
@@ -596,11 +477,17 @@ class ReconsolidationStore:
             await db.execute(
                 """
                 INSERT INTO reconsolidation_apply_ops (
-                    candidate_id, expected_revision, status, reason_code,
-                    created_at, updated_at
-                ) VALUES (?, ?, 'pending', 'apply_started', ?, ?)
+                    candidate_id, expected_revision, target_metadata,
+                    status, reason_code, created_at, updated_at
+                ) VALUES (?, ?, ?, 'pending', 'apply_started', ?, ?)
                 """,
-                (candidate_id, str(expected_revision), now, now),
+                (
+                    candidate_id,
+                    str(expected_revision),
+                    json.dumps(target_metadata, ensure_ascii=False),
+                    now,
+                    now,
+                ),
             )
             await db.commit()
         return self._row_to_candidate(candidate)
@@ -611,8 +498,16 @@ class ReconsolidationStore:
         *,
         applied: bool,
         reason_code: str,
+        applied_revision: str | None = None,
+        applied_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """原子收口 apply intent、候选状态和动作审计。"""
+        """原子收口 apply intent、候选状态、apply 快照和动作审计。"""
+
+        if applied and (
+            not str(applied_revision or "").strip()
+            or not isinstance(applied_metadata, dict)
+        ):
+            raise ReconsolidationCandidateConflictError("apply_result_incomplete")
 
         now = self._now()
         new_status = "approved" if applied else "rejected"
@@ -635,10 +530,22 @@ class ReconsolidationStore:
             cursor = await db.execute(
                 """
                 UPDATE reconsolidation_candidates
-                SET status=?, reason_code=?, updated_at=?
+                SET status=?, reason_code=?, applied_revision=?,
+                    applied_metadata=?, updated_at=?
                 WHERE candidate_id=? AND status='pending'
                 """,
-                (new_status, reason_code, now, candidate_id),
+                (
+                    new_status,
+                    reason_code,
+                    str(applied_revision) if applied else None,
+                    (
+                        json.dumps(applied_metadata, ensure_ascii=False)
+                        if applied
+                        else None
+                    ),
+                    now,
+                    candidate_id,
+                ),
             )
             changed = cursor.rowcount
             await cursor.close()
@@ -677,8 +584,8 @@ class ReconsolidationStore:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 """
-                SELECT candidate_id, expected_revision, status, reason_code,
-                       created_at, updated_at
+                SELECT candidate_id, expected_revision, target_metadata,
+                       status, reason_code, created_at, updated_at
                 FROM reconsolidation_apply_ops
                 WHERE status='pending'
                 ORDER BY created_at ASC, candidate_id ASC
@@ -686,7 +593,13 @@ class ReconsolidationStore:
             )
             rows = await cursor.fetchall()
             await cursor.close()
-        return [dict(row) for row in rows]
+        return [
+            {
+                **dict(row),
+                "target_metadata": _loads_metadata(row["target_metadata"]),
+            }
+            for row in rows
+        ]
 
     async def mark_apply_blocked(
         self,
@@ -735,6 +648,44 @@ class ReconsolidationStore:
             )
             await db.commit()
 
+    async def mark_apply_recovery_required(
+        self,
+        candidate_id: str,
+        *,
+        reason_code: str,
+    ) -> None:
+        """记录 apply 结果待核验，同时保留 pending 候选与恢复 intent。"""
+
+        now = self._now()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA busy_timeout = 5000")
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                """
+                UPDATE reconsolidation_candidates
+                SET reason_code=?, updated_at=?
+                WHERE candidate_id=? AND status='pending'
+                """,
+                (reason_code, now, candidate_id),
+            )
+            candidate_changed = cursor.rowcount
+            await cursor.close()
+            cursor = await db.execute(
+                """
+                UPDATE reconsolidation_apply_ops
+                SET reason_code=?, updated_at=?
+                WHERE candidate_id=? AND status='pending'
+                """,
+                (reason_code, now, candidate_id),
+            )
+            intent_changed = cursor.rowcount
+            await cursor.close()
+            if candidate_changed == 0:
+                raise ReconsolidationCandidateConflictError("candidate_status_changed")
+            if intent_changed == 0:
+                raise ReconsolidationCandidateConflictError("apply_intent_changed")
+            await db.commit()
+
     async def list_actions(self, candidate_id: str) -> list[dict[str, Any]]:
         """按时间顺序读取候选动作审计。"""
 
@@ -768,6 +719,16 @@ class ReconsolidationStore:
             "evidence_type": str(row["evidence_type"]),
             "status": str(row["status"]),
             "reason_code": str(row["reason_code"]),
+            "applied_revision": (
+                str(row["applied_revision"])
+                if row["applied_revision"] is not None
+                else None
+            ),
+            "applied_metadata": (
+                _loads_metadata(row["applied_metadata"])
+                if row["applied_metadata"] is not None
+                else None
+            ),
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
         }

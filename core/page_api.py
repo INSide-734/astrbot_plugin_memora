@@ -469,6 +469,12 @@ class PluginPageApi(
             "页面接口：学习历史",
         )
         register(
+            f"{PAGE_API_PREFIX}/learning/action",
+            self.learning_action,
+            ["POST"],
+            "页面接口：学习生产动作",
+        )
+        register(
             f"{PAGE_API_PREFIX}/learning/reset",
             self.reset_learning,
             ["POST"],

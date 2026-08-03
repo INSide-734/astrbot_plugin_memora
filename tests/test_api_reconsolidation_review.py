@@ -62,18 +62,44 @@ async def _api_with_candidates(
         await _stage_candidate(store, memory_id=index + 1, suffix=str(index + 1))
         for index in range(count)
     ]
+    canonical_state: dict[int, dict] = {}
+    revision = 0
+
+    async def update_memory(
+        memory_id: int,
+        updates: dict,
+        *,
+        expected_revision: str,
+    ) -> bool:
+        """模拟 canonical CAS，并保存可供 Manager 核验的新快照。"""
+
+        nonlocal revision
+        revision += 1
+        current_revision = f"current-revision-{revision}"
+        metadata = dict(updates.get("metadata") or {})
+        metadata["updated_at"] = current_revision
+        canonical_state[memory_id] = {
+            "text": str(updates.get("content") or ""),
+            "updated_at": current_revision,
+            "metadata": metadata,
+        }
+        return True
+
+    async def get_memory(memory_id: int) -> dict | None:
+        """读取当前模拟 canonical 快照。"""
+
+        return canonical_state.get(memory_id)
+
     engine = SimpleNamespace(
         reconsolidation_store=store,
-        update_memory=AsyncMock(return_value=True),
-        get_memory=AsyncMock(
-            return_value={
-                "text": "已应用正文",
-                "updated_at": "current-revision",
-                "metadata": {},
-            }
-        ),
+        update_memory=AsyncMock(side_effect=update_memory),
+        get_memory=AsyncMock(side_effect=get_memory),
     )
-    engine.reconsolidation = ReconsolidationManager(store)
+    engine.reconsolidation = ReconsolidationManager(
+        store,
+        get_memory_cb=engine.get_memory,
+        update_memory_cb=engine.update_memory,
+    )
     plugin = SimpleNamespace(
         initializer=SimpleNamespace(
             memory_engine=engine,
@@ -252,13 +278,12 @@ async def test_rollback_action_restores_old_content_with_current_revision_cas(
 
     api, store, engine, candidates = await _api_with_candidates(tmp_path)
     candidate_id = candidates[0]["candidate_id"]
-    await store.transition(
+    applied = await engine.reconsolidation.apply_candidate(
         candidate_id,
-        expected_status="pending",
-        new_status="approved",
-        reason_code="applied",
-        action="apply",
+        engine.update_memory,
     )
+    assert applied["applied"] is True
+    engine.update_memory.reset_mock()
     with patch(
         "core.api.reconsolidation_review_api.request",
         _mock_request(payload={"candidate_id": candidate_id, "action": "rollback"}),
@@ -269,7 +294,7 @@ async def test_rollback_action_restores_old_content_with_current_revision_cas(
     assert response["data"]["status"] == "rolled_back"
     assert engine.update_memory.await_args.args[1]["content"] == "旧正文-1"
     assert engine.update_memory.await_args.kwargs["expected_revision"] == (
-        "current-revision"
+        "current-revision-1"
     )
     candidate = await store.get_candidate(candidate_id)
     assert candidate is not None
@@ -283,6 +308,7 @@ async def test_approve_returns_stable_source_revision_mismatch_code(
     """canonical 来源已变化时批准必须拒绝候选并返回稳定错误码。"""
 
     api, store, engine, candidates = await _api_with_candidates(tmp_path)
+    engine.update_memory.side_effect = None
     engine.update_memory.return_value = False
     engine.update_memory._last_write_reason_code = "source_revision_mismatch"
     candidate_id = candidates[0]["candidate_id"]

@@ -479,7 +479,9 @@ class TestBackfillScheduler:
         await s._backfill_one(1, meta)
 
         engine.hybrid_retriever.update_metadata.assert_called_once_with(
-            1, {"schema_version": "v3"}
+            1,
+            {"schema_version": "v3"},
+            advance_revision=False,
         )
 
     @pytest.mark.asyncio
@@ -634,6 +636,7 @@ class TestBackfillScheduler:
                 "backfill_delete_failed": True,
                 "backfill_new_ids": [1, 1],
             },
+            advance_revision=False,
         )
 
     @pytest.mark.asyncio

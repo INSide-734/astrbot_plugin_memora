@@ -302,11 +302,23 @@ class ReflectionTrigger:
                 f"> 实际消息数({total_messages})，调整为当前消息总数"
             )
             last_summarized_index = total_messages
-            await self._conversation_manager.update_session_metadata(
+            persisted = await self._conversation_manager.update_session_metadata(
                 session_id,
                 "last_summarized_index",
                 total_messages,
             )
+            if persisted is not True:
+                report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="session",
+                    status="degraded",
+                    reason_code="summary_cursor_repair_failed",
+                )
+                logger.error(
+                    f"[反思处理] [{session_id}] 修正总结游标未持久化，"
+                    "本次仅使用内存修正值"
+                )
 
         pending_summary = await self._conversation_manager.get_session_metadata(
             session_id,
@@ -337,8 +349,9 @@ class ReflectionTrigger:
             兼容规则处理后返回 ``None``。
 
         Side Effects:
-            重试耗尽时清除 ``pending_summary`` 并推进总结索引，保持本次
-            抽取前已有的运行时语义。
+            已被总结游标覆盖的旧待重试窗口只清理、不重放；重试耗尽时
+            原子推进总结索引并清除 ``pending_summary``。必要的持久化失败
+            会停止当前续跑并返回 ``None``。
         """
 
         start_index = progress.last_summarized_index
@@ -352,7 +365,41 @@ class ReflectionTrigger:
             pending_start = progress.pending_summary.get("start_index", start_index)
             pending_end = progress.pending_summary.get("end_index", end_index)
             retry_count = progress.pending_summary.get("retry_count", 0)
-            if retry_count >= 3:
+            if pending_end <= progress.last_summarized_index:
+                pending_cleared = (
+                    await self._conversation_manager.update_session_metadata(
+                        session_id,
+                        "pending_summary",
+                        None,
+                    )
+                )
+                if pending_cleared is not True:
+                    report_debug_event(
+                        "reflection_state",
+                        component="reflection",
+                        stage="summary_gate",
+                        status="failed",
+                        reason_code="stale_pending_clear_failed",
+                    )
+                    logger.error(
+                        f"[{session_id}] 待重试窗口 [{pending_start}:{pending_end}] "
+                        "已被总结游标覆盖，但清理状态未持久化；停止本次续跑"
+                    )
+                    return None
+
+                report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="summary_gate",
+                    status="completed",
+                    reason_code="stale_pending_cleared",
+                )
+                logger.info(
+                    f"[{session_id}] 已清理总结游标覆盖的旧待重试窗口 "
+                    f"[{pending_start}:{pending_end}]"
+                )
+                retry_count = 0
+            elif retry_count >= 3:
                 report_debug_event(
                     "reflection_state",
                     component="reflection",
@@ -366,24 +413,35 @@ class ReflectionTrigger:
                     f"[{session_id}] 待处理总结已连续失败 {retry_count} 次，放弃该范围 "
                     f"[{pending_start}:{pending_end}]"
                 )
-                await self._conversation_manager.update_session_metadata(
-                    session_id,
-                    "pending_summary",
-                    None,
+                metadata_persisted = (
+                    await self._conversation_manager.update_session_metadata_fields(
+                        session_id,
+                        {
+                            "last_summarized_index": pending_end,
+                            "pending_summary": None,
+                        },
+                    )
                 )
-                await self._conversation_manager.update_session_metadata(
-                    session_id,
-                    "last_summarized_index",
-                    pending_end,
-                )
+                if metadata_persisted is not True:
+                    report_debug_event(
+                        "reflection_state",
+                        component="reflection",
+                        stage="summary_gate",
+                        status="failed",
+                        reason_code="summary_exhaustion_metadata_failed",
+                    )
+                    logger.error(
+                        f"[{session_id}] 放弃失败窗口时游标与待重试状态未能"
+                        "原子提交，保留原窗口"
+                    )
                 return None
-
-            start_index = pending_start
-            end_index = min(progress.total_messages, pending_end)
-            logger.info(
-                f"[{session_id}] 重试原有失败总结范围 [{start_index}:{end_index}]，"
-                f"重试次数：{retry_count + 1}/3"
-            )
+            else:
+                start_index = pending_start
+                end_index = min(progress.total_messages, pending_end)
+                logger.info(
+                    f"[{session_id}] 重试原有失败总结范围 "
+                    f"[{start_index}:{end_index}]，重试次数：{retry_count + 1}/3"
+                )
 
         return start_index, end_index, retry_count
 
