@@ -20,13 +20,29 @@ _DASHBOARD_PASSWORD_ENV = "ASTRBOT_DASHBOARD_INITIAL_PASSWORD"
 class AstrBotScenario:
     """封装一个完全隔离的真实 AstrBot 根目录与进程。"""
 
-    def __init__(self, root: Path, process: AstrBotProcess) -> None:
+    def __init__(
+        self,
+        root: Path,
+        process: AstrBotProcess,
+        *,
+        purge_sensitive_artifacts: bool = False,
+    ) -> None:
         """保存已准备的场景根目录及其尚未启动的进程管理器。"""
         self.root = root.resolve()
         self._process = process
+        self._purge_artifacts = purge_sensitive_artifacts
 
     @classmethod
-    def prepare(cls, template_root: Path, root: Path) -> AstrBotScenario:
+    def prepare(
+        cls,
+        template_root: Path,
+        root: Path,
+        *,
+        chat_provider_config: dict[str, object] | None = None,
+        memora_config: dict[str, object] | None = None,
+        sensitive_values: tuple[str, ...] = (),
+        purge_sensitive_artifacts: bool = False,
+    ) -> AstrBotScenario:
         """复制无秘密模板、预约端口并通过官方 init 生成场景鉴权配置。"""
         template_root = template_root.resolve()
         root = root.resolve()
@@ -40,18 +56,30 @@ class AstrBotScenario:
                 root,
                 extra_env={_DASHBOARD_PASSWORD_ENV: password},
             )
-            cls._write_official_configs(root, port)
+            cls._write_official_configs(
+                root,
+                port,
+                chat_provider_config=chat_provider_config,
+                memora_config=memora_config,
+            )
             process = AstrBotProcess(
                 root=root,
                 port=port,
                 reservation=reservation,
                 password=password,
                 test_token=test_token,
+                sensitive_values=sensitive_values,
             )
         except Exception:
             reservation.close()
+            if purge_sensitive_artifacts:
+                cls._purge_sensitive_artifacts(root)
             raise
-        return cls(root=root, process=process)
+        return cls(
+            root=root,
+            process=process,
+            purge_sensitive_artifacts=purge_sensitive_artifacts,
+        )
 
     @property
     def client(self) -> AstrBotClient:
@@ -68,7 +96,11 @@ class AstrBotScenario:
 
     def close(self) -> None:
         """幂等释放当前场景全部父侧资源。"""
-        self._process.close()
+        try:
+            self._process.close()
+        finally:
+            if self._purge_artifacts:
+                self._purge_sensitive_artifacts(self.root)
 
     def assert_resources_released(self) -> None:
         """独立验证退出码、关停方式、端口重绑和目录原子重命名。"""
@@ -91,19 +123,30 @@ class AstrBotScenario:
             raise AssertionError("场景资源未完全释放：\n- " + "\n- ".join(reasons))
 
     @staticmethod
-    def _write_official_configs(root: Path, port: int) -> None:
+    def _write_official_configs(
+        root: Path,
+        port: int,
+        *,
+        chat_provider_config: dict[str, object] | None = None,
+        memora_config: dict[str, object] | None = None,
+    ) -> None:
         """写入 AstrBot 主配置和 Memora 官方插件配置文件。"""
         config = read_command_config(root)
         configure_dashboard(config, port, password_change_required=False)
+        chat_provider = chat_provider_config or {
+            "id": "memora-test-chat",
+            "type": "memora_test_chat",
+            "provider_type": "chat_completion",
+            "enable": True,
+            "model": "memora-test-chat-model",
+            "key": [],
+        }
+        chat_provider = dict(chat_provider)
+        chat_provider_id = str(chat_provider.get("id", ""))
+        if not chat_provider_id:
+            raise ValueError("测试 Chat Provider 配置缺少 id")
         config["provider"] = [
-            {
-                "id": "memora-test-chat",
-                "type": "memora_test_chat",
-                "provider_type": "chat_completion",
-                "enable": True,
-                "model": "memora-test-chat-model",
-                "key": [],
-            },
+            chat_provider,
             {
                 "id": "memora-test-embedding",
                 "type": "memora_test_embedding",
@@ -112,7 +155,8 @@ class AstrBotScenario:
                 "model": "memora-test-embedding-model",
             },
         ]
-        config["provider_settings"]["default_provider_id"] = "memora-test-chat"
+        config["provider_settings"]["default_provider_id"] = chat_provider_id
+        config["provider_settings"]["streaming_response"] = False
         config["platform"] = [
             {
                 "id": "memora-test-platform",
@@ -125,19 +169,27 @@ class AstrBotScenario:
         plugin_config_path = (
             root / "data" / "config" / "astrbot_plugin_memora_config.json"
         )
+        plugin_settings: dict[str, object] = {
+            "provider_settings": {
+                "embedding_provider_id": "memora-test-embedding",
+                "llm_provider_id": chat_provider_id,
+            }
+        }
+        if memora_config:
+            plugin_settings.update(memora_config)
         plugin_config_path.write_text(
-            json.dumps(
-                {
-                    "provider_settings": {
-                        "embedding_provider_id": "memora-test-embedding",
-                        "llm_provider_id": "memora-test-chat",
-                    }
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
+            json.dumps(plugin_settings, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    @staticmethod
+    def _purge_sensitive_artifacts(root: Path) -> None:
+        """删除可能包含 Provider 密钥、请求或回复的场景配置与原始日志。"""
+        for path in (
+            root / "data" / "cmd_config.json",
+            root / "astrbot-runtime.log",
+        ):
+            path.unlink(missing_ok=True)
 
     @staticmethod
     def _port_release_failure(port: int) -> str | None:

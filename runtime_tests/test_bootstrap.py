@@ -87,6 +87,10 @@ def test_bind_conflict_retry_ignores_externally_owned_port(
             scenario._process.port,
         ]
         assert scenario._process.release_check_ports == (scenario._process.port,)
+        assert (
+            scenario.client.wait_for_memora_ready()["provider"]["is_initialized"]
+            is True
+        )
         scenario.stop()
         scenario.assert_resources_released()
     finally:
