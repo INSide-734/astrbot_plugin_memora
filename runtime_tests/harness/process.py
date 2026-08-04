@@ -67,6 +67,7 @@ class AstrBotProcess:
         self.test_token = test_token
         self.forced_shutdown = False
         self.ports_used: list[int] = []
+        self._bind_conflict_ports: set[int] = set()
         self._reservation: socket.socket | None = reservation
         self._process: subprocess.Popen[bytes] | None = None
         self._log_path = self.root / "astrbot-runtime.log"
@@ -81,6 +82,20 @@ class AstrBotProcess:
         if self._process is None:
             return None
         return self._process.poll()
+
+    @property
+    def release_check_ports(self) -> tuple[int, ...]:
+        """返回由 AstrBot 实际拥有过、停止后必须能够重绑的端口。"""
+        candidates = dict.fromkeys(
+            [
+                self.original_port,
+                *self.ports_used,
+                self.port,
+            ]
+        )
+        return tuple(
+            port for port in candidates if port not in self._bind_conflict_ports
+        )
 
     def start(self) -> None:
         """启动真实 AstrBot，并仅对明确的早期端口冲突更换端口重试。"""
@@ -109,6 +124,7 @@ class AstrBotProcess:
                     f"\n{logs}"
                 )
 
+            self._bind_conflict_ports.add(self.port)
             self._close_log_handle()
             self._process = None
             self.port, self._reservation = reserve_loopback_port()
@@ -198,6 +214,7 @@ class AstrBotProcess:
             environment.pop(key, None)
         environment["ASTRBOT_ROOT"] = str(self.root)
         environment["MEMORA_TEST_DRIVER_TOKEN"] = self.test_token
+        environment["PYTHONIOENCODING"] = "utf-8"
         arguments: dict[str, object] = {}
         if os.name == "nt":
             arguments["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP

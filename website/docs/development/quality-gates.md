@@ -24,7 +24,7 @@ uv run --locked python scripts/check_all.py
 uv run --locked python scripts/run_astrbot_blackbox.py --profile pr -q
 ```
 
-该命令为每个场景创建一次性 AstrBot 根目录，安装暂存的 Memora 和确定性测试驱动，并在验证正常关停后回收资源。它不读取本机 AstrBot 实例、用户数据或真实模型凭据；CI 会在 Windows 和 Ubuntu 上同时运行此门禁。
+该命令为每个场景创建一次性 AstrBot 根目录，安装暂存的 Memora 和确定性测试驱动，并在验证正常关停后回收资源。除正常 bootstrap 外，它还会真实验证候选端口被外部抢占后的受限重试和资源所有权。命令不读取本机 AstrBot 实例、用户数据或真实模型凭据；CI 会在 Windows 和 Ubuntu 上同时运行此门禁。
 
 ## Dashboard 变更
 

@@ -47,7 +47,7 @@ flowchart TD
 
 - `check_all.py` 只编排已有命令，不复制 pytest、npm 或构建工具逻辑。
 - `run_smoke.py` 依赖 `tests/integration` 的固定文件清单；重命名/增删主路径必须同步 `SMOKE_TARGETS` 和集成测试指南。
-- `run_astrbot_blackbox.py` 的首期 `pr` profile 只运行真实 bootstrap；每个场景使用独立进程、端口、正式配置和临时根目录，边界详见 [`runtime_tests/AGENTS.md`](../runtime_tests/AGENTS.md)。
+- `run_astrbot_blackbox.py` 的首期 `pr` profile 运行真实 bootstrap 与端口冲突恢复契约；每个场景使用独立进程、端口、正式配置和临时根目录，边界详见 [`runtime_tests/AGENTS.md`](../runtime_tests/AGENTS.md)。
 - `check_dashboard_build_artifacts.py` 依赖 Dashboard 的单 JS、单 CSS legacy bundle 契约；构建配置变化要同时验证检查器。
 - `benchmark_recall_cost.py` 导入 `core/injection` 和 AstrBot Provider 类型，并通过 `recall_total_path_benchmark.py` 启动子进程测量公开 `RecallHandler.handle_memory_recall()` 路径。
 - `benchmark_injection_decisions.py` 直接使用注入决策模型、Recorder 与 Store；不读取生产数据库。
@@ -92,7 +92,7 @@ python scripts/run_smoke.py -q
 python scripts/run_astrbot_blackbox.py --profile pr -q
 ```
 
-首期只实现 `pr` profile，并把额外参数原样传给 pytest。该档位使用确定性的本地 Chat/Embedding Provider，不读取本机 AstrBot 实例、用户数据或真实模型凭据；`full` 和 `live` profile 尚未实现，不得以空壳选项暗示已有覆盖。
+首期只实现 `pr` profile，并把额外参数原样传给 pytest。该档位覆盖正常 bootstrap，以及候选端口被外部抢占后的真实重试和资源所有权断言；它使用确定性的本地 Chat/Embedding Provider，不读取本机 AstrBot 实例、用户数据或真实模型凭据。`full` 和 `live` profile 尚未实现，不得以空壳选项暗示已有覆盖。
 
 ### `check_dashboard_build_artifacts.py`
 
@@ -174,7 +174,7 @@ python -m pytest tests/test_generate_release_notes.py -q
 # 集成 smoke 调度的真实执行
 python scripts/run_smoke.py -q
 
-# 真实 AstrBot bootstrap；首期 pr profile
+# 真实 AstrBot bootstrap 与端口冲突恢复；首期 pr profile
 python scripts/run_astrbot_blackbox.py --profile pr -q
 
 # 修改产物检查器或 Dashboard bundle 契约后；先确保已有生产构建

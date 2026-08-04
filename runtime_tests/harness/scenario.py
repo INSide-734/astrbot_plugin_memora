@@ -78,12 +78,7 @@ class AstrBotScenario:
         if self._process.forced_shutdown:
             reasons.append("AstrBot 使用了强制关停")
 
-        checked_ports = [
-            self._process.original_port,
-            *self._process.ports_used,
-            self._process.port,
-        ]
-        for port in dict.fromkeys(checked_ports):
+        for port in self._process.release_check_ports:
             reason = self._port_release_failure(port)
             if reason:
                 reasons.append(reason)
