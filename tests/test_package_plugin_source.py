@@ -22,6 +22,15 @@ def test_source_package_excludes_vitepress_directory(tmp_path: Path) -> None:
     _write(source_root / "website" / "docs" / "index.md")
     _write(source_root / "website" / "docs" / ".vitepress" / "config.mts")
     _write(source_root / "website" / "docs" / ".vitepress" / "theme" / "index.ts")
+    _write(source_root / "runtime_tests" / "test_bootstrap.py")
+    _write(
+        source_root
+        / "runtime_tests"
+        / "fixtures"
+        / "plugins"
+        / "astrbot_plugin_memora_test_driver"
+        / "main.py"
+    )
 
     package_plugin.copy_worktree_source(
         source_root,
@@ -33,3 +42,4 @@ def test_source_package_excludes_vitepress_directory(tmp_path: Path) -> None:
     packaged_docs = staging_root / "memora" / "website" / "docs"
     assert (packaged_docs / "index.md").is_file()
     assert not (packaged_docs / ".vitepress").exists()
+    assert not (staging_root / "memora" / "runtime_tests").exists()
