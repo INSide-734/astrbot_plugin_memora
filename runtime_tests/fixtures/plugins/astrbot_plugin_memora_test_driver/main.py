@@ -1,11 +1,14 @@
 """注册 Memora 黑盒测试所需的低敏 readiness 路由。"""
 
+import asyncio
 import ipaddress
 import os
 import secrets
+import signal
+from types import FrameType
 
 from astrbot.api.star import Context, Star
-from quart import request
+from astrbot.api.web import request
 
 from .platform import MemoraTestPlatform  # noqa: F401
 from .provider import (  # noqa: F401
@@ -28,12 +31,26 @@ class MemoraTestDriver(Star):
     def __init__(self, context: Context) -> None:
         """注册受 Dashboard 鉴权、回环地址和测试令牌保护的路由。"""
         super().__init__(context)
+        self._loop = asyncio.get_running_loop()
+        self._owner_task = asyncio.current_task()
+        if os.name == "nt":
+            signal.signal(signal.SIGBREAK, self._cancel_owner_task)
         context.register_web_api(
             f"/{DRIVER_ROOT_NAME}/page/status",
             self.status,
             ["GET"],
             "Memora 黑盒测试 readiness",
         )
+
+    def _cancel_owner_task(
+        self,
+        _signum: int,
+        _frame: FrameType | None,
+    ) -> None:
+        """把 Windows 控制中断转为 AstrBot 顶层任务的有序取消。"""
+        task = self._owner_task
+        if task is not None and not task.done():
+            self._loop.call_soon_threadsafe(task.cancel)
 
     async def status(self) -> tuple[dict[str, bool] | dict[str, str], int] | dict:
         """验证双重测试保护后返回低敏注册表状态。"""
@@ -63,7 +80,7 @@ class MemoraTestDriver(Star):
     @staticmethod
     def _request_is_loopback() -> bool:
         """仅接受来源可解析且属于回环网段的请求。"""
-        remote_addr = request.remote_addr
+        remote_addr = request.client_host
         if not remote_addr:
             return False
         try:
