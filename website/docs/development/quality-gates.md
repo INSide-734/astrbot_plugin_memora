@@ -18,13 +18,21 @@ uv run --locked ruff check path/to/file.py
 uv run --locked python scripts/check_all.py
 ```
 
-## AstrBot 黑盒 Bootstrap
+## AstrBot 黑盒测试
 
 ```powershell
 uv run --locked python scripts/run_astrbot_blackbox.py --profile pr -q
 ```
 
-该命令为每个场景创建一次性 AstrBot 根目录，安装暂存的 Memora 和确定性测试驱动，并在验证正常关停后回收资源。除正常 bootstrap 外，它还会真实验证候选端口被外部抢占后的受限重试和资源所有权。命令不读取本机 AstrBot 实例、用户数据或真实模型凭据；CI 会在 Windows 和 Ubuntu 上同时运行此门禁。
+该命令为每个场景创建一次性 AstrBot 根目录，安装暂存的 Memora 和确定性测试驱动，并在验证正常关停后回收资源。除 bootstrap、端口冲突恢复和资源所有权外，`pr` 档位还会通过 HTTP 向测试 Platform 注入消息，使用 AstrBot 内置 OpenAI-compatible adapter 访问回环 stub，并通过 Memora Page API 验证记忆落库。命令不读取本机 AstrBot 实例、用户数据或真实模型凭据；CI 会在 Windows 和 Ubuntu 上同时运行此门禁。
+
+真实第三方 Provider 只允许在受保护环境显式运行：
+
+```powershell
+uv run --locked python scripts/run_astrbot_blackbox.py --profile live -q
+```
+
+运行前必须设置 `MEMORA_LIVE_API_BASE`、`MEMORA_LIVE_API_KEY`、`MEMORA_LIVE_MODEL` 和 `MEMORA_LIVE_ALLOWED_HOSTS`。API Base 只能使用标准 HTTPS 端口，主机必须是非 IP 地址且与白名单完全匹配。GitHub Actions 仅允许从 `main` 手动选择 live 门禁，并从 `astrbot-blackbox-live` Environment 注入变量；普通 PR 不会获得密钥或访问第三方模型。
 
 ## Dashboard 变更
 

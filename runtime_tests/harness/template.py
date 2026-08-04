@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import SCENARIO_ENV_KEYS
+from .config import build_isolated_environment
 
 _CLI_PREFIX = [sys.executable, "-m", "astrbot.cli.__main__"]
 _PLUGIN_NAME = "astrbot_plugin_memora"
@@ -37,12 +36,7 @@ def run_astrbot_cli(
     input_text: str | None = None,
 ) -> None:
     """在指定 AstrBot 根目录执行真实 CLI，并将失败输出纳入异常。"""
-    environment = os.environ.copy()
-    for key in SCENARIO_ENV_KEYS:
-        environment.pop(key, None)
-    environment["ASTRBOT_ROOT"] = str(root)
-    if extra_env:
-        environment.update(extra_env)
+    environment = build_isolated_environment(root, extra_env=extra_env)
 
     # CLI 子命令与本地路径均作为独立 argv 元素传递，shell 始终禁用。
     # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit

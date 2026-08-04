@@ -17,7 +17,7 @@ import psutil
 
 from .client import AstrBotClient
 from .config import (
-    SCENARIO_ENV_KEYS,
+    build_isolated_environment,
     configure_dashboard,
     read_command_config,
     write_command_config,
@@ -60,6 +60,7 @@ class AstrBotProcess:
         reservation: socket.socket,
         password: str,
         test_token: str,
+        sensitive_values: tuple[str, ...] = (),
     ) -> None:
         """记录场景边界并创建尚未连接的 Dashboard 客户端。"""
         self.root = root.resolve()
@@ -76,6 +77,9 @@ class AstrBotProcess:
         self._log_handle: BinaryIO | None = None
         self._attempt_log_offset = 0
         self._closed = False
+        self._redactions: list[tuple[str, str]] = []
+        for value in sensitive_values:
+            self.add_sensitive_value(value, "[PROVIDER_SECRET]")
         self.client = AstrBotClient(port, password, test_token, self)
 
     @property
@@ -182,6 +186,18 @@ class AstrBotProcess:
         """读取最后 200 行，脱敏并移除影响失败报告可读性的 ANSI 序列。"""
         return self._read_sanitized_log(start_offset=0)
 
+    def add_sensitive_value(self, value: str, replacement: str) -> None:
+        """登记运行期敏感值及其前 12 位，供失败日志与落盘日志脱敏。"""
+        if not value:
+            return
+        candidates = [(value, replacement)]
+        if len(value) > 12:
+            candidates.append((value[:12], f"{replacement}_PREFIX"))
+        for candidate in candidates:
+            if candidate not in self._redactions:
+                self._redactions.append(candidate)
+        self._redactions.sort(key=lambda item: len(item[0]), reverse=True)
+
     def _read_current_attempt_sanitized_log(self) -> str:
         """仅读取当前启动尝试的脱敏日志，供端口冲突判定使用。"""
         return self._read_sanitized_log(start_offset=self._attempt_log_offset)
@@ -195,17 +211,22 @@ class AstrBotProcess:
         with self._log_path.open("rb") as log_file:
             log_file.seek(start_offset)
             content = log_file.read().decode("utf-8", errors="replace")
-        redactions = (
+        return "\n".join(self._sanitize_text(content).splitlines()[-200:])
+
+    def _sanitize_text(self, content: str) -> str:
+        """对任意日志文本应用固定凭据、场景路径与动态载荷脱敏。"""
+        redactions = [
             (self.password, "[DASHBOARD_PASSWORD]"),
             (self.test_token, "[TEST_TOKEN]"),
             (str(self.root), "[SCENARIO_ROOT]"),
             (self.root.as_posix(), "[SCENARIO_ROOT]"),
-        )
+            *self._redactions,
+        ]
+        redactions.sort(key=lambda item: len(item[0]), reverse=True)
         for secret, replacement in redactions:
             if secret:
                 content = content.replace(secret, replacement)
-        content = _ANSI_ESCAPE_PATTERN.sub("", content)
-        return "\n".join(content.splitlines()[-200:])
+        return _ANSI_ESCAPE_PATTERN.sub("", content)
 
     def _launch_once(self) -> None:
         """在释放当前端口预约后启动一次独立进程组。"""
@@ -213,13 +234,14 @@ class AstrBotProcess:
             self._log_path.stat().st_size if self._log_path.exists() else 0
         )
         self._log_handle = self._log_path.open("ab")
-        environment = os.environ.copy()
-        for key in SCENARIO_ENV_KEYS:
-            environment.pop(key, None)
-        environment["ASTRBOT_ROOT"] = str(self.root)
-        environment["MEMORA_TEST_DRIVER_TOKEN"] = self.test_token
-        environment["PYTHONIOENCODING"] = "utf-8"
-        environment["PYTHONUTF8"] = "1"
+        environment = build_isolated_environment(
+            self.root,
+            extra_env={
+                "MEMORA_TEST_DRIVER_TOKEN": self.test_token,
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            },
+        )
         arguments: dict[str, object] = {}
         if os.name == "nt":
             arguments["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -306,11 +328,17 @@ class AstrBotProcess:
         self._reservation = None
 
     def _close_log_handle(self) -> None:
-        """在子进程退出后幂等关闭父进程持有的日志文件句柄。"""
-        if self._log_handle is None:
+        """在子进程退出后关闭句柄，并把残留日志原地改写为脱敏文本。"""
+        if self._log_handle is not None:
+            self._log_handle.close()
+            self._log_handle = None
+        process = self._process
+        if process is not None and process.poll() is None:
             return
-        self._log_handle.close()
-        self._log_handle = None
+        if not self._log_path.exists():
+            return
+        content = self._log_path.read_bytes().decode("utf-8", errors="replace")
+        self._log_path.write_text(self._sanitize_text(content), encoding="utf-8")
 
     @staticmethod
     def _send_interrupt(process: subprocess.Popen[bytes]) -> None:

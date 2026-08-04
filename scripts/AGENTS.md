@@ -35,7 +35,7 @@ flowchart TD
     A --> S["run_smoke.py"]
     S --> I["tests/integration/test_pipeline_*.py"]
     A --> X["run_astrbot_blackbox.py --profile pr"]
-    X --> RT["runtime_tests/test_bootstrap.py"]
+    X --> RT["bootstrap + message contract"]
     A --> B["Dashboard build"]
     B --> C["check_dashboard_build_artifacts.py"]
     A --> V["Dashboard tests + runtime/browser smoke"]
@@ -47,7 +47,7 @@ flowchart TD
 
 - `check_all.py` 只编排已有命令，不复制 pytest、npm 或构建工具逻辑。
 - `run_smoke.py` 依赖 `tests/integration` 的固定文件清单；重命名/增删主路径必须同步 `SMOKE_TARGETS` 和集成测试指南。
-- `run_astrbot_blackbox.py` 的首期 `pr` profile 运行真实 bootstrap 与端口冲突恢复契约；每个场景使用独立进程、端口、正式配置和临时根目录，边界详见 [`runtime_tests/AGENTS.md`](../runtime_tests/AGENTS.md)。
+- `run_astrbot_blackbox.py` 的 `pr` profile 运行真实 bootstrap、端口冲突恢复和消息契约；消息经测试 Platform 进入 EventBus，并通过 AstrBot 内置 OpenAI-compatible adapter 访问回环 stub，最后由 Memora Page API 验证记忆落库。`live` profile 只在显式受保护流程中使用真实第三方 Provider。每个场景使用独立进程、端口、正式配置和临时根目录，边界详见 [`runtime_tests/AGENTS.md`](../runtime_tests/AGENTS.md)。
 - `check_dashboard_build_artifacts.py` 依赖 Dashboard 的单 JS、单 CSS legacy bundle 契约；构建配置变化要同时验证检查器。
 - `benchmark_recall_cost.py` 导入 `core/injection` 和 AstrBot Provider 类型，并通过 `recall_total_path_benchmark.py` 启动子进程测量公开 `RecallHandler.handle_memory_recall()` 路径。
 - `benchmark_injection_decisions.py` 直接使用注入决策模型、Recorder 与 Store；不读取生产数据库。
@@ -92,7 +92,7 @@ python scripts/run_smoke.py -q
 python scripts/run_astrbot_blackbox.py --profile pr -q
 ```
 
-首期只实现 `pr` profile，并把额外参数原样传给 pytest。runner 固定为 pytest 及其 AstrBot 子进程设置 `PYTHONIOENCODING=utf-8` 和 `PYTHONUTF8=1`，确保 Windows CI 的中文失败信息不依赖系统代码页；harness 输出失败日志时会去除 ANSI 控制序列，但继续保留脱敏后的原始中文。该档位覆盖正常 bootstrap，以及候选端口被外部抢占后的真实重试和资源所有权断言；它使用确定性的本地 Chat/Embedding Provider，不读取本机 AstrBot 实例、用户数据或真实模型凭据。`full` 和 `live` profile 尚未实现，不得以空壳选项暗示已有覆盖。
+`pr` profile 把 bootstrap 与消息契约目标交给 pytest；`live` profile 只选择真实第三方 Provider 场景。runner 把额外参数原样传给 pytest，并固定 `PYTHONIOENCODING=utf-8` 和 `PYTHONUTF8=1`，确保 Windows CI 的中文失败信息不依赖系统代码页。harness 输出失败日志时会去除 ANSI 控制序列，脱敏场景路径、测试消息、回复、完整 Provider key 及其前 12 位。普通 `pr` 使用回环 OpenAI-compatible stub，不读取本机 AstrBot 实例、用户数据或真实模型凭据；`live` 缺少配置时必须在联网前失败，不得 skip。
 
 ### `check_dashboard_build_artifacts.py`
 
@@ -176,6 +176,9 @@ python scripts/run_smoke.py -q
 
 # 真实 AstrBot bootstrap 与端口冲突恢复；首期 pr profile
 python scripts/run_astrbot_blackbox.py --profile pr -q
+
+# 仅在受保护环境显式配置第三方 Provider 后运行
+python scripts/run_astrbot_blackbox.py --profile live -q
 
 # 修改产物检查器或 Dashboard bundle 契约后；先确保已有生产构建
 python scripts/check_dashboard_build_artifacts.py pages/dashboard

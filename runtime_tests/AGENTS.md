@@ -19,3 +19,16 @@ Memora 的真实运行时行为。这里的测试与 `tests/` 中基于 Mock 的
 - 测试驱动、探针和专用端点只属于测试基础设施，不得进入插件发布包或生产加载路径。
 - 普通 Pull Request 不得使用真实模型密钥；应使用无秘密、确定性的本地测试
   Provider。只有受控的专用验证流程才能注入真实模型凭据。
+
+## 当前档位
+
+- `pr`：逐场景启动真实 AstrBot，覆盖 bootstrap、端口冲突恢复，以及经受保护
+  HTTP 入口注入群消息、内置 `openai_chat_completion` adapter 调用回环 stub、
+  Platform 回复、Memora hooks 和 Page API 记忆落库。stub 不保存请求正文。
+- `live`：仅显式选择时读取四个 `MEMORA_LIVE_*` 环境变量；API Base 必须使用
+  HTTPS、标准端口、非 IP 主机并命中显式白名单。Provider key 只写入一次性场景，
+  不传给 AstrBot 子进程环境，结束后删除配置和原始日志。
+
+测试消息只能包含随机或固定 canary，不得放入真实用户文本。测试事件会以固定占位符
+代替请求和回复日志；harness 仍须把消息、Provider 回复、完整 key 及其前 12 位加入
+失败日志脱敏表。
