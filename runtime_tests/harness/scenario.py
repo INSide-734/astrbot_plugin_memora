@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 
 from .client import AstrBotClient
+from .config import configure_dashboard, read_command_config, write_command_config
 from .process import AstrBotProcess, reserve_loopback_port
 from .template import run_astrbot_cli
 
@@ -92,11 +93,8 @@ class AstrBotScenario:
     @staticmethod
     def _write_official_configs(root: Path, port: int) -> None:
         """写入 AstrBot 主配置和 Memora 官方插件配置文件。"""
-        command_config_path = root / "data" / "cmd_config.json"
-        config = json.loads(command_config_path.read_text(encoding="utf-8-sig"))
-        config["dashboard"]["host"] = "127.0.0.1"
-        config["dashboard"]["port"] = port
-        config["dashboard"]["password_change_required"] = False
+        config = read_command_config(root)
+        configure_dashboard(config, port, password_change_required=False)
         config["provider"] = [
             {
                 "id": "memora-test-chat",
@@ -122,10 +120,7 @@ class AstrBotScenario:
                 "enable": True,
             }
         ]
-        command_config_path.write_text(
-            json.dumps(config, ensure_ascii=False, indent=2),
-            encoding="utf-8-sig",
-        )
+        write_command_config(root, config)
 
         plugin_config_path = (
             root / "data" / "config" / "astrbot_plugin_memora_config.json"

@@ -9,13 +9,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import SCENARIO_ENV_KEYS
+
 _CLI_PREFIX = [sys.executable, "-m", "astrbot.cli.__main__"]
 _PLUGIN_NAME = "astrbot_plugin_memora"
-_SCENARIO_ENV_KEYS = (
-    "ASTRBOT_DASHBOARD_INITIAL_PASSWORD",
-    "ASTRBOT_RESET_DASHBOARD_PASSWORD",
-    "MEMORA_TEST_DRIVER_TOKEN",
-)
 _STAGED_ENTRIES = (
     "main.py",
     "metadata.yaml",
@@ -41,12 +38,14 @@ def run_astrbot_cli(
 ) -> None:
     """在指定 AstrBot 根目录执行真实 CLI，并将失败输出纳入异常。"""
     environment = os.environ.copy()
-    for key in _SCENARIO_ENV_KEYS:
+    for key in SCENARIO_ENV_KEYS:
         environment.pop(key, None)
     environment["ASTRBOT_ROOT"] = str(root)
     if extra_env:
         environment.update(extra_env)
 
+    # CLI 子命令与本地路径均作为独立 argv 元素传递，shell 始终禁用。
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
     completed = subprocess.run(
         [*_CLI_PREFIX, *arguments],
         cwd=root,
@@ -59,6 +58,7 @@ def run_astrbot_cli(
         encoding="utf-8",
         errors="replace",
         check=False,
+        shell=False,
     )
     if completed.returncode != 0:
         output = completed.stdout.strip()

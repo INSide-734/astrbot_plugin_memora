@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import signal
@@ -17,6 +16,12 @@ import httpx
 import psutil
 
 from .client import AstrBotClient
+from .config import (
+    SCENARIO_ENV_KEYS,
+    configure_dashboard,
+    read_command_config,
+    write_command_config,
+)
 
 _CLI_RUN = [sys.executable, "-m", "astrbot.cli.__main__", "run", "-p"]
 _DASHBOARD_READY_TIMEOUT = 120.0
@@ -30,11 +35,6 @@ _BIND_CONFLICT_MARKERS = (
     "error while attempting to bind",
     "端口 ",
     "已被占用",
-)
-_INHERITED_SCENARIO_ENV_KEYS = (
-    "ASTRBOT_DASHBOARD_INITIAL_PASSWORD",
-    "ASTRBOT_RESET_DASHBOARD_PASSWORD",
-    "MEMORA_TEST_DRIVER_TOKEN",
 )
 
 
@@ -214,7 +214,7 @@ class AstrBotProcess:
         )
         self._log_handle = self._log_path.open("ab")
         environment = os.environ.copy()
-        for key in _INHERITED_SCENARIO_ENV_KEYS:
+        for key in SCENARIO_ENV_KEYS:
             environment.pop(key, None)
         environment["ASTRBOT_ROOT"] = str(self.root)
         environment["MEMORA_TEST_DRIVER_TOKEN"] = self.test_token
@@ -228,6 +228,8 @@ class AstrBotProcess:
 
         self.ports_used.append(self.port)
         self._release_reservation()
+        # 命令仅由固定模块入口和内部生成的整数端口组成，shell 始终禁用。
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
         self._process = subprocess.Popen(
             [*_CLI_RUN, str(self.port)],
             cwd=self.root,
@@ -235,6 +237,7 @@ class AstrBotProcess:
             stdin=subprocess.DEVNULL,
             stdout=self._log_handle,
             stderr=subprocess.STDOUT,
+            shell=False,
             **arguments,
         )
 
@@ -374,11 +377,6 @@ class AstrBotProcess:
 
     def _write_dashboard_port(self, port: int) -> None:
         """把冲突重试的新端口写回场景的官方 Dashboard 配置。"""
-        config_path = self.root / "data" / "cmd_config.json"
-        config = json.loads(config_path.read_text(encoding="utf-8-sig"))
-        config["dashboard"]["host"] = "127.0.0.1"
-        config["dashboard"]["port"] = port
-        config_path.write_text(
-            json.dumps(config, ensure_ascii=False, indent=2),
-            encoding="utf-8-sig",
-        )
+        config = read_command_config(self.root)
+        configure_dashboard(config, port)
+        write_command_config(self.root, config)

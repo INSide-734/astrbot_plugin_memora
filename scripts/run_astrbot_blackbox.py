@@ -33,6 +33,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     environment = os.environ.copy()
     environment["PYTHONIOENCODING"] = "utf-8"
     environment["PYTHONUTF8"] = "1"
+    # profile 和 pytest 参数均作为独立 argv 元素透传，shell 始终禁用。
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
     completed = subprocess.run(
         command,
         cwd=REPO_ROOT,
