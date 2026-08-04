@@ -22,8 +22,8 @@ def astrbot_scenario(
 ) -> Iterator[AstrBotScenario]:
     """为单个测试准备并启动隔离场景，结束时幂等释放资源。"""
     scenario = AstrBotScenario.prepare(astrbot_template, tmp_path)
-    scenario.start()
     try:
+        scenario.start()
         yield scenario
     finally:
         scenario.close()
