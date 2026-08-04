@@ -45,6 +45,7 @@ def _run_step(title: str, command: list[str], *, cwd: Path | None = None) -> int
 
 
 def main() -> int:
+    """按固定顺序运行全部本地质量门禁，并在首个失败处退出。"""
     started_at = time.perf_counter()
     steps: list[tuple[str, list[str], Path | None]] = []
 
@@ -68,6 +69,11 @@ def main() -> int:
             (
                 "Smoke tests",
                 [sys.executable, "scripts/run_smoke.py", "-q"],
+                REPO_ROOT,
+            ),
+            (
+                "AstrBot black-box bootstrap",
+                [sys.executable, "scripts/run_astrbot_blackbox.py", "-q"],
                 REPO_ROOT,
             ),
             (

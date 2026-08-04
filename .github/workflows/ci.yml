@@ -46,6 +46,36 @@ jobs:
       - name: Run smoke tests
         run: uv run --locked python scripts/run_smoke.py -q
 
+  blackbox-bootstrap:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          version: "0.11.x"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python dependencies
+        run: uv sync --locked --dev
+
+      - name: Run AstrBot black-box bootstrap
+        run: uv run --locked python scripts/run_astrbot_blackbox.py -q
+
   dashboard:
     runs-on: ubuntu-latest
     timeout-minutes: 35
