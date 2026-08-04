@@ -85,7 +85,7 @@ jobs:
   blackbox-live:
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
-          inputs.run_live_blackbox &&
+          github.event.inputs.run_live_blackbox == 'true' &&
           github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

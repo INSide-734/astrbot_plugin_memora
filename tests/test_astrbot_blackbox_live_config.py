@@ -96,6 +96,8 @@ def test_ci_keeps_live_secret_out_of_pr_jobs_and_requires_manual_main() -> None:
     assert live_job["environment"] == "astrbot-blackbox-live"
     assert live_job["timeout-minutes"] == "5"
     assert "workflow_dispatch" in live_job["if"]
+    assert "github.event.inputs.run_live_blackbox == 'true'" in live_job["if"]
+    assert "inputs.run_live_blackbox &&" not in live_job["if"]
     assert "refs/heads/main" in live_job["if"]
     live_step = next(
         step for step in live_job["steps"] if "--profile live" in step.get("run", "")
