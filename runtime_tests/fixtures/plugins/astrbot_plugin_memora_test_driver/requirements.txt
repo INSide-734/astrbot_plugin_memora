@@ -1,0 +1,1 @@
+# 测试驱动仅使用 AstrBot SDK 和 Python 标准库，不需要额外依赖。

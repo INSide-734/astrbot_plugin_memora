@@ -2,7 +2,7 @@
 
 # Tests 模块上下文
 
-**最后更新：** 2026-07-21
+**最后更新：** 2026-08-04
 **入口：** `pytest.ini`、`tests/conftest.py`、`tests/integration/conftest.py`
 
 ## 职责与边界
@@ -21,7 +21,9 @@
 - `tests/test_temporal_semantics.py` 覆盖 UTC/Unix/ISO 解析、reference-time cache 隔离、future/valid/invalid 边界、source provenance 迁移、supporting source 修订/删除保留、conflict exact/unresolved 决策和安全标量统计；不把 conflict source ID、revision 或时间 provenance 放入模型 DTO。
 - P0 隐私观测用例覆盖 Diagnostics/Recall Trace 的新写入与旧数据库读取、API/命令稳定错误码、正文/query/Prompt/身份/ID/异常 canary、Injection metadata allowlist 和动态记忆不进入 System Prompt。
 
-不在本目录承担：生产实现、真实 AstrBot 服务启动、真实模型/网络调用、Dashboard 组件测试、发布说明或普通设计文档维护。
+不在本目录承担：生产实现、真实模型/网络调用、Dashboard 组件测试、发布说明或普通设计文档维护。真实 AstrBot 服务启动已迁移到 [`runtime_tests/`](../runtime_tests/AGENTS.md)；“不启动真实服务”仅是本 legacy `tests/` 目录的边界。
+
+迁移期继续保留既有 Mock 测试，只有对应领域达到黑盒 parity 门后才能删除。禁止向 legacy suite 新增用于替代真实 AstrBot 行为的新 Mock；新的加载、注册表、Dashboard 或进程生命周期契约应进入 `runtime_tests/`。
 
 ## 组织与依赖方向
 

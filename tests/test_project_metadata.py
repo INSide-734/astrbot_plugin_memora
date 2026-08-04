@@ -83,6 +83,7 @@ def test_run_smoke_reports_each_target_status_and_total_duration(
 
 
 def test_check_all_reports_step_durations_and_total(monkeypatch, capsys) -> None:
+    """统一门禁应报告各步骤耗时、总耗时和真实黑盒入口。"""
     from scripts import check_all
 
     calls: list[tuple[list[str], Path]] = []
@@ -115,6 +116,8 @@ def test_check_all_reports_step_durations_and_total(monkeypatch, capsys) -> None
                 102.5,
                 102.9,
                 102.9,
+                103.3,
+                103.3,
             ]
         ).__next__,
     )
@@ -124,11 +127,16 @@ def test_check_all_reports_step_durations_and_total(monkeypatch, capsys) -> None
     output = capsys.readouterr().out
     assert "PASSED: Backend regression tests in 0.20s" in output
     assert "PASSED: Smoke tests in 0.80s" in output
-    assert "PASSED: Dashboard artifact check in 0.30s" in output
-    assert "PASSED: Dashboard runtime smoke in 0.50s" in output
+    assert "PASSED: AstrBot black-box bootstrap in 0.30s" in output
+    assert "PASSED: Dashboard artifact check in 0.40s" in output
+    assert "PASSED: Dashboard runtime smoke in 0.40s" in output
     assert "PASSED: Dashboard browser smoke in 0.40s" in output
-    assert "All quality gates passed in 2.90s." in output
+    assert "All quality gates passed in 3.30s." in output
     assert calls
+    assert any(
+        command == [sys.executable, "scripts/run_astrbot_blackbox.py", "-q"]
+        for command, _cwd in calls
+    )
     assert any(
         "check_dashboard_build_artifacts.py" in " ".join(command)
         for command, _cwd in calls

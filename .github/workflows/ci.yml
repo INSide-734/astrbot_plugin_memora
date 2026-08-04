@@ -4,6 +4,12 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      run_live_blackbox:
+        description: Run the protected third-party LLM black-box gate
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -45,6 +51,75 @@ jobs:
 
       - name: Run smoke tests
         run: uv run --locked python scripts/run_smoke.py -q
+
+  blackbox-bootstrap:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          version: "0.11.x"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python dependencies
+        run: uv sync --locked --dev
+
+      - name: Run AstrBot black-box PR contract
+        run: uv run --locked python scripts/run_astrbot_blackbox.py --profile pr -q
+
+  blackbox-live:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.run_live_blackbox == 'true' &&
+          github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: astrbot-blackbox-live
+    concurrency:
+      group: astrbot-blackbox-live
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          version: "0.11.x"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python dependencies
+        run: uv sync --locked --dev
+
+      - name: Run protected live Provider contract
+        env:
+          MEMORA_LIVE_API_BASE: ${{ vars.MEMORA_LIVE_API_BASE }}
+          MEMORA_LIVE_API_KEY: ${{ secrets.MEMORA_LIVE_API_KEY }}
+          MEMORA_LIVE_MODEL: ${{ vars.MEMORA_LIVE_MODEL }}
+          MEMORA_LIVE_ALLOWED_HOSTS: ${{ vars.MEMORA_LIVE_ALLOWED_HOSTS }}
+        run: uv run --locked python scripts/run_astrbot_blackbox.py --profile live -q
 
   dashboard:
     runs-on: ubuntu-latest

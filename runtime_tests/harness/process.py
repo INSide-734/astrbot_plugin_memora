@@ -1,0 +1,410 @@
+"""真实 AstrBot 子进程的跨平台生命周期管理。"""
+
+from __future__ import annotations
+
+import os
+import re
+import signal
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import BinaryIO
+
+import httpx
+import psutil
+
+from .client import AstrBotClient
+from .config import (
+    build_isolated_environment,
+    configure_dashboard,
+    read_command_config,
+    write_command_config,
+)
+
+_CLI_RUN = [sys.executable, "-m", "astrbot.cli.__main__", "run", "-p"]
+_DASHBOARD_READY_TIMEOUT = 120.0
+_POLL_INTERVAL_SECONDS = 0.5
+_MAX_PORT_ATTEMPTS = 3
+_ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_BIND_CONFLICT_MARKERS = (
+    "address already in use",
+    "only one usage of each socket address",
+    "winerror 10048",
+    "error while attempting to bind",
+    "端口 ",
+    "已被占用",
+)
+
+
+def reserve_loopback_port() -> tuple[int, socket.socket]:
+    """绑定回环地址的临时端口，并把预约套接字保持为打开状态。"""
+    reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        reservation.bind(("127.0.0.1", 0))
+        port = int(reservation.getsockname()[1])
+        return port, reservation
+    except Exception:
+        reservation.close()
+        raise
+
+
+class AstrBotProcess:
+    """管理单个场景的进程、日志、HTTP 客户端与端口预约。"""
+
+    def __init__(
+        self,
+        root: Path,
+        port: int,
+        reservation: socket.socket,
+        password: str,
+        test_token: str,
+        sensitive_values: tuple[str, ...] = (),
+    ) -> None:
+        """记录场景边界并创建尚未连接的 Dashboard 客户端。"""
+        self.root = root.resolve()
+        self.port = port
+        self.original_port = port
+        self.password = password
+        self.test_token = test_token
+        self.forced_shutdown = False
+        self.ports_used: list[int] = []
+        self._bind_conflict_ports: set[int] = set()
+        self._reservation: socket.socket | None = reservation
+        self._process: subprocess.Popen[bytes] | None = None
+        self._log_path = self.root / "astrbot-runtime.log"
+        self._log_handle: BinaryIO | None = None
+        self._attempt_log_offset = 0
+        self._closed = False
+        self._redactions: list[tuple[str, str]] = []
+        for value in sensitive_values:
+            self.add_sensitive_value(value, "[PROVIDER_SECRET]")
+        self.client = AstrBotClient(port, password, test_token, self)
+
+    @property
+    def returncode(self) -> int | None:
+        """返回当前子进程退出码；未启动或仍在运行时返回 ``None``。"""
+        if self._process is None:
+            return None
+        return self._process.poll()
+
+    @property
+    def release_check_ports(self) -> tuple[int, ...]:
+        """返回由 AstrBot 实际拥有过、停止后必须能够重绑的端口。"""
+        candidates = dict.fromkeys(
+            [
+                self.original_port,
+                *self.ports_used,
+                self.port,
+            ]
+        )
+        return tuple(
+            port for port in candidates if port not in self._bind_conflict_ports
+        )
+
+    def start(self) -> None:
+        """启动真实 AstrBot，并仅对明确的早期端口冲突更换端口重试。"""
+        if self._closed:
+            raise RuntimeError("不能启动已关闭的 AstrBot 进程")
+        if self._process is not None:
+            if self._process.poll() is None:
+                return
+            raise RuntimeError("AstrBot 进程已退出，不能重复启动")
+
+        deadline = time.monotonic() + _DASHBOARD_READY_TIMEOUT
+        for attempt in range(_MAX_PORT_ATTEMPTS):
+            self._launch_once()
+            if self._wait_until_dashboard_accepts_requests(deadline):
+                return
+
+            logs = self.read_sanitized_log()
+            attempt_logs = self._read_current_attempt_sanitized_log()
+            if (
+                not self._is_bind_conflict(attempt_logs)
+                or attempt == _MAX_PORT_ATTEMPTS - 1
+            ):
+                self._close_log_handle()
+                raise RuntimeError(
+                    "AstrBot 在 Dashboard 就绪前退出，且不满足端口冲突重试条件。"
+                    f"\n{logs}"
+                )
+
+            self._bind_conflict_ports.add(self.port)
+            self._stop_failed_start_attempt()
+            self._close_log_handle()
+            self._process = None
+            self.port, self._reservation = reserve_loopback_port()
+            self._write_dashboard_port(self.port)
+            self.client.retarget(self.port)
+
+        raise RuntimeError("AstrBot 端口重试次数已耗尽")
+
+    def stop(self) -> None:
+        """先关闭 HTTP 客户端，再以平台信号请求干净关停并回收日志句柄。"""
+        self.client.close()
+        self._release_reservation()
+        process = self._process
+        if process is None:
+            self._close_log_handle()
+            return
+
+        if process.poll() is None:
+            process_tree = self._snapshot_process_tree(process)
+            self._send_interrupt(process)
+            if process_tree:
+                _, alive = psutil.wait_procs(process_tree, timeout=15)
+            else:
+                try:
+                    process.wait(timeout=15)
+                    alive = []
+                except subprocess.TimeoutExpired:
+                    alive = [psutil.Process(process.pid)]
+            if alive:
+                self.forced_shutdown = True
+                self._terminate_process_tree(process, alive)
+            try:
+                process.wait(timeout=0)
+            except subprocess.TimeoutExpired:
+                self.forced_shutdown = True
+                self._terminate_process_tree(process, [psutil.Process(process.pid)])
+        self._close_log_handle()
+
+    def close(self) -> None:
+        """幂等释放准备中、部分启动、运行中或已停止场景的所有父侧资源。"""
+        if self._closed:
+            return
+        try:
+            self.stop()
+        finally:
+            self._release_reservation()
+            self._close_log_handle()
+            self.client.close()
+            self._closed = True
+
+    def read_sanitized_log(self) -> str:
+        """读取最后 200 行，脱敏并移除影响失败报告可读性的 ANSI 序列。"""
+        return self._read_sanitized_log(start_offset=0)
+
+    def add_sensitive_value(self, value: str, replacement: str) -> None:
+        """登记运行期敏感值及其前 12 位，供失败日志与落盘日志脱敏。"""
+        if not value:
+            return
+        candidates = [(value, replacement)]
+        if len(value) > 12:
+            candidates.append((value[:12], f"{replacement}_PREFIX"))
+        for candidate in candidates:
+            if candidate not in self._redactions:
+                self._redactions.append(candidate)
+        self._redactions.sort(key=lambda item: len(item[0]), reverse=True)
+
+    def _read_current_attempt_sanitized_log(self) -> str:
+        """仅读取当前启动尝试的脱敏日志，供端口冲突判定使用。"""
+        return self._read_sanitized_log(start_offset=self._attempt_log_offset)
+
+    def _read_sanitized_log(self, *, start_offset: int) -> str:
+        """从指定字节偏移读取日志，脱敏、清理 ANSI 后保留最后 200 行。"""
+        if self._log_handle is not None:
+            self._log_handle.flush()
+        if not self._log_path.exists():
+            return ""
+        with self._log_path.open("rb") as log_file:
+            log_file.seek(start_offset)
+            content = log_file.read().decode("utf-8", errors="replace")
+        return "\n".join(self._sanitize_text(content).splitlines()[-200:])
+
+    def _sanitize_text(self, content: str) -> str:
+        """对任意日志文本应用固定凭据、场景路径与动态载荷脱敏。"""
+        redactions = [
+            (self.password, "[DASHBOARD_PASSWORD]"),
+            (self.test_token, "[TEST_TOKEN]"),
+            (str(self.root), "[SCENARIO_ROOT]"),
+            (self.root.as_posix(), "[SCENARIO_ROOT]"),
+            *self._redactions,
+        ]
+        redactions.sort(key=lambda item: len(item[0]), reverse=True)
+        for secret, replacement in redactions:
+            if secret:
+                content = content.replace(secret, replacement)
+        return _ANSI_ESCAPE_PATTERN.sub("", content)
+
+    def _launch_once(self) -> None:
+        """在释放当前端口预约后启动一次独立进程组。"""
+        self._attempt_log_offset = (
+            self._log_path.stat().st_size if self._log_path.exists() else 0
+        )
+        self._log_handle = self._log_path.open("ab")
+        environment = build_isolated_environment(
+            self.root,
+            extra_env={
+                "MEMORA_TEST_DRIVER_TOKEN": self.test_token,
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            },
+        )
+        arguments: dict[str, object] = {}
+        if os.name == "nt":
+            arguments["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            arguments["start_new_session"] = True
+
+        self.ports_used.append(self.port)
+        self._release_reservation()
+        # 命令仅由固定模块入口和内部生成的整数端口组成，shell 始终禁用。
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+        self._process = subprocess.Popen(
+            [*_CLI_RUN, str(self.port)],
+            cwd=self.root,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=self._log_handle,
+            stderr=subprocess.STDOUT,
+            shell=False,
+            **arguments,
+        )
+
+    def _wait_until_dashboard_accepts_requests(self, deadline: float) -> bool:
+        """条件轮询真实登录，成功后才确认 Dashboard 鉴权服务已经就绪。"""
+        while True:
+            process = self._process
+            if process is None or process.poll() is not None:
+                return False
+            if self._is_bind_conflict(self._read_current_attempt_sanitized_log()):
+                return False
+            try:
+                self.client.login()
+                return True
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 401:
+                    raise RuntimeError(
+                        "AstrBot Dashboard 拒绝场景初始化密码。\n"
+                        f"{self.read_sanitized_log()}"
+                    ) from exc
+            except httpx.RequestError:
+                pass
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"等待 AstrBot Dashboard 就绪超时。\n{self.read_sanitized_log()}"
+                )
+            time.sleep(min(_POLL_INTERVAL_SECONDS, remaining))
+
+    def _stop_failed_start_attempt(self) -> None:
+        """回收已确认启动失败但尚未退出的包装进程及其全部后代。"""
+        process = self._process
+        if process is None:
+            return
+        if process.poll() is not None:
+            process.wait()
+            return
+
+        process_tree = self._snapshot_process_tree(process)
+        self._send_interrupt(process)
+        if process_tree:
+            _, alive = psutil.wait_procs(process_tree, timeout=5)
+        else:
+            try:
+                process.wait(timeout=5)
+                alive = []
+            except subprocess.TimeoutExpired:
+                try:
+                    alive = [psutil.Process(process.pid)]
+                except psutil.Error:
+                    process.kill()
+                    process.wait(timeout=5)
+                    alive = []
+
+        if alive:
+            self._terminate_process_tree(process, alive)
+            return
+        process.wait(timeout=5)
+
+    def _release_reservation(self) -> None:
+        """关闭当前端口预约套接字，并确保重复调用安全。"""
+        if self._reservation is None:
+            return
+        self._reservation.close()
+        self._reservation = None
+
+    def _close_log_handle(self) -> None:
+        """在子进程退出后关闭句柄，并把残留日志原地改写为脱敏文本。"""
+        if self._log_handle is not None:
+            self._log_handle.close()
+            self._log_handle = None
+        process = self._process
+        if process is not None and process.poll() is None:
+            return
+        if not self._log_path.exists():
+            return
+        content = self._log_path.read_bytes().decode("utf-8", errors="replace")
+        self._log_path.write_text(self._sanitize_text(content), encoding="utf-8")
+
+    @staticmethod
+    def _send_interrupt(process: subprocess.Popen[bytes]) -> None:
+        """向完整 AstrBot 进程组发送平台对应的正常中断信号。"""
+        try:
+            if os.name == "nt":
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+            else:
+                os.killpg(process.pid, signal.SIGINT)
+        except ProcessLookupError:
+            return
+
+    @staticmethod
+    def _snapshot_process_tree(
+        process: subprocess.Popen[bytes],
+    ) -> list[psutil.Process]:
+        """在发信号前快照包装进程及全部后代，供统一等待与兜底终止。"""
+        try:
+            parent = psutil.Process(process.pid)
+            return [parent, *parent.children(recursive=True)]
+        except psutil.Error:
+            return []
+
+    @staticmethod
+    def _terminate_process_tree(
+        process: subprocess.Popen[bytes],
+        alive: list[psutil.Process],
+    ) -> None:
+        """仅在正常关停超时后强制终止完整子进程树。"""
+        if os.name == "nt":
+            for child in reversed(alive):
+                subprocess.run(
+                    ["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        psutil.wait_procs(alive, timeout=5)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if os.name == "nt":
+                process.kill()
+            else:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.wait(timeout=5)
+
+    @staticmethod
+    def _is_bind_conflict(logs: str) -> bool:
+        """仅依据已退出进程日志中的明确绑定冲突标记决定是否重试。"""
+        lowered = logs.lower()
+        if "端口 " in logs and "已被占用" in logs:
+            return True
+        return any(marker in lowered for marker in _BIND_CONFLICT_MARKERS[:4])
+
+    def _write_dashboard_port(self, port: int) -> None:
+        """把冲突重试的新端口写回场景的官方 Dashboard 配置。"""
+        config = read_command_config(self.root)
+        configure_dashboard(config, port)
+        write_command_config(self.root, config)

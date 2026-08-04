@@ -2,8 +2,8 @@
 
 # Scripts 模块上下文
 
-**最后更新：** 2026-07-27
-**入口：** `scripts/check_all.py`、`scripts/run_smoke.py`、`scripts/package_plugin.py`、`scripts/generate_release_notes.py`、`scripts/benchmark_recall_cost.py`
+**最后更新：** 2026-08-04
+**入口：** `scripts/check_all.py`、`scripts/run_smoke.py`、`scripts/run_astrbot_blackbox.py`、`scripts/package_plugin.py`、`scripts/generate_release_notes.py`、`scripts/benchmark_recall_cost.py`
 
 ## 职责与边界
 
@@ -13,8 +13,9 @@
 
 | 路径 | 职责 | 主要副作用 |
 |---|---|---|
-| `check_all.py` | 顺序执行统一仓库质量门禁，首个失败立即退出 | 运行 pytest、Dashboard 构建/测试/smoke |
+| `check_all.py` | 顺序执行统一仓库质量门禁，首个失败立即退出 | 运行 legacy pytest、真实 AstrBot bootstrap、Dashboard 构建/测试/smoke |
 | `run_smoke.py` | 分别执行五条 Python 集成管线并汇总 | 创建各测试自己的临时数据 |
+| `run_astrbot_blackbox.py` | 运行 `runtime_tests/` 的真实 AstrBot 黑盒档位 | 每场景创建并回收独立 AstrBot 根目录和子进程 |
 | `check_dashboard_build_artifacts.py` | 检查生产 Dashboard 的 HTML 与 bundle 兼容约束 | 只读目标构建目录 |
 | `package_plugin.py` | 生成 runtime/source/both 插件 ZIP，校验白名单、排除项和归档路径 | 可能构建 Dashboard；写入 `dist/` 或指定目录 |
 | `generate_release_notes.py` | 校验 runtime/source ZIP 与 SHA-256 清单，并用 Markdown 模板生成发布说明 | 写入指定的发布说明 Markdown |
@@ -33,6 +34,8 @@ flowchart TD
     A --> P["python -m pytest tests -q"]
     A --> S["run_smoke.py"]
     S --> I["tests/integration/test_pipeline_*.py"]
+    A --> X["run_astrbot_blackbox.py --profile pr"]
+    X --> RT["bootstrap + message contract"]
     A --> B["Dashboard build"]
     B --> C["check_dashboard_build_artifacts.py"]
     A --> V["Dashboard tests + runtime/browser smoke"]
@@ -44,6 +47,7 @@ flowchart TD
 
 - `check_all.py` 只编排已有命令，不复制 pytest、npm 或构建工具逻辑。
 - `run_smoke.py` 依赖 `tests/integration` 的固定文件清单；重命名/增删主路径必须同步 `SMOKE_TARGETS` 和集成测试指南。
+- `run_astrbot_blackbox.py` 的 `pr` profile 运行真实 bootstrap、端口冲突恢复和消息契约；消息经测试 Platform 进入 EventBus，并通过 AstrBot 内置 OpenAI-compatible adapter 访问回环 stub，最后由 Memora Page API 验证记忆落库。`live` profile 只在显式受保护流程中使用真实第三方 Provider。每个场景使用独立进程、端口、正式配置和临时根目录，边界详见 [`runtime_tests/AGENTS.md`](../runtime_tests/AGENTS.md)。
 - `check_dashboard_build_artifacts.py` 依赖 Dashboard 的单 JS、单 CSS legacy bundle 契约；构建配置变化要同时验证检查器。
 - `benchmark_recall_cost.py` 导入 `core/injection` 和 AstrBot Provider 类型，并通过 `recall_total_path_benchmark.py` 启动子进程测量公开 `RecallHandler.handle_memory_recall()` 路径。
 - `benchmark_injection_decisions.py` 直接使用注入决策模型、Recorder 与 Store；不读取生产数据库。
@@ -63,11 +67,12 @@ python scripts/check_all.py
 1. 若 `scripts/validate_conf_schema.py` 存在，先执行配置 schema 校验；当前仓库没有该文件，因此该步被条件跳过。
 2. `python -m pytest tests -q`。
 3. `python scripts/run_smoke.py -q`。
-4. 在 `pages/dashboard/` 执行 `npm run build`。
-5. 从根目录执行 `python scripts/check_dashboard_build_artifacts.py`。
-6. 在 Dashboard 目录执行 `npm run test`。
-7. 执行 `npm run smoke:runtime`。
-8. 执行 `npm run smoke:browser`。
+4. `python scripts/run_astrbot_blackbox.py -q`。
+5. 在 `pages/dashboard/` 执行 `npm run build`。
+6. 从根目录执行 `python scripts/check_dashboard_build_artifacts.py`。
+7. 在 Dashboard 目录执行 `npm run test`。
+8. 执行 `npm run smoke:runtime`。
+9. 执行 `npm run smoke:browser`。
 
 `_resolve_command()` 使用 `shutil.which()`，并在 Windows 兼容 `.cmd`/`.exe`。任一步骤非零时立即返回该退出码，不继续后续步骤。
 
@@ -80,6 +85,14 @@ python scripts/run_smoke.py -q
 固定目标是 ingest、event、retrieval、graph、lifecycle 五个文件。存在 `uv` 时使用 `uv run pytest`，否则使用当前 Python 的 `-m pytest`。目标缺失返回 2；测试失败不会阻止后续目标执行，最终返回第一个测试失败码。
 
 新增给 pytest 的参数会原样附加到每个目标。不要传只适用于单一文件的 node id 或会改变五条目标语义的参数。
+
+### `run_astrbot_blackbox.py`
+
+```bash
+python scripts/run_astrbot_blackbox.py --profile pr -q
+```
+
+`pr` profile 把 bootstrap 与消息契约目标交给 pytest；`live` profile 只选择真实第三方 Provider 场景。runner 把额外参数原样传给 pytest，并固定 `PYTHONIOENCODING=utf-8` 和 `PYTHONUTF8=1`，确保 Windows CI 的中文失败信息不依赖系统代码页。harness 输出失败日志时会去除 ANSI 控制序列，脱敏场景路径、测试消息、回复、完整 Provider key 及其前 12 位。普通 `pr` 使用回环 OpenAI-compatible stub，不读取本机 AstrBot 实例、用户数据或真实模型凭据；`live` 缺少配置时必须在联网前失败，不得 skip。
 
 ### `check_dashboard_build_artifacts.py`
 
@@ -160,6 +173,12 @@ python -m pytest tests/test_generate_release_notes.py -q
 
 # 集成 smoke 调度的真实执行
 python scripts/run_smoke.py -q
+
+# 真实 AstrBot bootstrap 与端口冲突恢复；首期 pr profile
+python scripts/run_astrbot_blackbox.py --profile pr -q
+
+# 仅在受保护环境显式配置第三方 Provider 后运行
+python scripts/run_astrbot_blackbox.py --profile live -q
 
 # 修改产物检查器或 Dashboard bundle 契约后；先确保已有生产构建
 python scripts/check_dashboard_build_artifacts.py pages/dashboard

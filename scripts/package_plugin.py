@@ -40,6 +40,7 @@ EXCLUDED_DIRS = {
     "node_modules",
     "data",
     "storage",
+    "runtime_tests",
     "dist",
     "build",
     ".pytest_cache",
@@ -381,7 +382,7 @@ def validate_archive(
     normalized = [PurePosixPath(name) for name in names]
     name_set = set(names)
     forbidden_anywhere = {"node_modules", ".git"}
-    forbidden_root = {"data", "storage"}
+    forbidden_root = {"data", "storage", "runtime_tests"}
     if mode == "runtime":
         forbidden_root.update({"tests", "scripts", "docs"})
     for path in normalized:
