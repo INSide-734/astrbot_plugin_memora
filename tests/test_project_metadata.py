@@ -83,6 +83,7 @@ def test_run_smoke_reports_each_target_status_and_total_duration(
 
 
 def test_check_all_reports_step_durations_and_total(monkeypatch, capsys) -> None:
+    """统一门禁应报告各步骤耗时、总耗时和真实黑盒入口。"""
     from scripts import check_all
 
     calls: list[tuple[list[str], Path]] = []
