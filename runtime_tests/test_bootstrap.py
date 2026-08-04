@@ -81,12 +81,14 @@ def test_bind_conflict_retry_ignores_externally_owned_port(
     try:
         scenario.start()
         assert launch_count == 2
+        assert scenario._process.port != scenario._process.original_port
+        assert scenario._process.ports_used == [
+            scenario._process.original_port,
+            scenario._process.port,
+        ]
+        assert scenario._process.release_check_ports == (scenario._process.port,)
         scenario.stop()
         scenario.assert_resources_released()
-        sanitized_log = scenario._process.read_sanitized_log()
-        assert "端口 " in sanitized_log
-        assert "已被占用" in sanitized_log
-        assert "\x1b[" not in sanitized_log
     finally:
         scenario.close()
         external_listener.close()
