@@ -18,6 +18,14 @@ uv run --locked ruff check path/to/file.py
 uv run --locked python scripts/check_all.py
 ```
 
+## AstrBot 黑盒 Bootstrap
+
+```powershell
+uv run --locked python scripts/run_astrbot_blackbox.py --profile pr -q
+```
+
+该命令为每个场景创建一次性 AstrBot 根目录，安装暂存的 Memora 和确定性测试驱动，并在验证正常关停后回收资源。它不读取本机 AstrBot 实例、用户数据或真实模型凭据；CI 会在 Windows 和 Ubuntu 上同时运行此门禁。
+
 ## Dashboard 变更
 
 ```powershell

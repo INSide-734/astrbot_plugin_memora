@@ -11,6 +11,7 @@ astrbot_plugin_memora/
 ├── pages/dashboard/
 ├── website/
 ├── tests/
+├── runtime_tests/
 ├── scripts/
 ├── _conf_schema.json
 ├── pyproject.toml
