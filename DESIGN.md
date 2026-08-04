@@ -188,6 +188,9 @@ unrelated local artifacts.
 
 ## Authoritative references
 
+- [Package-by-Feature migration baseline](docs/architecture/package-by-feature/README.md):
+  proposed dependency rules, per-file matrix, staged runbook, and acceptance gates for
+  AST-6 review.
 - Root and module `CLAUDE.md` files: current ownership and implementation notes.
 - `website/docs/development/`: environment and gate commands.
 - `docs/superpowers/specs/`: approved feature designs.
