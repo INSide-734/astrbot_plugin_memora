@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -29,7 +30,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         *PROFILE_TARGETS[arguments.profile],
         *pytest_arguments,
     ]
-    completed = subprocess.run(command, cwd=REPO_ROOT, shell=False)
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["PYTHONUTF8"] = "1"
+    completed = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        env=environment,
+        shell=False,
+    )
     return completed.returncode
 
 

@@ -92,7 +92,7 @@ python scripts/run_smoke.py -q
 python scripts/run_astrbot_blackbox.py --profile pr -q
 ```
 
-首期只实现 `pr` profile，并把额外参数原样传给 pytest。该档位覆盖正常 bootstrap，以及候选端口被外部抢占后的真实重试和资源所有权断言；它使用确定性的本地 Chat/Embedding Provider，不读取本机 AstrBot 实例、用户数据或真实模型凭据。`full` 和 `live` profile 尚未实现，不得以空壳选项暗示已有覆盖。
+首期只实现 `pr` profile，并把额外参数原样传给 pytest。runner 固定为 pytest 及其 AstrBot 子进程设置 `PYTHONIOENCODING=utf-8` 和 `PYTHONUTF8=1`，确保 Windows CI 的中文失败信息不依赖系统代码页；harness 输出失败日志时会去除 ANSI 控制序列，但继续保留脱敏后的原始中文。该档位覆盖正常 bootstrap，以及候选端口被外部抢占后的真实重试和资源所有权断言；它使用确定性的本地 Chat/Embedding Provider，不读取本机 AstrBot 实例、用户数据或真实模型凭据。`full` 和 `live` profile 尚未实现，不得以空壳选项暗示已有覆盖。
 
 ### `check_dashboard_build_artifacts.py`
 

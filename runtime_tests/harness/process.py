@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -21,6 +22,7 @@ _CLI_RUN = [sys.executable, "-m", "astrbot.cli.__main__", "run", "-p"]
 _DASHBOARD_READY_TIMEOUT = 120.0
 _POLL_INTERVAL_SECONDS = 0.5
 _MAX_PORT_ATTEMPTS = 3
+_ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _BIND_CONFLICT_MARKERS = (
     "address already in use",
     "only one usage of each socket address",
@@ -125,6 +127,7 @@ class AstrBotProcess:
                 )
 
             self._bind_conflict_ports.add(self.port)
+            self._stop_failed_start_attempt()
             self._close_log_handle()
             self._process = None
             self.port, self._reservation = reserve_loopback_port()
@@ -176,7 +179,7 @@ class AstrBotProcess:
             self._closed = True
 
     def read_sanitized_log(self) -> str:
-        """读取至多最后 200 行日志并替换密码、令牌和场景绝对路径。"""
+        """读取最后 200 行，脱敏并移除影响失败报告可读性的 ANSI 序列。"""
         return self._read_sanitized_log(start_offset=0)
 
     def _read_current_attempt_sanitized_log(self) -> str:
@@ -184,7 +187,7 @@ class AstrBotProcess:
         return self._read_sanitized_log(start_offset=self._attempt_log_offset)
 
     def _read_sanitized_log(self, *, start_offset: int) -> str:
-        """从指定字节偏移读取日志，脱敏后限制为最后 200 行。"""
+        """从指定字节偏移读取日志，脱敏、清理 ANSI 后保留最后 200 行。"""
         if self._log_handle is not None:
             self._log_handle.flush()
         if not self._log_path.exists():
@@ -201,6 +204,7 @@ class AstrBotProcess:
         for secret, replacement in redactions:
             if secret:
                 content = content.replace(secret, replacement)
+        content = _ANSI_ESCAPE_PATTERN.sub("", content)
         return "\n".join(content.splitlines()[-200:])
 
     def _launch_once(self) -> None:
@@ -215,6 +219,7 @@ class AstrBotProcess:
         environment["ASTRBOT_ROOT"] = str(self.root)
         environment["MEMORA_TEST_DRIVER_TOKEN"] = self.test_token
         environment["PYTHONIOENCODING"] = "utf-8"
+        environment["PYTHONUTF8"] = "1"
         arguments: dict[str, object] = {}
         if os.name == "nt":
             arguments["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -239,6 +244,8 @@ class AstrBotProcess:
             process = self._process
             if process is None or process.poll() is not None:
                 return False
+            if self._is_bind_conflict(self._read_current_attempt_sanitized_log()):
+                return False
             try:
                 self.client.login()
                 return True
@@ -257,6 +264,36 @@ class AstrBotProcess:
                     f"等待 AstrBot Dashboard 就绪超时。\n{self.read_sanitized_log()}"
                 )
             time.sleep(min(_POLL_INTERVAL_SECONDS, remaining))
+
+    def _stop_failed_start_attempt(self) -> None:
+        """回收已确认启动失败但尚未退出的包装进程及其全部后代。"""
+        process = self._process
+        if process is None:
+            return
+        if process.poll() is not None:
+            process.wait()
+            return
+
+        process_tree = self._snapshot_process_tree(process)
+        self._send_interrupt(process)
+        if process_tree:
+            _, alive = psutil.wait_procs(process_tree, timeout=5)
+        else:
+            try:
+                process.wait(timeout=5)
+                alive = []
+            except subprocess.TimeoutExpired:
+                try:
+                    alive = [psutil.Process(process.pid)]
+                except psutil.Error:
+                    process.kill()
+                    process.wait(timeout=5)
+                    alive = []
+
+        if alive:
+            self._terminate_process_tree(process, alive)
+            return
+        process.wait(timeout=5)
 
     def _release_reservation(self) -> None:
         """关闭当前端口预约套接字，并确保重复调用安全。"""

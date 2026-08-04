@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import socket
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -53,12 +54,23 @@ def test_bind_conflict_retry_ignores_externally_owned_port(
         command: list[str],
         **kwargs: Any,
     ) -> subprocess.Popen[bytes]:
-        """只在第一次真实启动前抢占已释放的候选端口。"""
+        """首次抢占端口，并让失败包装进程保持存活以复现 Windows CI。"""
         nonlocal launch_count
         launch_count += 1
         if launch_count == 1:
             external_listener.bind(("127.0.0.1", int(command[-1])))
             external_listener.listen()
+            wrapper = [
+                sys.executable,
+                "-c",
+                (
+                    "import subprocess, sys, threading; "
+                    "subprocess.run(sys.argv[1:]); "
+                    "threading.Event().wait()"
+                ),
+                *command,
+            ]
+            return real_popen(wrapper, **kwargs)
         return real_popen(command, **kwargs)
 
     monkeypatch.setattr(
@@ -71,6 +83,10 @@ def test_bind_conflict_retry_ignores_externally_owned_port(
         assert launch_count == 2
         scenario.stop()
         scenario.assert_resources_released()
+        sanitized_log = scenario._process.read_sanitized_log()
+        assert "端口 " in sanitized_log
+        assert "已被占用" in sanitized_log
+        assert "\x1b[" not in sanitized_log
     finally:
         scenario.close()
         external_listener.close()
