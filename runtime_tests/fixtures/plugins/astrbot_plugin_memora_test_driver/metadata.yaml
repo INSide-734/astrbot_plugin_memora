@@ -1,0 +1,7 @@
+name: astrbot_plugin_memora_test_driver
+display_name: Memora Test Driver
+desc: 仅用于 Memora 黑盒测试的 AstrBot 驱动插件
+version: 0.1.0
+author: Memora Tests
+repo: https://github.com/INSide-734/astrbot_plugin_memora
+astrbot_version: ">=4.26.7,<4.27"
