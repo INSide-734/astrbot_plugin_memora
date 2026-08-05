@@ -3,6 +3,7 @@ config_validator.py - 配置验证模块
 提供配置验证和默认值管理功能。
 """
 
+import math
 from typing import Any, Literal
 
 from astrbot.api import logger
@@ -15,6 +16,7 @@ from .feature_config import (
     JargonConfig,
     UpdateSettings,
 )
+from .runtime_feature_config import RuntimeFeatureConfigSections
 
 PresetName = Literal["tool_first", "low_cost", "balanced", "quality"]
 
@@ -424,7 +426,7 @@ class GraphMemoryConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_route_weights(self):
-        """将路由权重归一化至总和为 1.0，以确保数值稳定的融合计算。"""
+        """归一化路由权重，并拒绝总和不为一的图评分权重。"""
         total = self.document_route_weight + self.graph_route_weight
         if total <= 0:
             self.document_route_weight = 0.65
@@ -432,6 +434,11 @@ class GraphMemoryConfig(BaseModel):
         elif total != 1.0:
             self.document_route_weight = self.document_route_weight / total
             self.graph_route_weight = self.graph_route_weight / total
+        score_total = (
+            self.score_alpha + self.score_beta + self.score_gamma + self.score_delta
+        )
+        if not math.isclose(score_total, 1.0, rel_tol=0.0, abs_tol=1e-6):
+            raise ValueError("graph_memory 评分权重总和必须为 1.0")
         return self
 
 
@@ -443,16 +450,16 @@ class RerankerConfig(BaseModel):
     )
     strategy: str = Field(
         default="mmr",
-        description="重排序策略: mmr(最大边际相关性), cross_encoder(Embedding打分), llm(LLM打分—高成本), hybrid(两级排序)",
+        description="重排序策略: mmr(最大边际相关性), embedding_similarity(Embedding相似度), llm(LLM打分—高成本), hybrid(两级排序)",
     )
     mmr_lambda: float = Field(
         default=0.7, ge=0.0, le=1.0, description="MMR 相关性权重。值越高越偏相关性"
     )
-    cross_encoder_lambda: float = Field(
+    embedding_similarity_lambda: float = Field(
         default=0.7,
         ge=0.0,
         le=1.0,
-        description="Cross-Encoder query-doc 相似度融合权重",
+        description="query-doc Embedding 余弦相似度融合权重",
     )
     llm_batch_size: int = Field(
         default=10, ge=1, le=50, description="LLM 重排序每批候选记忆数上限"
@@ -621,7 +628,7 @@ class MemoryEvolutionConfig(BaseModel):
     )
 
 
-class MemoraConfig(BaseModel):
+class MemoraConfig(RuntimeFeatureConfigSections):
     """完整插件配置"""
 
     debug: bool = Field(

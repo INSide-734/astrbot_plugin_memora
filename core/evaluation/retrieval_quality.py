@@ -13,6 +13,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .metric_provenance import (
+    RetrievalObservation,
+    aggregate_case_metrics,
+    annotated_latency,
+    build_case_metrics,
+    reason_code_aggregates,
+    reported_latency,
+    split_retrieval_observation,
+)
+
 
 @dataclass(slots=True)
 class EvaluationCase:
@@ -44,10 +54,12 @@ class EvaluationResult:
     recall_at_k: float
     reciprocal_rank: float
     ndcg_at_k: float
-    latency_ms: float
+    observed_latency_ms: float
     metadata: dict[str, Any] = field(default_factory=dict)
     precision_at_k: float = 0.0
     advanced_metrics: dict[str, float] = field(default_factory=dict)
+    annotated_latency_ms: float | None = None
+    reported_latency_ms: float | None = None
 
 
 @dataclass(slots=True)
@@ -59,9 +71,9 @@ class EvaluationReport:
     recall_at_k: float
     mrr: float
     ndcg_at_k: float
-    p95_latency_ms: float | None
+    observed_p95_latency_ms: float | None
     cases: list[EvaluationResult]
-    dataset_breakdown: dict[str, dict[str, float | int]]
+    dataset_breakdown: dict[str, dict[str, float | int | None]]
     precision_at_k: float = 0.0
     multi_hop_recall: float = 0.0
     single_hop_recall: float = 0.0
@@ -69,11 +81,23 @@ class EvaluationReport:
     temporal_consistency: float = 0.0
     conflict_accuracy: float = 0.0
     source_supported_projection_rate: float = 0.0
-    answer_faithfulness: float = 0.0
-    answer_relevancy: float = 0.0
-    p50_latency_ms: float | None = None
-    provider_calls: float = 0.0
-    token_cost: float = 0.0
+    observed_p50_latency_ms: float | None = None
+    annotated_p50_latency_ms: float | None = None
+    annotated_p95_latency_ms: float | None = None
+    reported_p50_latency_ms: float | None = None
+    reported_p95_latency_ms: float | None = None
+    annotated_answer_faithfulness: float | None = None
+    annotated_answer_relevancy: float | None = None
+    judged_answer_faithfulness: float | None = None
+    judged_answer_relevancy: float | None = None
+    reported_answer_faithfulness: float | None = None
+    reported_answer_relevancy: float | None = None
+    observed_provider_calls: float | None = None
+    observed_token_cost: float | None = None
+    annotated_provider_calls: float | None = None
+    annotated_token_cost: float | None = None
+    reported_provider_calls: float | None = None
+    reported_token_cost: float | None = None
     reason_code_aggregates: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -90,12 +114,24 @@ class EvaluationReport:
             "temporal_consistency": self.temporal_consistency,
             "conflict_accuracy": self.conflict_accuracy,
             "source_supported_projection_rate": self.source_supported_projection_rate,
-            "answer_faithfulness": self.answer_faithfulness,
-            "answer_relevancy": self.answer_relevancy,
-            "p50_latency_ms": self.p50_latency_ms,
-            "p95_latency_ms": self.p95_latency_ms,
-            "provider_calls": self.provider_calls,
-            "token_cost": self.token_cost,
+            "observed_p50_latency_ms": self.observed_p50_latency_ms,
+            "observed_p95_latency_ms": self.observed_p95_latency_ms,
+            "annotated_p50_latency_ms": self.annotated_p50_latency_ms,
+            "annotated_p95_latency_ms": self.annotated_p95_latency_ms,
+            "reported_p50_latency_ms": self.reported_p50_latency_ms,
+            "reported_p95_latency_ms": self.reported_p95_latency_ms,
+            "annotated_answer_faithfulness": self.annotated_answer_faithfulness,
+            "annotated_answer_relevancy": self.annotated_answer_relevancy,
+            "judged_answer_faithfulness": self.judged_answer_faithfulness,
+            "judged_answer_relevancy": self.judged_answer_relevancy,
+            "reported_answer_faithfulness": self.reported_answer_faithfulness,
+            "reported_answer_relevancy": self.reported_answer_relevancy,
+            "observed_provider_calls": self.observed_provider_calls,
+            "observed_token_cost": self.observed_token_cost,
+            "annotated_provider_calls": self.annotated_provider_calls,
+            "annotated_token_cost": self.annotated_token_cost,
+            "reported_provider_calls": self.reported_provider_calls,
+            "reported_token_cost": self.reported_token_cost,
             "reason_code_aggregates": dict(self.reason_code_aggregates),
         }
 
@@ -118,7 +154,7 @@ class AblationReport:
     recall_at_k: float
     mrr: float
     ndcg_at_k: float
-    p95_latency_ms: float | None
+    observed_p95_latency_ms: float | None
 
     @classmethod
     def from_metrics(
@@ -128,16 +164,16 @@ class AblationReport:
         recall_at_k: float,
         mrr: float,
         ndcg_at_k: float,
-        p95_latency_ms: float | None,
+        observed_p95_latency_ms: float | None,
     ) -> "AblationReport":
         return cls(
             name=name,
             recall_at_k=round(float(recall_at_k), 4),
             mrr=round(float(mrr), 4),
             ndcg_at_k=round(float(ndcg_at_k), 4),
-            p95_latency_ms=None
-            if p95_latency_ms is None
-            else round(float(p95_latency_ms), 4),
+            observed_p95_latency_ms=None
+            if observed_p95_latency_ms is None
+            else round(float(observed_p95_latency_ms), 4),
         )
 
     @classmethod
@@ -151,11 +187,14 @@ class AblationReport:
             recall_at_k=report.recall_at_k,
             mrr=report.mrr,
             ndcg_at_k=report.ndcg_at_k,
-            p95_latency_ms=report.p95_latency_ms,
+            observed_p95_latency_ms=report.observed_p95_latency_ms,
         )
 
 
-RetrieverFn = Callable[[EvaluationCase, int], Sequence[Any] | Awaitable[Sequence[Any]]]
+RetrieverValue = Sequence[Any] | RetrievalObservation
+RetrieverFn = Callable[
+    [EvaluationCase, int], RetrieverValue | Awaitable[RetrieverValue]
+]
 
 
 def make_memory_engine_retriever(engine: Any) -> RetrieverFn:
@@ -288,9 +327,9 @@ def compare_reports(
         "recall_at_k_delta": round(variant.recall_at_k - baseline.recall_at_k, 4),
         "mrr_delta": round(variant.mrr - baseline.mrr, 4),
         "ndcg_at_k_delta": round(variant.ndcg_at_k - baseline.ndcg_at_k, 4),
-        "p95_latency_ms_delta": _nullable_delta(
-            baseline.p95_latency_ms,
-            variant.p95_latency_ms,
+        "observed_p95_latency_ms_delta": _nullable_delta(
+            baseline.observed_p95_latency_ms,
+            variant.observed_p95_latency_ms,
         ),
     }
 
@@ -364,12 +403,18 @@ async def evaluate_cases(
         if inspect.isawaitable(retrieved):
             retrieved = await retrieved
         measured_latency_ms = (time.perf_counter() - started_at) * 1000.0
-        ranked_doc_ids = [_document_id(item) for item in list(retrieved or [])[:k]]
-        latency_ms = _latency_from_case(case, measured_latency_ms)
+        documents, observed_metrics = split_retrieval_observation(retrieved)
+        ranked_doc_ids = [_document_id(item) for item in documents[:k]]
         case_metrics = _score_case(case, ranked_doc_ids, k=k)
-        advanced_metrics = _advanced_case_metrics(case, ranked_doc_ids, k=k)
+        advanced_metrics = build_case_metrics(
+            metadata=case.metadata,
+            ranked_doc_ids=ranked_doc_ids,
+            relevant_doc_ids=case.relevant_doc_ids,
+            k=k,
+            observed_metrics=observed_metrics,
+        )
         result_metadata = dict(case.metadata)
-        result_metadata["observed_metrics"] = dict(advanced_metrics)
+        result_metadata["metric_provenance"] = sorted(advanced_metrics)
         results.append(
             EvaluationResult(
                 case_id=case.case_id,
@@ -379,14 +424,16 @@ async def evaluate_cases(
                 recall_at_k=case_metrics["recall_at_k"],
                 reciprocal_rank=case_metrics["reciprocal_rank"],
                 ndcg_at_k=case_metrics["ndcg_at_k"],
-                latency_ms=round(latency_ms, 4),
+                observed_latency_ms=round(max(measured_latency_ms, 0.0), 4),
                 metadata=result_metadata,
                 precision_at_k=case_metrics["precision_at_k"],
                 advanced_metrics=advanced_metrics,
+                annotated_latency_ms=annotated_latency(case.metadata),
+                reported_latency_ms=reported_latency(case.metadata),
             )
         )
 
-    advanced = _aggregate_advanced_metrics(results)
+    advanced = aggregate_case_metrics([item.advanced_metrics for item in results])
 
     return EvaluationReport(
         total_cases=len(results),
@@ -394,7 +441,9 @@ async def evaluate_cases(
         recall_at_k=_mean(item.recall_at_k for item in results),
         mrr=_mean(item.reciprocal_rank for item in results),
         ndcg_at_k=_mean(item.ndcg_at_k for item in results),
-        p95_latency_ms=_percentile([item.latency_ms for item in results], 95),
+        observed_p95_latency_ms=_percentile(
+            [item.observed_latency_ms for item in results], 95
+        ),
         cases=results,
         dataset_breakdown=_dataset_breakdown(results),
         precision_at_k=_mean(item.precision_at_k for item in results),
@@ -404,12 +453,54 @@ async def evaluate_cases(
         temporal_consistency=advanced["temporal_consistency"],
         conflict_accuracy=advanced["conflict_accuracy"],
         source_supported_projection_rate=advanced["source_supported_projection_rate"],
-        answer_faithfulness=advanced["answer_faithfulness"],
-        answer_relevancy=advanced["answer_relevancy"],
-        p50_latency_ms=_percentile([item.latency_ms for item in results], 50),
-        provider_calls=advanced["provider_calls"],
-        token_cost=advanced["token_cost"],
-        reason_code_aggregates=_reason_code_aggregates(results),
+        observed_p50_latency_ms=_percentile(
+            [item.observed_latency_ms for item in results], 50
+        ),
+        annotated_p50_latency_ms=_percentile(
+            [
+                item.annotated_latency_ms
+                for item in results
+                if item.annotated_latency_ms is not None
+            ],
+            50,
+        ),
+        annotated_p95_latency_ms=_percentile(
+            [
+                item.annotated_latency_ms
+                for item in results
+                if item.annotated_latency_ms is not None
+            ],
+            95,
+        ),
+        reported_p50_latency_ms=_percentile(
+            [
+                item.reported_latency_ms
+                for item in results
+                if item.reported_latency_ms is not None
+            ],
+            50,
+        ),
+        reported_p95_latency_ms=_percentile(
+            [
+                item.reported_latency_ms
+                for item in results
+                if item.reported_latency_ms is not None
+            ],
+            95,
+        ),
+        annotated_answer_faithfulness=advanced["annotated_answer_faithfulness"],
+        annotated_answer_relevancy=advanced["annotated_answer_relevancy"],
+        reported_answer_faithfulness=advanced["reported_answer_faithfulness"],
+        reported_answer_relevancy=advanced["reported_answer_relevancy"],
+        observed_provider_calls=advanced["observed_provider_calls"],
+        observed_token_cost=advanced["observed_token_cost"],
+        annotated_provider_calls=advanced["annotated_provider_calls"],
+        annotated_token_cost=advanced["annotated_token_cost"],
+        reported_provider_calls=advanced["reported_provider_calls"],
+        reported_token_cost=advanced["reported_token_cost"],
+        reason_code_aggregates=reason_code_aggregates(
+            item.metadata for item in results
+        ),
     )
 
 
@@ -519,15 +610,6 @@ def _parse_reference_time(value: Any) -> datetime | None:
     )
 
 
-def _latency_from_case(case: EvaluationCase, measured_latency_ms: float) -> float:
-    raw = case.metadata.get("latency_ms")
-    try:
-        latency = float(raw)
-    except (TypeError, ValueError):
-        latency = measured_latency_ms
-    return max(latency, 0.0)
-
-
 def _score_case(
     case: EvaluationCase, ranked_doc_ids: Sequence[str], *, k: int
 ) -> dict[str, float]:
@@ -553,146 +635,6 @@ def _score_case(
         "ndcg_at_k": ndcg_at_k(ranked_doc_ids, case.relevant_doc_ids, k=k),
         "precision_at_k": round(precision, 4),
     }
-
-
-def _advanced_case_metrics(
-    case: EvaluationCase,
-    ranked_doc_ids: Sequence[str],
-    *,
-    k: int,
-) -> dict[str, float]:
-    """根据匿名标注计算可选的演化质量指标。"""
-    metadata = case.metadata or {}
-    top_k = [_normalize_doc_id(item) for item in ranked_doc_ids[:k]]
-    ranked = set(top_k)
-    hit = recall_at_k(top_k, case.relevant_doc_ids, k=k)
-    group = str(
-        metadata.get("evaluation_group") or metadata.get("scenario") or ""
-    ).lower()
-    metrics: dict[str, float] = {}
-    if group in {"multi_hop", "多跳"} or metadata.get("requires_relation") is True:
-        metrics["multi_hop_recall"] = hit
-    if group in {"single_hop", "direct", "single-hop", "单跳"}:
-        metrics["single_hop_recall"] = hit
-
-    if metadata.get("expected_no_hit") is True:
-        metrics["noise_negative_false_hit"] = 1.0 if top_k else 0.0
-
-    temporal_expected = _normalize_doc_id_set(
-        metadata.get("temporal_expected_doc_ids", [])
-    )
-    temporal_forbidden = _normalize_doc_id_set(
-        metadata.get("temporal_forbidden_doc_ids", [])
-    )
-    temporal_ids = _normalize_doc_id_set(metadata.get("temporal_relevant_doc_ids", []))
-    if temporal_expected or temporal_forbidden:
-        metrics["temporal_consistency"] = (
-            1.0
-            if temporal_expected <= ranked and not (temporal_forbidden & ranked)
-            else 0.0
-        )
-    elif temporal_ids:
-        metrics["temporal_consistency"] = 1.0 if ranked & temporal_ids else 0.0
-    elif "temporal_consistency" in metadata:
-        metrics["temporal_consistency"] = _bounded_metric(
-            metadata["temporal_consistency"]
-        )
-
-    conflict_expected = _normalize_doc_id_set(
-        metadata.get("conflict_expected_doc_ids", [])
-    )
-    conflict_ids = _normalize_doc_id_set(metadata.get("conflict_doc_ids", []))
-    if conflict_expected:
-        metrics["conflict_accuracy"] = 1.0 if conflict_expected <= ranked else 0.0
-    elif conflict_ids:
-        metrics["conflict_accuracy"] = 1.0 if conflict_ids <= ranked else 0.0
-    elif "conflict_accuracy" in metadata:
-        metrics["conflict_accuracy"] = _bounded_metric(metadata["conflict_accuracy"])
-
-    projection_sources = _normalize_doc_id_set(
-        metadata.get("projection_source_ids", [])
-    )
-    if projection_sources:
-        metrics["source_supported_projection_rate"] = len(
-            projection_sources & ranked
-        ) / len(projection_sources)
-    elif "source_supported_projection_rate" in metadata:
-        metrics["source_supported_projection_rate"] = _bounded_metric(
-            metadata["source_supported_projection_rate"]
-        )
-
-    for name in ("answer_faithfulness", "answer_relevancy"):
-        if name in metadata:
-            metrics[name] = _bounded_metric(metadata[name])
-
-    for name in ("provider_calls", "token_cost"):
-        if name in metadata:
-            metrics[name] = _nonnegative_metric(metadata[name])
-    return {key: round(value, 4) for key, value in metrics.items()}
-
-
-def _aggregate_advanced_metrics(
-    results: Sequence[EvaluationResult],
-) -> dict[str, float]:
-    names = (
-        "multi_hop_recall",
-        "single_hop_recall",
-        "noise_negative_false_hit",
-        "temporal_consistency",
-        "conflict_accuracy",
-        "source_supported_projection_rate",
-        "answer_faithfulness",
-        "answer_relevancy",
-    )
-    aggregated = {
-        name: _mean(
-            result.advanced_metrics[name]
-            for result in results
-            if name in result.advanced_metrics
-        )
-        for name in names
-    }
-    aggregated["provider_calls"] = _mean(
-        result.advanced_metrics["provider_calls"]
-        for result in results
-        if "provider_calls" in result.advanced_metrics
-    )
-    aggregated["token_cost"] = _mean(
-        result.advanced_metrics["token_cost"]
-        for result in results
-        if "token_cost" in result.advanced_metrics
-    )
-    return aggregated
-
-
-def _reason_code_aggregates(results: Sequence[EvaluationResult]) -> dict[str, int]:
-    counts: dict[str, int] = defaultdict(int)
-    for result in results:
-        reasons = result.metadata.get("reason_codes", [])
-        if isinstance(reasons, str):
-            reasons = [reasons]
-        if not isinstance(reasons, Iterable):
-            continue
-        for reason in reasons:
-            normalized = str(reason or "").strip()
-            if normalized:
-                counts[normalized] += 1
-    return dict(sorted(counts.items()))
-
-
-def _bounded_metric(value: Any) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, min(1.0, parsed))
-
-
-def _nonnegative_metric(value: Any) -> float:
-    try:
-        return max(0.0, float(value))
-    except (TypeError, ValueError):
-        return 0.0
 
 
 def _mean(values: Iterable[float]) -> float:
@@ -734,20 +676,38 @@ def _nullable_delta(
 
 def _dataset_breakdown(
     results: Sequence[EvaluationResult],
-) -> dict[str, dict[str, float | int]]:
+) -> dict[str, dict[str, float | int | None]]:
     grouped: dict[str, list[EvaluationResult]] = defaultdict(list)
     for result in results:
         dataset = str(result.metadata.get("dataset") or "default")
         grouped[dataset].append(result)
 
-    breakdown: dict[str, dict[str, float | int]] = {}
+    breakdown: dict[str, dict[str, float | int | None]] = {}
     for dataset, items in grouped.items():
         breakdown[dataset] = {
             "case_count": len(items),
             "recall_at_k": _mean(item.recall_at_k for item in items),
             "mrr": _mean(item.reciprocal_rank for item in items),
             "ndcg_at_k": _mean(item.ndcg_at_k for item in items),
-            "p95_latency_ms": _percentile([item.latency_ms for item in items], 95)
+            "observed_p95_latency_ms": _percentile(
+                [item.observed_latency_ms for item in items], 95
+            )
             or 0.0,
+            "annotated_p95_latency_ms": _percentile(
+                [
+                    item.annotated_latency_ms
+                    for item in items
+                    if item.annotated_latency_ms is not None
+                ],
+                95,
+            ),
+            "reported_p95_latency_ms": _percentile(
+                [
+                    item.reported_latency_ms
+                    for item in items
+                    if item.reported_latency_ms is not None
+                ],
+                95,
+            ),
         }
     return breakdown

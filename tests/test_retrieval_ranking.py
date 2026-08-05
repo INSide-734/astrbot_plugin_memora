@@ -49,7 +49,7 @@ def _ablation_engine(*, reranker: object) -> tuple[object, object]:
 
     config = {
         "reranker.mmr_lambda": 0.7,
-        "reranker.cross_encoder_lambda": 0.7,
+        "reranker.embedding_similarity_lambda": 0.7,
         "graph_expansion_hops": 1,
         "memory_evolution": {"enabled": False, "mode": "disabled"},
     }

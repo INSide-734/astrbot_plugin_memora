@@ -343,6 +343,73 @@ class MetricsApiMixin:
                 )
         return summary
 
+    def _build_anomaly_summary(self) -> dict[str, Any]:
+        """返回异常检测器最近状态与脱敏标量统计。"""
+
+        initializer = getattr(getattr(self, "plugin", None), "initializer", None)
+        engine = getattr(initializer, "memory_engine", None)
+        detector = getattr(engine, "anomaly_detector", None)
+        if detector is None:
+            return {"available": False, "reason_code": "unavailable"}
+        try:
+            stats = detector.stats if isinstance(detector.stats, dict) else {}
+        except Exception as exc:
+            logger.warning(
+                "[指标接口] 读取异常检测统计失败，异常类型=%s",
+                type(exc).__name__,
+            )
+            return {
+                "available": True,
+                "reason_code": "error",
+                "error_type": type(exc).__name__,
+            }
+        return {
+            "available": True,
+            "reason_code": str(stats.get("reason_code", "ok")),
+            "window_size": _safe_int(stats.get("window_size")),
+            "mean_7d": _safe_float(stats.get("mean")),
+            "stdev_7d": _safe_float(stats.get("stdev")),
+            "alerts": _safe_int(stats.get("alerts")),
+            "latest_count": _safe_int(stats.get("latest_count")),
+            "sigma_threshold": _safe_float(stats.get("sigma_threshold")),
+        }
+
+    def _build_learning_summary(self) -> dict[str, Any]:
+        """返回自主学习 shadow 候选与统一反馈管线的只读摘要。"""
+
+        initializer = getattr(getattr(self, "plugin", None), "initializer", None)
+        engine = getattr(initializer, "memory_engine", None)
+        auto_learning = getattr(engine, "auto_learning", None)
+        feedback = getattr(engine, "feedback_signal_manager", None)
+        feedback_summary: dict[str, Any] = {}
+        if feedback is not None:
+            try:
+                feedback_summary = feedback.safe_summary()
+            except Exception as exc:
+                logger.warning(
+                    "[指标接口] 读取反馈摘要失败，异常类型=%s",
+                    type(exc).__name__,
+                )
+        summary: dict[str, Any] = {
+            "available": auto_learning is not None,
+            "candidate_count": 0,
+            "ready_count": 0,
+            "rejected_count": 0,
+            "published_count": 0,
+            "reasons": [],
+            "feedback": feedback_summary,
+        }
+        if auto_learning is not None:
+            try:
+                summary.update(auto_learning.safe_summary())
+            except Exception as exc:
+                logger.warning(
+                    "[指标接口] 读取自主学习摘要失败，异常类型=%s",
+                    type(exc).__name__,
+                )
+                summary["status"] = "error"
+        return summary
+
     @staticmethod
     def _read_decay_state(decay: Any) -> dict[str, Any]:
         state_file = getattr(decay, "_state_file", None)

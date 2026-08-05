@@ -1,4 +1,4 @@
-"""Tests for the initialization-independent configuration Page API."""
+"""不依赖插件初始化状态的配置 Page API 测试。"""
 
 from __future__ import annotations
 
@@ -553,6 +553,8 @@ class TestConfigApplyApi:
     async def test_success_applies_exact_transaction_and_never_logs_values(
         self,
     ) -> None:
+        """成功响应应报告生效要求，并且日志不得包含配置值。"""
+
         secret_value = "never-log-this-secret"
         changes = {
             "provider_settings.llm_provider_id": secret_value,
@@ -592,6 +594,8 @@ class TestConfigApplyApi:
                     "recall_engine.top_k",
                 ],
                 "reload_scheduled": True,
+                "restart_required": True,
+                "rebuild_required": False,
                 "instance_id": "instance-123",
             },
         }
@@ -661,3 +665,42 @@ class TestConfigApplyApi:
             reason_code="runtime_already_published",
             capability="debug_reporting",
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "changes",
+        [
+            {"graph_memory.document_route_weight": 0.6},
+            {"graph_memory.graph_route_weight": 0.4},
+            {"document_route_weight": 0.6},
+            {"graph_route_weight": 0.4},
+            {"graph_memory/document_route_weight": 0.6},
+            {"graph_memory[graph_route_weight]": 0.4},
+            {"graph_memory": {"document_route_weight": 0.6}},
+            {"graph_memory": {"graph_route_weight": 0.4}},
+        ],
+    )
+    async def test_learning_weight_paths_are_reserved_before_config_manager(
+        self,
+        changes: dict[str, Any],
+    ) -> None:
+        """通用配置接口不得绕过 evidence、intent 与 publication 状态机。"""
+
+        manager = MagicMock()
+        manager.apply_config_changes = AsyncMock(
+            side_effect=AssertionError("保留路径不得触达 ConfigManager")
+        )
+        api, _ = _make_api(
+            request=_Request(body={"base_revision": "rev-old", "changes": changes}),
+            config_manager=manager,
+        )
+
+        result = await api.apply_config()
+
+        assert result == {
+            "status": "error",
+            "code": "config_path_reserved_for_learning",
+            "message": "自主学习生产权重只能通过学习动作接口修改",
+        }
+        api._maintenance_write_guard.assert_called_once_with()
+        manager.apply_config_changes.assert_not_awaited()

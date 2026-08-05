@@ -193,24 +193,25 @@ export function useTheme() {
 
   useEffect(() => {
     const bridge = window.AstrBotPluginPage;
-    if (!bridge || typeof bridge.onContextChange !== "function") return;
+    if (!bridge || typeof bridge.onContext !== "function") return;
 
     const handler = (context: { isDark?: boolean }) => {
       if (manualOverrideRef.current || typeof context?.isDark !== "boolean") return;
       commitTheme(context.isDark ? "dark" : "light", false);
     };
 
+    let unsubscribe: (() => void) | undefined;
     try {
-      bridge.onContextChange(handler);
+      unsubscribe = bridge.onContext(handler);
     } catch {
       return;
     }
 
     return () => {
       try {
-        bridge.offContextChange?.(handler);
+        unsubscribe?.();
       } catch {
-        // Bridge teardown must not block dashboard unmounting.
+        // 桥接清理失败不得阻塞 Dashboard 卸载。
       }
     };
   }, [commitTheme]);

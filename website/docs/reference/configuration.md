@@ -18,7 +18,7 @@ Memora 的配置由仓库根目录的 [`_conf_schema.json`](https://github.com/I
 | 主题 | 包含的配置域 | 适合查找 |
 |---|---|---|
 | [基础运行与记忆生成](/reference/configuration/basic) | `bot_language`、`provider_settings`、`session_manager`、`reflection_engine`、`prompt_templates` 等 | Provider、会话捕获、反思和提示词。 |
-| [召回、注入与索引](/reference/configuration/retrieval) | `recall_engine`、`graph_memory`、`reranker`、`index_management` 等 | 检索数量、注入路由、融合、过滤和索引。 |
+| [召回、注入与索引](/reference/configuration/retrieval) | `recall_engine`、`graph_memory`、`reranker` 等 | 检索数量、注入路由、融合、过滤和索引。 |
 | [记忆生命周期](/reference/configuration/lifecycle) | `memory_evolution`、`topic_segmentation`、`atom_quality_filter`、`forgetting_agent` 等 | 演化、分割、质量、衰减、压缩和遗忘。 |
 | [智能与内容增强](/reference/configuration/features) | `user_profile`、`knowledge_base`、`notes`、`agent_tools` 等 | 画像、知识、笔记、关系、学习和工具。 |
 | [运维、可靠性与安全](/reference/configuration/operations) | `backup_settings`、`cost_control`、`update_settings`、`security` 等 | 迁移、重建、备份、更新、成本和安全。 |

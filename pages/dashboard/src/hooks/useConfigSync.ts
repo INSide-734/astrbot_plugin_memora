@@ -11,44 +11,30 @@ import {
   setConfigValue,
   toJsonConfigChanges,
 } from "@/lib/config";
+import {
+  configRuntimeEffects,
+  mergeConfigRuntimeEffects,
+} from "@/lib/configRuntimeEffects";
+import {
+  acknowledgeConfigDraft,
+  configSuccessData,
+  configSyncError,
+  ConfigProtocolError,
+} from "@/lib/configSyncProtocol";
 import type {
-  ConfigApiResponse,
-  ConfigApiError,
   ConfigApplyData,
   ConfigApplyRequest,
   ConfigObject,
   ConfigRemoteSnapshot,
+  ConfigRuntimeEffects,
   ConfigSchemaData,
   ConfigStateData,
   ConfigSyncError,
   ConfigSyncOptions,
+  ConfigSyncResult,
   ConfigSyncStatus,
   ConfigValue,
 } from "@/types/config";
-
-export interface ConfigSyncResult {
-  schemaData: ConfigSchemaData | null;
-  baseConfig: ConfigObject | null;
-  draft: ConfigObject | null;
-  revision: string | null;
-  instanceId: string | null;
-  remoteConfig: ConfigObject | null;
-  remoteRevision: string | null;
-  remoteInstanceId: string | null;
-  dirtyPaths: string[];
-  localPaths: string[];
-  remotePaths: string[];
-  overlapPaths: string[];
-  fieldErrors: Record<string, string>;
-  status: ConfigSyncStatus;
-  error: ConfigSyncError | null;
-  changeField: (path: string, value: ConfigValue) => void;
-  refresh: () => Promise<void>;
-  apply: () => Promise<void>;
-  discardLocal: () => void;
-  acceptRemote: () => void;
-  rebaseRemote: () => void;
-}
 
 interface SyncState {
   schemaData: ConfigSchemaData | null;
@@ -61,6 +47,7 @@ interface SyncState {
   fieldErrors: Record<string, string>;
   status: ConfigSyncStatus;
   error: ConfigSyncError | null;
+  runtimeEffects: ConfigRuntimeEffects | null;
 }
 
 const INITIAL_STATE: SyncState = {
@@ -74,71 +61,8 @@ const INITIAL_STATE: SyncState = {
   fieldErrors: {},
   status: "loading",
   error: null,
+  runtimeEffects: null,
 };
-
-class ConfigProtocolError extends Error {
-  constructor(readonly response: ConfigApiError) {
-    super(response.message);
-  }
-}
-
-function successData<T>(response: ApiResponse): T {
-  const configResponse = response as ConfigApiResponse<T>;
-  if (configResponse.status === "error") {
-    throw new ConfigProtocolError(configResponse);
-  }
-  if (configResponse.status === "ok" && "data" in configResponse) {
-    return configResponse.data;
-  }
-  // AstrBot 的宿主 Page bridge 会剥离成功 envelope，仅把 data 传给 iframe。
-  if (
-    response !== null &&
-    typeof response === "object" &&
-    !Array.isArray(response) &&
-    !Object.prototype.hasOwnProperty.call(response, "status")
-  ) {
-    return response as unknown as T;
-  }
-  throw new ConfigProtocolError({
-    status: "error",
-    code: "invalid_request",
-    message: "Unexpected configuration response",
-  });
-}
-
-function syncError(error: unknown): ConfigSyncError {
-  if (error instanceof ConfigProtocolError) {
-    return {
-      kind: "protocol",
-      code: error.response.code,
-      message: error.response.message,
-      ...(error.response.data ? { data: error.response.data } : {}),
-    };
-  }
-  return {
-    kind: "transport",
-    message: error instanceof Error ? error.message : String(error),
-  };
-}
-
-function acknowledgeDraft(
-  persistedConfig: ConfigObject,
-  submittedDraft: ConfigObject,
-  latestDraft: ConfigObject | null
-) {
-  const baseConfig = cloneConfig(persistedConfig);
-  const pendingPaths = latestDraft
-    ? diffConfigLeafPaths(submittedDraft, latestDraft)
-    : [];
-  const draft = latestDraft
-    ? rebaseConfig(baseConfig, latestDraft, pendingPaths)
-    : cloneConfig(baseConfig);
-  return {
-    baseConfig,
-    draft,
-    hasPendingChanges: diffConfigLeafPaths(baseConfig, draft).length > 0,
-  };
-}
 
 export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult {
   const pollIntervalMs = options.pollIntervalMs ?? 5_000;
@@ -165,8 +89,8 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         apiRequest("config/schema", { retries: 0 }),
         apiRequest("config/state", { retries: 0 }),
       ]);
-      const schemaData = successData<ConfigSchemaData>(schemaResponse);
-      const stateData = successData<ConfigStateData>(stateResponse);
+      const schemaData = configSuccessData<ConfigSchemaData>(schemaResponse);
+      const stateData = configSuccessData<ConfigStateData>(stateResponse);
       if (
         !stateData.changed ||
         !mountedRef.current ||
@@ -186,6 +110,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         fieldErrors: {},
         status: "synced",
         error: null,
+        runtimeEffects: null,
       });
     } catch (error) {
       if (
@@ -197,7 +122,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
       setState((previous) => ({
         ...previous,
         status: error instanceof ConfigProtocolError ? "error" : "offline",
-        error: syncError(error),
+        error: configSyncError(error),
       }));
     }
   }, []);
@@ -270,7 +195,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         `config/state?revision=${encodeURIComponent(current.revision)}`,
         { retries: 0 }
       );
-      const stateData = successData<ConfigStateData>(response);
+      const stateData = configSuccessData<ConfigStateData>(response);
       if (
         !mountedRef.current ||
         generation !== refreshGenerationRef.current
@@ -346,7 +271,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
       setState((previous) => ({
         ...previous,
         status: error instanceof ConfigProtocolError ? "error" : "offline",
-        error: syncError(error),
+        error: configSyncError(error),
       }));
     }
   }, [loadInitial]);
@@ -495,11 +420,11 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         body: applyRequest,
         retries: 0,
       });
-      const applyData = successData<ConfigApplyData>(response);
+      const applyData = configSuccessData<ConfigApplyData>(response);
       if (!mountedRef.current) return;
 
       setState((previous) => {
-        const acknowledged = acknowledgeDraft(
+        const acknowledged = acknowledgeConfigDraft(
           savedDraft,
           savedDraft,
           previous.draft
@@ -519,6 +444,10 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
               ? "dirty"
               : "synced",
           error: null,
+          runtimeEffects: mergeConfigRuntimeEffects(
+            previous.runtimeEffects,
+            configRuntimeEffects(applyData),
+          ),
         };
       });
     } catch (error) {
@@ -533,7 +462,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
               `config/state?revision=${encodeURIComponent(current.revision)}`,
               { retries: 0 }
             );
-            const stateData = successData<ConfigStateData>(stateResponse);
+            const stateData = configSuccessData<ConfigStateData>(stateResponse);
             if (stateData.changed) {
               remote = {
                 config: cloneConfig(stateData.config),
@@ -551,7 +480,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
             remoteRevisionHint:
               response.data?.current_revision ?? remote?.revision ?? null,
             status: "conflict",
-            error: syncError(error),
+            error: configSyncError(error),
             fieldErrors: {},
           }));
           return;
@@ -560,7 +489,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         setState((previous) => ({
           ...previous,
           status: "error",
-          error: syncError(error),
+          error: configSyncError(error),
           fieldErrors:
             response.code === "validation_failed"
               ? { ...(response.data?.field_errors ?? {}) }
@@ -574,7 +503,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
           `config/state?revision=${encodeURIComponent(current.revision)}`,
           { retries: 0 }
         );
-        const stateData = successData<ConfigStateData>(stateResponse);
+        const stateData = configSuccessData<ConfigStateData>(stateResponse);
         if (!mountedRef.current) return;
 
         if (stateData.changed) {
@@ -586,7 +515,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
           );
           if (persisted) {
             setState((previous) => {
-              const acknowledged = acknowledgeDraft(
+              const acknowledged = acknowledgeConfigDraft(
                 stateData.config,
                 savedDraft,
                 previous.draft
@@ -616,7 +545,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
             },
             remoteRevisionHint: stateData.revision,
             status: "conflict",
-            error: syncError(error),
+            error: configSyncError(error),
           }));
           return;
         }
@@ -627,7 +556,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
       setState((previous) => ({
         ...previous,
         status: "offline",
-        error: syncError(error),
+        error: configSyncError(error),
       }));
     } finally {
       applyInFlightRef.current = false;
@@ -735,14 +664,14 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
           failOnTimeout();
           return;
         }
-        const stateData = successData<ConfigStateData>(response);
+        const stateData = configSuccessData<ConfigStateData>(response);
 
         if (stateData.instance_id !== previousInstanceId) {
           terminal = true;
           setState((previous) => {
             const acknowledged =
               stateData.changed && previous.baseConfig
-                ? acknowledgeDraft(
+                ? acknowledgeConfigDraft(
                     stateData.config,
                     previous.baseConfig,
                     previous.draft
@@ -784,7 +713,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
           setState((previous) => ({
             ...previous,
             status: "error",
-            error: syncError(error),
+            error: configSyncError(error),
           }));
           return;
         }
@@ -849,6 +778,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
     fieldErrors: state.fieldErrors,
     status: state.status,
     error: state.error,
+    runtimeEffects: state.runtimeEffects,
     changeField,
     refresh,
     apply,

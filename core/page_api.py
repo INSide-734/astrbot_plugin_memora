@@ -25,6 +25,7 @@ from .api.knowledge_api import KnowledgeApiMixin
 from .api.learning_api import LearningApiMixin
 from .api.maintenance_api import MaintenanceApiMixin
 from .api.memory_batch_api import MemoryBatchApiMixin
+from .api.memory_evolution_review_api import MemoryEvolutionReviewApiMixin
 from .api.memory_read_api import MemoryReadApiMixin
 from .api.memory_stats_recall_api import MemoryStatsRecallApiMixin
 from .api.memory_write_api import MemoryWriteApiMixin
@@ -32,7 +33,9 @@ from .api.metrics_api import MetricsApiMixin
 from .api.note_api import NoteApiMixin
 from .api.profile_api import ProfileApiMixin
 from .api.quality_api import QualityApiMixin
+from .api.quarantine_api import QuarantineApiMixin
 from .api.recall_trace_api import RecallTraceApiMixin
+from .api.reconsolidation_review_api import ReconsolidationReviewApiMixin
 from .api.response_utils import error_response, ok_response
 from .api.review_api import ReviewApiMixin
 from .api.social_api import SocialApiMixin
@@ -64,9 +67,12 @@ class PluginPageApi(
     ConfigApiMixin,
     TopicSegmentationApiMixin,
     QualityApiMixin,
+    QuarantineApiMixin,
     RecallTraceApiMixin,
     InjectionStrategyApiMixin,
     ReviewApiMixin,
+    MemoryEvolutionReviewApiMixin,
+    ReconsolidationReviewApiMixin,
     JargonApiMixin,
     DelegationApiMixin,
     EvaluationApiMixin,
@@ -82,7 +88,7 @@ class PluginPageApi(
         self._route_metadata: list[dict[str, Any]] = []
 
     async def sse_stream(self):
-        """D4：基于 Quart 原生流式输出的 SSE 实时记忆流端点。"""
+        """D4：基于 AstrBot 公共流式响应的 SSE 实时记忆流端点。"""
         initializer = getattr(self.plugin, "initializer", None)
         engine = getattr(initializer, "memory_engine", None)
         if engine is None or not hasattr(engine, "sse"):
@@ -463,6 +469,12 @@ class PluginPageApi(
             "页面接口：学习历史",
         )
         register(
+            f"{PAGE_API_PREFIX}/learning/action",
+            self.learning_action,
+            ["POST"],
+            "页面接口：学习生产动作",
+        )
+        register(
             f"{PAGE_API_PREFIX}/learning/reset",
             self.reset_learning,
             ["POST"],
@@ -736,6 +748,66 @@ class PluginPageApi(
             self.apply_review_action,
             ["POST"],
             "页面接口：执行记忆审查动作",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/derived",
+            self.list_memory_evolution_review_candidates,
+            ["GET"],
+            "页面接口：高影响派生候选复核队列",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/derived/detail",
+            self.get_memory_evolution_review_candidate,
+            ["GET"],
+            "页面接口：高影响派生候选复核详情",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/derived/action",
+            self.apply_memory_evolution_review_action,
+            ["POST"],
+            "页面接口：处置高影响派生候选",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/reconsolidation",
+            self.list_reconsolidation_review_candidates,
+            ["GET"],
+            "页面接口：再巩固候选复核队列",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/reconsolidation/detail",
+            self.get_reconsolidation_review_candidate,
+            ["GET"],
+            "页面接口：再巩固候选复核详情",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/reconsolidation/action",
+            self.apply_reconsolidation_review_action,
+            ["POST"],
+            "页面接口：处置再巩固候选",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/quarantine",
+            self.list_quarantine_candidates,
+            ["GET"],
+            "页面接口：pre-canonical 记忆隔离队列",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/quarantine/detail",
+            self.get_quarantine_candidate_detail,
+            ["GET"],
+            "页面接口：pre-canonical 记忆隔离详情",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/quarantine/action",
+            self.apply_quarantine_action,
+            ["POST"],
+            "页面接口：处置 pre-canonical 记忆隔离候选",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/review/quarantine/repair",
+            self.repair_quarantine_approval,
+            ["POST"],
+            "页面接口：修复 pre-canonical 隔离批准收口",
         )
 
         # ---- 黑话 ----

@@ -21,6 +21,7 @@ import type {
   ReviewItemDetailResponse,
   ReviewItemsResponse,
 } from "@/types/intelligence";
+import { ReconsolidationQueue } from "./ReconsolidationQueue";
 import { ReviewItemDetail } from "./ReviewItemDetail";
 
 interface ReviewQueueProps {
@@ -305,7 +306,9 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
   const actionFeedbackVisible = actionOwnerId === selectedId;
 
   return (
-    <section className="space-y-4">
+    <div className="min-w-0 space-y-6">
+      <ReconsolidationQueue showToast={showToast} />
+      <section className="space-y-4">
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] px-4 py-3">
           <div className="flex items-center gap-2">
@@ -432,6 +435,7 @@ export function ReviewQueue({ showToast }: ReviewQueueProps) {
           />
         </section>
       </div>
-    </section>
+      </section>
+    </div>
   );
 }

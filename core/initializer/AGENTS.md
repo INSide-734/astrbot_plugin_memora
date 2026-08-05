@@ -2,7 +2,7 @@
 
 # 初始化与组件装配
 
-**最后核对：** 2026-07-21
+**最后核对：** 2026-08-01
 **公共入口：** `core/initializer/__init__.py`  
 **上游编排：** `core/plugin_initializer.py`
 
@@ -47,7 +47,7 @@ flowchart TD
 | `FaissChecker` | `check_runtime()` / `load_vec_db_class()` | 父进程已加载 FAISS 时复用成功状态；冷启动用固定参数 `[sys.executable, "-c", "import faiss"]`、30 秒超时探测，再动态导入 AstrBot `FaissVecDB` |
 | `FaissChecker` | `check_and_fix_dimension_mismatch(path, provider)` | 维度不匹配删除旧索引；不可读索引尽量原子隔离为 `.corrupt_<timestamp>` |
 | `DatabaseSetup` | `auto_rebuild_index_if_needed(...)` | 检查 `IndexValidator`，仅在 `needs_rebuild` 时调用统一协调器；失败记录并返回稳定降级结果 |
-| `DerivedRebuildCoordinator` | `rebuild_all()` | 只读确认 canonical 后，按 FTS5/FAISS、graph、relation/projection 顺序重建；阶段失败不删除 canonical |
+| `DerivedRebuildCoordinator` | `rebuild_all()` | 只读确认 canonical 后，按 FTS5/FAISS、graph、relation/projection、自动笔记顺序重建；阶段失败不删除 canonical |
 | `DatabaseSetup` | `repair_message_counts(store)` | 调用 `sync_message_counts()` 修复会话计数；失败记录但不阻断启动 |
 | `ComponentFactory` | `build_all(...) -> dict` | 在任何索引/数据库 I/O 前验证 LLM/Embedding 必需入口，再返回数据库、引擎、处理器、备份/会话/索引/衰减、Memory Evolution 及注入决策组件字典 |
 
@@ -60,13 +60,13 @@ flowchart TD
 ## 装配顺序与持久化
 
 1. 验证 Embedding 与聊天 Provider；缺失、类型不符或没有可冻结的 `text_chat`/Embedding 入口时抛 `ProviderNotReadyError`，不得继续索引检查或创建数据库。
-2. 检查 `memora.index`，图记忆开启时也检查 `memora_graph.index`；主库 `memora.db` 与图文档库 `memora_graph_documents.db` 使用不同文件并可并行初始化。
-3. 在主 `memora.db` 上初始化 `MemoryEvolutionStore`。只有 `memory_evolution.enabled=true` 且 mode 为 `readonly` 或 `active` 时，才构造 `DerivedRelationExpander` 和 `ProjectionReader` 并注入引擎配置；`disabled` 与 `shadow` 均传入空读取器。
-4. 构造并初始化 `MemoryEngine`；其配置由 `ConfigManager.get()` 逐项投影，覆盖召回、图扩展、重排、成本控制、索引重建、缓存及 Memory Evolution 读取器等，而不是在工厂内再次合并配置。
+2. 检查 `memora.index`，图记忆开启时也检查 `memora_graph.index`；随后只构造主库和图文档库适配器，不打开持久连接。
+3. 构造尚未打开连接的 `MemoryEvolutionStore`。只有 `memory_evolution.enabled=true` 且 mode 为 `readonly` 或 `active` 时，才构造 `DerivedRelationExpander` 和 `ProjectionReader` 并注入引擎配置；`disabled` 与 `shadow` 均传入空读取器。
+4. 构造并初始化 `MemoryEngine`；`engine_runtime_config.py` 使用唯一显式映射表把 `ConfigManager` 投影为不可变语义的白名单快照，覆盖召回、图扩展、重排、成本控制、迁移、索引重建、缓存、连续性 TTL/上限及 Memory Evolution 读取器等，而不是在工厂内再次合并或由组件猜测配置形状。连续性启用时引擎以 `data_dir` 同步恢复 Tracker，关闭时同步保存；禁用时不创建、不读写。工厂把同一个 `BackupManager` 注入引擎，供 `SchemaMigrationCoordinator` 在旧库迁移前创建 `pre_migration` 快照；fresh install 不创建该快照。canonical Schema 创建或迁移成功后，工厂才依次打开主/图 FAISS Store 与 `MemoryEvolutionStore`，确保迁移失败恢复时没有其他 `memora.db` 持久连接。`ComponentFactory` 另从 typed `CostControlConfig` 构造唯一 `CostControl` 对象，并同时注入引擎、处理器和事件链。
 5. 初始化 `conversations.db` 与 `ConversationManager`，随后修复 `message_count`。
-6. 构造 `MemoryProcessor`，再以其带重试 LLM 调用构造 `MemoryConsolidator`；`MemoryEvolutionGate` 会把 `enabled=false` 归一为 disabled，Manager 仅在归一后的 mode 非 disabled 时启动单 worker。
-7. 构造 `IndexValidator`；若索引需要重建，由 `DerivedRebuildCoordinator` 按 canonical → FTS5/FAISS → graph → relation/projection 顺序执行，并异步加载停用词。
-8. 当衰减、自动清理或 `backup_settings.enabled` 启用时启动 `DecayScheduler`；自动备份可以独立于衰减运行。
+6. 构造 `MemoryProcessor`，显式投影 `persona_interpretation.enabled` 与完整 topic strategy/B/Hybrid 配置，复用同一 `CostControl`，并把共享 Embedding Provider 的冻结批量适配器注入 A/B/Hybrid 后置分段链；C/D 仍由 handlers 预切分。再以处理器的带重试 LLM 调用构造 `MemoryConsolidator`，并从正式 episode 配置构造不调用 Provider 的 `MemoryEvolutionCandidateGenerator`。Manager 先消费本地 episode/conflict 候选，候选为空才回退 Consolidator。`MemoryEvolutionGate` 会把 `enabled=false` 归一为 disabled，Manager 仅在归一后的 mode 非 disabled 时启动单 worker。画像、知识库和笔记启用时，工厂在对应 Manager 与 canonical `MemoryEvolutionStore` 可用后分别装配 `ProfileProposalPipeline`、`KnowledgeProposalPipeline` 和 `NoteProposalPipeline`；三者复用同一 `CostControl`，由 canonical 写后任务触发。自动笔记的长度、tag 与版本上限来自唯一 engine runtime config，重建强制使用无 Provider fallback。语义压缩默认关闭；开启且 Memory Evolution 处于可持久化模式时，工厂装配只读 canonical source + Manager proposal 边界的 `SemanticCompressor`，关闭时读取器屏蔽已有 `semantic_summary`。
+7. 构造 `IndexValidator`；若索引需要重建，由 `DerivedRebuildCoordinator` 按 canonical → FTS5/FAISS → graph → relation/projection → 语义摘要 → 自动笔记顺序执行，并异步加载停用词。语义摘要和 notes 阶段都按完整来源证据幂等，不覆盖 canonical 或人工笔记。
+8. 当衰减、自动清理、`backup_settings.enabled` 或语义压缩启用时启动 `DecayScheduler`；自动备份和语义摘要维护都可以独立于衰减运行。
 9. 在 `memora.db` 上初始化 `InjectionDecisionStore` 和有界异步 `InjectionDecisionRecorder`，应用保留天数与最大行数并安排清理。
 
 若第 9 步失败，工厂按 Memory Evolution Manager、Memory Evolution Store、调度器、会话存储、引擎、图 DB、主 DB 的顺序尽力回滚；各关闭失败只记录日志，原异常继续传播。不要把这一局部回滚误写成覆盖前面所有装配阶段的通用事务。
@@ -76,6 +76,7 @@ flowchart TD
 - `ConfigManager` 以 AstrBot 注入的可变映射为唯一源：先与 `MemoraConfig` 默认值深合并，再做 Pydantic 校验；无效分支回退默认分支，最终才可能全量回退。
 - Dashboard 更新使用点号叶子路径、Schema 白名单、SHA-256 revision 和异步锁。revision 过期或保存后源配置被并发改写会产生 `ConfigConflictError`。
 - 初始化工厂只消费已经解析后的配置；不得自行写 `_conf_schema.json`、绕过 revision 或把配置 ID 当作已验证 Provider 实例。
+- 引擎映射表的每个后备值必须等于 Pydantic 默认配置；来源和目标键都必须唯一。保存后的重启/重建分类属于 `core/base/config_runtime_effects.py`，API 不得反向导入初始化层取得该契约。
 - `memory_evolution.enabled=false` 是强制关闭；不能仅凭 `mode` 字符串装配读取器或启动 worker。Projection/relation 只复用 canonical `memora.db` 来源及 ID，不得在初始化层另建第二套权威记忆库。
 - Provider ID、模型信息可记录；不得记录凭据、请求正文或 Provider 私有配置。
 

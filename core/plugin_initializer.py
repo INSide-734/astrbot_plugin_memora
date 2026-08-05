@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import inspect
 import time
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,8 @@ from .managers.memory_engine import MemoryEngine
 from .monitoring import report_debug_event, report_debug_exception
 from .monitoring.quality_scorer import MemoryQualityScorer
 from .processors.memory_processor import MemoryProcessor
+from .review.memory_quality_gate import MemoryQualityGate
+from .review.quarantine_store import MemoryQuarantineStore
 from .schedulers.backfill_scheduler import BackfillScheduler
 from .schedulers.decay_scheduler import DecayScheduler
 from .security import PromptProtectionService
@@ -61,6 +64,8 @@ class PluginInitializer:
         self.memory_engine: MemoryEngine | None = None
         self.quality_scorer: MemoryQualityScorer = MemoryQualityScorer(window_size=100)
         self.memory_processor: MemoryProcessor | None = None
+        self.memory_quarantine_store: MemoryQuarantineStore | None = None
+        self.memory_quality_gate: MemoryQualityGate | None = None
         self.conversation_manager: ConversationManager | None = None
         self.index_validator: IndexValidator | None = None
         self.decay_scheduler: DecayScheduler | None = None
@@ -258,6 +263,8 @@ class PluginInitializer:
             self.memory_engine = components["memory_engine"]
             self.memory_engine._quality_scorer = self.quality_scorer
             self.memory_processor = components["memory_processor"]
+            self.memory_quarantine_store = components["memory_quarantine_store"]
+            self.memory_quality_gate = components["memory_quality_gate"]
             self.conversation_manager = components["conversation_manager"]
             self.index_validator = components["index_validator"]
             self.decay_scheduler = components["decay_scheduler"]
@@ -277,6 +284,8 @@ class PluginInitializer:
                 ("graph_database", self.graph_db),
                 ("memory_engine", self.memory_engine),
                 ("memory_processor", self.memory_processor),
+                ("memory_quarantine_store", self.memory_quarantine_store),
+                ("memory_quality_gate", self.memory_quality_gate),
                 ("conversation_manager", self.conversation_manager),
                 ("index_validator", self.index_validator),
                 ("decay_scheduler", self.decay_scheduler),
@@ -377,6 +386,13 @@ class PluginInitializer:
                     status="failed",
                     reason_code="full_initialization_error",
                     duration_ms=duration_ms,
+                )
+            try:
+                await self.stop_memory_engine_tasks()
+            except BaseException:
+                logger.error(
+                    "初始化失败后收敛记忆引擎后台任务失败",
+                    exc_info=True,
                 )
             if owns_evolution_components:
                 try:
@@ -655,6 +671,8 @@ class PluginInitializer:
                 "graph_db": self.graph_db is not None,
                 "memory_engine": self.memory_engine is not None,
                 "memory_processor": self.memory_processor is not None,
+                "memory_quarantine_store": self.memory_quarantine_store is not None,
+                "memory_quality_gate": self.memory_quality_gate is not None,
                 "conversation_manager": self.conversation_manager is not None,
                 "index_validator": self.index_validator is not None,
                 "memory_evolution_store": self.memory_evolution_store is not None,
@@ -699,6 +717,17 @@ class PluginInitializer:
 
     async def stop_background_tasks(self) -> None:
         await self._safe_step("取消Provider等待", self._provider_waiter.cancel())
+
+    async def stop_memory_engine_tasks(self) -> None:
+        """在共享演化消费者关闭前收敛引擎持有的生产者任务。"""
+
+        engine = getattr(self, "memory_engine", None)
+        stopper = getattr(engine, "stop_pending_tasks", None)
+        if not callable(stopper):
+            return
+        result = stopper()
+        if inspect.isawaitable(result):
+            await result
 
     async def close_injection_components(self) -> None:
         async with self._injection_close_lock:

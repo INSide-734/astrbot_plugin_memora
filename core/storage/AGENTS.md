@@ -9,7 +9,7 @@
 
 `core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存原子、图、会话消息、知识、笔记、画像和注入决策遥测，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
 
-`feedback_signal_store.py` 是仅供离线实验显式传入路径的同步 SQLite Store；它保存最小反馈事件和可重建聚合，使用 dedupe 唯一约束与事务，不得默认连接 `memora.db`，也不得把事件 key/domain/query/正文写入安全摘要。
+`feedback_signal_store.py` 是显式隔离路径的同步 SQLite Store；它保存最小反馈事件和可重建聚合，使用 dedupe 唯一约束与事务，不得默认连接 `memora.db`，也不得把事件 key/domain/query/正文写入安全摘要。生产可信适配器写入前必须把决策、作用域和人格转换为稳定不可逆 token；Manager 在写入/重建时物理清理超期事件，并只允许受控适配器按同一匿名决策撤销后重建聚合。
 
 `sql_contract.py` 集中保存跨 retrieval、managers、validators 与 social 复用的固定表名和静态 FTS SQL；这些常量不接受运行时输入，调用方仍必须对值参数绑定，并在支持可替换标识符的入口保留白名单校验。
 
@@ -17,11 +17,14 @@ SQLite 不支持把表标识符作为绑定参数。`RelationStore` 因此只用
 
 ## Memory Evolution 派生解释平面
 
-`memory_evolution_store.py` 与 canonical `memora.db` 共用连接生命周期，但只保存可失效、可重建的演化数据：job/lease 队列、`memory_relations`、`memory_projections` 及 projection source mapping 四类解释平面。relation/projection 写入保留 source revision、`reference_at`/`discovered_at`/`invalid_at` 和时间来源/精度；source mapping 可保存自己的 occurred/valid 窗口。旧库由初始化迁移补列，缺失时间保持 NULL，不从 `updated_at` 推断事实时间。canonical memory 的整数 ID、正文和 revision 仍由主记忆表权威维护，Projection 不创建第二套 canonical ID。
+`memory_evolution_store.py` 与 canonical `memora.db` 共用连接生命周期，但只保存可失效、可重建的演化数据：job/lease 队列、`memory_relations`、`memory_projections`、projection source mapping，以及独立的 `memory_derived_review_actions` 低敏复核审计。relation/projection 写入保留 source revision、`reference_at`/`discovered_at`/`invalid_at` 和时间来源/精度；source mapping 可保存自己的 occurred/valid 窗口。旧库由初始化迁移补列，缺失时间保持 NULL，不从 `updated_at` 推断事实时间。canonical memory 的整数 ID、正文和 revision 仍由主记忆表权威维护，Projection 不创建第二套 canonical ID。
 
 - Job 写入必须使用 idempotency key，并保存入队时 `source_revisions_json`；claim/renew/retry/reject/complete/dead 状态转换同时校验 worker token，过期 lease 可恢复为 pending。旧库初始化时必须补齐 revision 列，不能删除已有 job。
 - `apply_derived_plan()` 在一个事务内写入 relation、projection、mapping 和 source revision；source revision 变化、非法 seed、scope 不一致、坏 mapping 或不支持 role 必须隔离/失效，不能污染其他 bundle。
+- `load_candidate_sources()` 必须在 SQL 限流前按 canonical metadata 的 scope 过滤，再保持 primary 首项；不得先截取全库最近 ID 后在 Python 中过滤，避免其他租户记录挤掉真实候选。
+- `memory_relations.revision` 是高影响候选动作的 CAS 值，不是 canonical source revision。approve/replay 在同一写事务内重新验证两侧 source；reject 保持终态，普通 upsert 不得无审计重开。动作表只保存 action、前后状态、候选 revision、reason code 和时间，不保存 source ID/revision、scope、identity 或正文。
 - `active_projection_bundles_for_seeds()` 先去重 seed，再批量读取 active projection 与完整 source mapping；支持 `scope_key` 和 projection limit，禁止 N+1 source 查询。读取侧再核对 primary/supporting/conflict role、revision、privacy 和 validity。
+- 普通非冲突 Projection 可在 supporting source 失效且 primary 仍有效时保留；`semantic_summary` 的正文合成自全部 mappings，因此任一来源 revision 变化、删除或 orphan cleanup 移除 mapping 时必须整条失效，等待从当前 canonical revision 幂等重建。
 - SQL 动态片段仅来自固定 allowlist，值全部参数绑定；读取失败由上层回退 canonical/relation baseline，不把 query、prompt、正文、source ID 列表或身份写入日志/决策记录。
 
 ```mermaid
@@ -112,7 +115,7 @@ stateDiagram-v2
 ### 知识与笔记
 
 - `knowledge_entries`：title/content/category/confidence/source_ids/tags、时间、过期和访问计数，并以 `origin`/`provenance_json` 区分人工与派生；搜索是参数化 `LIKE`，不是 FTS。派生写入和读取会重新校验 source revision/scope/privacy。
-- `notes` + `note_versions`：创建时同事务写 v1；更新以 `WHERE id=? AND version=?` 乐观锁，成功后插入下一版本；notes 以 `origin`/`provenance_json` 保存派生来源，primary 仍有效时 supporting source 可在读取投影中裁剪。
+- `notes` + `note_versions`：创建时同事务写 v1；更新以 `WHERE id=? AND version=?` 乐观锁，成功后插入下一版本；notes 以 `origin`/`provenance_json` 保存派生来源，primary 仍有效时 supporting source 可在读取投影中裁剪。自动派生创建在 `BEGIN IMMEDIATE` 中按完整 provenance 幂等命中当前记录，不更新人工笔记或已有版本。
 - `idx_note_versions_note_version` 对 `(note_id, version)` 唯一；健康检查仍检测旧数据或损坏造成的重复版本。
 - `soft_delete()` 仅改状态；`delete()` 同事务删版本和主笔记；`prune_versions()` 按创建时间保留最新 N 个。
 
@@ -129,6 +132,10 @@ stateDiagram-v2
 - 列表故意排除 `reason_codes_json`，详情按 opaque `decision_id` 获取并解码。
 - `cleanup()` 先按 retention 删除，再按 `(created_at_ms DESC, decision_id DESC)` 稳定保留 newest `max_rows`，同一事务提交。
 - provider 型号和错误码仍可能泄露部署信息，API 层必须授权；“无正文”不代表可公开。
+
+### 再巩固候选：`ReconsolidationStore`
+
+`reconsolidation_candidates` 保存 source revision、旧正文与 proposed 正文，`reconsolidation_actions` 记录 stage/apply/reject/rollback 低敏审计；状态迁移使用 CAS，应用与回滚必须携带 `expected_revision`。`reconsolidation_apply_ops` 在 canonical apply 前保存唯一 intent，成功、明确失败和重启恢复都必须在同一事务内收口候选与 intent；普通 reject 不得越过进行中的 apply。`reconsolidation_rollback_ops` 在 canonical 更新前保存回滚意图；完成时必须在同一事务内迁移候选、追加动作并删除操作。启动恢复只重放 revision 未变或正文已经等于目标正文/旧正文的 pending 操作，冲突操作保持 blocked/failed，不能覆盖后续编辑。
 
 ### Memory Evolution 能力快照
 

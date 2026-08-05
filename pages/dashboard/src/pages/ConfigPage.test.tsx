@@ -28,8 +28,7 @@ interface BridgeMock {
   getLocale: ReturnType<typeof vi.fn>;
   getI18n: ReturnType<typeof vi.fn>;
   t: ReturnType<typeof vi.fn>;
-  onContextChange: ReturnType<typeof vi.fn>;
-  offContextChange: ReturnType<typeof vi.fn>;
+  onContext: ReturnType<typeof vi.fn>;
 }
 
 function deferred<T>() {
@@ -142,6 +141,8 @@ function applyResult(
     revision: "rev-2",
     changed_paths: ["general.bot_name"],
     reload_scheduled: false,
+    restart_required: true,
+    rebuild_required: false,
     instance_id: "instance-1",
     ...overrides,
   });
@@ -204,8 +205,7 @@ describe("ConfigPage", () => {
       getLocale: vi.fn().mockReturnValue("en-US"),
       getI18n: vi.fn().mockReturnValue({}),
       t: vi.fn((key: string) => key),
-      onContextChange: vi.fn(),
-      offContextChange: vi.fn(),
+      onContext: vi.fn().mockReturnValue(vi.fn()),
     };
 
     Object.defineProperty(window, "AstrBotPluginPage", {

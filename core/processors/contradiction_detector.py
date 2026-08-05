@@ -1,181 +1,156 @@
-"""R4: 矛盾检测与更新 — 写入时检测冲突记忆并标记 SUPERSEDED。
-
-认知原理：当新信息与旧记忆矛盾（如"喜欢咖啡" vs "戒咖啡三个月"），
-大脑不会删除旧记忆，而是标记为"已过时"并在检索时降权。
-"""
+"""从 canonical 快照生成只读冲突或状态更新候选。"""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import hashlib
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from itertools import combinations
+from typing import Sequence
 
-from astrbot.api import logger
+from ..models.memory_evolution import MemorySourceRef
+
+
+@dataclass(frozen=True, slots=True)
+class ConflictCandidate:
+    """保存一对同主体 source 的冲突类型与 revision 证据。"""
+
+    source_id: int
+    source_revision: str
+    target_id: int
+    target_revision: str
+    source_occurred_at: datetime
+    target_occurred_at: datetime
+    subject_key: str
+    conflict_type: str
+    confidence: float
+
+    @property
+    def candidate_key(self) -> str:
+        """返回绑定 source/target revision 的稳定候选键。"""
+
+        payload = "|".join(
+            (
+                str(self.source_id),
+                self.source_revision,
+                str(self.target_id),
+                self.target_revision,
+                self.conflict_type,
+            )
+        )
+        return f"conflict:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:24]}"
 
 
 class ContradictionDetector:
-    """写入前搜索候选冲突记忆，判断是否需要标记为 SUPERSEDED。
+    """使用词面启发式预筛同主体冲突，不搜索或更新 canonical。"""
 
-    用法:
-        detector = ContradictionDetector(search_fn, update_fn)
-        superseded = await detector.check_and_mark(
-            new_content="我已经戒咖啡三个月了",
-            new_topics=["咖啡", "饮食"],
-            session_id="...",
-        )
-    """
-
-    # 矛盾检测的相似度阈值（Jaccard token overlap）
-    JACCARD_CONFLICT_THRESHOLD = 0.40
+    JACCARD_CONFLICT_THRESHOLD = 0.4
 
     def __init__(
         self,
-        search_fn: Callable | None = None,
-        update_fn: Callable | None = None,
+        *,
         enabled: bool = True,
         max_conflicts: int = 5,
+        jaccard_threshold: float = JACCARD_CONFLICT_THRESHOLD,
     ) -> None:
-        """
-        Args:
-            search_fn: async (query, k, session_id) -> list of dicts with "id", "text", "metadata"
-            update_fn: async (memory_id, updates_dict) -> bool
-            enabled: 是否启用矛盾检测
-            max_conflicts: 最多返回多少候选冲突
-        """
-        self._search = search_fn
-        self._update = update_fn
-        self._enabled = enabled
-        self._max_conflicts = max_conflicts
+        """保存候选上限和相似度阈值。"""
+
+        self._enabled = bool(enabled)
+        self._max_conflicts = max(0, int(max_conflicts))
+        self._jaccard_threshold = min(1.0, max(0.0, float(jaccard_threshold)))
 
     @property
     def enabled(self) -> bool:
+        """返回当前是否允许生成冲突候选。"""
+
         return self._enabled
 
     @enabled.setter
     def enabled(self, value: bool) -> None:
-        self._enabled = value
+        """切换候选生成开关。"""
 
-    async def check_and_mark(
+        self._enabled = bool(value)
+
+    def detect_candidates(
         self,
-        new_content: str,
-        new_topics: list[str],
-        session_id: str | None = None,
-    ) -> list[int]:
-        """检测并标记与新记忆矛盾的旧记忆。
+        sources: Sequence[MemorySourceRef],
+    ) -> tuple[ConflictCandidate, ...]:
+        """比较同 scope、同可信主体 source，并返回有界只读候选。"""
 
-        Args:
-            new_content: 新记忆的文本内容
-            new_topics: 新记忆的主题标签
-            session_id: 会话 ID（限定搜索范围）
-
-        Returns:
-            被标记为 SUPERSEDED 的记忆 ID 列表
-        """
-        if not self._enabled or self._search is None:
-            return []
-
-        if not new_content.strip() or not new_topics:
-            return []
-
-        try:
-            # 用 topic 关键词搜索候选冲突
-            search_query = " ".join(new_topics[:5])
-            candidates = await self._search(
-                search_query,
-                k=self._max_conflicts,
-                session_id=session_id,
+        if not self._enabled or self._max_conflicts == 0 or len(sources) < 2:
+            return ()
+        candidates: list[ConflictCandidate] = []
+        ordered = sorted(sources, key=lambda item: (item.occurred_at, item.memory_id))
+        for left, right in combinations(ordered, 2):
+            if not _same_subject(left, right):
+                continue
+            old, new = (
+                (left, right)
+                if left.occurred_at <= right.occurred_at
+                else (right, left)
             )
-
-            if not candidates:
-                return []
-
-            new_tokens = set(_tokenize(new_content))
-
-            superseded_ids: list[int] = []
-            for candidate in candidates:
-                candidate_text = str(
-                    candidate.get("text") or candidate.get("content") or ""
+            old_content = old.content or ""
+            new_content = new.content or ""
+            if not old_content.strip() or not new_content.strip():
+                continue
+            overlap = _jaccard(set(_tokenize(old_content)), set(_tokenize(new_content)))
+            if overlap < self._jaccard_threshold:
+                continue
+            if not _detect_semantic_contradiction(new_content, old_content):
+                continue
+            conflict_type = (
+                "temporal_update"
+                if _is_temporal_update(old_content, new_content, old, new)
+                else "polarity_conflict"
+            )
+            candidates.append(
+                ConflictCandidate(
+                    source_id=new.memory_id,
+                    source_revision=new.revision_token,
+                    target_id=old.memory_id,
+                    target_revision=old.revision_token,
+                    source_occurred_at=new.occurred_at,
+                    target_occurred_at=old.occurred_at,
+                    subject_key=new.subject_key or "",
+                    conflict_type=conflict_type,
+                    confidence=min(1.0, 0.6 + overlap * 0.4),
                 )
-                if not candidate_text.strip():
-                    continue
+            )
+            if len(candidates) >= self._max_conflicts:
+                break
+        return tuple(candidates)
 
-                candidate_tokens = set(_tokenize(candidate_text))
-                jaccard = _jaccard(new_tokens, candidate_tokens)
 
-                if jaccard >= self.JACCARD_CONFLICT_THRESHOLD:
-                    candidate_id = int(
-                        candidate.get("id")
-                        or candidate.get("doc_id")
-                        or candidate.get("memory_id")
-                        or 0
-                    )
-                    if candidate_id <= 0:
-                        continue
+def _same_subject(first: MemorySourceRef, second: MemorySourceRef) -> bool:
+    """要求 scope 和匿名主体键都明确一致。"""
 
-                    # 检查情感/立场是否矛盾（简单启发式：否定词 + 相同 topic）
-                    has_contradiction = _detect_semantic_contradiction(
-                        new_content, candidate_text
-                    )
-                    if not has_contradiction:
-                        continue
-
-                    # 标记旧记忆为 SUPERSEDED
-                    if self._update is not None:
-                        try:
-                            meta = candidate.get("metadata", {}) or {}
-                            if isinstance(meta, str):
-                                import json
-
-                                try:
-                                    meta = json.loads(meta)
-                                except (json.JSONDecodeError, TypeError):
-                                    meta = {}
-                            meta["superseded_by"] = new_content[:200]
-                            meta["superseded_at"] = _now_iso()
-
-                            await self._update(candidate_id, {"metadata": meta})
-                            superseded_ids.append(candidate_id)
-                            logger.info(
-                                f"[ContradictionDetector] 标记 SUPERSEDED: "
-                                f"id={candidate_id}, jaccard={jaccard:.3f}"
-                            )
-                        except Exception:
-                            logger.debug(
-                                f"[ContradictionDetector] 更新 id={candidate_id} 失败",
-                                exc_info=True,
-                            )
-
-            return superseded_ids
-
-        except Exception:
-            logger.debug("[ContradictionDetector] 矛盾检测失败", exc_info=True)
-            return []
+    return bool(
+        first.scope_key == second.scope_key
+        and first.subject_key
+        and first.subject_key == second.subject_key
+    )
 
 
 def _tokenize(text: str) -> list[str]:
-    """Delegate to shared CJK tokenizer.
+    """委托共享中英文分词器，避免处理器内维护第二套规则。"""
 
-    See :func:`core.utils.text_utils.tokenize_cjk_words`.
-    """
     from ..utils.text_utils import tokenize_cjk_words
 
     return tokenize_cjk_words(text)
 
 
 def _jaccard(set_a: set, set_b: set) -> float:
-    """Jaccard 相似度。"""
+    """计算两个 token 集合的 Jaccard 相似度。"""
+
     if not set_a or not set_b:
         return 0.0
-    return len(set_a & set_b) / max(1, len(set_a | set_b))
+    return len(set_a & set_b) / len(set_a | set_b)
 
 
-def _detect_semantic_contradiction(
-    new_text: str,
-    old_text: str,
-) -> bool:
-    """简单启发式矛盾检测：否定词 + 相同主题 = 可能矛盾。
+def _detect_semantic_contradiction(new_text: str, old_text: str) -> bool:
+    """用肯定/否定极性差异做低成本候选预筛。"""
 
-    更精确的判断应使用 LLM，这里作为低延迟预筛选。
-    """
-    negation_words = [
+    negation_words = (
         "不",
         "没",
         "别",
@@ -183,13 +158,11 @@ def _detect_semantic_contradiction(
         "停止",
         "放弃",
         "不再",
-        "改",
-        "换",
         "取消",
         "拒绝",
         "否",
-    ]
-    affirmative_words = [
+    )
+    affirmative_words = (
         "喜欢",
         "爱",
         "想要",
@@ -200,25 +173,28 @@ def _detect_semantic_contradiction(
         "有",
         "会",
         "可以",
-    ]
-
-    new_has_negation = any(w in new_text for w in negation_words)
-    old_has_affirm = any(w in old_text for w in affirmative_words)
-
-    old_has_negation = any(w in old_text for w in negation_words)
-    new_has_affirm = any(w in new_text for w in affirmative_words)
-
-    # 一方有否定 + 另一方有肯定 = 潜在矛盾
-    return (new_has_negation and old_has_affirm) or (
-        old_has_negation and new_has_affirm
     )
+    new_negative = any(word in new_text for word in negation_words)
+    old_affirmative = any(word in old_text for word in affirmative_words)
+    old_negative = any(word in old_text for word in negation_words)
+    new_affirmative = any(word in new_text for word in affirmative_words)
+    return (new_negative and old_affirmative) or (old_negative and new_affirmative)
 
 
-def _now_iso() -> str:
-    """ISO 时间戳字符串。"""
-    from datetime import datetime, timedelta, timezone
+def _is_temporal_update(
+    old_text: str,
+    new_text: str,
+    old: MemorySourceRef,
+    new: MemorySourceRef,
+) -> bool:
+    """识别显式历史到当前的状态变化，避免误标为同时冲突。"""
 
-    return datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
+    historical_words = ("以前", "曾经", "过去", "去年", "当时", "原来")
+    current_words = ("现在", "目前", "如今", "后来", "已经")
+    explicit_change = any(word in old_text for word in historical_words) and any(
+        word in new_text for word in current_words
+    )
+    return explicit_change or new.occurred_at - old.occurred_at >= timedelta(days=1)
 
 
-__all__ = ["ContradictionDetector"]
+__all__ = ["ConflictCandidate", "ContradictionDetector"]

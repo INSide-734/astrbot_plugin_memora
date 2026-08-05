@@ -536,32 +536,40 @@
     },
     "hybrid_scoring": {
         "description": "混合检索评分权重",
-        "hint": "控制 BM25 + 向量混合检索结果的评分权重分配。修改后即时生效，无需重启。",
+        "hint": "控制 BM25 + 向量混合检索结果的评分权重分配。三个评分权重总和必须为 1，保存后需重载插件。",
         "type": "object",
         "items": {
             "score_alpha": {
                 "description": "检索相关性权重",
                 "hint": "BM25+向量检索相似度在混合评分中的占比。值越大，检索结果越偏向字面和语义匹配。范围 0-1。",
                 "type": "float",
-                "default": 0.5
+                "default": 0.5,
+                "min": 0.0,
+                "max": 1.0
             },
             "score_beta": {
                 "description": "重要性权重",
                 "hint": "记忆自身重要性在混合评分中的占比。值越大，高重要性记忆越容易被召回。范围 0-1。",
                 "type": "float",
-                "default": 0.25
+                "default": 0.25,
+                "min": 0.0,
+                "max": 1.0
             },
             "score_gamma": {
                 "description": "时间新鲜度权重",
                 "hint": "记忆创建/访问时间在混合评分中的占比。值越大，越新的记忆越容易被召回。范围 0-1。",
                 "type": "float",
-                "default": 0.25
+                "default": 0.25,
+                "min": 0.0,
+                "max": 1.0
             },
             "mmr_lambda": {
                 "description": "MMR 多样性权衡",
                 "hint": "Maximal Marginal Relevance 参数。1=纯相关性排序，0=纯多样性排序。0.7 表示偏向相关性但保留一定多样性，避免召回大量相似记忆。",
                 "type": "float",
-                "default": 0.7
+                "default": 0.7,
+                "min": 0.0,
+                "max": 1.0
             }
         }
     },
@@ -793,11 +801,10 @@
             },
             "human_like_formatter_mode": {
                 "description": "类人格式化模式",
-                "hint": "rule: 基于规则的自然语言记忆片段; llm: LLM驱动的高质量格式化; disabled: 返回原始结果",
+                "hint": "rule: 基于规则的自然语言记忆片段; disabled: 仅返回结构化原始结果",
                 "type": "string",
                 "options": [
                     "rule",
-                    "llm",
                     "disabled"
                 ],
                 "default": "rule"
@@ -1167,9 +1174,9 @@
         "type": "object",
         "items": {
             "enabled": {"description": "启用重排序器", "hint": "关闭后跳过所有重排序步骤，减少计算开销。", "type": "bool", "default": true},
-            "strategy": {"description": "重排序策略", "hint": "mmr: 最大边际相关性(推荐，无额外LLM调用); cross_encoder: Embedding打分; llm: LLM打分(高成本); hybrid: 两级排序", "type": "string", "options": ["mmr", "cross_encoder", "llm", "hybrid"], "default": "mmr"},
+            "strategy": {"description": "重排序策略", "hint": "mmr: 最大边际相关性(推荐，无额外LLM调用); embedding_similarity: Embedding余弦相似度; llm: LLM打分(高成本); hybrid: 两级排序", "type": "string", "options": ["mmr", "embedding_similarity", "llm", "hybrid"], "default": "mmr"},
             "mmr_lambda": {"description": "MMR 相关性权重", "hint": "值越高越偏向相关性。范围 0-1。", "type": "float", "default": 0.7, "min": 0.0, "max": 1.0},
-            "cross_encoder_lambda": {"description": "Cross-Encoder 融合权重", "hint": "query-doc 相似度与原始得分的融合比例。", "type": "float", "default": 0.7, "min": 0.0, "max": 1.0},
+            "embedding_similarity_lambda": {"description": "Embedding 相似度融合权重", "hint": "query-doc 余弦相似度与原始得分的融合比例。", "type": "float", "default": 0.7, "min": 0.0, "max": 1.0},
             "llm_batch_size": {"description": "LLM 重排序批量大小", "hint": "每次处理的候选记忆数量上限。LLM 策略会增加 token 消耗。", "type": "int", "default": 10, "min": 1, "max": 50}
         }
     },
@@ -1178,11 +1185,7 @@
         "hint": "从对话反馈中自动调整检索权重、记忆重要性、TTL 等参数",
         "type": "object",
         "items": {
-            "enabled": {"description": "启用自主学习", "hint": "开启后插件会根据记忆复用率和对话质量自动优化参数。", "type": "bool", "default": true},
-            "learning_rate": {"description": "学习率", "hint": "参数更新的步长。建议 0.01-0.05。", "type": "float", "default": 0.01},
-            "target_hit_rate_low": {"description": "目标命中率下限", "hint": "记忆召回命中率低于此值时自动降低 importance 阈值、提高 top_k。", "type": "float", "default": 0.3},
-            "target_hit_rate_high": {"description": "目标命中率上限", "hint": "记忆召回命中率高于此值时自动提高 importance 阈值、降低 top_k。", "type": "float", "default": 0.7},
-            "quality_ema_alpha": {"description": "质量评分 EMA 系数", "hint": "对话质量评分的指数移动平均平滑系数。0.2 表示新评分权重 20%。", "type": "float", "default": 0.2}
+            "enabled": {"description": "启用自主学习 shadow 候选", "hint": "开启后从统一反馈聚合生成参数候选并等待人工 CAS 发布，不自动修改生产配置。", "type": "bool", "default": false}
         }
     },
     "knowledge_base": {
@@ -1216,15 +1219,6 @@
             "sigma_threshold": {"description": "Sigma 告警阈值", "hint": "当日创建量偏离均值超过 sigma 倍标准差时触发告警。3.0 为标准 3-sigma。", "type": "float", "default": 3.0}
         }
     },
-    "relationship_tracking": {
-        "description": "关系阶段追踪",
-        "hint": "追踪用户与 Bot 的亲密度变化，从陌生人到密友",
-        "type": "object",
-        "items": {
-            "enabled": {"description": "启用关系追踪", "hint": "开启后根据互动频率和情感极性累积用户亲密度 warmth score。", "type": "bool", "default": true},
-            "warmth_decay_per_day": {"description": "温暖度日衰减率", "hint": "每天自然的亲密度衰减。0.005 表示每天降低 0.5%（极慢）。设为 0 可停用。", "type": "float", "default": 0.005}
-        }
-    },
     "continuity_tracking": {
         "description": "对话连续性追踪",
         "hint": "追踪未完成话题，下次对话时优先恢复上下文",
@@ -1237,12 +1231,12 @@
     },
     "semantic_compression": {
         "description": "语义压缩",
-        "hint": "将 60 天以上旧记忆按主题相似度合并为抽象摘要，控制记忆库规模",
+        "hint": "将同边界旧记忆按 topic 聚合为可失效的 semantic_summary Projection；不会删除或替换原记忆，需要同时启用 Memory Evolution。",
         "type": "object",
         "items": {
-            "enabled": {"description": "启用语义压缩", "hint": "开启后定期扫描旧记忆，将 topic 高度重叠的记忆合并为精简摘要。", "type": "bool", "default": true},
+            "enabled": {"description": "启用语义压缩", "hint": "开启并启用 Memory Evolution 后，每日扫描旧 canonical 记忆并生成带 source revision 的派生摘要；关闭后已有摘要不再进入召回。", "type": "bool", "default": false},
             "age_days": {"description": "压缩年龄阈值", "hint": "记忆创建超过此天数后才进入压缩候选。建议 45-90 天。", "type": "float", "default": 60.0},
-            "similarity_threshold": {"description": "合并相似度阈值", "hint": "两条记忆 topic Jaccard 重叠超过该值才合并。建议 0.75-0.92。", "type": "float", "default": 0.85}
+            "similarity_threshold": {"description": "聚类相似度阈值", "hint": "同 scope、privacy 和 role 的记忆 topic Jaccard 重叠达到该值才生成摘要。建议 0.75-0.92。", "type": "float", "default": 0.85}
         }
     },
     "episode_clustering": {
@@ -1253,15 +1247,6 @@
             "enabled": {"description": "启用情景聚类", "hint": "开启后同一事件的多条记忆会在后台自动聚合为 episode。", "type": "bool", "default": true},
             "time_window_hours": {"description": "时间窗口（小时）", "hint": "该时间窗口内的记忆可能属于同一 episode。建议 12-48 小时。", "type": "float", "default": 24},
             "topic_overlap_threshold": {"description": "主题重叠阈值", "hint": "两条记忆 topic Jaccard 重叠超过该值才归为同一 episode。", "type": "float", "default": 0.50}
-        }
-    },
-    "index_management": {
-        "description": "索引管理",
-        "hint": "控制 FAISS 向量索引的增量更新和 IVF 自动切换策略",
-        "type": "object",
-        "items": {
-            "ivf_switch_threshold": {"description": "IVF 切换阈值", "hint": "向量总数超过该值后建议切换至 IVF 索引以提升大规模检索性能。建议 8000-50000。", "type": "int", "default": 10000},
-            "incremental_rebuild_threshold": {"description": "增量重建阈值", "hint": "自上次全量重建以来新增向量超过该值后触发自动重建。", "type": "int", "default": 500}
         }
     },
     "agent_tools": {
@@ -1405,16 +1390,6 @@
             "default_modifier": {"description": "默认遗忘倍率", "hint": "1.0=标准。2.0=两倍速遗忘。0.5=半速遗忘。建议 0.3-3.0。", "type": "float", "default": 1.0}
         }
     },
-    "weight_learning": {
-        "description": "MAB 权重学习",
-        "hint": "Epsilon-Greedy MAB 在线学习文档路/图路融合权重",
-        "type": "object",
-        "items": {
-            "enabled": {"description": "启用 MAB 权重学习", "type": "bool", "default": false},
-            "epsilon": {"description": "探索率 0-1", "type": "float", "default": 0.1},
-            "group_by_persona": {"description": "按人格分组学习", "type": "bool", "default": true}
-        }
-    },
     "reconsolidation": {
         "description": "记忆再巩固",
         "hint": "召回时可选 LLM 微调记忆内容，保留原始版本",
@@ -1430,20 +1405,6 @@
         "type": "object",
         "items": {
             "enabled": {"description": "启用导入导出", "type": "bool", "default": true}
-        }
-    },
-    "semantic_compressor": {
-        "description": "语义压缩设置",
-        "hint": "控制旧记忆语义压缩的种子词语言",
-        "type": "object",
-        "items": {
-            "seed_language": {
-                "description": "种子词语言",
-                "hint": "压缩扫描时使用的种子词语言。auto=自动跟随 bot_language，zh=中文，en=English，ru=Русский。",
-                "type": "string",
-                "options": ["auto", "zh", "en", "ru"],
-                "default": "auto"
-            }
         }
     },
     "topic_segmentation": {
@@ -1606,7 +1567,9 @@
                 "description": "闪光灯记忆强度阈值",
                 "hint": "emotional_intensity 达到此值的记忆将完全跳过衰减。0.90 表示极高情感强度的记忆。",
                 "type": "float",
-                "default": 0.90
+                "default": 0.90,
+                "min": 0.0,
+                "max": 1.0
             }
         }
     },

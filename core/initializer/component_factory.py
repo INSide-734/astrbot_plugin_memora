@@ -6,24 +6,41 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.core.provider.provider import Provider
 
+from ..base.config_validator import CostControlConfig
+from ..base.cost_control import build_cost_control_from_config
 from ..base.exceptions import ProviderNotReadyError
+from ..evaluation.feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
+    FeedbackLearningEvidenceProvider,
+)
 from ..identity.conversation_sync import ConversationIdentitySynchronizer
 from ..identity.memory import MemoryIdentityEnricher
 from ..identity.resolver import ProtocolIdentityResolver
 from ..identity.runtime import ProtocolIdentityRuntime
 from ..identity.service import ProtocolIdentityService
 from ..injection.recorder import InjectionDecisionRecorder
+from ..managers.auto_learning_actions import aggregation_revision_for
 from ..managers.backup_manager import BackupManager
 from ..managers.conversation_manager import ConversationManager
+from ..managers.knowledge_proposal_pipeline import KnowledgeProposalPipeline
 from ..managers.memory_engine import MemoryEngine
 from ..managers.memory_evolution_gate import MemoryEvolutionGate
 from ..managers.memory_evolution_manager import MemoryEvolutionManager
+from ..managers.note_proposal_pipeline import NoteProposalPipeline
+from ..managers.profile_proposal_pipeline import ProfileProposalPipeline
+from ..managers.semantic_compressor import SemanticCompressor
+from ..processors.knowledge_extractor import KnowledgeExtractor
 from ..processors.memory_consolidator import MemoryConsolidator
+from ..processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
 from ..processors.memory_processor import MemoryProcessor
+from ..processors.note_generator import NoteGenerator
+from ..processors.profile_extractor import ProfileExtractor
 from ..provider_adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..retrieval.derived_relation_expander import DerivedRelationExpander
 from ..retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
 from ..retrieval.projection_reader import ProjectionReader
+from ..review.memory_quality_gate import MemoryQualityGate
+from ..review.quarantine_store import MemoryQuarantineStore
 from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
@@ -31,6 +48,7 @@ from ..storage.memory_evolution_store import MemoryEvolutionStore
 from ..storage.protocol_identity_store import ProtocolIdentityStore
 from ..validators.index_validator import IndexValidator
 from .derived_rebuild_coordinator import DerivedRebuildCoordinator
+from .engine_runtime_config import build_engine_runtime_config
 
 
 class ComponentFactory:
@@ -82,9 +100,20 @@ class ComponentFactory:
         graph_doc_path = data_dir_path / "memora_graph_documents.db"
         graph_index_path = data_dir_path / "memora_graph.index"
         graph_memory_enabled = self.config_manager.get("graph_memory.enabled", True)
+        semantic_compression_enabled = bool(
+            self.config_manager.get("semantic_compression.enabled", False)
+        )
         evolution_config = self.config_manager.get_section("memory_evolution")
         if not isinstance(evolution_config, dict):
             evolution_config = {}
+        episode_config = self.config_manager.get_section("episode_clustering")
+        if not isinstance(episode_config, dict):
+            episode_config = {}
+        cost_control_section = self.config_manager.get_section("cost_control")
+        if not isinstance(cost_control_section, dict):
+            cost_control_section = {}
+        cost_control_config = CostControlConfig.model_validate(cost_control_section)
+        cost_control = build_cost_control_from_config(cost_control_config)
 
         if not embedding_provider:
             raise ProviderNotReadyError("Embedding Provider 未初始化")
@@ -105,8 +134,11 @@ class ComponentFactory:
             )
 
         shared_embedding_provider = InFlightEmbeddingProviderProxy(embedding_provider)
+        topic_embedding_adapter = EmbeddingProviderAdapter.from_provider(
+            shared_embedding_provider
+        )
 
-        # 并行初始化主 DB 和图 DB（两者完全独立，不同的文件）
+        # 只构造适配器；持久连接必须等待 canonical Schema 迁移完成。
         db = faiss_vec_db_cls(
             str(db_path),
             str(index_path),
@@ -120,12 +152,8 @@ class ComponentFactory:
                 str(graph_index_path),
                 shared_embedding_provider,
             )
-            await asyncio.gather(db.initialize(), graph_db.initialize())
-        else:
-            await db.initialize()
 
         memory_evolution_store = MemoryEvolutionStore(str(db_path))
-        await memory_evolution_store.initialize()
         derived_expander = None
         projection_reader = None
         if bool(evolution_config.get("enabled", False)) and str(
@@ -148,9 +176,10 @@ class ComponentFactory:
                     0,
                     int(evolution_config.get("max_query_expansions", 8)),
                 ),
+                disabled_types=(
+                    () if semantic_compression_enabled else ("semantic_summary",)
+                ),
             )
-
-        logger.info(f"数据库已初始化。数据目录: {self.data_dir}")
 
         backup_manager = BackupManager(self.data_dir)
 
@@ -159,8 +188,18 @@ class ComponentFactory:
 
         engine_config = self._build_engine_config(stopwords_dir, graph_memory_enabled)
         engine_config["memory_evolution"] = evolution_config
+        engine_config["cost_control_runtime"] = cost_control
         engine_config["derived_expander"] = derived_expander
         engine_config["projection_reader"] = projection_reader
+        engine_config["backup_manager"] = backup_manager
+        engine_config["auto_learning_evidence_provider"] = (
+            FeedbackLearningEvidenceProvider(
+                FeedbackLearningEvidenceInbox(self.data_dir),
+                aggregation_revision_provider=aggregation_revision_for,
+                source_config_revision_provider=self._get_current_config_revision,
+                quality_gate_version="quality-gate-v1",
+            )
+        )
         memory_engine = MemoryEngine(
             db_path=str(db_path),
             faiss_db=db,
@@ -168,7 +207,26 @@ class ComponentFactory:
             llm_provider=llm_provider,
             config=engine_config,
         )
-        await memory_engine.initialize()
+        try:
+            # canonical Schema 迁移必须早于任何其他 memora.db 持久连接。
+            await memory_engine.initialize()
+            if graph_memory_enabled:
+                await asyncio.gather(db.initialize(), graph_db.initialize())
+            else:
+                await db.initialize()
+            await memory_evolution_store.initialize()
+        except BaseException:
+            await self._rollback_build_components(
+                None,
+                None,
+                memory_engine,
+                graph_db,
+                db,
+                None,
+                memory_evolution_store,
+            )
+            raise
+        logger.info("数据库与索引组件已初始化")
         logger.info("MemoryEngine 已初始化")
 
         conversation_db_path = data_dir_path / "conversations.db"
@@ -192,6 +250,9 @@ class ComponentFactory:
             llm_provider=llm_id if llm_id else None,
             config={
                 "atom_enabled": engine_config["atom_enabled"],
+                "atom_classifier.negation_detection_enabled": engine_config[
+                    "atom_classifier.negation_detection_enabled"
+                ],
                 **{
                     key: engine_config[key]
                     for key in (
@@ -215,25 +276,116 @@ class ComponentFactory:
                 "topic_segmentation.enabled": self.config_manager.get(
                     "topic_segmentation.enabled", True
                 ),
+                "topic_segmentation.strategy": self.config_manager.get(
+                    "topic_segmentation.strategy", "a_b_hybrid"
+                ),
+                "topic_segmentation.strategy_b.similarity_threshold": (
+                    self.config_manager.get(
+                        "topic_segmentation.strategy_b.similarity_threshold",
+                        0.5,
+                    )
+                ),
+                "topic_segmentation.strategy_b.min_cluster_size": (
+                    self.config_manager.get(
+                        "topic_segmentation.strategy_b.min_cluster_size",
+                        1,
+                    )
+                ),
+                "topic_segmentation.strategy_b.max_clusters": self.config_manager.get(
+                    "topic_segmentation.strategy_b.max_clusters",
+                    5,
+                ),
+                "topic_segmentation.hybrid_fallback_fact_threshold": (
+                    self.config_manager.get(
+                        "topic_segmentation.hybrid_fallback_fact_threshold",
+                        3,
+                    )
+                ),
+                "persona_interpretation.enabled": self.config_manager.get(
+                    "persona_interpretation.enabled", False
+                ),
             },
+            cost_control=cost_control,
+            topic_embed_fn=topic_embedding_adapter.embed,
         )
         logger.info("MemoryProcessor 已初始化")
+
+        memory_quarantine_store = MemoryQuarantineStore(
+            data_dir_path / "memory_quarantine.sqlite3"
+        )
+        memory_quality_gate = None
 
         memory_evolution_gate = MemoryEvolutionGate(evolution_config)
         memory_evolution_consolidator = MemoryConsolidator(
             memory_processor.llm_client.call_llm_with_retry,
             evolution_config,
         )
+        memory_evolution_candidate_generator = MemoryEvolutionCandidateGenerator(
+            episode_config=episode_config,
+        )
         memory_evolution_manager = MemoryEvolutionManager(
             memory_evolution_store,
             memory_evolution_gate,
             memory_evolution_consolidator,
             evolution_config,
+            candidate_generator=memory_evolution_candidate_generator,
         )
         # CRUD 提交后只注入同一 SQLite 上的派生 Store；canonical 仍由
         # MemoryEngine/DocumentStorage 唯一写入，避免形成第二套正文权威。
         memory_engine.memory_evolution_store = memory_evolution_store
         memory_engine.memory_evolution_manager = memory_evolution_manager
+        if semantic_compression_enabled and memory_evolution_manager.mode in {
+            "shadow",
+            "readonly",
+            "active",
+        }:
+            memory_engine.semantic_compressor = SemanticCompressor(
+                source_store=memory_evolution_store,
+                proposal_applier=memory_evolution_manager.apply_projection_proposal,
+                enabled=True,
+                age_days=float(
+                    engine_config.get("semantic_compression.age_days", 60.0)
+                ),
+                similarity_threshold=float(
+                    engine_config.get(
+                        "semantic_compression.similarity_threshold",
+                        0.85,
+                    )
+                ),
+            )
+        if memory_engine.profile_manager is not None:
+            memory_engine.profile_proposal_pipeline = ProfileProposalPipeline(
+                profile_manager=memory_engine.profile_manager,
+                source_store=memory_evolution_store,
+                get_memory=memory_engine.get_memory,
+                extractor=ProfileExtractor(memory_processor.llm_client),
+                cost_control=cost_control,
+                min_tag_confidence=float(
+                    engine_config.get("user_profile.min_tag_confidence", 0.1)
+                ),
+            )
+        if memory_engine.knowledge_manager is not None:
+            memory_engine.knowledge_proposal_pipeline = KnowledgeProposalPipeline(
+                knowledge_manager=memory_engine.knowledge_manager,
+                source_store=memory_evolution_store,
+                get_memory=memory_engine.get_memory,
+                extractor=KnowledgeExtractor(memory_processor.llm_client),
+                cost_control=cost_control,
+                expire_days=int(engine_config.get("knowledge_base.expire_days", 365)),
+            )
+        if memory_engine.note_manager is not None:
+            note_min_length = int(engine_config.get("notes.auto_create_min_length", 50))
+            memory_engine.note_proposal_pipeline = NoteProposalPipeline(
+                note_manager=memory_engine.note_manager,
+                source_store=memory_evolution_store,
+                generator=NoteGenerator(
+                    memory_processor.llm_client,
+                    min_length=note_min_length,
+                ),
+                cost_control=cost_control,
+                auto_create_min_length=note_min_length,
+                max_tags=int(engine_config.get("notes.max_tags", 10)),
+            )
         index_validator = IndexValidator(str(db_path), db)
         derived_rebuild_coordinator = DerivedRebuildCoordinator(
             index_validator,
@@ -241,6 +393,14 @@ class ComponentFactory:
             memory_evolution_manager,
         )
         try:
+            await memory_quarantine_store.initialize()
+            memory_quality_gate = MemoryQualityGate(
+                memory_quarantine_store,
+                memory_engine=memory_engine,
+                memory_processor=memory_processor,
+                conversation_manager=conversation_manager,
+            )
+            logger.info("记忆质量隔离门已初始化")
             await db_setup.auto_rebuild_index_if_needed(
                 index_validator,
                 memory_engine,
@@ -276,7 +436,15 @@ class ComponentFactory:
         backup_enabled = bool(self.config_manager.get("backup_settings.enabled", True))
         decay_scheduler = None
         should_start_decay_scheduler = bool(
-            memory_engine and (decay_rate > 0 or auto_cleanup or backup_enabled)
+            memory_engine
+            and (
+                decay_rate > 0
+                or auto_cleanup
+                or backup_enabled
+                or bool(engine_config.get("auto_learning.enabled", False))
+                or memory_engine.semantic_compressor is not None
+                or memory_engine.anomaly_detector is not None
+            )
         )
         if should_start_decay_scheduler:
             backup_keep_days = int(
@@ -329,6 +497,8 @@ class ComponentFactory:
             "graph_db": graph_db,
             "memory_engine": memory_engine,
             "memory_processor": memory_processor,
+            "memory_quarantine_store": memory_quarantine_store,
+            "memory_quality_gate": memory_quality_gate,
             "backup_manager": backup_manager,
             "conversation_manager": conversation_manager,
             "identity_runtime": identity_runtime,
@@ -457,175 +627,25 @@ class ComponentFactory:
     def _build_engine_config(
         self, stopwords_dir: Path, graph_memory_enabled: bool
     ) -> dict:
-        """把已校验配置投影为 MemoryEngine 使用的扁平运行时字典。
+        """把已校验配置投影为 MemoryEngine 使用的运行时白名单快照。
 
         参数:
             stopwords_dir: 文本处理器加载停用词的目录。
             graph_memory_enabled: 本次装配是否启用图记忆能力。
 
         返回:
-            包含召回、Atom 生命周期、图与演化设置的引擎配置副本。
+            包含显式字段所有权与生效语义的引擎配置副本。
         """
 
-        cm = self.config_manager
-        return {
-            "data_dir": self.data_dir,
-            "rrf_k": cm.get("fusion_strategy.rrf_k", 60),
-            "decay_rate": cm.get("importance_decay.decay_rate", 0.01),
-            "access_decay_window_days": cm.get(
-                "importance_decay.access_decay_window_days", 30.0
-            ),
-            "access_decay_max_count": cm.get(
-                "importance_decay.access_decay_max_count", 10
-            ),
-            "access_count_decay_multiplier": cm.get(
-                "importance_decay.access_count_decay_multiplier", 0.5
-            ),
-            "importance_weight": cm.get("recall_engine.importance_weight", 1.0),
-            "search_cache_enabled": cm.get("recall_engine.search_cache_enabled", True),
-            "search_cache_ttl_seconds": cm.get(
-                "recall_engine.search_cache_ttl_seconds", 45.0
-            ),
-            "search_cache_max_size": cm.get("recall_engine.search_cache_max_size", 256),
-            "fallback_enabled": cm.get("recall_engine.fallback_to_vector", True),
-            "cleanup_days_threshold": cm.get(
-                "forgetting_agent.cleanup_days_threshold", 30
-            ),
-            "cleanup_importance_threshold": cm.get(
-                "forgetting_agent.cleanup_importance_threshold", 0.3
-            ),
-            "auto_cleanup_enabled": cm.get(
-                "forgetting_agent.auto_cleanup_enabled", True
-            ),
-            "stopwords_path": str(stopwords_dir),
-            "graph_memory_enabled": graph_memory_enabled,
-            "document_route_weight": cm.get("graph_memory.document_route_weight", 0.65),
-            "graph_route_weight": cm.get("graph_memory.graph_route_weight", 0.35),
-            "cross_route_bonus": cm.get("graph_memory.cross_route_bonus", 0.08),
-            "graph_expansion_limit": cm.get("graph_memory.expansion_limit", 24),
-            "graph_expansion_hops": cm.get("graph_memory.expansion_hops", 1),
-            "graph_second_hop_weight": cm.get("graph_memory.second_hop_weight", 0.4),
-            "dynamic_route_weighting": cm.get(
-                "graph_memory.dynamic_route_weighting", True
-            ),
-            "graph_max_topics": cm.get("graph_memory.max_topics_per_memory", 6),
-            "graph_max_participants": cm.get(
-                "graph_memory.max_participants_per_memory", 8
-            ),
-            "graph_max_facts": cm.get("graph_memory.max_facts_per_memory", 8),
-            "atom_enabled": cm.get("graph_memory.atom_enabled", True),
-            "atom_maintenance_interval_hours": cm.get(
-                "graph_memory.atom_maintenance_interval_hours", 24.0
-            ),
-            "atom_forget_delay_days": cm.get(
-                "graph_memory.atom_forget_delay_days", 7.0
-            ),
-            "atom_purge_delay_days": cm.get("graph_memory.atom_purge_delay_days", 30.0),
-            "atom_quality_filter_enabled": cm.get(
-                "atom_quality_filter.atom_quality_filter_enabled", True
-            ),
-            "atom_min_confidence": cm.get(
-                "atom_quality_filter.atom_min_confidence", 0.65
-            ),
-            "atom_min_importance": cm.get(
-                "atom_quality_filter.atom_min_importance", 0.3
-            ),
-            "atom_min_content_length": cm.get(
-                "atom_quality_filter.atom_min_content_length", 5
-            ),
-            "atom_info_check_enabled": cm.get(
-                "atom_quality_filter.atom_info_check_enabled", True
-            ),
-            "atom_probationary_enabled": cm.get(
-                "atom_quality_filter.atom_probationary_enabled", True
-            ),
-            "atom_probationary_ttl_days": cm.get(
-                "atom_quality_filter.atom_probationary_ttl_days", 3.0
-            ),
-            "atom_dedup_enabled": cm.get(
-                "atom_quality_filter.atom_dedup_enabled", True
-            ),
-            "atom_dedup_threshold": cm.get(
-                "atom_quality_filter.atom_dedup_threshold", 0.7
-            ),
-            "atom_cold_storage_enabled": cm.get(
-                "atom_quality_filter.atom_cold_storage_enabled", True
-            ),
-            "atom_cold_days_threshold": cm.get(
-                "atom_quality_filter.atom_cold_days_threshold", 14.0
-            ),
-            "atom_cold_max_importance": cm.get(
-                "atom_quality_filter.atom_cold_max_importance", 0.4
-            ),
-            "index_rebuild_batch_size": cm.get("index_rebuild_settings.batch_size", 50),
-            "index_rebuild_embedding_batch_size": cm.get(
-                "index_rebuild_settings.embedding_batch_size", 8
-            ),
-            "index_rebuild_tasks_limit": cm.get(
-                "index_rebuild_settings.tasks_limit", 1
-            ),
-            "index_rebuild_max_retries": cm.get(
-                "index_rebuild_settings.max_retries", 5
-            ),
-            "index_rebuild_retry_base_delay": cm.get(
-                "index_rebuild_settings.retry_base_delay", 30.0
-            ),
-            "index_rebuild_batch_delay": cm.get(
-                "index_rebuild_settings.batch_delay", 5.0
-            ),
-            "index_rebuild_request_delay": cm.get(
-                "index_rebuild_settings.request_delay", 5.0
-            ),
-            "index_rebuild_max_failure_ratio": cm.get(
-                "index_rebuild_settings.max_failure_ratio", 0.02
-            ),
-            # === 请求级会话缓存（消除 Bridge→RecallHandler 重复检索） ===
-            "session_cache_enabled": cm.get(
-                "recall_engine.session_cache_enabled", True
-            ),
-            "session_cache_ttl_seconds": cm.get(
-                "recall_engine.session_cache_ttl_seconds", 10.0
-            ),
-            # === 链式扩展（R2 多跳图/话题扩展） ===
-            "recall_engine.max_chain_hops": cm.get("recall_engine.max_chain_hops", 1),
-            "recall_engine.chain_hop_decay": cm.get(
-                "recall_engine.chain_hop_decay", 0.65
-            ),
-            "recall_engine.chain_graph_expansion_enabled": cm.get(
-                "recall_engine.chain_graph_expansion_enabled", True
-            ),
-            "recall_engine.chain_topic_expansion_enabled": cm.get(
-                "recall_engine.chain_topic_expansion_enabled", True
-            ),
-            # === 测试效应（召回成功后的访问时间强化） ===
-            "testing_effect_async": cm.get("recall_engine.testing_effect_async", True),
-            "testing_effect_top_k": cm.get("recall_engine.testing_effect_top_k", 5),
-            # === 重排序器 ===
-            "reranker.enabled": cm.get("reranker.enabled", True),
-            "reranker.strategy": cm.get("reranker.strategy", "mmr"),
-            "reranker.llm_batch_size": cm.get("reranker.llm_batch_size", 10),
-            "reranker.cross_encoder_lambda": cm.get(
-                "reranker.cross_encoder_lambda", 0.7
-            ),
-            "reranker.mmr_lambda": cm.get("reranker.mmr_lambda", 0.7),
-            # === 成本控制 ===
-            "cost_control.mode": cm.get("cost_control.mode", "balanced"),
-            "cost_control.max_extra_llm_calls_per_turn": cm.get(
-                "cost_control.max_extra_llm_calls_per_turn", 0
-            ),
-            "cost_control.allow_llm_reranker_in_passive_recall": cm.get(
-                "cost_control.allow_llm_reranker_in_passive_recall", False
-            ),
-            "cost_control.allow_llm_topic_strategy_d": cm.get(
-                "cost_control.allow_llm_topic_strategy_d", False
-            ),
-            "cost_control.max_reflection_parallel_llm_calls": cm.get(
-                "cost_control.max_reflection_parallel_llm_calls", 2
-            ),
-            "cost_control.llm_reranker_min_candidates": cm.get(
-                "cost_control.llm_reranker_min_candidates", 12
-            ),
-            "cost_control.llm_reranker_prompt_chars": cm.get(
-                "cost_control.llm_reranker_prompt_chars", 3000
-            ),
-        }
+        return build_engine_runtime_config(
+            self.config_manager,
+            data_dir=self.data_dir,
+            stopwords_dir=stopwords_dir,
+            graph_memory_enabled=graph_memory_enabled,
+        )
+
+    async def _get_current_config_revision(self) -> str:
+        """从 ConfigManager 权威快照取得当前配置 revision。"""
+
+        _snapshot, revision = await self.config_manager.get_config_snapshot_async()
+        return revision

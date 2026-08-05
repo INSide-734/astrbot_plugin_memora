@@ -22,14 +22,14 @@ pageClass: config-reference-page
 
 ## 类人记忆增强
 
-配置域：`"human_like_memory"`。让记忆检索行为更接近人类记忆的自然浮现过程，包括近因效应、季节性召回、情感加权、类人格式化及类型感知衰减。
+配置域：`"human_like_memory"`。让记忆检索行为更接近人类记忆的自然浮现过程，包括近因效应、季节性召回、情感加权、类人格式化及类型感知衰减。该配置在插件重载后生效。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
 | `"human_like_memory.recency_bump_enabled"` | `"bool"` | `true` | - | 近因爆发效应<br><small>0-7天记忆获得1.5倍近因加成，模拟人类近期记忆更鲜明的特点</small> |
 | `"human_like_memory.seasonal_recall_enabled"` | `"bool"` | `true` | - | 季节性召回<br><small>周年/季节性时间点附近的相关记忆获得检索加成</small> |
 | `"human_like_memory.emotion_scoring_mode"` | `"string"` | `"enhanced"` | 可选：`"enhanced"` / `"basic"` / `"disabled"` | 情感加权模式<br><small>enhanced: Jaccard+情绪一致性+强度三维计分; basic: 简单标签重叠; disabled: 关闭情感加权</small> |
-| `"human_like_memory.human_like_formatter_mode"` | `"string"` | `"rule"` | 可选：`"rule"` / `"llm"` / `"disabled"` | 类人格式化模式<br><small>rule: 基于规则的自然语言记忆片段; llm: LLM驱动的高质量格式化; disabled: 返回原始结果</small> |
+| `"human_like_memory.human_like_formatter_mode"` | `"string"` | `"rule"` | 可选：`"rule"` / `"disabled"` | 类人格式化模式<br><small>rule: 基于规则生成自然语言记忆片段; disabled: 仅返回结构化原始结果。当前没有未经评测的 LLM 格式化模式。</small> |
 | `"human_like_memory.type_aware_decay_enabled"` | `"bool"` | `true` | - | 类型感知衰减<br><small>不同记忆类型以不同速度衰减: EPISODIC 1.5倍速/ FACTUAL 0.5倍速/ PREFERENCE 0.7倍速/ RELATIONAL 0.6倍速</small> |
 
 ## 记忆演化
@@ -58,21 +58,13 @@ pageClass: config-reference-page
 
 ## 语义压缩
 
-配置域：`"semantic_compression"`。将 60 天以上旧记忆按主题相似度合并为抽象摘要，控制记忆库规模
+配置域：`"semantic_compression"`。把同边界旧 canonical 记忆按 topic 聚合为带 source revision 的 `semantic_summary` Projection；原记忆不会被删除或替换。该功能要求同时启用 Memory Evolution，配置变更后需重启。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"semantic_compression.enabled"` | `"bool"` | `true` | - | 启用语义压缩<br><small>开启后定期扫描旧记忆，将 topic 高度重叠的记忆合并为精简摘要。</small> |
+| `"semantic_compression.enabled"` | `"bool"` | `false` | - | 启用语义压缩<br><small>开启并启用 Memory Evolution 后，每日生成派生摘要；关闭后已有语义摘要不再进入召回，canonical 保持可用。</small> |
 | `"semantic_compression.age_days"` | `"float"` | `60` | - | 压缩年龄阈值<br><small>记忆创建超过此天数后才进入压缩候选。建议 45-90 天。</small> |
-| `"semantic_compression.similarity_threshold"` | `"float"` | `0.85` | - | 合并相似度阈值<br><small>两条记忆 topic Jaccard 重叠超过该值才合并。建议 0.75-0.92。</small> |
-
-## 语义压缩设置
-
-配置域：`"semantic_compressor"`。控制旧记忆语义压缩的种子词语言
-
-| 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
-|---|---|---|---|---|
-| `"semantic_compressor.seed_language"` | `"string"` | `"auto"` | 可选：`"auto"` / `"zh"` / `"en"` / `"ru"` | 种子词语言<br><small>压缩扫描时使用的种子词语言。auto=自动跟随 bot_language，zh=中文，en=English，ru=Русский。</small> |
+| `"semantic_compression.similarity_threshold"` | `"float"` | `0.85` | - | 聚类相似度阈值<br><small>同 scope、privacy 和 role 的记忆 topic Jaccard 重叠达到该值才生成摘要。建议 0.75-0.92。</small> |
 
 ## 情景聚类
 
@@ -95,11 +87,11 @@ pageClass: config-reference-page
 
 ## 记忆再巩固
 
-配置域：`"reconsolidation"`。召回时可选 LLM 微调记忆内容，保留原始版本
+配置域：`"reconsolidation"`。召回时只生成可审阅候选，不直接修改 canonical；人工确认后按来源 revision CAS 应用，并可回滚旧正文。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"reconsolidation.enabled"` | `"bool"` | `false` | - | 是否启用记忆再巩固。开启后，达到条件且被反复召回的记忆可进入重新整理流程；该过程会增加后台处理成本，建议先观察召回质量再启用。 |
+| `"reconsolidation.enabled"` | `"bool"` | `false` | - | 是否启用记忆再巩固候选。开启后，被反复召回的候选记忆经 LLM 修订生成 pending 候选，等待人工 CAS 确认；不会自动改写 canonical。 |
 | `"reconsolidation.min_recall_count"` | `"int"` | `5` | - | 记忆进入再巩固前必须达到的最低召回次数。值越低触发越积极，值越高越偏向只整理长期反复使用的记忆。 |
 
 ## 话题分割
@@ -128,7 +120,7 @@ pageClass: config-reference-page
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"atom_classifier.negation_detection_enabled"` | `"bool"` | `true` | - | 启用否定检测<br><small>开启后，原子分类器会检测否定句式（如"我不喜欢"），防止将否定陈述误分类为 PREFERENCE 等类型。</small> |
+| `"atom_classifier.negation_detection_enabled"` | `"bool"` | `true` | - | 启用否定检测<br><small>开启后记录否定极性，并避免把带否定动作的未来表达误判为已确认计划。</small> |
 
 ## 闪光灯记忆设置
 
@@ -137,7 +129,7 @@ pageClass: config-reference-page
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
 | `"flashbulb.enabled"` | `"bool"` | `true` | - | 启用闪光灯记忆保护<br><small>开启后，emotional_intensity >= 阈值的记忆将永不过期。</small> |
-| `"flashbulb.intensity_threshold"` | `"float"` | `0.9` | - | 闪光灯记忆强度阈值<br><small>emotional_intensity 达到此值的记忆将完全跳过衰减。0.90 表示极高情感强度的记忆。</small> |
+| `"flashbulb.intensity_threshold"` | `"float"` | `0.9` | 最小值：`0`<br>最大值：`1` | 闪光灯记忆强度阈值<br><small>emotional_intensity 达到此值的记忆将完全跳过衰减。0.90 表示极高情感强度的记忆。</small> |
 
 ## 自动清理设置
 

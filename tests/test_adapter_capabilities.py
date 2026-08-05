@@ -508,7 +508,7 @@ async def test_reranker_factory_explicitly_degrades_unsupported_dependencies() -
 
     backend = MagicMock()
     backend.adapter_capabilities = _contract(kind="vector_backend")
-    reranker = await create_reranker("cross_encoder", {}, faiss_db=backend)
+    reranker = await create_reranker("embedding_similarity", {}, faiss_db=backend)
 
     assert isinstance(reranker, MMRReranker)
     assert reranker.degradation_reason_code == "adapter_capability_unsupported"

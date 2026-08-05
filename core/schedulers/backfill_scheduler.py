@@ -260,7 +260,9 @@ class BackfillScheduler:
         if len(segments) <= 1:
             if self._engine:
                 await self._engine.hybrid_retriever.update_metadata(
-                    doc_id, {"schema_version": "v3"}
+                    doc_id,
+                    {"schema_version": "v3"},
+                    advance_revision=False,
                 )
             return
 
@@ -302,6 +304,7 @@ class BackfillScheduler:
                                 "backfill_delete_failed": True,
                                 "backfill_new_ids": list(new_ids),
                             },
+                            advance_revision=False,
                         )
                     except Exception:
                         logger.warning(

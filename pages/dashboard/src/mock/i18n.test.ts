@@ -323,6 +323,14 @@ const DYNAMIC_KEYS = [
   ...["private", "group"].map((chatType) => `intelligence.trace.chatType.${chatType}`),
   ...["approve", "mark_safe", "edit", "merge", "archive", "delete", "approved", "edited", "merged", "archived", "deleted", "safe"]
     .map((action) => `intelligence.review.action.${action}`),
+  ...["pending", "approved", "rejected", "failed", "rolled_back"]
+    .map((status) => `intelligence.reconsolidation.status.${status}`),
+  ...["approve", "reject", "rollback", "stage", "apply"]
+    .map((action) => `intelligence.reconsolidation.action.${action}`),
+  ...["llm_revision"]
+    .map((evidence) => `intelligence.reconsolidation.evidence.${evidence}`),
+  ...["proposed", "applied", "manual_reject", "rolled_back", "source_revision_mismatch", "candidate_changed"]
+    .map((reason) => `intelligence.reconsolidation.reason.${reason}`),
   ...["healthy", "watch", "degraded", "critical"]
     .map((level) => `intelligence.diagnostics.level.${level}`),
   ...["healthy", "watch", "degraded", "critical", "info", "unknown", "ok", "resolved", "failed", "error", "warning"]
@@ -332,8 +340,10 @@ const DYNAMIC_KEYS = [
   ...["open", "resolved"].map((state) => `intelligence.diagnostics.state.${state}`),
   ...["hostile", "disliked", "cold", "neutral", "warm", "friendly", "close", "intimate"]
     .map((level) => `affection.levelValue.${level}`),
-  ...["weight_adjust", "threshold_tune", "correction", "param_init"]
-    .map((action) => `learning.historyAction.${action}`),
+  ...["ready_for_review", "rejected", "published", "invalid_state"]
+    .map((status) => `learning.status.${status}`),
+  ...["candidate", "insufficient_evidence", "published", "invalid_state"]
+    .map((reason) => `learning.reason.${reason}`),
   ...["low_score", "topic_mismatch", "missing_fields"]
     .map((reason) => `intelligence.trace.filterReason.${reason}`),
   ...["search_memories", "query_parse", "bm25", "vector", "graph", "merge", "boost", "rerank"]

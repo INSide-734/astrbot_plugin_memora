@@ -75,14 +75,14 @@ pageClass: config-reference-page
 
 ## 混合检索评分权重
 
-配置域：`"hybrid_scoring"`。控制 BM25 + 向量混合检索结果的评分权重分配。修改后即时生效，无需重启。
+配置域：`"hybrid_scoring"`。控制 BM25 + 向量混合检索结果的评分权重分配。三个评分权重必须都在 0-1 且总和为 1；修改后需重载插件。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"hybrid_scoring.score_alpha"` | `"float"` | `0.5` | - | 检索相关性权重<br><small>BM25+向量检索相似度在混合评分中的占比。值越大，检索结果越偏向字面和语义匹配。范围 0-1。</small> |
-| `"hybrid_scoring.score_beta"` | `"float"` | `0.25` | - | 重要性权重<br><small>记忆自身重要性在混合评分中的占比。值越大，高重要性记忆越容易被召回。范围 0-1。</small> |
-| `"hybrid_scoring.score_gamma"` | `"float"` | `0.25` | - | 时间新鲜度权重<br><small>记忆创建/访问时间在混合评分中的占比。值越大，越新的记忆越容易被召回。范围 0-1。</small> |
-| `"hybrid_scoring.mmr_lambda"` | `"float"` | `0.7` | - | MMR 多样性权衡<br><small>Maximal Marginal Relevance 参数。1=纯相关性排序，0=纯多样性排序。0.7 表示偏向相关性但保留一定多样性，避免召回大量相似记忆。</small> |
+| `"hybrid_scoring.score_alpha"` | `"float"` | `0.5` | 最小值：`0`<br>最大值：`1` | 检索相关性权重<br><small>BM25+向量检索相似度在混合评分中的占比。值越大，检索结果越偏向字面和语义匹配。</small> |
+| `"hybrid_scoring.score_beta"` | `"float"` | `0.25` | 最小值：`0`<br>最大值：`1` | 重要性权重<br><small>记忆自身重要性在混合评分中的占比。值越大，高重要性记忆越容易被召回。</small> |
+| `"hybrid_scoring.score_gamma"` | `"float"` | `0.25` | 最小值：`0`<br>最大值：`1` | 时间新鲜度权重<br><small>记忆创建/访问时间在混合评分中的占比。值越大，越新的记忆越容易被召回。</small> |
+| `"hybrid_scoring.mmr_lambda"` | `"float"` | `0.7` | 最小值：`0`<br>最大值：`1` | MMR 多样性权衡<br><small>这是 HybridRetriever 候选去重的相关性权重，与 reranker.mmr_lambda 分属两个排序阶段。</small> |
 
 ## 记忆隔离设置
 
@@ -118,8 +118,8 @@ pageClass: config-reference-page
 | `"graph_memory.score_beta"` | `"float"` | `0.2` | 最小值：`0`<br>最大值：`1` | 图检索：关键词匹配权重<br><small>图路关键词匹配分数在图检索混合评分中的占比。范围 0-1。</small> |
 | `"graph_memory.score_gamma"` | `"float"` | `0.15` | 最小值：`0`<br>最大值：`1` | 图检索：时间新鲜度权重<br><small>图节点/边的创建时间在图检索混合评分中的占比。范围 0-1。</small> |
 | `"graph_memory.score_delta"` | `"float"` | `0.1` | 最小值：`0`<br>最大值：`1` | 图检索：图结构权重<br><small>图节点度数、边权重等结构特征在图检索混合评分中的占比。范围 0-1。</small> |
-| `"graph_memory.temporal_edges_enabled"` | `"bool"` | `true` | - | 启用时序图边<br><small>从记忆中自动提取事件先后关系（before/after/during），构建时序维度的图边。Phase 3 深度增强功能。</small> |
-| `"graph_memory.causal_edges_enabled"` | `"bool"` | `true` | - | 启用因果图边<br><small>从记忆中自动提取因果关系（caused_by/results_in/prevents），构建因果推理维度的图边。Phase 3 深度增强功能。</small> |
+| `"graph_memory.temporal_edges_enabled"` | `"bool"` | `true` | - | 启用时序图边<br><small>控制后续写入是否提取 before/after/during 关系。修改后需重载插件并重建图派生数据。</small> |
+| `"graph_memory.causal_edges_enabled"` | `"bool"` | `true` | - | 启用因果图边<br><small>控制后续写入是否提取 caused_by/results_in/prevents 关系。修改后需重载插件并重建图派生数据。</small> |
 
 ## 重排序模型
 
@@ -128,18 +128,9 @@ pageClass: config-reference-page
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
 | `"reranker.enabled"` | `"bool"` | `true` | - | 启用重排序器<br><small>关闭后跳过所有重排序步骤，减少计算开销。</small> |
-| `"reranker.strategy"` | `"string"` | `"mmr"` | 可选：`"mmr"` / `"cross_encoder"` / `"llm"` / `"hybrid"` | 重排序策略<br><small>mmr: 最大边际相关性(推荐，无额外LLM调用); cross_encoder: Embedding打分; llm: LLM打分(高成本); hybrid: 两级排序</small> |
+| `"reranker.strategy"` | `"string"` | `"mmr"` | 可选：`"mmr"` / `"embedding_similarity"` / `"llm"` / `"hybrid"` | 重排序策略<br><small>mmr: 最大边际相关性(推荐，无额外LLM调用); embedding_similarity: Embedding余弦相似度; llm: LLM打分(高成本); hybrid: 两级排序</small> |
 | `"reranker.mmr_lambda"` | `"float"` | `0.7` | 最小值：`0`<br>最大值：`1` | MMR 相关性权重<br><small>值越高越偏向相关性。范围 0-1。</small> |
-| `"reranker.cross_encoder_lambda"` | `"float"` | `0.7` | 最小值：`0`<br>最大值：`1` | Cross-Encoder 融合权重<br><small>query-doc 相似度与原始得分的融合比例。</small> |
+| `"reranker.embedding_similarity_lambda"` | `"float"` | `0.7` | 最小值：`0`<br>最大值：`1` | Embedding 相似度融合权重<br><small>query-doc 余弦相似度与原始得分的融合比例。</small> |
 | `"reranker.llm_batch_size"` | `"int"` | `10` | 最小值：`1`<br>最大值：`50` | LLM 重排序批量大小<br><small>每次处理的候选记忆数量上限。LLM 策略会增加 token 消耗。</small> |
-
-## 索引管理
-
-配置域：`"index_management"`。控制 FAISS 向量索引的增量更新和 IVF 自动切换策略
-
-| 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
-|---|---|---|---|---|
-| `"index_management.ivf_switch_threshold"` | `"int"` | `10000` | - | IVF 切换阈值<br><small>向量总数超过该值后建议切换至 IVF 索引以提升大规模检索性能。建议 8000-50000。</small> |
-| `"index_management.incremental_rebuild_threshold"` | `"int"` | `500` | - | 增量重建阈值<br><small>自上次全量重建以来新增向量超过该值后触发自动重建。</small> |
 
 返回[配置参考总览](/reference/configuration)。

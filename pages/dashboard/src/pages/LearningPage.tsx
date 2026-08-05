@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/Progress";
+import { StatePanel } from "@/components/ui/StatePanel";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { DataTable } from "@/components/data-table/DataTable";
 import type { DataTableColumn, DataTableSort } from "@/components/data-table/table-types";
@@ -18,13 +19,33 @@ interface LearningPageProps {
   showToast: (msg: string, isError?: boolean) => void;
 }
 
+interface LearningWeights {
+  document_route_weight: number;
+  graph_route_weight: number;
+}
+
+interface LearningCandidate {
+  proposed_document_weight: number | null;
+  proposed_graph_weight: number | null;
+  delta_from_baseline: number | null;
+  accepted_count: number | null;
+  independent_window_count: number | null;
+  decayed_support: number | null;
+  status: "ready_for_review" | "rejected" | "published" | "invalid_state";
+  reason_code: "candidate" | "insufficient_evidence" | "published" | "invalid_state";
+}
+
 interface LearningStats {
-  hit_rate?: number;
-  avg_quality?: number;
-  total_trials?: number;
-  total_corrections?: number;
-  parameters?: Record<string, number>;
-  history?: Array<{ timestamp: string; action: string; detail: string }>;
+  enabled: boolean;
+  available: boolean;
+  candidate_count: number;
+  ready_count: number;
+  rejected_count: number;
+  published_count: number;
+  reasons: string[];
+  current: LearningWeights;
+  baseline: LearningWeights;
+  candidates: LearningCandidate[];
 }
 
 interface ExpressionPatternRow {
@@ -40,11 +61,13 @@ interface ExpressionPatternRow {
 
 const DEFAULT_EXPRESSION_SORT: DataTableSort = { id: "weight", desc: true };
 
+/** 展示只读 shadow 学习候选、真实运行时权重与表达模式。 */
 export function LearningPage({ showToast }: LearningPageProps) {
   const { t, currentLang } = useI18n();
   const { groups, groupId, setGroupId } = useGroups();
   const [stats, setStats] = useState<LearningStats | null>(null);
   const [loading, setLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
   const [expressionPatterns, setExpressionPatterns] = useState<ExpressionPatternRow[]>([]);
   const [expressionSort, setExpressionSort] = useState<DataTableSort>(DEFAULT_EXPRESSION_SORT);
   const [exprLoading, setExprLoading] = useState(false);
@@ -58,13 +81,15 @@ export function LearningPage({ showToast }: LearningPageProps) {
   const fetchStats = useCallback(async () => {
     const requestId = ++statsRequestRef.current;
     setLoading(true);
+    setStatsError(null);
     try {
       const res = unwrapApiData(await apiRequest("learning/status"));
       if (statsRequestRef.current === requestId) {
-        setStats(res as LearningStats);
+        setStats(res as unknown as LearningStats);
       }
     } catch (e) {
       if (statsRequestRef.current === requestId) {
+        setStatsError(e instanceof Error ? e.message : String(e));
         showToast(String(e), true);
       }
     } finally {
@@ -93,7 +118,7 @@ export function LearningPage({ showToast }: LearningPageProps) {
         setExpressionPatterns((res.patterns ?? []) as ExpressionPatternRow[]);
       }
     } catch {
-      // Expression errors remain non-blocking for the learning overview.
+      // 表达模式读取失败不阻断自主学习概览。
     } finally {
       if (expressionRequestRef.current === requestId) {
         setExprLoading(false);
@@ -124,7 +149,6 @@ export function LearningPage({ showToast }: LearningPageProps) {
     }
   };
 
-  const s = stats ?? {};
   const locale = dashboardLocale(currentLang());
   const changeExpressionSort = useCallback((next: DataTableSort | null) => {
     if (next?.id === "usage_count" && expressionSort.id !== "usage_count" && !next.desc) {
@@ -208,55 +232,108 @@ export function LearningPage({ showToast }: LearningPageProps) {
         onConfirm={resetLearning}
       />
       <PageContent className="flex flex-col gap-6">
-        {loading && !stats && <p className="text-center text-sm text-muted-foreground">{t("common.loading")}</p>}
+        {loading && !stats ? (
+          <StatePanel state="loading" title={t("learning.loading")} />
+        ) : null}
+        {statsError && !stats ? (
+          <StatePanel
+            state="error"
+            title={t("learning.loadError")}
+            description={statsError}
+            actionLabel={t("common.retry")}
+            onAction={fetchStats}
+          />
+        ) : null}
 
-        <MetricGrid minItemWidth="10rem">
-          {[{ label: t("learning.hitRate"), value: s.hit_rate, fmt: (v: number) => formatDashboardPercent(v, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) },
-            { label: t("learning.avgQuality"), value: s.avg_quality, fmt: (v: number) => formatDashboardNumber(v, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) },
-            { label: t("learning.trials"), value: s.total_trials, fmt: (v: number) => String(v) },
-            { label: t("learning.corrections"), value: s.total_corrections, fmt: (v: number) => String(v) }].map((item) => (
-            <Card key={item.label} size="sm">
+        {stats ? (
+          <>
+            {statsError ? <p role="alert" className="text-sm text-destructive">{statsError}</p> : null}
+            <MetricGrid minItemWidth="10rem">
+              {[
+                { label: t("learning.candidates"), value: stats.candidate_count },
+                { label: t("learning.ready"), value: stats.ready_count },
+                { label: t("learning.rejected"), value: stats.rejected_count },
+                { label: t("learning.published"), value: stats.published_count },
+              ].map((item) => (
+                <Card key={item.label} size="sm">
+                  <CardContent>
+                    <div className="text-2xl font-bold tabular-nums text-foreground">
+                      {formatDashboardNumber(item.value, locale)}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">{item.label}</div>
+                  </CardContent>
+                </Card>
+              ))}
+            </MetricGrid>
+
+            <div data-slot="learning-details" className="grid gap-6 xl:grid-cols-2">
+              {[
+                { title: t("learning.current"), weights: stats.current },
+                { title: t("learning.baseline"), weights: stats.baseline },
+              ].map(({ title, weights }) => (
+                <Card key={title}>
+                  <CardHeader><CardTitle><h2>{title}</h2></CardTitle></CardHeader>
+                  <CardContent className="flex flex-col gap-4">
+                    {[
+                      [t("learning.documentRoute"), weights.document_route_weight],
+                      [t("learning.graphRoute"), weights.graph_route_weight],
+                    ].map(([label, value]) => (
+                      <div key={String(label)} className="grid min-w-0 grid-cols-[minmax(7rem,10rem)_minmax(4rem,1fr)_4rem] items-center gap-3">
+                        <span className="truncate text-xs text-muted-foreground">{label}</span>
+                        <Progress aria-label={`${title} ${label}`} value={Number(value)} className="h-2" />
+                        <span className="text-right text-xs tabular-nums text-muted-foreground">
+                          {formatDashboardPercent(value, locale, { maximumFractionDigits: 1 })}
+                        </span>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            <Card>
+              <CardHeader className="flex-row items-center justify-between gap-3">
+                <CardTitle><h2>{t("learning.shadowCandidates")}</h2></CardTitle>
+                <Badge variant={stats.enabled ? "secondary" : "outline"}>
+                  {stats.enabled ? t("learning.enabled") : t("learning.disabled")}
+                </Badge>
+              </CardHeader>
               <CardContent>
-              <div className="text-2xl font-bold tabular-nums text-foreground">
-                {item.value !== undefined && item.value !== null ? item.fmt(item.value) : "--"}
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">{item.label}</div>
+                {stats.candidates.length === 0 ? (
+                  <StatePanel
+                    state="empty"
+                    title={t("learning.noCandidates")}
+                    description={t("learning.noCandidatesDescription")}
+                    className="min-h-40"
+                  />
+                ) : (
+                  <div className="grid gap-3 xl:grid-cols-2">
+                    {stats.candidates.map((candidate, index) => (
+                      <div key={`${candidate.status}-${candidate.reason_code}-${index}`} className="min-w-0 rounded-lg border p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <Badge variant={candidate.status === "ready_for_review" ? "default" : "secondary"}>
+                            {translateEnum(t, "learning.status", candidate.status, candidate.status)}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {translateEnum(t, "learning.reason", candidate.reason_code, candidate.reason_code)}
+                          </span>
+                        </div>
+                        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                          <div><dt className="text-xs text-muted-foreground">{t("learning.documentRoute")}</dt><dd className="mt-1 tabular-nums">{formatDashboardPercent(candidate.proposed_document_weight, locale, { maximumFractionDigits: 1 })}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">{t("learning.graphRoute")}</dt><dd className="mt-1 tabular-nums">{formatDashboardPercent(candidate.proposed_graph_weight, locale, { maximumFractionDigits: 1 })}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">{t("learning.delta")}</dt><dd className="mt-1 tabular-nums">{formatDashboardPercent(candidate.delta_from_baseline, locale, { maximumFractionDigits: 1 })}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">{t("learning.support")}</dt><dd className="mt-1 tabular-nums">{formatDashboardPercent(candidate.decayed_support, locale, { maximumFractionDigits: 1 })}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">{t("learning.samples")}</dt><dd className="mt-1 tabular-nums">{formatDashboardNumber(candidate.accepted_count, locale)}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">{t("learning.windows")}</dt><dd className="mt-1 tabular-nums">{formatDashboardNumber(candidate.independent_window_count, locale)}</dd></div>
+                        </dl>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
-          ))}
-        </MetricGrid>
-
-        <div data-slot="learning-details" className="grid gap-6 xl:grid-cols-2">
-          {s.parameters && Object.keys(s.parameters).length > 0 && (
-          <Card>
-            <CardHeader><CardTitle><h2>{t("learning.params")}</h2></CardTitle></CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              {Object.entries(s.parameters).map(([key, value]) => (
-                <div key={key} className="grid min-w-0 grid-cols-[minmax(6rem,10rem)_minmax(4rem,1fr)_3.5rem] items-center gap-3">
-                  <span className="truncate text-xs text-muted-foreground">{key}</span>
-                  <Progress aria-label={key} value={Number(value)} className="h-2" />
-                  <span className="text-right text-xs tabular-nums text-muted-foreground">{formatDashboardNumber(value, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-          )}
-
-          {s.history && s.history.length > 0 && (
-          <Card>
-            <CardHeader><CardTitle><h2>{t("learning.history")}</h2></CardTitle></CardHeader>
-            <CardContent className="flex max-h-80 flex-col gap-1 overflow-auto">
-              {s.history.map((h, i) => (
-                <div key={i} className="flex min-w-0 items-center gap-3 rounded-md px-3 py-2 text-sm hover:bg-muted/50">
-                  <span className="w-36 shrink-0 text-xs text-muted-foreground">{formatDashboardDateTime(h.timestamp, locale)}</span>
-                  <Badge variant="secondary">{translateEnum(t, "learning.historyAction", h.action, h.action)}</Badge>
-                  <span className="truncate text-xs text-foreground">{h.detail}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-          )}
-        </div>
+          </>
+        ) : null}
 
         <Card className="gap-0 py-0">
           <PageToolbar className="justify-between rounded-t-lg border-b bg-muted/30">

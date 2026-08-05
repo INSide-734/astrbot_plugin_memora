@@ -18,6 +18,7 @@ from pathlib import Path
 from astrbot.api import logger
 
 from ..utils.version import PLUGIN_VERSION  # single source of truth: metadata.yaml
+from . import backup_reference_integrity as backup_integrity
 from .backup_models import (
     BackupIntegrity,
     BackupOperationError,
@@ -42,6 +43,7 @@ _BACKUP_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _BACKUP_FILE_SPECS: dict[str, tuple[FileRole, str, bool]] = {
     "memora.db": (FileRole.CANONICAL, "sqlite", True),
     "conversations.db": (FileRole.OPERATIONAL, "sqlite", False),
+    **backup_integrity.OPERATIONAL_FILE_SPECS,
     "decay_state.json": (FileRole.OPERATIONAL, "regular", False),
     "memora.index": (FileRole.DERIVED, "regular", False),
     "memora_graph.index": (FileRole.DERIVED, "regular", False),
@@ -55,6 +57,7 @@ _BACKUP_PATTERNS: list[str] = [
     "memora_graph_documents.db",
     "memora_graph.index",
     "conversations.db",
+    *backup_integrity.OPERATIONAL_BACKUP_PATTERNS,
     "decay_state.json",
     "*.db-wal",
     "*.db-shm",
@@ -338,6 +341,9 @@ class BackupManager:
         snapshots: dict[str, dict[str, object]] = {}
         total_size = 0
         try:
+            feedback_pair_expected = backup_integrity.prepare_feedback_backup(
+                self.data_dir
+            )
             required = self._estimated_backup_size()
             ensure_free_space(self.data_dir, required)
             for name, (role, kind, required_file) in _BACKUP_FILE_SPECS.items():
@@ -361,7 +367,13 @@ class BackupManager:
                     "sha256": result.sha256,
                     "quick_check": result.quick_check,
                 }
+                backup_integrity.finalize_snapshot_file(target, kind, snapshots[name])
                 total_size += result.size_bytes
+
+            backup_integrity.validate_feedback_snapshot(
+                temporary_dir,
+                require_pair=feedback_pair_expected,
+            )
 
             timestamp = datetime.now(timezone.utc).isoformat()
             manifest = {
@@ -415,7 +427,7 @@ class BackupManager:
     def prune_backups(
         self, keep_days: int, now: float | None = None
     ) -> dict[str, object]:
-        """清理到期 scheduled/pre_restore 备份，跳过活动事务引用。"""
+        """清理到期自动备份，跳过活动恢复事务引用。"""
         days = max(1, int(keep_days))
         cutoff = (time.time() if now is None else float(now)) - days * 86400
         referenced = self._referenced_backup_names()
@@ -426,6 +438,7 @@ class BackupManager:
             name = str(item.get("name", ""))
             if name in referenced or item.get("backup_type") not in {
                 BackupType.SCHEDULED.value,
+                BackupType.PRE_MIGRATION.value,
                 BackupType.PRE_RESTORE.value,
             }:
                 continue
@@ -606,6 +619,7 @@ class BackupManager:
                     file_specs.append({"name": source.name, "role": role.value})
             if not any(item["name"] == "memora.db" for item in file_specs):
                 raise BackupOperationError("canonical_file_missing")
+        backup_integrity.validate_feedback_backup_specs(backup_dir, file_specs)
         return {
             "backup_name": backup_name,
             "backup_dir": backup_dir,
@@ -708,34 +722,6 @@ class BackupManager:
             validated=progress.validated,
         )
 
-    def _rollback_restore_files(self, plan: RestorePlan) -> None:
-        plan_dir = self._restore_root() / plan.operation_id
-        plan.status = RestoreStatus.ROLLING_BACK
-        self._write_plan(plan)
-        try:
-            for progress in reversed(plan.files):
-                target = self.data_dir / progress.name
-                previous = plan_dir / "previous" / progress.name
-                if progress.installed and target.exists():
-                    target.unlink()
-                if progress.moved_to_previous and previous.exists():
-                    os.replace(previous, target)
-            plan.status = RestoreStatus.ROLLED_BACK
-            self._write_plan(plan)
-        except OSError as exc:
-            plan.status = RestoreStatus.ROLLBACK_PENDING
-            plan.reason_code = "restore_rollback_pending"
-            self._write_plan(plan)
-            raise BackupOperationError("restore_rollback_pending") from exc
-
-    def _validate_restored_files(self, plan: RestorePlan) -> None:
-        for progress in plan.files:
-            path = self.data_dir / progress.name
-            if not path.is_file() or path.is_symlink():
-                raise BackupOperationError("restore_apply_failed")
-            if progress.name.endswith(".db"):
-                self._quick_check(path)
-
     def apply_pending_restores(self) -> dict[str, object]:
         """在数据库打开前应用恢复计划，并在失败时回滚。"""
         plan = self._read_plan()
@@ -744,7 +730,9 @@ class BackupManager:
         if plan is None:
             return {"status": "none", "applied": 0}
         if plan.status is RestoreStatus.ROLLBACK_PENDING:
-            self._rollback_restore_files(plan)
+            backup_integrity.rollback_restore_files(
+                self.data_dir, self._restore_root(), plan, self._write_plan
+            )
             return self._public_restore_status(plan)
         if plan.status not in {
             RestoreStatus.STAGED,
@@ -770,7 +758,9 @@ class BackupManager:
                     continue
                 plan.files[index] = self._install_restore_file(plan_dir, progress)
                 self._write_plan(plan)
-            self._validate_restored_files(plan)
+            backup_integrity.validate_restored_files(
+                self.data_dir, plan, self._quick_check
+            )
             plan.status = RestoreStatus.VALIDATING
             for index, progress in enumerate(plan.files):
                 plan.files[index] = RestoreFileProgress(
@@ -793,7 +783,9 @@ class BackupManager:
                 self._write_plan(plan)
                 return self._public_restore_status(plan)
             try:
-                self._rollback_restore_files(plan)
+                backup_integrity.rollback_restore_files(
+                    self.data_dir, self._restore_root(), plan, self._write_plan
+                )
             except BackupOperationError:
                 return self._public_restore_status(plan)
             return self._public_restore_status(plan)

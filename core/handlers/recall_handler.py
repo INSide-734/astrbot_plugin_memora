@@ -16,6 +16,7 @@ from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
 from ..base.constants import FAKE_TOOL_CALL_NAME
+from ..base.cost_control import CostControl
 from ..cleaners.injection_cleaner import InjectionCleaner
 from ..extractors.message_content_extractor import MessageContentExtractor
 from ..identity.models import IdentityTrust, ResolvedIdentity
@@ -45,7 +46,9 @@ from ..security.prompt_sanitizer import (
 )
 from ..utils import OperationContext, get_persona_id
 from .auxiliary_recall import AuxiliaryRecall
+from .continuity_hooks import build_continuity_context
 from .recall_observability import RecallTimingContext
+from .reconsolidation_dispatch import schedule_reconsolidation_proposal
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -96,6 +99,8 @@ class RecallHandler:
         injection_recorder: InjectionDecisionRecorder | None = None,
         memory_tool_available: bool = False,
         identity_enricher: MemoryIdentityEnricher | None = None,
+        query_rewrite_llm_caller: Any | None = None,
+        cost_control: CostControl | None = None,
     ) -> None:
         """装配召回依赖与可选的历史别名只读增强器。"""
 
@@ -118,9 +123,10 @@ class RecallHandler:
         self._executor = InjectionExecutor(injection_adapter, prompt_protection_service)
         self._cleaner = InjectionCleaner()
         self._extractor = MessageContentExtractor()
-        # R1：查询改写器（无 LLM 调用方时使用关键词回退，后续再注入 LLM 调用方）
         self._query_rewriter = QueryRewriter(
+            llm_caller=query_rewrite_llm_caller,
             enabled=config_manager.get("recall_engine.query_rewrite_enabled", True),
+            cost_control=cost_control,
         )
         self._auxiliary_recall = AuxiliaryRecall(config_manager, memory_engine)
 
@@ -570,6 +576,7 @@ class RecallHandler:
                         cognitive_format_ms=format_ms,
                     )
                 )
+                await self._maybe_propose_reconsolidation(memories, actual_query)
                 injected_count = result.selected_count
                 injection_format_ms = result.format_ms
                 injection_inject_ms = result.inject_ms
@@ -1228,6 +1235,12 @@ class RecallHandler:
     ) -> str:
         """构建来自 v1.0+ 认知模块的可选只读上下文。"""
         parts: list[str] = []
+        continuity_context = build_continuity_context(
+            self._memory_engine,
+            group_id,
+        )
+        if continuity_context:
+            parts.append(continuity_context)
         try:
             if self._jargon_query_service is not None:
                 explanation = await self._jargon_query_service.check_and_explain(
@@ -1266,6 +1279,19 @@ class RecallHandler:
             logger.debug("[召回流程] 好感度上下文构建失败", exc_info=True)
 
         return "\n".join(parts)
+
+    async def _maybe_propose_reconsolidation(
+        self,
+        memories: list[Any],
+        query: str,
+    ) -> None:
+        """把最高分记忆的再巩固候选交给引擎生命周期任务所有者。"""
+
+        await schedule_reconsolidation_proposal(
+            self._memory_engine,
+            memories,
+            query,
+        )
 
     async def _build_fallback_query(self, session_id: str) -> str | None:
         """从最近历史消息构建回退查询，用于空消息场景（如纯 @mention）。

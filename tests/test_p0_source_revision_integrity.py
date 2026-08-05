@@ -182,6 +182,44 @@ async def test_update_metadata_advances_document_revision():
 
 
 @pytest.mark.asyncio
+async def test_operational_metadata_update_preserves_document_revision():
+    """运行态计数更新不得改变 canonical source revision。"""
+
+    session = MagicMock()
+    session.begin.return_value.__aenter__ = AsyncMock(return_value=session)
+    session.begin.return_value.__aexit__ = AsyncMock(return_value=None)
+    session.execute = AsyncMock()
+    session_context = MagicMock()
+    session_context.__aenter__ = AsyncMock(return_value=session)
+    session_context.__aexit__ = AsyncMock(return_value=None)
+    document_storage = MagicMock()
+    document_storage.get_documents = AsyncMock(
+        return_value=[
+            {
+                "id": 17,
+                "metadata": json.dumps({"access_count": 1}),
+                "updated_at": "r-current",
+            }
+        ]
+    )
+    document_storage.get_session.return_value = session_context
+    faiss_db = MagicMock(document_storage=document_storage)
+    retriever = VectorRetriever(faiss_db)
+
+    assert (
+        await retriever.update_metadata(
+            17,
+            {"access_count": 2},
+            advance_revision=False,
+        )
+        is True
+    )
+    statement = session.execute.await_args.args[0]
+    assert "SET metadata = :metadata" in str(statement)
+    assert "updated_at = :updated_at" not in str(statement)
+
+
+@pytest.mark.asyncio
 async def test_engine_rejects_stale_update_and_invalidates_deleted_source():
     faiss_db = MagicMock()
     faiss_db.document_storage = MagicMock()

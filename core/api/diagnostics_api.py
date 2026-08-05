@@ -156,6 +156,8 @@ class DiagnosticsApiMixin:
             "provider": self._build_provider_summary(),
             "index": self._build_index_summary(),
             "write_coordinator": self._build_write_coordinator_summary(),
+            "anomaly": self._build_anomaly_summary(),
+            "learning": self._build_learning_summary(),
         }
         build_prometheus = getattr(self, "_build_prometheus_summary", None)
         if callable(build_prometheus):

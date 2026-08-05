@@ -120,11 +120,19 @@ def test_storage_event_accepts_named_non_negative_counts(tmp_path: Path) -> None
         message_count=20,
         batch_count=2,
         success_count=3,
+        canonical_count=1,
+        quarantine_count=2,
         failed_count=1,
+        skipped_idempotent_count=2,
         retry_count=1,
         attempt_count=2,
         skipped_count=2,
         queue_depth=4,
+        threshold_rounds=5,
+        prompt_chars=1200,
+        response_chars=400,
+        prompt_tokens=120,
+        completion_tokens=40,
     )
 
     path = tmp_path / "diagnostics" / "memora-debug.jsonl"
@@ -134,11 +142,60 @@ def test_storage_event_accepts_named_non_negative_counts(tmp_path: Path) -> None
     assert record["message_count"] == 20
     assert record["batch_count"] == 2
     assert record["success_count"] == 3
+    assert record["canonical_count"] == 1
+    assert record["quarantine_count"] == 2
     assert record["failed_count"] == 1
+    assert record["skipped_idempotent_count"] == 2
     assert record["retry_count"] == 1
     assert record["attempt_count"] == 2
     assert record["skipped_count"] == 2
     assert record["queue_depth"] == 4
+    assert record["threshold_rounds"] == 5
+    assert record["prompt_chars"] == 1200
+    assert record["response_chars"] == 400
+    assert record["prompt_tokens"] == 120
+    assert record["completion_tokens"] == 40
+
+
+@pytest.mark.parametrize(
+    ("component", "stage", "reason_code"),
+    [
+        ("reflection", "prompt_build", "reflection_prompt_built"),
+        ("reflection", "provider", "reflection_provider_completed"),
+        ("reflection", "parse", "reflection_parse_completed"),
+        ("reflection", "segmentation", "reflection_segmentation_completed"),
+        ("reflection", "grounding", "reflection_grounding_completed"),
+        ("reflection", "window_total", "reflection_window_completed"),
+        ("memory_engine", "document_vector", "memory_write_stage_completed"),
+        ("memory_engine", "fts", "memory_write_stage_completed"),
+        ("memory_engine", "atom", "memory_write_stage_completed"),
+        ("memory_engine", "graph", "memory_write_stage_completed"),
+        ("memory_engine", "evolution", "memory_write_stage_completed"),
+    ],
+)
+def test_reflection_timing_stage_values_are_allowlisted(
+    tmp_path: Path,
+    component: str,
+    stage: str,
+    reason_code: str,
+) -> None:
+    """生成与写入阶段只能使用固定枚举并接受非负耗时。"""
+
+    debug_reporter.configure_debug_reporting(True, tmp_path)
+    debug_reporter.report_debug_event(
+        "storage_task",
+        component=component,
+        stage=stage,
+        status="completed",
+        reason_code=reason_code,
+        task_type="storage",
+        duration_ms=1.5,
+    )
+
+    path = tmp_path / "diagnostics" / "memora-debug.jsonl"
+    record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert record["event"] == "storage_task"
+    assert record["stage"] == stage
 
 
 @pytest.mark.parametrize(
@@ -148,6 +205,13 @@ def test_storage_event_accepts_named_non_negative_counts(tmp_path: Path) -> None
         ("retry_count", True),
         ("attempt_count", -2),
         ("queue_depth", float("nan")),
+        ("canonical_count", -1),
+        ("quarantine_count", True),
+        ("skipped_idempotent_count", float("inf")),
+        ("threshold_rounds", True),
+        ("prompt_chars", -1),
+        ("completion_tokens", True),
+        ("response_chars", float("nan")),
     ],
 )
 def test_named_counts_reject_negative_boolean_and_non_finite_values(
@@ -173,10 +237,13 @@ def test_named_counts_reject_negative_boolean_and_non_finite_values(
     assert field not in record
 
 
-def test_unknown_field_rejects_entire_event_without_writing_sensitive_value(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize("field", ["query", "content", "memory_ids", "session_id"])
+def test_sensitive_field_rejects_event_without_writing_value(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    field: str,
 ) -> None:
-    """未知字段导致整条事件 fail-closed，不能把原始值写入任一 sink。"""
+    """敏感字段导致整条事件 fail-closed，不能把原始值写入任一 sink。"""
     caplog.set_level(logging.INFO)
     sentinel = "PRIVATE_QUERY_SENTINEL"
     debug_reporter.configure_debug_reporting(True, tmp_path)
@@ -186,7 +253,7 @@ def test_unknown_field_rejects_entire_event_without_writing_sensitive_value(
         component="recall",
         stage="recall",
         status="completed",
-        query=sentinel,
+        **{field: sentinel},
     )
 
     path = tmp_path / "diagnostics" / "memora-debug.jsonl"

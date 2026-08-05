@@ -892,7 +892,8 @@ class TestRecordPendingSummary:
         from core.handlers.reflection_handler import ReflectionHandler
 
         conv = MagicMock()
-        conv.update_session_metadata = AsyncMock()
+        conv.update_session_metadata = AsyncMock(return_value=True)
+        conv.update_session_metadata_fields = AsyncMock(return_value=True)
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -923,7 +924,8 @@ class TestReflectionStorageTaskCommit:
 
         conv = MagicMock()
         conv.get_session_metadata = AsyncMock(return_value=0)
-        conv.update_session_metadata = AsyncMock()
+        conv.update_session_metadata = AsyncMock(return_value=True)
+        conv.update_session_metadata_fields = AsyncMock(return_value=True)
 
         proc = MagicMock()
         proc.process_conversation = AsyncMock(
@@ -991,7 +993,8 @@ class TestReflectionStorageTaskCommit:
                 },
             ]
         )
-        conv.update_session_metadata = AsyncMock()
+        conv.update_session_metadata = AsyncMock(return_value=True)
+        conv.update_session_metadata_fields = AsyncMock(return_value=True)
 
         proc = MagicMock()
         proc.process_conversation = AsyncMock(
@@ -1045,7 +1048,8 @@ class TestReflectionStorageTaskCommit:
 
         conv = MagicMock()
         conv.get_session_metadata = AsyncMock(return_value=0)
-        conv.update_session_metadata = AsyncMock()
+        conv.update_session_metadata = AsyncMock(return_value=True)
+        conv.update_session_metadata_fields = AsyncMock(return_value=True)
 
         proc = MagicMock()
         proc.process_conversation = AsyncMock(
@@ -1078,11 +1082,12 @@ class TestReflectionStorageTaskCommit:
             retry_count=1,
         )
 
-        conv.update_session_metadata.assert_any_await(
-            "session-1", "last_summarized_index", 4
-        )
-        conv.update_session_metadata.assert_any_await(
-            "session-1", "pending_summary", None
+        conv.update_session_metadata_fields.assert_awaited_once_with(
+            "session-1",
+            {
+                "last_summarized_index": 4,
+                "pending_summary": None,
+            },
         )
 
     @pytest.mark.asyncio

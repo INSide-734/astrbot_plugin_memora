@@ -14,7 +14,7 @@
 `DualRouteRetriever` 的在线顺序固定为：direct/graph candidate merge → `DerivedRelationExpander` → `ProjectionReader` attachment → reranker → privacy filter。只有 `enabled=true` 且 mode 为 `readonly`/`active` 时才调用 relation/projection reader；`disabled` 与 `shadow` 必须保持 baseline，不能因派生表存在而读取。
 
 - relation expansion 只增加有 scope/隐私证据的 canonical candidate，并受 per-seed/global expansion budget 限制。
-- ProjectionReader 只把通过 active、validity、scope、privacy、source revision、role 和统一 `reference_time` 校验的 projection metadata 附着到已有 primary canonical candidate；supporting/conflict source 只用于证据校验，不能单独生成 candidate。非冲突 Projection 可在 supporting mapping 已由 Store 移除且 primary 仍有效时保留；检测到 stale/越权 source 或缺少 conflict side 时整体不附着。
+- ProjectionReader 只把通过 active、类型开关、validity、scope、privacy、source revision、role 和统一 `reference_time` 校验的 projection metadata 附着到已有 primary canonical candidate；supporting/conflict source 只用于证据校验，不能单独生成 candidate。普通非冲突 Projection 可在 supporting mapping 已由 Store 移除且 primary 仍有效时保留；`semantic_summary` 合成自全部来源，任一 mapping/revision 失效都必须整条失效。检测到 stale/越权 source 或缺少 conflict side 时整体不附着。
 - 附着不得改变 canonical `doc_id`、content、score、排序或 reranker candidate 数量；普通异常回退 baseline，单条坏 projection 隔离，`asyncio.CancelledError` 必须传播。
 - 下游 formatter 只能看到 `type/summary/confidence`，不得把 projection ID、source ID、revision、scope、privacy、role 或 job 信息交给模型。
 
@@ -93,7 +93,8 @@ sequenceDiagram
 - `GraphKeywordRetriever` 组合图 entry FTS、节点 token、0..2 hop 邻居扩展和可选 `EntityHierarchyStore` 层级展开，最终聚合到 `source_memory_id`。direct/matched-node 的内部距离为 0，一跳为 1，二跳为 2，层级路径为未知；多路径命中保留最小已知距离。
 - `GraphVectorRetriever` 查询独立图 FAISS；结果 metadata 必须映射回源记忆 ID。
 - `GraphRetriever` 并行两条图路并 RRF 融合，再组合 RRF、importance、recency 与 `compute_decay_score(atom)`；关键词路最小距离只进入内部 `score_breakdown.graph_min_distance`，不进入 metadata，也暂不改变默认评分。
-- `DualRouteRetriever` 默认文档/图权重为 `0.65/0.35`，双路同 ID 额外 `cross_route_bonus=0.08`；显式 `RecallStrategy` 优先，其次 `QueryIntent`，最后关键词规则。
+- `DualRouteRetriever` 只编排路由执行、派生扩展、重排、隐私过滤和反馈；`dual_route_fusion.py` 负责缺失 canonical 回填、文档/图/Atom 分数融合、解释字段与权重选择，依赖方向保持为 Retriever → Fusion。
+- 双路默认文档/图权重为 `0.65/0.35`，双路同 ID 额外 `cross_route_bonus=0.08`；显式 `RecallStrategy` 优先，其次 `QueryIntent`，最后关键词规则。
 - 缺正文或 metadata 的候选通过 `memory_loader` 并发回填；加载异常或 `None` 的候选被跳过。
 - 图路为空时直接使用文档路；当前实现先 await 文档任务再 await 图任务，协程对象已创建但不是 `create_task()`，修改计时/并发语义时须以测试为准。
 
@@ -101,7 +102,7 @@ sequenceDiagram
 
 ### 查询改写
 
-`QueryRewriter.rewrite()` 可把 query 与 recent context 交给 LLM，解析 `QueryIntent`（intent、实体、时间引用、可选 UTC `reference_time`、改写查询、memory types）；失败回退 `intent_keywords.py`。LLM 返回只作为路由提示，不能直接用作 SQL/路径/工具输入。`reference_time` 必须从 MemoryEngine 贯穿 DualRoute、relation/projection reader 和链式扩展，并进入 retrieval/session cache key；下游不得各自读取墙钟。
+`QueryRewriter.rewrite()` 可把 query 与 recent context 交给生产注入的单次 LLM caller，解析 `QueryIntent`（intent、实体、时间引用、可选 UTC `reference_time`、改写查询、memory types）；功能门或请求额度拒绝、Provider 失败及解析失败均回退 `intent_keywords.py`。LLM 返回只作为路由提示，不能直接用作 SQL/路径/工具输入。`reference_time` 必须从 MemoryEngine 贯穿 DualRoute、relation/projection reader 和链式扩展，并进入 retrieval/session cache key；下游不得各自读取墙钟。
 
 ### 个性化
 
@@ -112,19 +113,20 @@ sequenceDiagram
 | 策略 | 实现 | 失败语义 |
 |---|---|---|
 | `mmr` | 词袋 Jaccard | 同步、无外部调用 |
-| `cross_encoder` | 实际为 query/doc embedding 余弦代理，不是真正 cross-encoder | 生产路径 FAISS/向量不可用回退 MMR；可信消融使用严格运行时探针 |
-| `llm` | 把 query 与最多 `2 * batch_size` 个正文预览交给 LLM 评分 | 解析/调用失败使用基于原排序的合成分数 |
-| `hybrid` | CrossEncoder 窄化后 LLM 精排 | 组合两者语义 |
+| `embedding_similarity` | query/doc Embedding 余弦相似度与原始分数加权，不执行 Cross-Encoder 联合推理 | 生产路径 FAISS/向量不可用回退 MMR；可信消融使用严格运行时探针 |
+| `llm` | 通过请求级双门后，把 query 与最多 `2 * batch_size` 个正文预览交给 LLM 评分 | 额度拒绝、解析或调用失败保持输入顺序和分数不变；普通失败释放 reservation |
+| `hybrid` | Embedding 相似度窄化后 LLM 精排 | 组合两者语义 |
 
-`create_reranker()` 是 async 工厂；只有显式 `vector_access`/`sync_text_generation` 能力满足时才构造对应外部重排器，否则在工厂阶段返回带稳定原因码的 MMR。`DualRouteRetriever._apply_reranker()` 兼容同步/异步返回并在异常或返回非 list 时恢复原始分数排序。注意 `HybridReranker.rerank()` 当前是同步方法但可能返回 LLM coroutine，调用方负责 await。
+`create_reranker()` 是 async 工厂；只有显式 `vector_access`/`sync_text_generation` 能力满足时才构造对应外部重排器，否则在工厂阶段返回带稳定原因码的 MMR。`DualRouteRetriever._apply_reranker()` 通过 `provider_privacy_prefilter` 兼容同步/异步返回，并在普通异常或返回非 list 时恢复安全候选的原始分数排序。注意 `HybridReranker.rerank()` 当前是同步方法但可能返回 LLM coroutine，调用方负责 await。
 
 ## 隐私与不可泄露数据边界
 
-1. **最终群聊过滤在 `DualRouteRetriever` 重排之后执行。** `chat_type == "group"` 时丢弃 `metadata.privacy_level == "confidential"`；缺字段按 `shared`。任何绕过该入口的直接 `HybridRetriever`/图检索调用都不具备此保护。
-2. 过滤发生较晚：机密候选在被过滤前可能进入画像排序和 LLM 重排。群聊启用 `llm`/`hybrid` 时，provider 仍可能看到机密正文；调用层必须按 provider 授权策略配置，安全敏感路径应考虑在外部调用前预过滤。
-3. `QueryRewriter` 会向 LLM 发送 query/recent context；`LLMReranker` 会发送 query 和每项前 200 字符。不得把凭据、系统提示或未授权私密会话传入外部 provider。
-4. `HybridResult.content`、metadata、graph provenance、query、session/user/persona ID 都是敏感数据。禁止进入普通指标标签或未授权 API。
-5. FTS、FAISS 与图路返回的 metadata 不可信；读取时需类型校验，不能把 metadata 字段当成权限声明以外的可信控制输入。
+1. **任何非 MMR 重排都先经过 `ProviderPrivacyPrefilter`。** 预过滤按当前 chat type、scope、稳定用户和候选 role/privacy 约束正文；群聊 `confidential`、跨 scope、私聊稳定身份不匹配和非法 role 候选不得进入 Provider。
+2. 预过滤普通故障时，`security.strict_mode=true` 跳过外部重排并保持基础顺序；兼容模式只执行本地 MMR。`asyncio.CancelledError` 必须传播，两种模式都不得把未过滤候选交给 Provider。
+3. **最终群聊过滤继续保留在重排之后。** `chat_type == "group"` 时丢弃 `metadata.privacy_level == "confidential"`；缺字段按 `shared`，用于防止中间组件错误恢复候选。任何绕过 `DualRouteRetriever` 的直接检索调用都不具备完整双层保护。
+4. `QueryRewriter` 会向 LLM 发送 query/recent context；`LLMReranker` 只发送 query、匿名局部索引和每项前 200 字符。不得把凭据、系统提示或未授权私密会话传入外部 provider。
+5. `HybridResult.content`、metadata、graph provenance、query、session/user/persona ID 都是敏感数据。禁止进入普通指标标签或未授权 API。
+6. FTS、FAISS 与图路返回的 metadata 不可信；预过滤必须校验字段类型和值，不能把 metadata 字段当成未经验证的授权证明。
 
 ## 可解释召回与追踪
 
@@ -164,7 +166,7 @@ python -m pytest -q tests/test_bm25_retriever.py tests/test_vector_retriever.py 
 python -m pytest -q tests/test_graph_keyword_retriever.py tests/test_graph_vector_retriever.py tests/test_graph_retriever.py tests/test_dual_route_retriever.py
 python -m pytest -q tests/test_derived_relation_expander.py tests/test_projection_reader.py
 python -m pytest -q tests/test_adapter_capabilities.py tests/test_reranker_factory.py
-python -m pytest -q tests/test_query_rewriter.py tests/test_intent_keywords.py tests/test_personalized_ranker.py tests/test_reranker_factory.py tests/test_cross_encoder_reranker.py tests/test_llm_reranker.py
+python -m pytest -q tests/test_query_rewriter.py tests/test_intent_keywords.py tests/test_personalized_ranker.py tests/test_reranker_factory.py tests/test_embedding_similarity_reranker.py tests/test_llm_reranker.py
 python -m pytest -q tests/test_atom_retriever.py tests/test_knowledge_retriever.py tests/test_memory_lifecycle.py
 python -m pytest -q tests/test_api_recall_trace.py tests/test_p0_observability_privacy.py tests/test_recall_cost_benchmark.py
 python -m pytest -q tests/test_emotion_scorer.py tests/test_seasonal_recall.py

@@ -11,11 +11,11 @@ from ..adapter_capabilities import (
     AdapterCapabilityContract,
     AdapterKind,
 )
-from ..provider_adapters import LLMProviderAdapter
+from ..provider_adapters import LLMGenerationResult, LLMProviderAdapter
 
 
 class LLMClient:
-    """动态解析 LLM Provider + 带指数退避的调用"""
+    """动态解析 LLM Provider，并提供带指数退避或单次调用的文本生成入口。"""
 
     adapter_capabilities = AdapterCapabilityContract(
         kind=AdapterKind.LLM_CLIENT,
@@ -99,7 +99,7 @@ class LLMClient:
     async def call_llm_with_retry(
         self, prompt: str, system_prompt: str, max_retries: int = 3
     ) -> str:
-        """调用当前 Provider，并对普通失败执行有界指数退避。
+        """调用当前 Provider，并保持原有的纯文本返回契约。
 
         参数:
             prompt: 发送给 Provider 的用户提示。
@@ -114,13 +114,41 @@ class LLMClient:
             Exception: 最后一次 Provider 调用失败，或 Provider 不可用。
         """
 
+        result = await self.call_llm_with_retry_result(
+            prompt,
+            system_prompt,
+            max_retries=max_retries,
+        )
+        return result.text
+
+    async def call_llm_with_retry_result(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_retries: int = 3,
+    ) -> LLMGenerationResult:
+        """调用当前 Provider，并保留明确返回的 token usage。
+
+        参数:
+            prompt: 发送给 Provider 的用户提示。
+            system_prompt: 发送给 Provider 的系统约束。
+            max_retries: 最大调用次数。
+
+        返回:
+            Provider 文本以及可选的输入、输出 token 用量。
+
+        异常:
+            asyncio.CancelledError: 调用或退避被取消。
+            Exception: 最后一次 Provider 调用失败，或 Provider 不可用。
+        """
+
         last_error = None
         for attempt in range(max_retries):
             try:
                 adapter = self.get_current_llm_adapter()
                 if adapter is None:
                     raise RuntimeError("LLM Provider 不可用")
-                return await adapter.generate(prompt, system_prompt)
+                return await adapter.generate_result(prompt, system_prompt)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -136,3 +164,12 @@ class LLMClient:
         if last_error:
             raise last_error
         raise RuntimeError("LLM 调用失败，未捕获到具体异常")
+
+    async def complete(self, prompt: str) -> str:
+        """以单次物理 Provider 调用完成处理器的通用文本生成协议。
+
+        额外 LLM 的功能许可和请求额度由调用方在进入本方法前完成；本方法
+        不自行重试，避免一个 reservation 对应多次物理请求。
+        """
+
+        return await self.call_llm_with_retry(prompt, "", max_retries=1)

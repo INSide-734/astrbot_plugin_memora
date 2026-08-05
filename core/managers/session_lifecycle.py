@@ -72,12 +72,17 @@ class SessionLifecycleMixin:
         """
         return await self.store.get_recent_sessions(limit)
 
-    async def clear_session(self, session_id: str):
-        """
-        清空会话历史
+    async def clear_session(self, session_id: str) -> bool:
+        """清空会话历史并持久化重置元数据。
 
         Args:
-            session_id: 会话ID
+            session_id: 统一会话标识。
+
+        Returns:
+            ``True`` 表示消息删除和 metadata reset 请求均已完成。
+
+        Raises:
+            RuntimeError: metadata reset 未成功，无法确认会话已完整清空。
         """
         # 删除数据库中的消息
         await self.store.delete_session_messages(session_id)
@@ -87,9 +92,12 @@ class SessionLifecycleMixin:
             if session_id in self._cache:
                 del self._cache[session_id]
         # 同步重置会话元数据，特别是记忆总结的计数器
-        await self.reset_session_metadata(session_id)
+        metadata_reset = await self.reset_session_metadata(session_id)
+        if metadata_reset is not True:
+            raise RuntimeError("会话元数据重置未持久化")
 
         logger.info(f"[ConversationManager] 已清空会话并重置记忆上下文: {session_id}")
+        return True
 
     async def cleanup_expired_sessions(self) -> int:
         """

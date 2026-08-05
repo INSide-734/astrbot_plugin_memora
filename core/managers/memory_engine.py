@@ -15,6 +15,7 @@ from typing import Any
 from .maintenance_operations import MaintenanceOperations
 from .memory_engine_batch import MemoryEngineBatchMixin
 from .memory_engine_crud import MemoryEngineCRUDMixin
+from .memory_engine_domain_hooks import MemoryEngineDomainHooksMixin
 from .memory_engine_evolution_hooks import MemoryEngineEvolutionHooksMixin
 from .memory_engine_lifecycle import MemoryEngineLifecycleMixin
 from .retrieval_optimizer import RetrievalOptimizer
@@ -25,6 +26,7 @@ from .write_op_journal import WriteOpJournal
 class MemoryEngine(
     MemoryEngineLifecycleMixin,
     MemoryEngineEvolutionHooksMixin,
+    MemoryEngineDomainHooksMixin,
     MemoryEngineCRUDMixin,
     MemoryEngineBatchMixin,
 ):
@@ -74,6 +76,10 @@ class MemoryEngine(
         # 用户画像组件
         self.profile_store = None
         self.profile_manager = None
+        self.profile_proposal_pipeline = None
+        self.knowledge_proposal_pipeline = None
+        self.note_proposal_pipeline = None
+        self.semantic_compressor = None
         self.personalized_ranker = None
         # 自主学习
         self.auto_learning = None
@@ -86,8 +92,6 @@ class MemoryEngine(
         self.note_manager = None
         # 重排序器
         self.reranker = None
-        # 性格演化（可选）
-        self.trait_tracker = None
         # 由 ComponentFactory 在 canonical 组件创建完成后注入；为空时不影响主写链。
         self.memory_evolution_store = None
         self.memory_evolution_manager = None
@@ -128,6 +132,11 @@ class MemoryEngine(
         )
 
     # ==================== 委托封装（公开 API 不变） ====================
+
+    def get_last_write_reason_code(self) -> str | None:
+        """返回最近一次同步 canonical 写入的稳定原因码。"""
+
+        return self._last_write_reason_code
 
     async def update_importance(self, memory_id: int, new_importance: float) -> bool:
         return await self.update_memory(memory_id, {"importance": new_importance})

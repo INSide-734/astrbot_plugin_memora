@@ -42,7 +42,7 @@ flowchart LR
 ### `DiagnosticEventStore`
 
 - `initialize()` 创建父目录、`diagnostic_events` 表和按新到旧查询的索引。
-- `add_event(event)` 生成或校验诊断关联码与 UTC ISO 时间，并把 domain、severity、source 和 payload 收窄到固定允许列表；`title`、`message` 统一为安全 `reason_code`，不保留调用方自由文本。
+- `add_event(event)` 生成或校验诊断关联码与 UTC ISO 时间，并把 domain、severity、source 和 payload 收窄到固定允许列表；显式提供的稳定关联码按主键幂等，重复写返回已持久化事件；`title`、`message` 统一为安全 `reason_code`，不保留调用方自由文本。
 - `list_events(limit, domain, severity, include_resolved)` 参数化筛选并稳定排序；非法 limit 回退 50。
 - `get_event(event_id)` / `resolve_event(event_id)` 查询与幂等标记解决时间。
 - payload 只允许固定文本枚举、安全异常类型、非负有界数值和布尔字段；dict、list、任意嵌套 JSON 与未知字段都会被丢弃。
@@ -59,6 +59,7 @@ flowchart LR
 
 - `event_id` 只是有界诊断关联码，不得复用用户、群组、会话、消息、记忆、source、revision 或 job ID；非法历史值读取为稳定占位符。
 - payload allowlist 是存储与 API 的共同隐私边界。禁止加入 query、Prompt、正文、原始身份、ID/ID 列表、Provider 请求信息、秘密、异常消息、堆栈或绝对路径；新增字段必须先定义低基数类型并补充 canary 测试。
+- 异常检测告警使用稳定 reason code `memory_rate_anomaly`，payload 只含 `direction/count/mean_7d/stdev_7d/z_score/window_size` 等标量；不记录记忆正文、身份或路径。
 - API 失败只返回稳定错误码，日志只允许固定阶段与异常类型，不得拼接 `str(exc)`、异常 `repr` 或 traceback。
 - 事件的 `domain`、`severity`、`source` 是不可信输入，必须继续使用参数化查询，不要拼接 SQL。
 - 健康分是启发式运维摘要，不应直接触发破坏性恢复动作；恢复端点必须在 API 层使用白名单，并保留鉴权/审计边界。

@@ -322,6 +322,8 @@ class MemoryEvolutionDerivedMixin:
                 if (
                     not remaining
                     or not primary_exists
+                    or str(row["projection_type"])
+                    == ProjectionType.SEMANTIC_SUMMARY.value
                     or (
                         str(row["projection_type"]) == ProjectionType.CONFLICT_SET.value
                         and not {"conflict_left", "conflict_right"} <= roles
@@ -353,8 +355,8 @@ class MemoryEvolutionDerivedMixin:
         """在 canonical 删除提交后让引用该 source 的派生对象立即不可见。
 
         relation 直接标记为 invalidated。Projection 先移除已删除 source 的
-        mapping；若它失去 primary source 或不再有任何 mapping，则整体失效，
-        从而不会误删仍由其他有效 source 支持的共享 projection。
+        mapping；普通类型仅在失去 primary 或全部 mapping 时整体失效。
+        ``semantic_summary`` 合成自全部来源，任一 mapping 删除都使整条摘要失效。
         """
 
         if not self.connection:
@@ -375,7 +377,7 @@ class MemoryEvolutionDerivedMixin:
                 ),
             )
             projection_rows = await self._fetch_all(
-                "SELECT projection_id,primary_source_memory_id "
+                "SELECT projection_id,primary_source_memory_id,projection_type "
                 "FROM memory_projections WHERE state!=? AND projection_id IN ("
                 "SELECT projection_id FROM memory_projection_sources WHERE memory_id=?"
                 ")",
@@ -389,6 +391,7 @@ class MemoryEvolutionDerivedMixin:
                 str(row["projection_id"])
                 for row in projection_rows
                 if int(row["primary_source_memory_id"]) == memory_id
+                or str(row["projection_type"]) == ProjectionType.SEMANTIC_SUMMARY.value
             }
             for row in projection_rows:
                 projection_id = str(row["projection_id"])
@@ -593,7 +596,8 @@ class MemoryEvolutionDerivedMixin:
                 relation_count = int(cursor.rowcount or 0)
 
             projection_rows = await self._fetch_all(
-                "SELECT projection_id,primary_source_memory_id,scope_key,privacy_level,state "
+                "SELECT projection_id,primary_source_memory_id,projection_type,"
+                "scope_key,privacy_level,state "
                 "FROM memory_projections WHERE state!=?",
                 (DerivedState.INVALIDATED.value,),
             )
@@ -610,6 +614,7 @@ class MemoryEvolutionDerivedMixin:
             for projection in projection_rows:
                 projection_id = str(projection["projection_id"])
                 mappings = mappings_by_projection.get(projection_id, [])
+                mapping_removed = False
                 for mapping in mappings:
                     if not source_valid(
                         int(mapping["memory_id"]),
@@ -623,6 +628,7 @@ class MemoryEvolutionDerivedMixin:
                             (projection_id, int(mapping["memory_id"])),
                         )
                         removed_mapping_count += 1
+                        mapping_removed = True
                 remaining = await self._fetch_scalar(
                     "SELECT COUNT(*) FROM memory_projection_sources WHERE projection_id=?",
                     (projection_id,),
@@ -632,7 +638,15 @@ class MemoryEvolutionDerivedMixin:
                     "WHERE projection_id=? AND memory_id=?",
                     (projection_id, int(projection["primary_source_memory_id"])),
                 )
-                if not remaining or not primary_exists:
+                if (
+                    not remaining
+                    or not primary_exists
+                    or (
+                        mapping_removed
+                        and str(projection["projection_type"])
+                        == ProjectionType.SEMANTIC_SUMMARY.value
+                    )
+                ):
                     projection_invalid.add(projection_id)
             projection_count = 0
             if projection_invalid:

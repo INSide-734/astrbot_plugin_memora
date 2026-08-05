@@ -25,6 +25,22 @@ T = TypeVar("T", bound=BaseModel)
 # ---------------------------------------------------------------------------
 
 
+class SourceReferenceSchema(BaseModel):
+    """限制单条抽取结果只能引用当前匿名消息窗口。"""
+
+    message_index: int = Field(ge=0, le=4095, description="当前窗口内的消息序号")
+    start: int = Field(ge=0, le=100_000, description="正文引用起点，左闭")
+    end: int = Field(ge=1, le=100_000, description="正文引用终点，右开")
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> "SourceReferenceSchema":
+        """拒绝空区间和反向区间。"""
+
+        if self.end <= self.start:
+            raise ValueError("source_refs 的 end 必须大于 start")
+        return self
+
+
 class MemoryAtomSchema(BaseModel):
     """单条记忆原子的强类型 schema。
 
@@ -70,6 +86,11 @@ class MemoryAtomSchema(BaseModel):
     causal_relations: list[dict[str, Any]] = Field(
         default_factory=list,
         description="明确因果关系列表",
+    )
+    source_refs: list[SourceReferenceSchema] = Field(
+        default_factory=list,
+        max_length=8,
+        description="当前匿名消息窗口中的受控来源引用",
     )
 
     @model_validator(mode="before")

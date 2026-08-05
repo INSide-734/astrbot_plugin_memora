@@ -155,3 +155,34 @@ async def test_add_entry_reuses_stale_row_for_same_source_revision(
     assert stored is not None
     assert stored.provenance is not None
     assert stored.provenance.sources[0].revision_token == "rev-new"
+
+
+@pytest.mark.asyncio
+async def test_scoped_knowledge_read_rejects_other_session() -> None:
+    """按 ID 读取知识时，其他会话的派生正文必须不可见。"""
+    store = AsyncMock()
+    entry = _entry(entry_id=21, provenance=_provenance(17, "rev-17"))
+    store.get.return_value = entry
+    manager = KnowledgeManager(store)
+
+    assert await manager.get_entry_for_scope(21, scope_key="private:other") is None
+    assert (
+        await manager.get_entry_for_scope(21, scope_key="private:test-scope") is entry
+    )
+
+
+@pytest.mark.asyncio
+async def test_scoped_knowledge_search_rejects_other_session() -> None:
+    """搜索知识时，其他会话的派生正文必须从结果和总数中移除。"""
+    store = AsyncMock()
+    entry = _entry(entry_id=22, provenance=_provenance(17, "rev-17"))
+    store.search.return_value = ([entry], 1)
+    manager = KnowledgeManager(store)
+
+    entries, total = await manager.search_for_scope(
+        "稳定事实",
+        scope_key="private:other",
+    )
+
+    assert entries == []
+    assert total == 0

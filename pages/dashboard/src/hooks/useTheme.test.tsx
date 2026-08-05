@@ -5,8 +5,7 @@ import { useTheme } from "./useTheme";
 
 interface BridgeMock {
   getContext: ReturnType<typeof vi.fn>;
-  onContextChange: ReturnType<typeof vi.fn>;
-  offContextChange: ReturnType<typeof vi.fn>;
+  onContext: ReturnType<typeof vi.fn>;
 }
 
 function Harness() {
@@ -47,6 +46,7 @@ function setReducedMotion(matches: boolean) {
 
 describe("useTheme", () => {
   let bridge: BridgeMock;
+  let unsubscribeContext: ReturnType<typeof vi.fn>;
   let animationFrames: Map<number, FrameRequestCallback>;
   let nextAnimationFrameId: number;
 
@@ -78,10 +78,10 @@ describe("useTheme", () => {
     }));
     setReducedMotion(false);
 
+    unsubscribeContext = vi.fn();
     bridge = {
       getContext: vi.fn().mockReturnValue({ isDark: false }),
-      onContextChange: vi.fn(),
-      offContextChange: vi.fn(),
+      onContext: vi.fn().mockReturnValue(unsubscribeContext),
     };
 
     Object.defineProperty(window, "AstrBotPluginPage", {
@@ -231,8 +231,9 @@ describe("useTheme", () => {
 
   it("ignores bridge theme changes after a manual override and unregisters on cleanup", async () => {
     let contextHandler: ((ctx: { isDark?: boolean }) => void) | undefined;
-    bridge.onContextChange.mockImplementation((handler) => {
+    bridge.onContext.mockImplementation((handler) => {
       contextHandler = handler;
+      return unsubscribeContext;
     });
 
     const view = render(<Harness />);
@@ -249,7 +250,6 @@ describe("useTheme", () => {
 
     view.unmount();
 
-    expect(bridge.offContextChange).toHaveBeenCalledTimes(1);
-    expect(bridge.offContextChange).toHaveBeenCalledWith(expect.any(Function));
+    expect(unsubscribeContext).toHaveBeenCalledTimes(1);
   });
 });

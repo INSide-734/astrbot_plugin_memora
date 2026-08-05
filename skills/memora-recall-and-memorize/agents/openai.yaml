@@ -1,0 +1,4 @@
+interface:
+  display_name: "Memora 记忆助手"
+  short_description: "安全回忆既有长期记忆，并只在用户明确要求时保存新的持久记忆"
+  default_prompt: "使用 $memora-recall-and-memorize 回忆与当前问题相关的长期记忆。"

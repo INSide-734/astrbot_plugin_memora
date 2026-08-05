@@ -49,7 +49,7 @@ flowchart LR
 ## 依赖方向
 
 - 上游：`core/plugin_initializer.py`、`core/api/affection_api.py`、`core/tools/affection_tools.py`。
-- 本模块：`affection_manager.py -> models.py + affection_store.py`。
+- 本模块：`affection_manager.py -> models.py + affection_store.py + mood_cascade.py`；`mood_cascade.py -> models.py`。
 - 下游：`core/base/entity_editing.py`、`core/storage/base_store.py`、`aiosqlite`、可选 LLM 适配器。
 - 相关上下文：[存储模块](../storage/AGENTS.md)、[基础领域能力](../base/AGENTS.md)。
 
@@ -64,6 +64,7 @@ flowchart LR
 ## 测试定位与验证
 
 `tests/test_affection_manager.py` 覆盖模型阈值、关键词与 LLM 分类、门控、分数与情绪级联、存储 CRUD、管理员 revision、并发、损坏情绪行、重分配、取消与关闭生命周期。
+`tests/test_affection_interaction_boundary.py` 覆盖自动交互身份的写前校验、零副作用失败与日志脱敏。
 
 精确验证命令：
 

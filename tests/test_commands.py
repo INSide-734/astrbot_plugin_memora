@@ -2,9 +2,39 @@
 
 from __future__ import annotations
 
+import hashlib
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from astrbot.api.platform import MessageType
+
+
+def _qq_official_c2c_event(*, sender_id: str = "OPENID-1") -> MagicMock:
+    """构造包含交叉校验证据的 QQ Official C2C 事件。"""
+
+    platform_id = "official-bot-1"
+    author = {"id": "OPENID-1", "user_openid": "OPENID-1"}
+    raw_message = SimpleNamespace(
+        raw_data={"author": author},
+        author=SimpleNamespace(user_openid="OPENID-1"),
+    )
+    event = MagicMock()
+    event.unified_msg_origin = "qq-official:c2c:OPENID-1"
+    event.message_obj = SimpleNamespace(
+        raw_message=raw_message,
+        sender=SimpleNamespace(user_id=sender_id),
+        group_id=None,
+    )
+    event.get_platform_name.return_value = "qq_official"
+    event.get_platform_id.return_value = platform_id
+    event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+    event.get_sender_id.return_value = sender_id
+    event.plain_result.return_value = "no results"
+    instance_key = hashlib.sha256(platform_id.encode("ascii")).hexdigest()[:24]
+    event.expected_canonical_user_id = f"qq-official:{instance_key}:OPENID-1"
+    return event
+
 
 # ============================================================================
 # QueryCommandMixin tests
@@ -119,6 +149,8 @@ class TestHandleSearch:
         mixin = TestMixin()
         event = MagicMock()
         event.unified_msg_origin = "test-session"
+        event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+        event.get_sender_id.return_value = "user-001"
         event.plain_result = MagicMock(return_value="no results")
 
         # k=0 should be clamped to 1
@@ -141,6 +173,8 @@ class TestHandleSearch:
         mixin = TestMixin()
         event = MagicMock()
         event.unified_msg_origin = "test-session"
+        event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+        event.get_sender_id.return_value = "user-001"
         event.plain_result = MagicMock(return_value="no results")
 
         results = []
@@ -148,6 +182,97 @@ class TestHandleSearch:
             results.append(result)
         engine.search_memories.assert_awaited_once()
         assert engine.search_memories.call_args[1]["k"] == 100
+
+    @pytest.mark.asyncio
+    async def test_group_search_passes_privacy_scope_to_engine(self) -> None:
+        """群聊命令检索必须传递群聊和发送者作用域以过滤机密记忆。"""
+        from core.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=[])
+
+        class TestMixin(QueryCommandMixin):
+            memory_engine = engine
+
+        event = MagicMock()
+        event.unified_msg_origin = "group:42"
+        event.get_message_type.return_value = MessageType.GROUP_MESSAGE
+        event.get_sender_id.return_value = "user-001"
+        event.plain_result = MagicMock(return_value="no results")
+
+        async for _ in TestMixin().handle_search(event, "private fact"):
+            pass
+
+        kwargs = engine.search_memories.call_args.kwargs
+        assert kwargs["chat_type"] == "group"
+        assert kwargs["user_id"] == "user-001"
+
+    @pytest.mark.asyncio
+    async def test_qq_official_search_uses_canonical_user_id(self) -> None:
+        """QQ Official 检索必须带机器人实例命名空间，不能直接使用 OpenID。"""
+
+        from core.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=[])
+
+        class TestMixin(QueryCommandMixin):
+            memory_engine = engine
+
+        event = _qq_official_c2c_event()
+
+        async for _ in TestMixin().handle_search(event, "private fact"):
+            pass
+
+        kwargs = engine.search_memories.call_args.kwargs
+        assert kwargs["user_id"] == event.expected_canonical_user_id
+
+    @pytest.mark.asyncio
+    async def test_qq_official_identity_conflict_denies_search(self) -> None:
+        """包装层 sender 与官方载荷冲突时不得降级到原始 OpenID 检索。"""
+
+        from core.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=[])
+
+        class TestMixin(QueryCommandMixin):
+            memory_engine = engine
+
+        event = _qq_official_c2c_event(sender_id="OTHER-OPENID")
+
+        results = []
+        async for result in TestMixin().handle_search(event, "private fact"):
+            results.append(result)
+
+        assert results == ["no results"]
+        engine.search_memories.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_message_type_fails_closed(self) -> None:
+        """无法确认消息类型时不得把请求伪装成私聊检索。"""
+
+        from core.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=[])
+
+        class TestMixin(QueryCommandMixin):
+            memory_engine = engine
+
+        mixin = TestMixin()
+        event = MagicMock()
+        event.unified_msg_origin = "unknown:session"
+        event.get_message_type.return_value = object()
+        event.get_sender_id.return_value = "user-001"
+        event.plain_result = MagicMock(return_value="no results")
+
+        results = []
+        async for result in mixin.handle_search(event, "private fact"):
+            results.append(result)
+
+        assert results == ["no results"]
+        engine.search_memories.assert_not_awaited()
 
 
 class TestHandleForget:

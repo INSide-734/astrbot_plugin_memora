@@ -9,7 +9,7 @@ import json
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
@@ -66,6 +66,7 @@ class DecayScheduler:
         self._task: asyncio.Task | None = None
         self._startup_task: asyncio.Task | None = None
         self._running = False
+        self._diagnostic_event_store: Any | None = None
         self.last_backup_result: dict[str, object] = {
             "status": "idle",
             "reason_code": None,
@@ -78,6 +79,8 @@ class DecayScheduler:
 
     @staticmethod
     def _log_task_exception(task: asyncio.Task) -> None:
+        """记录后台任务的普通异常，并忽略已取消任务。"""
+
         if task.cancelled():
             return
         try:
@@ -297,13 +300,19 @@ class DecayScheduler:
         except Exception as e:
             logger.warning(f"[衰减调度] 知识库清理异常: {e}")
 
-        # 自主学习参数优化
+        # 自主学习：只重建 shadow 候选，不修改生产配置
         try:
             auto_learning = getattr(engine, "auto_learning", None)
             if auto_learning is not None:
-                await auto_learning.optimize()
-        except Exception as e:
-            logger.warning(f"[衰减调度] 自主学习优化异常: {e}")
+                await auto_learning.rebuild_candidates()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[衰减调度] 自主学习候选重建失败，"
+                "reason=learning_candidate_rebuild_failed，异常类型=%s",
+                type(exc).__name__,
+            )
 
         # 笔记版本清理
         try:
@@ -313,6 +322,24 @@ class DecayScheduler:
                 await note_mgr.prune_versions(max_versions)
         except Exception as e:
             logger.warning(f"[衰减调度] 笔记版本清理异常: {e}")
+
+        # 语义压缩只生成带来源证据的 Projection，不修改 canonical。
+        try:
+            compressor = vars(engine).get("semantic_compressor")
+            if compressor is not None:
+                result = await compressor.compress_old_memories()
+                applied = int(result.get("projections_applied", 0))
+                failed = int(result.get("failed_groups", 0))
+                if applied or failed:
+                    logger.info(
+                        "[衰减调度] 语义摘要完成: applied=%s, failed=%s",
+                        applied,
+                        failed,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("[衰减调度] 语义摘要异常，已保留 canonical")
 
         # 前瞻记忆：扫描未来 24 小时内的 PLANNED 原子并缓存待注入
         try:
@@ -324,6 +351,76 @@ class DecayScheduler:
                     logger.info(f"[衰减调度] 前瞻记忆: {len(upcoming)} 条待注入")
         except Exception as e:
             logger.warning(f"[衰减调度] 前瞻记忆扫描异常: {e}")
+
+        # 异常检测：每日 canonical 创建量聚合（幂等，只写脱敏告警事件）
+        try:
+            await self._run_anomaly_feed()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[衰减调度] 异常检测日聚合失败，异常类型=%s",
+                type(exc).__name__,
+            )
+
+    async def _run_anomaly_feed(self) -> None:
+        """按稳定 UTC 日向异常检测器投喂 canonical 创建量，缺失日期补喂。"""
+
+        from ..managers.anomaly_detector import AnomalyDetector
+
+        detector = getattr(self.memory_engine, "anomaly_detector", None)
+        if not isinstance(detector, AnomalyDetector):
+            return
+        today_ts = (int(time.time()) // 86400) * 86400
+        window_days = max(3, min(30, int(getattr(detector, "window_days", 7) or 7)))
+        # 首次启动额外读取一个当前日之前的完整窗口，确保当前日不参与自身基线。
+        for offset in range(window_days, -1, -1):
+            day_ts = today_ts - offset * 86400
+            if detector.has_fed(day_ts):
+                continue
+            alert = detector.pending_alert(day_ts)
+            if alert is None:
+                count = await self.memory_engine.count_canonical_created_on(day_ts)
+                alert = detector.record_daily_count(day_ts, count)
+            if alert:
+                await self._emit_anomaly_event(alert)
+            detector.mark_fed(day_ts)
+
+    async def _emit_anomaly_event(self, alert: dict[str, Any]) -> None:
+        """把告警写入共享诊断事件库，只保留固定标量 allowlist。"""
+
+        store = await self._get_diagnostic_event_store()
+        event_day = max(0, int(alert.get("day_ts", 0) or 0))
+        await store.add_event(
+            {
+                "event_id": f"anomaly-{event_day}",
+                "domain": "scheduler",
+                "severity": "warning",
+                "source": "scheduler",
+                "payload": {
+                    "component": "scheduler",
+                    "status": "completed",
+                    "reason_code": "memory_rate_anomaly",
+                    "direction": alert.get("direction"),
+                    "count": alert.get("count"),
+                    "mean_7d": alert.get("mean_7d"),
+                    "stdev_7d": alert.get("stdev_7d"),
+                    "z_score": alert.get("z_score"),
+                    "window_size": alert.get("window_size"),
+                },
+            }
+        )
+
+    async def _get_diagnostic_event_store(self) -> Any:
+        """懒加载与 Dashboard 诊断事件页共用的 SQLite 事件库。"""
+
+        if self._diagnostic_event_store is None:
+            from ..diagnostics.event_store import DiagnosticEventStore
+
+            store = DiagnosticEventStore(self.data_dir / "diagnostics_events.db")
+            await store.initialize()
+            self._diagnostic_event_store = store
+        return self._diagnostic_event_store
 
     async def _run_backup(self) -> None:
         """执行定时备份并委托管理器清理过期备份。"""

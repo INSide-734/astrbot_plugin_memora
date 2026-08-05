@@ -5,6 +5,21 @@ Memora 的所有重要变更都记录在此文件中。
 本文档遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 破坏性变更
+
+- 删除从未接入生产且与好感度域重复的 `relationship_tracking` 配置（`enabled`、`warmth_decay_per_day`）。Bot 与用户的关系/好感度统一由好感度域权威维护，用户间关系由社交关系域维护；旧配置会被安全忽略，无需迁移数据。
+- 删除无收益证据且从未正确装配的 `weight_learning`（MAB）配置（`enabled`、`epsilon`、`group_by_persona`）与实现；统一反馈与参数候选改由 FeedbackSignal 管线和自主学习 shadow 候选承担。
+- 自主学习改为默认关闭的 shadow 候选模式：删除无消费者的 `learning_rate`、`target_hit_rate_low/high`、`quality_ema_alpha` 配置叶，`enabled` 默认从 `true` 改为 `false`。
+
+### 修复
+
+- 记忆再巩固改为候选闭环：召回只生成 pending 候选，不再自动改写 canonical；人工按来源 revision CAS 应用并可回滚旧正文。
+- 移除从未发布且无生产消费者的 Trait Evolution 隐藏实现与生命周期入口。
+- 修复 `/memora summarize` 把隔离候选误报为长期记忆写入成功、将候选数量误作消息进度，以及混合结果把隔离候选计入重要性的问题。
+- 修复 Dashboard 活跃会话从 canonical 记忆 metadata 推导，导致对话已采集但长期记忆为空时错误显示 0 的问题。
+
 ## [1.1.0] — 2026-07-31
 
 Memora 1.1.0 聚焦召回准确性、LLM 首字响应关键路径、请求内证据覆盖和隐私安全观测，并同步加强提示词保护的配置一致性与并发隔离，适配新版 Dashboard 构建工具链。

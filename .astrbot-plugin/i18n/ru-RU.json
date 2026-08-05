@@ -981,7 +981,14 @@
       },
       "evaluation": {
         "metric": {
-          "cases": "Кейсы"
+          "cases": "Кейсы",
+          "observedP95": "Измеренный p95",
+          "annotatedP95": "Аннотированный p95",
+          "reportedP95": "Заявленный p95",
+          "annotatedFaithfulness": "Аннотированная достоверность",
+          "judgedFaithfulness": "Judge-достоверность",
+          "observedProviderCalls": "Измеренные вызовы провайдера",
+          "observedTokenCost": "Измеренная стоимость токенов"
         },
         "runs": "Запуски оценки",
         "baseline": "Базовая линия",
@@ -1041,6 +1048,7 @@
         "rrDelta": "Разница RR",
         "gainDelta": "Разница gain",
         "p95Delta": "Разница p95",
+        "observedP95Delta": "Разница измеренного p95",
         "emptyPrompt": "Запустите оценку или откройте сохранённый отчёт.",
         "noFailedCases": "Нет неудачных кейсов",
         "failedCases": "Неудачные кейсы",
@@ -1050,9 +1058,66 @@
           "rankedDocs": "Документы",
           "recall": "Recall",
           "gain": "Gain",
-          "latency": "Задержка"
+          "latency": "Задержка",
+          "observedLatency": "Измеренная задержка",
+          "annotatedLatency": "Аннотированная задержка",
+          "reportedLatency": "Заявленная задержка"
         },
         "miss": "промах"
+      },
+      "reconsolidation": {
+        "title": "Кандидаты реконсолидирования",
+        "subtitle": "Проверяйте значимые изменения памяти с историей действий и возможностью отката.",
+        "statusLabel": "Статус кандидата",
+        "allStatuses": "Все статусы",
+        "loading": "Загрузка кандидатов",
+        "loadingDetail": "Загрузка сведений о кандидате",
+        "noMatches": "Нет кандидатов для реконсолидирования",
+        "disabled": "Реконсолидация памяти не включена",
+        "selectCandidate": "Выберите кандидата для сравнения текста.",
+        "items": "Список кандидатов",
+        "detail": "Сведения о кандидате",
+        "detailMismatch": "Сведения о кандидате не соответствуют текущему выбору",
+        "oldContent": "Исходный текст",
+        "proposedContent": "Предлагаемый текст",
+        "evidenceLabel": "Тип доказательства",
+        "reasonLabel": "Код причины",
+        "actions": "Действия ревью",
+        "approve": "Одобрить",
+        "reject": "Отклонить",
+        "rollback": "Откатить",
+        "actionHistory": "История действий",
+        "noActions": "История действий пуста",
+        "confirmTitle": "Подтвердить: {0}",
+        "confirmDescription": "Действие изменит кандидата {0} и может обновить каноническую память.",
+        "confirm": "Подтвердить действие",
+        "submitting": "Отправка…",
+        "toastActionSubmitted": "Действие реконсолидирования отправлено: {0}",
+        "status": {
+          "pending": "Ожидает ревью",
+          "approved": "Одобрено",
+          "rejected": "Отклонено",
+          "failed": "Ошибка",
+          "rolled_back": "Откачено"
+        },
+        "action": {
+          "approve": "Одобрить",
+          "reject": "Отклонить",
+          "rollback": "Откатить",
+          "stage": "Создать кандидата",
+          "apply": "Применить"
+        },
+        "evidence": {
+          "llm_revision": "Доказательство пересмотра моделью"
+        },
+        "reason": {
+          "proposed": "Предложено изменение",
+          "applied": "Изменение применено",
+          "manual_reject": "Отклонено вручную",
+          "rolled_back": "Предыдущая версия восстановлена",
+          "source_revision_mismatch": "Версия источника изменилась",
+          "candidate_changed": "Кандидат изменился"
+        }
       },
       "review": {
         "status": {
@@ -1371,21 +1436,40 @@
       "deleteUser": "Удалить запись симпатии"
     },
     "learning": {
-      "historyAction": {
-        "weight_adjust": "Изменение весов",
-        "threshold_tune": "Настройка порога",
-        "correction": "Коррекция",
-        "param_init": "Инициализация параметров"
+      "status": {
+        "ready_for_review": "Ожидает ручной проверки",
+        "rejected": "Отклонён",
+        "published": "Опубликован",
+        "invalid_state": "Недопустимое состояние"
       },
-      "reset": "Сброс",
-      "hitRate": "Точность",
-      "avgQuality": "Качество",
-      "trials": "Попытки",
-      "corrections": "Исправления",
-      "params": "Параметры",
-      "history": "История",
-      "resetConfirm": "Сбросить параметры?",
-      "resetDone": "Параметры сброшены!"
+      "reason": {
+        "candidate": "Доказательства достигли порога кандидата",
+        "insufficient_evidence": "Недостаточно доказательств",
+        "published": "Опубликовано через CAS",
+        "invalid_state": "Восстановленное состояние не прошло проверку"
+      },
+      "reset": "Сбросить обучение",
+      "resetConfirm": "Очистить все теневые кандидаты и снимки публикаций? Рабочие веса не изменятся.",
+      "resetDone": "Теневое состояние обучения сброшено.",
+      "loading": "Загрузка состояния автономного обучения",
+      "loadError": "Не удалось загрузить состояние автономного обучения",
+      "candidates": "Кандидаты",
+      "ready": "Ожидают проверки",
+      "rejected": "Отклонены",
+      "published": "Опубликованы",
+      "current": "Текущие рабочие веса",
+      "baseline": "Теневая база",
+      "documentRoute": "Документный маршрут",
+      "graphRoute": "Графовый маршрут",
+      "shadowCandidates": "Теневые кандидаты",
+      "enabled": "Включено",
+      "disabled": "Отключено",
+      "noCandidates": "Теневых кандидатов пока нет",
+      "noCandidatesDescription": "Кандидаты появятся после достижения порогов независимых окон и выборок доверенной обратной связи.",
+      "delta": "Изменение от базы",
+      "support": "Поддержка с затуханием",
+      "samples": "Принятые выборки",
+      "windows": "Независимые окна"
     },
     "relation": {
       "relatives": "Родственники",
@@ -1420,11 +1504,21 @@
       "validationSummary": "Исправьте следующие поля"
     },
     "recall": {
+      "queryLabel": "Запрос",
       "queryPh": "Введите запрос...",
+      "submitHint": "Нажмите Ctrl/Cmd+Enter для поиска; Enter добавляет новую строку",
       "kLabel": "Кол-во K",
       "sessionLabel": "ID сессии",
       "searchBtn": "Поиск",
       "searching": "Поиск...",
+      "requestFailed": "Ошибка поиска: {0}",
+      "completed": "{0} · {1} мс",
+      "resultsRegion": "Результаты поиска",
+      "scoreLabel": "Релевантность",
+      "docKwScore": "Ключевые слова документа",
+      "docVecScore": "Вектор документа",
+      "graphKwScore": "Ключевые слова графа",
+      "graphVecScore": "Вектор графа",
       "noMatch": "Нет результатов",
       "results": "{0} рез.",
       "importanceLabel": "Важность:"
@@ -1543,6 +1637,10 @@
       "apply": "Применить конфигурацию",
       "applying": "Применение...",
       "reloading": "Перезагрузка...",
+      "restartRequiredTitle": "Требуется ручной перезапуск",
+      "restartRequiredDescription": "Конфигурация сохранена, но AstrBot не запланировал перезагрузку. Перезапустите плагин, чтобы применить изменения.",
+      "rebuildRequiredTitle": "Требуется перестроить граф",
+      "rebuildRequiredDescription": "Правила извлечения связей изменились. После перезагрузки плагина выполните /memora rebuild-graph для перестроения производных данных графа.",
       "retry": "Повторить",
       "loading": "Загрузка конфигурации",
       "status": {
@@ -1596,6 +1694,11 @@
       "avoidedTopics": "Избегаемые темы",
       "preferredTopics": "Предпочитаемые темы",
       "replyStyle": "Стиль ответов",
+      "source": {
+        "derived": "Производный",
+        "manual": "Ручной"
+      },
+      "sourceLabel": "Источник",
       "tagCategory": "Категория тега",
       "tagConfidence": "Уверенность тега",
       "tagConfidenceRange": "Уверенность тега должна быть от 0 до 1",

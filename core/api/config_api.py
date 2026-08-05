@@ -15,11 +15,51 @@ from ..base.config_manager import (
     ConfigPersistenceError,
     ConfigValidationError,
 )
+from ..base.config_runtime_effects import classify_config_effects
 from ..monitoring import report_debug_event, set_debug_mode
 from .response_utils import ok_response
 
 _PLUGIN_NAME = "astrbot_plugin_memora"
 _NO_DATA = object()
+_RESERVED_LEARNING_WEIGHT_PATHS = frozenset(
+    {
+        "graph_memory.document_route_weight",
+        "graph_memory.graph_route_weight",
+        "document_route_weight",
+        "graph_route_weight",
+    }
+)
+
+
+def _normalize_config_path(path: str) -> str:
+    """把点号、斜线和简单方括号路径统一为点号形式。"""
+
+    normalized = path.strip().replace("/", ".")
+    normalized = normalized.replace("[", ".").replace("]", "")
+    return ".".join(part for part in normalized.split(".") if part)
+
+
+def _contains_reserved_learning_weight_change(changes: Mapping[Any, Any]) -> bool:
+    """检测点号、运行时别名或嵌套对象中的自主学习生产权重。"""
+
+    pending: list[tuple[str, Mapping[Any, Any]]] = [("", changes)]
+    visited: set[int] = set()
+    while pending:
+        prefix, current = pending.pop()
+        identity = id(current)
+        if identity in visited:
+            continue
+        visited.add(identity)
+        for raw_key, value in current.items():
+            if not isinstance(raw_key, str):
+                continue
+            key = _normalize_config_path(raw_key)
+            path = ".".join(part for part in (prefix, key) if part)
+            if path in _RESERVED_LEARNING_WEIGHT_PATHS:
+                return True
+            if isinstance(value, Mapping):
+                pending.append((path, value))
+    return False
 
 
 def _config_error(
@@ -148,6 +188,11 @@ class ConfigApiMixin:
 
         try:
             assert base_revision is not None and changes is not None
+            if _contains_reserved_learning_weight_change(changes):
+                return _config_error(
+                    "config_path_reserved_for_learning",
+                    "自主学习生产权重只能通过学习动作接口修改",
+                )
             result = await self.plugin.config_manager.apply_config_changes(
                 changes,
                 expected_revision=base_revision,
@@ -162,6 +207,9 @@ class ConfigApiMixin:
 
         self._apply_live_debug_mode(result.changed_paths)
         self._schedule_injection_decision_cleanup(result.changed_paths)
+        restart_required, rebuild_required = classify_config_effects(
+            result.changed_paths
+        )
         reload_scheduled = self._schedule_plugin_reload(result.changed_paths)
 
         logger.info(
@@ -174,6 +222,8 @@ class ConfigApiMixin:
                 "revision": result.revision,
                 "changed_paths": list(result.changed_paths),
                 "reload_scheduled": reload_scheduled,
+                "restart_required": restart_required,
+                "rebuild_required": rebuild_required,
                 "instance_id": self.plugin.instance_id,
             }
         )

@@ -3,6 +3,7 @@
 负责处理插件命令
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
 
 from astrbot.api import logger
@@ -13,6 +14,7 @@ from .commands.diagnostic_commands import DiagnosticCommandMixin, DiagnosticProv
 from .commands.maintenance_commands import MaintenanceCommandMixin
 from .commands.query_commands import QueryCommandMixin
 from .commands.update_commands import UpdateCommandMixin
+from .handlers.reflection_candidate_writer import build_reflection_idempotency_key
 from .i18n_backend import t, t_list
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
@@ -35,6 +37,7 @@ class CommandHandler(
         conversation_manager: ConversationManager | None,
         index_validator: IndexValidator | None,
         memory_processor=None,
+        memory_quality_gate=None,
         initialization_status_callback=None,
         summary_window_locker=None,
         write_guard_cb=None,
@@ -54,6 +57,7 @@ class CommandHandler(
             conversation_manager: 会话管理器
             index_validator: 索引验证器
             memory_processor: 记忆处理器（用于手动总结）
+            memory_quality_gate: canonical 写入前的记忆质量门
             initialization_status_callback: 初始化状态回调函数
             diagnostics_health_provider: 健康评分异步提供器
             diagnostics_metrics_provider: 实时指标异步提供器
@@ -67,6 +71,7 @@ class CommandHandler(
         self.conversation_manager = conversation_manager
         self.index_validator = index_validator
         self._memory_processor = memory_processor
+        self._memory_quality_gate = memory_quality_gate
         self.get_initialization_status = initialization_status_callback
         self._summary_window_locker = summary_window_locker
         self._write_guard_cb = write_guard_cb
@@ -99,7 +104,18 @@ class CommandHandler(
     async def handle_summarize(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
-        """处理 /memora summarize 命令 - 立即触发记忆总结"""
+        """立即总结当前会话，并分别反馈 canonical 写入与隔离结果。
+
+        参数:
+            event: 提供当前会话来源、身份上下文和命令结果构造能力的事件。
+
+        生成:
+            总结开始、成功、隔离或失败阶段的 AstrBot 消息结果。
+
+        副作用:
+            通过质量门写入 canonical 记忆；全部候选安全处理后推进会话总结进度，
+            真实写入失败时保留 ``pending_summary``，并始终释放已取得的窗口锁。
+        """
         blocked_message = self._maintenance_write_guard_message()
         if blocked_message:
             yield event.plain_result(blocked_message)
@@ -197,9 +213,21 @@ class CommandHandler(
             )
 
             all_topics: list[str] = []
-            stored_count = 0
-            for mem in memories:
+            canonical_count = 0
+            canonical_importance_total = 0.0
+            quarantined_count = 0
+            completed_idempotency_keys: set[str] = set()
+            for memory_index, mem in enumerate(memories):
                 metadata = mem.setdefault("metadata", {})
+                idempotency_key = build_reflection_idempotency_key(
+                    session_id=session_id,
+                    start_index=last_summarized_index,
+                    end_index=actual_count,
+                    batch_index=int(metadata.get("batch_index", 0) or 0),
+                    memory_index=memory_index,
+                    content=str(mem.get("content", "") or ""),
+                )
+                metadata["idempotency_key"] = idempotency_key
                 metadata["source_window"] = {
                     "session_id": session_id,
                     "start_index": last_summarized_index,
@@ -208,6 +236,18 @@ class CommandHandler(
                     "triggered_by": "manual",
                 }
                 try:
+                    if self._memory_quality_gate is not None:
+                        gate_result = await self._memory_quality_gate.route_candidate(
+                            mem,
+                            session_id=session_id,
+                            persona_id=persona_id,
+                            source_window=metadata["source_window"],
+                            is_group_chat=is_group_chat,
+                        )
+                        if gate_result.action == "quarantined":
+                            quarantined_count += 1
+                            completed_idempotency_keys.add(idempotency_key)
+                            continue
                     await self.memory_engine.add_memory(
                         content=mem["content"],
                         session_id=session_id,
@@ -216,7 +256,9 @@ class CommandHandler(
                         metadata=metadata,
                         atoms=mem.get("atoms", []),
                     )
-                    stored_count += 1
+                    canonical_count += 1
+                    completed_idempotency_keys.add(idempotency_key)
+                    canonical_importance_total += mem.get("importance", 0)
                     all_topics.extend(metadata.get("topics", []))
                 except Exception as write_err:
                     logger.error(
@@ -224,42 +266,105 @@ class CommandHandler(
                         exc_info=True,
                     )
 
-            if stored_count < len(memories):
-                await self.conversation_manager.update_session_metadata(
-                    session_id,
-                    "pending_summary",
-                    {
-                        "start_index": last_summarized_index,
-                        "end_index": actual_count,
-                        "retry_count": 1,
-                        "failed_stage": "manual_memory_write",
-                        "failed_count": len(memories) - stored_count,
-                    },
+            processed_count = canonical_count + quarantined_count
+            if processed_count < len(memories):
+                pending_persisted = (
+                    await self.conversation_manager.update_session_metadata(
+                        session_id,
+                        "pending_summary",
+                        {
+                            "start_index": last_summarized_index,
+                            "end_index": actual_count,
+                            "retry_count": 1,
+                            "failed_stage": "manual_memory_write",
+                            "failed_count": len(memories) - processed_count,
+                            "completed_idempotency_keys": sorted(
+                                completed_idempotency_keys
+                            ),
+                        },
+                    )
                 )
+                if pending_persisted is not True:
+                    logger.error(
+                        f"[{session_id}] 手动总结失败窗口未能持久化，将拒绝报告为已处理"
+                    )
                 raise RuntimeError(
-                    f"仅成功写入 {stored_count}/{len(memories)} 条记忆，窗口未推进"
+                    f"仅安全处理 {processed_count}/{len(memories)} 条候选，窗口未推进"
                 )
 
-            await self.conversation_manager.update_session_metadata(
-                session_id, "last_summarized_index", actual_count
-            )
-            await self.conversation_manager.update_session_metadata(
-                session_id, "pending_summary", None
-            )
+            try:
+                metadata_persisted = (
+                    await self.conversation_manager.update_session_metadata_fields(
+                        session_id,
+                        {
+                            "last_summarized_index": actual_count,
+                            "pending_summary": None,
+                        },
+                    )
+                )
+                if metadata_persisted is not True:
+                    raise RuntimeError("总结游标与待重试状态原子持久化失败")
+            except asyncio.CancelledError:
+                raise
+            except Exception as metadata_error:
+                pending_persisted = False
+                try:
+                    pending_persisted = (
+                        await self.conversation_manager.update_session_metadata(
+                            session_id,
+                            "pending_summary",
+                            {
+                                "start_index": last_summarized_index,
+                                "end_index": actual_count,
+                                "retry_count": 1,
+                                "failed_stage": "metadata_commit",
+                                "failed_count": 0,
+                                "completed_idempotency_keys": sorted(
+                                    completed_idempotency_keys
+                                ),
+                            },
+                        )
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as pending_error:
+                    logger.error(
+                        f"[{session_id}] 元数据失败窗口写入异常：{pending_error}",
+                        exc_info=True,
+                    )
+                if pending_persisted is not True:
+                    logger.error(
+                        f"[{session_id}] 元数据失败窗口未能持久化，无法确认后续重试状态"
+                    )
+                raise RuntimeError("总结元数据持久化失败") from metadata_error
 
             avg_importance = (
-                sum(m.get("importance", 0) for m in memories) / len(memories)
-                if memories
-                else 0.0
+                canonical_importance_total / canonical_count if canonical_count else 0.0
             )
-            yield event.plain_result(
-                t(
-                    "summarize.success",
+            if canonical_count == 0 and quarantined_count:
+                feedback = t(
+                    "summarize.quarantined_only",
+                    quarantined_count=quarantined_count,
+                    count=actual_count,
+                )
+            elif quarantined_count:
+                feedback = t(
+                    "summarize.partial_quarantine",
+                    canonical_count=canonical_count,
+                    quarantined_count=quarantined_count,
                     importance=round(avg_importance, 2),
                     topics=", ".join(all_topics) or t("common.none"),
-                    count=len(memories),
+                    count=actual_count,
                 )
-            )
+            else:
+                feedback = t(
+                    "summarize.success",
+                    canonical_count=canonical_count,
+                    importance=round(avg_importance, 2),
+                    topics=", ".join(all_topics) or t("common.none"),
+                    count=actual_count,
+                )
+            yield event.plain_result(feedback)
 
         except Exception as e:
             logger.error(f"手动触发记忆总结失败: {e}", exc_info=True)

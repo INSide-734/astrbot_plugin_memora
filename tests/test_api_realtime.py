@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
+from starlette.responses import StreamingResponse
 
 from core.api.realtime_api import RealtimeSSE
 from core.page_api import PluginPageApi
@@ -39,23 +39,32 @@ class TestRealtimeSSE:
         sse = RealtimeSSE(memory_engine=MagicMock())
         sse.HEARTBEAT_SEC = 0.01
 
-        async def fake_make_response(generator, headers):
-            return SimpleNamespace(
-                response=generator, headers=headers, timeout="preset"
-            )
+        response = await sse.stream()
 
-        with patch("core.api.realtime_api.make_response", fake_make_response):
-            response = await sse.stream()
-
-        assert response.headers["Content-Type"] == "text/event-stream"
+        assert isinstance(response, StreamingResponse)
+        assert response.media_type == "text/event-stream"
         assert response.headers["Cache-Control"] == "no-cache"
-        assert response.timeout is None
         assert sse.connected == 1
 
-        first_chunk = await asyncio.wait_for(response.response.__anext__(), timeout=0.1)
+        first_chunk = await asyncio.wait_for(
+            response.body_iterator.__anext__(), timeout=0.1
+        )
         assert first_chunk == ": heartbeat\n\n"
 
-        await response.response.aclose()
+        await response.body_iterator.aclose()
+        assert sse.connected == 0
+
+    @pytest.mark.asyncio
+    async def test_stream_propagates_cancellation_and_unregisters(self) -> None:
+        sse = RealtimeSSE(memory_engine=MagicMock())
+        response = await sse.stream()
+        next_chunk = asyncio.create_task(response.body_iterator.__anext__())
+        await asyncio.sleep(0)
+
+        next_chunk.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await next_chunk
         assert sse.connected == 0
 
 

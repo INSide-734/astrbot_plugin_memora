@@ -31,25 +31,30 @@ class ScoreWeighting:
         score_alpha: float = 0.5,
         score_beta: float = 0.25,
         score_gamma: float = 0.25,
-    ):
+        recency_bump_enabled: bool = True,
+    ) -> None:
         """
         初始化评分加权器
 
-        Args:
+        参数:
             decay_rate: 时间衰减率,默认0.01
             importance_weight: 重要性权重,默认1.0
             score_alpha: 检索相关性维度权重,默认0.5
             score_beta: 重要性维度权重,默认0.25
             score_gamma: 时间新鲜度维度权重,默认0.25
+            recency_bump_enabled: 是否对三十天内记忆应用近因额外加成。
         """
         self.decay_rate = decay_rate
         self.importance_weight = importance_weight
         self.score_alpha = score_alpha
         self.score_beta = score_beta
         self.score_gamma = score_gamma
+        self.recency_bump_enabled = recency_bump_enabled
 
     @staticmethod
-    def _recency_bump_score(days_old: float) -> float:
+    def _recency_bump_score(days_old: float | None) -> float:
+        """按记忆年龄返回近因加成倍率，非法年龄保持中性。"""
+
         if days_old is None or days_old < 0:
             return 1.0
         if days_old <= 7:
@@ -67,12 +72,12 @@ class ScoreWeighting:
         使用加权求和（而非乘法）避免任何单一维度低分导致整体清零。
         时间衰减基于 max(create_time, last_access_time)，高频访问记忆衰减更慢。
 
-        Args:
+        参数:
             fused_results: RRF融合后的结果
             current_time: 当前时间戳
 
-        Returns:
-            List[HybridResult]: 加权后的结果,按最终分数降序排列
+        返回:
+            加权后的结果列表，按最终分数降序排列。
         """
         if not fused_results:
             return []
@@ -120,9 +125,10 @@ class ScoreWeighting:
             last_access_time = safe_float(metadata.get("last_access_time"), 0.0)
             reference_time = max(create_time, last_access_time)
             days_old = max(0.0, (current_time - reference_time) / 86400)
-            recency_weight = math.exp(
-                -self.decay_rate * days_old
-            ) * self._recency_bump_score(days_old)
+            recency_bump = (
+                self._recency_bump_score(days_old) if self.recency_bump_enabled else 1.0
+            )
+            recency_weight = math.exp(-self.decay_rate * days_old) * recency_bump
 
             # 归一化 RRF 分数
             rrf_normalized = result.rrf_score / max_rrf

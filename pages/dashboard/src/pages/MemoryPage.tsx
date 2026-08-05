@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ScrollText, Archive, Trash2, X } from "lucide-react";
+import { RefreshCw, ScrollText, Archive, Trash2, X } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData, normalizeImportance } from "@/lib/bridge";
@@ -257,7 +257,21 @@ export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: Memor
   return (
     <PageFrame variant="dense" aria-label={t("nav.memory")}>
       {/* Header */}
-      <PageHeader title={t("nav.memory")} icon={<ScrollText size={18} />} />
+      <PageHeader
+        title={t("nav.memory")}
+        icon={<ScrollText size={18} />}
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={() => void fetchMemories()}
+          >
+            <RefreshCw data-icon="inline-start" className={loading ? "animate-spin" : undefined} />
+            {t("common.refresh")}
+          </Button>
+        }
+      />
 
       {/* Filters */}
       <PageToolbar>

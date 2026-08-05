@@ -1962,92 +1962,35 @@ class TestRealtimeSSE:
 
 
 class TestLearningApi:
-    """Tests for core/api/learning_api.py — _flatten_learning_stats."""
+    """Tests for core/api/learning_api.py — shadow candidate views."""
 
-    def test_flatten_stats_with_full_data(self) -> None:
-        from core.api.learning_api import _flatten_learning_stats
+    def test_candidate_view_allowlist(self) -> None:
+        from core.api.learning_api import _candidate_view
 
-        raw = {
-            "feedback": {
-                "total_hits": 50,
-                "total_recalls": 100,
-                "avg_quality": 0.75,
-                "total_corrections": 3,
-            },
-            "params": {"alpha": 0.5, "beta": 0.25},
-            "history": [
-                {
-                    "timestamp": "t1",
-                    "reason": "adjust",
-                    "param": "alpha",
-                    "old": 0.4,
-                    "new": 0.5,
-                },
-            ],
-            "enabled": True,
-        }
-        result = _flatten_learning_stats(raw)
-        assert result["hit_rate"] == 0.5  # 50/100
-        assert result["avg_quality"] == 0.75
-        assert result["total_trials"] == 100
-        assert result["total_corrections"] == 3
-        assert result["enabled"] is True
-        assert "parameters" in result
-        assert len(result["history"]) == 1
+        result = _candidate_view(
+            {
+                "scope_domain": "private:u",
+                "proposed_document_weight": 0.72,
+                "proposed_graph_weight": 0.28,
+                "delta_from_baseline": 0.02,
+                "accepted_count": 4,
+                "independent_window_count": 2,
+                "decayed_support": 0.8,
+                "status": "ready_for_review",
+                "reason_code": "candidate",
+                "secret": "must-not-leak",
+            }
+        )
 
-    def test_flatten_stats_with_zero_recalls(self) -> None:
-        from core.api.learning_api import _flatten_learning_stats
+        assert result["status"] == "ready_for_review"
+        assert result["proposed_document_weight"] == 0.72
+        assert "secret" not in result
 
-        raw = {
-            "feedback": {"total_hits": 0, "total_recalls": 0},
-            "params": {},
-            "history": [],
-            "enabled": False,
-        }
-        result = _flatten_learning_stats(raw)
-        # total_recalls of 0 becomes max(0, 1) = 1 to avoid division by zero
-        assert result["hit_rate"] == 0.0  # 0 / 1
-        assert result["total_trials"] == 1
+    def test_candidate_view_tolerates_partial_payload(self) -> None:
+        from core.api.learning_api import _candidate_view
 
-    def test_flatten_stats_with_empty_raw(self) -> None:
-        from core.api.learning_api import _flatten_learning_stats
-
-        result = _flatten_learning_stats({})
-        assert result["hit_rate"] == 0.0
-        assert result["avg_quality"] == 0.5
-        assert result["history"] == []
-
-    def test_flatten_stats_with_missing_feedback(self) -> None:
-        from core.api.learning_api import _flatten_learning_stats
-
-        raw = {"params": {"x": 1}, "history": [], "enabled": True}
-        result = _flatten_learning_stats(raw)
-        assert result["avg_quality"] == 0.5
-        assert result["parameters"] == {"x": 1}
-
-    def test_flatten_history_detail_formatting(self) -> None:
-        from core.api.learning_api import _flatten_learning_stats
-
-        raw = {
-            "feedback": {
-                "total_hits": 10,
-                "total_recalls": 20,
-                "avg_quality": 0.6,
-                "total_corrections": 2,
-            },
-            "params": {},
-            "history": [
-                {
-                    "timestamp": "t1",
-                    "reason": "decay_rate adjusted",
-                    "param": "decay_rate",
-                    "old": 0.01,
-                    "new": 0.02,
-                },
-            ],
-            "enabled": True,
-        }
-        result = _flatten_learning_stats(raw)
-        entry = result["history"][0]
-        assert "decay_rate: 0.01" in entry["detail"]
-        assert "0.02" in entry["detail"]
+        result = _candidate_view(
+            {"status": "rejected", "reason_code": "insufficient_evidence"}
+        )
+        assert result["reason_code"] == "insufficient_evidence"
+        assert result["proposed_document_weight"] is None

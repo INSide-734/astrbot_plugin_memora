@@ -1,5 +1,26 @@
 name: astrbot_plugin_memora
-author: INSide-734
+display_name: Memora
+short_desc: 为 AstrBot 提供完整记忆生命周期的长期记忆插件，为对话提供记忆提取、混合检索、安全注入、稳定身份、关系演化与可视化管理能力。
+desc: |-
+  Memora 是 AstrBot 的长期记忆插件，为对话提供记忆提取、混合检索、安全注入、稳定身份、关系演化与可视化管理能力。
+
+  - 以 SQLite canonical memory 作为唯一权威数据，全文、向量、图和 Projection 均可重建。
+  - 组合 BM25、FAISS、图检索、关系扩展与重排序，并按会话、身份和隐私边界过滤。
+  - 支持稳定身份、用户画像、知识库、笔记、好感度、社交关系和群聊黑话。
+  - 提供 Dashboard、管理命令、Agent 工具、诊断、评测、备份恢复与在线更新能力。
+
+  安装后请配置可用的 Embedding Provider 与 LLM Provider 并重启 AstrBot；管理员可运行 `/memora status` 检查状态，或运行 `/memora webui` 打开管理面板。完整说明见[项目文档](https://inside-734.github.io/astrbot_plugin_memora/)。
 version: 1.1.0
-description: 为 AstrBot 打造的全链路智能长期记忆插件：融合 BM25、FAISS、图检索与派生关系，支持稳定身份识别、记忆抽取与反思、可演化记忆、隐私安全过滤、SQLite/FTS5 持久化及可视化管理面板，让 Bot 真正拥有可持续、可追溯、可控的强大记忆能力。
+author: INSide-734
 repo: https://github.com/INSide-734/astrbot_plugin_memora
+astrbot_version: ">=4.24.2"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - qq_official_webhook
+social_link: https://github.com/INSide-734
+tags:
+  - 长期记忆
+  - 智能检索
+  - 知识库
+  - 可视化管理

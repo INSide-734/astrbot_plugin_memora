@@ -985,7 +985,14 @@
       },
       "evaluation": {
         "metric": {
-          "cases": "用例"
+          "cases": "用例",
+          "observedP95": "实测 p95",
+          "annotatedP95": "标注 p95",
+          "reportedP95": "外部报告 p95",
+          "annotatedFaithfulness": "标注忠实度",
+          "judgedFaithfulness": "Judge 忠实度",
+          "observedProviderCalls": "实测 Provider 调用",
+          "observedTokenCost": "实测 token 成本"
         },
         "runs": "评测运行",
         "baseline": "基线配置",
@@ -1045,6 +1052,7 @@
         "rrDelta": "RR 差异",
         "gainDelta": "增益差异",
         "p95Delta": "p95 差异",
+        "observedP95Delta": "实测 p95 差异",
         "emptyPrompt": "运行一次评测，或打开已保存的报告。",
         "noFailedCases": "暂无失败用例",
         "failedCases": "失败用例",
@@ -1054,9 +1062,66 @@
           "rankedDocs": "排序文档",
           "recall": "召回",
           "gain": "增益",
-          "latency": "延迟"
+          "latency": "延迟",
+          "observedLatency": "实测延迟",
+          "annotatedLatency": "标注延迟",
+          "reportedLatency": "外部报告延迟"
         },
         "miss": "未命中"
+      },
+      "reconsolidation": {
+        "title": "再巩固候选",
+        "subtitle": "人工审查高影响记忆修订，并保留可回滚的动作历史。",
+        "statusLabel": "候选状态",
+        "allStatuses": "全部状态",
+        "loading": "正在加载候选",
+        "loadingDetail": "正在加载候选详情",
+        "noMatches": "暂无再巩固候选",
+        "disabled": "记忆再巩固功能未启用",
+        "selectCandidate": "选择候选以查看正文对照。",
+        "items": "候选列表",
+        "detail": "候选详情",
+        "detailMismatch": "候选详情与当前选择不匹配",
+        "oldContent": "旧正文",
+        "proposedContent": "拟议正文",
+        "evidenceLabel": "证据类型",
+        "reasonLabel": "原因码",
+        "actions": "人工动作",
+        "approve": "批准",
+        "reject": "拒绝",
+        "rollback": "回滚",
+        "actionHistory": "动作历史",
+        "noActions": "暂无动作历史",
+        "confirmTitle": "确认{0}",
+        "confirmDescription": "此操作将更新候选 {0} 的复核状态，并可能修改 canonical 记忆。",
+        "confirm": "确认操作",
+        "submitting": "正在提交…",
+        "toastActionSubmitted": "已提交再巩固操作：{0}",
+        "status": {
+          "pending": "待复核",
+          "approved": "已批准",
+          "rejected": "已拒绝",
+          "failed": "失败",
+          "rolled_back": "已回滚"
+        },
+        "action": {
+          "approve": "批准",
+          "reject": "拒绝",
+          "rollback": "回滚",
+          "stage": "创建候选",
+          "apply": "应用候选"
+        },
+        "evidence": {
+          "llm_revision": "模型修订证据"
+        },
+        "reason": {
+          "proposed": "已提出修订",
+          "applied": "修订已应用",
+          "manual_reject": "人工拒绝",
+          "rolled_back": "已恢复旧版本",
+          "source_revision_mismatch": "来源版本已变化",
+          "candidate_changed": "候选已变化"
+        }
       },
       "review": {
         "status": {
@@ -1375,21 +1440,40 @@
       "deleteUser": "删除好感用户"
     },
     "learning": {
-      "historyAction": {
-        "weight_adjust": "权重调整",
-        "threshold_tune": "阈值调优",
-        "correction": "纠正",
-        "param_init": "参数初始化"
+      "status": {
+        "ready_for_review": "待人工复核",
+        "rejected": "已拒绝",
+        "published": "已发布",
+        "invalid_state": "状态无效"
+      },
+      "reason": {
+        "candidate": "证据达到候选门槛",
+        "insufficient_evidence": "证据不足",
+        "published": "已通过 CAS 发布",
+        "invalid_state": "恢复状态未通过校验"
       },
       "reset": "重置学习",
-      "hitRate": "命中率",
-      "avgQuality": "平均质量",
-      "trials": "试验次数",
-      "corrections": "修正次数",
-      "params": "学习参数",
-      "history": "学习历史",
-      "resetConfirm": "确定要重置所有学习参数到默认值吗？",
-      "resetDone": "学习参数已重置！"
+      "resetConfirm": "确定要清空所有 shadow 候选和发布快照吗？生产权重不会改变。",
+      "resetDone": "自主学习 shadow 状态已重置！",
+      "loading": "正在加载自主学习状态",
+      "loadError": "无法加载自主学习状态",
+      "candidates": "候选总数",
+      "ready": "待复核",
+      "rejected": "已拒绝",
+      "published": "已发布",
+      "current": "当前运行时权重",
+      "baseline": "Shadow 基线",
+      "documentRoute": "文档路",
+      "graphRoute": "图路",
+      "shadowCandidates": "Shadow 候选",
+      "enabled": "已启用",
+      "disabled": "已关闭",
+      "noCandidates": "尚无 Shadow 候选",
+      "noCandidatesDescription": "可信反馈达到独立窗口和样本门槛后，候选才会出现在这里。",
+      "delta": "相对基线变化",
+      "support": "衰减支持度",
+      "samples": "已接受样本",
+      "windows": "独立窗口"
     },
     "relation": {
       "relatives": "亲戚",
@@ -1424,11 +1508,21 @@
       "validationSummary": "请修正以下字段"
     },
     "recall": {
+      "queryLabel": "查询文本",
       "queryPh": "输入查询文本，测试检索效果...",
+      "submitHint": "按 Ctrl/Cmd+Enter 执行召回，Enter 可换行",
       "kLabel": "召回数量 K",
       "sessionLabel": "会话 ID（可选）",
       "searchBtn": "执行召回",
       "searching": "搜索中...",
+      "requestFailed": "召回失败：{0}",
+      "completed": "{0} · {1} 毫秒",
+      "resultsRegion": "召回结果",
+      "scoreLabel": "相关性分数",
+      "docKwScore": "文档关键词",
+      "docVecScore": "文档向量",
+      "graphKwScore": "图关键词",
+      "graphVecScore": "图向量",
       "noMatch": "无匹配结果",
       "results": "{0} 条结果",
       "importanceLabel": "重要性:"
@@ -1547,6 +1641,10 @@
       "apply": "应用配置",
       "applying": "正在应用...",
       "reloading": "正在重载...",
+      "restartRequiredTitle": "需要手动重启",
+      "restartRequiredDescription": "配置已保存，但 AstrBot 未安排自动重载。请重启插件以应用本次变更。",
+      "rebuildRequiredTitle": "需要重建图派生数据",
+      "rebuildRequiredDescription": "图边提取规则已更改。重载插件后，请运行 /memora rebuild-graph 使既有图数据与新规则一致。",
       "retry": "重试",
       "loading": "正在加载配置",
       "status": {
@@ -1600,6 +1698,11 @@
       "avoidedTopics": "回避话题",
       "preferredTopics": "偏好话题",
       "replyStyle": "回复风格",
+      "source": {
+        "derived": "自动派生",
+        "manual": "人工维护"
+      },
+      "sourceLabel": "来源",
       "tagCategory": "标签类别",
       "tagConfidence": "标签置信度",
       "tagConfidenceRange": "标签置信度必须在 0 到 1 之间",

@@ -26,6 +26,7 @@ class RelationType(str, Enum):
 
 class ProjectionType(str, Enum):
     EPISODE_SUMMARY = "episode_summary"
+    SEMANTIC_SUMMARY = "semantic_summary"
     PREFERENCE_STATE = "preference_state"
     RELATIONSHIP_STATE = "relationship_state"
     CONFLICT_SET = "conflict_set"
@@ -88,6 +89,8 @@ class MemorySourceRef:
     source_role: str = "primary"
     valid_from: datetime | None = None
     valid_to: datetime | None = None
+    topic_keys: tuple[str, ...] = ()
+    subject_key: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -118,6 +121,17 @@ class MemorySourceRef:
         _check_interval(self.valid_from, self.valid_to)
         object.__setattr__(self, "valid_from", normalize_datetime(self.valid_from))
         object.__setattr__(self, "valid_to", normalize_datetime(self.valid_to))
+        normalized_topics = tuple(
+            dict.fromkeys(
+                topic.strip()[:128]
+                for topic in self.topic_keys
+                if isinstance(topic, str) and topic.strip()
+            )
+        )[:32]
+        object.__setattr__(self, "topic_keys", normalized_topics)
+        if self.subject_key is not None:
+            subject_key = _require_text(self.subject_key, "subject_key")[:128]
+            object.__setattr__(self, "subject_key", subject_key)
         validate_time_labels(self.time_source, self.time_precision)
 
     @property

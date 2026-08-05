@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from astrbot.api import web as astrbot_web
 
+from core.api.config_api import ConfigApiMixin
 from core.api.topic_segmentation_api import TopicSegmentationApiMixin
 
 
@@ -34,6 +37,7 @@ def _make_config_manager(*, update_result: bool = True):
 
 def _make_stub(*, update_result: bool = True, scheduler=None):
     class Stub:
+        _get_web_request = ConfigApiMixin._get_web_request
         get_topic_segmentation_config = (
             TopicSegmentationApiMixin.get_topic_segmentation_config
         )
@@ -95,6 +99,24 @@ class TestTopicSegmentationConfig:
                 "topic_segmentation.strategy_b.min_cluster_size": 3,
                 "topic_segmentation.strategy_b.max_clusters": 6,
             },
+            persist=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_uses_public_web_request_proxy(self) -> None:
+        """真实 AstrBot Context 没有 request 属性时使用公共请求代理。"""
+        stub = _make_stub()
+        stub.plugin.context = SimpleNamespace()
+        request = SimpleNamespace(
+            json=AsyncMock(return_value={"enabled": False}),
+        )
+
+        with patch.object(astrbot_web, "request", request):
+            result = await stub.update_topic_segmentation_config()
+
+        assert result["status"] == "ok"
+        stub.plugin.config_manager.update_runtime_config.assert_awaited_once_with(
+            {"topic_segmentation.enabled": False},
             persist=True,
         )
 

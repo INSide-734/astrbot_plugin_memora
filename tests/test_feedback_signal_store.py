@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -16,7 +18,11 @@ from core.models.feedback_signal import (
 from core.storage.feedback_signal_store import FeedbackSignalStore
 
 
-def _event(decision: str = "decision-1"):
+def _event(
+    decision: str = "decision-1",
+    *,
+    observed_at: datetime | None = None,
+):
     """构造匿名可信事件。"""
 
     return build_trusted_feedback_event(
@@ -26,7 +32,7 @@ def _event(decision: str = "decision-1"):
         outcome=FeedbackOutcome.POSITIVE,
         scope_domain="scope-synthetic",
         persona_domain=None,
-        observed_at=datetime(2026, 7, 21, 10, tzinfo=timezone.utc),
+        observed_at=observed_at or datetime(2026, 7, 21, 10, tzinfo=timezone.utc),
         window_seconds=3600,
     )
 
@@ -52,6 +58,77 @@ def test_store_deduplicates_and_persists_committed_events(tmp_path) -> None:
         assert len(reopened.list_events()) == 1
     finally:
         reopened.close()
+
+
+def test_opaque_token_is_keyed_stable_across_restart_and_install_isolated(
+    tmp_path,
+) -> None:
+    """token 必须跨重启稳定、跨安装不同，且不能退回固定 SHA-256。"""
+
+    first_path = tmp_path / "first.db"
+    first = FeedbackSignalStore(first_path)
+    first.initialize()
+    token = first.opaque_token("decision", "forget:7")
+    first.close()
+    key_path = Path(f"{first_path}.hmac.key")
+    key_material = key_path.read_bytes()
+
+    reopened = FeedbackSignalStore(first_path)
+    reopened.initialize()
+    restarted_token = reopened.opaque_token("decision", "forget:7")
+    reopened.close()
+
+    second = FeedbackSignalStore(tmp_path / "second.db")
+    second.initialize()
+    other_install_token = second.opaque_token("decision", "forget:7")
+    second.close()
+
+    legacy_digest = hashlib.sha256(b"memora-feedback-v1|decision|forget:7").hexdigest()
+    assert token == restarted_token
+    assert token != other_install_token
+    assert token != f"decision:{legacy_digest}"
+    assert len(key_material) == 32
+    assert key_path.stat().st_mode & 0o777 == 0o600
+    assert key_material not in first_path.read_bytes()
+
+
+@pytest.mark.parametrize("corruption", [None, b"short", b"x" * 32])
+def test_existing_store_rejects_missing_or_malformed_token_key(
+    tmp_path,
+    corruption: bytes | None,
+) -> None:
+    """已初始化 Store 的密钥缺失或损坏时必须拒绝静默轮换。"""
+
+    path = tmp_path / "corrupt-key.db"
+    store = FeedbackSignalStore(path)
+    store.initialize()
+    store.close()
+    key_path = Path(f"{path}.hmac.key")
+    if corruption is None:
+        key_path.unlink()
+    else:
+        key_path.write_bytes(corruption)
+        key_path.chmod(0o600)
+
+    reopened = FeedbackSignalStore(path)
+    with pytest.raises(RuntimeError, match="feedback_token_key_(missing|invalid)"):
+        reopened.initialize()
+    reopened.close()
+
+
+def test_existing_store_rejects_overly_permissive_token_key(tmp_path) -> None:
+    """密钥文件出现 group/other 权限时不得继续使用。"""
+
+    path = tmp_path / "permissive-key.db"
+    store = FeedbackSignalStore(path)
+    store.initialize()
+    store.close()
+    Path(f"{path}.hmac.key").chmod(0o644)
+
+    reopened = FeedbackSignalStore(path)
+    with pytest.raises(RuntimeError, match="feedback_token_key_invalid"):
+        reopened.initialize()
+    reopened.close()
 
 
 def test_store_rolls_back_partial_batch_on_non_sql_error(tmp_path) -> None:
@@ -97,6 +174,101 @@ def test_store_replaces_and_rebuilds_aggregates_without_event_loss(tmp_path) -> 
     try:
         assert before == {"event_count": 1, "aggregate_count": 1}
         assert after == {"event_count": 1, "aggregate_count": 0}
+    finally:
+        store.close()
+
+
+def test_store_prunes_only_events_before_cutoff(tmp_path) -> None:
+    """保留期清理只删除 cutoff 之前的事件并保留边界后的事件。"""
+
+    store = FeedbackSignalStore(tmp_path / "retention.db")
+    store.initialize()
+    store.insert_events(
+        [
+            _event(
+                "expired-decision",
+                observed_at=datetime(2026, 7, 21, 10, tzinfo=timezone.utc),
+            ),
+            _event(
+                "current-decision",
+                observed_at=datetime(2026, 7, 21, 12, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+
+    deleted = store.delete_events_before(datetime(2026, 7, 21, 11, tzinfo=timezone.utc))
+
+    try:
+        assert deleted == 1
+        remaining = store.list_events()
+        assert [item.decision_key for item in remaining] == ["current-decision"]
+    finally:
+        store.close()
+
+
+def test_store_revokes_only_exact_anonymous_decision_domain(tmp_path) -> None:
+    """决策撤销必须同时匹配适配器、variant、scope 和 persona。"""
+
+    store = FeedbackSignalStore(tmp_path / "revoke.db")
+    store.initialize()
+    store.insert_events([_event("decision-a"), _event("decision-b")])
+
+    deleted = store.delete_decision_events(
+        adapter_kind=FeedbackAdapterKind.RETRIEVAL_RESULT,
+        decision_key="decision-a",
+        variant_key="document_route",
+        scope_domain="scope-synthetic",
+        persona_domain=None,
+    )
+
+    try:
+        assert deleted == 1
+        remaining = store.list_events()
+        assert [item.decision_key for item in remaining] == ["decision-b"]
+    finally:
+        store.close()
+
+
+def test_transactional_revoke_rolls_back_callback_failure(tmp_path) -> None:
+    """聚合构建失败时撤销、保留期清理和旧聚合必须一起回滚。"""
+
+    store = FeedbackSignalStore(tmp_path / "revoke-rollback.db")
+    store.initialize()
+    event = _event("decision-a")
+    store.insert_events([event])
+    aggregate = FeedbackSignalAggregate(
+        scope_domain="scope-synthetic",
+        persona_domain=None,
+        window_start=datetime(2026, 7, 21, 10, tzinfo=timezone.utc),
+        window_end=datetime(2026, 7, 21, 11, tzinfo=timezone.utc),
+        accepted_count=1,
+        independent_window_count=1,
+        decayed_support=1.0,
+        proposed_document_weight=0.7,
+        proposed_graph_weight=0.3,
+        delta_from_baseline=0.0,
+        status="baseline_retained",
+        policy_version=1,
+    )
+    store.replace_aggregates([aggregate])
+
+    def fail_build(_events):
+        raise RuntimeError("injected_rebuild_failure")
+
+    with pytest.raises(RuntimeError, match="injected_rebuild_failure"):
+        store.revoke_and_replace_aggregates(
+            adapter_kind=FeedbackAdapterKind.RETRIEVAL_RESULT,
+            decision_key="decision-a",
+            variant_key="document_route",
+            scope_domain="scope-synthetic",
+            persona_domain=None,
+            retention_cutoff=datetime(2026, 7, 20, tzinfo=timezone.utc),
+            aggregate_builder=fail_build,
+        )
+
+    try:
+        assert [item.decision_key for item in store.list_events()] == ["decision-a"]
+        assert store.safe_summary() == {"event_count": 1, "aggregate_count": 1}
     finally:
         store.close()
 

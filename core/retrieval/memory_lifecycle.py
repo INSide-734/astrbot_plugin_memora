@@ -12,6 +12,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..monitoring.memory_write_timing import measure_memory_write_stage
 from .bm25_retriever import BM25Retriever
 from .vector_retriever import VectorRetriever
 
@@ -71,10 +72,12 @@ class MemoryLifecycleManager:
             metadata["persona_id"] = None
 
         # 先写入向量库以获取 doc_id
-        doc_id = await self.vector_retriever.add_document(content, metadata)
+        with measure_memory_write_stage("document_vector"):
+            doc_id = await self.vector_retriever.add_document(content, metadata)
 
         # 使用同一个 doc_id 写入 BM25 索引
-        await self.bm25_retriever.add_document(doc_id, content, metadata)
+        with measure_memory_write_stage("fts"):
+            await self.bm25_retriever.add_document(doc_id, content, metadata)
 
         return doc_id
 
@@ -83,6 +86,7 @@ class MemoryLifecycleManager:
         doc_id: int,
         metadata: dict[str, Any],
         expected_revision: str | None = None,
+        advance_revision: bool = True,
     ) -> bool:
         """
         同步更新所有存储层的元数据
@@ -101,22 +105,29 @@ class MemoryLifecycleManager:
             doc_id: 文档 ID（整数）
             metadata: 新的元数据字典
             expected_revision: 可选的 source revision；提供时拒绝 stale writer
+            advance_revision: 是否推进 canonical source revision；运行态维护字段
+                更新时应设为 False。
 
         返回:
             是否更新成功。
         """
         try:
             # 更新 FAISS 向量库（会同步更新 DocumentStorage 中的 metadata）
+            update_kwargs: dict[str, Any] = {}
+            if not advance_revision:
+                update_kwargs["advance_revision"] = False
             if expected_revision is None:
                 vector_success = await self.vector_retriever.update_metadata(
                     doc_id,
                     metadata,
+                    **update_kwargs,
                 )
             else:
                 vector_success = await self.vector_retriever.update_metadata(
                     doc_id,
                     metadata,
                     expected_revision=expected_revision,
+                    **update_kwargs,
                 )
 
             if not vector_success:

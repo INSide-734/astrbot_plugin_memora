@@ -25,6 +25,7 @@ def _build_components(*, evolution_mode: str = "active"):
     )
     engine = MagicMock()
     engine.rebuild_graph_index = AsyncMock(return_value={"rebuilt": 3, "skipped": 0})
+    engine.note_proposal_pipeline = None
     manager = MagicMock()
     manager.mode = evolution_mode
     manager.rebuild_from_canonical = AsyncMock(

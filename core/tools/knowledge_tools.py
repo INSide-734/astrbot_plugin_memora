@@ -11,6 +11,8 @@ from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 from pydantic.dataclasses import dataclass
 
+from .agent_scope import resolve_agent_read_scope
+
 
 def _json_result(data: dict[str, Any]) -> str:
     """将工具结果稳定序列化为 JSON 文本。"""
@@ -62,6 +64,8 @@ class KnowledgeSearchTool(FunctionTool[AstrAgentContext]):
         limit: int = 10,
         category: str = "",
     ) -> ToolExecResult:
+        """在当前事件作用域中搜索可见的结构化知识。"""
+
         mgr = self.knowledge_manager
         if mgr is None:
             return _json_result(
@@ -72,9 +76,19 @@ class KnowledgeSearchTool(FunctionTool[AstrAgentContext]):
                     "error": "knowledge_manager not available",
                 }
             )
+        read_scope = resolve_agent_read_scope(context)
+        if read_scope is None:
+            return _json_result(
+                {"query": query, "count": 0, "results": [], "error": "scope_denied"}
+            )
 
         try:
-            entries, total = await mgr.search(query, limit=limit, category=category)
+            entries, total = await mgr.search_for_scope(
+                query,
+                scope_key=read_scope.session_id,
+                limit=limit,
+                category=category,
+            )
         except Exception:
             return _json_result(
                 {"query": query, "count": 0, "results": [], "error": "search_failed"}
@@ -134,6 +148,8 @@ class KnowledgeReadTool(FunctionTool[AstrAgentContext]):
         context: ContextWrapper[AstrAgentContext],
         entry_id: int = 0,
     ) -> ToolExecResult:
+        """在当前事件作用域中读取单条可见知识。"""
+
         mgr = self.knowledge_manager
         if mgr is None:
             return _json_result(
@@ -143,9 +159,17 @@ class KnowledgeReadTool(FunctionTool[AstrAgentContext]):
                     "error": "knowledge_manager not available",
                 }
             )
+        read_scope = resolve_agent_read_scope(context)
+        if read_scope is None:
+            return _json_result(
+                {"entry_id": entry_id, "found": False, "error": "scope_denied"}
+            )
 
         try:
-            entry = await mgr.get_entry(entry_id)
+            entry = await mgr.get_entry_for_scope(
+                entry_id,
+                scope_key=read_scope.session_id,
+            )
         except Exception:
             return _json_result(
                 {"entry_id": entry_id, "found": False, "error": "read_failed"}
@@ -165,7 +189,6 @@ class KnowledgeReadTool(FunctionTool[AstrAgentContext]):
                 else str(entry.category),
                 "confidence": entry.confidence,
                 "tags": entry.tags,
-                "source_ids": entry.source_ids,
                 "access_count": entry.access_count,
                 "created_at": entry.created_at,
                 "updated_at": entry.updated_at,

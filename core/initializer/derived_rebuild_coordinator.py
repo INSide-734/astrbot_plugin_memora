@@ -77,6 +77,16 @@ class DerivedRebuildCoordinator:
                 self._rebuild_evolution,
                 failure_reason="derived_rebuild_failed",
             )
+            stages["semantic_compression"] = await self._run_stage(
+                "semantic_compression",
+                self._rebuild_semantic_compression,
+                failure_reason="semantic_compression_rebuild_failed",
+            )
+            stages["notes"] = await self._run_stage(
+                "notes",
+                self._rebuild_notes,
+                failure_reason="note_rebuild_failed",
+            )
 
             failed_stages = [
                 name
@@ -227,6 +237,32 @@ class DerivedRebuildCoordinator:
                 "status": "skipped",
                 "success": True,
                 "reason_code": "evolution_rebuild_unavailable",
+            }
+        return await rebuild()
+
+    async def _rebuild_notes(self) -> dict[str, Any]:
+        """从 canonical source 幂等重建自动派生笔记。"""
+
+        pipeline = getattr(self.memory_engine, "note_proposal_pipeline", None)
+        rebuild = getattr(pipeline, "rebuild_from_canonical", None)
+        if not callable(rebuild):
+            return {
+                "status": "skipped",
+                "success": True,
+                "reason_code": "note_rebuild_unavailable",
+            }
+        return await rebuild()
+
+    async def _rebuild_semantic_compression(self) -> dict[str, Any]:
+        """从当前 canonical revision 幂等重建语义摘要 Projection。"""
+
+        compressor = vars(self.memory_engine).get("semantic_compressor")
+        rebuild = getattr(compressor, "rebuild_from_canonical", None)
+        if not callable(rebuild):
+            return {
+                "status": "skipped",
+                "success": True,
+                "reason_code": "semantic_compression_disabled",
             }
         return await rebuild()
 

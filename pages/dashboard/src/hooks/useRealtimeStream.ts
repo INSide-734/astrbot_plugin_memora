@@ -16,6 +16,57 @@ interface RealtimeState {
 const MAX_EVENTS = 50;
 const RECONNECT_DELAY_MS = 5000;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function decodeJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function parseStreamEvent(input: unknown): StreamEvent | null {
+  let payload = input;
+  let rawFallback: unknown;
+  if (isRecord(input) && ("parsed" in input || "raw" in input)) {
+    payload = input.parsed;
+    rawFallback = input.raw;
+  }
+
+  payload = decodeJson(payload);
+  if (!isRecord(payload) && rawFallback !== undefined) {
+    payload = decodeJson(rawFallback);
+  }
+  if (!isRecord(payload)) return null;
+
+  const { event, data, ts } = payload;
+  if (
+    typeof event !== "string"
+    || !event
+    || !isRecord(data)
+    || typeof ts !== "number"
+    || !Number.isFinite(ts)
+  ) {
+    return null;
+  }
+  return { event, data, ts };
+}
+
+async function unsubscribeSafely(
+  bridge: AstrBotPluginPageBridge,
+  subscriptionId: string,
+): Promise<void> {
+  try {
+    await bridge.unsubscribeSSE(subscriptionId);
+  } catch {
+    // 已失效的宿主订阅不应阻塞重连或页面卸载。
+  }
+}
+
 export function useRealtimeStream() {
   const [state, setState] = useState<RealtimeState>({
     connected: false,
@@ -25,107 +76,115 @@ export function useRealtimeStream() {
   });
   const subIdRef = useRef<string | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const mountedRef = useRef(true);
+  const mountedRef = useRef(false);
+  const attemptRef = useRef(0);
 
   const clearReconnectTimer = useCallback(() => {
-    if (reconnectTimerRef.current) {
+    if (reconnectTimerRef.current !== null) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
   }, []);
 
-  const connect = useCallback(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const bridge = (window as any).AstrBotPluginPage as
-      | {
-          subscribeSSE?: (
-            endpoint: string,
-            handlers: { onMessage?: (data: string) => void; onError?: (e: Error) => void; onClose?: () => void },
-            params?: Record<string, string>
-          ) => string;
-          unsubscribeSSE?: (id: string) => void;
-        }
-      | undefined;
+  const connect = useCallback(async () => {
+    clearReconnectTimer();
+    const attempt = ++attemptRef.current;
+    const bridge = window.AstrBotPluginPage as AstrBotPluginPageBridge | undefined;
+
+    const scheduleReconnect = () => {
+      clearReconnectTimer();
+      if (mountedRef.current) {
+        reconnectTimerRef.current = setTimeout(() => {
+          void connect();
+        }, RECONNECT_DELAY_MS);
+      }
+    };
 
     if (!bridge?.subscribeSSE) {
-      // Bridge not available — retry after delay
-      if (mountedRef.current) {
-        reconnectTimerRef.current = setTimeout(connect, RECONNECT_DELAY_MS);
-      }
+      scheduleReconnect();
       return;
     }
 
-    // Unsubscribe any existing subscription
-    if (subIdRef.current && bridge.unsubscribeSSE) {
-      bridge.unsubscribeSSE(subIdRef.current);
+    if (subIdRef.current) {
+      const previousId = subIdRef.current;
       subIdRef.current = null;
+      await unsubscribeSafely(bridge, previousId);
+      if (!mountedRef.current || attemptRef.current !== attempt) return;
     }
 
+    const handleFailure = () => {
+      if (!mountedRef.current || attemptRef.current !== attempt) return;
+      attemptRef.current += 1;
+      setState((prev) => ({ ...prev, connected: false }));
+      const subscriptionId = subIdRef.current;
+      subIdRef.current = null;
+      if (subscriptionId) {
+        void unsubscribeSafely(bridge, subscriptionId);
+      }
+      scheduleReconnect();
+    };
+
     try {
-      subIdRef.current = bridge.subscribeSSE(
-        "realtime/stream",  // relative endpoint — bridge handles proxying
+      let subscriptionReady = false;
+      const subscriptionId = await bridge.subscribeSSE(
+        "realtime/stream",
         {
-          onMessage: (rawData: string) => {
-            if (!mountedRef.current) return;
-            try {
-              const payload = JSON.parse(rawData) as StreamEvent;
-              setState((prev) => {
-                const events = [payload, ...prev.events].slice(0, MAX_EVENTS);
-                return {
-                  ...prev,
-                  connected: true,
-                  events,
-                  lastEvent: payload,
-                  unreadCount: prev.unreadCount + 1,
-                };
-              });
-            } catch {
-              // ignore parse errors (heartbeat comments are not JSON)
-            }
+          onOpen: () => {
+            if (!subscriptionReady) return;
+            if (!mountedRef.current || attemptRef.current !== attempt) return;
+            setState((prev) => ({ ...prev, connected: true }));
           },
-          onError: () => {
-            if (!mountedRef.current) return;
-            setState((prev) => ({ ...prev, connected: false }));
-            // Clean up and schedule reconnect
-            if (subIdRef.current && bridge.unsubscribeSSE) {
-              bridge.unsubscribeSSE(subIdRef.current);
-              subIdRef.current = null;
-            }
-            clearReconnectTimer();
-            reconnectTimerRef.current = setTimeout(connect, RECONNECT_DELAY_MS);
+          onMessage: (event: SseEvent) => {
+            if (!mountedRef.current || attemptRef.current !== attempt) return;
+            const payload = parseStreamEvent(event);
+            if (!payload) return;
+            setState((prev) => {
+              const events = [payload, ...prev.events].slice(0, MAX_EVENTS);
+              return {
+                ...prev,
+                connected: true,
+                events,
+                lastEvent: payload,
+                unreadCount: prev.unreadCount + 1,
+              };
+            });
           },
-          onClose: () => {
-            if (!mountedRef.current) return;
-            setState((prev) => ({ ...prev, connected: false }));
-          },
-        }
+          onError: handleFailure,
+        },
       );
 
-      // Mark as connected once subscription is created
+      if (!mountedRef.current || attemptRef.current !== attempt) {
+        await unsubscribeSafely(bridge, subscriptionId);
+        return;
+      }
+      if (typeof subscriptionId !== "string" || !subscriptionId) {
+        throw new Error("AstrBot bridge returned an invalid SSE subscription ID");
+      }
+      subIdRef.current = subscriptionId;
+      subscriptionReady = true;
       setState((prev) => ({ ...prev, connected: true }));
     } catch {
-      // Subscription failed — retry
-      if (mountedRef.current) {
-        reconnectTimerRef.current = setTimeout(connect, RECONNECT_DELAY_MS);
-      }
+      if (!mountedRef.current || attemptRef.current !== attempt) return;
+      setState((prev) => ({ ...prev, connected: false }));
+      scheduleReconnect();
     }
   }, [clearReconnectTimer]);
 
   useEffect(() => {
     mountedRef.current = true;
-    // Delay initial connection to let bridge initialize
-    const initTimer = setTimeout(connect, 500);
+    // 给宿主桥接留出初始化时间。
+    const initTimer = setTimeout(() => {
+      void connect();
+    }, 500);
 
     return () => {
       mountedRef.current = false;
+      attemptRef.current += 1;
       clearTimeout(initTimer);
       clearReconnectTimer();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const bridge = (window as any).AstrBotPluginPage as
-        | { unsubscribeSSE?: (id: string) => void }
-        | undefined;
-      if (subIdRef.current && bridge?.unsubscribeSSE) {
-        bridge.unsubscribeSSE(subIdRef.current);
+      const bridge = window.AstrBotPluginPage as AstrBotPluginPageBridge | undefined;
+      if (subIdRef.current && bridge) {
+        void unsubscribeSafely(bridge, subIdRef.current);
         subIdRef.current = null;
       }
     };

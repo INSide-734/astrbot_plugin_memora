@@ -29,6 +29,7 @@ import {
   openEvaluationReportForSmoke,
 } from "./evaluation_smoke_helpers.mjs";
 import { recallTracePayload } from "./recall_trace_smoke_fixture.mjs";
+import { reconsolidationSmokePayload } from "./reconsolidation_smoke_fixture.mjs";
 
 const dashboardRoot = process.cwd();
 const htmlPath = path.join(dashboardRoot, "index.html");
@@ -605,6 +606,8 @@ function bridgePayload(endpoint, params = {}, method = "GET") {
   const pathOnly = String(endpoint || "").replace(/^page\/?/, "");
   const configResponse = configSmokeFixture.handle(method, pathOnly, params);
   if (configResponse !== undefined) return configResponse;
+  const reconsolidationResponse = reconsolidationSmokePayload(method, pathOnly, params);
+  if (reconsolidationResponse !== undefined) return reconsolidationResponse;
   if (pathOnly === "injection-strategy/catalog") return injectionCatalogPayload();
   if (pathOnly === "injection-strategy/summary") return injectionSummaryPayload(params);
   if (pathOnly === "injection-strategy/decisions") return injectionDecisionPagePayload(params);
@@ -769,14 +772,36 @@ function bridgePayload(endpoint, params = {}, method = "GET") {
   if (pathOnly === "notes") return { notes: [{ id: 1, title: "Smoke note" }], total: 1, active_count: 1 };
   if (pathOnly === "learning/status") {
     return {
-      hit_rate: 0.83,
-      avg_quality: 0.812,
-      total_trials: 18,
-      total_corrections: 4,
-      parameters: { retrieval_weight: 0.8, style_bias: 0.35 },
-      history: [
-        { timestamp: "2026-07-12T08:30:00Z", action: "adjusted", detail: "Raised retrieval weight" },
-        { timestamp: "2026-07-12T08:00:00Z", action: "reviewed", detail: "Validated style preference" },
+      enabled: true,
+      available: true,
+      candidate_count: 2,
+      ready_count: 1,
+      rejected_count: 1,
+      published_count: 0,
+      reasons: ["candidate", "insufficient_evidence"],
+      current: { document_route_weight: 0.61, graph_route_weight: 0.39 },
+      baseline: { document_route_weight: 0.65, graph_route_weight: 0.35 },
+      candidates: [
+        {
+          proposed_document_weight: 0.69,
+          proposed_graph_weight: 0.31,
+          delta_from_baseline: 0.04,
+          accepted_count: 6,
+          independent_window_count: 3,
+          decayed_support: 0.82,
+          status: "ready_for_review",
+          reason_code: "candidate",
+        },
+        {
+          proposed_document_weight: 0.65,
+          proposed_graph_weight: 0.35,
+          delta_from_baseline: 0,
+          accepted_count: 1,
+          independent_window_count: 1,
+          decayed_support: 0.2,
+          status: "rejected",
+          reason_code: "insufficient_evidence",
+        },
       ],
     };
   }
@@ -2086,7 +2111,17 @@ async function openBundledConfigPage(
   return { context, page };
 }
 
+/**
+ * 等待配置页完整渲染并核对权威 Schema 的浏览器契约。
+ *
+ * @param {import("playwright").Page} page Playwright 页面实例。
+ * @param {string} label 用于失败诊断的场景标签。
+ * @returns {Promise<{sections: number, fields: number, hasIndexManagement: boolean, text: string}>}
+ *   返回稳定后的配置域、字段数量及已删除配置域的可见性。
+ */
 async function waitForConfigReady(page, label) {
+  const expectedSections = 41;
+  const expectedFields = 227;
   await waitForRootText(
     page,
     ["配置", "单次召回数量", "recall_engine.top_k", "已同步"],
@@ -2096,12 +2131,15 @@ async function waitForConfigReady(page, label) {
     ({ sections, fields }) =>
       document.querySelectorAll("[data-config-section]").length === sections
       && document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length === fields,
-    { sections: 45, fields: 239 },
+      { sections: expectedSections, fields: expectedFields },
     { timeout: 10_000 },
   );
   const counts = await page.evaluate(() => ({
     sections: document.querySelectorAll("[data-config-section]").length,
     fields: document.querySelectorAll('[data-slot="page-frame"] [data-slot="field"]').length,
+    hasIndexManagement: Array.from(document.querySelectorAll("code")).some((element) =>
+      element.textContent?.includes("index_management"),
+    ),
     text: document.querySelector("#root")?.innerText ?? "",
   }));
   const lingeringLoading = [
@@ -2110,11 +2148,17 @@ async function waitForConfigReady(page, label) {
     "Loading configuration",
     "Загрузка конфигурации",
   ].filter((text) => counts.text.includes(text));
-  if (counts.sections !== 45 || counts.fields !== 239 || lingeringLoading.length > 0) {
+  if (
+    counts.sections !== expectedSections
+    || counts.fields !== expectedFields
+    || counts.hasIndexManagement
+    || lingeringLoading.length > 0
+  ) {
     throw new Error(
       `${label} did not render the complete settled schema: ${JSON.stringify({
         sections: counts.sections,
         fields: counts.fields,
+        hasIndexManagement: counts.hasIndexManagement,
         lingeringLoading,
       })}`,
     );
@@ -3070,7 +3114,7 @@ try {
     [
       "复核队列",
       "reviewQueue",
-      ["复核队列", "mem-smoke-duplicate", "duplicate", "重复记忆"],
+      ["再巩固候选", "recon-smoke-pending", "修正用户近期工作地点偏好", "复核队列", "mem-smoke-duplicate", "duplicate", "重复记忆"],
       "intelligence-review.png",
     ],
   ];
@@ -3144,7 +3188,7 @@ try {
 
   const wideRoutes = [
     ["#/preview", ["数据预览", "记忆增长", "记忆构成", "模块资产", "group-smoke-primary"], "wide-preview.png", "wide-preview"],
-    ["#/learning", ["自主学习", "83.0%", "retrieval_weight", "Formal greeting"], "wide-learning.png", "wide-learning"],
+    ["#/learning", ["自主学习", "当前运行时权重", "Shadow 候选", "Formal greeting"], "wide-learning.png", "wide-learning"],
     ["#/affection", ["好感度与情绪", "开心", "群聊今天的氛围很积极。", "所有好感用户"], "wide-affection.png", "wide-affection"],
     ["#/social", ["社交关系", "alice", "bob", "pair", "project"], "wide-social.png", "wide-social"],
     ["#/profiles", ["用户画像", "Profile smoke 1", "Profile smoke 8"], "wide-profiles-table.png", "wide-profiles-table"],
@@ -3194,7 +3238,7 @@ try {
     page,
     "自主学习",
     "#/learning",
-    ["自主学习", "命中率", "学习参数", "表达模式"],
+    ["自主学习", "当前运行时权重", "Shadow 候选", "表达模式"],
   );
 
   await page.evaluate(() => {

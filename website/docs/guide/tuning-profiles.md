@@ -20,6 +20,14 @@ Memora 没有一个能够同时切换全部行为的总开关。要让插件整�
 | `balanced` | 默认不执行额外 LLM 调用，但允许管理员逐项放行。 |
 | `quality` | 允许 LLM 重排序、两阶段话题分割等高成本路径，但仍受每轮调用上限约束。 |
 
+#### 请求级额度如何计算
+
+成本模式只决定某项功能能否尝试；`cost_control.max_extra_llm_calls_per_turn` 再限制同一轮请求实际可使用的额外 Provider 调用总数。两道门必须同时通过。
+
+计入额度的能力包括 LLM 查询改写、LLM 重排、Strategy D 第一阶段、persona interpretation，以及 Strategy C/D 切出多个反思批次后的第 2 批及后续批次。基础反思抽取负责 canonical 记忆写入，不计入额外额度；额度不足时，剩余反思批次会合并回基础调用，不会静默丢弃消息。
+
+reservation 在 Provider 成功返回后提交；即使返回内容无法解析，该次调用也已经消耗额度。Provider 普通失败或任务取消会释放未提交 reservation。`max_reflection_parallel_llm_calls` 只限制瞬时并发，不能替代每轮总额度。
+
 ### 注入预设
 
 `recall_engine.injection_*_preset` 管理每次请求最终交给模型的记忆数量与详细度：
@@ -91,7 +99,7 @@ Memora 没有一个能够同时切换全部行为的总开关。要让插件整�
 | `reranker.enabled` | `true` | 对融合后的候选执行最终排序。 |
 | `reranker.strategy` | `hybrid` | 先用向量缩小候选，再交给 LLM 精排。 |
 
-`hybrid` 重排序需要向量访问能力和同步文本生成能力；能力不足时运行时会安全降级为 MMR。若 Provider 延迟较高，可先使用 `cross_encoder`，它不执行 LLM 精排。
+`hybrid` 重排序需要向量访问能力和同步文本生成能力；能力不足时运行时会安全降级为 MMR。若 Provider 延迟较高，可先使用 `embedding_similarity`，它只执行 Embedding 调用或本地向量计算，不执行 Cross-Encoder 联合推理或 LLM 精排。
 
 ### 可选增强
 
@@ -99,7 +107,7 @@ Memora 没有一个能够同时切换全部行为的总开关。要让插件整�
 
 - 将 `graph_memory.expansion_hops` 从 `1` 调到 `2`，提高间接关系召回；二跳候选仍受 `second_hop_weight` 衰减。
 - 保持 `recall_engine.max_chain_hops=3`，并继续启用图边与话题扩展。
-- 只有混合话题分割持续不理想时，才把 `topic_segmentation.strategy` 改为 `strategy_d`，并同时设置 `cost_control.allow_llm_topic_strategy_d=true`。Strategy D 会产生多次 LLM 调用。
+- 只有混合话题分割持续不理想时，才把 `topic_segmentation.strategy` 改为 `strategy_d`，并同时设置 `cost_control.allow_llm_topic_strategy_d=true`。Strategy D 第一阶段占用一个额外额度；若切出多个反思批次，第 2 批及后续批次继续共享本轮剩余额度。
 - 需要派生关系时，先启用 `memory_evolution.enabled=true` 并使用 `readonly` 模式观察；确认派生质量和复核流程后再评估 `active`。
 
 ::: danger 不要只设置 `mode=quality`

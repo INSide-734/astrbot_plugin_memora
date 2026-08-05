@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { apiGet, unwrapApiData } from "@/lib/bridge";
 import { useI18n } from "@/hooks/useI18n";
 import type { MemoryItem } from "@/types";
-import { Clock, Calendar } from "lucide-react";
+import { Calendar, Clock, RefreshCw } from "lucide-react";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { Button } from "@/components/ui/Button";
 import { selectionStateVariants } from "@/components/ui/selection-state";
@@ -86,23 +86,34 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
   return (
     <PageFrame variant="standard">
       <PageHeader title={t("nav.timeline")} icon={<Clock size={20} />} actions={
-        <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
-          {zoomLabels.map(([z, label]) => (
-            <Button
-              key={z}
-              variant={zoom === z ? "default" : "ghost"}
-              size="sm"
-              onClick={() => setZoom(z)}
-            >
-              {label}
-            </Button>
-          ))}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={() => void loadMemories()}
+          >
+            <RefreshCw data-icon="inline-start" className={loading ? "animate-spin" : undefined} />
+            {t("common.refresh")}
+          </Button>
+          <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+            {zoomLabels.map(([z, label]) => (
+              <Button
+                key={z}
+                variant={zoom === z ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setZoom(z)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
         </div>}
       />
       <PageContent className="flex flex-col overflow-hidden p-0 sm:p-0 lg:p-0">
 
       <div className="flex-1 overflow-auto">
-        {loading ? (
+        {loading && memories.length === 0 ? (
           <div className="flex h-full items-center justify-center text-muted-foreground animate-pulse-soft">
             {t("timeline.loading")}
           </div>
@@ -112,13 +123,12 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
             <p className="text-sm">{t("timeline.empty")}</p>
           </div>
         ) : (
-          <div className="relative pl-8 pr-6 py-6">
-            <div className="absolute bottom-0 left-[23px] top-0 w-px bg-border" />
-            <div className="space-y-6">
+          <div className="timeline-rail">
+            <div className="timeline-rail-list">
               {filtered.map((mem) => (
-                <div key={mem.id} className="relative">
+                <div key={mem.id} className="timeline-rail-item">
                   <div
-                    className="absolute left-[-21px] top-2 w-3 h-3 rounded-full border-2 border-[var(--color-surface)] z-10"
+                    className="timeline-rail-marker"
                     style={{ backgroundColor: getImportanceColor(mem.importance ?? 0.5) }}
                   />
                   <button
@@ -127,34 +137,26 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
                     aria-controls={timelineDetailId(mem.id)}
                     onClick={() => setSelectedId(selectedId === mem.id ? null : mem.id)}
                     className={cn(
-                      "block w-full cursor-pointer rounded-lg border border-border bg-card p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      selectionStateVariants({
-                        kind: "current-item",
-                        selected: selectedId === mem.id,
-                      }),
-                      selectedId !== mem.id && "hover:border-foreground/20 card-hover",
+                      "timeline-memory-card block w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      selectionStateVariants({ kind: "current-item", selected: selectedId === mem.id }),
                     )}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="line-clamp-2 text-sm font-medium text-foreground">
-                          {getMemoryText(mem)}
-                        </p>
-                        {selectedId === mem.id && (
-                          <div id={timelineDetailId(mem.id)} className="mt-3 space-y-2 border-t pt-3">
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                              <span className="text-muted-foreground">{t("table.importance")}</span>
-                              <span className="text-foreground">{formatDashboardNumber(mem.importance ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                              <span className="text-muted-foreground">{t("table.type")}</span>
-                              <span className="text-foreground">{mem.type ? translateEnum(t, "memory.type", mem.type) : "—"}</span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {formatDate(parseTimestamp(mem))}
-                      </span>
+                    <div className="mb-1.5 flex items-center gap-3">
+                      <span className="text-xs text-muted-foreground">{formatDate(parseTimestamp(mem))}</span>
                     </div>
+                    <p className="line-clamp-2 text-sm font-medium leading-5 text-foreground">
+                      {getMemoryText(mem)}
+                    </p>
+                    {selectedId === mem.id && (
+                      <div id={timelineDetailId(mem.id)} className="mt-3 border-t pt-3">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                          <span className="text-muted-foreground">{t("table.importance")}</span>
+                          <span className="text-foreground">{formatDashboardNumber(mem.importance ?? 0, locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <span className="text-muted-foreground">{t("table.type")}</span>
+                          <span className="text-foreground">{mem.type ? translateEnum(t, "memory.type", mem.type) : "—"}</span>
+                        </div>
+                      </div>
+                    )}
                   </button>
                 </div>
               ))}

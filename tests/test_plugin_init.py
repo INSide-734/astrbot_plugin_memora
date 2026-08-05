@@ -264,6 +264,8 @@ class TestPluginInitializerConstruction:
         assert init.graph_db is None
         assert init.memory_engine is None
         assert init.memory_processor is None
+        assert init.memory_quarantine_store is None
+        assert init.memory_quality_gate is None
         assert init.conversation_manager is None
         assert init.index_validator is None
         assert init.decay_scheduler is None
@@ -904,6 +906,7 @@ class TestMemoraPluginReady:
         plugin.initializer.memory_engine = MagicMock()
         plugin.initializer.memory_processor = MagicMock()
         plugin.initializer.conversation_manager = MagicMock()
+        plugin.initializer.memory_quality_gate = MagicMock()
         plugin.initializer.index_validator = MagicMock()
         plugin.initializer.backfill_scheduler = MagicMock()
         plugin.initializer.jargon_filter = None
@@ -1462,12 +1465,16 @@ class TestInjectionDecisionLifecycle:
         store = MagicMock()
         recorder = MagicMock()
         memory_processor = MagicMock()
+        quarantine_store = MagicMock()
+        quality_gate = MagicMock()
         initializer._component_factory.build_all = AsyncMock(
             return_value={
                 "db": MagicMock(),
                 "graph_db": None,
                 "memory_engine": MagicMock(),
                 "memory_processor": memory_processor,
+                "memory_quarantine_store": quarantine_store,
+                "memory_quality_gate": quality_gate,
                 "conversation_manager": MagicMock(),
                 "index_validator": MagicMock(),
                 "decay_scheduler": None,
@@ -1495,6 +1502,8 @@ class TestInjectionDecisionLifecycle:
             "database",
             "memory_engine",
             "memory_processor",
+            "memory_quarantine_store",
+            "memory_quality_gate",
             "conversation_manager",
             "index_validator",
             "injection_store",
@@ -1517,12 +1526,16 @@ class TestInjectionDecisionLifecycle:
         store = MagicMock()
         store.close = AsyncMock()
         memory_processor = MagicMock()
+        quarantine_store = MagicMock()
+        quality_gate = MagicMock()
         initializer._component_factory.build_all = AsyncMock(
             return_value={
                 "db": MagicMock(),
                 "graph_db": None,
                 "memory_engine": MagicMock(),
                 "memory_processor": memory_processor,
+                "memory_quarantine_store": quarantine_store,
+                "memory_quality_gate": quality_gate,
                 "conversation_manager": MagicMock(),
                 "index_validator": MagicMock(),
                 "decay_scheduler": None,
@@ -1560,12 +1573,16 @@ class TestInjectionDecisionLifecycle:
         store = MagicMock()
         store.close = AsyncMock(side_effect=RuntimeError("store cleanup failed"))
         memory_processor = MagicMock()
+        quarantine_store = MagicMock()
+        quality_gate = MagicMock()
         initializer._component_factory.build_all = AsyncMock(
             return_value={
                 "db": MagicMock(),
                 "graph_db": None,
                 "memory_engine": MagicMock(),
                 "memory_processor": memory_processor,
+                "memory_quarantine_store": quarantine_store,
+                "memory_quality_gate": quality_gate,
                 "conversation_manager": MagicMock(),
                 "index_validator": MagicMock(),
                 "decay_scheduler": None,
@@ -1666,6 +1683,9 @@ class TestMemoraInjectionLifecycle:
                 is plugin.initializer.injection_decision_recorder
             )
             assert kwargs["memory_tool_available"] is True
+            assert (
+                kwargs["memory_quality_gate"] is plugin.initializer.memory_quality_gate
+            )
             return event_handler
 
         with patch.object(module, "EventHandler", side_effect=build_event_handler):
@@ -1692,6 +1712,7 @@ class TestMemoraInjectionLifecycle:
         plugin.initializer.memory_engine = MagicMock()
         plugin.initializer.memory_processor = MagicMock()
         plugin.initializer.conversation_manager = MagicMock()
+        plugin.initializer.memory_quality_gate = MagicMock()
         plugin.initializer.injection_decision_recorder = MagicMock()
         plugin._llm_tools_registered = False
         plugin.config_manager.get = MagicMock(
@@ -1725,6 +1746,14 @@ class TestMemoraInjectionLifecycle:
         assert plugin.event_handler is event_handler
         assert plugin.command_handler is command_handler
         assert event_handler_type.call_args.kwargs["memory_tool_available"] is False
+        assert (
+            event_handler_type.call_args.kwargs["memory_quality_gate"]
+            is plugin.initializer.memory_quality_gate
+        )
+        assert (
+            command_handler_type.call_args.kwargs["memory_quality_gate"]
+            is plugin.initializer.memory_quality_gate
+        )
         memory_tool_type.assert_called_once()
         plugin.context.add_llm_tools.assert_not_called()
         command_handler_type.assert_called_once()
@@ -1761,3 +1790,5 @@ class TestMemoryEvolutionLifecycle:
         components = snapshot["components_ready"]
         assert components["memory_evolution_store"] is False
         assert components["memory_evolution_manager"] is False
+        assert components["memory_quarantine_store"] is False
+        assert components["memory_quality_gate"] is False

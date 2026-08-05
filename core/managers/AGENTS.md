@@ -9,7 +9,7 @@
 
 `core/managers/` 是业务生命周期与编排层。它把 SQLite 文档表、BM25、FAISS、记忆原子和图记忆组合成统一的 `MemoryEngine`，并提供会话、画像、知识、笔记、备份、导入导出、衰减、写故障恢复及 Memory Evolution 后台演化服务。
 
-`feedback_signal_manager.py` 只管理隔离评测 Store 中的可信反馈事件、限流、时间衰减和候选聚合；不得调用 `MABWeightLearner`、`AutoLearningManager`、`update_memory()` 或修改生产检索权重。
+`feedback_signal_manager.py` 只管理隔离评测 Store 中的可信反馈事件、限流、时间衰减和候选聚合；`auto_learning.py` 只从该聚合生成 shadow 候选并通过单一 CAS 写入口发布，不得直接修改生产检索权重或调用 `update_memory()`。
 
 本层负责“何时、按什么顺序、失败后如何补偿”；底层表 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，候选召回和排序属于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)，定时触发属于 [`core/schedulers/AGENTS.md`](../schedulers/AGENTS.md)。Memory Evolution 的关系/Projection 事务和 revision 校验由 manager 编排，具体 SQLite 表访问仍属于 storage。
 
@@ -57,12 +57,12 @@ graph TD
 
 `memory_engine_lifecycle.py` 的实际顺序是：
 
-1. `aiosqlite.connect`，设置 `Row` 与共享 PRAGMA，注册 `ConnectionRegistry`。
-2. `SchemaManager.create_tables()`，同时创建 `memory_write_ops`。
+1. `aiosqlite.connect`，设置 `Row` 与共享 PRAGMA；此时尚不注册可重连连接。
+2. `SchemaMigrationCoordinator` 只读检查版本；fresh install 直接建当前结构，旧库按 `migration_settings` 决定阻断或先创建 `pre_migration` 快照再迁移，同时创建 `memory_write_ops`。迁移成功后才注册可重连连接。
 3. 构建 `TextProcessor → BM25Retriever → VectorRetriever → HybridRetriever`。
 4. 仅在 `graph_enabled` 且存在 `graph_vector_db` 时构建 `GraphStore`、`AtomStore`、层级存储、图双路检索和 `GraphMemoryManager`。
 5. 可选执行 `WriteOpJournal.repair_incomplete()`。
-6. 按配置构建画像、知识、笔记、自动学习、性格追踪、重排序器等；高成本 `llm`/`hybrid` 重排可能由成本控制降级为 `mmr`。
+6. 按配置构建画像、知识、笔记、自动学习、性格追踪、重排序器等；复用工厂注入的 typed `CostControl`，高成本 `llm`/`hybrid` 重排未通过功能门时降级为 `mmr`，成功创建的实例写回 `MemoryEngine.reranker` 并传给图双路检索器。
 7. 图路可用时构建 `DualRouteRetriever`，最后创建 `RealtimeSSE`。
 8. 若注入了 `projection_reader`，`MemoryEngine` 只把它作为召回阶段的派生注解读取器；它不改变 canonical 写入和整数 `doc_id` 语义。
 
@@ -99,16 +99,32 @@ sequenceDiagram
 - 原子批量失败后逐条补写，仅仍失败的原子进入修复载荷。图失败不撤销已建文档，而是标记修复。
 - 删除先调用 `HybridRetriever.delete_memory()`；随后图或原子清理失败不会把主删除改成失败，但日志保留 `needs_repair`。
 - `WriteOpJournal.start_op()` 失败时可能返回 `None`；业务路径仍继续，因此不能把日志存在等同于事务已保证。
+- `MemoryEngineProfileHooksMixin` 只在 canonical add 成功后创建受跟踪画像任务；
+  `ProfileProposalPipeline` 重新读取 source 并校验稳定身份、revision、scope 和 privacy。
+  自动标签/偏好携带 derived provenance，普通失败隔离主写，取消必须传播。画像 Store
+  读取时过滤失效来源；偏好是整份 provenance 快照，已有 manual 来源时自动 proposal
+整体让位，不能覆盖人工字段。
+- `MemoryEngineKnowledgeHooksMixin` 只在 canonical add 成功后创建受跟踪知识任务；
+  `KnowledgeProposalPipeline` 先执行重要性/置信度/稳定状态门和 `knowledge_extraction`
+  额外预算门，再二次校验 source revision、scope、privacy。知识条目携带不含正文的
+  derived provenance，人工条目优先，普通失败隔离主写，取消必须传播；Knowledge Store
+  读取时过滤失效来源，自动知识不进入被动召回。
+- `MemoryEngineDomainHooksMixin` 统一调度画像、知识和笔记写后任务；其中自动笔记只消费达到
+  `notes.auto_create_min_length` 的 canonical source。`NoteProposalPipeline` 在预算允许时调用
+  `NoteGenerator`，否则使用确定性 fallback，并在写前二次校验 revision/scope/privacy。
+  `NoteStore` 按完整 provenance 事务幂等，人工笔记与版本不被自动重建覆盖；source 失效后
+  derived note 不可见但版本历史保留，统一重建的 notes 阶段不调用 Provider。
 
 ## Memory Evolution 生命周期与安全边界
 
 `memory_evolution_gate.py`、`memory_evolution_manager.py` 负责 canonical 写入后的派生演化，不替代 `MemoryEngine` 的主写路径：
 
 - `MemoryEvolutionGate` 仅基于 source revision、scope、topic/entity 信号、阈值、去抖桶和待处理上限生成稳定 idempotency key；`enabled=false` 或非法 mode 必须返回 `mode_disabled`。
-- `MemoryEvolutionManager.schedule_consider()` 只在 canonical 写入成功后入队，并把创建时 source revision 写入 job provenance。worker 以单任务循环领取 job，持有可续租 lease；领取后先核对 job revision，stale job 进入 invalidated；取消会恢复 pending，普通异常按指数退避重试，超过 `max_attempts` 进入 dead，proposal 规则拒绝进入 rejected。
+- `MemoryEvolutionManager.schedule_consider()` 只在 canonical 写入成功后入队；Store 在 SQL 限流前按同 scope 选择最多 6 条近期 source，并把创建时全部 revision 写入 job provenance，其他 scope 的新记录不能挤掉同 scope 证据。worker 以单任务循环领取 job，持有可续租 lease；领取后先核对 job revision，stale job 进入 invalidated；取消会恢复 pending，普通异常按指数退避重试，超过 `max_attempts` 进入 dead，proposal 规则拒绝进入 rejected。
 - `MemoryEngine` 在 canonical add/语义 metadata update 提交后统一重载 source 并调度；`ReflectionHandler` 仍覆盖反思链兼容调度，重复触发由稳定 idempotency key 去重。派生计划写入 `origin_job_id`，启动时先做 orphan/stale cleanup；回滚 job 只能失效自身派生对象，不能删除 canonical。
-- 处理 proposal 时必须先读取 source，再在应用前重新读取并比较每个 source 的 revision；source 缺失、scope 不一致、alias 未知、自关系、重复/成环边、冲突 Projection 少于三类角色均拒绝，不能污染派生表。
-- 关系按低/高影响分类：低影响且达到阈值的允许按配置自动 `active`，高影响默认 `candidate` 并要求复核；Projection 共享 scope，privacy 取所有 source 中最严格值，状态由置信度和冲突类型决定。
+- 处理 proposal 时先运行本地 `MemoryEvolutionCandidateGenerator`：episode/conflict 候选非空时不调用 LLM，只有确定性候选为空才回退 Consolidator。随后必须再次读取 source 并比较每个 revision；source 缺失、scope 不一致、alias 未知、自关系、重复/成环边、冲突 Projection 少于三类角色均拒绝，不能污染派生表。
+- 关系按低/高影响分类：低影响且达到阈值的允许按配置自动 `active`，`updates`/`contradicts`/`preference_change`/`supersedes` 始终是 `candidate`。高影响 relation 的 approve/reject/replay 使用候选 revision CAS；approve/replay 再次验证 canonical source，后台重复 proposal 不得覆盖人工 rejected 状态。Projection 共享 scope，privacy 取所有 source 中最严格值，状态由置信度和冲突类型决定。
+- `SemanticCompressor` 只读取达到年龄门槛的 canonical source，按完全相同的 scope/privacy/role 分区并以 topic Jaccard 聚类；摘要通过 `apply_projection_proposal()` 二次核对全部 source revision 后写入 `semantic_summary`，不得调用 canonical add/delete。扫描普通失败只降级当前维护项，取消必须传播。
 - Relation/Projection 是 SQLite 中的派生解释平面；稳定 ID 由 source memory ID、revision 和类型计算，但不创建第二套 canonical memory 或向量索引。更新/删除 canonical 后由 Store 的 revision invalidation 隔离旧派生结果。
 - `get_status_snapshot()` 只能返回模式、计数、reason code 和延迟桶等 allowlist 标量；不得把 query、prompt、正文、原始身份、source ID 列表或 provider 信息写入日志/指标。
 
@@ -117,6 +133,8 @@ sequenceDiagram
 - `write_coordinator.py` 的模块级 `asyncio.Lock` 串行化协调写入；锁冲突可指数退避并加随机抖动，连接坏死由 `ConnectionRegistry` 重连。
 - `coordinated_transaction()` 使用 `BEGIN IMMEDIATE`，异常必须 rollback，取消也必须继续上抛。
 - `SchemaManager` 只对白名单 `doc_id`、`created_at`、`updated_at` 做动态列迁移，并安全引用标识符；动态 SQL 不得接收未白名单化的外部表/列名。
+- `SchemaManager` 分离 `inspect_schema()`、`create_fresh_schema()`、`build_migration_plan()`、`migrate_existing_schema()` 与 `validate_schema()`；生产启动只由 `SchemaMigrationCoordinator` 编排。`auto_migrate=false` 遇到旧结构必须以 `schema_migration_required` 停止引擎启动，不能调用兼容 `create_tables()` 偷偷升级。
+- 迁移计划使用稳定 `migration_id`，只记录 from/to version、阶段、reason code 和变更计数。启用迁移备份时，`pre_migration` 快照必须先于 `BEGIN`/DDL/DML；失败时关闭启动连接并从已校验快照原子恢复 canonical，恢复失败持久化为 `blocked`，不得继续发布运行时。
 - `documents` 是校验与重建的源数据表；BM25、FAISS、图和原子都是需要同步或可修复的派生产物。
 - 维护批次和批量删除是有意分块的；不要改成超大事务，也不要在持锁区执行 LLM/Embedding 网络调用。
 
@@ -128,13 +146,17 @@ sequenceDiagram
 | 图同步 | `graph_memory_manager.py` | 删除旧图产物后重建节点/边/条目与图向量；向量 ID 最终回写 SQLite |
 | 原子生命周期 | `atom_lifecycle_manager.py`、`atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理 |
 | 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护 |
-| 画像 | `profile_manager.py` | 管理员编辑使用修订值冲突检测；自动标签与偏好携带 derived provenance 并走存储层原子事务 |
-| 知识/笔记 | `knowledge_manager.py`、`note_manager.py` | 知识去重与过期；显式 derived proposal 需 source revision，笔记 CRUD、软删和版本裁剪保持领域权威 |
-| 可靠性 | `write_coordinator.py`、`write_op_*` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复 |
-| 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验及原子应用 |
+| 画像 | `profile_manager.py`、`profile_proposal_pipeline.py`、`memory_engine_profile_hooks.py` | 管理员编辑使用修订值冲突检测；canonical 写后自动 proposal 仅绑定唯一可信主体，标签与偏好携带 derived provenance 并走存储层原子事务 |
+| 知识/笔记 | `knowledge_manager.py`、`knowledge_proposal_pipeline.py`、`note_proposal_pipeline.py`、`memory_engine_domain_hooks.py`、`note_manager.py` | 知识与笔记 canonical 写后 proposal、来源约束幂等与失效；自动笔记可无 Provider 重建，人工 CRUD、软删和版本历史保持领域权威 |
+| 异常检测 | `anomaly_detector.py`、`stats_operations.py` | 按 UTC 日聚合 canonical 创建量；只用当前日之前的完整窗口计算 3-sigma 基线，待投递告警随状态恢复，同一天只写一条脱敏诊断事件 |
+| 记忆再巩固 | `reconsolidation.py`、`reconsolidation_store.py` | 默认关闭；召回只生成 pending 候选；apply 先持久化唯一 intent，再按 source revision CAS 写 canonical 并恢复/失败收口；回滚同样持久化跨 Store 意图并刷新当前 source 的 graph 派生，状态、动作审计与操作清理原子收口；启动恢复不得覆盖后续编辑 |
+| 自主学习 | `auto_learning.py`、`feedback_signal_manager.py`、`feedback_signal_store.py` | 统一 FeedbackSignal 事件只进入隔离 Store；shadow 候选经单一 CAS 写入口发布；生产写入前持久化真实旧权重 intent，最终状态保存失败时保留可重启回滚快照；rebuild/publish/rollback/reset 共用状态锁，不直接修改生产权重 |
+| 可靠性 | `write_coordinator.py`、`write_op_*`、`memory_engine_write_observability.py` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复；canonical 写入指标与质量采样由独立 mixin 承担 |
+| 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py`、`memory_evolution_projection.py`、`semantic_compressor.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验、外部 Projection proposal 二次校验及语义摘要生成 |
 | canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |
-| 文件状态 | `auto_learning.py`、`anomaly_detector.py`、`continuity_tracker.py`、`relationship_tracker.py`、`trait_evolution.py`、`weight_learner.py` | JSON 状态属于运行数据，不是配置；加载失败通常降级为空状态 |
-| 备份 | `backup_manager.py`、`backup_models.py`、`backup_snapshot.py` | SQLite 使用 Online Backup API；manifest 保存角色、大小、SHA-256 和 quick check；新恢复使用 `.restore/<operation_id>/restore_plan.json`、`payload/`、`previous/` 事务目录 |
+| 连续性 | `continuity_tracker.py`、`memory_engine_lifecycle.py` | 使用 `data_dir` 同步恢复/保存，按配置 TTL 和单 session 上限保留话题；关闭时不创建或读写 |
+| 文件状态 | `auto_learning.py` | JSON 状态属于运行数据，不是配置；加载失败通常降级为空状态；状态写入失败必须显式返回/抛出，不能把生产发布报告为成功 |
+| 备份 | `backup_manager.py`、`backup_models.py`、`backup_snapshot.py` | SQLite 使用 Online Backup API；manifest 保存角色、大小、SHA-256 和 quick check；`pre_migration` 供启动迁移失败恢复，新恢复使用 `.restore/<operation_id>/restore_plan.json`、`payload/`、`previous/` 事务目录 |
 | 插件更新 | `update_manager.py`、`update_installer.py` | `update_manager.py` 检查 GitHub Release，按镜像到官方顺序下载 runtime 与校验清单，并只在 SHA-256 校验通过后写入暂存区；`update_installer.py` 严格校验 ZIP、在 AstrBot 插件目录同卷切换 runtime，安排单插件重载，失败时恢复旧目录并记录安全状态 |
 | 导入导出 | `memory_exporter.py` | JSONL/Markdown 包含正文与 metadata；导入按内容 SHA-256 短哈希去重后重新走 `add_memory` |
 
@@ -154,7 +176,7 @@ sequenceDiagram
 - 内容为空：`add_memory()` 抛 `ValueError`；未初始化核心检索器：抛/返回失败，不能静默写半套数据。
 - 内容更新是新 ID 替换旧 ID，调用方不得假定 `memory_id` 永久不变。
 - `cleanup_old_memories()`、可选管理器和状态文件通常采用尽力而为语义；返回 0/空结果不等于数据一致性已验证。
-- `BackupManager` 只在 canonical SQLite 快照、manifest 和 quick check 全部成功后发布 `ready` 备份；失败不得发布半成品。`scheduled` 与 `pre_restore` 才允许自动 prune，`manual` 和 `version_change` 必须显式删除。
+- `BackupManager` 只在 canonical SQLite 快照、manifest 和 quick check 全部成功后发布 `ready` 备份；失败不得发布半成品。`scheduled`、`pre_migration` 与 `pre_restore` 允许按保留期自动 prune，`manual` 和 `version_change` 必须显式删除。
 
 ## 测试定位与精确验证
 

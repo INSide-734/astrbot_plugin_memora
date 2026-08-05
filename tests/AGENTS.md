@@ -2,7 +2,7 @@
 
 # Tests 模块上下文
 
-**最后更新：** 2026-07-21
+**最后更新：** 2026-08-01
 **入口：** `pytest.ini`、`tests/conftest.py`、`tests/integration/conftest.py`
 
 ## 职责与边界
@@ -13,11 +13,11 @@
 - `integration/`：以真实 SQLite、真实 FAISS 索引和 Mock Provider 组装跨模块管线；它是 `scripts/run_smoke.py` 的五条固定目标。
 - `evaluation/`：验证 JSONL 数据集加载、Recall@K/MRR/nDCG/延迟指标、variant 对比和报告持久化。
 - `test_adapter_capabilities.py`：集中验证三态能力、Provider 冻结入口、向量 scope fail-closed、派生 reference-time 降级和重排器依赖能力；不要把这些用例继续追加到遗留超长 validator 测试文件。
-- 领域权威用例使用独立文件：`test_memory_domain_authority.py` 固定 origin/source 模型；`test_profile_source_provenance.py`、`test_profile_store_concurrency.py` 与 `test_profile_manual_provenance_boundary.py` 覆盖画像；`test_domain_source_integrity.py`、`test_atom_parent_health.py` 与 `test_atom_repair_and_planned_reads.py` 覆盖 Atom；`test_prospective_atom_scope.py` 覆盖前瞻隐私；`test_knowledge_note_source_integrity.py`、`test_knowledge_manager_provenance.py` 与 `test_knowledge_note_stale_pagination.py` 覆盖 Knowledge/Note；`test_canonical_revision_cas.py` 覆盖 canonical metadata revision CAS。不得把这些职责重新堆回超长综合测试。
+- 领域权威用例使用独立文件：`test_memory_domain_authority.py` 固定 origin/source 模型；`test_profile_proposal_pipeline.py` 覆盖 canonical 写后画像触发、稳定身份、预算和取消，`test_profile_source_provenance.py`、`test_profile_store_concurrency.py` 与 `test_profile_manual_provenance_boundary.py` 覆盖画像来源、并发和人工边界；`test_knowledge_proposal_pipeline.py` 覆盖 canonical 写后知识触发、质量门、预算、取消、revision 二次校验、人工边界和 scope/privacy 合并；`test_note_proposal_pipeline.py` 覆盖自动笔记的配置哨兵、预算 fallback、来源二次校验、重建幂等、人工版本保护和工厂装配；`test_domain_source_integrity.py`、`test_atom_parent_health.py` 与 `test_atom_repair_and_planned_reads.py` 覆盖 Atom；`test_prospective_atom_scope.py` 覆盖前瞻隐私；`test_knowledge_note_source_integrity.py`、`test_knowledge_manager_provenance.py` 与 `test_knowledge_note_stale_pagination.py` 覆盖 Knowledge/Note；`test_canonical_revision_cas.py` 覆盖 canonical metadata revision CAS。不得把这些职责重新堆回超长综合测试。
 - 检索消融：`evaluation/test_retrieval_ablation.py` 验证只读 snapshot 与 capability，`evaluation/test_session_first_ablation.py` 验证 Session-first 双跑与保守证据门，`evaluation/test_derived_metadata_ablation.py` 验证 source-backed 有限 metadata，`evaluation/test_feedback_ranking_ablation.py` 验证反馈 shadow；`test_graph_hop_ablation.py` 和 `test_retrieval_ranking.py` 验证 hop/距离/reranker 实际路径；不得只断言配置值变化。
 - `stress/`：覆盖并发写入等竞争条件；不要把机器抖动敏感的绝对耗时阈值放进这里。
 - `fixtures/retrieval/`：标准六组离线检索样本另有三个默认排除的实验 fixture：`session_first.jsonl`、`derived_metadata.jsonl`、`feedback_ranking.jsonl`；它们只由专用测试加载，避免进入通用 EvaluationService 数据集。Memory Evolution 时间场景使用 UTC `reference_time`、temporal expected/forbidden IDs 和 conflict mode 表达历史时点、未来 source、有效窗口与未决冲突；`noise_negative.jsonl` 与演化负向场景使用 `expected_no_hit` 和 `__no_relevant__` 表达无可见命中。
-- Memory Evolution 相关用例覆盖 `memory_evolution.jsonl`、gate/manager/store、job source revision、proposal-only、统一派生重建协调器、derived relation、ProjectionReader、Recall metadata、formatter allowlist/budget 与插件生命周期；评测夹具显式标注 revision、single/multi-source conflict、delete/rebuild、scope/privacy/role/validity、stale/recovery 和 source-backed projection。Projection 只能注解 canonical candidate，相关文档集合不得为派生摘要伪造独立 `doc_id`。
+- Memory Evolution 相关用例覆盖 `memory_evolution.jsonl`、gate/manager/store、job source revision、proposal-only、统一派生重建协调器、derived relation、ProjectionReader、Recall metadata、formatter allowlist/budget 与插件生命周期；`test_semantic_compression_projection.py` 覆盖配置、装配、每日触发、重建、关闭读取和 canonical 不变，`test_semantic_compression_store.py` 使用真实 SQLite 验证重复扫描幂等及任一摘要来源 revision/删除后的整条失效。评测夹具显式标注 revision、single/multi-source conflict、delete/rebuild、scope/privacy/role/validity、stale/recovery 和 source-backed projection。Projection 只能注解 canonical candidate，相关文档集合不得为派生摘要伪造独立 `doc_id`。
 - `tests/test_temporal_semantics.py` 覆盖 UTC/Unix/ISO 解析、reference-time cache 隔离、future/valid/invalid 边界、source provenance 迁移、supporting source 修订/删除保留、conflict exact/unresolved 决策和安全标量统计；不把 conflict source ID、revision 或时间 provenance 放入模型 DTO。
 - P0 隐私观测用例覆盖 Diagnostics/Recall Trace 的新写入与旧数据库读取、API/命令稳定错误码、正文/query/Prompt/身份/ID/异常 canary、Injection metadata allowlist 和动态记忆不进入 System Prompt。
 
@@ -102,6 +102,11 @@ flowchart LR
 | Store/SQL/事务 | `test_<store>.py` | 相关 Manager/API 测试、并发冲突测试 |
 | Manager 业务规则 | `test_managers_<domain>.py` 或领域文件 | 对应 Store 与 API 测试 |
 | 召回、注入、格式化 | `test_handlers.py`、`test_injection_*.py`、`test_memory_formatter.py` | `integration/test_pipeline_event.py`、`test_recall_cost_benchmark.py` |
+| 连续性生命周期与闭环 | `test_continuity_closed_loop.py`、`test_managers_continuity.py` | `test_handlers.py`、`test_managers_memory_lifecycle.py`、`test_engine_runtime_config_contract.py` |
+| 异常检测闭环 | `test_anomaly_closed_loop.py`、`test_managers_anomaly.py` | `test_decay_scheduler.py`、`test_diagnostics_health_scorer.py`、`test_api_diagnostics.py`、`test_plugin_init.py` |
+| 再巩固候选闭环 | `test_reconsolidation_closed_loop.py` | `test_handlers.py`、`test_managers_memory_lifecycle.py`、`test_engine_runtime_config_contract.py` |
+| 学习与反馈闭环 | `test_learning_closed_loop.py`、`test_weight_ownership.py`、`test_api_learning.py` | `test_api_review.py`、`test_decay_scheduler.py`、`test_engine_runtime_config_contract.py` |
+| 话题分段与生产装配 | `test_topic_splitter.py`、`test_topic_production_wiring.py` | `test_integration_topic_segmentation.py`、`test_extra_llm_budget.py`、`test_plugin_init.py` |
 | 配置/schema | `test_base.py`、`test_config_contract.py`、`test_api_config.py` | `test_plugin_init.py`、`test_project_metadata.py` |
 | 插件初始化/导入 | `test_plugin_init.py`、`test_plugin_package_imports.py` | `test_event_handler.py` |
 | 检索质量 | `evaluation/` 与 `fixtures/retrieval/` | 相关 retriever 单测 |

@@ -27,6 +27,8 @@ class ContinuityTracker:
         topic_ttl_sec: float = _DEFAULT_TOPIC_TTL_SEC,
         max_topics: int = _MAX_PENDING_TOPICS,
     ) -> None:
+        """初始化状态目录、话题 TTL 和单 session 上限。"""
+
         self._data_dir = data_dir
         self._topic_ttl_sec = max(3600.0, topic_ttl_sec)
         self._max_topics = max(1, min(50, max_topics))
@@ -38,6 +40,8 @@ class ContinuityTracker:
         topics: list[str],
         importance: float = 0.5,
     ) -> None:
+        """为指定 session 新增或刷新待续话题。"""
+
         if not session_id or not topics:
             return
         now = time.time()
@@ -69,9 +73,11 @@ class ContinuityTracker:
         self._pending[session_id] = session_topics[: self._max_topics]
 
     def resolve_session(self, session_id: str) -> None:
+        """记录一次反思窗口完成，并保留该 session 的待续话题。"""
+
         logger.debug(
-            f"[Continuity] session {session_id} ended, "
-            f"{len(self._pending.get(session_id, []))} topics retained"
+            "[连续性追踪] 会话收尾完成，保留话题数=%s",
+            len(self._pending.get(session_id, [])),
         )
 
     def get_pending_topics(
@@ -79,6 +85,8 @@ class ContinuityTracker:
         session_id: str,
         max_return: int = 3,
     ) -> list[dict[str, Any]]:
+        """返回指定 session 内未过期且按衰减重要性排序的话题副本。"""
+
         if session_id not in self._pending:
             return []
         now = time.time()
@@ -100,9 +108,13 @@ class ContinuityTracker:
         return active[:max_return]
 
     def clear_session(self, session_id: str) -> None:
+        """清除指定 session 的全部待续话题。"""
+
         self._pending.pop(session_id, None)
 
     def get_continuity_context(self, session_id: str) -> str | None:
+        """把最多三个有效话题格式化为临时模型上下文。"""
+
         pending = self.get_pending_topics(session_id, max_return=3)
         if not pending:
             return None
@@ -116,9 +128,13 @@ class ContinuityTracker:
             return f"上次聊到了「{inner}」和「{names[-1]}」，话题尚未结束。"
 
     def _state_path(self) -> str:
+        """返回连续性状态文件的固定路径。"""
+
         return os.path.join(self._data_dir, _CONTINUITY_STATE_FILE)
 
     def save_state(self) -> None:
+        """同步保存未过期话题，并在失败时保留内存状态。"""
+
         if not self._data_dir:
             return
         try:
@@ -135,9 +151,11 @@ class ContinuityTracker:
                 json.dump(clean, f, ensure_ascii=False)
             self._pending = clean
         except OSError:
-            logger.debug("[Continuity] persist failed", exc_info=True)
+            logger.warning("[连续性追踪] 状态保存失败")
 
     def load_state(self) -> None:
+        """同步恢复未过期话题，并应用当前配置的单 session 上限。"""
+
         if not self._data_dir:
             return
         try:
@@ -155,14 +173,19 @@ class ContinuityTracker:
                     if now - t.get("last_seen_ts", 0) <= self._topic_ttl_sec
                 ]
                 if active:
-                    self._pending[sid] = active
+                    active.sort(
+                        key=lambda item: float(item.get("last_seen_ts", 0) or 0),
+                        reverse=True,
+                    )
+                    self._pending[sid] = active[: self._max_topics]
             total = sum(len(v) for v in self._pending.values())
             logger.info(
-                f"[Continuity] restored {len(self._pending)} sessions, "
-                f"{total} pending topics"
+                "[连续性追踪] 状态恢复完成，session_count=%s, topic_count=%s",
+                len(self._pending),
+                total,
             )
         except Exception:
-            logger.debug("[Continuity] restore failed", exc_info=True)
+            logger.warning("[连续性追踪] 状态恢复失败，使用空状态")
 
 
 __all__ = ["ContinuityTracker"]

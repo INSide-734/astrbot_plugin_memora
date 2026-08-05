@@ -68,7 +68,11 @@ describe("EvaluationWorkbench", () => {
             recall_at_k: 0.9,
             mrr: 0.74,
             ndcg_at_k: 0.78,
-            p95_latency_ms: 42.6,
+            observed_p95_latency_ms: 42.6,
+            annotated_p95_latency_ms: 44.0,
+            judged_answer_faithfulness: null,
+            observed_provider_calls: null,
+            observed_token_cost: null,
           },
           variants: {
             baseline: {
@@ -80,7 +84,7 @@ describe("EvaluationWorkbench", () => {
                 recall_at_k: 0.9,
                 mrr: 0.74,
                 ndcg_at_k: 0.78,
-                p95_latency_ms: 42.6,
+                observed_p95_latency_ms: 42.6,
               },
             },
             graph_expansion_off: {
@@ -95,7 +99,7 @@ describe("EvaluationWorkbench", () => {
                 recall_at_k: 0.85,
                 mrr: 0.72,
                 ndcg_at_k: 0.75,
-                p95_latency_ms: 34.2,
+                observed_p95_latency_ms: 34.2,
               },
             },
           },
@@ -104,7 +108,7 @@ describe("EvaluationWorkbench", () => {
               recall_at_k: -0.05,
               mrr: -0.02,
               ndcg_at_k: -0.03,
-              p95_latency_ms: null,
+              observed_p95_latency_ms: null,
             },
           },
           cases: [
@@ -113,14 +117,16 @@ describe("EvaluationWorkbench", () => {
               recall_at_k: 1.0,
               reciprocal_rank: 1.0,
               ndcg_at_k: 1.0,
-              latency_ms: 12.5,
+              observed_latency_ms: 12.5,
+              annotated_latency_ms: 13.0,
             },
             {
               case_id: "missed",
               recall_at_k: 0,
               reciprocal_rank: 0,
               ndcg_at_k: 0,
-              latency_ms: 18.2,
+              observed_latency_ms: 18.2,
+              annotated_latency_ms: null,
             },
           ],
         }));
@@ -152,6 +158,12 @@ describe("EvaluationWorkbench", () => {
     expect(await screen.findByText(/Recall@K/)).toBeTruthy();
     expect(screen.getByText(/MRR/)).toBeTruthy();
     expect(screen.getByText(/nDCG/)).toBeTruthy();
+    expect(screen.getByText(/^(Observed p95|实测 p95)$/)).toBeTruthy();
+    expect(screen.getByText(/Annotated p95|标注 p95/)).toBeTruthy();
+    expect(screen.getByText(/Judged faithfulness|Judge 忠实度/)).toBeTruthy();
+    expect(screen.getByText(/Observed latency|实测延迟/)).toBeTruthy();
+    expect(screen.getByText(/Annotated latency|标注延迟/)).toBeTruthy();
+    expect(screen.getByText(/Reported latency|外部报告延迟/)).toBeTruthy();
     expect(screen.getAllByText("Graph off").length).toBeGreaterThan(0);
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/evaluation/run", {
@@ -457,7 +469,7 @@ describe("EvaluationWorkbench", () => {
                 recall_at_k: 0.9,
                 mrr: 0.74,
                 ndcg_at_k: 0.78,
-                p95_latency_ms: 42.6,
+                observed_p95_latency_ms: 42.6,
               },
               variants: {
                 baseline: { name: "baseline", status: "completed" },
@@ -481,7 +493,7 @@ describe("EvaluationWorkbench", () => {
               recall_at_k: 0.9,
               mrr: 0.74,
               ndcg_at_k: 0.78,
-              p95_latency_ms: 42.6,
+              observed_p95_latency_ms: 42.6,
             },
             variants: {
               baseline: { name: "baseline", status: "completed" },
@@ -492,7 +504,7 @@ describe("EvaluationWorkbench", () => {
                 recall_at_k: -0.05,
                 mrr: -0.02,
                 ndcg_at_k: -0.03,
-                p95_latency_ms: -8.4,
+                observed_p95_latency_ms: -8.4,
               },
             },
             cases: [
@@ -501,7 +513,8 @@ describe("EvaluationWorkbench", () => {
                 recall_at_k: 0,
                 reciprocal_rank: 0,
                 ndcg_at_k: 0,
-                latency_ms: 18.2,
+                observed_latency_ms: 18.2,
+                annotated_latency_ms: null,
               },
             ],
           },

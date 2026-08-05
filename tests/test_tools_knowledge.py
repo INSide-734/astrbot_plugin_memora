@@ -6,6 +6,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from astrbot.api.platform import MessageType
 
 from core.tools.knowledge_tools import KnowledgeReadTool, KnowledgeSearchTool
 
@@ -41,7 +42,15 @@ def _make_mock_knowledge_entry(
 
 
 def _make_mock_ctx() -> MagicMock:
-    return MagicMock()
+    event = MagicMock()
+    event.unified_msg_origin = "private:user-001"
+    event.get_sender_id.return_value = "user-001"
+    event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
+    inner = MagicMock()
+    inner.event = event
+    wrapper = MagicMock()
+    wrapper.context = inner
+    return wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +84,7 @@ class TestKnowledgeSearchTool:
         )
 
         mock_mgr = MagicMock()
-        mock_mgr.search = AsyncMock(return_value=([entry1, entry2], 2))
+        mock_mgr.search_for_scope = AsyncMock(return_value=([entry1, entry2], 2))
 
         tool = KnowledgeSearchTool(knowledge_manager=mock_mgr)
         result = await tool.call(_make_mock_ctx(), query="test")
@@ -92,7 +101,7 @@ class TestKnowledgeSearchTool:
     async def test_search_empty_results(self):
         """当 search returns no entries, tool should report count=0 with empty results."""
         mock_mgr = MagicMock()
-        mock_mgr.search = AsyncMock(return_value=([], 0))
+        mock_mgr.search_for_scope = AsyncMock(return_value=([], 0))
 
         tool = KnowledgeSearchTool(knowledge_manager=mock_mgr)
         result = await tool.call(_make_mock_ctx(), query="nonexistent")
@@ -116,7 +125,7 @@ class TestKnowledgeSearchTool:
     async def test_search_manager_raises_exception(self):
         """当 knowledge_manager.search() raises, tool should catch and return error."""
         mock_mgr = MagicMock()
-        mock_mgr.search = AsyncMock(side_effect=RuntimeError("DB down"))
+        mock_mgr.search_for_scope = AsyncMock(side_effect=RuntimeError("DB down"))
 
         tool = KnowledgeSearchTool(knowledge_manager=mock_mgr)
         result = await tool.call(_make_mock_ctx(), query="test")
@@ -129,12 +138,14 @@ class TestKnowledgeSearchTool:
     async def test_search_passes_limit_and_category(self):
         """工具 should forward limit and category parameters to the manager."""
         mock_mgr = MagicMock()
-        mock_mgr.search = AsyncMock(return_value=([], 0))
+        mock_mgr.search_for_scope = AsyncMock(return_value=([], 0))
 
         tool = KnowledgeSearchTool(knowledge_manager=mock_mgr)
         await tool.call(_make_mock_ctx(), query="q", limit=5, category="rule")
 
-        mock_mgr.search.assert_called_once_with("q", limit=5, category="rule")
+        mock_mgr.search_for_scope.assert_called_once_with(
+            "q", scope_key="private:user-001", limit=5, category="rule"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +172,7 @@ class TestKnowledgeReadTool:
         entry = _make_mock_knowledge_entry(7, "Full Rule", "Detailed content here...")
 
         mock_mgr = MagicMock()
-        mock_mgr.get_entry = AsyncMock(return_value=entry)
+        mock_mgr.get_entry_for_scope = AsyncMock(return_value=entry)
 
         tool = KnowledgeReadTool(knowledge_manager=mock_mgr)
         result = await tool.call(_make_mock_ctx(), entry_id=7)
@@ -178,7 +189,7 @@ class TestKnowledgeReadTool:
     async def test_read_entry_not_found(self):
         """当 get_entry returns None, tool should report found=False."""
         mock_mgr = MagicMock()
-        mock_mgr.get_entry = AsyncMock(return_value=None)
+        mock_mgr.get_entry_for_scope = AsyncMock(return_value=None)
 
         tool = KnowledgeReadTool(knowledge_manager=mock_mgr)
         result = await tool.call(_make_mock_ctx(), entry_id=999)
@@ -201,7 +212,7 @@ class TestKnowledgeReadTool:
     async def test_read_manager_raises_exception(self):
         """当 get_entry raises, tool should catch and return error."""
         mock_mgr = MagicMock()
-        mock_mgr.get_entry = AsyncMock(side_effect=RuntimeError("DB down"))
+        mock_mgr.get_entry_for_scope = AsyncMock(side_effect=RuntimeError("DB down"))
 
         tool = KnowledgeReadTool(knowledge_manager=mock_mgr)
         result = await tool.call(_make_mock_ctx(), entry_id=1)

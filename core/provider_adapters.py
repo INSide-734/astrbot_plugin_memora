@@ -46,6 +46,15 @@ _LLM_PROVIDER_CAPABILITIES = AdapterCapabilityContract(
 
 
 @dataclass(frozen=True, slots=True)
+class LLMGenerationResult:
+    """保存一次文本生成的正文与 Provider 原始 token 用量。"""
+
+    text: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LLMProviderAdapter:
     """验证并冻结聊天 Provider 的异步文本生成入口。"""
 
@@ -66,7 +75,16 @@ class LLMProviderAdapter:
         return cls(provider=provider, _text_chat=text_chat)
 
     async def generate(self, prompt: str, system_prompt: str) -> str:
-        """调用冻结入口并验证文本响应形状。"""
+        """调用冻结入口并保持原有的纯文本返回契约。"""
+
+        return (await self.generate_result(prompt, system_prompt)).text
+
+    async def generate_result(
+        self,
+        prompt: str,
+        system_prompt: str,
+    ) -> LLMGenerationResult:
+        """调用冻结入口并返回文本及 Provider 明确提供的 token 用量。"""
 
         pending = self._text_chat(prompt=prompt, system_prompt=system_prompt)
         if not inspect.isawaitable(pending):
@@ -81,7 +99,21 @@ class LLMProviderAdapter:
                 "adapter_response_invalid",
                 AdapterKind.LLM_PROVIDER,
             )
-        return completion_text
+        usage = getattr(response, "usage", None)
+        return LLMGenerationResult(
+            text=completion_text,
+            prompt_tokens=_optional_token_count(usage, "input"),
+            completion_tokens=_optional_token_count(usage, "output"),
+        )
+
+
+def _optional_token_count(usage: Any, field: str) -> int | None:
+    """读取非负整数 token 字段；缺失、布尔或非法值均保持未知。"""
+
+    value = getattr(usage, field, None)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def _accepts_extended_batch(call: Callable[..., Any]) -> bool:
@@ -232,5 +264,6 @@ __all__ = [
     "AdapterResponseError",
     "EmbeddingCallMode",
     "EmbeddingProviderAdapter",
+    "LLMGenerationResult",
     "LLMProviderAdapter",
 ]

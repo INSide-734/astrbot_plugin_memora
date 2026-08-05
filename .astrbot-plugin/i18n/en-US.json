@@ -985,7 +985,14 @@
       },
       "evaluation": {
         "metric": {
-          "cases": "Cases"
+          "cases": "Cases",
+          "observedP95": "Observed p95",
+          "annotatedP95": "Annotated p95",
+          "reportedP95": "Reported p95",
+          "annotatedFaithfulness": "Annotated faithfulness",
+          "judgedFaithfulness": "Judged faithfulness",
+          "observedProviderCalls": "Observed provider calls",
+          "observedTokenCost": "Observed token cost"
         },
         "runs": "Evaluation Runs",
         "baseline": "Baseline",
@@ -1045,6 +1052,7 @@
         "rrDelta": "RR delta",
         "gainDelta": "Gain delta",
         "p95Delta": "p95 delta",
+        "observedP95Delta": "Observed p95 delta",
         "emptyPrompt": "Run an evaluation or open a saved report.",
         "noFailedCases": "No failed cases",
         "failedCases": "Failed cases",
@@ -1054,9 +1062,66 @@
           "rankedDocs": "Ranked docs",
           "recall": "Recall",
           "gain": "Gain",
-          "latency": "Latency"
+          "latency": "Latency",
+          "observedLatency": "Observed latency",
+          "annotatedLatency": "Annotated latency",
+          "reportedLatency": "Reported latency"
         },
         "miss": "miss"
+      },
+      "reconsolidation": {
+        "title": "Reconsolidation candidates",
+        "subtitle": "Review high-impact memory revisions with a rollback-aware action history.",
+        "statusLabel": "Candidate status",
+        "allStatuses": "All statuses",
+        "loading": "Loading candidates",
+        "loadingDetail": "Loading candidate details",
+        "noMatches": "No reconsolidation candidates",
+        "disabled": "Reconsolidation is not enabled",
+        "selectCandidate": "Select a candidate to compare its content.",
+        "items": "Candidate list",
+        "detail": "Candidate details",
+        "detailMismatch": "Candidate detail does not match the current selection",
+        "oldContent": "Original content",
+        "proposedContent": "Proposed content",
+        "evidenceLabel": "Evidence type",
+        "reasonLabel": "Reason code",
+        "actions": "Review actions",
+        "approve": "Approve",
+        "reject": "Reject",
+        "rollback": "Rollback",
+        "actionHistory": "Action history",
+        "noActions": "No action history",
+        "confirmTitle": "Confirm {0}",
+        "confirmDescription": "This changes candidate {0} and may update canonical memory.",
+        "confirm": "Confirm action",
+        "submitting": "Submitting…",
+        "toastActionSubmitted": "Reconsolidation action submitted: {0}",
+        "status": {
+          "pending": "Pending",
+          "approved": "Approved",
+          "rejected": "Rejected",
+          "failed": "Failed",
+          "rolled_back": "Rolled back"
+        },
+        "action": {
+          "approve": "Approve",
+          "reject": "Reject",
+          "rollback": "Rollback",
+          "stage": "Stage",
+          "apply": "Apply"
+        },
+        "evidence": {
+          "llm_revision": "Model revision evidence"
+        },
+        "reason": {
+          "proposed": "Revision proposed",
+          "applied": "Revision applied",
+          "manual_reject": "Manually rejected",
+          "rolled_back": "Previous revision restored",
+          "source_revision_mismatch": "Source revision changed",
+          "candidate_changed": "Candidate changed"
+        }
       },
       "review": {
         "status": {
@@ -1375,21 +1440,40 @@
       "deleteUser": "Delete affection user"
     },
     "learning": {
-      "historyAction": {
-        "weight_adjust": "Weight adjustment",
-        "threshold_tune": "Threshold tuning",
-        "correction": "Correction",
-        "param_init": "Parameter initialization"
+      "status": {
+        "ready_for_review": "Ready for manual review",
+        "rejected": "Rejected",
+        "published": "Published",
+        "invalid_state": "Invalid state"
       },
-      "reset": "Reset Learning",
-      "hitRate": "Hit Rate",
-      "avgQuality": "Average Quality",
-      "trials": "Total Trials",
-      "corrections": "Corrections",
-      "params": "Learned Parameters",
-      "history": "Learning History",
-      "resetConfirm": "Reset all learned parameters to defaults?",
-      "resetDone": "Learning parameters reset!"
+      "reason": {
+        "candidate": "Evidence reached the candidate threshold",
+        "insufficient_evidence": "Insufficient evidence",
+        "published": "Published through CAS",
+        "invalid_state": "Restored state failed validation"
+      },
+      "reset": "Reset learning",
+      "resetConfirm": "Clear all shadow candidates and publication snapshots? Production weights will not change.",
+      "resetDone": "Shadow learning state reset.",
+      "loading": "Loading autonomous learning status",
+      "loadError": "Could not load autonomous learning status",
+      "candidates": "Candidates",
+      "ready": "Ready for review",
+      "rejected": "Rejected",
+      "published": "Published",
+      "current": "Current runtime weights",
+      "baseline": "Shadow baseline",
+      "documentRoute": "Document route",
+      "graphRoute": "Graph route",
+      "shadowCandidates": "Shadow candidates",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "noCandidates": "No shadow candidates yet",
+      "noCandidatesDescription": "Candidates appear after trusted feedback reaches the independent-window and sample thresholds.",
+      "delta": "Delta from baseline",
+      "support": "Decayed support",
+      "samples": "Accepted samples",
+      "windows": "Independent windows"
     },
     "relation": {
       "relatives": "Relatives",
@@ -1424,11 +1508,21 @@
       "validationSummary": "Correct the following fields"
     },
     "recall": {
+      "queryLabel": "Query",
       "queryPh": "Enter query text to test retrieval...",
+      "submitHint": "Press Ctrl/Cmd+Enter to run recall; Enter inserts a new line",
       "kLabel": "Recall count K",
       "sessionLabel": "Session ID (optional)",
       "searchBtn": "Run Recall",
       "searching": "Searching...",
+      "requestFailed": "Recall request failed: {0}",
+      "completed": "{0} · {1} ms",
+      "resultsRegion": "Recall results",
+      "scoreLabel": "Relevance score",
+      "docKwScore": "Document keyword",
+      "docVecScore": "Document vector",
+      "graphKwScore": "Graph keyword",
+      "graphVecScore": "Graph vector",
       "noMatch": "No matching results",
       "results": "{0} results",
       "importanceLabel": "Importance:"
@@ -1547,6 +1641,10 @@
       "apply": "Apply configuration",
       "applying": "Applying...",
       "reloading": "Reloading...",
+      "restartRequiredTitle": "Manual restart required",
+      "restartRequiredDescription": "The configuration was saved, but AstrBot did not schedule a reload. Restart the plugin to apply these changes.",
+      "rebuildRequiredTitle": "Graph rebuild required",
+      "rebuildRequiredDescription": "Graph edge extraction changed. After reloading the plugin, run /memora rebuild-graph to rebuild existing derived graph data.",
       "retry": "Retry",
       "loading": "Loading configuration",
       "status": {
@@ -1600,6 +1698,11 @@
       "avoidedTopics": "Avoided topics",
       "preferredTopics": "Preferred topics",
       "replyStyle": "Reply style",
+      "source": {
+        "derived": "Derived",
+        "manual": "Manual"
+      },
+      "sourceLabel": "Source",
       "tagCategory": "Tag category",
       "tagConfidence": "Tag confidence",
       "tagConfidenceRange": "Tag confidence must be between 0 and 1",

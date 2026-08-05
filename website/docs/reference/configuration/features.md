@@ -22,15 +22,11 @@ pageClass: config-reference-page
 
 ## 自主学习
 
-配置域：`"auto_learning"`。从对话反馈中自动调整检索权重、记忆重要性、TTL 等参数
+配置域：`"auto_learning"`。从统一可信反馈聚合生成 shadow 参数候选，人工确认后按 revision CAS 发布；不自动修改生产配置。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"auto_learning.enabled"` | `"bool"` | `true` | - | 启用自主学习<br><small>开启后插件会根据记忆复用率和对话质量自动优化参数。</small> |
-| `"auto_learning.learning_rate"` | `"float"` | `0.01` | - | 学习率<br><small>参数更新的步长。建议 0.01-0.05。</small> |
-| `"auto_learning.target_hit_rate_low"` | `"float"` | `0.3` | - | 目标命中率下限<br><small>记忆召回命中率低于此值时自动降低 importance 阈值、提高 top_k。</small> |
-| `"auto_learning.target_hit_rate_high"` | `"float"` | `0.7` | - | 目标命中率上限<br><small>记忆召回命中率高于此值时自动提高 importance 阈值、降低 top_k。</small> |
-| `"auto_learning.quality_ema_alpha"` | `"float"` | `0.2` | - | 质量评分 EMA 系数<br><small>对话质量评分的指数移动平均平滑系数。0.2 表示新评分权重 20%。</small> |
+| `"auto_learning.enabled"` | `"bool"` | `false` | - | 启用自主学习 shadow 候选<br><small>开启后从统一反馈聚合生成参数候选并等待人工 CAS 发布，不自动修改生产配置。</small> |
 
 ## 知识库
 
@@ -55,7 +51,7 @@ pageClass: config-reference-page
 
 ## 异常检测
 
-配置域：`"anomaly_detection"`。监控记忆创建速率的异常波动，3-sigma 阈值告警
+配置域：`"anomaly_detection"`。每日按 UTC 日聚合 SQLite canonical 创建量，与滚动窗口均值/标准差比较；超阈值时写入脱敏诊断事件并在健康页显示最近状态与 reason code。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
@@ -63,18 +59,9 @@ pageClass: config-reference-page
 | `"anomaly_detection.window_days"` | `"int"` | `7` | - | 滚动窗口天数<br><small>计算基线均值与标准差所用的历史天数。</small> |
 | `"anomaly_detection.sigma_threshold"` | `"float"` | `3` | - | Sigma 告警阈值<br><small>当日创建量偏离均值超过 sigma 倍标准差时触发告警。3.0 为标准 3-sigma。</small> |
 
-## 关系阶段追踪
-
-配置域：`"relationship_tracking"`。追踪用户与 Bot 的亲密度变化，从陌生人到密友
-
-| 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
-|---|---|---|---|---|
-| `"relationship_tracking.enabled"` | `"bool"` | `true` | - | 启用关系追踪<br><small>开启后根据互动频率和情感极性累积用户亲密度 warmth score。</small> |
-| `"relationship_tracking.warmth_decay_per_day"` | `"float"` | `0.005` | - | 温暖度日衰减率<br><small>每天自然的亲密度衰减。0.005 表示每天降低 0.5%（极慢）。设为 0 可停用。</small> |
-
 ## 对话连续性追踪
 
-配置域：`"continuity_tracking"`。追踪未完成话题，下次对话时优先恢复上下文
+配置域：`"continuity_tracking"`。只从通过质量门并成功写入 canonical 的 topics 追踪同 session 未完成话题；启动时恢复未过期状态，召回结果仅进入受预算与保护的临时请求上下文。关闭后不读取、不写入、不注入。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
@@ -107,15 +94,5 @@ pageClass: config-reference-page
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
 | `"jargon.enabled"` | `"bool"` | `false` | - | 启用黑话自动发现<br><small>默认关闭。开启后会统计群消息候选词，并在达到渐进阈值时调用 LLM 推断。修改后需重载插件生效。</small> |
-
-## MAB 权重学习
-
-配置域：`"weight_learning"`。Epsilon-Greedy MAB 在线学习文档路/图路融合权重
-
-| 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
-|---|---|---|---|---|
-| `"weight_learning.enabled"` | `"bool"` | `false` | - | 是否启用多臂老虎机（MAB）权重学习。开启后系统会根据反馈逐步调整策略权重；缺少稳定反馈数据时应保持关闭。 |
-| `"weight_learning.epsilon"` | `"float"` | `0.1` | - | MAB 的探索概率，取值应在 0 到 1 之间。值越高越常尝试当前非最优策略，学习更充分但短期结果波动也更大。 |
-| `"weight_learning.group_by_persona"` | `"bool"` | `true` | - | 是否按人格分别维护学习结果。开启可避免不同人格的反馈相互污染，但会减少每组可用于学习的样本量。 |
 
 返回[配置参考总览](/reference/configuration)。

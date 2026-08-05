@@ -2,23 +2,41 @@
 记忆处理器 - 使用LLM将对话历史处理为结构化记忆
 """
 
+import asyncio
+import json
+import time
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
 
+from ..base.cost_control import CostControl
+from ..base.extra_llm_budget import budgeted_extra_llm_call
 from ..identity.memory import build_memory_identity_context
 from ..models.conversation_models import Message
 from ..models.memory_atom import MemoryAtom
-from ..security.guardrails import MemoryExtractionResult, validate_llm_response
+from ..security.guardrails import (
+    MemoryExtractionResult,
+    validate_and_clean_json,
+    validate_llm_response,
+)
 from .atom_classifier import classify_atoms
 from .conversation_formatter import ConversationFormatter
 from .json_parser import JsonParser
 from .llm_client import LLMClient
+from .memory_grounding import GroundingResult, MemoryGroundingValidator
 from .prompt_builder import PromptBuilder
 from .quality_validator import QualityValidator
+from .reflection_generation_observability import (
+    report_generation_stage as _report_generation_stage,
+)
 from .storage_builder import StorageBuilder
+from .topic_segmentation_pipeline import (
+    TOPIC_SEGMENTATION_OBSERVABILITY_FIELDS,
+    TopicSegmentationPipeline,
+)
 
 
 class MemoryProcessor:
@@ -34,11 +52,26 @@ class MemoryProcessor:
         context=None,
         llm_provider: Any = None,
         config: dict[str, Any] | None = None,
+        cost_control: CostControl | None = None,
+        grounding_judge: Callable[[dict[str, Any]], Awaitable[bool | Mapping[str, Any]]]
+        | None = None,
+        topic_embed_fn: Callable[[list[str]], Awaitable[list[list[float]]]]
+        | None = None,
     ):
-        """初始化 LLM、Prompt、解析、质量校验与存储格式协作对象。"""
+        """初始化结构化抽取、话题分段、质量校验与存储格式协作对象。
+
+        参数:
+            context: AstrBot 运行时上下文。
+            llm_provider: 固定 Provider 或由上下文解析的 Provider 标识。
+            config: 处理器运行时配置快照。
+            cost_control: 共享的请求级成本门。
+            grounding_judge: 可选的来源可信度 Judge。
+            topic_embed_fn: 策略 B 使用的批量 Embedding 入口。
+        """
 
         self.context = context
         self.config = config or {}
+        self.cost_control = cost_control or CostControl()
 
         self.llm_client = LLMClient(context, llm_provider)
         prompt_dir = Path(__file__).parent.parent / "prompts"
@@ -51,10 +84,16 @@ class MemoryProcessor:
         self.json_parser = JsonParser(self.quality)
         self.formatter = ConversationFormatter()
         self.storage = StorageBuilder()
+        self.grounding_validator = MemoryGroundingValidator()
+        self._grounding_judge = grounding_judge or self._call_grounding_judge
         self.prompt_protection_service: Any | None = None
         self._topic_guidance = self._load_topic_guidance(prompt_dir)
         self._topic_segmentation_enabled = self.config.get(
             "topic_segmentation.enabled", True
+        )
+        self.topic_segmentation = TopicSegmentationPipeline(
+            self.config,
+            embed_fn=topic_embed_fn,
         )
 
     @staticmethod
@@ -91,6 +130,7 @@ class MemoryProcessor:
         serial_position_hint: str | None = None,
         interest_profile: list[str] | None = None,
         continuity_context: str | None = None,
+        llm_max_retries: int = 3,
     ) -> list[dict[str, Any]]:
         """处理对话批次并生成结构化记忆（可能返回多条独立话题记忆）。
 
@@ -100,20 +140,27 @@ class MemoryProcessor:
         if not messages:
             raise ValueError("消息列表不能为空")
 
+        total_started = time.perf_counter()
+        stage_started = total_started
+        current_stage = "prompt_build"
         conversation_text = self.formatter.format_conversation(messages)
+        grounded_conversation_text = (
+            self.formatter.format_conversation_with_source_refs(messages)
+        )
         identity_context = build_memory_identity_context(messages)
 
         current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
         if is_group_chat:
             prompt = self.prompt_builder.group_chat_prompt.replace(
-                "{conversation}", conversation_text
+                "{conversation}", grounded_conversation_text
             )
         else:
             prompt = self.prompt_builder.private_chat_prompt.replace(
-                "{conversation}", conversation_text
+                "{conversation}", grounded_conversation_text
             )
         prompt = prompt.replace("{current_date}", current_date)
         prompt += identity_context.prompt_constraint()
+        prompt += self.grounding_validator.prompt_contract(len(messages))
         identity_metadata = identity_context.metadata()
 
         conversation_type = "群聊" if is_group_chat else "私聊"
@@ -130,24 +177,72 @@ class MemoryProcessor:
                 topic_segmentation_enabled=self._topic_segmentation_enabled,
                 topic_segmentation_guidance=self._topic_guidance,
             )
+            _report_generation_stage(
+                "prompt_build",
+                "completed",
+                "reflection_prompt_built",
+                stage_started,
+                prompt_chars=len(prompt),
+                message_count=len(messages),
+            )
 
-            llm_response_text = await self.llm_client.call_llm_with_retry(
+            current_stage = "provider"
+            stage_started = time.perf_counter()
+            generation_result = await self.llm_client.call_llm_with_retry_result(
                 prompt=prompt,
                 system_prompt=system_prompt,
+                max_retries=max(1, int(llm_max_retries)),
+            )
+            llm_response_text = generation_result.text
+            _report_generation_stage(
+                "provider",
+                "completed",
+                "reflection_provider_completed",
+                stage_started,
+                prompt_chars=len(prompt),
+                response_chars=len(llm_response_text),
+                prompt_tokens=generation_result.prompt_tokens,
+                completion_tokens=generation_result.completion_tokens,
             )
 
             logger.info(
                 f"[MemoryProcessor] LLM 响应成功，响应长度={len(llm_response_text)}"
             )
 
+            current_stage = "parse"
+            stage_started = time.perf_counter()
             structured_data = self._parse_llm_response(llm_response_text, is_group_chat)
 
             quality = self.quality.validate_summary_quality(structured_data)
             if quality == "low":
                 logger.warning(
-                    "[MemoryProcessor] 总结质量不达标（low），将标记但仍写入"
+                    "[MemoryProcessor] 总结质量不达标（low），候选将进入隔离队列"
                 )
             structured_data["_quality"] = quality
+            raw_candidates = structured_data.get("memories")
+            _report_generation_stage(
+                "parse",
+                "completed",
+                "reflection_parse_completed",
+                stage_started,
+                candidate_count=(
+                    len(raw_candidates) if isinstance(raw_candidates, list) else 0
+                ),
+            )
+            current_stage = "segmentation"
+            stage_started = time.perf_counter()
+            memories_raw = await self.topic_segmentation.prepare_candidates(
+                structured_data,
+                messages,
+                is_group_chat=is_group_chat,
+            )
+            _report_generation_stage(
+                "segmentation",
+                "completed",
+                "reflection_segmentation_completed",
+                stage_started,
+                candidate_count=len(memories_raw),
+            )
 
             fallback_excerpt = (
                 conversation_text[:200] + "..."
@@ -197,23 +292,8 @@ class MemoryProcessor:
                     snippet = conversation_text.strip()[:150]
             metadata["source_snippet"] = snippet[:150].strip()
 
-            # 提取 memories 数组（新格式）或包装旧格式
-            if "memories" in structured_data:
-                memories_raw = structured_data["memories"]
-            else:
-                memories_raw = [
-                    {
-                        "summary": structured_data.get("summary", ""),
-                        "key_facts": structured_data.get("key_facts", []),
-                        "topics": structured_data.get("topics", []),
-                        "importance": structured_data.get("importance", 0.5),
-                        "sentiment": structured_data.get("sentiment", "neutral"),
-                        "emotion_tags": structured_data.get("emotion_tags"),
-                        "causal_relations": structured_data.get("causal_relations"),
-                        "participants": structured_data.get("participants"),
-                    }
-                ]
-
+            current_stage = "grounding"
+            stage_started = time.perf_counter()
             results: list[dict[str, Any]] = []
             for mem in memories_raw:
                 if isinstance(mem, str):
@@ -265,6 +345,9 @@ class MemoryProcessor:
                     mem_metadata["atom_type"] = str(mem["atom_type"])
                 if mem.get("confidence") is not None:
                     mem_metadata["atom_confidence"] = float(mem["confidence"])
+                for field in TOPIC_SEGMENTATION_OBSERVABILITY_FIELDS:
+                    if field in mem:
+                        mem_metadata[field] = mem[field]
                 causal = (mem.get("causal_relations") or [])[:3]
                 if causal:
                     mem_metadata["causal_relations"] = [
@@ -276,6 +359,31 @@ class MemoryProcessor:
                     mem_metadata.update(identity_metadata)
                 elif is_group_chat and mem.get("participants"):
                     mem_metadata["participants"] = mem["participants"]
+
+                grounding = self.grounding_validator.validate(
+                    mem,
+                    messages,
+                    is_group_chat=is_group_chat,
+                )
+                if grounding.requires_judge:
+                    grounding = await self._resolve_grounding_with_judge(
+                        grounding,
+                        is_group_chat=is_group_chat,
+                    )
+                mem_metadata["grounding_status"] = grounding.status
+                mem_metadata["grounding_reason_codes"] = list(grounding.reason_codes)
+                mem_metadata["source_evidence"] = grounding.evidence
+                subject_ids = _referenced_subject_ids(
+                    grounding.evidence,
+                    messages,
+                    identity_metadata,
+                )
+                if subject_ids:
+                    mem_metadata["subject_ids"] = list(subject_ids)
+                should_quarantine = quality == "low" or not grounding.allowed
+                mem_metadata["quality_gate_action"] = (
+                    "quarantine" if should_quarantine else "allow"
+                )
 
                 # 记录首因与近因位置效应。
                 if serial_position_hint in ("first", "first_and_last"):
@@ -296,12 +404,14 @@ class MemoryProcessor:
                         mem_metadata["interest_match"] = matched
                         mem_metadata["interest_boost"] = round(boost, 4)
 
-                atoms = self.classify_atoms_from_metadata(
-                    metadata=mem_metadata,
-                    parent_importance=mem_importance,
-                    session_id=None,
-                    persona_id=persona_id,
-                )
+                atoms = []
+                if not should_quarantine:
+                    atoms = self.classify_atoms_from_metadata(
+                        metadata=mem_metadata,
+                        parent_importance=mem_importance,
+                        session_id=None,
+                        persona_id=persona_id,
+                    )
 
                 results.append(
                     {
@@ -312,15 +422,117 @@ class MemoryProcessor:
                     }
                 )
 
+            _report_generation_stage(
+                "grounding",
+                "completed",
+                "reflection_grounding_completed",
+                stage_started,
+                candidate_count=len(results),
+            )
             logger.info(
                 f"[MemoryProcessor] 成功生成 {len(results)} 条记忆, "
                 f"类型={conversation_type}"
             )
+            _report_generation_stage(
+                "window_total",
+                "completed",
+                "reflection_window_completed",
+                total_started,
+                candidate_count=len(results),
+                prompt_chars=len(prompt),
+                response_chars=len(llm_response_text),
+            )
             return results
 
-        except Exception as e:
-            logger.error(f"[MemoryProcessor] 处理对话历史失败: {e}", exc_info=True)
+        except asyncio.CancelledError:
+            _report_generation_stage(
+                current_stage,
+                "cancelled",
+                "reflection_generation_cancelled",
+                stage_started,
+            )
             raise
+        except Exception as e:
+            _report_generation_stage(
+                current_stage,
+                "failed",
+                "reflection_generation_failed",
+                stage_started,
+            )
+            _report_generation_stage(
+                "window_total",
+                "failed",
+                "reflection_generation_failed",
+                total_started,
+            )
+            logger.error(
+                "[MemoryProcessor] 处理对话历史失败，异常类型=%s",
+                e.__class__.__name__,
+                exc_info=True,
+            )
+            raise
+
+    async def _resolve_grounding_with_judge(
+        self,
+        grounding: GroundingResult,
+        *,
+        is_group_chat: bool,
+    ) -> GroundingResult:
+        """用请求预算保护可选 Judge，并把普通失败降级为隔离。"""
+
+        payload = {
+            "claim_text": grounding.claim_text,
+            "source_text": grounding.source_text,
+            "is_group_chat": bool(is_group_chat),
+        }
+        try:
+            async with budgeted_extra_llm_call(
+                self.cost_control,
+                "memory_grounding_judge",
+            ) as allowed:
+                if not allowed:
+                    return grounding.with_unavailable_judge()
+                judged = await self._grounding_judge(payload)
+            if isinstance(judged, Mapping):
+                supported = judged.get("supported") is True
+            else:
+                supported = judged is True
+            return grounding.with_judge_result(supported)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[MemoryProcessor] 来源忠实性 Judge 失败，候选进入隔离，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return grounding.with_unavailable_judge()
+
+    async def _call_grounding_judge(
+        self,
+        payload: dict[str, Any],
+    ) -> Mapping[str, Any]:
+        """只向 Provider 发送当前候选声明和已引用片段。"""
+
+        prompt = (
+            "判断候选记忆是否完全由给定来源支持。只输出 JSON："
+            '{"supported": true} 或 {"supported": false}。\n'
+            f"候选声明：{str(payload.get('claim_text') or '')[:1200]}\n"
+            f"来源片段：{str(payload.get('source_text') or '')[:2400]}"
+        )
+        response_text = await self.llm_client.call_llm_with_retry(
+            prompt=prompt,
+            system_prompt="只做来源忠实性判断，不补充来源之外的事实。",
+            max_retries=1,
+        )
+        parsed = validate_and_clean_json(
+            response_text,
+            fallback_return_none=True,
+        )
+        if not isinstance(parsed, dict) or not isinstance(
+            parsed.get("supported"), bool
+        ):
+            raise ValueError("grounding_judge_invalid_response")
+        return json.loads(json.dumps(parsed))
 
     def _parse_llm_response(
         self,
@@ -375,6 +587,9 @@ class MemoryProcessor:
                     "emotion_tags": list(atom.emotion_tags),
                     "participants": list(atom.participants),
                     "causal_relations": list(atom.causal_relations),
+                    "source_refs": [
+                        reference.model_dump() for reference in atom.source_refs
+                    ],
                     "confidence": atom.confidence,
                     "atom_type": (
                         atom.atom_type if "atom_type" in atom.model_fields_set else None
@@ -468,6 +683,12 @@ class MemoryProcessor:
             enable_quality_filter=bool(
                 self.config.get("atom_quality_filter_enabled", True)
             ),
+            enable_negation_detection=bool(
+                self.config.get(
+                    "atom_classifier.negation_detection_enabled",
+                    True,
+                )
+            ),
             atom_type_hint=metadata.get("atom_type"),
         )
 
@@ -515,19 +736,55 @@ class MemoryProcessor:
             )
 
             try:
-                result = await self.llm_client.call_llm_with_retry(
-                    prompt=prompt,
-                    system_prompt=persona_desc[:500],
-                )
+                async with budgeted_extra_llm_call(
+                    self.cost_control,
+                    "persona_interpretation",
+                ) as allowed:
+                    if not allowed:
+                        continue
+                    result = await self.llm_client.call_llm_with_retry(
+                        prompt=prompt,
+                        system_prompt=persona_desc[:500],
+                        max_retries=1,
+                    )
                 text = str(result).strip()[:120]
                 if text and len(text) >= 3:
                     interpretations[pid] = text
-                    logger.debug(
-                        f"[MemoryProcessor]persona={pid[:20]} interpretation={text[:50]}"
-                    )
-            except Exception as e:
+                    logger.debug("[MemoryProcessor] 人格解读生成成功")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
                 logger.warning(
-                    f"[MemoryProcessor]interpretation failed for {pid[:20]}: {e}"
+                    "[MemoryProcessor] 人格解读生成失败，异常类型=%s",
+                    exc.__class__.__name__,
                 )
 
         return interpretations
+
+
+def _referenced_subject_ids(
+    evidence: list[dict[str, Any]],
+    messages: list[Message],
+    identity_metadata: dict[str, Any],
+) -> tuple[str, ...]:
+    """从候选实际引用的消息提取可信 canonical 参与者。"""
+
+    raw_trusted = identity_metadata.get("participant_ids")
+    if not isinstance(raw_trusted, list):
+        return ()
+    trusted = {
+        item.strip() for item in raw_trusted if isinstance(item, str) and item.strip()
+    }
+    if not trusted:
+        return ()
+    subjects: list[str] = []
+    for item in evidence:
+        index = item.get("message_index") if isinstance(item, dict) else None
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        if index < 0 or index >= len(messages):
+            continue
+        sender_id = messages[index].sender_id
+        if sender_id in trusted and sender_id not in subjects:
+            subjects.append(sender_id)
+    return tuple(subjects)

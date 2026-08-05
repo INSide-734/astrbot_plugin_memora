@@ -147,6 +147,56 @@ export interface ReviewItemDetailResponse {
   actions: ReviewAction[];
 }
 
+export type ReconsolidationReviewStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "failed"
+  | "rolled_back"
+  | string;
+
+export type ReconsolidationReviewActionValue = "approve" | "reject" | "rollback";
+
+export interface ReconsolidationReviewItem {
+  candidate_id: string;
+  status: ReconsolidationReviewStatus;
+  change_summary: string;
+  evidence_type: string;
+  reason_code: string;
+  created_at: string | number;
+  updated_at: string | number;
+}
+
+export interface ReconsolidationReviewDetail extends ReconsolidationReviewItem {
+  old_content: string;
+  proposed_content: string;
+}
+
+export interface ReconsolidationReviewAction {
+  action: string;
+  reason_code: string;
+  created_at: string | number;
+}
+
+export interface ReconsolidationReviewItemsResponse {
+  enabled?: boolean;
+  items: ReconsolidationReviewItem[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface ReconsolidationReviewDetailResponse {
+  candidate: ReconsolidationReviewDetail;
+  actions: ReconsolidationReviewAction[];
+}
+
+export interface ReconsolidationReviewActionResponse {
+  candidate_id: string;
+  action: ReconsolidationReviewActionValue;
+  status: ReconsolidationReviewStatus;
+}
+
 export interface EvaluationDataset {
   name: string;
   case_count: number;
@@ -169,7 +219,24 @@ export interface EvaluationSummaryMetrics {
   recall_at_k: number;
   mrr: number;
   ndcg_at_k: number;
-  p95_latency_ms: number;
+  observed_p95_latency_ms?: number | null;
+  observed_p50_latency_ms?: number | null;
+  annotated_p50_latency_ms?: number | null;
+  annotated_p95_latency_ms?: number | null;
+  reported_p50_latency_ms?: number | null;
+  reported_p95_latency_ms?: number | null;
+  annotated_answer_faithfulness?: number | null;
+  annotated_answer_relevancy?: number | null;
+  judged_answer_faithfulness?: number | null;
+  judged_answer_relevancy?: number | null;
+  reported_answer_faithfulness?: number | null;
+  reported_answer_relevancy?: number | null;
+  observed_provider_calls?: number | null;
+  observed_token_cost?: number | null;
+  annotated_provider_calls?: number | null;
+  annotated_token_cost?: number | null;
+  reported_provider_calls?: number | null;
+  reported_token_cost?: number | null;
 }
 
 export interface EvaluationVariantPayload {
@@ -186,7 +253,7 @@ export interface EvaluationVariantDelta {
   recall_at_k: number | null;
   mrr: number | null;
   ndcg_at_k: number | null;
-  p95_latency_ms: number | null;
+  observed_p95_latency_ms?: number | null;
 }
 
 export interface EvaluationCaseResult {
@@ -195,7 +262,9 @@ export interface EvaluationCaseResult {
   precision_at_k?: number;
   reciprocal_rank: number;
   ndcg_at_k: number;
-  latency_ms: number;
+  observed_latency_ms?: number | null;
+  annotated_latency_ms?: number | null;
+  reported_latency_ms?: number | null;
 }
 
 export interface EvaluationReport {

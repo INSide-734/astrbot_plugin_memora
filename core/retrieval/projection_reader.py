@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -88,9 +89,21 @@ class ProjectionReader:
         ),
     )
 
-    def __init__(self, store: Any, *, projection_limit: int = 100) -> None:
+    def __init__(
+        self,
+        store: Any,
+        *,
+        projection_limit: int = 100,
+        disabled_types: Iterable[ProjectionType | str] = (),
+    ) -> None:
+        """绑定派生 Store，并设置读取上限和关闭的 Projection 类型。"""
+
         self.store = store
         self.projection_limit = max(0, int(projection_limit))
+        self.disabled_types = frozenset(
+            item if isinstance(item, ProjectionType) else ProjectionType(item)
+            for item in disabled_types
+        )
 
     async def attach(
         self,
@@ -215,6 +228,8 @@ class ProjectionReader:
             if projection_id in seen_projection_ids:
                 continue
             if projection.state is not DerivedState.ACTIVE:
+                continue
+            if projection.projection_type in self.disabled_types:
                 continue
             if projection.scope_key != scope.scope_key:
                 continue

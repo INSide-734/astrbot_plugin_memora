@@ -9,6 +9,7 @@ interface BridgeMock {
   getLocale: ReturnType<typeof vi.fn>;
   getI18n: ReturnType<typeof vi.fn>;
   t: ReturnType<typeof vi.fn>;
+  onContext: ReturnType<typeof vi.fn>;
 }
 
 /** 构造 Dashboard bridge 成功 envelope。 */
@@ -49,6 +50,7 @@ describe("RecallTracePanel", () => {
       getLocale: vi.fn().mockReturnValue("en-US"),
       getI18n: vi.fn().mockReturnValue({}),
       t: vi.fn((key: string) => key),
+      onContext: vi.fn().mockReturnValue(vi.fn()),
     };
     showToast = vi.fn();
 
@@ -178,6 +180,33 @@ describe("RecallTracePanel", () => {
     expect(bridge.apiGet).toHaveBeenCalledTimes(1);
     expect(await screen.findByText("trace-persisted")).toBeTruthy();
     expect(bridge.apiPost).not.toHaveBeenCalled();
+  });
+
+  it("loads one persisted trace when the bridge synchronously provides its context", async () => {
+    bridge.apiGet.mockResolvedValue(ok(persistedTrace("trace-persisted")));
+    bridge.onContext.mockImplementation((handler: (context: AstrBotContext) => void) => {
+      handler({
+        pluginName: "memora",
+        displayName: "Memora",
+        locale: "en-US",
+        isDark: false,
+      });
+      return vi.fn();
+    });
+
+    render(
+      <RecallTracePanel
+        showToast={showToast}
+        navigationTarget={{
+          requestId: 1,
+          tab: "recallTrace",
+          traceId: "trace-persisted",
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("trace-persisted")).toBeTruthy();
+    expect(bridge.apiGet).toHaveBeenCalledTimes(1);
   });
 
   it("ignores a late persisted trace after the navigation target is replaced", async () => {

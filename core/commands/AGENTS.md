@@ -2,7 +2,7 @@
 
 # `/memora` 管理命令实现
 
-**最后核对：** 2026-07-20
+**最后核对：** 2026-08-02
 **组合入口：** `core/command_handler.py::CommandHandler`  
 **路由入口：** `core/command_endpoints.py::CommandEndpointsMixin`
 
@@ -41,7 +41,7 @@ flowchart LR
 | `rebuild-graph` | `handle_rebuild_graph` | 写保护后重建图索引，报告 rebuilt/skipped |
 | `reset` | `handle_reset` | 写保护后清除当前 session 的 Memora 会话上下文 |
 | `cleanup [preview|exec]` | `handle_cleanup` | 默认 preview 映射 `dry_run=True`；只有大小写不敏感的 `exec` 真正写 AstrBot 历史 |
-| `summarize` | `CommandHandler.handle_summarize` | 写保护与会话窗口锁后，处理未总结消息并逐条持久化 |
+| `summarize` | `CommandHandler.handle_summarize` | 写保护与会话窗口锁后处理未总结消息，分别反馈 canonical 写入与 quarantine 数量 |
 | `help` | `CommandHandler.handle_help` | 返回 i18n 帮助文本 |
 
 `core/commands/__init__.py` 是空包标记；mixin 由 `CommandHandler` 直接导入，不存在包级公共重导出契约。
@@ -74,10 +74,11 @@ flowchart LR
 2. 从实际消息数与 `last_summarized_index` 计算窗口，少于 2 条不处理。
 3. 读取窗口、解析 persona/group，调用 `MemoryProcessor.process_conversation()`。
 4. 每条记忆写入 `source_window`（含 `triggered_by=manual`）。
-5. 任一写入失败时记录 `pending_summary` 并不推进窗口；全部成功后更新 `last_summarized_index` 并清空 pending。
-6. `finally` 释放窗口锁。
+5. quarantine 只计为已安全处理，不计入 canonical 写入、重要性或主题；canonical 写入失败时记录 `pending_summary` 并不推进窗口。
+6. 全部候选安全处理后更新 `last_summarized_index`、清空 pending，并分别反馈 canonical 与 quarantine 数量；反馈进度使用真实消息索引。
+7. `finally` 释放窗口锁。
 
-这保证“部分写入”不会假装整个窗口已提交，但已成功写入的前缀可能存在，后续补偿逻辑必须尊重 `pending_summary`。
+这保证“部分写入”不会假装整个窗口已提交，隔离候选也不会伪装成长期记忆；但已成功写入的前缀可能存在，后续补偿逻辑必须尊重 `pending_summary`。
 
 ## 写保护与安全边界
 

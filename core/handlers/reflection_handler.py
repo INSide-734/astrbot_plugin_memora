@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -12,6 +11,7 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
+from ..base.cost_control import CostControl
 from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
@@ -24,6 +24,22 @@ from ..security.prompt_sanitizer import (
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
 from ..utils import OperationContext, get_persona_id
+from .continuity_hooks import resolve_continuity_session
+from .reflection_backlog import ReflectionBacklogMixin
+from .reflection_candidate_writer import (
+    build_reflection_idempotency_key,
+    store_reflection_candidates,
+)
+from .reflection_llm_budget import (
+    fit_batches_to_extra_llm_budget,
+    process_reflection_batches,
+)
+from .reflection_metadata import commit_summary_metadata, persist_pending_summary
+from .reflection_storage_outcomes import (
+    ReflectionStoreOutcome,
+    ReflectionStoreResult,
+    summarize_store_results,
+)
 from .reflection_trigger import ReflectionTrigger
 from .topic_batch_preparer import TopicBatchPreparer
 
@@ -32,7 +48,7 @@ if TYPE_CHECKING:
     from astrbot.api.provider import LLMResponse
 
 
-class ReflectionHandler:
+class ReflectionHandler(ReflectionBacklogMixin):
     """在 LLM 响应后执行反思与后台记忆存储。"""
 
     def __init__(
@@ -50,7 +66,11 @@ class ReflectionHandler:
         prompt_protection_service: Any | None = None,
         write_guard_cb: Any | None = None,
         memory_evolution_manager: Any | None = None,
+        memory_quality_gate: Any | None = None,
+        cost_control: CostControl | None = None,
     ) -> None:
+        """装配响应清洗、反思存储及可选认知组件。"""
+
         self._context = context
         self._config_manager = config_manager
         self._memory_engine = memory_engine
@@ -64,6 +84,8 @@ class ReflectionHandler:
         self._prompt_protection = prompt_protection_service
         self._write_guard_cb = write_guard_cb
         self._memory_evolution_manager = memory_evolution_manager
+        self._memory_quality_gate = memory_quality_gate
+        self._cost_control = cost_control or CostControl()
 
         self._storage_tasks: set[asyncio.Task] = set()
         self._storage_sessions_inflight: set[str] = set()
@@ -74,6 +96,7 @@ class ReflectionHandler:
             config_manager=config_manager,
             memory_engine=memory_engine,
             memory_processor=memory_processor,
+            cost_control=self._cost_control,
         )
         self._summary_trigger = ReflectionTrigger(
             context=context,
@@ -341,16 +364,7 @@ class ReflectionHandler:
                 return
 
             try:
-                task = asyncio.create_task(
-                    self._storage_task(
-                        request.session_id,
-                        request.history_messages,
-                        request.persona_id,
-                        request.start_index,
-                        request.end_index,
-                        request.retry_count,
-                    )
-                )
+                task = asyncio.create_task(self._drain_summary_backlog(request))
             except Exception:
                 self.finish_summary_window(session_id)
                 raise
@@ -696,9 +710,10 @@ class ReflectionHandler:
         self, history_messages: list, is_group_chat: bool
     ) -> list[list]:
         """通过 ``TopicBatchPreparer`` 准备消息批次。"""
-        return await self._batch_preparer.prepare_batches(
+        batches = await self._batch_preparer.prepare_batches(
             history_messages, is_group_chat
         )
+        return fit_batches_to_extra_llm_budget(batches, self._cost_control)
 
     async def _storage_task(
         self,
@@ -826,38 +841,27 @@ class ReflectionHandler:
                     batch_processing_failed = False
                     failed_batch_count = 0
                     extraction_started = time.perf_counter()
-                    if len(batches) == 1:
-                        batch_memories = (
-                            await self._memory_processor.process_conversation(
-                                messages=batches[0],
-                                is_group_chat=is_group_chat,
-                                persona_id=persona_id,
+                    batch_results = await process_reflection_batches(
+                        batches,
+                        process_conversation=(
+                            self._memory_processor.process_conversation
+                        ),
+                        cost_control=self._cost_control,
+                        is_group_chat=is_group_chat,
+                        persona_id=persona_id,
+                    )
+                    for i, result in enumerate(batch_results):
+                        if isinstance(result, BaseException):
+                            batch_processing_failed = True
+                            failed_batch_count += 1
+                            logger.error(
+                                "反思批次 %d/%d LLM 处理失败，异常类型=%s",
+                                i + 1,
+                                len(batches),
+                                result.__class__.__name__,
                             )
-                        )
-                        all_memories.extend(batch_memories)
-                    else:
-                        # 多批次（策略 C/D 场景）并行调用 LLM
-                        async def _process_batch(batch):
-                            return await self._memory_processor.process_conversation(
-                                messages=batch,
-                                is_group_chat=is_group_chat,
-                                persona_id=persona_id,
-                            )
-
-                        batch_results = await asyncio.gather(
-                            *[_process_batch(b) for b in batches],
-                            return_exceptions=True,
-                        )
-                        for i, result in enumerate(batch_results):
-                            if isinstance(result, BaseException):
-                                batch_processing_failed = True
-                                failed_batch_count += 1
-                                logger.error(
-                                    f"[{session_id}] 批次 {i + 1}/{len(batches)} "
-                                    f"LLM 处理失败：{result}"
-                                )
-                            else:
-                                all_memories.extend(result)
+                        else:
+                            all_memories.extend(result)
 
                     if batch_processing_failed:
                         report_debug_event(
@@ -912,6 +916,8 @@ class ReflectionHandler:
                         f"[{session_id}] LLM 生成 {len(memories)} 条独立记忆"
                         f"（来自 {len(batches)} 个批次）"
                     )
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     report_debug_exception(
                         "storage_task",
@@ -924,7 +930,9 @@ class ReflectionHandler:
                         retry_count=max(0, int(retry_count)),
                     )
                     logger.error(
-                        f"[{session_id}] LLM 处理失败（重试 {retry_count + 1}/3）：{e}",
+                        "反思 LLM 处理失败（重试 %d/3），异常类型=%s",
+                        retry_count + 1,
+                        e.__class__.__name__,
                         exc_info=True,
                     )
                     await self._record_pending_summary(
@@ -936,15 +944,6 @@ class ReflectionHandler:
                     return
 
                 if self._memory_engine:
-                    # 并行写入记忆（受写锁串行化约束，但消除了 await 调度开销）
-                    stored_count = 0
-                    successful_keys = set(completed_idempotency_keys)
-                    skipped_memory_count = sum(
-                        str(memory.get("metadata", {}).get("idempotency_key") or "")
-                        in completed_idempotency_keys
-                        for memory in memories
-                    )
-                    _MAX_CONCURRENT_WRITES = 3
                     write_started = time.perf_counter()
                     report_debug_event(
                         "storage_task",
@@ -954,84 +953,64 @@ class ReflectionHandler:
                         reason_code="memory_write_started",
                         task_type="storage",
                         count=len(memories),
-                        skipped_count=skipped_memory_count,
                     )
 
-                    async def _store_one(mem: dict[str, Any]) -> bool:
-                        metadata = mem.setdefault("metadata", {})
-                        idempotency_key = str(metadata.get("idempotency_key") or "")
-                        if idempotency_key in completed_idempotency_keys:
-                            return True
-                        metadata["source_window"] = {
-                            "session_id": session_id,
-                            "start_index": start_index,
-                            "end_index": end_index,
-                            "message_count": end_index - start_index,
-                        }
-                        try:
-                            memory_id = await self._memory_engine.add_memory(
-                                content=mem["content"],
-                                session_id=session_id,
-                                persona_id=persona_id,
-                                importance=mem["importance"],
-                                metadata=metadata,
-                                atoms=mem.get("atoms", []),
-                            )
-                            await self._schedule_evolution_after_write(memory_id)
-                            if idempotency_key:
-                                successful_keys.add(idempotency_key)
-                            return True
-                        except Exception as e:
-                            logger.error(
-                                f"[{session_id}] 记忆写入失败：{e}",
-                                exc_info=True,
-                            )
-                            return False
-
-                    sem = asyncio.Semaphore(_MAX_CONCURRENT_WRITES)
-
-                    async def _store_with_sem(mem):
-                        async with sem:
-                            return await _store_one(mem)
-
-                    write_results = await asyncio.gather(
-                        *[_store_with_sem(m) for m in memories],
-                        return_exceptions=True,
+                    write_results = await store_reflection_candidates(
+                        memories,
+                        completed_idempotency_keys=completed_idempotency_keys,
+                        session_id=session_id,
+                        persona_id=persona_id,
+                        start_index=start_index,
+                        end_index=end_index,
+                        is_group_chat=is_group_chat,
+                        memory_engine=self._memory_engine,
+                        memory_quality_gate=self._memory_quality_gate,
+                        schedule_evolution_after_write=(
+                            self._schedule_evolution_after_write
+                        ),
                     )
-                    for r in write_results:
-                        if isinstance(r, BaseException):
-                            logger.error(
-                                f"[{session_id}] 批量写入异常：{r}",
-                                exc_info=True,
-                            )
-                        elif r is True:
-                            stored_count += 1
+                    store_summary = summarize_store_results(write_results)
+                    successful_keys = set(store_summary.completed_idempotency_keys)
 
                     logger.info(
-                        f"[{session_id}] 成功存储 {stored_count}/{len(memories)} 条记忆"
-                        f"（{len(history_messages)}条消息）"
+                        "[%s] 反思候选处理完成：canonical=%d，quarantine=%d，"
+                        "幂等跳过=%d，失败=%d（%d条消息）",
+                        session_id,
+                        store_summary.canonical_count,
+                        store_summary.quarantine_count,
+                        store_summary.skipped_idempotent_count,
+                        store_summary.failed_count,
+                        len(history_messages),
                     )
                     report_debug_event(
                         "storage_task",
                         component="reflection",
                         stage="memory_write",
                         status="completed"
-                        if stored_count == len(memories)
+                        if store_summary.failed_count == 0
                         else "degraded",
                         reason_code="memory_write_completed"
-                        if stored_count == len(memories)
+                        if store_summary.failed_count == 0
                         else "memory_write_partial",
                         task_type="storage",
                         duration_ms=max(
                             0.0, (time.perf_counter() - write_started) * 1000.0
                         ),
-                        success_count=max(0, int(stored_count - skipped_memory_count)),
-                        failed_count=max(0, int(len(memories) - stored_count)),
-                        skipped_count=skipped_memory_count,
+                        success_count=store_summary.canonical_count,
+                        canonical_count=store_summary.canonical_count,
+                        quarantine_count=store_summary.quarantine_count,
+                        failed_count=store_summary.failed_count,
+                        skipped_count=store_summary.skipped_idempotent_count,
+                        skipped_idempotent_count=(
+                            store_summary.skipped_idempotent_count
+                        ),
                     )
                 else:
-                    stored_count = len(memories)
-                    successful_keys = set(completed_idempotency_keys)
+                    store_summary = summarize_store_results(
+                        ReflectionStoreResult(ReflectionStoreOutcome.FAILED)
+                        for _ in memories
+                    )
+                    successful_keys = set()
                     report_debug_event(
                         "storage_task",
                         component="reflection",
@@ -1042,10 +1021,10 @@ class ReflectionHandler:
                         count=len(memories),
                     )
 
-                if stored_count < len(memories):
+                if store_summary.failed_count > 0:
                     logger.warning(
-                        f"[{session_id}] 记忆仅部分落库，保留待重试窗口："
-                        f"{stored_count}/{len(memories)}，范围=[{start_index}:{end_index}]"
+                        f"[{session_id}] 有 {store_summary.failed_count} 条候选写入失败，"
+                        f"保留待重试窗口：范围=[{start_index}:{end_index}]"
                     )
                     await self._record_pending_summary(
                         session_id,
@@ -1053,83 +1032,32 @@ class ReflectionHandler:
                         end_index,
                         retry_count,
                         failed_stage="memory_write",
-                        failed_count=len(memories) - stored_count,
+                        failed_count=store_summary.failed_count,
                         completed_idempotency_keys=successful_keys,
                     )
                     return
 
                 if self._conversation_manager:
-                    metadata_started = time.perf_counter()
-                    try:
-                        await self._conversation_manager.update_session_metadata(
+                    metadata_committed = await commit_summary_metadata(
+                        self._conversation_manager,
+                        session_id=session_id,
+                        end_index=end_index,
+                        record_pending_summary=lambda: self._record_pending_summary(
                             session_id,
-                            "last_summarized_index",
+                            start_index,
                             end_index,
-                        )
-                        await self._conversation_manager.update_session_metadata(
-                            session_id,
-                            "pending_summary",
-                            None,
-                        )
-                        logger.info(
-                            f"[{session_id}] 更新滑动窗口位置："
-                            f"last_summarized_index = {end_index}"
-                        )
-                        report_debug_event(
-                            "storage_task",
-                            component="reflection",
-                            stage="metadata_commit",
-                            status="completed",
-                            reason_code="summary_metadata_committed",
-                            task_type="storage",
-                            duration_ms=max(
-                                0.0, (time.perf_counter() - metadata_started) * 1000.0
-                            ),
-                        )
-                    except Exception as meta_err:
-                        report_debug_exception(
-                            "storage_task",
-                            meta_err,
-                            component="reflection",
-                            stage="metadata_commit",
-                            status="degraded",
-                            reason_code="summary_metadata_retrying",
-                            task_type="storage",
-                        )
-                        logger.error(
-                            f"[{session_id}] 记忆已存储但元数据更新失败：{meta_err}。"
-                            "下次触发时将跳过本段消息，避免重复总结。",
-                            exc_info=True,
-                        )
-                        try:
-                            await self._conversation_manager.update_session_metadata(
-                                session_id,
-                                "last_summarized_index",
-                                end_index,
-                            )
-                            await self._conversation_manager.update_session_metadata(
-                                session_id,
-                                "pending_summary",
-                                None,
-                            )
-                        except Exception:
-                            report_debug_event(
-                                "storage_task",
-                                component="reflection",
-                                stage="metadata_commit",
-                                status="failed",
-                                reason_code="summary_metadata_failed",
-                                task_type="storage",
-                                duration_ms=max(
-                                    0.0,
-                                    (time.perf_counter() - metadata_started) * 1000.0,
-                                ),
-                            )
-                            logger.error(
-                                f"[{session_id}] 重试元数据更新仍然失败，"
-                                "可能出现重复总结。",
-                                exc_info=True,
-                            )
+                            retry_count,
+                            failed_stage="metadata_commit",
+                            failed_count=0,
+                            completed_idempotency_keys=successful_keys,
+                        ),
+                    )
+                    if not metadata_committed:
+                        # 元数据未完成时不能把 canonical 写入误报为完整成功，
+                        # 也不能让积压 drain 根据旧游标继续下一窗口。
+                        return
+
+                resolve_continuity_session(self._memory_engine, session_id)
 
                 report_debug_event(
                     "storage_task",
@@ -1138,7 +1066,11 @@ class ReflectionHandler:
                     status="completed",
                     reason_code="memories_stored",
                     task_type="storage",
-                    count=max(0, int(stored_count)),
+                    count=store_summary.canonical_count,
+                    canonical_count=store_summary.canonical_count,
+                    quarantine_count=store_summary.quarantine_count,
+                    failed_count=store_summary.failed_count,
+                    skipped_idempotent_count=(store_summary.skipped_idempotent_count),
                     duration_ms=max(
                         0.0, (time.perf_counter() - storage_started) * 1000.0
                     ),
@@ -1187,52 +1119,41 @@ class ReflectionHandler:
         failed_stage: str = "unknown",
         failed_count: int | None = None,
         completed_idempotency_keys: set[str] | list[str] | None = None,
-    ) -> None:
-        """记录待处理的失败总结信息"""
-        if not self._conversation_manager:
-            return
+    ) -> bool:
+        """委托共享 helper 持久化待重试总结窗口。
 
-        new_retry_count = current_retry_count + 1
-        pending_summary = {
-            "start_index": start_index,
-            "end_index": end_index,
-            "retry_count": new_retry_count,
-            "failed_stage": failed_stage,
-        }
-        if failed_count is not None:
-            pending_summary["failed_count"] = failed_count
-        if completed_idempotency_keys:
-            pending_summary["completed_idempotency_keys"] = sorted(
-                str(item) for item in completed_idempotency_keys
-            )
+        Args:
+            session_id: 统一会话标识。
+            start_index: 失败窗口起始索引。
+            end_index: 失败窗口结束索引（不包含）。
+            current_retry_count: 当前已重试次数。
+            failed_stage: 失败阶段标识。
+            failed_count: 本次失败的候选数量。
+            completed_idempotency_keys: 已成功写入、重试时应跳过的候选键。
 
-        await self._conversation_manager.update_session_metadata(
-            session_id,
-            "pending_summary",
-            pending_summary,
-        )
+        Returns:
+            ``True`` 表示待重试状态已提交；没有会话管理器或提交失败时返回
+            ``False``，且不会发出“已记录”诊断事件。
 
-        report_debug_event(
-            "storage_task",
-            component="reflection",
-            stage="retry",
-            status="waiting",
-            reason_code="summary_retry_recorded",
-            task_type="storage",
-            retry_count=max(0, int(new_retry_count)),
-            failed_count=max(0, int(failed_count or 0)),
-        )
-
-        logger.warning(
-            f"[{session_id}] 记录待重试总结：范围=[{start_index}:{end_index}]，"
-            f"重试次数={new_retry_count}/3"
+        Raises:
+            asyncio.CancelledError: 调用方取消持久化时原样传播。
+        """
+        return await persist_pending_summary(
+            self._conversation_manager,
+            session_id=session_id,
+            start_index=start_index,
+            end_index=end_index,
+            current_retry_count=current_retry_count,
+            failed_stage=failed_stage,
+            failed_count=failed_count,
+            completed_idempotency_keys=completed_idempotency_keys,
         )
 
     async def _schedule_evolution_after_write(self, memory_id: int) -> None:
         """从 canonical Store 重读 source 后再通知记忆演化管理器。"""
 
         manager = self._memory_evolution_manager
-        if manager is None:
+        if manager is None or getattr(manager, "mode", None) == "disabled":
             report_debug_event(
                 "storage_task",
                 component="reflection",
@@ -1245,15 +1166,18 @@ class ReflectionHandler:
         try:
             sources = await manager.store.load_sources((int(memory_id),))
             if sources:
-                await manager.schedule_consider(sources[0])
+                decision = await manager.schedule_consider(sources[0])
+                should_enqueue = getattr(decision, "should_enqueue", False) is True
                 report_debug_event(
                     "storage_task",
                     component="reflection",
                     stage="evolution_schedule",
-                    status="completed",
-                    reason_code="evolution_scheduled",
+                    status="completed" if should_enqueue else "skipped",
+                    reason_code=(
+                        "evolution_scheduled" if should_enqueue else "evolution_skipped"
+                    ),
                     task_type="evolution",
-                    count=1,
+                    count=1 if should_enqueue else 0,
                 )
             else:
                 report_debug_event(
@@ -1296,12 +1220,16 @@ class ReflectionHandler:
         memory_index: int,
         content: str,
     ) -> str:
-        content_hash = hashlib.sha256(content.strip().encode("utf-8")).hexdigest()
-        raw = (
-            f"{session_id}:{start_index}:{end_index}:"
-            f"{batch_index}:{memory_index}:{content_hash}"
+        """兼容现有调用方，委托共享候选幂等键实现。"""
+
+        return build_reflection_idempotency_key(
+            session_id=session_id,
+            start_index=start_index,
+            end_index=end_index,
+            batch_index=batch_index,
+            memory_index=memory_index,
+            content=content,
         )
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def shutdown(self) -> None:
         """关闭反思处理器，并等待所有存储任务完成。"""

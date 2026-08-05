@@ -12,6 +12,8 @@ class ConversationFormatter:
     """将 Message 列表格式化为对话文本"""
 
     def format_conversation(self, messages: list[Message]) -> str:
+        """保留发送者和秒级时间，将消息列表格式化为普通对话文本。"""
+
         formatted_lines = []
         for i, msg in enumerate(messages):
             logger.debug(
@@ -34,8 +36,23 @@ class ConversationFormatter:
                 )
         return "\n".join(formatted_lines)
 
+    def format_conversation_with_source_refs(self, messages: list[Message]) -> str:
+        """给每条消息添加匿名标签和正文字符数，供抽取结果精确引用。"""
+
+        formatted_lines: list[str] = []
+        for index, message in enumerate(messages):
+            content_text = self._message_content_to_text(message.content)
+            sender_info = self._format_sender_info(message)
+            formatted_lines.append(
+                f"[S{index} chars={len(content_text)}] "
+                f"{sender_info} {content_text}".rstrip()
+            )
+        return "\n".join(formatted_lines)
+
     @staticmethod
     def _format_sender_info(msg: Message) -> str:
+        """生成不改变既有 Prompt 契约的发送者显示前缀。"""
+
         time_str = datetime.fromtimestamp(msg.timestamp).strftime("%Y-%m-%d %H:%M:%S")
         display_name = msg.sender_name if msg.sender_name else msg.sender_id or "未知"
         is_bot = msg.metadata.get("is_bot_message", False) or msg.role == "assistant"
@@ -51,7 +68,7 @@ class ConversationFormatter:
     ) -> str:
         """紧凑格式：省略 sender ID、合并连续同角色、秒级时间降为分钟。
 
-        Args:
+        参数:
             messages: 消息列表。
             message_max_chars: 单条消息最大字符数，超出截断。
             omit_sender_id: 私聊下省略 sender ID 以减少 token。
@@ -101,8 +118,12 @@ class ConversationFormatter:
 
     @classmethod
     def _message_content_to_text(cls, content: Any) -> str:
+        """把消息组件规范为纯文本。"""
+
         return Message.content_to_text(content)
 
     @classmethod
     def _message_part_to_text(cls, part: Any) -> tuple[str, bool]:
+        """把单个消息组件规范为文本和媒体标记。"""
+
         return Message._content_part_to_text(part)

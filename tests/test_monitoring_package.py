@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import importlib
+from importlib.util import find_spec
 
 
 def _reload_monitoring_package():
+    """重新加载监控包，隔离运行时 debug 开关状态。"""
+
     import core.monitoring as monitoring
 
     return importlib.reload(monitoring)
+
+
+def test_legacy_manager_metrics_collector_is_absent() -> None:
+    """监控指标只能由 core.monitoring 提供，不保留第二套 Manager。"""
+
+    assert find_spec("core.managers.metrics_collector") is None
 
 
 def test_set_debug_mode_toggles_functions_decorated_before_enable(monkeypatch) -> None:

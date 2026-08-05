@@ -216,8 +216,7 @@ interface BridgeMock {
   getLocale?: ReturnType<typeof vi.fn>;
   getI18n?: ReturnType<typeof vi.fn>;
   t?: ReturnType<typeof vi.fn>;
-  onContextChange?: ReturnType<typeof vi.fn>;
-  offContextChange?: ReturnType<typeof vi.fn>;
+  onContext?: ReturnType<typeof vi.fn>;
   subscribeSSE?: ReturnType<typeof vi.fn>;
   unsubscribeSSE?: ReturnType<typeof vi.fn>;
   apiGet?: ReturnType<typeof vi.fn>;
@@ -257,10 +256,9 @@ describe("App", () => {
       getLocale: vi.fn().mockReturnValue("en-US"),
       getI18n: vi.fn().mockReturnValue({}),
       t: vi.fn((key: string) => key),
-      onContextChange: vi.fn(),
-      offContextChange: vi.fn(),
-      subscribeSSE: vi.fn().mockReturnValue("sub-1"),
-      unsubscribeSSE: vi.fn(),
+      onContext: vi.fn().mockReturnValue(vi.fn()),
+      subscribeSSE: vi.fn().mockResolvedValue("sub-1"),
+      unsubscribeSSE: vi.fn().mockResolvedValue(undefined),
       apiGet: vi.fn((path: string) => {
         if (path === "page/metrics/summary") {
           return Promise.resolve({

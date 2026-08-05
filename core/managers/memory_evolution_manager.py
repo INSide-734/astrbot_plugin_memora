@@ -26,17 +26,17 @@ from ..models.memory_evolution import (
     RelationView,
     RetrySpec,
 )
-
-
-class EvolutionProposalRejected(ValueError):
-    """表示 proposal 没有通过确定性安全校验。"""
+from .memory_evolution_projection import (
+    EvolutionProposalRejected,
+    MemoryEvolutionProjectionProposalMixin,
+)
 
 
 class EvolutionLeaseLost(RuntimeError):
     """表示当前 worker 已失去 job lease，不能继续写入派生结果。"""
 
 
-class MemoryEvolutionManager:
+class MemoryEvolutionManager(MemoryEvolutionProjectionProposalMixin):
     """编排本地 evolution job，并把通过校验的 proposal 原子应用到 Store。"""
 
     _HIGH_IMPACT = frozenset(
@@ -61,11 +61,20 @@ class MemoryEvolutionManager:
     )
 
     def __init__(
-        self, store, gate, consolidator, config: Mapping[str, Any] | None = None
+        self,
+        store,
+        gate,
+        consolidator,
+        config: Mapping[str, Any] | None = None,
+        *,
+        candidate_generator=None,
     ):
+        """绑定 Store、门控、Provider consolidator 和可选本地候选生成器。"""
+
         self.store = store
         self.gate = gate
         self.consolidator = consolidator
+        self.candidate_generator = candidate_generator
         config = config or {}
         self.max_attempts = max(1, _as_int(config.get("max_attempts"), 3))
         self.lease_seconds = max(1, _as_int(config.get("lease_seconds"), 120))
@@ -141,7 +150,12 @@ class MemoryEvolutionManager:
             if current is not None and current.cancelling():
                 raise
 
-    async def schedule_consider(self, source: MemorySourceRef):
+    async def schedule_consider(
+        self,
+        source: MemorySourceRef,
+        *,
+        replay: bool = False,
+    ):
         """在 canonical 写入成功后执行本地 gate 和 job enqueue。"""
 
         pending_jobs = await self.store.pending_count()
@@ -150,26 +164,39 @@ class MemoryEvolutionManager:
             revision_token=source.revision_token,
             importance=0.8,
             scope_key=source.scope_key,
-            topic_keys=("memory",),
-            entity_keys=(str(source.memory_id),),
+            topic_keys=source.topic_keys or ("memory",),
+            entity_keys=(source.subject_key or str(source.memory_id),),
             occurred_at=source.occurred_at,
             pending_jobs=pending_jobs,
             privacy_level=source.privacy_level,
             content=source.content,
         )
-        decision = self.gate.consider(signal)
+        decision = (
+            self.gate.consider(signal, replay=True)
+            if replay
+            else self.gate.consider(signal)
+        )
         if not decision.should_enqueue:
             return decision
-        await self.store.enqueue_job(
-            JobSpec(
-                scope_key=source.scope_key,
-                bucket_key=decision.bucket_key or "",
-                source_ids=(source.memory_id,),
-                idempotency_key=decision.idempotency_key or "",
-                not_before=datetime.now(timezone.utc),
-                source_revisions={source.memory_id: source.revision_token},
+        sources = [source]
+        if self.candidate_generator is not None:
+            sources = await self.store.load_candidate_sources(
+                source,
+                limit=min(6, self.candidate_limit + 1),
+                max_content_chars=self.max_input_chars,
             )
+        spec = JobSpec(
+            scope_key=source.scope_key,
+            bucket_key=decision.bucket_key or "",
+            source_ids=tuple(item.memory_id for item in sources),
+            idempotency_key=decision.idempotency_key or "",
+            not_before=datetime.now(timezone.utc),
+            source_revisions={item.memory_id: item.revision_token for item in sources},
         )
+        if replay:
+            await self.store.requeue_job(spec)
+        else:
+            await self.store.enqueue_job(spec)
         return decision
 
     async def run_once(self) -> bool:
@@ -246,7 +273,14 @@ class MemoryEvolutionManager:
                 }
                 if loaded_revisions != claim.source_revisions:
                     raise EvolutionProposalRejected("source_revision_changed")
-            proposal = await self.consolidator.propose(sources)
+            proposal = EvolutionProposal()
+            if self.candidate_generator is not None:
+                proposal = await self.candidate_generator.propose(
+                    sources,
+                    limit=self.candidate_limit,
+                )
+            if not proposal.relations and not proposal.projections:
+                proposal = await self.consolidator.propose(sources)
             if not isinstance(proposal, EvolutionProposal):
                 raise EvolutionProposalRejected("proposal_schema_invalid")
             fresh_sources = await self.store.load_sources(
@@ -285,12 +319,17 @@ class MemoryEvolutionManager:
             except asyncio.CancelledError:
                 pass
 
-    async def reconcile_recent_sources(self, sources: Iterable[MemorySourceRef]) -> int:
+    async def reconcile_recent_sources(
+        self,
+        sources: Iterable[MemorySourceRef],
+        *,
+        replay: bool = False,
+    ) -> int:
         """对近期 canonical source 补偿缺失的演化 job。"""
 
         scheduled = 0
         for source in sources:
-            decision = await self.schedule_consider(source)
+            decision = await self.schedule_consider(source, replay=replay)
             if decision.should_enqueue:
                 scheduled += 1
         return scheduled
@@ -307,7 +346,7 @@ class MemoryEvolutionManager:
             sources = await self.store.load_all_sources(
                 max_content_chars=self.max_input_chars
             )
-            scheduled = await self.reconcile_recent_sources(sources)
+            scheduled = await self.reconcile_recent_sources(sources, replay=True)
             return {
                 "success": True,
                 "canonical_sources": len(sources),
@@ -464,7 +503,7 @@ class MemoryEvolutionManager:
             target = _alias(aliases, item.target_alias)
             if source.memory_id == target.memory_id:
                 raise EvolutionProposalRejected("self_relation")
-            _ensure_compatible(source, target)
+            _ensure_compatible(source, target, item.relation_type)
             edge = (source.memory_id, target.memory_id)
             reverse = (target.memory_id, source.memory_id)
             if (
@@ -518,7 +557,7 @@ class MemoryEvolutionManager:
                 projection_sources_for_item
             ):
                 raise EvolutionProposalRejected("duplicate_projection_source")
-            _ensure_scope_compatible(*projection_sources_for_item)
+            _ensure_projection_compatible(*projection_sources_for_item)
             if (
                 item.projection_type is ProjectionType.CONFLICT_SET
                 and len(projection_sources_for_item) < 3
@@ -588,8 +627,38 @@ def _ensure_scope_compatible(*sources: MemorySourceRef) -> None:
         raise EvolutionProposalRejected("scope_mismatch")
 
 
-def _ensure_compatible(first: MemorySourceRef, second: MemorySourceRef) -> None:
+def _ensure_projection_compatible(*sources: MemorySourceRef) -> None:
+    """校验 Projection 的 scope，并隔离 confidential 主体边界。"""
+
+    _ensure_scope_compatible(*sources)
+    if not any(source.privacy_level == "confidential" for source in sources):
+        return
+    subjects = {source.subject_key for source in sources}
+    if len(subjects) != 1 or None in subjects:
+        raise EvolutionProposalRejected("subject_mismatch")
+
+
+def _ensure_compatible(
+    first: MemorySourceRef,
+    second: MemorySourceRef,
+    relation_type: RelationType,
+) -> None:
+    """校验 relation 的 scope、私聊主体和高影响主体边界。"""
+
     _ensure_scope_compatible(first, second)
+    subject_required = "confidential" in {
+        first.privacy_level,
+        second.privacy_level,
+    } or relation_type in {
+        RelationType.UPDATES,
+        RelationType.CONTRADICTS,
+        RelationType.PREFERENCE_CHANGE,
+        RelationType.SUPERSEDES,
+    }
+    if subject_required and (
+        not first.subject_key or first.subject_key != second.subject_key
+    ):
+        raise EvolutionProposalRejected("subject_mismatch")
 
 
 def _strictest_privacy(*sources: MemorySourceRef) -> str:
@@ -678,6 +747,7 @@ def _reason(error: Exception) -> str:
             "proposal_schema_invalid",
             "proposal_limit_exceeded",
             "duplicate_source",
+            "subject_mismatch",
         }:
             return code
         return "proposal_rejected"

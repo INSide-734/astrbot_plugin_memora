@@ -22,6 +22,7 @@ from .models import (
     UserAffection,
     classify_by_keywords,
 )
+from .mood_cascade import apply_mood_cascade
 
 # ---- LLM 适配器协议 --------------------------------------------------------------
 
@@ -95,6 +96,21 @@ def _random_mood_description(mood_type: MoodType) -> str:
     return random.choice(pool)
 
 
+def _failed_interaction(error: str) -> dict[str, Any]:
+    """构造不包含身份或内容的稳定交互失败结果。"""
+    return {
+        "success": False,
+        "interaction_type": "unknown",
+        "affection_score": None,
+        "affection_level": None,
+        "affection_delta": 0,
+        "mood_type": None,
+        "mood_intensity": None,
+        "mood_description": None,
+        "error": error,
+    }
+
+
 # ---- 分类提示词模板 ---------------------------------------------------
 
 
@@ -166,8 +182,6 @@ class AffectionManager:
         self._mood_cache: dict[str, BotMood] = {}
         self._mood_lock = asyncio.Lock()
 
-    # ---- 对外 API --------------------------------------------------------------------
-
     async def process_interaction(
         self,
         user_id: str,
@@ -177,8 +191,15 @@ class AffectionManager:
     ) -> dict[str, Any]:
         """主入口：分类、门控、更新并触发情绪级联。"""
         try:
+            normalized_group_id = self._normalize_identity(group_id, "group_id")
+            normalized_user_id = self._normalize_identity(user_id, "user_id")
+        except EntityValidationError:
+            logger.debug("[好感度管理] 身份字段不符合约束，跳过自动交互")
+            return _failed_interaction("身份无效")
+
+        try:
             # 1. 确保群组当前有情绪状态
-            mood = await self._ensure_mood(group_id)
+            mood = await self._ensure_mood(normalized_group_id)
 
             # 2. 分类交互类型
             itype = await self._classify(message, bot_response, mood)
@@ -207,8 +228,8 @@ class AffectionManager:
 
             # 5. 持久化写入
             record = await self._store.upsert_affection(
-                group_id,
-                user_id,
+                normalized_group_id,
+                normalized_user_id,
                 delta,
                 max_score=self._max_affection,
                 min_score=self._min_affection,
@@ -217,11 +238,20 @@ class AffectionManager:
 
             # 6. 若总量超限则执行重分配
             if delta > 0:
-                await self._maybe_redistribute(group_id, user_id)
+                await self._maybe_redistribute(
+                    normalized_group_id,
+                    normalized_user_id,
+                )
 
             # 7. 触发情绪级联
             if rule is not None:
-                await self._apply_mood_cascade(group_id, itype, rule, mood)
+                await apply_mood_cascade(
+                    self.set_mood,
+                    normalized_group_id,
+                    itype,
+                    rule,
+                    mood,
+                )
 
             return {
                 "success": True,
@@ -236,20 +266,8 @@ class AffectionManager:
             }
 
         except Exception:
-            logger.exception(
-                f"[好感度管理] process_interaction 失败: {group_id}/{user_id}"
-            )
-            return {
-                "success": False,
-                "interaction_type": "unknown",
-                "affection_score": None,
-                "affection_level": None,
-                "affection_delta": 0,
-                "mood_type": None,
-                "mood_intensity": None,
-                "mood_description": None,
-                "error": "内部错误",
-            }
+            logger.exception("[好感度管理] process_interaction 失败")
+            return _failed_interaction("内部错误")
 
     async def get_mood(self, group_id: str) -> BotMood:
         """返回指定群组当前情绪，必要时从存储层加载。"""
@@ -754,134 +772,6 @@ class AffectionManager:
                 ):
                     u["affection_score"] = new_score
                     overhead -= cut
-
-    # ---- 内部：情绪级联 --------------------------------------------------------
-
-    async def _apply_mood_cascade(
-        self,
-        group_id: str,
-        itype: InteractionType,
-        rule: Any,
-        current_mood: BotMood,
-    ) -> None:
-        """根据交互结果更新机器人的情绪。"""
-        mood_effect = getattr(rule, "mood_effect", 0.0)
-
-        if getattr(rule, "negative_mood_trigger", False):
-            await self._cascade_negative(group_id, itype, mood_effect)
-        elif getattr(rule, "positive_mood_boost", False):
-            await self._cascade_positive(group_id, itype, mood_effect)
-        else:
-            await self._cascade_adjust(group_id, current_mood, mood_effect)
-
-    async def _cascade_negative(
-        self, group_id: str, itype: InteractionType, effect: float
-    ) -> None:
-        """负面交互会触发强烈且即时的情绪覆盖，持续 2 小时。"""
-        mapping: dict[InteractionType, tuple[MoodType, list[str]]] = {
-            InteractionType.THREAT: (
-                MoodType.ANXIOUS,
-                [
-                    "感到被威胁，心情变得紧张不安...",
-                    "受到恐吓，现在有些害怕和担心。",
-                    "被威胁让我感到很不安全。",
-                ],
-            ),
-            InteractionType.ABUSE: (
-                MoodType.ANGRY,
-                [
-                    "被恶意谩骂，现在心情很愤怒！",
-                    "受到恶毒攻击，感到非常生气。",
-                    "恶语相向让我感到愤怒和受伤。",
-                ],
-            ),
-            InteractionType.INSULT: (
-                MoodType.SAD,
-                [
-                    "被侮辱攻击，心情变得很低落...",
-                    "受到攻击，感到伤心和失望。",
-                    "被人侮辱让我感到很难过。",
-                ],
-            ),
-            InteractionType.HARASSMENT: (
-                MoodType.ANXIOUS,
-                [
-                    "被骚扰困扰，现在感到很不安。",
-                    "持续的骚扰让我感到紧张。",
-                    "这种行为让我感到不舒服。",
-                ],
-            ),
-        }
-        mood_type, descriptions = mapping.get(
-            itype, (MoodType.SAD, ["心情有些低落..."])
-        )
-        intensity = min(0.9, abs(effect))
-        description = random.choice(descriptions)
-        await self.set_mood(
-            group_id,
-            mood_type,
-            intensity,
-            duration_hours=2,
-            description=description,
-        )
-        logger.info(
-            f"[好感度管理] 群 {group_id} 触发负面情绪: {mood_type.value} ({intensity:.2f})"
-        )
-
-    async def _cascade_positive(
-        self, group_id: str, itype: InteractionType, effect: float
-    ) -> None:
-        """强烈的正向交互会触发持续 4 小时的情绪提升。"""
-        if itype == InteractionType.GIFT:
-            mood_type = MoodType.EXCITED
-            pool = [
-                "收到礼物，太兴奋了！",
-                "有人送礼物给我，好开心好激动！",
-                "这个礼物让我感到非常兴奋！",
-            ]
-        elif itype in (InteractionType.PRAISE, InteractionType.ENCOURAGE):
-            mood_type = MoodType.HAPPY
-            pool = [
-                "被夸赞鼓励，心情变得很开心！",
-                "收到赞美，感到特别高兴。",
-                "这些鼓励的话让我心情大好！",
-            ]
-        else:
-            mood_type = MoodType.HAPPY
-            pool = [
-                "感受到善意，心情变好了。",
-                "这种关怀让我感到温暖。",
-                "谢谢你的友好，我心情好多了。",
-            ]
-
-        intensity = min(0.8, effect)
-        description = random.choice(pool)
-        await self.set_mood(
-            group_id,
-            mood_type,
-            intensity,
-            duration_hours=4,
-            description=description,
-        )
-        logger.info(
-            f"[好感度管理] 群 {group_id} 触发积极情绪: {mood_type.value} ({intensity:.2f})"
-        )
-
-    async def _cascade_adjust(
-        self, group_id: str, mood: BotMood, effect: float
-    ) -> None:
-        """对当前情绪强度进行轻微调整。"""
-        if abs(effect) < 0.05:
-            return
-        new_intensity = max(0.1, min(0.9, mood.intensity + effect))
-        if abs(new_intensity - mood.intensity) < 0.1:
-            return
-        await self.set_mood(
-            group_id,
-            mood.mood_type,
-            new_intensity,
-            duration_hours=1,
-        )
 
     # ---- 内部：辅助方法 -------------------------------------------------------------
 

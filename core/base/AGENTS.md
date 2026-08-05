@@ -10,6 +10,7 @@
 `core/base/` 是插件的低层基础契约，负责：
 
 - 以 Pydantic v2 描述配置树、默认值、数值范围和跨字段不变量；
+- 为每个公开配置分支声明产品分类、唯一责任模块以及保存后的重启/重建影响；
 - 将 AstrBot 注入的可变配置映射规范化为隔离快照，并提供带修订号的原子更新；
 - 提供稳定的异常码、记忆注入边界常量、领域无关实体编辑冲突类型；
 - 对额外 LLM 调用实施成本模式门控；
@@ -22,28 +23,30 @@
 ```mermaid
 flowchart LR
     A[AstrBotConfig 可变映射] --> B[ConfigManager._read_source_state]
-    B --> C[运行时注入叶子安全降级]
-    C --> D[merge_config_with_defaults]
-    D --> E[MemoraConfig / Pydantic 校验]
-    E -->|局部分支无效| F[分支回退默认值]
-    F --> G[隔离配置快照 + SHA-256 revision]
-    E --> G
-    H[Dashboard / 调用方点号路径更新] --> I[apply_config_changes]
-    I --> J{expected_revision 匹配?}
-    J -->|否| K[ConfigConflictError]
-    J -->|是| L[Schema 叶子与 options 校验]
-    L --> M[Pydantic 整体校验]
-    M --> N[save_config 在线程中持久化]
-    N --> O[发布新快照或回滚/冲突]
+    B --> C[旧公开配置名一次迁移]
+    C --> D[运行时注入叶子安全降级]
+    D --> E[merge_config_with_defaults]
+    E --> F[MemoraConfig / Pydantic 校验]
+    F -->|局部分支无效| G[分支回退默认值]
+    G --> H[隔离配置快照 + SHA-256 revision]
+    F --> H
+    I[Dashboard / 调用方点号路径更新] --> J[apply_config_changes]
+    J --> K{expected_revision 匹配?}
+    K -->|否| L[ConfigConflictError]
+    K -->|是| M[Schema 叶子与 options 校验]
+    M --> N[Pydantic 整体校验]
+    N --> O[save_config 在线程中持久化]
+    O --> P[发布新快照或回滚/冲突]
 ```
 
 ### 配置读取
 
 1. `ConfigManager(user_config)` 保留传入 `MutableMapping` 作为唯一外部来源，不再维护第二份 Dashboard JSON 覆盖层。
-2. `_normalize_runtime_injection_config()` 只在内存副本上容忍无效的新注入策略叶子；不会迁移或改写源映射。保留天数与行上限分别回退为 `30`、`100_000`；策略组整体无效时回退到安全的手动/`balanced` 配置及 `extra_user_content`。
-3. `merge_config_with_defaults()` 以 Pydantic 默认树为底，递归覆盖用户字典。
-4. `_validate_with_branch_fallback()` 首先回退报错的顶层分支；仍失败才使用完整默认配置。降级记录通过 `validation_errors` 返回。
-5. `get()`、`get_section()`、`get_all()` 和快照 API 对可变值执行深拷贝，禁止调用方绕过 revision 修改内部状态。
+2. `migrate_legacy_config()` 只在内存深拷贝上把 `cross_encoder` 与旧权重键迁移到 `embedding_similarity` 单一契约；新键优先，运行时不保留旧别名，下一次正常保存会持久化新名称。
+3. `_normalize_runtime_injection_config()` 只在内存副本上容忍无效的新注入策略叶子；不会改写源映射。保留天数与行上限分别回退为 `30`、`100_000`；策略组整体无效时回退到安全的手动/`balanced` 配置及 `extra_user_content`。
+4. `merge_config_with_defaults()` 以 Pydantic 默认树为底，递归覆盖用户字典。
+5. `_validate_with_branch_fallback()` 首先回退报错的顶层分支；仍失败才使用完整默认配置。降级记录通过 `validation_errors` 返回。
+6. `get()`、`get_section()`、`get_all()` 和快照 API 对可变值执行深拷贝，禁止调用方绕过 revision 修改内部状态。
 
 ### 原子更新
 
@@ -58,13 +61,18 @@ flowchart LR
 | 文件 | 核心接口 | 约束 |
 |---|---|---|
 | `config_validator.py` | `MemoraConfig`、其余分支模型、`validate_config()`、`get_default_config()`、`merge_config_with_defaults()`、`validate_runtime_config_changes()` | 默认值唯一运行时来源；顶层允许额外字段以兼容旧配置，已声明字段仍受类型/范围约束 |
+| `config_migrations.py` | `migrate_legacy_config()` | 旧公开键只在配置载入边界迁移到当前单一命名；不得在消费者中维护运行时别名 |
+| `runtime_feature_config.py` | 运行时功能分支 Pydantic 模型 | 正式功能分支不得退回无类型字典；Hybrid/Graph 融合权重总和必须为 `1.0` |
+| `config_ownership.py` | `CONFIG_SECTION_OWNERSHIP`、`resolve_config_ownership()` | 每个 Schema 叶必须解析为 `runtime/dashboard_only/experimental/deprecated` 和唯一 owner；未知顶层分支不得静默归类 |
+| `config_runtime_effects.py` | `RuntimeConfigEffect`、`classify_config_effects()` | 非空保存保守要求重启；时序/因果图边变更还要求重建图派生数据 |
 | `feature_config.py` | `AgentToolsConfig`、`JargonConfig`、`DashboardConfig`、`is_jargon_discovery_enabled()` | 轻量功能开关与 Dashboard 构建配置；黑话发现缺少有效配置时遵循调用方的兼容边界，正常插件运行时默认关闭 |
 | `config_manager.py` | `ConfigManager`、`ConfigApplyResult`、配置事务异常 | revision 是规范化 JSON 的 SHA-256；结果中的 `changed_paths` 排序且不可变 |
 | `config_defaults.py` | 默认值维护说明 | 新键必须同步 Pydantic 模型、根级 `_conf_schema.json` 与访问处默认值 |
 | `constants.py` | `MEMORY_INJECTION_HEADER/FOOTER`、`FAKE_TOOL_CALL_NAME/ID_PREFIX` | 边界和伪调用标识同时被格式化器、清理器与测试依赖，不可单边改名 |
 | `exceptions.py` | `MemoraException` 及 16 个语义子类 | `message` 与稳定 `error_code` 是上层错误映射契约 |
 | `entity_editing.py` | `compute_entity_revision()`、编辑异常族 | revision 使用排序、紧凑、禁 NaN 的 JSON；该异常族独立于 `MemoraException` |
-| `cost_control.py` | `CostControl`、`build_cost_control_from_config()` | `allow()` 与 `check_call_limit()` 是两个门，调用方应同时检查并在成功调用后 `record_call()` |
+| `cost_control.py` | `CostControl`、`build_cost_control_from_config()` | 只接受 `CostControlConfig` 或 `cost_control` 叶子映射，生成不可变功能许可门；不得传入完整配置树 |
+| `extra_llm_budget.py` | `ExtraLlmBudget`、`budgeted_extra_llm_call()`、`extra_llm_budget_scope()` | 请求级 reservation 防并发超卖；Provider 成功后 commit，普通失败或取消 release；观测只含固定标量 |
 | `__init__.py` | 配置事务类型、8 个常用异常 | 常量通过星号导入到包命名空间，但不在 `__all__`；其余异常和成本/实体接口需从子模块直接导入 |
 
 ## 配置不变量
@@ -79,8 +87,10 @@ flowchart LR
 - `RecallEngineConfig.top_k=0` 是明确的“跳过自动召回和注入”语义；不要把它强制改成正数。
 - 顶层 `debug` 默认关闭，仅用于用户问题报告的隐私安全结构化诊断；它不授权向 Dashboard 或普通日志返回原始异常消息。
 - `SecurityConfig.strict_mode` 仅表达策略；严格失败关闭由使用该配置的处理链实现，不是 `ConfigManager` 自动行为。
-- `CostControl(mode="quality")` 的 `allow()` 会允许功能，但仍应由调用方检查每轮调用上限；`reset_turn()` 必须在轮次边界调用。
+- 额外 LLM 必须同时通过不可变 `CostControl.allow()` 与当前请求的 `ExtraLlmBudget`；轮次状态只存在于预算对象，不得恢复 `CostControl` 内部可变计数器或另建调用方局部计数。
+- 计入请求额度的功能固定为 LLM 查询改写、LLM 重排、Strategy D 第一阶段、persona interpretation 和第 2 个及后续反思批次；基础反思抽取是 canonical 写入主链，不计入额外额度。
 - Schema option 比较要求值和类型都相同，避免 Python 中 `True == 1` 导致错误接受。
+- 所有权按顶层配置分支声明；同一分支若新增不同生命周期的叶子，应先拆分公开分支，不能在消费者中私设例外。
 
 ## 依赖方向
 
@@ -95,14 +105,16 @@ flowchart LR
 - 新异常若需要从 `core.base` 导入，必须显式加入 `__init__.__all__`；不要依赖星号导出的偶然行为。
 - 修改注入边界常量时必须同步格式化器、清理器和兼容测试；这些是协议，不是展示文本。
 - 成本控制是策略门而非计费器，不记录 token 或货币成本。
+- 预算观测只允许 `feature/allowed/used/remaining/reason_code`；不得记录 query、Prompt、记忆正文、ID、身份或 Provider 连接信息。
 
 ## 测试定位与精确验证
 
 | 变更 | 首选测试 |
 |---|---|
 | 常量、异常、默认配置 | `tests/test_base.py` |
-| Schema 与 Pydantic 默认/范围、Hybrid 顺序、revision、冲突和持久化 | `tests/test_config_contract.py` |
+| Schema 与 Pydantic 默认/范围、Hybrid 顺序、revision、冲突和持久化 | `tests/test_config_contract.py tests/test_engine_runtime_config_contract.py` |
 | Memory Evolution 默认、模式和范围契约 | `tests/test_config_contract.py tests/test_memory_evolution_gate.py` |
+| 请求级额外 LLM 双门、并发 reservation 与轮次复用 | `tests/test_extra_llm_budget.py tests/test_llm_reranker.py` |
 | Dashboard 配置 API 到事务异常的映射 | `tests/test_api_config.py` |
 | 实体 revision 与编辑异常 | `tests/test_entity_editing.py` |
 | 实体调用链集成 | `tests/test_affection_manager.py tests/test_jargon_admin_service.py tests/test_managers_profile.py tests/test_profile_store.py` |

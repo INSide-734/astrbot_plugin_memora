@@ -14,6 +14,7 @@ from pydantic.dataclasses import dataclass
 from ..base.config_manager import ConfigManager
 from ..processors.human_like_formatter import HumanLikeMemoryFormatter
 from ..utils import get_persona_id
+from .agent_scope import resolve_agent_read_scope
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -64,7 +65,9 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """创建规则格式化器；是否使用由每次调用的正式配置决定。"""
+
         self.formatter = HumanLikeMemoryFormatter(
             max_fragments=5, max_fragment_length=80
         )
@@ -107,6 +110,17 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
 
         try:
             event = context.context.event
+            read_scope = resolve_agent_read_scope(context)
+            if read_scope is None:
+                return _json_result(
+                    {
+                        "query": cleaned_query,
+                        "count": 0,
+                        "results": [],
+                        "formatted_recall": [],
+                        "error": "event_scope_unavailable",
+                    }
+                )
             filtering_config = self.config_manager.filtering_settings
             use_persona_filtering = filtering_config.get("use_persona_filtering", True)
             use_session_filtering = filtering_config.get("use_session_filtering", True)
@@ -137,6 +151,8 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
                 session_id=recall_session_id,
                 persona_id=recall_persona_id,
                 emotion_context=emotion_context,
+                chat_type=read_scope.chat_type,
+                user_id=read_scope.user_id,
             )
 
             serialized_results = []
@@ -155,8 +171,16 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
                     }
                 )
 
+            formatter_mode = str(
+                self.config_manager.get(
+                    "human_like_memory.human_like_formatter_mode",
+                    "rule",
+                )
+            ).casefold()
             formatted_recall = (
-                self.formatter.format(serialized_results) if format_output else []
+                self.formatter.format(serialized_results)
+                if format_output and formatter_mode == "rule"
+                else []
             )
 
             return _json_result(

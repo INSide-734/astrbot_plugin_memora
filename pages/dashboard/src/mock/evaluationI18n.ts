@@ -31,6 +31,17 @@ const EVALUATION_COPY: Record<string, [string, string, string]> = {
   "intelligence.evaluation.reason.variant_not_exercised": ["变体未实际触发", "Variant was not exercised", "Вариант не был фактически задействован"],
   "intelligence.evaluation.reason.embedding_query_failed": ["查询向量计算失败", "Query embedding failed", "Не удалось вычислить эмбеддинг запроса"],
   "intelligence.evaluation.reason.unknown_variant": ["未知变体", "Unknown variant", "Неизвестный вариант"],
+  "intelligence.evaluation.metric.observedP95": ["实测 p95", "Observed p95", "Измеренный p95"],
+  "intelligence.evaluation.metric.annotatedP95": ["标注 p95", "Annotated p95", "Аннотированный p95"],
+  "intelligence.evaluation.metric.reportedP95": ["外部报告 p95", "Reported p95", "Заявленный p95"],
+  "intelligence.evaluation.metric.annotatedFaithfulness": ["标注忠实度", "Annotated faithfulness", "Аннотированная достоверность"],
+  "intelligence.evaluation.metric.judgedFaithfulness": ["Judge 忠实度", "Judged faithfulness", "Judge-достоверность"],
+  "intelligence.evaluation.metric.observedProviderCalls": ["实测 Provider 调用", "Observed provider calls", "Измеренные вызовы провайдера"],
+  "intelligence.evaluation.metric.observedTokenCost": ["实测 token 成本", "Observed token cost", "Измеренная стоимость токенов"],
+  "intelligence.evaluation.table.observedLatency": ["实测延迟", "Observed latency", "Измеренная задержка"],
+  "intelligence.evaluation.table.annotatedLatency": ["标注延迟", "Annotated latency", "Аннотированная задержка"],
+  "intelligence.evaluation.table.reportedLatency": ["外部报告延迟", "Reported latency", "Заявленная задержка"],
+  "intelligence.evaluation.observedP95Delta": ["实测 p95 差异", "Observed p95 delta", "Разница измеренного p95"],
 };
 
 /** 按语言位置生成评测变体和稳定原因码文案。 */

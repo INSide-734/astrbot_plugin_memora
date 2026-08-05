@@ -23,10 +23,18 @@ import { DeleteConfirmDialog } from "@/components/editing/DeleteConfirmDialog";
 import { EditConflictDialog } from "@/components/editing/EditConflictDialog";
 import { EntityCreateDialog } from "@/components/editing/EntityCreateDialog";
 import { EntityEditorSheet } from "@/components/editing/EntityEditorSheet";
-import { DetailField, DetailGrid, DetailSection } from "@/components/editing/EntityDetail";
+import { DetailField, DetailGrid } from "@/components/editing/EntityDetail";
 import { ProfileForm } from "@/components/editing/forms/ProfileForm";
+import {
+  ProfileProvenanceDetails,
+  profileTagCategory,
+  profileTagConfidence,
+  profileTagValue,
+  type ProfilePreferencesDetail,
+  type ProfileTagValue,
+} from "@/components/profiles/ProfileProvenanceDetails";
 import { UnsavedChangesDialog } from "@/components/editing/UnsavedChangesDialog";
-import { dashboardLocale, formatDashboardDate, formatDashboardPercent } from "@/lib/i18n";
+import { dashboardLocale, formatDashboardDate } from "@/lib/i18n";
 import { ApiRequestError, BULK_CONFIRMATION_THRESHOLD, editingErrorDetails, type BatchResult, type EntityEnvelope, type FieldErrors } from "@/types/editing";
 import type { ProfileDraft } from "@/types";
 
@@ -34,15 +42,6 @@ interface ProfilesPageProps {
   showToast: (msg: string, isError?: boolean) => void;
   onDirtyChange?: (dirty: boolean) => void;
 }
-
-interface ProfileTag {
-  name?: string;
-  category?: string;
-  value?: string;
-  confidence: number;
-}
-
-type ProfileTagValue = ProfileTag | string;
 
 interface Profile {
   user_id: string;
@@ -52,7 +51,7 @@ interface Profile {
   tag_count?: number;
   tags?: ProfileTagValue[];
   top_interests?: string[];
-  preferences?: Partial<ProfileDraft["preferences"]>;
+  preferences?: ProfilePreferencesDetail;
   last_seen?: string;
   message_count?: number;
 }
@@ -70,18 +69,6 @@ type ProfileDeleteResponse = { deleted?: boolean; identity?: ProfileIdentity };
 type ProfileBatchFailure = { identity: ProfileIdentity; code: string; message: string };
 type ProfileBatchResponse = Omit<BatchResult<ProfileIdentity>, "failures"> & { failures: ProfileBatchFailure[] };
 type ProfileBatchItem = { identity: ProfileIdentity; expected_revision?: string };
-
-function profileTagValue(tag: ProfileTagValue): string {
-  return typeof tag === "string" ? tag : tag.value ?? tag.name ?? "";
-}
-
-function profileTagCategory(tag: ProfileTagValue): string {
-  return typeof tag === "string" ? "interest" : tag.category ?? "interest";
-}
-
-function profileTagConfidence(tag: ProfileTagValue): number {
-  return typeof tag === "string" ? 0.5 : Number(tag.confidence ?? 0.5);
-}
 
 function batchItemKey(item: ProfileBatchItem): string {
   return JSON.stringify([item.identity, item.expected_revision]);
@@ -789,26 +776,7 @@ export function ProfilesPage({ showToast, onDirtyChange }: ProfilesPageProps) {
             <DetailField label={label("profile.groupId", "Group ID")}>{detail.group_id || "--"}</DetailField>
             <DetailField label={t("detail.revision")}>{detail.revision || "--"}</DetailField>
           </DetailGrid>
-          <DetailSection title={t("table.tags")}>
-            <div className="space-y-2">
-              {(detail.tags ?? []).length ? (detail.tags ?? []).map((tag, index) => {
-                const category = profileTagCategory(tag).trim() || "--";
-                const value = profileTagValue(tag).trim() || "--";
-                const confidenceValue = profileTagConfidence(tag);
-                const confidence = Number.isFinite(confidenceValue)
-                  ? formatDashboardPercent(confidenceValue, locale, { maximumFractionDigits: 0 })
-                  : "--";
-                return (
-                  <div key={`${category}-${value}-${index}`} className="grid min-w-0 gap-3 rounded-lg border border-border/70 bg-muted/20 p-3 sm:grid-cols-[minmax(8rem,0.9fr)_minmax(0,1.8fr)_minmax(8rem,0.8fr)]">
-                    <DetailField label={label("profile.tagCategory", "Tag category")}>{category}</DetailField>
-                    <DetailField label={label("profile.tagValue", "Tag value")}>{value}</DetailField>
-                    <DetailField label={label("profile.tagConfidence", "Tag confidence")}>{confidence}</DetailField>
-                  </div>
-                );
-              }) : <span className="text-sm text-muted-foreground">--</span>}
-            </div>
-          </DetailSection>
-          <DetailSection title={label("profile.preferences", "Preferences")}><DetailGrid><DetailField label={t("profile.replyStyle")}>{detail.preferences?.reply_style || "--"}</DetailField><DetailField label={t("profile.preferredTopics")}>{detail.preferences?.preferred_topics?.join(", ") || "--"}</DetailField><DetailField label={t("profile.avoidedTopics")}>{detail.preferences?.avoided_topics?.join(", ") || "--"}</DetailField></DetailGrid></DetailSection>
+          <ProfileProvenanceDetails tags={detail.tags ?? []} preferences={detail.preferences} locale={locale} />
         </div> : null}
         viewActions={detail ? <Button variant="destructive" size="sm" onClick={() => { if (hasProfileRevision(detail)) setDeleteOpen(true); else void executeSingleDelete(); }}><Trash2 data-icon="inline-start" />{hasProfileRevision(detail) ? t("common.delete") : t("detail.deleteProfile")}</Button> : null}
         form={<ProfileForm value={editDraft} onChange={(next) => { setEditDraft(next); setEditFieldErrors({}); setEditFormError(null); }} fieldErrors={editFieldErrors} formErrors={editFormError ? [editFormError] : []} disabled={editSubmitting} mode="edit" />}

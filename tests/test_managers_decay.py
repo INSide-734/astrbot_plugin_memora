@@ -16,7 +16,7 @@ from core.storage.base import apply_perf_pragmas
 
 
 class TestTypeDecayMultiplier:
-    """Tests for _type_decay_multiplier static method."""
+    """测试不同记忆类型的衰减倍率。"""
 
     @pytest.mark.parametrize(
         "memory_type,expected",
@@ -35,58 +35,58 @@ class TestTypeDecayMultiplier:
         ],
     )
     def test_multiplier_values(self, memory_type: str | None, expected: float) -> None:
-        """Each memory type produces the correct decay multiplier."""
+        """每种记忆类型都应返回对应的衰减倍率。"""
         result = DecayOperationsMixin._type_decay_multiplier(memory_type)
         assert result == expected
 
 
 class TestNormalizeBatchMetadata:
-    """Tests for _normalize_batch_metadata function."""
+    """测试批量 metadata 规范化函数。"""
 
     def test_empty_list(self) -> None:
-        """Empty list is returned unchanged."""
+        """空列表应原样返回。"""
         assert _normalize_batch_metadata([]) == []
 
     def test_dict_metadata_passthrough(self) -> None:
-        """Dict metadata is left as-is."""
+        """字典 metadata 应保持不变。"""
         docs = [{"metadata": {"key": "value"}}]
         result = _normalize_batch_metadata(docs)
         assert result[0]["metadata"] == {"key": "value"}
 
     def test_string_metadata_parsed(self) -> None:
-        """String metadata is parsed from JSON."""
+        """字符串 metadata 应按 JSON 解析。"""
         docs = [{"metadata": '{"key": "parsed_value"}'}]
         result = _normalize_batch_metadata(docs)
         assert result[0]["metadata"] == {"key": "parsed_value"}
 
     def test_bad_json_metadata_defaults_to_empty(self) -> None:
-        """Invalid JSON string metadata becomes empty dict."""
+        """非法 JSON 字符串应转换为空字典。"""
         docs = [{"metadata": "{not valid json}"}]
         result = _normalize_batch_metadata(docs)
         assert result[0]["metadata"] == {}
 
     def test_none_metadata_defaults_to_empty(self) -> None:
-        """None metadata becomes empty dict."""
+        """空值 metadata 应转换为空字典。"""
         docs = [{"metadata": None}]
         result = _normalize_batch_metadata(docs)
         assert result[0]["metadata"] == {}
 
     def test_missing_metadata_defaults_to_empty(self) -> None:
-        """Missing metadata key gets an empty dict added."""
+        """缺少 metadata 键时应补充空字典。"""
         docs = [{"other_field": "value"}]
         result = _normalize_batch_metadata(docs)
-        # The function adds metadata={} when the key is missing
+        # 缺少键时函数会补充 metadata={}。
         assert result[0].get("metadata") == {}
         assert result[0]["other_field"] == "value"
 
     def test_list_metadata_defaults_to_empty(self) -> None:
-        """List metadata (non-dict, non-string) becomes empty dict."""
+        """列表等不支持的 metadata 类型应转换为空字典。"""
         docs = [{"metadata": [1, 2, 3]}]
         result = _normalize_batch_metadata(docs)
         assert result[0]["metadata"] == {}
 
     def test_mixed_batch(self) -> None:
-        """Mixed valid and invalid metadata in a batch."""
+        """同一批次应分别处理合法和非法 metadata。"""
         docs = [
             {"metadata": {"valid": True}},
             {"metadata": '{"parsed": "ok"}'},
@@ -101,14 +101,14 @@ class TestNormalizeBatchMetadata:
 
 
 class _DecayHost(DecayOperationsMixin):
-    """Minimal host for exercising decay mixin write boundaries."""
+    """用于验证衰减写边界的最小宿主。"""
 
     def __init__(self) -> None:
         self._config = {
             "access_decay_window_days": 30.0,
             "access_decay_max_count": 10.0,
             "access_count_decay_multiplier": 0.5,
-            "type_aware_decay_enabled": True,
+            "human_like_memory.type_aware_decay_enabled": True,
             "flashbulb.enabled": True,
             "flashbulb.intensity_threshold": 0.90,
         }
@@ -123,7 +123,7 @@ class _RealDecayHost(DecayOperationsMixin):
             "access_decay_window_days": 30.0,
             "access_decay_max_count": 10.0,
             "access_count_decay_multiplier": 0.5,
-            "type_aware_decay_enabled": False,
+            "human_like_memory.type_aware_decay_enabled": False,
             "flashbulb.enabled": True,
             "flashbulb.intensity_threshold": 0.90,
         }
@@ -143,7 +143,7 @@ class _TxnContext:
 
 
 class TestDecayWriteBoundaries:
-    """Decay writes should use a single coordinated transaction."""
+    """衰减写入应使用单一协调事务。"""
 
     @pytest.mark.asyncio
     async def test_single_access_update_uses_one_coordinated_transaction(self) -> None:

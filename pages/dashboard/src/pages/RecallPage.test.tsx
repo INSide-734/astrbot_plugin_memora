@@ -45,6 +45,9 @@ describe("RecallPage", () => {
 
     expect(container.querySelector('[data-slot="page-frame"]')?.getAttribute("data-layout")).toBe("standard");
     expect(screen.getByRole("heading", { level: 1, name: "Recall Test" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Query" })).toBeTruthy();
+    expect(screen.getByRole("slider", { name: "Recall count K" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Session ID (optional)" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /run recall/i }));
 
@@ -94,13 +97,63 @@ describe("RecallPage", () => {
     });
 
     expect(await screen.findByText("Remember the Python async discussion")).toBeTruthy();
-    expect(screen.getByText(/1 results/)).toBeTruthy();
+    expect(screen.getByText("1 results", { selector: "span.font-medium" })).toBeTruthy();
     expect(screen.getByText(/Importance:/)).toBeTruthy();
     expect(screen.getByText("Fact memory")).toBeTruthy();
     expect(screen.getByText("stable-date")).toBeTruthy();
     expect(screen.getByText("0.912")).toBeTruthy();
-    expect(screen.getByText("Doc-KW: 0.700")).toBeTruthy();
-    expect(screen.getByText("Doc-Vec: 0.800")).toBeTruthy();
+    expect(screen.getByText("Document keyword: 0.700")).toBeTruthy();
+    expect(screen.getByText("Document vector: 0.800")).toBeTruthy();
+  });
+
+  it("submits with Ctrl+Enter and announces the loading state", async () => {
+    let resolveRequest: ((value: unknown) => void) | undefined;
+    bridge.apiPost.mockImplementation(() => new Promise((resolve) => {
+      resolveRequest = resolve;
+    }));
+
+    const { container } = render(<RecallPage showToast={showToast} />);
+    const query = screen.getByRole("textbox", { name: "Query" });
+    fireEvent.change(query, { target: { value: "keyboard submit" } });
+    fireEvent.keyDown(query, { key: "Enter", ctrlKey: true });
+
+    await waitFor(() => {
+      expect(bridge.apiPost).toHaveBeenCalledWith("page/recall/test", {
+        query: "keyboard submit",
+        k: 5,
+      });
+    });
+    expect(container.querySelector('[data-status="recall"]')?.textContent).toContain("Searching...");
+    expect(container.querySelector('[data-slot="page-content"]')?.getAttribute("aria-busy")).toBe("true");
+
+    resolveRequest?.({ status: "ok", data: { results: [] } });
+    await waitFor(() => {
+      expect(container.querySelector('[data-slot="page-content"]')?.getAttribute("aria-busy")).toBe("false");
+    });
+  });
+
+  it("clears previous results when a later request fails", async () => {
+    bridge.apiPost
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { results: [{ id: "old", content: "Old result", score: 0.9 }] },
+      })
+      .mockResolvedValueOnce({ status: "error", message: "recall exploded" });
+
+    render(<RecallPage showToast={showToast} />);
+    const query = screen.getByRole("textbox", { name: "Query" });
+    fireEvent.change(query, { target: { value: "first request" } });
+    fireEvent.click(screen.getByRole("button", { name: /run recall/i }));
+    expect(await screen.findByText("Old result")).toBeTruthy();
+
+    fireEvent.change(query, { target: { value: "second request" } });
+    fireEvent.click(screen.getByRole("button", { name: /run recall/i }));
+
+    await waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith("Recall request failed: Error: recall exploded", true);
+    });
+    expect(screen.queryByText("Old result")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("Recall request failed: Error: recall exploded");
   });
 
   it("shows an error toast when recall requests fail", async () => {
@@ -117,7 +170,7 @@ describe("RecallPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /run recall/i }));
 
     await waitFor(() => {
-      expect(showToast).toHaveBeenCalledWith("Error: recall exploded", true);
+      expect(showToast).toHaveBeenCalledWith("Recall request failed: Error: recall exploded", true);
     });
   });
 });

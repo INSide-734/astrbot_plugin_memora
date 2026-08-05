@@ -17,10 +17,14 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 
 from ..models.temporal import canonical_visible_at, reference_time_key
-from ..retrieval.emotion_scorer import compute_emotion_boost, emotion_similarity
 from ..retrieval.rrf_fusion import HybridResult
-from ..retrieval.seasonal_recall import seasonal_boost
 from ..utils.number_utils import safe_float
+from .human_like_recall import (
+    apply_emotion_boost as apply_human_like_emotion_boost,
+)
+from .human_like_recall import (
+    apply_seasonal_boost as apply_human_like_seasonal_boost,
+)
 
 if TYPE_CHECKING:
     pass
@@ -65,6 +69,8 @@ class RetrievalOptimizer:
         update_memory_cb: Callable | None = None,
         create_tracked_task_cb: Callable | None = None,
     ) -> None:
+        """保存召回协作对象，并冻结本次引擎生命周期内的增强配置。"""
+
         self._config = config
         self._db = db_connection
         self._dual_route_retriever = dual_route_retriever
@@ -94,6 +100,12 @@ class RetrievalOptimizer:
         # 测试效应配置：后台异步 + top-K 限制，避免阻塞检索热点路径
         self._testing_effect_async = bool(config.get("testing_effect_async", True))
         self._testing_effect_top_k = int(config.get("testing_effect_top_k", 5))
+        self._emotion_scoring_mode = str(
+            config.get("human_like_memory.emotion_scoring_mode", "enhanced")
+        ).casefold()
+        self._seasonal_recall_enabled = bool(
+            config.get("human_like_memory.seasonal_recall_enabled", True)
+        )
 
         # 由 apply_boosts 填充、供调用方读取的情绪反馈回路状态
         self._last_mood_delta: float = 0.0
@@ -357,6 +369,8 @@ class RetrievalOptimizer:
         emotion_context: list[str] | None,
         debug_trace: list[dict[str, Any]] | None = None,
     ) -> list[HybridResult]:
+        """过滤不可见记忆并依次应用测试效应、情感和季节增强。"""
+
         if not results:
             self._last_mood_delta = 0.0
             self._last_mood_tags = []
@@ -381,13 +395,20 @@ class RetrievalOptimizer:
         await self._apply_testing_effect(filtered)
 
         before_scores = self._score_snapshot(filtered)
-        filtered = self._apply_emotion_boost(filtered, emotion_context)
+        filtered = self._apply_emotion_boost(
+            filtered,
+            emotion_context,
+            mode=self._emotion_scoring_mode,
+        )
         self._append_boost_trace_stage(
             trace_by_id, "emotion_boost", before_scores, filtered
         )
 
         before_scores = self._score_snapshot(filtered)
-        filtered = self._apply_seasonal_boost(filtered)
+        filtered = self._apply_seasonal_boost(
+            filtered,
+            enabled=self._seasonal_recall_enabled,
+        )
         self._append_boost_trace_stage(
             trace_by_id, "seasonal_boost", before_scores, filtered
         )
@@ -576,45 +597,24 @@ class RetrievalOptimizer:
     def _apply_emotion_boost(
         results: list[HybridResult],
         emotion_context: list[str] | None,
+        mode: str = "enhanced",
     ) -> list[HybridResult]:
-        if not emotion_context:
-            return results
+        """兼容旧调用入口并委托给独立的情感增强模块。"""
 
-        for r in results:
-            metadata = r.metadata or {}
-            memory_tags = metadata.get("emotion_tags", []) or []
-            if isinstance(memory_tags, str):
-                try:
-                    memory_tags = json.loads(memory_tags)
-                except (json.JSONDecodeError, TypeError):
-                    memory_tags = []
-            if not isinstance(memory_tags, list):
-                memory_tags = []
-
-            memory_intensity = safe_float(metadata.get("emotional_intensity"), 0.5)
-
-            sim = emotion_similarity(emotion_context, memory_tags, memory_intensity)
-            boost = compute_emotion_boost(sim)
-            r.final_score = r.final_score * boost
-
-        results.sort(key=lambda x: x.final_score, reverse=True)
-        return results
+        return apply_human_like_emotion_boost(
+            results,
+            emotion_context,
+            mode=mode,
+        )
 
     @staticmethod
     def _apply_seasonal_boost(
         results: list[HybridResult],
+        enabled: bool = True,
     ) -> list[HybridResult]:
-        for r in results:
-            metadata = r.metadata or {}
-            ts = (
-                metadata.get("event_time")
-                or metadata.get("create_time")
-                or metadata.get("timestamp")
-            )
-            if ts is not None:
-                boost = seasonal_boost(float(ts))
-                r.final_score = r.final_score * boost
-        return results
+        """兼容旧调用入口并委托给独立的季节性增强模块。"""
+
+        return apply_human_like_seasonal_boost(results, enabled=enabled)
 
     # ---- 干扰衰减 ----
 

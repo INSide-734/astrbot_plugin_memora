@@ -179,13 +179,13 @@ class RetrievalAblationController:
             faiss_db = getattr(self.engine, "faiss_db", None)
             target_weight = _bounded_weight(
                 config,
-                "reranker.cross_encoder_lambda",
+                "reranker.embedding_similarity_lambda",
                 0.7,
             )
             current = getattr(dual, "reranker", None)
             if (
                 current is not None
-                and current.__class__.__name__ == "CrossEncoderReranker"
+                and current.__class__.__name__ == "EmbeddingSimilarityReranker"
                 and _same_number(getattr(current, "_lambda", None), target_weight)
             ):
                 return "equivalent_to_baseline"
@@ -238,7 +238,7 @@ class RetrievalAblationController:
         if name == "final_reranker_embedding_similarity":
             weight = _bounded_weight(
                 snapshot.config,
-                "reranker.cross_encoder_lambda",
+                "reranker.embedding_similarity_lambda",
                 0.7,
             )
             snapshot.dual_route_retriever.reranker = (

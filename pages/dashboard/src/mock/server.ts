@@ -22,6 +22,11 @@ import {
   handleEvaluationRun,
 } from "./evaluationServer";
 import { createSafeRecallTraceResponse } from "./recallTrace";
+import {
+  handleReconsolidationGet,
+  handleReconsolidationPost,
+  resetReconsolidationMockState,
+} from "./reconsolidationServer";
 import type { MockProfile, MockProfilePreferences, MockProfileTag, MockProfileTagCategory } from "./data";
 import {
   handleUpdateGet,
@@ -137,6 +142,7 @@ export function resetMockServerState(): void {
   Object.assign(AFFECTION_DATA, seeds.AFFECTION_DATA);
   for (const key of Object.keys(REVIEW_ACTIONS)) delete REVIEW_ACTIONS[key];
   Object.assign(REVIEW_ACTIONS, seeds.REVIEW_ACTIONS);
+  resetReconsolidationMockState();
   nextEntityRevision = 1;
   mockRestoreStatus = null;
   mockRestorePollCount = 0;
@@ -1132,28 +1138,39 @@ function handleReviewAction(body: Record<string, unknown>): ApiResponse {
 }
 
 
+/** 返回与生产 Page API 一致的只读 shadow 学习状态。 */
 function handleLearningStatus(): ApiResponse {
   return ok({
-    hit_rate: 0.78,
-    avg_quality: 0.842,
-    total_trials: 156,
-    total_corrections: 23,
-    parameters: {
-      recall_weight: 0.65,
-      graph_weight: 0.35,
-      emotion_bonus: 0.12,
-      recency_decay: 0.03,
-      importance_threshold: 4.2,
-      fusion_k: 60,
-      mmr_lambda: 0.7,
-      learning_rate: 0.01,
-    },
-    history: [
-      { timestamp: "2026-06-15T14:30:00Z", action: "weight_adjust", detail: "recall_weight +0.03 (hit_rate improved)" },
-      { timestamp: "2026-06-14T09:15:00Z", action: "threshold_tune", detail: "importance_threshold 5.0→4.2 (wider recall)" },
-      { timestamp: "2026-06-13T16:45:00Z", action: "correction", detail: "emotion_bonus reverted: -0.05 (negative feedback)" },
-      { timestamp: "2026-06-12T11:00:00Z", action: "param_init", detail: "Initial parameter set from defaults" },
-      { timestamp: "2026-06-11T08:20:00Z", action: "weight_adjust", detail: "graph_weight +0.05 (graph route underused)" },
+    enabled: true,
+    available: true,
+    candidate_count: 2,
+    ready_count: 1,
+    rejected_count: 1,
+    published_count: 0,
+    reasons: ["candidate", "insufficient_evidence"],
+    current: { document_route_weight: 0.65, graph_route_weight: 0.35 },
+    baseline: { document_route_weight: 0.65, graph_route_weight: 0.35 },
+    candidates: [
+      {
+        proposed_document_weight: 0.69,
+        proposed_graph_weight: 0.31,
+        delta_from_baseline: 0.04,
+        accepted_count: 6,
+        independent_window_count: 3,
+        decayed_support: 0.82,
+        status: "ready_for_review",
+        reason_code: "candidate",
+      },
+      {
+        proposed_document_weight: 0.65,
+        proposed_graph_weight: 0.35,
+        delta_from_baseline: 0,
+        accepted_count: 1,
+        independent_window_count: 1,
+        decayed_support: 0.2,
+        status: "rejected",
+        reason_code: "insufficient_evidence",
+      },
     ],
   });
 }
@@ -1597,6 +1614,8 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   if (configResponse) return configResponse;
   const updateResponse = handleUpdateGet(p, params);
   if (updateResponse) return updateResponse;
+  const reconsolidationResponse = handleReconsolidationGet(p, params);
+  if (reconsolidationResponse) return reconsolidationResponse;
 
   if (p === "injection-strategy/catalog") return handleInjectionCatalog();
   if (p === "injection-strategy/summary" || p.startsWith("injection-strategy/summary?")) {
@@ -1707,6 +1726,8 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   const data = body as Record<string, unknown>;
   const updateResponse = handleUpdatePost(p, data);
   if (updateResponse) return updateResponse;
+  const reconsolidationResponse = handleReconsolidationPost(p, data);
+  if (reconsolidationResponse) return reconsolidationResponse;
 
   if (p === "recall/test") return handleRecallTest(data);
   if (p === "recall/trace") return ok(createSafeRecallTraceResponse(RECALL_TRACE_SAMPLE, data));

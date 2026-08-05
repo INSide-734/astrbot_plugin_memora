@@ -36,6 +36,7 @@ def source(
         "shared",
         datetime(2026, 7, 18, tzinfo=UTC),
         f"证据 {memory_id}",
+        subject_key="subject:a",
     )
 
 
@@ -137,6 +138,21 @@ async def test_schedule_deduplicates_same_revision_but_keeps_new_revision(manage
 
 
 @pytest.mark.asyncio
+async def test_rebuild_replays_every_source_even_when_pending_cap_is_full(manager):
+    """全量重建在 worker 启动前也必须完整排入所有 canonical source。"""
+
+    manager.gate.max_pending_jobs = 1
+    await seed_documents(manager.store, source(17), source(18), source(19))
+
+    result = await manager.rebuild_from_canonical()
+
+    assert result["success"] is True
+    assert result["canonical_sources"] == 3
+    assert result["scheduled_jobs"] == 3
+    assert await manager.store.pending_count() == 3
+
+
+@pytest.mark.asyncio
 async def test_unknown_alias_is_rejected(manager):
     manager.consolidator.propose.return_value = EvolutionProposal(
         relations=(
@@ -214,6 +230,7 @@ async def test_high_impact_is_candidate_and_privacy_uses_strictest_source(manage
         "confidential",
         datetime(2026, 7, 18, tzinfo=UTC),
         "机密证据",
+        subject_key="subject:a",
     )
     proposal = EvolutionProposal(
         relations=(

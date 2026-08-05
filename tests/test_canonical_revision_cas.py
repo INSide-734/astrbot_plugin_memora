@@ -155,6 +155,39 @@ async def test_stale_revision_does_not_change_metadata(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_operational_metadata_cas_preserves_revision(tmp_path) -> None:
+    """运行态 CAS 更新通过校验后仍保留原 source revision。"""
+
+    storage = _DocumentStorage(str(tmp_path / "canonical-operational-cas.db"))
+    await _create_document(storage)
+    retriever = VectorRetriever(SimpleNamespace(document_storage=storage))
+
+    assert (
+        await retriever.update_metadata(
+            17,
+            {"access_count": 2},
+            expected_revision="rev-current",
+            advance_revision=False,
+        )
+        is True
+    )
+
+    async with storage.get_session() as session:
+        row = (
+            (
+                await session.execute(
+                    text("SELECT metadata, updated_at FROM documents WHERE id = 17")
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert json.loads(row["metadata"])["access_count"] == 2
+    assert row["updated_at"] == "rev-current"
+    await storage.close()
+
+
+@pytest.mark.asyncio
 async def test_same_revision_content_update_keeps_canonical_id(tmp_path) -> None:
     """正文 CAS 更新保留 canonical ID，并拒绝旧 revision 重放。"""
 

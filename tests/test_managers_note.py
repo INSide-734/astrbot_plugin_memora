@@ -2,20 +2,41 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from core.managers.note_manager import NoteManager
+from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from core.models.memory_evolution import MemorySourceRef
 from core.models.note_models import Note, NoteStatus, NoteVersion
 
+
+def _provenance() -> DomainProvenance:
+    """构造自动笔记测试使用的 canonical 来源证据。"""
+
+    return DomainProvenance(
+        DomainObjectOrigin.DERIVED,
+        (
+            MemorySourceRef(
+                memory_id=17,
+                revision_token="revision-17",
+                scope_key="session:test",
+                privacy_level="shared",
+                occurred_at=datetime(2026, 8, 1, tzinfo=UTC),
+            ),
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
-# create_note
+# 创建笔记
 # ---------------------------------------------------------------------------
 
 
 class TestCreateNote:
-    """create_note."""
+    """验证创建笔记。"""
 
     @pytest.mark.asyncio
     async def test_create_note_returns_id(self) -> None:
@@ -47,12 +68,12 @@ class TestCreateNote:
 
 
 # ---------------------------------------------------------------------------
-# get_note
+# 读取笔记
 # ---------------------------------------------------------------------------
 
 
 class TestGetNote:
-    """get_note."""
+    """验证读取笔记。"""
 
     @pytest.mark.asyncio
     async def test_get_existing_note(self) -> None:
@@ -72,14 +93,53 @@ class TestGetNote:
         result = await mgr.get_note(999)
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_scoped_get_rejects_other_user_note(self) -> None:
+        """按 ID 读取笔记时，其他用户的人工正文必须不可见。"""
+        note = Note(note_id=1, user_id="user-a", content="secret")
+        store = MagicMock()
+        store.get = AsyncMock(return_value=note)
+        mgr = NoteManager(store=store)
+
+        assert (
+            await mgr.get_note_for_scope(
+                1,
+                scope_key="private:user-b",
+                user_id="user-b",
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_scoped_get_rejects_other_session_derived_note(self) -> None:
+        """按 ID 读取笔记时，其他会话的派生正文必须不可见。"""
+        note = Note(
+            note_id=1,
+            origin=DomainObjectOrigin.DERIVED,
+            provenance=_provenance(),
+            content="secret",
+        )
+        store = MagicMock()
+        store.get = AsyncMock(return_value=note)
+        mgr = NoteManager(store=store)
+
+        assert (
+            await mgr.get_note_for_scope(
+                1,
+                scope_key="session:other",
+                user_id="user-a",
+            )
+            is None
+        )
+
 
 # ---------------------------------------------------------------------------
-# update_note
+# 更新笔记
 # ---------------------------------------------------------------------------
 
 
 class TestUpdateNote:
-    """update_note."""
+    """验证更新笔记。"""
 
     @pytest.mark.asyncio
     async def test_update_title(self) -> None:
@@ -136,12 +196,12 @@ class TestUpdateNote:
 
 
 # ---------------------------------------------------------------------------
-# delete_note
+# 删除笔记
 # ---------------------------------------------------------------------------
 
 
 class TestDeleteNote:
-    """delete_note."""
+    """验证删除笔记。"""
 
     @pytest.mark.asyncio
     async def test_delete_returns_store_result(self) -> None:
@@ -159,12 +219,12 @@ class TestDeleteNote:
 
 
 # ---------------------------------------------------------------------------
-# search
+# 搜索笔记
 # ---------------------------------------------------------------------------
 
 
 class TestSearch:
-    """search."""
+    """验证搜索笔记。"""
 
     @pytest.mark.asyncio
     async def test_search_delegates(self) -> None:
@@ -177,14 +237,32 @@ class TestSearch:
         assert total == 2
         store.search.assert_called_once_with("query", limit=10)
 
+    @pytest.mark.asyncio
+    async def test_scoped_search_rejects_cross_user_note(self) -> None:
+        """搜索笔记时，其他用户的人工正文必须从结果中移除。"""
+        notes = [Note(note_id=1, user_id="user-a"), Note(note_id=2, user_id="user-b")]
+        store = MagicMock()
+        store.search = AsyncMock(return_value=(notes, 2))
+        mgr = NoteManager(store=store)
+
+        result, total = await mgr.search_for_scope(
+            "query",
+            scope_key="private:user-b",
+            user_id="user-b",
+            limit=10,
+        )
+
+        assert [note.note_id for note in result] == [2]
+        assert total == 1
+
 
 # ---------------------------------------------------------------------------
-# list_notes
+# 分页列出笔记
 # ---------------------------------------------------------------------------
 
 
 class TestListNotes:
-    """list_notes."""
+    """验证分页列出笔记。"""
 
     @pytest.mark.asyncio
     async def test_list_notes_delegates(self) -> None:
@@ -196,12 +274,12 @@ class TestListNotes:
 
 
 # ---------------------------------------------------------------------------
-# get_versions
+# 读取版本历史
 # ---------------------------------------------------------------------------
 
 
 class TestGetVersions:
-    """get_versions."""
+    """验证读取版本历史。"""
 
     @pytest.mark.asyncio
     async def test_get_versions_delegates(self) -> None:
@@ -214,12 +292,12 @@ class TestGetVersions:
 
 
 # ---------------------------------------------------------------------------
-# count / prune_versions
+# 计数与裁剪版本
 # ---------------------------------------------------------------------------
 
 
 class TestCountAndPrune:
-    """count and prune_versions."""
+    """验证计数与版本裁剪。"""
 
     @pytest.mark.asyncio
     async def test_count(self) -> None:
@@ -238,12 +316,12 @@ class TestCountAndPrune:
 
 
 # ---------------------------------------------------------------------------
-# auto_create_from_memory
+# 从 canonical memory 自动创建
 # ---------------------------------------------------------------------------
 
 
 class TestAutoCreateFromMemory:
-    """auto_create_from_memory logic."""
+    """验证 canonical 来源约束的自动创建逻辑。"""
 
     @pytest.mark.asyncio
     async def test_short_content_returns_none(self) -> None:
@@ -260,10 +338,15 @@ class TestAutoCreateFromMemory:
         store.create = AsyncMock(return_value=10)
         mgr = NoteManager(store=store)
         long_text = "A" * 50 + "\nBody text here"
-        result = await mgr.auto_create_from_memory(long_text, user_id="user1")
+        result = await mgr.auto_create_from_memory(
+            long_text,
+            source_memory_ids=[17],
+            user_id="user1",
+            provenance=_provenance(),
+        )
         assert result == 10
         created = store.create.call_args[0][0]
-        assert created.title == "A" * 50  # first line, capped at 80
+        assert created.title == "A" * 50  # 第一行作为标题，最多 80 字符
         assert created.content == "Body text here"
         assert "auto-generated" in created.tags
 
@@ -272,8 +355,12 @@ class TestAutoCreateFromMemory:
         store = MagicMock()
         store.create = AsyncMock(return_value=5)
         mgr = NoteManager(store=store)
-        long_text = "B" * 60  # no newline → title = first 80 chars, body = same
-        result = await mgr.auto_create_from_memory(long_text)
+        long_text = "B" * 60  # 无换行时标题取前 80 字符，正文保持原文
+        result = await mgr.auto_create_from_memory(
+            long_text,
+            source_memory_ids=[17],
+            provenance=_provenance(),
+        )
         assert result == 5
         created = store.create.call_args[0][0]
         assert created.title == "B" * 60
@@ -284,8 +371,12 @@ class TestAutoCreateFromMemory:
         store = MagicMock()
         store.create = AsyncMock(return_value=1)
         mgr = NoteManager(store=store)
-        text = "C" * 50  # exactly 50 — meets threshold
-        result = await mgr.auto_create_from_memory(text)
+        text = "C" * 50  # 恰好达到默认 50 字符门槛
+        result = await mgr.auto_create_from_memory(
+            text,
+            source_memory_ids=[17],
+            provenance=_provenance(),
+        )
         assert result == 1
 
     @pytest.mark.asyncio
@@ -293,7 +384,7 @@ class TestAutoCreateFromMemory:
         store = MagicMock()
         store.create = AsyncMock()
         mgr = NoteManager(store=store)
-        text = "C" * 49  # below 50 threshold
+        text = "C" * 49  # 低于默认 50 字符门槛
         result = await mgr.auto_create_from_memory(text)
         assert result is None
         store.create.assert_not_called()

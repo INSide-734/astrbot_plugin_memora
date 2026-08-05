@@ -11,12 +11,16 @@ pageClass: config-reference-page
 
 ## 数据库迁移
 
-配置域：`"migration_settings"`。控制插件启动时的数据库版本升级行为
+配置域：`"migration_settings"`。控制插件启动时的数据库版本升级行为。新数据库直接创建当前 Schema，不生成迁移备份；旧数据库先生成稳定迁移计划，再按以下开关决定是否执行。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"migration_settings.auto_migrate"` | `"bool"` | `true` | - | 自动迁移<br><small>插件启动时自动检测并升级旧版本数据库。建议保持开启。</small> |
-| `"migration_settings.create_backup"` | `"bool"` | `true` | - | 迁移前自动备份<br><small>执行数据库迁移前自动创建备份文件，防止迁移失败导致数据丢失。建议保持开启。</small> |
+| `"migration_settings.auto_migrate"` | `"bool"` | `true` | - | 自动迁移<br><small>开启时按迁移计划升级旧 Schema；关闭后检测到旧 Schema 会以 `schema_migration_required` 停止 MemoryEngine 启动，不执行 ALTER、UPDATE 或隐式升级。</small> |
+| `"migration_settings.create_backup"` | `"bool"` | `true` | - | 迁移前自动备份<br><small>仅旧 Schema 迁移时创建 `pre_migration` 校验后快照，且快照完成早于第一条变更 SQL。备份失败会以 `pre_migration_backup_failed` 停止启动。</small> |
+
+迁移在显式事务内逐步执行并验证目标版本与 canonical 数量。中途失败时，启用备份的流程会关闭启动连接并从迁移前快照原子恢复；恢复成功返回 `schema_migration_rolled_back`，恢复失败持久化为 `blocked` 并在后续启动返回 `schema_migration_blocked`。管理员应先从有效备份修复数据库、核对 canonical 数量和版本，再删除插件数据目录中的 `.schema_migration_state.json` 以显式解除阻断并重新启动；不要在未修复数据库时反复删除状态文件或重启。
+
+迁移观测只包含 migration ID、from/to version、阶段、reason code、canonical 数量和变更计数，不记录数据库路径、记忆正文、canonical ID 列表或原始异常堆栈。`pre_migration` 备份与定时备份、恢复前备份一样服从 `backup_settings.keep_days`；手动备份和版本变更备份仍需显式删除。
 
 ## 索引重建
 
@@ -53,15 +57,17 @@ pageClass: config-reference-page
 
 ## 成本控制
 
-配置域：`"cost_control"`。统一管理高成本 LLM 功能的启用与降级策略。balanced 模式默认禁止额外 LLM 调用。
+配置域：`"cost_control"`。统一管理高成本 LLM 功能的启用与降级策略。运行时只从该 typed 叶子分支构造一个不可变功能门；balanced 模式默认禁止额外 LLM 调用。
+
+每轮请求另有共享 reservation 预算。LLM 查询改写、LLM 重排、Strategy D 第一阶段、persona interpretation 和额外反思批次共用 `max_extra_llm_calls_per_turn`；基础反思抽取不计入额外额度。Provider 普通失败或取消释放未提交额度，成功返回后即使解析失败也会提交。`max_reflection_parallel_llm_calls` 只控制并发，不增加总额度。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
 | `"cost_control.mode"` | `"string"` | `"balanced"` | 可选：`"balanced"` / `"low_cost"` / `"quality"` | 成本模式<br><small>balanced: 默认禁止额外LLM调用; low_cost: 最小化所有成本; quality: 允许高成本路径(LLM reranker/strategyD等)</small> |
-| `"cost_control.max_extra_llm_calls_per_turn"` | `"int"` | `0` | 最小值：`0`<br>最大值：`10` | 每轮额外 LLM 调用上限<br><small>被动召回 + 反思总共允许的额外 LLM 调用次数。balanced/low_cost 下默认 0。</small> |
+| `"cost_control.max_extra_llm_calls_per_turn"` | `"int"` | `0` | 最小值：`0`<br>最大值：`10` | 每轮额外 LLM 调用上限<br><small>召回增强与反思额外阶段共享的请求级总额度；并发 reservation 不会超卖。balanced/low_cost 下默认 0。</small> |
 | `"cost_control.allow_llm_reranker_in_passive_recall"` | `"bool"` | `false` | - | 允许被动召回触发 LLM reranker<br><small>WARNING: 开启会显著增加 token 消耗和延迟。仅 quality 模式建议开启。</small> |
-| `"cost_control.allow_llm_topic_strategy_d"` | `"bool"` | `false` | - | 允许 strategy D（两阶段 LLM 话题分割）<br><small>WARNING: strategy D 需要多次 LLM 调用。仅 quality 模式或手动批处理建议开启。</small> |
-| `"cost_control.max_reflection_parallel_llm_calls"` | `"int"` | `2` | 最小值：`1`<br>最大值：`8` | 单次反思流程允许并行执行的 LLM 请求数。提高可缩短批量处理时间，但会增加瞬时并发、限流风险和费用；Provider 配额较低时应保持较小值。 |
+| `"cost_control.allow_llm_topic_strategy_d"` | `"bool"` | `false` | - | 允许 strategy D（两阶段 LLM 话题分割）<br><small>Strategy D 第一阶段及后续额外反思批次仍受共享请求额度约束。</small> |
+| `"cost_control.max_reflection_parallel_llm_calls"` | `"int"` | `2` | 最小值：`1`<br>最大值：`8` | 单次反思流程允许并行执行的 LLM 请求数。它只限制瞬时并发，不替代 `max_extra_llm_calls_per_turn`；Provider 配额较低时应保持较小值。 |
 | `"cost_control.llm_reranker_min_candidates"` | `"int"` | `12` | 最小值：`1`<br>最大值：`50` | LLM reranker 最小候选数<br><small>候选数低于此值时不触发 LLM reranker（使用 MMR 替代）。</small> |
 | `"cost_control.llm_reranker_prompt_chars"` | `"int"` | `3000` | 最小值：`500`<br>最大值：`10000` | LLM reranker prompt 最大字符数 |
 

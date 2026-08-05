@@ -351,7 +351,7 @@ def test_schema_numeric_bounds_match_every_pydantic_constraint() -> None:
     model_bounds = _model_numeric_bounds()
     schema_bounds = _schema_numeric_bounds(schema)
 
-    assert len(model_bounds) == 94
+    assert len(model_bounds) == 99
     assert schema_bounds == model_bounds
 
 
