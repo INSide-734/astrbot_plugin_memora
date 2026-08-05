@@ -1504,11 +1504,21 @@
       "validationSummary": "Исправьте следующие поля"
     },
     "recall": {
+      "queryLabel": "Запрос",
       "queryPh": "Введите запрос...",
+      "submitHint": "Нажмите Ctrl/Cmd+Enter для поиска; Enter добавляет новую строку",
       "kLabel": "Кол-во K",
       "sessionLabel": "ID сессии",
       "searchBtn": "Поиск",
       "searching": "Поиск...",
+      "requestFailed": "Ошибка поиска: {0}",
+      "completed": "{0} · {1} мс",
+      "resultsRegion": "Результаты поиска",
+      "scoreLabel": "Релевантность",
+      "docKwScore": "Ключевые слова документа",
+      "docVecScore": "Вектор документа",
+      "graphKwScore": "Ключевые слова графа",
+      "graphVecScore": "Вектор графа",
       "noMatch": "Нет результатов",
       "results": "{0} рез.",
       "importanceLabel": "Важность:"

@@ -1508,11 +1508,21 @@
       "validationSummary": "Correct the following fields"
     },
     "recall": {
+      "queryLabel": "Query",
       "queryPh": "Enter query text to test retrieval...",
+      "submitHint": "Press Ctrl/Cmd+Enter to run recall; Enter inserts a new line",
       "kLabel": "Recall count K",
       "sessionLabel": "Session ID (optional)",
       "searchBtn": "Run Recall",
       "searching": "Searching...",
+      "requestFailed": "Recall request failed: {0}",
+      "completed": "{0} · {1} ms",
+      "resultsRegion": "Recall results",
+      "scoreLabel": "Relevance score",
+      "docKwScore": "Document keyword",
+      "docVecScore": "Document vector",
+      "graphKwScore": "Graph keyword",
+      "graphVecScore": "Graph vector",
       "noMatch": "No matching results",
       "results": "{0} results",
       "importanceLabel": "Importance:"

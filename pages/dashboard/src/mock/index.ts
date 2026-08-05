@@ -9,6 +9,7 @@ import {
 } from "./configRuntimeI18n";
 import { EVALUATION_EN_MAP, EVALUATION_RU_MAP, EVALUATION_ZH_MAP } from "./evaluationI18n";
 import { LEARNING_EN_MAP, LEARNING_RU_MAP, LEARNING_ZH_MAP } from "./learningI18n";
+import { RECALL_EN_MAP, RECALL_RU_MAP, RECALL_ZH_MAP } from "./recallI18n";
 import {
   RECALL_TRACE_EN_MAP,
   RECALL_TRACE_RU_MAP,
@@ -219,6 +220,7 @@ const I18N_MAP: Record<string, string> = {
   ...INJECTION_ZH_MAP,
   ...EVALUATION_ZH_MAP,
   ...LEARNING_ZH_MAP,
+  ...RECALL_ZH_MAP,
   ...RECALL_TRACE_ZH_MAP,
   ...RECONSOLIDATION_ZH_MAP,
   "nav.preview": "数据预览",
@@ -1176,6 +1178,7 @@ const EN_MAP: Record<string, string> = {
   ...INJECTION_EN_MAP,
   ...EVALUATION_EN_MAP,
   ...LEARNING_EN_MAP,
+  ...RECALL_EN_MAP,
   ...RECALL_TRACE_EN_MAP,
   ...RECONSOLIDATION_EN_MAP,
   "nav.preview": "Preview", "nav.graph": "Knowledge Graph", "nav.memory": "Memories",
@@ -2011,6 +2014,7 @@ const RU_MAP: Record<string, string> = {
   ...INJECTION_RU_MAP,
   ...EVALUATION_RU_MAP,
   ...LEARNING_RU_MAP,
+  ...RECALL_RU_MAP,
   ...RECALL_TRACE_RU_MAP,
   ...RECONSOLIDATION_RU_MAP,
   "nav.preview": "Обзор", "nav.graph": "Граф знаний", "nav.memory": "Память",

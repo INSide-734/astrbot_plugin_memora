@@ -282,6 +282,65 @@ html.theme-transitioning [data-theme-icon] {
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
+/* 时间线使用明确的轨道和内容层级，重要度仅作为节点状态色。 */
+.timeline-rail {
+  position: relative;
+  padding: 20px 24px 20px 28px;
+}
+
+.timeline-rail::before {
+  position: absolute;
+  inset-block: 20px;
+  left: 43px;
+  width: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.timeline-rail-list {
+  display: grid;
+  gap: 22px;
+}
+
+.timeline-rail-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+}
+
+.timeline-rail-marker {
+  position: relative;
+  z-index: 1;
+  width: 10px;
+  height: 10px;
+  margin: 17px auto 0;
+  border: 2px solid var(--background);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.timeline-memory-card {
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: 0 1px 2px var(--shadow-surface-color);
+  transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+.timeline-memory-card:hover {
+  border-color: color-mix(in oklch, var(--foreground) 22%, var(--border));
+  box-shadow: 0 5px 16px var(--shadow-elevated-color);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-memory-card {
+    transition: none;
+  }
+}
+
 /* ================================================================
    Mobile responsive (max-width: 768px)
    ================================================================ */

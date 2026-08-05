@@ -1508,11 +1508,21 @@
       "validationSummary": "请修正以下字段"
     },
     "recall": {
+      "queryLabel": "查询文本",
       "queryPh": "输入查询文本，测试检索效果...",
+      "submitHint": "按 Ctrl/Cmd+Enter 执行召回，Enter 可换行",
       "kLabel": "召回数量 K",
       "sessionLabel": "会话 ID（可选）",
       "searchBtn": "执行召回",
       "searching": "搜索中...",
+      "requestFailed": "召回失败：{0}",
+      "completed": "{0} · {1} 毫秒",
+      "resultsRegion": "召回结果",
+      "scoreLabel": "相关性分数",
+      "docKwScore": "文档关键词",
+      "docVecScore": "文档向量",
+      "graphKwScore": "图关键词",
+      "graphVecScore": "图向量",
       "noMatch": "无匹配结果",
       "results": "{0} 条结果",
       "importanceLabel": "重要性:"
