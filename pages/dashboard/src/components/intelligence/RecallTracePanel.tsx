@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GitBranch, Loader2, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
@@ -132,10 +132,15 @@ export function RecallTracePanel({
   const [chainDepth, setChainDepth] = useState(2);
   const [trace, setTrace] = useState<RecallTraceResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const feedbackRef = useRef({ showToast, t });
 
   const clampedK = useMemo(() => clampNumber(k, 1, 20, 5), [k]);
   const clampedChainDepth = useMemo(() => clampNumber(chainDepth, 0, 5, 2), [chainDepth]);
   const canSubmit = query.trim().length > 0 && !loading;
+
+  useEffect(() => {
+    feedbackRef.current = { showToast, t };
+  }, [showToast, t]);
 
   useEffect(() => {
     const traceId = navigationTarget?.traceId;
@@ -151,7 +156,8 @@ export function RecallTracePanel({
       })
       .catch((error) => {
         if (active) {
-          showToast(t("common.errorPrefix", String(error)), true);
+          const feedback = feedbackRef.current;
+          feedback.showToast(feedback.t("common.errorPrefix", String(error)), true);
         }
       })
       .finally(() => {
@@ -164,8 +170,6 @@ export function RecallTracePanel({
     navigationTarget?.requestId,
     navigationTarget?.tab,
     navigationTarget?.traceId,
-    showToast,
-    t,
   ]);
 
   const submitTrace = async () => {
