@@ -114,13 +114,13 @@ class MemoryEvolutionReviewMixin:
         self,
         relation_id: str,
     ) -> list[dict[str, Any]]:
-        """按时间顺序读取 relation 的低敏复核动作历史。"""
+        """按 relation revision 的因果顺序读取低敏复核动作历史。"""
 
         rows = await self._fetch_all(
             "SELECT action_id,action,expected_revision,previous_state,new_state,"
             "result_revision,reason_code,created_at "
             "FROM memory_derived_review_actions WHERE relation_id=? "
-            "ORDER BY created_at ASC, action_id ASC",
+            "ORDER BY result_revision ASC, action_id ASC",
             (str(relation_id),),
         )
         return [dict(row) for row in rows]

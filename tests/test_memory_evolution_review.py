@@ -147,13 +147,23 @@ async def test_reject_can_be_replayed_and_stale_revision_cannot_overwrite(
         action="replay",
         expected_revision=rejected["revision"],
     )
+    fixed_time = "2026-08-04T00:00:00+00:00"
+    await store.connection.execute(
+        "UPDATE memory_derived_review_actions "
+        "SET action_id=CASE action WHEN 'reject' THEN ? WHEN 'replay' THEN ? "
+        "ELSE action_id END, created_at=? WHERE relation_id=?",
+        ("f" * 32, "0" * 32, fixed_time, "conflict-1"),
+    )
+    await store.connection.commit()
     actions = await store.list_relation_review_actions("conflict-1")
+    await store.close()
 
     assert rejected["state"] == DerivedState.REJECTED.value
     assert replayed["state"] == DerivedState.CANDIDATE.value
     assert replayed["revision"] == 3
+    assert actions[0]["created_at"] == actions[1]["created_at"]
     assert [action["action"] for action in actions] == ["reject", "replay"]
-    await store.close()
+    assert [action["result_revision"] for action in actions] == [2, 3]
 
 
 @pytest.mark.asyncio
