@@ -23,23 +23,25 @@ from .memory_engine_atom_support import (
     successful_atoms,
 )
 from .memory_engine_evolution_hooks import memory_revision
+from .memory_engine_idempotency import MemoryEngineIdempotencyMixin
 from .memory_engine_semantic_updates import has_semantic_metadata_change
 from .memory_engine_write_observability import (
     MemoryEngineWriteObservabilityMixin,
     measure_memory_write_stage,
-    observe_memory_write,
 )
 from .retrieval_timing import RetrievalTimingSink
 from .write_op_serialization import serialize_atom_for_repair
 
 
-class MemoryEngineCRUDMixin(MemoryEngineWriteObservabilityMixin):
+class MemoryEngineCRUDMixin(
+    MemoryEngineIdempotencyMixin,
+    MemoryEngineWriteObservabilityMixin,
+):
     """MemoryEngine 核心 CRUD 方法"""
 
     # ==================== 核心 CRUD ====================
 
-    @observe_memory_write
-    async def add_memory(
+    async def _add_memory_unchecked(
         self,
         content: str,
         session_id: str | None = None,
@@ -48,7 +50,7 @@ class MemoryEngineCRUDMixin(MemoryEngineWriteObservabilityMixin):
         metadata: dict[str, Any] | None = None,
         atoms: list | None = None,
     ) -> int:
-        """提交 canonical memory，并在成功后维护 Atom、图与演化派生。"""
+        """执行一次尚未按幂等键存在性过滤的 canonical 写入。"""
 
         if not content or not content.strip():
             raise ValueError("记忆内容不能为空")
@@ -85,26 +87,14 @@ class MemoryEngineCRUDMixin(MemoryEngineWriteObservabilityMixin):
         if self.hybrid_retriever is None:
             self._record_add_memory_failure("not_initialized")
             raise RuntimeError("混合检索器未初始化")
-        try:
-            with measure_memory_write_stage("document_vector"):
-                doc_id = await self.hybrid_retriever.add_memory(
-                    content,
-                    full_metadata,
-                )
-            await self._write_journal.advance_op(
-                op_id,
-                "document_indexed",
-                memory_id=doc_id,
-                payload_patch={"memory_id": doc_id},
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            await self._write_journal.advance_op(
-                op_id, "document_failed", status="failed", error=str(e)
-            )
-            self._record_add_memory_failure("document")
-            raise
+        doc_id, owner_reused = await self._write_document_stage(
+            content,
+            full_metadata,
+            metadata,
+            op_id,
+        )
+        if owner_reused:
+            return doc_id
         with measure_memory_write_stage("atom"):
             atom_write_failed = False
             if prepared_atoms and self.atom_store is not None and self.atom_enabled:

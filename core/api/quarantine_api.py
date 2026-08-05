@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from typing import Any
 
 from astrbot.api import logger
@@ -12,6 +13,52 @@ from ..review.memory_quality_gate import QuarantineApprovalPendingError
 from .response_utils import error_response
 
 _VALID_STATUSES = {"pending", "approving", "approved", "rejected", "blocked"}
+_MISSING = object()
+
+
+def _parse_positive_memory_id(value: Any) -> int:
+    """Parse a JSON memory ID without allowing bool or coercive values."""
+
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("quarantine_canonical_id_required")
+    return value
+
+
+def _parse_candidate_correlation(
+    value: Any,
+    *,
+    candidate_id: str,
+    canonical_memory_id: int | None,
+) -> int | None:
+    """Validate optional client correlation and reconcile its canonical ID."""
+
+    if value is None:
+        return canonical_memory_id
+    if isinstance(value, str):
+        if value.strip() != candidate_id:
+            raise ValueError("quarantine_candidate_correlation_invalid")
+        return canonical_memory_id
+    if not isinstance(value, Mapping):
+        raise ValueError("quarantine_candidate_correlation_invalid")
+    if set(value) - {"candidate_id", "canonical_memory_id"}:
+        raise ValueError("quarantine_candidate_correlation_invalid")
+    correlated_candidate_id = value.get("candidate_id")
+    if (
+        not isinstance(correlated_candidate_id, str)
+        or correlated_candidate_id.strip() != candidate_id
+    ):
+        raise ValueError("quarantine_candidate_correlation_invalid")
+    if "canonical_memory_id" not in value:
+        return canonical_memory_id
+    try:
+        correlated_memory_id = _parse_positive_memory_id(
+            value.get("canonical_memory_id")
+        )
+    except ValueError as exc:
+        raise ValueError("quarantine_candidate_correlation_invalid") from exc
+    if canonical_memory_id is not None and correlated_memory_id != canonical_memory_id:
+        raise ValueError("quarantine_candidate_correlation_invalid")
+    return correlated_memory_id
 
 
 class QuarantineApiMixin:
@@ -225,7 +272,10 @@ class QuarantineApiMixin:
                 "请求体必须为 JSON 对象",
                 code="quarantine_repair_payload_invalid",
             )
-        candidate_id = str(payload.get("candidate_id") or "").strip()
+        raw_candidate_id = payload.get("candidate_id")
+        candidate_id = (
+            raw_candidate_id.strip() if isinstance(raw_candidate_id, str) else ""
+        )
         action = str(payload.get("action") or "").strip()
         expected_revision = payload.get("expected_revision")
         if not candidate_id:
@@ -256,18 +306,47 @@ class QuarantineApiMixin:
         try:
             gate = self._get_memory_quality_gate()
             if action == "approve":
-                canonical_memory_id = payload.get("canonical_memory_id")
-                approval_token = payload.get("approval_token")
+                raw_canonical_memory_id = payload.get("canonical_memory_id", _MISSING)
+                canonical_memory_id: int | None = None
                 if (
-                    isinstance(canonical_memory_id, bool)
-                    or not isinstance(canonical_memory_id, int)
-                    or canonical_memory_id <= 0
+                    raw_canonical_memory_id is not _MISSING
+                    and raw_canonical_memory_id is not None
                 ):
+                    try:
+                        canonical_memory_id = _parse_positive_memory_id(
+                            raw_canonical_memory_id
+                        )
+                    except ValueError:
+                        return error_response(
+                            "canonical_memory_id 必须为正整数",
+                            code="quarantine_canonical_id_required",
+                        )
+                if "candidate_correlation" in payload:
+                    try:
+                        canonical_memory_id = _parse_candidate_correlation(
+                            payload["candidate_correlation"],
+                            candidate_id=candidate_id,
+                            canonical_memory_id=canonical_memory_id,
+                        )
+                    except ValueError:
+                        return error_response(
+                            "隔离候选关联无效",
+                            code="quarantine_candidate_correlation_invalid",
+                        )
+                if canonical_memory_id is None:
                     return error_response(
                         "canonical_memory_id 必须为正整数",
                         code="quarantine_canonical_id_required",
                     )
-                if not isinstance(approval_token, str) or not approval_token.strip():
+                approval_token = payload.get("approval_token")
+                if approval_token is not None and not isinstance(approval_token, str):
+                    return error_response(
+                        "approval_token 无效",
+                        code="quarantine_approval_token_invalid",
+                    )
+                if isinstance(approval_token, str):
+                    approval_token = approval_token.strip()
+                if approval_token == "":
                     return error_response(
                         "approval_token 不能为空",
                         code="quarantine_approval_token_required",
@@ -311,6 +390,7 @@ class QuarantineApiMixin:
                 "quarantine_status_conflict",
                 "quarantine_approval_token_required",
                 "quarantine_approval_token_invalid",
+                "quarantine_candidate_correlation_invalid",
                 "quarantine_canonical_not_found",
                 "quarantine_canonical_mismatch",
                 "quarantine_canonical_status_invalid",

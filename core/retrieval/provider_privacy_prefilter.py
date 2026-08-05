@@ -126,19 +126,17 @@ def _candidate_is_allowed(
 ) -> bool:
     """对单个不可信候选执行权限字段类型和值校验。"""
 
-    metadata = candidate.metadata if isinstance(candidate.metadata, dict) else {}
-    privacy_level = metadata.get("privacy_level", "shared")
-    if privacy_level is None:
-        privacy_level = "shared"
+    if not isinstance(candidate.metadata, dict):
+        return False
+    metadata = candidate.metadata
+    privacy_level = metadata.get("privacy_level")
     if not isinstance(privacy_level, str) or privacy_level not in _PRIVACY_LEVELS:
         return False
     if context.chat_type == "group" and privacy_level == "confidential":
         return False
 
     candidate_scope = _candidate_scope(metadata)
-    if candidate_scope is False:
-        return False
-    if isinstance(candidate_scope, str) and candidate_scope != context.scope_key:
+    if not isinstance(candidate_scope, str) or candidate_scope != context.scope_key:
         return False
 
     role = metadata.get("role")
@@ -150,9 +148,10 @@ def _candidate_is_allowed(
     participant_ids = _participant_ids(metadata)
     if participant_ids is False:
         return False
-    if context.chat_type == "private" and isinstance(participant_ids, frozenset):
+    if context.chat_type == "private":
         if (
-            context.stable_user_id is None
+            not isinstance(participant_ids, frozenset)
+            or context.stable_user_id is None
             or context.stable_user_id not in participant_ids
         ):
             return False
@@ -160,16 +159,26 @@ def _candidate_is_allowed(
 
 
 def _candidate_scope(metadata: dict[str, Any]) -> str | bool | None:
-    """提取候选作用域；存在非法类型时返回 ``False``。"""
+    """提取候选主作用域；缺失、非法或来源冲突时安全拒绝。"""
 
+    scopes: dict[str, str] = {}
     for key in ("scope_key", "session_id", "persona_id"):
         value = metadata.get(key)
         if value is None:
             continue
         if not isinstance(value, str) or not value.strip():
             return False
-        return value
-    return None
+        scopes[key] = value
+    if not scopes:
+        return None
+
+    explicit_scope = scopes.get("scope_key")
+    if explicit_scope is not None:
+        source_scope = scopes.get("session_id") or scopes.get("persona_id")
+        if source_scope is not None and source_scope != explicit_scope:
+            return False
+        return explicit_scope
+    return scopes.get("session_id") or scopes.get("persona_id")
 
 
 def _participant_ids(

@@ -76,9 +76,19 @@ async def test_create_tables_builds_current_schema(tmp_path: Path) -> None:
         "created_at",
         "updated_at",
     }.issubset(inspection.document_columns)
-    assert {"entity_hierarchy", "db_version", "migration_status"}.issubset(
-        inspection.tables
-    )
+    assert {
+        "entity_hierarchy",
+        "db_version",
+        "migration_status",
+        "canonical_idempotency_keys",
+        "canonical_idempotency_conflicts",
+    }.issubset(inspection.tables)
+    assert {
+        "documents_idempotency_insert",
+        "documents_idempotency_update",
+        "documents_idempotency_delete",
+    }.issubset(inspection.triggers)
+    assert inspection.idempotency_mapping_valid is True
 
 
 @pytest.mark.asyncio

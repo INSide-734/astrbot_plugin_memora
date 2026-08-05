@@ -88,7 +88,7 @@ class PluginPageApi(
         self._route_metadata: list[dict[str, Any]] = []
 
     async def sse_stream(self):
-        """D4：基于 Quart 原生流式输出的 SSE 实时记忆流端点。"""
+        """D4：基于 AstrBot 公共流式响应的 SSE 实时记忆流端点。"""
         initializer = getattr(self.plugin, "initializer", None)
         engine = getattr(initializer, "memory_engine", None)
         if engine is None or not hasattr(engine, "sse"):

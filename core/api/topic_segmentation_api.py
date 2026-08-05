@@ -143,7 +143,19 @@ class TopicSegmentationApiMixin:
         if err:
             return err
         try:
-            body = await self.plugin.context.request.json()
+            request_getter = getattr(self, "_get_web_request", None)
+            request_source = request_getter() if callable(request_getter) else None
+            if request_source is None:
+                from astrbot.api.web import request as request_source
+
+            invalid_json = object()
+            try:
+                body = await request_source.json(default=invalid_json)
+            except TypeError:
+                # 兼容 json() 尚不支持公共代理 default 参数的旧请求适配器。
+                body = await request_source.json()
+            if body is invalid_json:
+                return error_response("invalid JSON body")
         except Exception as exc:
             logger.debug(
                 "[TopicSegmentationApi] invalid config JSON body: %s",

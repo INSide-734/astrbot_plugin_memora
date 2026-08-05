@@ -9,6 +9,10 @@ from astrbot.api.platform import MessageType
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
+from ..identity import IdentityTrust, ProtocolIdentityResolver
+
+_READ_ONLY_IDENTITY_RESOLVER = ProtocolIdentityResolver.default()
+
 
 @dataclass(frozen=True, slots=True)
 class AgentReadScope:
@@ -28,7 +32,7 @@ def resolve_agent_read_scope(
 
     event = getattr(getattr(context, "context", None), "event", None)
     session_id = _normalized_text(getattr(event, "unified_msg_origin", None))
-    user_id = _event_sender_id(event)
+    user_id = _event_user_id(event)
     chat_type = _event_chat_type(event)
     if not session_id or chat_type is None or (require_user_id and not user_id):
         return None
@@ -41,8 +45,24 @@ def resolve_agent_read_scope(
     )
 
 
-def _event_sender_id(event: Any) -> str | None:
-    """读取事件发送者 ID，只接受字符串或整数形式的稳定标识。"""
+def _event_user_id(event: Any) -> str | None:
+    """只读解析 canonical 用户标识；未接管协议保留原始发送者。"""
+
+    try:
+        identity = _READ_ONLY_IDENTITY_RESOLVER.resolve(event)
+    except Exception:
+        return None
+    trust_status = getattr(identity, "trust_status", None)
+    if trust_status is IdentityTrust.TRUSTED:
+        return _normalized_text(getattr(identity, "canonical_user_id", None))
+    if trust_status is not IdentityTrust.UNSUPPORTED:
+        return None
+
+    return _raw_event_sender_id(event)
+
+
+def _raw_event_sender_id(event: Any) -> str | None:
+    """仅为未接管协议读取原始发送者 ID。"""
 
     getter = getattr(event, "get_sender_id", None)
     if not callable(getter):

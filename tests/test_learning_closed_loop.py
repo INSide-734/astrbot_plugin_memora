@@ -393,6 +393,9 @@ def test_review_feedback_records_trusted_event() -> None:
 
     manager = MagicMock()
     manager.policy = FeedbackSignalPolicy()
+    manager.store.opaque_token.side_effect = lambda namespace, _value: (
+        f"{namespace}:{'a' * 64}"
+    )
     engine = SimpleNamespace(feedback_signal_manager=manager)
 
     ReviewApiMixin._record_review_feedback(None, engine, "review-1", "approve")
@@ -415,6 +418,9 @@ async def test_forget_feedback_records_trusted_event() -> None:
 
     manager = MagicMock()
     manager.policy = FeedbackSignalPolicy()
+    manager.store.opaque_token.side_effect = lambda namespace, _value: (
+        f"{namespace}:{'a' * 64}"
+    )
     engine = SimpleNamespace(feedback_signal_manager=manager)
     handler = SimpleNamespace(memory_engine=engine)
     event = SimpleNamespace(unified_msg_origin="private:u")

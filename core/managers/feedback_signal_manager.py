@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -133,16 +132,20 @@ class FeedbackSignalManager:
             return FeedbackRevokeResult(False, "scope_mismatch")
         try:
             now = _utc(reference_time)
-            deleted = self.store.delete_decision_events(
+            retention_cutoff = now - timedelta(
+                seconds=self.policy.max_event_age_seconds
+            )
+            deleted = self.store.revoke_and_replace_aggregates(
                 adapter_kind=adapter_kind,
                 decision_key=decision_key,
                 variant_key=variant_key,
                 scope_domain=scope_domain,
                 persona_domain=persona_domain,
+                retention_cutoff=retention_cutoff,
+                aggregate_builder=lambda events: self._build_aggregates(events, now),
             )
             if not deleted:
                 return FeedbackRevokeResult(False, "feedback_not_found")
-            self.rebuild(reference_time=now)
         except (RuntimeError, ValueError):
             return FeedbackRevokeResult(False, "evaluation_prerequisite_unmet")
         return FeedbackRevokeResult(True, "revoked")
@@ -153,10 +156,21 @@ class FeedbackSignalManager:
         now = _utc(reference_time)
         retention_cutoff = now - timedelta(seconds=self.policy.max_event_age_seconds)
         self.store.delete_events_before(retention_cutoff)
+        aggregates = self._build_aggregates(self.store.list_events(), now)
+        self.store.replace_aggregates(aggregates)
+        return aggregates
+
+    def _build_aggregates(
+        self,
+        events: list[TrustedFeedbackEvent],
+        reference_time: datetime,
+    ) -> list[FeedbackSignalAggregate]:
+        """从事务提供的事件快照纯计算 aggregate，不执行 Store I/O。"""
+
+        now = _utc(reference_time)
         groups: dict[tuple[str, str | None, str], list[TrustedFeedbackEvent]] = (
             defaultdict(list)
         )
-        events = self.store.list_events()
         for event in events:
             age = (now - _utc(event.observed_at)).total_seconds()
             if (
@@ -213,7 +227,6 @@ class FeedbackSignalManager:
                     policy_version=self.policy.policy_version,
                 )
             )
-        self.store.replace_aggregates(aggregates)
         return aggregates
 
     def reset_and_rebuild(
@@ -258,10 +271,10 @@ def record_explicit_correction(
     """由受控生产入口记录一条显式纠正反馈（如忘记/复核拒绝）。"""
 
     observed_at = reference_time or datetime.now(timezone.utc)
-    opaque_decision = _opaque_feedback_token("decision", decision_key)
-    opaque_scope = _opaque_feedback_token("scope", scope_domain)
+    opaque_decision = manager.store.opaque_token("decision", decision_key)
+    opaque_scope = manager.store.opaque_token("scope", scope_domain)
     opaque_persona = (
-        _opaque_feedback_token("persona", persona_domain)
+        manager.store.opaque_token("persona", persona_domain)
         if persona_domain is not None
         else None
     )
@@ -294,10 +307,10 @@ def revoke_explicit_correction(
     """按与写入相同的匿名键撤销显式纠正，并重建当前聚合。"""
 
     observed_at = reference_time or datetime.now(timezone.utc)
-    opaque_decision = _opaque_feedback_token("decision", decision_key)
-    opaque_scope = _opaque_feedback_token("scope", scope_domain)
+    opaque_decision = manager.store.opaque_token("decision", decision_key)
+    opaque_scope = manager.store.opaque_token("scope", scope_domain)
     opaque_persona = (
-        _opaque_feedback_token("persona", persona_domain)
+        manager.store.opaque_token("persona", persona_domain)
         if persona_domain is not None
         else None
     )
@@ -311,16 +324,6 @@ def revoke_explicit_correction(
         trusted_persona=opaque_persona,
         reference_time=observed_at,
     )
-
-
-def _opaque_feedback_token(namespace: str, value: str) -> str:
-    """把内部标识转换为稳定且不可逆的低敏 token。"""
-
-    normalized = str(value).strip() or "unknown"
-    digest = hashlib.sha256(
-        f"memora-feedback-v1|{namespace}|{normalized}".encode("utf-8")
-    ).hexdigest()
-    return f"{namespace}:{digest}"
 
 
 def _utc(value: datetime) -> datetime:

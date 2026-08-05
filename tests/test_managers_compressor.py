@@ -100,8 +100,8 @@ def test_eligible_source_uses_ingested_age_content_topics_and_role() -> None:
     assert _eligible_source(empty, cutoff) is False
 
 
-def test_partition_sources_keeps_scope_privacy_and_role_separate() -> None:
-    """分区键必须包含 scope、privacy 和 source role。"""
+def test_partition_sources_keeps_scope_privacy_role_and_subject_separate() -> None:
+    """分区键必须包含 scope、privacy、source role 和机密主体。"""
 
     primary = _source(17)
     supporting = _source(18)
@@ -116,10 +116,10 @@ def test_partition_sources_keeps_scope_privacy_and_role_separate() -> None:
     )
 
     assert set(partitions) == {
-        ("private:user-a", "shared", "primary"),
-        ("private:user-a", "shared", "supporting"),
-        ("private:user-b", "shared", "primary"),
-        ("private:user-a", "confidential", "primary"),
+        ("private:user-a", "shared", "primary", None),
+        ("private:user-a", "shared", "supporting", None),
+        ("private:user-b", "shared", "primary", None),
+        ("private:user-a", "confidential", "primary", None),
     }
 
 

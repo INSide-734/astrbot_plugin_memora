@@ -14,7 +14,7 @@ import pytest
 from core.managers.backup_manager import BackupManager
 from core.managers.backup_snapshot import snapshot_sqlite
 from core.managers.memory_engine import MemoryEngine
-from core.managers.schema_manager import SchemaManager
+from core.managers.schema_manager import CURRENT_DB_VERSION, SchemaManager
 from core.managers.schema_migration import (
     SchemaMigrationCoordinator,
     SchemaMigrationError,
@@ -237,9 +237,9 @@ async def test_pre_migration_backup_precedes_first_change_sql(tmp_path: Path) ->
 
     assert events[0] == "backup:pre_migration"
     assert result.stage == "completed"
-    assert result.migration_id == "schema-v7-to-v8"
+    assert result.migration_id == f"schema-v7-to-v{CURRENT_DB_VERSION}"
     assert result.from_version == 7
-    assert result.to_version == 8
+    assert result.to_version == CURRENT_DB_VERSION
     assert result.canonical_count == 2
 
 
@@ -357,7 +357,7 @@ async def test_fresh_database_creates_schema_without_backup(tmp_path: Path) -> N
 
     assert events == []
     assert result.stage == "fresh_created"
-    assert _read_schema_snapshot(db_path)[0:2] == (0, 8)
+    assert _read_schema_snapshot(db_path)[0:2] == (0, CURRENT_DB_VERSION)
 
 
 @pytest.mark.asyncio
@@ -389,7 +389,7 @@ async def test_empty_provider_schema_is_treated_as_fresh_install(
 
     assert result.stage == "fresh_created"
     assert events == []
-    assert _read_schema_snapshot(db_path)[0:2] == (0, 8)
+    assert _read_schema_snapshot(db_path)[0:2] == (0, CURRENT_DB_VERSION)
 
 
 @pytest.mark.asyncio
@@ -439,7 +439,8 @@ async def test_completed_migration_is_idempotent_on_retry(tmp_path: Path) -> Non
         (
             await (
                 await second_connection.execute(
-                    "SELECT COUNT(*) FROM db_version WHERE version = 8"
+                    "SELECT COUNT(*) FROM db_version WHERE version = ?",
+                    (CURRENT_DB_VERSION,),
                 )
             ).fetchone()
         )[0]

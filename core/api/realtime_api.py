@@ -8,7 +8,7 @@ import time
 from typing import TYPE_CHECKING
 
 from astrbot.api import logger
-from quart import make_response
+from astrbot.api.web import stream_response
 
 if TYPE_CHECKING:
     from ..managers.memory_engine import MemoryEngine
@@ -55,7 +55,7 @@ class RealtimeSSE:
             return True
 
     async def stream(self):
-        """Quart 原生的 SSE 流式端点。"""
+        """通过 AstrBot 公共响应工厂返回 SSE 流。"""
         cid, q = self.register()
 
         async def event_generator():
@@ -68,21 +68,20 @@ class RealtimeSSE:
                         yield f"data: {msg}\n\n"
                     except asyncio.TimeoutError:
                         yield ": heartbeat\n\n"
-            except (asyncio.CancelledError, GeneratorExit):
+            except GeneratorExit:
                 pass
             finally:
                 self.unregister(cid)
 
-        response = await make_response(
+        return stream_response(
             event_generator(),
-            {
-                "Content-Type": "text/event-stream",
+            content_type="text/event-stream",
+            headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
             },
         )
-        response.timeout = None  # 禁用超时以支持长连接 SSE
-        return response
 
     @property
     def connected(self) -> int:

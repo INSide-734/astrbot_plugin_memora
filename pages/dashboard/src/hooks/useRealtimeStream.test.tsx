@@ -15,6 +15,12 @@ interface BridgeMock {
   unsubscribeSSE: ReturnType<typeof vi.fn>;
 }
 
+type CapturedHandlers = {
+  onOpen?: () => void;
+  onMessage?: (event: SseEvent) => void;
+  onError?: (error?: Error) => void;
+};
+
 function Harness() {
   const state = useRealtimeStream();
   const snapshot: HookSnapshot = {
@@ -39,7 +45,7 @@ describe("useRealtimeStream", () => {
 
     bridge = {
       subscribeSSE: vi.fn(),
-      unsubscribeSSE: vi.fn(),
+      unsubscribeSSE: vi.fn().mockResolvedValue(undefined),
     };
 
     Object.defineProperty(window, "AstrBotPluginPage", {
@@ -60,15 +66,9 @@ describe("useRealtimeStream", () => {
   });
 
   it("subscribes to realtime SSE and updates state on messages", async () => {
-    let handlers:
-      | {
-          onMessage?: (data: string) => void;
-          onError?: (error: Error) => void;
-          onClose?: () => void;
-        }
-      | undefined;
+    let handlers: CapturedHandlers | undefined;
 
-    bridge.subscribeSSE.mockImplementation((endpoint, incomingHandlers) => {
+    bridge.subscribeSSE.mockImplementation(async (endpoint, incomingHandlers) => {
       handlers = incomingHandlers;
       expect(endpoint).toBe("realtime/stream");
       return "sub-1";
@@ -78,9 +78,16 @@ describe("useRealtimeStream", () => {
 
     await act(async () => {
       vi.advanceTimersByTime(500);
+      await Promise.resolve();
     });
 
     expect(bridge.subscribeSSE).toHaveBeenCalledTimes(1);
+    expect(readState().connected).toBe(true);
+
+    await act(async () => {
+      handlers?.onOpen?.();
+    });
+
     expect(readState()).toEqual({
       connected: true,
       unreadCount: 0,
@@ -89,13 +96,15 @@ describe("useRealtimeStream", () => {
     });
 
     await act(async () => {
-      handlers?.onMessage?.(
-        JSON.stringify({
+      handlers?.onMessage?.({
+        raw: "",
+        parsed: {
           event: "memory_added",
           data: { id: 1 },
           ts: 123,
-        })
-      );
+        },
+        eventType: "message",
+      });
     });
 
     expect(readState()).toEqual({
@@ -107,12 +116,13 @@ describe("useRealtimeStream", () => {
   });
 
   it("unsubscribes on cleanup", async () => {
-    bridge.subscribeSSE.mockReturnValue("sub-cleanup");
+    bridge.subscribeSSE.mockResolvedValue("sub-cleanup");
 
     const view = render(<Harness />);
 
     await act(async () => {
       vi.advanceTimersByTime(500);
+      await Promise.resolve();
     });
 
     view.unmount();
@@ -121,25 +131,20 @@ describe("useRealtimeStream", () => {
   });
 
   it("reconnects after SSE errors", async () => {
-    let handlers:
-      | {
-          onMessage?: (data: string) => void;
-          onError?: (error: Error) => void;
-          onClose?: () => void;
-        }
-      | undefined;
+    let handlers: CapturedHandlers | undefined;
 
     bridge.subscribeSSE
-      .mockImplementationOnce((_, incomingHandlers) => {
+      .mockImplementationOnce(async (_, incomingHandlers) => {
         handlers = incomingHandlers;
         return "sub-1";
       })
-      .mockImplementationOnce(() => "sub-2");
+      .mockResolvedValueOnce("sub-2");
 
     render(<Harness />);
 
     await act(async () => {
       vi.advanceTimersByTime(500);
+      await Promise.resolve();
     });
 
     await act(async () => {
@@ -151,8 +156,51 @@ describe("useRealtimeStream", () => {
 
     await act(async () => {
       vi.advanceTimersByTime(5000);
+      await Promise.resolve();
     });
 
     expect(bridge.subscribeSSE).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries when the bridge rejects a subscription", async () => {
+    bridge.subscribeSSE
+      .mockRejectedValueOnce(new Error("subscribe failed"))
+      .mockResolvedValueOnce("sub-retry");
+
+    render(<Harness />);
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+    expect(readState().connected).toBe(false);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+
+    expect(bridge.subscribeSSE).toHaveBeenCalledTimes(2);
+  });
+
+  it("unsubscribes a late subscription result after unmount", async () => {
+    let resolveSubscription!: (subscriptionId: string) => void;
+    bridge.subscribeSSE.mockReturnValue(new Promise<string>((resolve) => {
+      resolveSubscription = resolve;
+    }));
+
+    const view = render(<Harness />);
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    view.unmount();
+
+    await act(async () => {
+      resolveSubscription("sub-late");
+      await Promise.resolve();
+    });
+
+    expect(bridge.unsubscribeSSE).toHaveBeenCalledWith("sub-late");
   });
 });

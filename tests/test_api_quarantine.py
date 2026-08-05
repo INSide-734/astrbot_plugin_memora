@@ -81,6 +81,10 @@ def test_quarantine_routes_are_registered() -> None:
     assert (f"{PAGE_API_PREFIX}/review/quarantine/detail", ("GET",)) in routes
     assert (f"{PAGE_API_PREFIX}/review/quarantine/action", ("POST",)) in routes
     assert (f"{PAGE_API_PREFIX}/review/quarantine/repair", ("POST",)) in routes
+    metadata = {item["path"]: item for item in api.get_route_metadata()}
+    repair_metadata = metadata[f"{PAGE_API_PREFIX}/review/quarantine/repair"]
+    assert repair_metadata["auth"] == "admin"
+    assert repair_metadata["write_guard"] is True
 
 
 @pytest.mark.asyncio
@@ -220,6 +224,204 @@ async def test_repair_approve_forwards_token_and_canonical_id() -> None:
         actor_id="dashboard",
     )
     assert "opaque-token" not in str(response)
+
+
+@pytest.mark.asyncio
+async def test_repair_approve_allows_durable_correlation_without_raw_token() -> None:
+    """Durable repair can omit the raw token that does not survive restart."""
+
+    result = {
+        "candidate_id": "qc-one",
+        "revision": 4,
+        "status": "approved",
+        "reason_codes": ["summary_quality_low"],
+        "content": "用户喜欢手冲咖啡。",
+        "metadata": {},
+        "importance": 0.8,
+        "canonical_memory_id": 91,
+        "failure_reason": None,
+        "created_at": 1.0,
+        "updated_at": 2.0,
+    }
+    gate = MagicMock()
+    gate.repair_approval = AsyncMock(return_value=result)
+    api = _api(gate)
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={
+            "candidate_id": "qc-one",
+            "expected_revision": 3,
+            "action": "approve",
+            "canonical_memory_id": 91,
+            "candidate_correlation": {"candidate_id": "qc-one"},
+        }
+    )
+
+    with patch("core.api.quarantine_api.request", request_mock):
+        response = await api.repair_quarantine_approval()
+
+    assert response["status"] == "ok"
+    gate.repair_approval.assert_awaited_once_with(
+        "qc-one",
+        expected_revision=3,
+        canonical_memory_id=91,
+        approval_token=None,
+        actor_id="dashboard",
+    )
+
+
+@pytest.mark.asyncio
+async def test_repair_rejects_conflicting_candidate_correlation() -> None:
+    """Request correlation cannot redirect repair to another candidate."""
+
+    gate = MagicMock()
+    gate.repair_approval = AsyncMock()
+    api = _api(gate)
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={
+            "candidate_id": "qc-one",
+            "expected_revision": 3,
+            "action": "approve",
+            "canonical_memory_id": 91,
+            "candidate_correlation": {"candidate_id": "qc-other"},
+        }
+    )
+
+    with patch("core.api.quarantine_api.request", request_mock):
+        response = await api.repair_quarantine_approval()
+
+    assert response["status"] == "error"
+    assert response["code"] == "quarantine_candidate_correlation_invalid"
+    gate.repair_approval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_repair_rejects_malformed_canonical_id_or_correlation() -> None:
+    """Malformed canonical IDs and correlations fail closed."""
+
+    gate = MagicMock()
+    gate.repair_approval = AsyncMock()
+    api = _api(gate)
+    payloads = (
+        {
+            "candidate_id": "qc-one",
+            "expected_revision": 3,
+            "action": "approve",
+            "canonical_memory_id": True,
+        },
+        {
+            "candidate_id": "qc-one",
+            "expected_revision": 3,
+            "action": "approve",
+            "canonical_memory_id": 91,
+            "candidate_correlation": ["qc-one"],
+        },
+    )
+
+    for payload in payloads:
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+        with patch("core.api.quarantine_api.request", request_mock):
+            response = await api.repair_quarantine_approval()
+        assert response["status"] == "error"
+        assert response["code"] in {
+            "quarantine_canonical_id_required",
+            "quarantine_candidate_correlation_invalid",
+        }
+
+    gate.repair_approval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_repair_maps_gate_correlation_failure_to_stable_error() -> None:
+    """Gate correlation failures use a stable non-leaking envelope."""
+
+    gate = MagicMock()
+    gate.repair_approval = AsyncMock(
+        side_effect=ValueError("quarantine_candidate_correlation_invalid")
+    )
+    api = _api(gate)
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={
+            "candidate_id": "qc-one",
+            "expected_revision": 3,
+            "action": "approve",
+            "canonical_memory_id": 91,
+        }
+    )
+
+    with patch("core.api.quarantine_api.request", request_mock):
+        response = await api.repair_quarantine_approval()
+
+    assert response["status"] == "error"
+    assert response["code"] == "quarantine_candidate_correlation_invalid"
+    assert "quarantine_candidate_correlation_invalid" not in response["message"]
+
+
+@pytest.mark.asyncio
+async def test_repair_keeps_write_guard_before_durable_call() -> None:
+    """A maintenance block must prevent the durable repair call."""
+
+    blocked = {"status": "error", "code": "maintenance_blocked"}
+    gate = MagicMock()
+    gate.repair_approval = AsyncMock()
+    api = _api(gate)
+    api._maintenance_write_guard = MagicMock(return_value=blocked)
+    request_mock = _mock_request()
+    request_mock.get_json = AsyncMock(
+        return_value={
+            "candidate_id": "qc-one",
+            "expected_revision": 3,
+            "action": "approve",
+            "canonical_memory_id": 91,
+        }
+    )
+
+    with patch("core.api.quarantine_api.request", request_mock):
+        response = await api.repair_quarantine_approval()
+
+    assert response is blocked
+    api._maintenance_write_guard.assert_called_once_with()
+    gate.repair_approval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_repair_keeps_revision_validation_and_token_type_guard() -> None:
+    """Revision CAS input and optional token types remain fail-closed."""
+
+    gate = MagicMock()
+    gate.repair_approval = AsyncMock()
+    api = _api(gate)
+    payloads = (
+        {
+            "candidate_id": "qc-one",
+            "expected_revision": True,
+            "action": "approve",
+            "canonical_memory_id": 91,
+        },
+        {
+            "candidate_id": "qc-one",
+            "expected_revision": 3,
+            "action": "approve",
+            "canonical_memory_id": 91,
+            "approval_token": 123,
+        },
+    )
+
+    for payload in payloads:
+        request_mock = _mock_request()
+        request_mock.get_json = AsyncMock(return_value=payload)
+        with patch("core.api.quarantine_api.request", request_mock):
+            response = await api.repair_quarantine_approval()
+        assert response["status"] == "error"
+        assert response["code"] in {
+            "quarantine_revision_required",
+            "quarantine_approval_token_invalid",
+        }
+
+    gate.repair_approval.assert_not_awaited()
 
 
 @pytest.mark.asyncio

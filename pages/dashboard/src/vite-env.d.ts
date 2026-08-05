@@ -11,22 +11,26 @@ interface AstrBotPluginPageBridge {
   getLocale(): string;
   getI18n(): Record<string, unknown>;
   t(key: string, fallback?: string): string;
-  onContext(callback: (ctx: AstrBotContext) => void): void;
-  offContext(callback: (ctx: AstrBotContext) => void): void;
-  onContextChange(callback: (ctx: AstrBotContext) => void): void;
-  offContextChange(callback: (ctx: AstrBotContext) => void): void;
+  onContext(callback: (ctx: AstrBotContext) => void): () => void;
   apiGet(endpoint: string, params?: Record<string, string>): Promise<ApiResponse>;
   apiPost(endpoint: string, body?: unknown): Promise<ApiResponse>;
   upload(endpoint: string, file: File): Promise<ApiResponse>;
   download(endpoint: string, params: Record<string, string>, filename: string): Promise<void>;
-  subscribeSSE(endpoint: string, handlers: SseHandlers, params?: Record<string, string>): string;
-  unsubscribeSSE(subscriptionId: string): void;
+  subscribeSSE(endpoint: string, handlers: SseHandlers, params?: Record<string, string>): Promise<string>;
+  unsubscribeSSE(subscriptionId: string): Promise<void>;
+}
+
+interface SseEvent {
+  raw: string;
+  parsed: unknown;
+  eventType: string;
+  lastEventId?: string;
 }
 
 interface SseHandlers {
-  onMessage?: (data: string) => void;
-  onError?: (error: Error) => void;
-  onClose?: () => void;
+  onOpen?: () => void;
+  onMessage?: (event: SseEvent) => void;
+  onError?: (error?: Error) => void;
 }
 
 interface AstrBotContext {

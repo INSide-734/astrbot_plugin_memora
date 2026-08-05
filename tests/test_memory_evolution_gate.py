@@ -54,6 +54,19 @@ def test_pending_cap_is_deterministic() -> None:
     assert decision.reason_code == "pending_cap"
 
 
+def test_replay_bypasses_pending_cap() -> None:
+    """全量派生重建的 replay 不得被普通待处理上限截断。"""
+
+    gate = MemoryEvolutionGate(
+        {"enabled": True, "mode": "shadow", "max_pending_jobs": 2}
+    )
+
+    decision = gate.consider(signal(importance=0.9, pending_jobs=2), replay=True)
+
+    assert decision.should_enqueue is True
+    assert decision.reason_code == "eligible"
+
+
 def test_same_signal_produces_same_bucket_and_idempotency_key() -> None:
     gate = MemoryEvolutionGate(
         {"enabled": True, "mode": "shadow", "trigger_threshold": 0.5}

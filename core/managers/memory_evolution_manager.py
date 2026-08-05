@@ -171,7 +171,11 @@ class MemoryEvolutionManager(MemoryEvolutionProjectionProposalMixin):
             privacy_level=source.privacy_level,
             content=source.content,
         )
-        decision = self.gate.consider(signal)
+        decision = (
+            self.gate.consider(signal, replay=True)
+            if replay
+            else self.gate.consider(signal)
+        )
         if not decision.should_enqueue:
             return decision
         sources = [source]
@@ -553,7 +557,7 @@ class MemoryEvolutionManager(MemoryEvolutionProjectionProposalMixin):
                 projection_sources_for_item
             ):
                 raise EvolutionProposalRejected("duplicate_projection_source")
-            _ensure_scope_compatible(*projection_sources_for_item)
+            _ensure_projection_compatible(*projection_sources_for_item)
             if (
                 item.projection_type is ProjectionType.CONFLICT_SET
                 and len(projection_sources_for_item) < 3
@@ -621,6 +625,17 @@ def _ensure_scope_compatible(*sources: MemorySourceRef) -> None:
         raise EvolutionProposalRejected("source_not_found")
     if any(source.scope_key != sources[0].scope_key for source in sources[1:]):
         raise EvolutionProposalRejected("scope_mismatch")
+
+
+def _ensure_projection_compatible(*sources: MemorySourceRef) -> None:
+    """校验 Projection 的 scope，并隔离 confidential 主体边界。"""
+
+    _ensure_scope_compatible(*sources)
+    if not any(source.privacy_level == "confidential" for source in sources):
+        return
+    subjects = {source.subject_key for source in sources}
+    if len(subjects) != 1 or None in subjects:
+        raise EvolutionProposalRejected("subject_mismatch")
 
 
 def _ensure_compatible(

@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import inspect
 import time
 from pathlib import Path
 from typing import Any
@@ -386,6 +387,13 @@ class PluginInitializer:
                     reason_code="full_initialization_error",
                     duration_ms=duration_ms,
                 )
+            try:
+                await self.stop_memory_engine_tasks()
+            except BaseException:
+                logger.error(
+                    "初始化失败后收敛记忆引擎后台任务失败",
+                    exc_info=True,
+                )
             if owns_evolution_components:
                 try:
                     await self.close_memory_evolution_components()
@@ -709,6 +717,17 @@ class PluginInitializer:
 
     async def stop_background_tasks(self) -> None:
         await self._safe_step("取消Provider等待", self._provider_waiter.cancel())
+
+    async def stop_memory_engine_tasks(self) -> None:
+        """在共享演化消费者关闭前收敛引擎持有的生产者任务。"""
+
+        engine = getattr(self, "memory_engine", None)
+        stopper = getattr(engine, "stop_pending_tasks", None)
+        if not callable(stopper):
+            return
+        result = stopper()
+        if inspect.isawaitable(result):
+            await result
 
     async def close_injection_components(self) -> None:
         async with self._injection_close_lock:

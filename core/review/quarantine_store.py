@@ -259,11 +259,20 @@ class MemoryQuarantineStore:
         expected_revision: int,
         canonical_memory_id: int,
         actor_id: str | None,
-        approval_token: str,
+        approval_token: str | None = None,
+        approval_token_hash: str | None = None,
     ) -> dict[str, Any]:
-        """仅凭匹配 token、revision 的 canonical 事实收口 approving 候选。"""
+        """凭匹配 token digest、revision 的 canonical 事实收口候选。
 
-        token_hash = self._approval_token_digest(approval_token)
+        正常 repair 可继续传入 raw token；跨重启恢复应传入 canonical
+        metadata 与 quarantine 行共同持久化的 digest，避免把不可恢复的
+        raw token 作为唯一修复凭证。
+        """
+
+        token_hash = self._resolve_approval_token_hash(
+            approval_token,
+            approval_token_hash,
+        )
         return await self._transition(
             candidate_id,
             expected_revision=expected_revision,
@@ -274,6 +283,25 @@ class MemoryQuarantineStore:
             canonical_memory_id=int(canonical_memory_id),
             failure_reason=None,
             verify_approval_token_hash=token_hash,
+        )
+
+    async def finalize_repaired_approval_by_digest(
+        self,
+        candidate_id: str,
+        *,
+        expected_revision: int,
+        canonical_memory_id: int,
+        actor_id: str | None,
+        approval_token_hash: str,
+    ) -> dict[str, Any]:
+        """使用已持久化 digest 完成不依赖 raw token 的 repair。"""
+
+        return await self.finalize_repaired_approval(
+            candidate_id,
+            expected_revision=expected_revision,
+            canonical_memory_id=canonical_memory_id,
+            actor_id=actor_id,
+            approval_token_hash=approval_token_hash,
         )
 
     async def block_approval(
@@ -449,6 +477,7 @@ class MemoryQuarantineStore:
     def _row_to_candidate(cls, row: aiosqlite.Row) -> dict[str, Any]:
         """把 SQLite 行转换为内部候选字典。"""
 
+        columns = set(row.keys())
         return {
             "candidate_id": row["candidate_id"],
             "candidate_key": row["candidate_key"],
@@ -463,6 +492,9 @@ class MemoryQuarantineStore:
             "source_window": cls._from_json(row["source_window_json"]),
             "is_group_chat": bool(row["is_group_chat"]),
             "canonical_memory_id": row["canonical_memory_id"],
+            "approval_token_hash": (
+                row["approval_token_hash"] if "approval_token_hash" in columns else None
+            ),
             "failure_reason": row["failure_reason"],
             "created_at": float(row["created_at"]),
             "updated_at": float(row["updated_at"]),
@@ -501,6 +533,25 @@ class MemoryQuarantineStore:
         if not token:
             raise ValueError("quarantine_approval_token_required")
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _resolve_approval_token_hash(
+        cls,
+        approval_token: str | None,
+        approval_token_hash: str | None,
+    ) -> str:
+        """解析 raw token 或持久 digest，并拒绝含糊的双凭证输入。"""
+
+        if approval_token is not None and approval_token_hash is not None:
+            raise ValueError("quarantine_approval_credential_conflict")
+        if approval_token is not None:
+            return cls._approval_token_digest(approval_token)
+        normalized = str(approval_token_hash or "").strip().lower()
+        if len(normalized) != 64 or any(
+            character not in "0123456789abcdef" for character in normalized
+        ):
+            raise ValueError("quarantine_approval_token_digest_required")
+        return normalized
 
 
 __all__ = ["MemoryQuarantineStore"]

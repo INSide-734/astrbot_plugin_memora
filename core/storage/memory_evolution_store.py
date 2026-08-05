@@ -562,7 +562,10 @@ class MemoryEvolutionStore(
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(relation_key) DO UPDATE SET
                       revision=memory_relations.revision+1,
-                      state=excluded.state,
+                      state=CASE
+                        WHEN memory_relations.state='active' THEN 'active'
+                        ELSE excluded.state
+                      END,
                       confidence=excluded.confidence,
                       scope_key=excluded.scope_key,
                       privacy_level=excluded.privacy_level,

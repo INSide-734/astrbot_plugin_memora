@@ -188,6 +188,31 @@ async def test_background_upsert_cannot_reopen_rejected_candidate(tmp_path) -> N
 
 
 @pytest.mark.asyncio
+async def test_background_upsert_preserves_approved_active_relation(tmp_path) -> None:
+    """重复后台 proposal 不得撤销已经人工批准的 active relation。"""
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    await _seed_canonical_sources(store)
+    await store.apply_derived_plan(_candidate_plan())
+    approved = await store.review_relation_candidate(
+        "conflict-1",
+        action="approve",
+        expected_revision=1,
+    )
+
+    await store.apply_derived_plan(_candidate_plan())
+    stored = await store.get_relation_review_candidate("conflict-1")
+    await store.close()
+
+    assert approved["state"] == DerivedState.ACTIVE.value
+    assert stored is not None
+    assert stored["relation_id"] == approved["relation_id"]
+    assert stored["state"] == DerivedState.ACTIVE.value
+    assert stored["revision"] == approved["revision"] + 1
+
+
+@pytest.mark.asyncio
 async def test_approve_and_replay_fail_when_source_revision_changed(tmp_path) -> None:
     """source 已变化时不得把旧候选激活或重新送回待审状态。"""
 

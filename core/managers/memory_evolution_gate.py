@@ -35,8 +35,15 @@ class MemoryEvolutionGate:
         )
         self.policy_version = str(config.get("policy_version", "v1")) or "v1"
 
-    def consider(self, signal: EvolutionSignal) -> GateDecision:
-        """根据单条 canonical source 信号返回稳定的门控决策。"""
+    def consider(
+        self, signal: EvolutionSignal, *, replay: bool = False
+    ) -> GateDecision:
+        """根据单条 canonical source 信号返回稳定的门控决策。
+
+        ``replay`` 仅供从 canonical 全量重建派生索引使用；它保留模式、
+        信号和阈值校验，但绕过正常写入的待处理任务上限。重建完成前
+        worker 不会消费队列，若复用普通 cap 会静默丢失 source 的派生任务。
+        """
 
         if self.mode == "disabled":
             return GateDecision(False, None, "mode_disabled")
@@ -44,7 +51,7 @@ class MemoryEvolutionGate:
             return GateDecision(False, None, "invalid_signal")
         if signal.importance < self.trigger_threshold:
             return GateDecision(False, None, "below_threshold")
-        if signal.pending_jobs >= self.max_pending_jobs:
+        if not replay and signal.pending_jobs >= self.max_pending_jobs:
             return GateDecision(False, None, "pending_cap")
 
         bucket_key, idempotency_key = self._stable_keys(signal)

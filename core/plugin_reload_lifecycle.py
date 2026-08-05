@@ -19,6 +19,26 @@ def supports_learning_reload_callback(plugin: object) -> bool:
     return callable(getattr(manager, "update_reload_operation", None))
 
 
+def schedule_learning_reload(plugin: object, operation_id: str) -> bool:
+    """读取当前 revision 并安排自主学习配置的延迟重载。"""
+
+    if not supports_learning_reload_callback(plugin):
+        return False
+    manager = _learning_manager(plugin)
+    revision = getattr(manager, "_state_revision", None)
+    expected_state_revision = revision if isinstance(revision, str) else None
+    scheduler = getattr(plugin, "_schedule_plugin_reload", None)
+    if not callable(scheduler):
+        return False
+    return bool(
+        scheduler(
+            "auto_learning",
+            learning_operation_id=operation_id,
+            expected_state_revision=expected_state_revision,
+        )
+    )
+
+
 async def run_scheduled_plugin_reload(
     plugin: object,
     reload_plugin: object,
@@ -26,6 +46,7 @@ async def run_scheduled_plugin_reload(
     reason: str,
     backup_operation_id: str | None = None,
     learning_operation_id: str | None = None,
+    expected_state_revision: str | None = None,
 ) -> None:
     """延迟调用宿主重载，并按真实执行阶段持久化低敏状态。
 
@@ -49,6 +70,7 @@ async def run_scheduled_plugin_reload(
                 learning_operation_id,
                 state="restart_required",
                 reason_code="plugin_terminating",
+                expected_state_revision=expected_state_revision,
             )
             logger.debug("插件正在停止，跳过延迟重载")
             return
@@ -58,6 +80,7 @@ async def run_scheduled_plugin_reload(
                 learning_operation_id,
                 state="running",
                 reason_code="reload_started",
+                expected_state_revision=expected_state_revision,
             )
             if not started:
                 await _mark_learning_reload(
@@ -65,6 +88,7 @@ async def run_scheduled_plugin_reload(
                     learning_operation_id,
                     state="restart_required",
                     reason_code="reload_not_executed",
+                    expected_state_revision=expected_state_revision,
                 )
                 logger.warning(
                     "自主学习重载未执行 reason=%s operation_id=%s",
@@ -79,6 +103,7 @@ async def run_scheduled_plugin_reload(
             learning_operation_id,
             state="restart_required",
             reason_code="reload_cancelled",
+            expected_state_revision=expected_state_revision,
         )
         raise
     except Exception:
@@ -87,6 +112,7 @@ async def run_scheduled_plugin_reload(
             learning_operation_id,
             state="failed",
             reason_code="host_reload_failed",
+            expected_state_revision=expected_state_revision,
         )
         raise
 
@@ -106,6 +132,7 @@ async def run_scheduled_plugin_reload(
         learning_operation_id,
         state="failed",
         reason_code="host_reload_failed",
+        expected_state_revision=expected_state_revision,
     )
 
 
@@ -123,6 +150,7 @@ async def _mark_learning_reload(
     *,
     state: str,
     reason_code: str,
+    expected_state_revision: str | None = None,
 ) -> bool:
     """调用 manager 回调并确认目标 operation 已持久化为预期状态。"""
 
@@ -133,7 +161,10 @@ async def _mark_learning_reload(
     if not callable(updater):
         return False
     try:
-        result = updater(operation_id, state=state, reason_code=reason_code)
+        kwargs = {"state": state, "reason_code": reason_code}
+        if expected_state_revision is not None:
+            kwargs["expected_state_revision"] = expected_state_revision
+        result = updater(operation_id, **kwargs)
         if inspect.isawaitable(result):
             result = await result
     except asyncio.CancelledError:
@@ -162,4 +193,8 @@ def _reload_failed(result: Any) -> bool:
     return False
 
 
-__all__ = ["run_scheduled_plugin_reload", "supports_learning_reload_callback"]
+__all__ = [
+    "run_scheduled_plugin_reload",
+    "schedule_learning_reload",
+    "supports_learning_reload_callback",
+]

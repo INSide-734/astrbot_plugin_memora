@@ -10,11 +10,20 @@ from typing import TYPE_CHECKING
 
 from astrbot.api import logger
 
+from ..storage.canonical_idempotency import (
+    REQUIRED_CANONICAL_IDEMPOTENCY_TABLES,
+    REQUIRED_CANONICAL_IDEMPOTENCY_TRIGGERS,
+    count_current_canonical_idempotency_conflicts,
+    create_canonical_idempotency_schema,
+    rebuild_canonical_idempotency_mapping,
+    validate_canonical_idempotency_mapping,
+)
+
 if TYPE_CHECKING:
     import aiosqlite
 
 
-CURRENT_DB_VERSION = 8
+CURRENT_DB_VERSION = 9
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +36,8 @@ class SchemaInspection:
     document_columns: frozenset[str]
     tables: frozenset[str]
     indexes: frozenset[str]
+    triggers: frozenset[str]
+    idempotency_mapping_valid: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +51,8 @@ class SchemaMigrationPlan:
     missing_columns: tuple[str, ...]
     missing_tables: tuple[str, ...]
     missing_indexes: tuple[str, ...]
+    missing_triggers: tuple[str, ...]
+    idempotency_rebuild_required: bool
     write_journal_required: bool
 
 
@@ -102,9 +115,11 @@ class SchemaManager:
             "ON entity_hierarchy(parent)"
         ),
     }
-    _REQUIRED_TABLES = frozenset(
-        {"documents", "entity_hierarchy", "db_version", "migration_status"}
+    _REQUIRED_TABLES = (
+        frozenset({"documents", "entity_hierarchy", "db_version", "migration_status"})
+        | REQUIRED_CANONICAL_IDEMPOTENCY_TABLES
     )
+    _REQUIRED_TRIGGERS = REQUIRED_CANONICAL_IDEMPOTENCY_TRIGGERS
 
     def __init__(self, db_connection: aiosqlite.Connection | None = None) -> None:
         """保存由 MemoryEngine 统一管理的 SQLite 连接。"""
@@ -154,6 +169,10 @@ class SchemaManager:
             "SELECT name FROM sqlite_master WHERE type = 'index'"
         )
         indexes = frozenset(str(row[0]) for row in await index_cursor.fetchall())
+        trigger_cursor = await self._db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+        )
+        triggers = frozenset(str(row[0]) for row in await trigger_cursor.fetchall())
         if "documents" not in tables:
             return SchemaInspection(
                 fresh=True,
@@ -162,6 +181,8 @@ class SchemaManager:
                 document_columns=frozenset(),
                 tables=tables,
                 indexes=indexes,
+                triggers=triggers,
+                idempotency_mapping_valid=False,
             )
 
         column_cursor = await self._db.execute("PRAGMA table_info(documents)")
@@ -182,6 +203,14 @@ class SchemaManager:
             and "entity_hierarchy" not in tables
             and "migration_status" not in tables
         )
+        idempotency_structure_present = REQUIRED_CANONICAL_IDEMPOTENCY_TABLES.issubset(
+            tables
+        ) and REQUIRED_CANONICAL_IDEMPOTENCY_TRIGGERS.issubset(triggers)
+        idempotency_mapping_valid = False
+        if idempotency_structure_present:
+            idempotency_mapping_valid = await validate_canonical_idempotency_mapping(
+                self._db
+            )
         return SchemaInspection(
             fresh=fresh_install,
             version=version,
@@ -189,6 +218,8 @@ class SchemaManager:
             document_columns=columns,
             tables=tables,
             indexes=indexes,
+            triggers=triggers,
+            idempotency_mapping_valid=idempotency_mapping_valid,
         )
 
     @classmethod
@@ -217,6 +248,12 @@ class SchemaManager:
         missing_indexes = tuple(
             index for index in cls._INDEX_SQL if index not in inspection.indexes
         )
+        missing_triggers = tuple(
+            trigger
+            for trigger in sorted(cls._REQUIRED_TRIGGERS)
+            if trigger not in inspection.triggers
+        )
+        idempotency_rebuild_required = not inspection.idempotency_mapping_valid
         journal_missing = (
             require_write_journal and "memory_write_ops" not in inspection.tables
         )
@@ -225,6 +262,8 @@ class SchemaManager:
             and not missing_columns
             and not missing_tables
             and not missing_indexes
+            and not missing_triggers
+            and not idempotency_rebuild_required
             and not journal_missing
         ):
             return None
@@ -241,6 +280,8 @@ class SchemaManager:
             missing_columns=missing_columns,
             missing_tables=missing_tables,
             missing_indexes=missing_indexes,
+            missing_triggers=missing_triggers,
+            idempotency_rebuild_required=idempotency_rebuild_required,
             write_journal_required=journal_missing,
         )
 
@@ -264,6 +305,7 @@ class SchemaManager:
                 await self._db.execute(self._DOCUMENT_COLUMN_MIGRATIONS[column])
             await self._backfill_document_columns()
             await self._create_supporting_schema(write_journal_create_table_cb)
+            await rebuild_canonical_idempotency_mapping(self._db)
             await self._write_current_version("初始化当前 Schema")
             validation = await self.validate_schema(
                 expected_version=CURRENT_DB_VERSION,
@@ -306,6 +348,7 @@ class SchemaManager:
                 current_columns.add(column)
             await self._backfill_document_columns()
             await self._create_supporting_schema(write_journal_create_table_cb)
+            await rebuild_canonical_idempotency_mapping(self._db)
             await self._write_current_version(
                 f"Schema 迁移 {plan.from_version} -> {plan.to_version}"
             )
@@ -353,6 +396,10 @@ class SchemaManager:
             reason_code = "schema_tables_missing"
         elif not frozenset(self._INDEX_SQL).issubset(inspection.indexes):
             reason_code = "schema_indexes_missing"
+        elif not self._REQUIRED_TRIGGERS.issubset(inspection.triggers):
+            reason_code = "schema_triggers_missing"
+        elif not inspection.idempotency_mapping_valid:
+            reason_code = "schema_idempotency_mapping_invalid"
         elif require_write_journal and "memory_write_ops" not in inspection.tables:
             reason_code = "schema_write_journal_missing"
         return SchemaValidation(
@@ -462,6 +509,7 @@ class SchemaManager:
             )
             """
         )
+        await create_canonical_idempotency_schema(self._db)
 
     async def _write_current_version(self, description: str) -> None:
         """仅在当前版本记录不存在时追加版本行。"""
@@ -493,6 +541,9 @@ class SchemaManager:
         """在数据库内保存不含路径和正文的迁移完成摘要。"""
 
         assert self._db is not None
+        idempotency_conflicts = await count_current_canonical_idempotency_conflicts(
+            self._db
+        )
         summary = json.dumps(
             {
                 "migration_id": plan.migration_id,
@@ -501,6 +552,9 @@ class SchemaManager:
                 "stage": "completed",
                 "canonical_count": plan.canonical_count,
                 "columns_added": len(plan.missing_columns),
+                "triggers_added": len(plan.missing_triggers),
+                "idempotency_mapping_rebuilt": plan.idempotency_rebuild_required,
+                "idempotency_conflicts_preserved": idempotency_conflicts,
             },
             ensure_ascii=True,
             separators=(",", ":"),

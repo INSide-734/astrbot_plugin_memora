@@ -204,6 +204,84 @@ async def test_multi_query_confidential_candidate_never_reaches_llm_payload() ->
     assert all(item.doc_id != 1 for item in results)
 
 
+@pytest.mark.asyncio
+async def test_incomplete_authorization_never_reaches_llm_payload() -> None:
+    """缺失或冲突的授权证据不得进入 Provider，也不得回到最终结果。"""
+
+    client = MagicMock()
+    client.complete_sync.return_value = "[9.0, 5.0, 2.0]"
+    missing_privacy = _candidate(
+        1,
+        0.99,
+        "MISSING_PRIVACY_CANARY",
+        scope_key="private:stable-user",
+    )
+    missing_privacy.metadata.pop("privacy_level")
+    missing_scope = _candidate(2, 0.98, "MISSING_SCOPE_CANARY")
+    missing_scope.metadata.pop("scope_key")
+    missing_participants = _candidate(
+        3,
+        0.97,
+        "MISSING_PARTICIPANTS_CANARY",
+        scope_key="private:stable-user",
+    )
+    missing_participants.metadata.pop("participant_ids")
+    conflicting_scope = _candidate(
+        4,
+        0.96,
+        "CONFLICTING_SCOPE_CANARY",
+        scope_key="private:stable-user",
+    )
+    conflicting_scope.metadata["session_id"] = "private:other"
+    retriever = _dual_retriever(
+        [
+            missing_privacy,
+            missing_scope,
+            missing_participants,
+            conflicting_scope,
+            _candidate(
+                5,
+                0.80,
+                "VISIBLE_PRIVATE_CANARY_1",
+                privacy_level="confidential",
+                scope_key="private:stable-user",
+            ),
+            _candidate(
+                6,
+                0.70,
+                "VISIBLE_PRIVATE_CANARY_2",
+                privacy_level="confidential",
+                scope_key="private:stable-user",
+            ),
+            _candidate(
+                7,
+                0.60,
+                "VISIBLE_PRIVATE_CANARY_3",
+                privacy_level="confidential",
+                scope_key="private:stable-user",
+            ),
+        ],
+        client,
+    )
+
+    with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
+        results = await retriever.search(
+            "匿名查询",
+            k=2,
+            session_id="private:stable-user",
+            chat_type="private",
+            user_id="stable-user",
+        )
+
+    prompt = client.complete_sync.call_args.args[0]
+    assert "MISSING_PRIVACY_CANARY" not in prompt
+    assert "MISSING_SCOPE_CANARY" not in prompt
+    assert "MISSING_PARTICIPANTS_CANARY" not in prompt
+    assert "CONFLICTING_SCOPE_CANARY" not in prompt
+    assert "VISIBLE_PRIVATE_CANARY" in prompt
+    assert {item.doc_id for item in results} <= {5, 6, 7}
+
+
 def test_prefilter_enforces_scope_stable_identity_and_role() -> None:
     """Provider 候选必须同时满足 scope、稳定身份和 role 约束。"""
 
@@ -253,6 +331,77 @@ def test_prefilter_enforces_scope_stable_identity_and_role() -> None:
     assert outcome.input_count == 4
     assert outcome.allowed_count == 1
     assert outcome.filtered_count == 3
+
+
+def test_prefilter_rejects_missing_or_conflicting_authorization_evidence() -> None:
+    """Provider 边界必须拒绝缺失或互相冲突的候选授权证据。"""
+
+    from core.retrieval.provider_privacy_prefilter import (
+        ProviderPrivacyContext,
+        ProviderPrivacyPrefilter,
+    )
+
+    allowed = _candidate(
+        1,
+        0.9,
+        "允许正文",
+        privacy_level="confidential",
+        scope_key="private:stable-user",
+    )
+    canonical_shape = _candidate(7, 0.3, "合法 canonical 正文")
+    canonical_shape.metadata = {
+        "privacy_level": "confidential",
+        "session_id": "private:stable-user",
+        "persona_id": "persona:current",
+        "participant_ids": ["stable-user"],
+    }
+    empty_metadata = _candidate(2, 0.8, "空授权证据")
+    empty_metadata.metadata = {}
+    missing_privacy = _candidate(
+        3,
+        0.7,
+        "缺少隐私证据",
+        scope_key="private:stable-user",
+    )
+    missing_privacy.metadata.pop("privacy_level")
+    missing_scope = _candidate(4, 0.6, "缺少作用域证据")
+    missing_scope.metadata.pop("scope_key")
+    missing_participants = _candidate(
+        5,
+        0.5,
+        "缺少稳定参与者证据",
+        scope_key="private:stable-user",
+    )
+    missing_participants.metadata.pop("participant_ids")
+    conflicting_scope = _candidate(
+        6,
+        0.4,
+        "冲突作用域证据",
+        scope_key="private:stable-user",
+    )
+    conflicting_scope.metadata["session_id"] = "private:other"
+
+    outcome = ProviderPrivacyPrefilter().filter(
+        [
+            allowed,
+            canonical_shape,
+            empty_metadata,
+            missing_privacy,
+            missing_scope,
+            missing_participants,
+            conflicting_scope,
+        ],
+        ProviderPrivacyContext(
+            chat_type="private",
+            scope_key="private:stable-user",
+            stable_user_id="stable-user",
+        ),
+    )
+
+    assert outcome.candidates == [allowed, canonical_shape]
+    assert outcome.input_count == 7
+    assert outcome.allowed_count == 2
+    assert outcome.filtered_count == 5
 
 
 @pytest.mark.asyncio

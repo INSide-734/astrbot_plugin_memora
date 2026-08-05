@@ -508,6 +508,135 @@ class TestStageRestore:
             encoding="utf-8"
         ) == "live-state"
 
+    @pytest.mark.asyncio
+    async def test_backup_and_restore_include_quarantine_database(
+        self, tmp_path: Path
+    ) -> None:
+        """双库备份恢复必须同时还原 canonical 与 quarantine 状态。"""
+
+        from core.review.quarantine_store import MemoryQuarantineStore
+
+        canonical_path = tmp_path / "memora.db"
+        with sqlite3.connect(canonical_path) as db:
+            db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, text TEXT)")
+            db.execute("INSERT INTO documents(id, text) VALUES (1, 'source')")
+            db.commit()
+        quarantine = MemoryQuarantineStore(tmp_path / "memory_quarantine.sqlite3")
+        await quarantine.initialize()
+        candidate = await quarantine.stage_candidate(
+            candidate_key="backup-quarantine-candidate",
+            reason_codes=["summary_quality_low"],
+            content="用户喜欢咖啡。",
+            metadata={},
+            importance=0.7,
+            session_id="session-1",
+            persona_id=None,
+            source_window={"start_index": 0, "end_index": 1},
+            is_group_chat=False,
+        )
+        with sqlite3.connect(quarantine.db_path) as db:
+            db.execute(
+                """
+                UPDATE memory_quarantine_candidates
+                SET status = 'approved', canonical_memory_id = 1, revision = 2
+                WHERE candidate_id = ?
+                """,
+                (candidate["candidate_id"],),
+            )
+            db.commit()
+
+        manager = BackupManager(str(tmp_path))
+        backup = await manager.create_backup()
+        manifest = json.loads(
+            (Path(backup["directory"]) / _BACKUP_INFO_FILE).read_text(encoding="utf-8")
+        )
+        assert "memory_quarantine.sqlite3" in manifest["files"]
+
+        with sqlite3.connect(canonical_path) as db:
+            db.execute("DELETE FROM documents")
+            db.execute("INSERT INTO documents(id, text) VALUES (2, 'live')")
+            db.commit()
+        with sqlite3.connect(quarantine.db_path) as db:
+            db.execute(
+                "UPDATE memory_quarantine_candidates SET canonical_memory_id = 2"
+            )
+            db.commit()
+
+        staged = manager.stage_restore(str(backup["name"]))
+        applied = manager.apply_pending_restores()
+
+        assert applied["restore_status"] == "validating"
+        with sqlite3.connect(canonical_path) as db:
+            assert db.execute("SELECT id FROM documents").fetchall() == [(1,)]
+        with sqlite3.connect(quarantine.db_path) as db:
+            assert db.execute(
+                "SELECT status, canonical_memory_id FROM memory_quarantine_candidates"
+            ).fetchone() == ("approved", 1)
+        manager.mark_restore_succeeded(str(staged["operation_id"]))
+
+    @pytest.mark.asyncio
+    async def test_legacy_restore_rolls_back_on_orphaned_quarantine_reference(
+        self, tmp_path: Path
+    ) -> None:
+        """旧的单库备份也不得留下 approved 指向不存在 canonical 的状态。"""
+
+        from core.review.quarantine_store import MemoryQuarantineStore
+
+        canonical_path = tmp_path / "memora.db"
+        with sqlite3.connect(canonical_path) as db:
+            db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, text TEXT)")
+            db.execute("INSERT INTO documents(id, text) VALUES (1, 'live')")
+            db.commit()
+        source_path = tmp_path / "source.db"
+        with sqlite3.connect(source_path) as db:
+            db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, text TEXT)")
+            db.execute("INSERT INTO documents(id, text) VALUES (2, 'source')")
+            db.commit()
+        quarantine = MemoryQuarantineStore(tmp_path / "memory_quarantine.sqlite3")
+        await quarantine.initialize()
+        candidate = await quarantine.stage_candidate(
+            candidate_key="legacy-orphan-candidate",
+            reason_codes=["summary_quality_low"],
+            content="用户喜欢咖啡。",
+            metadata={},
+            importance=0.7,
+            session_id="session-1",
+            persona_id=None,
+            source_window={"start_index": 0, "end_index": 1},
+            is_group_chat=False,
+        )
+        with sqlite3.connect(quarantine.db_path) as db:
+            db.execute(
+                """
+                UPDATE memory_quarantine_candidates
+                SET status = 'approved', canonical_memory_id = 1, revision = 2
+                WHERE candidate_id = ?
+                """,
+                (candidate["candidate_id"],),
+            )
+            db.commit()
+
+        backup_dir = tmp_path / "backups" / "legacy"
+        backup_dir.mkdir(parents=True)
+        (backup_dir / _BACKUP_INFO_FILE).write_text("{}", encoding="utf-8")
+        (backup_dir / "memora.db").write_bytes(source_path.read_bytes())
+        manager = BackupManager(str(tmp_path))
+
+        staged = manager.stage_restore("legacy")
+        applied = manager.apply_pending_restores()
+
+        assert applied["restore_status"] == "rolled_back"
+        with sqlite3.connect(canonical_path) as db:
+            assert db.execute("SELECT id FROM documents").fetchall() == [(1,)]
+        with sqlite3.connect(quarantine.db_path) as db:
+            assert db.execute(
+                "SELECT status, canonical_memory_id FROM memory_quarantine_candidates"
+            ).fetchone() == ("approved", 1)
+        assert (
+            manager.get_restore_status(str(staged["operation_id"]))["reason_code"]
+            == "restore_quarantine_reference_missing"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Constants

@@ -12,7 +12,10 @@ from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from astrbot.api.platform import MessageType
 
 from ..i18n_backend import t, t_list
+from ..identity import IdentityTrust, ProtocolIdentityResolver
 from ..managers.feedback_signal_manager import record_explicit_correction
+
+_READ_ONLY_IDENTITY_RESOLVER = ProtocolIdentityResolver.default()
 
 
 class QueryCommandMixin:
@@ -79,18 +82,50 @@ class QueryCommandMixin:
             return "private"
         return None
 
+    def _event_user_id(self, event: AstrMessageEvent) -> str | None:
+        """只读解析 canonical 用户标识；不可信身份拒绝检索。"""
+
+        conversation_manager = getattr(self, "conversation_manager", None)
+        identity_runtime = getattr(conversation_manager, "identity_runtime", None)
+        resolver = (
+            getattr(identity_runtime, "resolve", None)
+            if identity_runtime is not None
+            else _READ_ONLY_IDENTITY_RESOLVER.resolve
+        )
+        if not callable(resolver):
+            return None
+        try:
+            identity = resolver(event)
+        except Exception:
+            return None
+        trust_status = getattr(identity, "trust_status", None)
+        if trust_status is IdentityTrust.TRUSTED:
+            return self._normalized_identifier(
+                getattr(identity, "canonical_user_id", None)
+            )
+        if trust_status is not IdentityTrust.UNSUPPORTED:
+            return None
+
+        return self._raw_event_sender_id(event)
+
     @staticmethod
-    def _event_sender_id(event: AstrMessageEvent) -> str | None:
-        """读取稳定发送者标识；缺失或非标量输入不参与用户级检索。"""
+    def _raw_event_sender_id(event: AstrMessageEvent) -> str | None:
+        """仅为未接管协议读取原始发送者标识。"""
 
         try:
             value = event.get_sender_id()
         except Exception:
             return None
+        return QueryCommandMixin._normalized_identifier(value)
+
+    @staticmethod
+    def _normalized_identifier(value: object) -> str | None:
+        """只接受非空字符串或整数标识。"""
+
         if isinstance(value, bool) or not isinstance(value, (str, int)):
             return None
-        user_id = str(value).strip()
-        return user_id or None
+        normalized = str(value).strip()
+        return normalized or None
 
     async def handle_status(
         self, event: AstrMessageEvent
@@ -162,12 +197,16 @@ class QueryCommandMixin:
             if chat_type is None or not session_id:
                 yield event.plain_result(t("search.no_results", query=query))
                 return
+            user_id = self._event_user_id(event)
+            if user_id is None:
+                yield event.plain_result(t("search.no_results", query=query))
+                return
             results = await self.memory_engine.search_memories(
                 query=query.strip(),
                 k=k,
                 session_id=session_id,
                 chat_type=chat_type,
-                user_id=self._event_sender_id(event),
+                user_id=user_id,
             )
 
             if not results:

@@ -293,6 +293,7 @@ def test_runtime_dependency_imports_are_declared_or_allowlisted() -> None:
         "datetime",
         "difflib",
         "enum",
+        "fcntl",
         "fnmatch",
         "functools",
         "gc",

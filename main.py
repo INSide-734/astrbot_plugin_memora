@@ -37,10 +37,11 @@ from .core.monitoring import (
     set_debug_mode,
 )
 from .core.plugin_initializer import PluginInitializer
+from .core.plugin_reload_lifecycle import run_scheduled_plugin_reload
 from .core.plugin_reload_lifecycle import (
-    run_scheduled_plugin_reload,
-    supports_learning_reload_callback,
+    schedule_learning_reload as schedule_learning_reload_callback,
 )
+from .core.plugin_shutdown_lifecycle import stop_runtime_producers
 from .core.tools import MemoryMemorizeTool, MemorySearchTool
 from .core.utils.version import PLUGIN_VERSION
 from .core.version_check import (  # noqa: F401
@@ -183,12 +184,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     def schedule_learning_reload(self, operation_id: str) -> bool:
         """安排自主学习配置提交后的可观察延迟重载。"""
 
-        if not supports_learning_reload_callback(self):
-            return False
-        return self._schedule_plugin_reload(
-            "auto_learning",
-            learning_operation_id=operation_id,
-        )
+        return schedule_learning_reload_callback(self, operation_id)
 
     def _schedule_plugin_reload(
         self,
@@ -196,6 +192,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         operation_id: str | None = None,
         *,
         learning_operation_id: str | None = None,
+        expected_state_revision: str | None = None,
     ) -> bool:
         """安排延迟且不纳入关停追踪的插件重载。"""
         star_manager = getattr(self.context, "_star_manager", None)
@@ -210,6 +207,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 reason=reason,
                 backup_operation_id=operation_id,
                 learning_operation_id=learning_operation_id,
+                expected_state_revision=expected_state_revision,
             )
         )
         task.add_done_callback(self._consume_reload_task_result)
@@ -1001,38 +999,13 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         else:
             _report_skipped("event_handler", "component_inactive")
 
-        await _safe_step(
-            "memory_evolution",
-            "关闭记忆演化组件",
-            self.initializer.close_memory_evolution_components(),
+        # 4. 停止生产者，再关闭它们共享的消费者。
+        await stop_runtime_producers(
+            self,
+            _safe_step,
+            _report_skipped,
             timeout=STEP_TIMEOUT,
         )
-
-        await _safe_step(
-            "injection_components",
-            "关闭注入决策组件",
-            self.initializer.close_injection_components(),
-            timeout=STEP_TIMEOUT,
-        )
-
-        # 4. 停止衰减调度器
-        await _safe_step(
-            "schedulers",
-            "停止衰减调度器",
-            self.initializer.stop_scheduler(),
-            timeout=STEP_TIMEOUT,
-        )
-
-        # 5. 停止存量回填任务
-        if self._backfill_scheduler:
-            await _safe_step(
-                "backfill_scheduler",
-                "停止存量回填调度器",
-                self._backfill_scheduler.stop(),
-                timeout=STEP_TIMEOUT,
-            )
-        else:
-            _report_skipped("backfill_scheduler", "component_inactive")
 
         # 6. 关闭扩展认知组件
         await _safe_step(

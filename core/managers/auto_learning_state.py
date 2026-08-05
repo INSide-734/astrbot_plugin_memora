@@ -11,7 +11,9 @@ import math
 import os
 import re
 import secrets
+import threading
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +42,49 @@ _OWNER_COLLECTIONS: dict[str, tuple[str, ...]] = {
     "tombstones": ("tombstone_id", "operation_id"),
     "recovery_records": ("recovery_revision", "operation_id"),
 }
+_EXPECTED_REVISION_UNSET = object()
+_STATE_LOCKS: dict[str, threading.RLock] = {}
+_STATE_LOCKS_GUARD = threading.Lock()
+
+try:  # pragma: no cover - 平台特定的可选加固
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - Windows 回退到进程内锁
+    _fcntl = None
+
+
+def _thread_lock_for(path: Path) -> threading.RLock:
+    """返回一个状态路径对应的进程级共享锁。"""
+
+    key = str(path.absolute())
+    with _STATE_LOCKS_GUARD:
+        lock = _STATE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _STATE_LOCKS[key] = lock
+        return lock
+
+
+@contextmanager
+def _state_file_lock(path: Path):
+    """串行化进程内写入，并在平台支持时同时串行化跨进程写入。"""
+
+    process_lock = _thread_lock_for(path)
+    with process_lock:
+        lock_handle = None
+        try:
+            lock_path = path.with_name(f"{path.name}.lock")
+            lock_handle = lock_path.open("a+b")
+            if _fcntl is not None:
+                _fcntl.flock(lock_handle.fileno(), _fcntl.LOCK_EX)
+            yield
+        finally:
+            if lock_handle is not None:
+                if _fcntl is not None:
+                    try:
+                        _fcntl.flock(lock_handle.fileno(), _fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                lock_handle.close()
 
 
 class AutoLearningStateError(RuntimeError):
@@ -85,6 +130,7 @@ class AutoLearningStateStore:
 
         self._path = Path(path)
         self._backup_path = self._path.with_name(f"{self._path.name}.lkg")
+        self._loaded_revision: str | None | object = _EXPECTED_REVISION_UNSET
 
     @property
     def path(self) -> Path:
@@ -103,22 +149,40 @@ class AutoLearningStateStore:
         payload: Mapping[str, Any],
         *,
         state_revision: str | None = None,
+        expected_state_revision: str | None | object = _EXPECTED_REVISION_UNSET,
     ) -> str:
         """校验并原子保存载荷，返回实际写入的状态 revision。
 
         LKG 必须先于新主文件落盘。已有主文件损坏或仅剩备份时，本方法拒绝
-        覆盖恢复证据。协程取消会原样传播，调用方必须按未知提交状态处理。
+        覆盖恢复证据。传入 ``expected_state_revision`` 时，写入是跨实例 CAS；
+        协程取消会原样传播，调用方必须按未知提交状态处理。
         """
 
         if not isinstance(payload, Mapping):
             raise AutoLearningStateValidationError("learning_state_payload_invalid")
+        if expected_state_revision is _EXPECTED_REVISION_UNSET:
+            expected_state_revision = self._loaded_revision
         revision = state_revision or secrets.token_urlsafe(24)
         _validate_opaque_id(revision)
+        if expected_state_revision is not _EXPECTED_REVISION_UNSET:
+            if expected_state_revision is not None:
+                if not isinstance(expected_state_revision, str):
+                    raise AutoLearningStateValidationError(
+                        "learning_state_revision_invalid"
+                    )
+                _validate_opaque_id(expected_state_revision)
         normalized_payload = dict(payload)
         _validate_payload(normalized_payload)
         envelope_bytes = _encode_envelope(normalized_payload, revision)
         try:
-            await asyncio.to_thread(self._save_sync, envelope_bytes)
+            if expected_state_revision is _EXPECTED_REVISION_UNSET:
+                await asyncio.to_thread(self._save_sync, envelope_bytes)
+            else:
+                await asyncio.to_thread(
+                    self._save_sync,
+                    envelope_bytes,
+                    expected_state_revision,
+                )
         except asyncio.CancelledError:
             raise
         except AutoLearningStateError:
@@ -127,6 +191,7 @@ class AutoLearningStateStore:
             raise AutoLearningStatePersistenceError(
                 "learning_state_write_failed"
             ) from exc
+        self._loaded_revision = revision
         return revision
 
     async def load(self) -> AutoLearningStateLoadResult:
@@ -137,9 +202,11 @@ class AutoLearningStateStore:
         """
 
         try:
-            return await asyncio.to_thread(self._load_sync)
+            result = await asyncio.to_thread(self._load_sync)
         except asyncio.CancelledError:
             raise
+        self._loaded_revision = result.state_revision
+        return result
 
     async def migrate_legacy(
         self,
@@ -176,21 +243,52 @@ class AutoLearningStateStore:
             raise AutoLearningStatePersistenceError(
                 "learning_state_write_failed"
             ) from exc
+        self._loaded_revision = revision
         return revision
 
-    def _save_sync(self, envelope_bytes: bytes) -> None:
+    def _save_sync(
+        self,
+        envelope_bytes: bytes,
+        expected_state_revision: str | None | object = _EXPECTED_REVISION_UNSET,
+    ) -> None:
         """同步执行 LKG 优先的双文件原子写入。"""
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        if not self._path.exists() and self._backup_path.exists():
-            raise AutoLearningStatePersistenceError("learning_state_recovery_required")
+        with _state_file_lock(self._path):
+            if not self._path.exists() and self._backup_path.exists():
+                raise AutoLearningStatePersistenceError(
+                    "learning_state_recovery_required"
+                )
 
-        backup_bytes = envelope_bytes
-        if self._path.exists():
-            _, _, backup_bytes = _read_verified_envelope(self._path)
+            backup_bytes = envelope_bytes
+            if expected_state_revision is _EXPECTED_REVISION_UNSET:
+                if self._path.exists():
+                    _, _, backup_bytes = _read_verified_envelope(self._path)
+            elif expected_state_revision is None:
+                if self._path.exists() or self._backup_path.exists():
+                    raise AutoLearningStatePersistenceError(
+                        "learning_state_revision_conflict"
+                    )
+            else:
+                if not self._path.exists():
+                    raise AutoLearningStatePersistenceError(
+                        "learning_state_revision_conflict"
+                    )
+                try:
+                    _, current_revision, backup_bytes = _read_verified_envelope(
+                        self._path
+                    )
+                except (AutoLearningStateError, OSError) as exc:
+                    raise AutoLearningStatePersistenceError(
+                        "learning_state_recovery_required"
+                    ) from exc
+                if not hmac.compare_digest(current_revision, expected_state_revision):
+                    raise AutoLearningStatePersistenceError(
+                        "learning_state_revision_conflict"
+                    )
 
-        self._atomic_write(self._backup_path, backup_bytes)
-        self._atomic_write(self._path, envelope_bytes)
+            self._atomic_write(self._backup_path, backup_bytes)
+            self._atomic_write(self._path, envelope_bytes)
 
     def _load_sync(self) -> AutoLearningStateLoadResult:
         """同步加载主状态，并将所有故障收敛为有限恢复结果。"""
@@ -269,8 +367,19 @@ class AutoLearningStateStore:
         if not hmac.compare_digest(current_revision, expected_legacy_revision):
             raise AutoLearningStatePersistenceError("learning_state_migration_conflict")
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._atomic_write(self._backup_path, envelope_bytes)
-        self._atomic_write(self._path, envelope_bytes)
+        with _state_file_lock(self._path):
+            try:
+                _, latest_revision = _read_legacy_state(self._path)
+            except (AutoLearningStateValidationError, OSError) as exc:
+                raise AutoLearningStatePersistenceError(
+                    "learning_state_migration_conflict"
+                ) from exc
+            if not hmac.compare_digest(latest_revision, expected_legacy_revision):
+                raise AutoLearningStatePersistenceError(
+                    "learning_state_migration_conflict"
+                )
+            self._atomic_write(self._backup_path, envelope_bytes)
+            self._atomic_write(self._path, envelope_bytes)
 
     def _recover_from_backup(
         self,

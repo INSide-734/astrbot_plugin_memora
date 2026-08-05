@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import secrets
 from dataclasses import dataclass
@@ -109,6 +110,20 @@ class MemoryQualityGate:
         if current is None:
             raise KeyError("quarantine_candidate_not_found")
         if current["status"] == "approved":
+            canonical_memory_id = current.get("canonical_memory_id")
+            if canonical_memory_id is None:
+                raise ValueError("quarantine_canonical_not_found")
+            getter = getattr(self.memory_engine, "get_memory", None)
+            if getter is None:
+                return current
+            canonical_result = getter(int(canonical_memory_id))
+            canonical = (
+                await canonical_result
+                if inspect.isawaitable(canonical_result)
+                else canonical_result
+            )
+            if canonical is None:
+                raise ValueError("quarantine_canonical_not_found")
             return current
 
         corrected_metadata = None
@@ -184,6 +199,7 @@ class MemoryQualityGate:
         metadata["source_evidence"] = validation.evidence
         metadata["quality_gate_action"] = "approved"
         metadata["quarantine_approved"] = True
+        metadata["_quarantine_candidate_id"] = candidate_id
         metadata["_quarantine_approval_token_hash"] = approval_token_hash
         metadata["_quarantine_approval_status"] = "committed"
         try:
@@ -251,10 +267,15 @@ class MemoryQualityGate:
         *,
         expected_revision: int,
         canonical_memory_id: int,
-        approval_token: str,
+        approval_token: str | None = None,
         actor_id: str | None,
     ) -> dict[str, Any]:
-        """核对 canonical token、状态和正文后收口 approving 候选。"""
+        """核对 canonical 关联、digest、状态和正文后收口候选。
+
+        ``approval_token`` 是旧版/同进程 repair 的兼容输入；跨重启场景
+        可以省略它，改用 quarantine 行与 canonical metadata 中共同保存的
+        candidate correlation 和 digest。
+        """
 
         current = await self.store.get_candidate(candidate_id)
         if current is None:
@@ -263,10 +284,6 @@ class MemoryQualityGate:
             raise ValueError("quarantine_status_conflict")
         if int(current["revision"]) != int(expected_revision):
             raise ValueError("quarantine_revision_conflict")
-        token = str(approval_token).strip()
-        if not token:
-            raise ValueError("quarantine_approval_token_required")
-        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
         canonical = await self.memory_engine.get_memory(int(canonical_memory_id))
         if canonical is None:
             raise ValueError("quarantine_canonical_not_found")
@@ -279,22 +296,48 @@ class MemoryQualityGate:
         if not isinstance(metadata, dict):
             raise ValueError("quarantine_canonical_status_invalid")
         canonical_token_hash = metadata.get("_quarantine_approval_token_hash")
-        if not isinstance(canonical_token_hash, str) or not secrets.compare_digest(
-            canonical_token_hash,
-            token_hash,
+        stored_token_hash = current.get("approval_token_hash")
+        if (
+            not isinstance(canonical_token_hash, str)
+            or not isinstance(stored_token_hash, str)
+            or not secrets.compare_digest(canonical_token_hash, stored_token_hash)
         ):
             raise ValueError("quarantine_approval_token_invalid")
+        canonical_candidate_id = metadata.get("_quarantine_candidate_id")
+        if (
+            canonical_candidate_id is not None
+            and canonical_candidate_id != candidate_id
+        ):
+            raise ValueError("quarantine_candidate_correlation_invalid")
+        if approval_token is None:
+            if canonical_candidate_id != candidate_id:
+                raise ValueError("quarantine_candidate_correlation_invalid")
+        else:
+            token = approval_token.strip()
+            if not token:
+                raise ValueError("quarantine_approval_token_required")
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            if not secrets.compare_digest(canonical_token_hash, token_hash):
+                raise ValueError("quarantine_approval_token_invalid")
         if metadata.get("_quarantine_approval_status") != "committed":
             raise ValueError("quarantine_canonical_status_invalid")
         canonical_content = str(canonical.get("text") or canonical.get("content") or "")
         if canonical_content != str(current["content"]):
             raise ValueError("quarantine_canonical_mismatch")
+        if approval_token is None:
+            return await self.store.finalize_repaired_approval_by_digest(
+                candidate_id,
+                expected_revision=expected_revision,
+                canonical_memory_id=int(canonical_memory_id),
+                actor_id=actor_id,
+                approval_token_hash=stored_token_hash,
+            )
         return await self.store.finalize_repaired_approval(
             candidate_id,
             expected_revision=expected_revision,
             canonical_memory_id=int(canonical_memory_id),
             actor_id=actor_id,
-            approval_token=token,
+            approval_token=approval_token,
         )
 
     async def repair_blocked(

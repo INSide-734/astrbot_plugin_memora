@@ -48,6 +48,7 @@ from ..utils import OperationContext, get_persona_id
 from .auxiliary_recall import AuxiliaryRecall
 from .continuity_hooks import build_continuity_context
 from .recall_observability import RecallTimingContext
+from .reconsolidation_dispatch import schedule_reconsolidation_proposal
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -1284,28 +1285,13 @@ class RecallHandler:
         memories: list[Any],
         query: str,
     ) -> None:
-        """召回后为最高分记忆生成再巩固候选；永不直接写 canonical。
+        """把最高分记忆的再巩固候选交给引擎生命周期任务所有者。"""
 
-        ``_safe_candidates()`` 已将检索结果规范化为字典，因此这里优先读取
-        ``id``；保留对象属性回退只为兼容少量内部测试替身和旧调用者。
-        """
-
-        manager = getattr(self._memory_engine, "reconsolidation", None)
-        if manager is None or not memories:
-            return
-        candidate = memories[0]
-        if isinstance(candidate, dict):
-            memory_id = candidate.get("id")
-        else:
-            memory_id = getattr(candidate, "doc_id", None)
-        if not memory_id:
-            return
-        try:
-            await manager.maybe_propose(int(memory_id), context=query)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning("[召回流程] 再巩固候选生成失败")
+        await schedule_reconsolidation_proposal(
+            self._memory_engine,
+            memories,
+            query,
+        )
 
     async def _build_fallback_query(self, session_id: str) -> str | None:
         """从最近历史消息构建回退查询，用于空消息场景（如纯 @mention）。

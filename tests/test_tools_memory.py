@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -31,6 +33,32 @@ def _make_mock_ctx_with_event(session_id: str = "s-001") -> MagicMock:
     wrapper = MagicMock()
     wrapper.context = inner_ctx
     return wrapper
+
+
+def _make_qq_official_ctx() -> tuple[MagicMock, str]:
+    """构造包含完整证据的 QQ Official C2C Agent 上下文。"""
+
+    platform_id = "official-bot-1"
+    openid = "OPENID-1"
+    author = {"id": openid, "user_openid": openid}
+    event = MagicMock()
+    event.unified_msg_origin = "qq-official:c2c:OPENID-1"
+    event.message_obj = SimpleNamespace(
+        raw_message=SimpleNamespace(
+            raw_data={"author": author},
+            author=SimpleNamespace(user_openid=openid),
+        ),
+        sender=SimpleNamespace(user_id=openid),
+        group_id=None,
+    )
+    event.get_platform_name.return_value = "qq_official"
+    event.get_platform_id.return_value = platform_id
+    event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+    event.get_sender_id.return_value = openid
+    wrapper = MagicMock()
+    wrapper.context.event = event
+    instance_key = hashlib.sha256(platform_id.encode("ascii")).hexdigest()[:24]
+    return wrapper, f"qq-official:{instance_key}:{openid}"
 
 
 def _make_test_config_manager(
@@ -157,6 +185,25 @@ class TestMemorySearchTool:
         kwargs = mock_engine.search_memories.call_args.kwargs
         assert kwargs["chat_type"] == "group"
         assert kwargs["user_id"] == "user-001"
+
+    @pytest.mark.asyncio
+    async def test_qq_official_recall_passes_canonical_user_id_to_engine(self):
+        """Agent recall 到引擎边界必须携带实例命名空间 canonical ID。"""
+
+        mock_engine = MagicMock()
+        mock_engine.search_memories = AsyncMock(return_value=[])
+        tool = MemorySearchTool(
+            context=MagicMock(),
+            config_manager=_make_test_config_manager(),
+            memory_engine=mock_engine,
+        )
+        context, canonical_user_id = _make_qq_official_ctx()
+
+        await tool.call(context, query="private fact")
+
+        kwargs = mock_engine.search_memories.call_args.kwargs
+        assert kwargs["chat_type"] == "private"
+        assert kwargs["user_id"] == canonical_user_id
 
     @pytest.mark.asyncio
     async def test_group_recall_without_sender_fails_closed(self):

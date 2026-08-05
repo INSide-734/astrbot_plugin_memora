@@ -204,3 +204,69 @@ def test_reset_rebuild_is_stable_and_summary_omits_canaries(tmp_path) -> None:
             assert canary not in serialized
     finally:
         store.close()
+
+
+def test_revoke_rebuild_failure_is_retryable_and_keeps_previous_snapshot(
+    tmp_path,
+) -> None:
+    """撤销重建失败不得丢事件或留下过期 aggregate，随后重试应成功。"""
+
+    class InjectedFailureManager(FeedbackSignalManager):
+        fail_build = False
+
+        def _build_aggregates(self, events, reference_time):
+            if self.fail_build:
+                raise RuntimeError("injected_rebuild_failure")
+            return super()._build_aggregates(events, reference_time)
+
+    store = FeedbackSignalStore(tmp_path / "atomic-revoke.db")
+    store.initialize()
+    manager = InjectedFailureManager(
+        store,
+        FeedbackSignalPolicy(min_independent_windows=1),
+    )
+    manager.register_adapter(FeedbackAdapterKind.RETRIEVAL_RESULT)
+    event = _event("decision-a", REFERENCE_TIME - timedelta(minutes=5))
+    accepted = manager.ingest_event(
+        event,
+        trusted_scope=event.scope_domain,
+        trusted_persona=event.persona_domain,
+        reference_time=REFERENCE_TIME,
+    )
+    assert accepted.accepted is True
+    assert manager.rebuild(reference_time=REFERENCE_TIME)
+    before = store.safe_summary()
+
+    manager.fail_build = True
+    failed = manager.revoke_event(
+        adapter_kind=event.adapter_kind,
+        decision_key=event.decision_key,
+        variant_key=event.variant_key,
+        scope_domain=event.scope_domain,
+        persona_domain=event.persona_domain,
+        trusted_scope=event.scope_domain,
+        trusted_persona=event.persona_domain,
+        reference_time=REFERENCE_TIME,
+    )
+
+    assert failed.reason_code == "evaluation_prerequisite_unmet"
+    assert store.safe_summary() == before
+    assert [item.decision_key for item in store.list_events()] == ["decision-a"]
+
+    manager.fail_build = False
+    retried = manager.revoke_event(
+        adapter_kind=event.adapter_kind,
+        decision_key=event.decision_key,
+        variant_key=event.variant_key,
+        scope_domain=event.scope_domain,
+        persona_domain=event.persona_domain,
+        trusted_scope=event.scope_domain,
+        trusted_persona=event.persona_domain,
+        reference_time=REFERENCE_TIME,
+    )
+
+    try:
+        assert retried.revoked is True
+        assert store.safe_summary() == {"event_count": 0, "aggregate_count": 0}
+    finally:
+        store.close()

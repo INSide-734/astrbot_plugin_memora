@@ -116,6 +116,29 @@ def _install_astrbot_mocks() -> None:
     _star.StarTools = MagicMock  # type: ignore[attr-defined]
     sys.modules["astrbot.api.star"] = _star
 
+    # astrbot.api.web — 公共请求代理与流式响应工厂
+    from starlette.responses import StreamingResponse
+
+    def _stream_response(
+        content,
+        *,
+        content_type="text/event-stream",
+        status_code=200,
+        headers=None,
+    ):
+        return StreamingResponse(
+            content,
+            media_type=content_type,
+            status_code=status_code,
+            headers=headers,
+        )
+
+    _web = _mkmod("astrbot.api.web")
+    _web.request = MagicMock()  # type: ignore[attr-defined]
+    _web.stream_response = _stream_response  # type: ignore[attr-defined]
+    sys.modules["astrbot.api.web"] = _web
+    sys.modules["astrbot.api"].web = _web  # type: ignore[attr-defined]
+
     # astrbot.api.platform — MessageType
     _platform = _mkmod("astrbot.api.platform")
     _platform.MessageType = MagicMock()  # type: ignore[attr-defined]

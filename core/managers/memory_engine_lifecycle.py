@@ -142,6 +142,8 @@ class MemoryEngineLifecycleMixin:
         文档、图和 Atom 召回路径；任一必要初始化异常由调用方处理。
         """
 
+        self._pending_tasks_lock = asyncio.Lock()
+        self._pending_tasks_accepting = True
         self.db_connection = await aiosqlite.connect(self.db_path)
         self.db_connection.row_factory = aiosqlite.Row
         # ---- SQLite 写性能优化 PRAGMA ----
@@ -475,12 +477,17 @@ class MemoryEngineLifecycleMixin:
             if component is not None and hasattr(component, "save_state"):
                 with contextlib.suppress(Exception):
                     await component.save_state()
-        if self._pending_tasks:
-            for task in self._pending_tasks:
+        stop_pending_tasks = getattr(self, "stop_pending_tasks", None)
+        if callable(stop_pending_tasks):
+            await stop_pending_tasks()
+        else:
+            # 兼容旧版轻量测试替身，真实引擎始终走带锁的收敛路径。
+            pending_tasks = getattr(self, "_pending_tasks", set())
+            for task in tuple(pending_tasks):
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(*self._pending_tasks, return_exceptions=True)
-            self._pending_tasks.clear()
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+            pending_tasks.clear()
         continuity_tracker = getattr(self, "continuity_tracker", None)
         if continuity_tracker is not None:
             with contextlib.suppress(Exception):
@@ -498,12 +505,69 @@ class MemoryEngineLifecycleMixin:
         if self.graph_vector_db is not None:
             await self.graph_vector_db.close()
 
-    def _create_tracked_task(self, coro) -> None:
-        """创建受引擎关闭流程管理的后台任务。"""
+    async def stop_pending_tasks(self) -> None:
+        """拒绝新工作并取消所有由引擎持有的后台任务。"""
 
+        lock = getattr(self, "_pending_tasks_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._pending_tasks_lock = lock
+        async with lock:
+            self._pending_tasks_accepting = False
+            pending_tasks = getattr(self, "_pending_tasks", None)
+            if pending_tasks is None:
+                pending_tasks = set()
+                self._pending_tasks = pending_tasks
+            current_task = asyncio.current_task()
+            tasks = tuple(task for task in pending_tasks if task is not current_task)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        try:
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            async with lock:
+                pending_tasks = getattr(self, "_pending_tasks", None)
+                if pending_tasks is not None:
+                    pending_tasks.difference_update(
+                        task for task in tasks if task.done()
+                    )
+
+    def _create_tracked_task(self, coro):
+        """关停尚未开始时创建由引擎持有的后台任务。"""
+
+        if not getattr(self, "_pending_tasks_accepting", True):
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            return None
+        pending_tasks = getattr(self, "_pending_tasks", None)
+        if pending_tasks is None:
+            pending_tasks = set()
+            self._pending_tasks = pending_tasks
         task = asyncio.create_task(coro)
-        self._pending_tasks.add(task)
-        task.add_done_callback(self._pending_tasks.discard)
+        pending_tasks.add(task)
+        task.add_done_callback(self._on_pending_task_done)
+        return task
+
+    def _on_pending_task_done(self, task: asyncio.Task) -> None:
+        """移除已完成任务，并收口普通后台异常。"""
+
+        pending_tasks = getattr(self, "_pending_tasks", None)
+        if pending_tasks is not None:
+            pending_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            error = task.exception()
+        except asyncio.CancelledError:
+            return
+        if error is not None:
+            logger.warning(
+                "MemoryEngine 后台任务失败 type=%s",
+                type(error).__name__,
+            )
 
     def _build_reconsolidation_llm_caller(self) -> Any | None:
         """构造带形状校验的再巩固 LLM 调用器，Provider 缺失时返回 None。"""

@@ -1,7 +1,10 @@
 // ================================================================
 // 模拟桥接初始化器：当 AstrBot bridge 缺失时自动启用
 // ================================================================
-import { handleApiGet, handleApiPost } from "./server";
+import {
+  installMockPluginPageBridge,
+  notifyMockContextChanged,
+} from "./pluginPageBridge";
 import {
   CONFIG_RUNTIME_EN_MAP,
   CONFIG_RUNTIME_RU_MAP,
@@ -2847,10 +2850,18 @@ const RU_MAP: Record<string, string> = {
 const LANG_MAPS: Record<string, Record<string, string>> = { zh: I18N_MAP, en: EN_MAP, ru: RU_MAP };
 export { I18N_MAP, EN_MAP, RU_MAP, LANG_MAPS };
 let currentLang = "zh";
-let contextChangeCb: ((ctx: { pluginName: string; displayName: string; locale: string; isDark: boolean }) => void) | null = null;
 
 function localeForLanguage(lang: string): string {
   return lang === "en" ? "en-US" : lang === "ru" ? "ru-RU" : "zh-CN";
+}
+
+function getMockContext(): AstrBotContext {
+  return {
+    pluginName: "memora",
+    displayName: "Memora",
+    locale: localeForLanguage(currentLang),
+    isDark: false,
+  };
 }
 
 function syncDocumentLanguage(lang: string): void {
@@ -2896,14 +2907,7 @@ export function ensureI18n(): void {
     syncDocumentLanguage(lang);
     try { localStorage.setItem("memora_lang", lang); } catch { /* */ }
     window.dispatchEvent(new Event("languagechange"));
-    if (contextChangeCb) {
-      contextChangeCb({
-        pluginName: "memora",
-        displayName: "Memora",
-        locale: localeForLanguage(lang),
-        isDark: false,
-      });
-    }
+    notifyMockContextChanged(getMockContext());
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2918,108 +2922,10 @@ export function ensureI18n(): void {
   window.dispatchEvent(new Event("languagechange"));
 }
 
+/** 在真实桥接缺失时安装与 AstrBot 公共契约一致的模拟桥接。 */
 export function initMockBridge(): boolean {
-  // 仅在真实桥接不可用时安装模拟 API
-  // （ensureI18n 已提前安装 window.t / getLanguage / setLanguage）
-  if (window.AstrBotPluginPage) return false;
-
-  console.log("[模拟桥接] 未找到 AstrBot bridge，开始安装模拟 API 服务");
-
-  // SSE 模拟：记录活动订阅及其处理器与定时器
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sseSubs: Record<string, { handlers: Record<string, (...args: any[]) => void>; interval: ReturnType<typeof setInterval> }> = {};
-  let sseCounter = 0;
-
-  const mockBridge = {
-    apiGet: async (path: string, params: Record<string, string>) => {
-      const cleanPath = path.replace(/^\/+/, "");
-      return handleApiGet(cleanPath, params);
-    },
-    apiPost: async (path: string, body: unknown) => {
-      const cleanPath = path.replace(/^\/+/, "");
-      return handleApiPost(cleanPath, body);
-    },
-    getLocale: () => localeForLanguage(currentLang),
-    getI18n: () => {
-      const flat = LANG_MAPS[currentLang] ?? I18N_MAP;
-      const nested: Record<string, unknown> = { dashboard: {} };
-      const dash = nested.dashboard as Record<string, unknown>;
-      for (const [k, v] of Object.entries(flat)) {
-        const parts = k.split(".");
-        let cur: Record<string, unknown> = dash;
-        for (let i = 0; i < parts.length - 1; i++) {
-          if (!cur[parts[i]]) cur[parts[i]] = {};
-          cur = cur[parts[i]] as Record<string, unknown>;
-        }
-        cur[parts[parts.length - 1]] = v;
-      }
-      return nested;
-    },
-    t: (key: string, fallback?: string): string => {
-      const map = LANG_MAPS[currentLang] ?? I18N_MAP;
-      if (map[key]) return map[key];
-      if (key.startsWith("dashboard.")) {
-        const stripped = key.slice("dashboard.".length);
-        if (map[stripped]) return map[stripped];
-      }
-      return fallback ?? key;
-    },
-    onContextChange: (cb: (ctx: { pluginName: string; displayName: string; locale: string; isDark: boolean }) => void) => {
-      contextChangeCb = cb;
-    },
-    ready: async () => ({ pluginName: "memora", displayName: "Memora", locale: localeForLanguage(currentLang), isDark: false }),
-    getContext: () => ({ pluginName: "memora", displayName: "Memora", locale: localeForLanguage(currentLang), isDark: false }),
-    onContext: () => {},
-    offContext: () => {},
-    offContextChange: () => {},
-    upload: async () => ({ status: "ok" }),
-    download: async () => {},
-    subscribeSSE: (endpoint: string, handlers: { onMessage?: (data: string) => void; onError?: (e: Error) => void; onClose?: () => void }, _params?: Record<string, string>): string => {
-      sseCounter += 1;
-      const subId = `mock_sse_${sseCounter}`;
-
-      // 模拟周期性的记忆流事件
-      const mockEventTypes = [
-        { event: "memory_created", data: { memory_id: 100 + sseCounter, summary: "来自会话的新情景记忆", importance: 6.5 } },
-        { event: "memory_recalled", data: { memory_id: 42, query: "最近的讨论", score: 0.87 } },
-        { event: "atom_consolidated", data: { atom_type: "FACTUAL", count: 3 } },
-        { event: "decay_applied", data: { total_decayed: 12, avg_importance_drop: 0.03 } },
-      ];
-
-      let eventIdx = 0;
-      const interval = setInterval(() => {
-        const mockEvent = mockEventTypes[eventIdx % mockEventTypes.length];
-        eventIdx += 1;
-        const payload = JSON.stringify({
-          event: mockEvent.event,
-          data: mockEvent.data,
-          ts: Date.now() / 1000,
-        });
-        if (handlers.onMessage) {
-          handlers.onMessage(payload);
-        }
-      }, 8000 + Math.random() * 12000); // 8 到 20 秒的随机间隔
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      sseSubs[subId] = { handlers: handlers as Record<string, (...args: any[]) => void>, interval };
-      console.log(`[模拟桥接] SSE 已订阅：${subId} -> ${endpoint}`);
-      return subId;
-    },
-    unsubscribeSSE: (subscriptionId: string) => {
-      const sub = sseSubs[subscriptionId];
-      if (sub) {
-        clearInterval(sub.interval);
-        if (sub.handlers.onClose) sub.handlers.onClose();
-        delete sseSubs[subscriptionId];
-        console.log(`[模拟桥接] SSE 已取消订阅：${subscriptionId}`);
-      }
-    },
-  };
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (window as any).AstrBotPluginPage = mockBridge;
-
-  window.dispatchEvent(new Event("languagechange"));
-  console.log("[模拟桥接] 桥接已安装，API 与 i18n 已就绪");
-  return true;
+  return installMockPluginPageBridge({
+    getContext: getMockContext,
+    getTranslations: () => LANG_MAPS[currentLang] ?? I18N_MAP,
+  });
 }

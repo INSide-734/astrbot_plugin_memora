@@ -151,17 +151,21 @@ def _eligible_source(source: MemorySourceRef, cutoff: datetime) -> bool:
         and source.content.strip()
         and source.topic_keys
         and source.source_role in {"primary", "supporting"}
+        and not (source.privacy_level == "confidential" and not source.subject_key)
     )
 
 
 def _partition_sources(
     sources: list[MemorySourceRef],
-) -> dict[tuple[str, str, str], list[MemorySourceRef]]:
-    """按完全相同的 scope、privacy 和 role 隔离压缩候选。"""
+) -> dict[tuple[str, str, str, str | None], list[MemorySourceRef]]:
+    """按 scope、privacy、role 和机密主体分区压缩候选。"""
 
-    partitions: dict[tuple[str, str, str], list[MemorySourceRef]] = {}
+    partitions: dict[tuple[str, str, str, str | None], list[MemorySourceRef]] = {}
     for source in sorted(sources, key=lambda item: item.memory_id):
-        key = (source.scope_key, source.privacy_level, source.source_role)
+        subject_key = (
+            source.subject_key if source.privacy_level == "confidential" else None
+        )
+        key = (source.scope_key, source.privacy_level, source.source_role, subject_key)
         partitions.setdefault(key, []).append(source)
     return partitions
 

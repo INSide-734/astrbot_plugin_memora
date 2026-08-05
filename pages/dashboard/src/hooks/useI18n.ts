@@ -73,16 +73,13 @@ export function useI18n() {
     // 同时监听 AstrBot 上下文变更
     try {
       const bridge = window.AstrBotPluginPage;
-      if (bridge && typeof bridge.onContextChange === "function") {
+      if (bridge && typeof bridge.onContext === "function") {
         const handler = () => {
           syncDocumentLanguage(getEffectiveLanguageOverride() ?? getCurrentLocale());
           langVersion++;
           listeners.forEach((l) => l());
         };
-        bridge.onContextChange(handler);
-        if (typeof bridge.offContextChange === "function") {
-          removeBridgeListener = () => bridge.offContextChange(handler);
-        }
+        removeBridgeListener = bridge.onContext(handler);
       }
     } catch { /* */ }
     return () => {

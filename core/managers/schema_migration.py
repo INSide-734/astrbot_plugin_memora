@@ -239,6 +239,7 @@ class SchemaMigrationCoordinator:
             "columns_added",
             "tables_added",
             "indexes_added",
+            "triggers_added",
         }
         return {key: value[key] for key in allowed if key in value}
 
@@ -409,6 +410,7 @@ class SchemaMigrationCoordinator:
             columns_added=len(plan.missing_columns) if plan else 0,
             tables_added=len(plan.missing_tables) if plan else 0,
             indexes_added=len(plan.missing_indexes) if plan else 0,
+            triggers_added=len(plan.missing_triggers) if plan else 0,
         )
 
     def _persist_plan(
@@ -430,6 +432,7 @@ class SchemaMigrationCoordinator:
             columns_added=len(plan.missing_columns),
             tables_added=len(plan.missing_tables),
             indexes_added=len(plan.missing_indexes),
+            triggers_added=len(plan.missing_triggers),
         )
 
     def _persist_state(
@@ -444,6 +447,7 @@ class SchemaMigrationCoordinator:
         columns_added: int = 0,
         tables_added: int = 0,
         indexes_added: int = 0,
+        triggers_added: int = 0,
     ) -> None:
         """原子写入不含路径、正文或内部 ID 的迁移状态。"""
 
@@ -460,6 +464,7 @@ class SchemaMigrationCoordinator:
                 "columns_added": int(columns_added),
                 "tables_added": int(tables_added),
                 "indexes_added": int(indexes_added),
+                "triggers_added": int(triggers_added),
             },
         )
 

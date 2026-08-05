@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from core.managers.auto_learning import AutoLearningManager
+from core.plugin_reload_lifecycle import run_scheduled_plugin_reload
 
 _CANDIDATE_ID = "candidate_reload_state_01"
 _PUBLICATION_ID = "publication_reload_st01"
@@ -219,3 +221,79 @@ async def test_invalid_reload_transition_does_not_overwrite_terminal_state(
 
     assert result is not None
     assert result["state"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_stale_reload_callback_cannot_regress_new_instance_terminal_state(
+    tmp_path: object,
+) -> None:
+    """旧插件实例的回调不能覆盖新实例已经持久化的成功终态。"""
+
+    data_dir = str(tmp_path)
+    old_manager = _manager(data_dir)
+    _install_active_publication(old_manager)
+    await old_manager.record_reload_operation(
+        action="publish",
+        candidate_id=_CANDIDATE_ID,
+        operation_id=_OPERATION_ID,
+        applied_revision="config-revision-2",
+        changed_paths=_LEARNING_PATHS,
+        state="queued",
+    )
+    old_revision = old_manager._state_revision
+
+    new_manager = _manager(data_dir)
+    await new_manager.load_state()
+    result = await new_manager.reconcile_reload_operation(
+        effective_document_weight=0.70,
+        effective_graph_weight=0.30,
+    )
+    assert result is not None
+    assert result["state"] == "succeeded"
+
+    reload_plugin = AsyncMock(return_value=False)
+    old_plugin = SimpleNamespace(
+        _terminating=False,
+        initializer=SimpleNamespace(
+            memory_engine=SimpleNamespace(auto_learning=old_manager)
+        ),
+    )
+    with patch("core.plugin_reload_lifecycle.asyncio.sleep", new=AsyncMock()):
+        await run_scheduled_plugin_reload(
+            old_plugin,
+            reload_plugin,
+            reason="auto_learning",
+            learning_operation_id=_OPERATION_ID,
+            expected_state_revision=old_revision,
+        )
+
+    reload_plugin.assert_not_awaited()
+    persisted = await old_manager._state_store.load()
+    assert persisted.payload is not None
+    assert persisted.payload["reload_operation"]["state"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_reload_callback_revision_conflict_is_fail_closed(
+    tmp_path: object,
+) -> None:
+    """过期状态写入者应返回稳定 revision 冲突，不得覆盖新状态。"""
+
+    from core.managers.auto_learning_state import (
+        AutoLearningStatePersistenceError,
+        AutoLearningStateStore,
+    )
+
+    store = AutoLearningStateStore(str(tmp_path / "auto_learning.json"))
+    first_payload = {"marker": "first"}
+    second_payload = {"marker": "second"}
+    first_revision = await store.save(first_payload)
+
+    with pytest.raises(AutoLearningStatePersistenceError) as exc_info:
+        await store.save(
+            second_payload,
+            expected_state_revision=first_revision + "stale",
+        )
+
+    assert exc_info.value.reason_code == "learning_state_revision_conflict"
+    assert (await store.load()).payload == first_payload

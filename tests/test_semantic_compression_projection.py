@@ -44,6 +44,7 @@ def _source(
     revision: str | None = None,
     scope: str = "private:user-a",
     privacy: str = "shared",
+    subject: str | None = "subject:user-a",
     topics: tuple[str, ...] = ("python", "ai"),
     age_days: int = 90,
 ) -> MemorySourceRef:
@@ -59,7 +60,7 @@ def _source(
         content=f"记忆正文 {memory_id}",
         ingested_at=ingested_at,
         topic_keys=topics,
-        subject_key="subject:user-a",
+        subject_key=subject,
     )
 
 
@@ -144,6 +145,30 @@ async def test_semantic_compression_never_mixes_scope_or_privacy() -> None:
             _source(17, scope="private:user-a", privacy="shared"),
             _source(18, scope="private:user-b", privacy="shared"),
             _source(19, scope="private:user-a", privacy="confidential"),
+        ]
+    )
+    applier = _ProposalApplier()
+    compressor = SemanticCompressor(
+        source_store=store,
+        proposal_applier=applier.apply,
+        similarity_threshold=0.8,
+    )
+
+    result = await compressor.compress_old_memories(now=NOW)
+
+    assert result["candidate_groups"] == 0
+    assert result["projections_applied"] == 0
+    assert applier.calls == []
+
+
+@pytest.mark.asyncio
+async def test_semantic_compression_never_mixes_confidential_subjects() -> None:
+    """同 scope 的 confidential 来源必须按 subject 隔离，不能合成摘要。"""
+
+    store = _SourceStore(
+        [
+            _source(17, privacy="confidential", subject="subject:user-a"),
+            _source(18, privacy="confidential", subject="subject:user-b"),
         ]
     )
     applier = _ProposalApplier()
@@ -305,6 +330,23 @@ async def test_manager_rejects_stale_semantic_projection() -> None:
     manager = _manager(store)
 
     with pytest.raises(EvolutionProposalRejected, match="source_revision_changed"):
+        await manager.apply_projection_proposal(_summary_proposal(), original)
+
+    assert store.plans == []
+
+
+@pytest.mark.asyncio
+async def test_manager_rejects_confidential_projection_with_mixed_subjects() -> None:
+    """Projection 写入边界必须拒绝跨主体的 confidential source。"""
+
+    original = [
+        _source(17, privacy="confidential", subject="subject:user-a"),
+        _source(18, privacy="confidential", subject="subject:user-b"),
+    ]
+    store = _PlanStore(original)
+    manager = _manager(store)
+
+    with pytest.raises(EvolutionProposalRejected, match="subject_mismatch"):
         await manager.apply_projection_proposal(_summary_proposal(), original)
 
     assert store.plans == []

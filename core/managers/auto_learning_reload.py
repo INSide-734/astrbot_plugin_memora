@@ -67,6 +67,8 @@ class AutoLearningReloadMixin:
         if not normalized_paths:
             return None
         async with self._state_lock:
+            if not await self._refresh_state_if_changed_unlocked():
+                return None
             target = self._reload_target_unlocked(
                 action=action,
                 candidate_id=candidate_id,
@@ -74,6 +76,13 @@ class AutoLearningReloadMixin:
             )
             if target is None:
                 return None
+            current = self._reload_operation
+            if (
+                isinstance(current, Mapping)
+                and current.get("operation_id") == operation_id
+                and current.get("state") in _TERMINAL_RELOAD_STATES
+            ):
+                return copy.deepcopy(dict(current))
             previous = copy.deepcopy(self._reload_operation)
             timestamp = utc_now()
             reason_code = "reload_queued" if state == "queued" else "reload_not_queued"
@@ -102,6 +111,7 @@ class AutoLearningReloadMixin:
         *,
         state: str,
         reason_code: str,
+        expected_state_revision: str | None = None,
     ) -> dict[str, Any] | None:
         """按 operation ID 更新 reload 状态，拒绝迟到事件覆盖 succeeded 终态。"""
 
@@ -109,15 +119,30 @@ class AutoLearningReloadMixin:
             not _opaque_id(operation_id)
             or state not in _RELOAD_STATES
             or not _safe_reason(reason_code)
+            or (
+                expected_state_revision is not None
+                and not _safe_revision(expected_state_revision)
+            )
         ):
             return None
         async with self._state_lock:
+            if not await self._refresh_state_if_changed_unlocked():
+                return None
             current = self._reload_operation
             if (
                 not isinstance(current, Mapping)
                 or current.get("operation_id") != operation_id
             ):
                 return None
+            if (
+                expected_state_revision is not None
+                and self._state_revision != expected_state_revision
+            ):
+                return (
+                    copy.deepcopy(dict(current))
+                    if current.get("state") == "succeeded"
+                    else None
+                )
             if current.get("state") in _TERMINAL_RELOAD_STATES:
                 return copy.deepcopy(dict(current))
             previous = copy.deepcopy(self._reload_operation)
@@ -127,6 +152,8 @@ class AutoLearningReloadMixin:
             updated["updated_at"] = utc_now()
             self._reload_operation = updated
             try:
+                # 状态 Store 携带前置刷新读取的 revision，并在写入时执行最终的
+                # 跨实例 CAS，避免旧插件实例覆盖新生命周期状态。
                 await self._save_state()
             except AutoLearningStatePersistenceError:
                 self._reload_operation = previous
@@ -144,6 +171,12 @@ class AutoLearningReloadMixin:
         if not _weight_pair(effective_document_weight, effective_graph_weight):
             return None
         async with self._state_lock:
+            if not await self._refresh_state_if_changed_unlocked():
+                return (
+                    copy.deepcopy(self._reload_operation)
+                    if isinstance(self._reload_operation, Mapping)
+                    else None
+                )
             current = self._reload_operation
             if not isinstance(current, Mapping):
                 return None
@@ -180,6 +213,37 @@ class AutoLearningReloadMixin:
                 self._reload_operation = previous
                 raise
             return copy.deepcopy(updated)
+
+    async def _refresh_state_if_changed_unlocked(self) -> bool:
+        """执行生命周期回调前从磁盘刷新 Manager 状态。
+
+        调用方已持有 ``_state_lock``。回调可能来自旧插件实例，因此必须先读取
+        最新持久 revision；Store 缺失、损坏或需要显式恢复时拒绝继续写入。
+        """
+
+        if self._state_store is None:
+            return True
+        result = await self._state_store.load()
+        if (
+            result.state_revision == self._state_revision
+            and not result.state_corrupt
+            and not result.recovery_required
+        ):
+            return True
+        self._state_reason_code = result.reason_code
+        self._state_revision = result.state_revision
+        self._state_corrupt = result.state_corrupt
+        self._state_recovery_required = result.recovery_required
+        if result.payload is None or result.migration_required:
+            return False
+        try:
+            self._restore_payload(result.payload)
+        except (TypeError, ValueError):
+            self._state_corrupt = True
+            self._state_recovery_required = True
+            self._state_reason_code = "learning_state_payload_invalid"
+            return False
+        return not self._writes_blocked_unlocked()
 
     def _reload_target_unlocked(
         self,

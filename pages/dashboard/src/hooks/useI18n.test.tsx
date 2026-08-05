@@ -5,8 +5,7 @@ interface BridgeMock {
   getLocale: ReturnType<typeof vi.fn>;
   getI18n: ReturnType<typeof vi.fn>;
   t: ReturnType<typeof vi.fn>;
-  onContextChange: ReturnType<typeof vi.fn>;
-  offContextChange: ReturnType<typeof vi.fn>;
+  onContext: ReturnType<typeof vi.fn>;
 }
 
 interface I18nSnapshot {
@@ -36,12 +35,14 @@ async function loadHarness(onRender?: (snapshot: I18nSnapshot) => void) {
 
 describe("useI18n", () => {
   let bridge: BridgeMock;
+  let unsubscribeContext: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.resetModules();
     localStorage.clear();
     Reflect.deleteProperty(window, "setLanguage");
     document.documentElement.lang = "en";
+    unsubscribeContext = vi.fn();
     bridge = {
       getLocale: vi.fn().mockReturnValue("zh-CN"),
       getI18n: vi.fn().mockReturnValue({
@@ -51,8 +52,7 @@ describe("useI18n", () => {
         },
       }),
       t: vi.fn((key: string) => key),
-      onContextChange: vi.fn(),
-      offContextChange: vi.fn(),
+      onContext: vi.fn().mockReturnValue(unsubscribeContext),
     };
 
     Object.defineProperty(window, "AstrBotPluginPage", {
@@ -182,8 +182,9 @@ describe("useI18n", () => {
 
   it("refreshes when bridge context change listeners fire", async () => {
     let contextHandler: (() => void) | undefined;
-    bridge.onContextChange.mockImplementation((handler) => {
+    bridge.onContext.mockImplementation((handler) => {
       contextHandler = handler;
+      return unsubscribeContext;
     });
     bridge.getLocale.mockReturnValue("en-US");
     bridge.getI18n.mockReturnValue({
@@ -209,8 +210,9 @@ describe("useI18n", () => {
 
   it("unsubscribes the bridge context listener on unmount", async () => {
     let contextHandler: (() => void) | undefined;
-    bridge.onContextChange.mockImplementation((handler) => {
+    bridge.onContext.mockImplementation((handler) => {
       contextHandler = handler;
+      return unsubscribeContext;
     });
     const { Harness } = await loadHarness();
 
@@ -218,6 +220,6 @@ describe("useI18n", () => {
     unmount();
 
     expect(contextHandler).toBeDefined();
-    expect(bridge.offContextChange).toHaveBeenCalledWith(contextHandler);
+    expect(unsubscribeContext).toHaveBeenCalledTimes(1);
   });
 });
