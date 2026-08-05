@@ -281,6 +281,7 @@ def test_runtime_dependency_imports_are_declared_or_allowlisted() -> None:
         "ast",
         "asyncio",
         "base64",
+        "binascii",
         "bisect",
         "collections",
         "concurrent",
