@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = Path("dist")
 TOP_LEVEL_PACKAGE = "astrbot_plugin_memora"
 PAGE_I18N_LOCALES = ("zh-CN", "en-US", "ru-RU")
+PLUGIN_SKILL_PATH = "skills/memora-recall-and-memorize/SKILL.md"
 RUNTIME_ROOT_FILES = (
     "main.py",
     "metadata.yaml",
@@ -177,6 +178,7 @@ def copy_runtime_files(
 
     _copy_runtime_tree(repo_root / "core", staging_root, package_name, Path("core"))
     _copy_runtime_tree(repo_root / "static", staging_root, package_name, Path("static"))
+    _copy_runtime_tree(repo_root / "skills", staging_root, package_name, Path("skills"))
     _copy_runtime_tree(
         repo_root / ".astrbot-plugin",
         staging_root,
@@ -404,6 +406,9 @@ def validate_archive(
             for locale in PAGE_I18N_LOCALES
             if f"{package_name}/.astrbot-plugin/i18n/{locale}.json" not in name_set
         )
+        plugin_skill_entry = f"{package_name}/{PLUGIN_SKILL_PATH}"
+        if plugin_skill_entry not in name_set:
+            missing.append(f"{plugin_skill_entry}（插件 Skill）")
         if missing:
             raise PackageError(f"runtime 包缺少必需文件：{', '.join(missing)}")
         if not any(path.parts[1:2] == ("core",) for path in normalized):
