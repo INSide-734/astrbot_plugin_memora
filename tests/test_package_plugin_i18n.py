@@ -21,6 +21,7 @@ def test_runtime_package_includes_astrbot_page_i18n(tmp_path: Path) -> None:
         _write(source_root / relative)
     _write(source_root / "core" / "i18n_backend.py")
     _write(source_root / "static" / "placeholder.txt")
+    _write(source_root / package_plugin.PLUGIN_SKILL_PATH)
     _write(source_root / "pages" / "dashboard" / "index.html")
     _write(source_root / "pages" / "dashboard" / "assets" / "bundle.js")
     for locale in ("zh-CN", "en-US", "ru-RU"):
