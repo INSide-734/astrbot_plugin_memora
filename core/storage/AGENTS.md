@@ -128,7 +128,11 @@ stateDiagram-v2
 该 Store 使用显式安全 schema，只保存决策 ID、时间、trace ID、路由/预设/交付结果、reason code、provider 类型/模型、计数、字符预算与耗时；**不保存提示词、候选正文、最终注入正文、session/user/persona ID 或 provider 凭据**。
 
 - `DecisionQuery` 限制 `offset >= 0`、`1 <= limit <= 100` 和时间范围顺序；所有过滤参数绑定。
-- `insert_many()` 在全局 `write_transaction` 中原子批量插入，重复 `decision_id` 忽略，异常 rollback。
+- `insert_many()` 在全局 `write_transaction` 中原子批量插入，重复 `decision_id` 忽略，异常（含 `BaseException`/`CancelledError`）
+  rollback 后原样上抛；事务实现由上层构造点（`core/initializer/component_factory.py` 生产装配、
+  `scripts/benchmark_injection_decisions.py` 基准）在构造 `InjectionDecisionStore` 时逐实例注入的
+  动态 accessor 提供，存储层不解析、不加载 managers（import 与写入前后均不得出现 `core.managers*`），
+  未注入时写路径明确失败。
 - 列表故意排除 `reason_codes_json`，详情按 opaque `decision_id` 获取并解码。
 - `cleanup()` 先按 retention 删除，再按 `(created_at_ms DESC, decision_id DESC)` 稳定保留 newest `max_rows`，同一事务提交。
 - provider 型号和错误码仍可能泄露部署信息，API 层必须授权；“无正文”不代表可公开。

@@ -1141,12 +1141,8 @@ class TestInjectionDecisionLifecycle:
     ) -> None:
         from core.initializer.component_factory import ComponentFactory
 
-        store = MagicMock()
-        store.initialize = AsyncMock()
-        store.close = AsyncMock()
-        recorder = MagicMock()
-        recorder.start = AsyncMock()
-        recorder.close = AsyncMock()
+        store = MagicMock(initialize=AsyncMock(), close=AsyncMock())
+        recorder = MagicMock(start=AsyncMock(), close=AsyncMock())
         store_type = MagicMock(return_value=store)
         recorder_type = MagicMock(return_value=recorder)
         monkeypatch.setattr(
@@ -1165,7 +1161,8 @@ class TestInjectionDecisionLifecycle:
 
         components = await factory._build_injection_components(tmp_path / "memora.db")
 
-        store_type.assert_called_once_with(tmp_path / "memora.db")
+        assert store_type.call_args.args == (tmp_path / "memora.db",)
+        assert "write_transaction_accessor" in store_type.call_args.kwargs
         store.initialize.assert_awaited_once()
         recorder_type.assert_called_once_with(store, retention_days=17, max_rows=321)
         recorder.start.assert_awaited_once()

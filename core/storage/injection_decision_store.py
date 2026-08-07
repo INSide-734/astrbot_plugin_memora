@@ -4,21 +4,17 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..injection.models import InjectionDecisionRecord
 from .base_store import BaseStore
 
 _DAY_MS = 86_400_000
 _HOUR_MS = 3_600_000
-_WINDOW_MS = {
-    "1h": _HOUR_MS,
-    "24h": _DAY_MS,
-    "7d": 7 * _DAY_MS,
-    "30d": 30 * _DAY_MS,
-}
+_WINDOW_MS = {"1h": _HOUR_MS, "24h": _DAY_MS, "7d": 7 * _DAY_MS, "30d": 30 * _DAY_MS}
 
 _COLUMNS = (
     "decision_id",
@@ -123,8 +119,14 @@ class InjectionDecisionStore(BaseStore):
         VALUES ({", ".join("?" for _ in _COLUMNS)})
     """
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        write_transaction_accessor: Callable[[], Callable[..., Any]] | None = None,
+    ) -> None:
+        """构造实例；accessor 由上层构造点按实例注入，调用时读取当前实现。"""
         super().__init__(str(db_path))
+        self._write_transaction_accessor = write_transaction_accessor
 
     async def _create_tables(self) -> None:
         await self._execute("""
@@ -213,14 +215,14 @@ class InjectionDecisionStore(BaseStore):
             try:
                 await self.connection.executemany(self._INSERT_SQL, values)
                 await self.connection.commit()
-            except Exception:
+            except BaseException:
                 await self.connection.rollback()
                 raise
             return self.connection.total_changes - before
 
-        from ..managers.write_coordinator import write_transaction
-
-        return await write_transaction(operation)
+        if self._write_transaction_accessor is None:
+            raise RuntimeError("write_transaction 尚未注入")
+        return await self._write_transaction_accessor()(operation)
 
     @staticmethod
     def _where(query: DecisionQuery) -> tuple[str, tuple[Any, ...]]:
@@ -335,8 +337,6 @@ class InjectionDecisionStore(BaseStore):
         if window not in _WINDOW_MS:
             raise ValueError("window must be one of 1h, 24h, 7d, 30d")
         if now_ms is None:
-            import time
-
             now_ms = int(time.time() * 1000)
         cutoff_ms = now_ms - _WINDOW_MS[window]
         bucket_rows = await self._fetch_all(
@@ -392,8 +392,6 @@ class InjectionDecisionStore(BaseStore):
         if max_rows < 0:
             raise ValueError("max_rows must be non-negative")
         if now_ms is None:
-            import time
-
             now_ms = int(time.time() * 1000)
 
         async def operation() -> CleanupResult:
@@ -416,14 +414,14 @@ class InjectionDecisionStore(BaseStore):
                 )
                 deleted_overflow = cursor.rowcount
                 await self.connection.commit()
-            except Exception:
+            except BaseException:
                 await self.connection.rollback()
                 raise
             return CleanupResult(deleted_expired, deleted_overflow)
 
-        from ..managers.write_coordinator import write_transaction
-
-        return await write_transaction(operation)
+        if self._write_transaction_accessor is None:
+            raise RuntimeError("write_transaction 尚未注入")
+        return await self._write_transaction_accessor()(operation)
 
 
 __all__ = [

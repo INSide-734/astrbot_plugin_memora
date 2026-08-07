@@ -301,8 +301,8 @@ async def coordinated_transaction(db: Any) -> AsyncIterator[Any]:
         try:
             yield db
             await db.commit()
-        except Exception:
-            with contextlib.suppress(Exception):
+        except BaseException:
+            with contextlib.suppress(BaseException):
                 await db.rollback()
             raise
 

@@ -131,7 +131,7 @@ sequenceDiagram
 ## SQLite、事务与并发约束
 
 - `write_coordinator.py` 的模块级 `asyncio.Lock` 串行化协调写入；锁冲突可指数退避并加随机抖动，连接坏死由 `ConnectionRegistry` 重连。
-- `coordinated_transaction()` 使用 `BEGIN IMMEDIATE`，异常必须 rollback，取消也必须继续上抛。
+- `coordinated_transaction()` 使用 `BEGIN IMMEDIATE`，`BaseException`（含 `CancelledError`）必须 rollback 后原样上抛。
 - `SchemaManager` 只对白名单 `doc_id`、`created_at`、`updated_at` 做动态列迁移，并安全引用标识符；动态 SQL 不得接收未白名单化的外部表/列名。
 - `SchemaManager` 分离 `inspect_schema()`、`create_fresh_schema()`、`build_migration_plan()`、`migrate_existing_schema()` 与 `validate_schema()`；生产启动只由 `SchemaMigrationCoordinator` 编排。`auto_migrate=false` 遇到旧结构必须以 `schema_migration_required` 停止引擎启动，不能调用兼容 `create_tables()` 偷偷升级。
 - 迁移计划使用稳定 `migration_id`，只记录 from/to version、阶段、reason code 和变更计数。启用迁移备份时，`pre_migration` 快照必须先于 `BEGIN`/DDL/DML；失败时关闭启动连接并从已校验快照原子恢复 canonical，恢复失败持久化为 `blocked`，不得继续发布运行时。
@@ -197,7 +197,11 @@ python -m pytest -q tests/integration/test_pipeline_lifecycle.py tests/stress/te
 ## 依赖方向与改动守则
 
 - 允许：`managers → models/processors/retrieval/storage/utils/base/api`。
-- 禁止让 `storage` 反向依赖领域管理器；当前 `InjectionDecisionStore` 仅在方法内延迟导入通用 `write_transaction`，不要扩展为领域回调。
+- 禁止让 `storage` 反向依赖领域管理器（静态或运行时都不行）；`InjectionDecisionStore` 不解析、不加载 managers。
+  共享 `write_transaction` 由上层构造点在构造 `InjectionDecisionStore` 时逐实例注入动态 accessor
+  （`core/initializer/component_factory.py` 生产装配与 `scripts/benchmark_injection_decisions.py` 基准均传
+  `lambda: write_coordinator.write_transaction`）；storage 只调用注入的 accessor 且从不提及 managers 模块名，
+  manager 解析只允许留在上层，未注入时 Store 写路径给出明确错误，不得静默绕过共享事务。
 - `schedulers` 调用 managers，managers 不应反向持有 scheduler。
 - 新增存储阶段必须同时更新写日志步骤、修复重放、删除/批删和相关测试；只改 happy path 会留下孤儿数据。
 - 新增用户可编辑实体字段时，必须同步修订值计算、验证、原子替换和冲突响应，不能用旧快照覆盖并发更新。
