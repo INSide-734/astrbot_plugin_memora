@@ -19,6 +19,7 @@ from ..identity.resolver import ProtocolIdentityResolver
 from ..identity.runtime import ProtocolIdentityRuntime
 from ..identity.service import ProtocolIdentityService
 from ..injection.recorder import InjectionDecisionRecorder
+from ..managers import write_coordinator
 from ..managers.auto_learning_actions import aggregation_revision_for
 from ..managers.backup_manager import BackupManager
 from ..managers.conversation_manager import ConversationManager
@@ -581,7 +582,10 @@ class ComponentFactory:
         )
 
     async def _build_injection_components(self, db_path: Path) -> dict[str, object]:
-        decision_store = InjectionDecisionStore(db_path)
+        decision_store = InjectionDecisionStore(
+            db_path,
+            write_transaction_accessor=lambda: write_coordinator.write_transaction,
+        )
         decision_recorder: InjectionDecisionRecorder | None = None
         try:
             await decision_store.initialize()
@@ -610,18 +614,12 @@ class ComponentFactory:
                     try:
                         await decision_recorder.close(timeout=5.0)
                     except Exception:
-                        logger.error(
-                            "关闭注入决策记录器失败",
-                            exc_info=True,
-                        )
+                        logger.error("关闭注入决策记录器失败", exc_info=True)
             finally:
                 try:
                     await decision_store.close()
                 except Exception:
-                    logger.error(
-                        "关闭注入决策存储失败",
-                        exc_info=True,
-                    )
+                    logger.error("关闭注入决策存储失败", exc_info=True)
             raise
 
     def _build_engine_config(

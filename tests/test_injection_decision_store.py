@@ -9,11 +9,17 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from core.injection.models import InjectionDecisionRecord
+from core.managers.write_coordinator import write_transaction
 from core.storage.injection_decision_store import (
     INJECTION_DECISION_SORT_COLUMNS,
     DecisionQuery,
     InjectionDecisionStore,
 )
+
+
+def make_store(db_path) -> InjectionDecisionStore:
+    """构造注入共享写事务 accessor 的存储实例（逐实例注入）。"""
+    return InjectionDecisionStore(db_path, lambda: write_transaction)
 
 
 def record(
@@ -88,11 +94,10 @@ FORBIDDEN_COLUMNS = {
 
 @pytest.mark.asyncio
 async def test_file_database_uses_wal_and_exact_safe_schema(tmp_path) -> None:
-    db_path = tmp_path / "memora.db"
-    store = InjectionDecisionStore(db_path)
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
-        with sqlite3.connect(db_path) as connection:
+        with sqlite3.connect(tmp_path / "memora.db") as connection:
             journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
             columns = {
                 row[1]
@@ -109,7 +114,7 @@ async def test_file_database_uses_wal_and_exact_safe_schema(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_summary_and_filtered_page_use_expected_indexes(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         index_rows = await store._fetch_all("PRAGMA index_list('injection_decisions')")
@@ -121,14 +126,9 @@ async def test_summary_and_filtered_page_use_expected_indexes(tmp_path) -> None:
             "idx_injection_decisions_outcome",
         } <= names
         plan = await store._fetch_all(
-            """
-            EXPLAIN QUERY PLAN
-            SELECT decision_id
-            FROM injection_decisions
-            WHERE resolved_preset = ?
-            ORDER BY created_at_ms DESC, decision_id DESC
-            LIMIT ? OFFSET ?
-            """,
+            "EXPLAIN QUERY PLAN SELECT decision_id FROM injection_decisions "
+            "WHERE resolved_preset = ? ORDER BY created_at_ms DESC, decision_id DESC "
+            "LIMIT ? OFFSET ?",
             ("balanced", 50, 0),
         )
         assert any("idx_injection_decisions_preset" in row["detail"] for row in plan)
@@ -139,10 +139,10 @@ async def test_summary_and_filtered_page_use_expected_indexes(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_initialize_is_idempotent_on_same_file(tmp_path) -> None:
     db_path = tmp_path / "memora.db"
-    first = InjectionDecisionStore(db_path)
+    first = make_store(db_path)
     await first.initialize()
     await first.close()
-    second = InjectionDecisionStore(db_path)
+    second = make_store(db_path)
     await second.initialize()
     try:
         assert await second.insert_many([record("one", 1)]) == 1
@@ -152,7 +152,7 @@ async def test_initialize_is_idempotent_on_same_file(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_batch_is_idempotent_and_list_is_stable(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         now = int(time.time() * 1000)
@@ -168,7 +168,7 @@ async def test_batch_is_idempotent_and_list_is_stable(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_empty_batch_is_a_noop(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         assert await store.insert_many([]) == 0
@@ -195,7 +195,7 @@ def test_decision_query_is_frozen_and_validates_pagination_and_window() -> None:
 
 @pytest.mark.asyncio
 async def test_list_pagination_is_stable_and_reports_unpaged_total(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         await store.insert_many(
@@ -214,7 +214,7 @@ async def test_list_pagination_is_stable_and_reports_unpaged_total(tmp_path) -> 
 
 @pytest.mark.asyncio
 async def test_sort_happens_before_limit_and_uses_public_allowlist(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         await store.insert_many(
@@ -267,7 +267,7 @@ def test_injection_decision_sort_columns_are_fixed() -> None:
 async def test_every_scalar_filter_is_applied(
     tmp_path, query_values, matching_overrides
 ) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         await store.insert_many(
@@ -282,7 +282,7 @@ async def test_every_scalar_filter_is_applied(
 
 @pytest.mark.asyncio
 async def test_time_filters_are_inclusive_and_composable(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         await store.insert_many(
@@ -302,7 +302,7 @@ async def test_time_filters_are_inclusive_and_composable(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_filters_use_parameter_binding_for_hostile_values(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     hostile = "openai' OR 1=1; DROP TABLE injection_decisions; --"
     try:
@@ -319,7 +319,7 @@ async def test_filters_use_parameter_binding_for_hostile_values(tmp_path) -> Non
 
 @pytest.mark.asyncio
 async def test_detail_decodes_reason_json_and_preserves_opaque_ids(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     opaque_id = "550e8400-e29b-41d4-a716-446655440000/opaque?x=1"
     try:
@@ -346,7 +346,7 @@ async def test_detail_decodes_reason_json_and_preserves_opaque_ids(tmp_path) -> 
 
 @pytest.mark.asyncio
 async def test_detail_lookup_binds_opaque_hostile_id(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     hostile_id = "x' OR decision_id <> 'x"
     try:
@@ -359,7 +359,7 @@ async def test_detail_lookup_binds_opaque_hostile_id(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_empty_summary_has_complete_zero_shape(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         summary = await store.summary(window="24h", now_ms=1_000)
@@ -380,7 +380,7 @@ async def test_empty_summary_has_complete_zero_shape(tmp_path) -> None:
 async def test_summary_reports_deterministic_p95_distribution_fallback_and_events(
     tmp_path,
 ) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     now = 1_000_000
     try:
@@ -421,7 +421,7 @@ async def test_summary_reports_deterministic_p95_distribution_fallback_and_event
 
 @pytest.mark.asyncio
 async def test_summary_window_excludes_older_rows(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     now = 40 * 86_400_000
     try:
@@ -437,7 +437,7 @@ async def test_summary_window_excludes_older_rows(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_retention_zero_disables_age_deletion(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         now = int(time.time() * 1000)
@@ -452,7 +452,7 @@ async def test_retention_zero_disables_age_deletion(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_retention_runs_before_row_cap(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         now = int(time.time() * 1000)
@@ -476,7 +476,7 @@ async def test_retention_runs_before_row_cap(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_row_cap_uses_stable_created_at_and_id_order(tmp_path) -> None:
-    store = InjectionDecisionStore(tmp_path / "memora.db")
+    store = make_store(tmp_path / "memora.db")
     await store.initialize()
     try:
         await store.insert_many([record("a", 10), record("c", 10), record("b", 10)])

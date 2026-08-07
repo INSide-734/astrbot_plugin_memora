@@ -18,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 # 脚本需先把仓库根目录加入模块路径，以下运行时代码导入必须后置。
 from core.injection.models import InjectionDecisionRecord  # noqa: E402
 from core.injection.recorder import InjectionDecisionRecorder  # noqa: E402
+from core.managers.write_coordinator import write_transaction  # noqa: E402
 from core.storage.injection_decision_store import (  # noqa: E402
     DecisionQuery,
     InjectionDecisionStore,
@@ -120,18 +121,14 @@ async def measure_enqueue(store: InjectionDecisionStore, now_ms: int) -> float:
 
 
 async def measure_cleanup(store: InjectionDecisionStore, now_ms: int) -> float:
-    return await elapsed_ms(
-        lambda: store.cleanup(
-            retention_days=30,
-            max_rows=50_000,
-            now_ms=now_ms,
-        )
-    )
+    return await elapsed_ms(lambda: store.cleanup(30, 50_000, now_ms))
 
 
 async def run_benchmark() -> dict[str, float]:
     with tempfile.TemporaryDirectory(prefix="memora-injection-bench-") as directory:
-        store = InjectionDecisionStore(Path(directory) / "memora.db")
+        store = InjectionDecisionStore(
+            Path(directory) / "memora.db", lambda: write_transaction
+        )
         await store.initialize()
         try:
             now_ms = time.time_ns() // 1_000_000
