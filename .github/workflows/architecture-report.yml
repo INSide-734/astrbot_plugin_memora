@@ -1,0 +1,107 @@
+name: M0 架构报告
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.11.x"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  architecture-report:
+    name: 生成 report-only 架构证据
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 配置 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 配置 uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: 安装锁定依赖
+        run: uv sync --locked --dev
+
+      - name: 生成架构报告
+        run: >-
+          uv run --locked python scripts/check_architecture.py
+          --mode report
+          --baseline scripts/baselines/architecture.json
+          --report reports/architecture.json
+
+      - name: 执行门禁契约测试
+        run: >-
+          uv run --locked pytest -q
+          tests/test_architecture_gate.py
+          tests/test_feature_gate.py
+
+      - name: 验证 feature report CLI
+        run: >-
+          uv run --locked python scripts/check_feature_gate.py
+          --feature jargon
+          --mode report
+          --baseline scripts/baselines/architecture.json
+          --report reports/jargon-feature.json
+
+      - name: 写入 Job Summary
+        env:
+          REPORT_PATH: reports/architecture.json
+        run: |
+          uv run --locked python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(Path(os.environ["REPORT_PATH"]).read_text(encoding="utf-8"))
+          summary = report["summary"]
+          imports = report["imports"]["summary"]
+          graph = report["dependency_graph"]
+          contracts = report["public_contract_summary"]
+          body = "\n".join(
+              (
+                  "## M0 架构报告",
+                  "",
+                  f"- Source commit: `{report['source_commit']}`",
+                  f"- Files / lines: `{summary['file_count']}` / `{summary['total_lines']}`",
+                  f"- Largest SCC: `{graph['largest_scc']}`",
+                  f"- Private import statements / files: `{imports['private_statements']}` / `{imports['private_files']}`",
+                  f"- C0-C6 blockers: `{', '.join(contracts['blocked'])}`",
+                  "- Decision: `report-only` (tool/config/parse errors still fail)",
+                  "",
+              )
+          )
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+              handle.write(body)
+          PY
+
+      - name: 上传架构证据
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: architecture-report-${{ github.run_id }}
+          path: |
+            reports/architecture.json
+            reports/jargon-feature.json
+          if-no-files-found: error
+          retention-days: 14

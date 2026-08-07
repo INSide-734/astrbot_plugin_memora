@@ -1,0 +1,300 @@
+version = 1
+
+[project]
+name = "astrbot_plugin_memora"
+python = "3.12"
+baseline_policy = "only_decrease"
+
+[policy]
+# M0 只生成报告。候选阈值在 TH-01/TH-02/TH-03 书面确认前不能替代现行协作规则。
+default_mode = "report"
+candidate_thresholds_effective = false
+baseline_update_requires_explicit = true
+changed_files_blocking_from = "M1"
+full_tree_blocking_from = "M5"
+
+[decisions]
+"TH-01" = "pending"
+"TH-02" = "pending"
+"TH-03" = "pending"
+"TH-04" = "fixed"
+"TH-05" = "pending"
+"AB-01" = "blocked"
+"AB-02" = "fixed"
+
+[roots]
+production = ["main.py", "core"]
+tests = ["tests"]
+scripts = ["scripts"]
+markdown = ["docs", "website/docs", "README.md", "README_EN.md", "README_RU.md", "DESIGN.md", "CHANGELOG.md"]
+entry_files = ["main.py", "core/page_api.py", "core/plugin_initializer.py"]
+contract_names = ["contracts.py", "__init__.py"]
+
+# 这些目录不是架构事实来源，也不会进入 import 图或行数报告。
+exclude = [
+  ".git",
+  ".venv",
+  ".uv-cache",
+  ".pytest_cache",
+  ".hypothesis",
+  ".mypy_cache",
+  ".ruff_cache",
+  "build",
+  "dist",
+  "node_modules",
+  "pages/dashboard/assets",
+  "pages/dashboard/dist",
+  ".agent_artifacts",
+]
+
+[thresholds.production]
+soft = 450
+hard = 700
+legacy_hard = 800
+
+[thresholds.entry]
+soft = 300
+hard = 500
+legacy_hard = 800
+
+[thresholds.contract]
+soft = 150
+hard = 250
+legacy_hard = 800
+
+[thresholds.test]
+soft = 600
+hard = 1000
+legacy_hard = 800
+
+[thresholds.script]
+soft = 400
+hard = 650
+legacy_hard = 800
+
+[thresholds.markdown]
+soft = 300
+hard = 500
+legacy_hard = 400
+
+[signals]
+max_method_lines = 80
+max_public_symbols = 20
+max_import_fanout = 24
+
+[dependencies]
+# 现有私有导入只做 baseline 台账；新增、移动或 wrapper 均属于阻断项。
+private_import_prefixes = ["astrbot.core."]
+public_import_prefixes = ["astrbot.api", "astrbot.api."]
+forbidden_wrapper_names = ["compat.py", "compatibility.py"]
+# 迁移后的 feature 不能重新依赖旧技术层；当前没有 core/features，规则先以 report 形式存在。
+feature_roots = ["core.features"]
+legacy_layer_prefixes = [
+  "core.api",
+  "core.managers",
+  "core.storage",
+  "core.processors",
+  "core.handlers",
+  "core.retrieval",
+  "core.injection",
+]
+
+[dependencies.feature_layers]
+domain = ["domain", "contracts"]
+application = ["application", "domain", "contracts"]
+infrastructure = ["infrastructure", "application", "domain", "contracts"]
+presentation = ["presentation", "application", "domain", "contracts"]
+
+[[dependencies.forbidden_edges]]
+source = "core.shared"
+target = "core.features"
+reason = "shared 不得依赖 feature"
+
+[[dependencies.forbidden_edges]]
+source = "core.shared"
+target = "core.platform"
+reason = "shared 不得依赖 platform"
+
+[[dependencies.forbidden_edges]]
+source = "core.shared"
+target = "astrbot"
+reason = "shared 不得依赖 AstrBot"
+
+[[dependencies.forbidden_edges]]
+source = "core.shared"
+target = "quart"
+reason = "shared 不得依赖 Quart"
+
+[[dependencies.forbidden_edges]]
+source = "core.shared"
+target = "sqlite"
+reason = "shared 不得依赖 SQLite 实现"
+
+[[dependencies.forbidden_edges]]
+source = "core.shared"
+target = "faiss"
+reason = "shared 不得依赖 FAISS 实现"
+
+[[dependencies.forbidden_edges]]
+source = "core.platform.astrbot"
+target = "astrbot.core"
+reason = "AstrBot 适配层只允许公共 astrbot.api"
+
+[features]
+memory = "core/features/memory"
+recall = "core/features/recall"
+reflection = "core/features/reflection"
+evolution = "core/features/evolution"
+identity = "core/features/identity"
+profiles = "core/features/profiles"
+knowledge = "core/features/knowledge"
+notes = "core/features/notes"
+jargon = "core/features/jargon"
+affection = "core/features/affection"
+social = "core/features/social"
+review = "core/features/review"
+configuration = "core/features/configuration"
+backup = "core/features/backup"
+diagnostics = "core/features/diagnostics"
+evaluation = "core/features/evaluation"
+updates = "core/features/updates"
+
+[feature_requirements]
+memory.contracts = ["C0", "C3", "C4"]
+memory.lifecycle = "L4"
+recall.contracts = ["C2", "C3"]
+recall.lifecycle = "L4"
+reflection.contracts = ["C1", "C2", "C4"]
+reflection.lifecycle = "L4"
+evolution.contracts = ["C3"]
+evolution.lifecycle = "L4"
+identity.contracts = ["C4", "C6"]
+identity.lifecycle = "L1"
+profiles.contracts = ["C1", "C4"]
+profiles.lifecycle = "L2"
+knowledge.contracts = ["C1", "C4"]
+knowledge.lifecycle = "L2"
+notes.contracts = ["C1", "C4"]
+notes.lifecycle = "L2"
+jargon.contracts = ["C1"]
+jargon.lifecycle = "L1"
+affection.contracts = ["C1"]
+affection.lifecycle = "L2"
+social.contracts = ["C1"]
+social.lifecycle = "L2"
+review.contracts = ["C4", "C5"]
+review.lifecycle = "L2"
+configuration.contracts = ["C0", "C6"]
+configuration.lifecycle = "L2"
+backup.contracts = ["C0", "C6"]
+backup.lifecycle = "L3"
+diagnostics.contracts = ["C5", "C6"]
+diagnostics.lifecycle = "L2"
+evaluation.contracts = ["C3", "C6"]
+evaluation.lifecycle = "L2"
+updates.contracts = ["C0", "C6"]
+updates.lifecycle = "L3"
+
+# C0-C6 是公共契约台账，不是兼容实现。无公共替代时必须保持 blocker。
+[[public_contracts]]
+id = "C0"
+symbol = "EmbeddingProvider"
+current_imports = [
+  "core/initializer/provider_loader.py",
+  "core/initializer/provider_waiter.py",
+  "core/initializer/component_factory.py",
+  "core/plugin_initializer.py",
+]
+public_candidates = ["astrbot.api.provider.Provider"]
+status = "blocked"
+stable = false
+no_wrapper = true
+owner = "AstrBot API 集成工程师"
+stage = "M1"
+versions = ["4.24.2", "4.26.7", "4.27.1"]
+contract_tests = []
+evidence = "EmbeddingProvider 未形成完整插件公共契约；等待公开 embedding port。"
+
+[[public_contracts]]
+id = "C1"
+symbol = "FunctionTool/ContextWrapper/AstrAgentContext/ToolExecResult"
+current_imports = ["core/tools/*.py"]
+public_candidates = ["astrbot.api.FunctionTool", "astrbot.api.ToolSet", "astrbot.api.star.Context.add_llm_tools"]
+status = "blocked"
+stable = false
+no_wrapper = true
+owner = "AstrBot API 集成工程师"
+stage = "M2"
+versions = ["4.24.2", "4.26.7", "4.27.1"]
+contract_tests = []
+evidence = "FunctionTool 等部分入口公开，但现有 handler 依赖的上下文与结果类型未形成完整公共契约。"
+
+[[public_contracts]]
+id = "C2"
+symbol = "TextPart"
+current_imports = ["core/injection/executor.py"]
+public_candidates = []
+status = "blocked"
+stable = false
+no_wrapper = true
+owner = "AstrBot API 集成工程师"
+stage = "M4"
+versions = ["4.24.2", "4.26.7", "4.27.1"]
+contract_tests = []
+evidence = "TextPart 仅见内部协议，未确认公共消息组件替代。"
+
+[[public_contracts]]
+id = "C3"
+symbol = "FaissVecDB"
+current_imports = ["core/retrieval/vector_retriever.py", "core/initializer/faiss_checker.py"]
+public_candidates = []
+status = "blocked"
+stable = false
+no_wrapper = true
+owner = "AstrBot API 集成工程师"
+stage = "M4"
+versions = ["4.24.2", "4.26.7", "4.27.1"]
+contract_tests = []
+evidence = "FaissVecDB 为 AstrBot Core 实现类；插件自有 vector port 尚未建立。"
+
+[[public_contracts]]
+id = "C4"
+symbol = "astrbot.core.message.components"
+current_imports = ["core/extractors/message_content_extractor.py"]
+public_candidates = ["astrbot.api.message_components"]
+status = "blocked"
+stable = false
+no_wrapper = true
+owner = "AstrBot API 集成工程师"
+stage = "M2"
+versions = ["4.24.2", "4.26.7", "4.27.1"]
+contract_tests = []
+evidence = "当前提取器依赖 Core message components；公共入口和完整组件契约需逐版本核验。"
+
+[[public_contracts]]
+id = "C5"
+symbol = "astrbot.core.star.star_handler"
+current_imports = ["core/command_endpoints.py"]
+public_candidates = ["astrbot.api.event.filter"]
+status = "blocked"
+stable = false
+no_wrapper = true
+owner = "AstrBot API 集成工程师"
+stage = "M3"
+versions = ["4.24.2", "4.26.7", "4.27.1"]
+contract_tests = []
+evidence = "命令注册内部 registry 仍需公共 adapter；不以 version guard 或 wrapper 放行。"
+
+[[public_contracts]]
+id = "C6"
+symbol = "astrbot.core.config.*"
+current_imports = ["core/version_check.py"]
+public_candidates = ["astrbot.api.star.Context"]
+status = "blocked"
+stable = false
+no_wrapper = true
+owner = "AstrBot API 集成工程师"
+stage = "M3"
+versions = ["4.24.2", "4.26.7", "4.27.1"]
+contract_tests = []
+evidence = "版本/配置内部实现路径未确认稳定公共能力。"
