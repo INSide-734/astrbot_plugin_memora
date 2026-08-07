@@ -15,7 +15,7 @@ class ProviderWaiter:
         self._max_attempts = max_attempts
         self._attempts = 0
         self._providers_ready = False
-        self.on_ready_callback = None
+        self.on_terminal_callback = None
 
     @property
     def providers_ready(self) -> bool:
@@ -107,8 +107,8 @@ class ProviderWaiter:
                     f"Provider 在第 {self._attempts} 次尝试后就绪，继续初始化。"
                 )
                 self._providers_ready = True
-                if self.on_ready_callback:
-                    await self.on_ready_callback(emb, llm)
+                if self.on_terminal_callback:
+                    await self.on_terminal_callback(emb, llm, exhausted=False)
                 break
 
             current_interval = min(current_interval * 1.5, max_interval)
@@ -123,6 +123,8 @@ class ProviderWaiter:
                 f"以下 Provider 在 {self._attempts} 次尝试后仍未就绪，初始化失败: "
                 f"{', '.join(missing) if missing else '未知'}"
             )
+            if self.on_terminal_callback:
+                await self.on_terminal_callback(emb, llm, exhausted=True)
 
     async def cancel(self):
         if self._retry_task and not self._retry_task.done():
