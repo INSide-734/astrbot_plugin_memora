@@ -1,0 +1,20 @@
+{
+  "base_commit": "eedbe53e7baa5edbf857eb749cef880a3fa6cf23",
+  "base_graph_facts_sha256": "13a155c5defece7292e46297951c487496d33bf44f34c00ca11d9a0cd59a4158",
+  "base_tree": "839f4d9bb434db81c8f2bd8c1f481232a7cb34b2",
+  "change_manifest_sha256": "1417ef5af078a9cc6b2d489052a0f89e0509bc68f2a399df3db39315b6948b14",
+  "cut_id": "m1-genesis",
+  "expected_changes": [
+    {
+      "new_blob": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "new_mode": "100644",
+      "new_path": "scripts/m1_cuts/__placeholder__.json",
+      "old_blob": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "old_mode": "100644",
+      "old_path": "scripts/m1_cuts/__placeholder__.json",
+      "status": "M"
+    }
+  ],
+  "expected_removed_edges": [],
+  "schema_version": 1
+}

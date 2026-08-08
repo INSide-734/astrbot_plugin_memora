@@ -145,3 +145,13 @@ probe 305、report 413、workflow 203、tests 722/799/…/181、docs 127。
   必须以受信身份签名并完整绑定 candidate，由受保护基础设施提供
   （bootstrap 的 verifier 已就绪，attestor 落地前 production 一律
   exit 2）。
+
+## contract 生成、验证与轮换（AST-40）
+
+canonical contract generator/validator 与连续 cut 轮换协议已由独立工具
+`scripts/m1_contract_cut.py` 承载（只读复用 verifier 接口，不改判定逻辑）：
+grammar、manifest 规格、genesis 语义、回滚规则与非法反例见
+[m1-contract-rotation.md](./m1-contract-rotation.md)。首个不可变 genesis
+contract 位于 `scripts/m1_cuts/m1-genesis.json`；轮换 PR 的合法性由
+`validate-rotation` 确定性复验。残余：verifier 对轮换 PR 的直接放行需要
+一处最小接口变更（超出现有文件所有权），在 attestor 前置评估时一并处理。
