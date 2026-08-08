@@ -93,7 +93,10 @@ python scripts/m1_contract_cut.py validate-rotation \
 - `generate`：`--pr-head` 与 `--expected-changes-file` 二选一；`--pr-head`
   时以 `diff(base_tree -> head_tree)` 计算 `expected_changes`（规范 7 键
   形态，与 verifier 生产 cut 逐项比较口径一致）。kind 自动判定：
-  base 无 contract 为 `genesis`，恰一份为 `rotation`。
+  base 无 contract 为 `genesis`，恰一份为 `rotation`。**rotation 的
+  canonical 存储路径固定沿用 base 现役 contract 的路径**（单文件 `M`
+  同路径约束），`--cut-id` 只作为 contract 载荷身份，不决定存储路径；
+  genesis 的路径为 `scripts/m1_cuts/<cut-id>.json`。
 - 退出码：`0` 通过/生成成功；`1` 轮换被 grammar 拒绝；`2` 无法形成可信
   裁决（工具/输入/契约/结构错误，fail-closed）。
 - 生成与验证均**确定性**：同输入产出逐字节相同的 contract 与 manifest

@@ -258,8 +258,13 @@ def cmd_generate(args: argparse.Namespace) -> int:
         _validate_contract_anchors(
             root, contract, base_commit=base_commit, path=CONTRACT_DIR
         )
-        # manifest 记录 canonical 提交路径（与 validate-rotation 校验口径一致）。
-        contract_path = f"{CONTRACT_DIR}/{args.cut_id}.json"
+        # manifest 记录 canonical 提交路径（与 validate-rotation 校验口径一致）：
+        # rotation 必须沿用 base 现役 contract 的固定路径（单文件 M 同路径），
+        # cut_id 只作为载荷身份，不决定存储路径。
+        if entries:
+            contract_path = entries[0]["path"]
+        else:
+            contract_path = f"{CONTRACT_DIR}/{args.cut_id}.json"
         contract_bytes = (
             json.dumps(contract, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         ).encode("utf-8")
