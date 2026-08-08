@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
+from ..shared.contracts.canonical_source import MemorySourceRef
 from .temporal import normalize_datetime, validate_time_labels
 
 
@@ -50,7 +51,6 @@ class DerivedState(str, Enum):
 
 
 _PRIVACY_LEVELS = frozenset({"public", "shared", "confidential"})
-_MAX_EVIDENCE_CHARS = 4_000
 
 
 def _require_text(value: str, name: str) -> str:
@@ -70,75 +70,6 @@ def _check_interval(start: datetime | None, end: datetime | None) -> None:
     end = normalize_datetime(end)
     if start is not None and end is not None and end < start:
         raise ValueError("valid_to must not precede valid_from")
-
-
-@dataclass(frozen=True)
-class MemorySourceRef:
-    """作为 proposal 证据的 canonical memory 快照。"""
-
-    memory_id: int
-    revision_token: str
-    scope_key: str
-    privacy_level: str
-    occurred_at: datetime
-    content: str | None = None
-    reference_at: datetime | None = None
-    ingested_at: datetime | None = None
-    time_source: str = "unknown"
-    time_precision: str = "unknown"
-    source_role: str = "primary"
-    valid_from: datetime | None = None
-    valid_to: datetime | None = None
-    topic_keys: tuple[str, ...] = ()
-    subject_key: str | None = None
-
-    def __post_init__(self) -> None:
-        if (
-            isinstance(self.memory_id, bool)
-            or not isinstance(self.memory_id, int)
-            or self.memory_id <= 0
-        ):
-            raise ValueError("memory_id must be a positive integer")
-        _require_text(self.revision_token, "revision_token")
-        _require_text(self.scope_key, "scope_key")
-        if self.privacy_level not in _PRIVACY_LEVELS:
-            raise ValueError("privacy_level must be public, shared, or confidential")
-        if self.source_role not in {"primary", "supporting"}:
-            raise ValueError("source_role must be primary or supporting")
-        if self.content is not None:
-            if not isinstance(self.content, str):
-                raise ValueError("content must be a string or None")
-            if len(self.content) > _MAX_EVIDENCE_CHARS:
-                raise ValueError("content exceeds the evidence length limit")
-        object.__setattr__(self, "occurred_at", normalize_datetime(self.occurred_at))
-        if self.reference_at is None:
-            object.__setattr__(self, "reference_at", self.occurred_at)
-        else:
-            object.__setattr__(
-                self, "reference_at", normalize_datetime(self.reference_at)
-            )
-        object.__setattr__(self, "ingested_at", normalize_datetime(self.ingested_at))
-        _check_interval(self.valid_from, self.valid_to)
-        object.__setattr__(self, "valid_from", normalize_datetime(self.valid_from))
-        object.__setattr__(self, "valid_to", normalize_datetime(self.valid_to))
-        normalized_topics = tuple(
-            dict.fromkeys(
-                topic.strip()[:128]
-                for topic in self.topic_keys
-                if isinstance(topic, str) and topic.strip()
-            )
-        )[:32]
-        object.__setattr__(self, "topic_keys", normalized_topics)
-        if self.subject_key is not None:
-            subject_key = _require_text(self.subject_key, "subject_key")[:128]
-            object.__setattr__(self, "subject_key", subject_key)
-        validate_time_labels(self.time_source, self.time_precision)
-
-    @property
-    def revision(self) -> str:
-        """为沿用设计文档命名的调用方提供兼容别名。"""
-
-        return self.revision_token
 
 
 @dataclass(frozen=True)

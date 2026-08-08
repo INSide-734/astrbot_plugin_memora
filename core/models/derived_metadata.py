@@ -65,6 +65,7 @@ class DerivedMetadataSourceRef:
     valid_to: str | None = None
     schema_version: str = DERIVED_METADATA_SCHEMA_VERSION
     extractor_version: str = "extractor-v1"
+    stale: bool = False
 
     def __post_init__(self) -> None:
         """校验 source identity、可见性边界和固定版本字段。"""
@@ -85,6 +86,8 @@ class DerivedMetadataSourceRef:
         ):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(reason)
+        if not isinstance(self.stale, bool):
+            raise ValueError("source_stale_invalid")
 
 
 @dataclass(frozen=True, slots=True)
