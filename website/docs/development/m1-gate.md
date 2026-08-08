@@ -144,4 +144,6 @@ probe 305、report 413、workflow 203、tests 722/799/…/181、docs 127。
   contract generator/validator + 连续 cut 轮换协议；生产 attestation
   必须以受信身份签名并完整绑定 candidate，由受保护基础设施提供
   （bootstrap 的 verifier 已就绪，attestor 落地前 production 一律
-  exit 2）。
+  exit 2）。attestor/HSM 的输入输出、密钥仪式、私钥保管、认证传输、
+  失败/重放处理、回滚与 pinned 公钥轮换方案见
+  [`m1-attestor-contract.md`](./m1-attestor-contract.md)。
