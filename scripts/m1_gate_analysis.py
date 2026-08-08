@@ -26,6 +26,7 @@ try:  # 直接从仓库根执行脚本时，scripts 目录在 sys.path 首位。
         ATTESTATION_ENV_KEYS,
         ATTESTATION_KEYS,
         CONTRACT_DIR,
+        CONTRACT_SUFFIX,
         M1_PROBE_VERSION,
         PROBE_IMAGE,
         SCHEMA_VERSION,
@@ -69,6 +70,7 @@ except ImportError:  # pytest 以包模块导入时使用完整路径。
         ATTESTATION_ENV_KEYS,
         ATTESTATION_KEYS,
         CONTRACT_DIR,
+        CONTRACT_SUFFIX,
         M1_PROBE_VERSION,
         PROBE_IMAGE,
         SCHEMA_VERSION,
@@ -179,32 +181,41 @@ def _validate_governance_contract(
     base_facts: Mapping[str, Any],
     candidate_facts: Mapping[str, Any],
 ) -> list[str]:
-    """校验 governance-only PR 新增的 contract（deny-by-default 配套）。
+    """校验 governance-only PR 的 contract 变更（deny-by-default 配套）。
 
-    contract-add PR 必须 contract-only（精确只含一份 contract 文件）；
-    并按 production 同口径验证“移除 contract 后”的 candidate facts 与
-    base 一致，保证 governance pass 后首个 production cut 可直接可用。
-    结构/schema 歧义 → M1GateError（exit 2）；仅事实/范围不匹配 →
-    返回阻断原因（exit 1）。
+    支持两类合法变更（均必须 contract-only、精确只含一份 contract 文件）：
+    genesis（base 无 contract，新增首份 A）与 rotation（base 恰有一份
+    contract，同路径单文件 M 替换且新 contract 精确绑定当前 base）。两类
+    都按 production 同口径验证“移除 contract 后”的 candidate facts 与
+    base 一致。结构/schema 歧义 → M1GateError（exit 2）；仅事实/范围不匹配
+    → 返回阻断原因（exit 1）。
     """
 
     base_entries = _list_tree_files(root, base_tree, CONTRACT_DIR)
-    if base_entries:
+    base_contracts = [
+        entry for entry in base_entries if entry["path"].endswith(CONTRACT_SUFFIX)
+    ]
+    if len(base_contracts) > 1:
         raise M1GateError(
-            f"governance-only 新增 contract 时 base 不得已有 contract（{len(base_entries)} 份）"
+            f"governance contract 变更时 base 必须至多一份 contract（实际 {len(base_contracts)} 份）"
         )
+    rotation = bool(base_contracts)
     candidate_entries = _list_tree_files(root, candidate_tree, CONTRACT_DIR)
     candidate_contracts = [
-        entry for entry in candidate_entries if entry["path"].endswith(".json")
+        entry for entry in candidate_entries if entry["path"].endswith(CONTRACT_SUFFIX)
     ]
     if len(candidate_contracts) != 1:
         raise M1GateError(
-            f"candidate 必须恰好新增一份 contract，实际 {len(candidate_contracts)}"
+            f"candidate 必须恰好一份 contract，实际 {len(candidate_contracts)}"
         )
     entry = candidate_contracts[0]
     if entry["mode"] not in {"100644", "100755"}:
         raise M1GateError(
             f"contract 必须是 regular blob（mode {entry['mode']}）: {entry['path']}"
+        )
+    if rotation and entry["path"] != base_contracts[0]["path"]:
+        raise M1GateError(
+            f"轮换必须同路径单文件 M: {base_contracts[0]['path']} -> {entry['path']}"
         )
     changed = set(contract_paths_changed)
     if changed != {entry["path"]}:

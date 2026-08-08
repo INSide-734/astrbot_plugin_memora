@@ -470,10 +470,27 @@ def test_full_sequence_genesis_prod1_rotation_prod2(rot: RotFixture) -> None:
     assert gen_manifest2["kind"] == "rotation"
     assert gen_manifest2["old_contract_oid"]
 
-    # 轮换 PR：单文件 M 替换，validator 通过并输出 manifest
+    # 轮换 PR：单文件 M 替换，validator 与 base-owned verifier 双重复核
     git(rot.repo, "checkout", "-q", "-b", "rot", base_after_prod1)
     _write(rot.repo, CONTRACT_PATH, c2_file.read_text(encoding="utf-8"))
     rot_head = _commit_all(rot.repo, "rotation: contract 2")
+    rot_merge = _make_merge(rot.repo, base_after_prod1, rot_head, "rotation merge")
+    rot_gate_report = rot.work / "rot-gate-reports"
+    assert (
+        rot.run_gate(
+            rot_gate_report,
+            base=base_after_prod1,
+            head=rot_head,
+            candidate=rot_merge,
+            probe=None,
+        )
+        == 0
+    )
+    rot_gate_decision = json.loads(
+        (rot_gate_report / "decision.json").read_text(encoding="utf-8")
+    )
+    assert rot_gate_decision["status"] == "governance_only"
+    assert rot_gate_decision["invariants"]["governance_contract_valid"] is True
     validated_manifest = rot.work / "rot-manifest.json"
     assert (
         rot.validate_rotation(base_after_prod1, rot_head, output=validated_manifest)
@@ -663,36 +680,6 @@ def test_rotation_rejects_tampered_manifest(rot: RotFixture) -> None:
         json.dumps({"kind": "rotation", "tampered": True}), encoding="utf-8"
     )
     assert rot.validate_rotation(rot.main_head, candidate, manifest=fake) == 1
-
-
-def test_verifier_rejects_rotation_until_authorized_change(
-    rot: RotFixture,
-) -> None:
-    """High 证据回归：真实 rotation merge candidate 经 base-owned verifier
-    复核仍 exit 2（governance 路径要求 base 无 contract）。
-
-    本测试固化 AST-40 的已知缺口：在获得 verifier 最小接口变更授权并落地
-    后，此测试应从 exit 2 翻转为 exit 0，成为“rotation 被 verifier 连续
-    复验”的验收见证。
-    """
-
-    _, contract = _setup_contract(rot)
-    assert rot.main_head is not None
-    git(rot.repo, "checkout", "-q", "-b", "rot-real", rot.main_head)
-    _write(rot.repo, CONTRACT_PATH, json.dumps(contract, ensure_ascii=False))
-    rot_head = _commit_all(rot.repo, "rotation merge candidate")
-    merge = _make_merge(rot.repo, rot.main_head, rot_head, "rotation merge")
-    report_dir = rot.work / "rot-gate-reports"
-    code = rot.run_gate(
-        report_dir,
-        base=rot.main_head,
-        head=rot_head,
-        candidate=merge,
-        probe=None,
-    )
-    assert code == 2, "授权变更落地前 verifier 必须 fail-closed（exit 2）"
-    decision = json.loads((report_dir / "decision.json").read_text(encoding="utf-8"))
-    assert "base 不得已有 contract" in decision["error"]
 
 
 def test_generate_requires_input_and_valid_sha(rot: RotFixture) -> None:

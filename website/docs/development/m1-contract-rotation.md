@@ -6,9 +6,11 @@ contract 轮换路径，否则后续 production cut 无法取得绑定当前 bas
 contract，门禁流程停滞。
 
 协议由独立工具 `scripts/m1_contract_cut.py`（generator + validator）承载，
-**只读复用** M1 verifier 既定接口（contract schema/锚点/facts 口径），
-不修改任何 verifier 判定逻辑（`scripts/m1_gate_*`、baseline、AstrBot API
-与数据库 schema 均不在本协议改动范围内）。
+**只读复用** M1 verifier 既定接口（contract schema/锚点/facts 口径）。为让
+轮换被 base-owned verifier 连续复验，经任务授权对 verifier 落了一处最小
+接口变更（`scripts/m1_gate_analysis.py::_validate_governance_contract` 放行
+“base 恰有一份 contract 时、契约绑定/范围校验通过的 contract-only 单文件
+`M`”轮换）；baseline、AstrBot API 与数据库 schema 均未改动。
 
 ## 连续 cut 协议总览
 
@@ -28,7 +30,8 @@ genesis contract（首个 cut，绑定初始 base）
   方式新增首份 contract（现有 verifier 的 governance contract-add 路径）。
 - **rotation**：base 已有 contract 时，governance-only PR 以 **单文件 `M`**
   方式替换现役 contract。每次 production cut 合并后 base 必然推进，因此
-  每个新 production cut 都要求一次 rotation。
+  每个新 production cut 都要求一次 rotation。轮换 PR 由 verifier（授权
+  最小变更后的 governance 路径）与 `validate-rotation` 双重复核。
 - **production cut**：不得修改 contract；未绑定当前 base 的 contract 无法
   通过 verifier 的锚点/facts 复核（fail-closed）。
 
@@ -157,14 +160,14 @@ contract，作为轮换链的**不可变起点**：
 破坏（exit 2）、夹带非 contract 路径、自轮换（candidate tree 相同）、
 删除 contract、candidate 出现第二份 contract（exit 2）、篡改 manifest。
 
-## 与 M1 verifier 的关系与残余风险
+## 与 M1 verifier 的关系
 
-- verifier 的 governance contract-add 路径（`scripts/m1_gate_analysis.py`
-  `_validate_governance_contract`）要求 base 无 contract，因此**当前
-  verifier 本身对轮换 PR 仍返回 exit 2**——这是 AST-37 记录的已知缺口。
-  本协议的工具、fixtures 与测试已让轮换可被确定性复验；让 verifier 直接
-  放行轮换 PR 需要一处最小接口变更（放行“base 已有恰一份 contract 时、
-  契约绑定/范围校验通过的 contract-only 单文件 M”），该变更属于 verifier
-  判定逻辑，超出 AST-40 文件所有权，留给后续阶段评估。
-- production cut 的 attestation（受信身份/签名/nonce/currentness）仍由
-  受保护 attestor 前置（见 `m1-gate.md` production 前置），本协议不替代。
+- 轮换 PR 由 **base-owned verifier 与独立 reviewer 双重复核**：verifier 的
+  governance 路径（`_validate_governance_contract`，AST-40 授权的最小变更）
+  放行“base 恰有一份 contract、契约绑定/范围校验通过的 contract-only
+  单文件 `M`”轮换，绑定/范围不符仍按原有语义 exit 1/2；独立 reviewer 用
+  `validate-rotation --manifest` 做确定性复验。验收见证：
+  `test_verifier_passes_authorized_rotation`（真实 rotation merge candidate
+  经 `m1_gate.run_gate` 放行）与 `test_verifier_rejects_rotation_wrong_binding`。
+- 生产 cut 的 attestation（受信身份/签名/nonce/currentness）仍由受保护
+  attestor 前置（见 `m1-gate.md` production 前置），本协议不替代。

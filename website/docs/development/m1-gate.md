@@ -103,8 +103,10 @@ PYTHONPATH="$CHECKER_DIR/scripts" python3 "$CHECKER_DIR/scripts/check_m1_gate.py
   （`d = builtins.__dict__`、`b = __builtins__; d = b.__dict__`、
   `import builtins as b`、`from builtins import __import__ as imp` 等，
   不动点迭代）；未知动态取值 fail-closed；`re.compile` 豁免。
-- governance-only PR deny-by-default；contract-add PR 必须 contract-only，
-  并按 production 同口径验证 candidate facts（两阶段回归覆盖）。
+- governance-only PR deny-by-default；contract PR 必须 contract-only：新增
+  （genesis，base 无 contract）或同路径单文件 `M` 替换（rotation，base 恰
+  有一份 contract，新 contract 必须精确绑定当前 base），并按 production
+  同口径验证 candidate facts（连续 cut 回归覆盖）。
 
 ## 退出码与报告契约
 
@@ -148,10 +150,12 @@ probe 305、report 413、workflow 203、tests 722/799/…/181、docs 127。
 
 ## contract 生成、验证与轮换（AST-40）
 
-canonical contract generator/validator 与连续 cut 轮换协议已由独立工具
-`scripts/m1_contract_cut.py` 承载（只读复用 verifier 接口，不改判定逻辑）：
-grammar、manifest 规格、genesis 语义、回滚规则与非法反例见
+canonical contract generator/validator 与连续 cut 轮换协议由独立工具
+`scripts/m1_contract_cut.py` 承载：grammar、manifest 规格、genesis 语义、
+回滚规则与非法反例见
 [m1-contract-rotation.md](./m1-contract-rotation.md)。首个不可变 genesis
-contract 位于 `scripts/m1_cuts/m1-genesis.json`；轮换 PR 的合法性由
-`validate-rotation` 确定性复验。残余：verifier 对轮换 PR 的直接放行需要
-一处最小接口变更（超出现有文件所有权），在 attestor 前置评估时一并处理。
+contract 位于 `scripts/m1_cuts/m1-genesis.json`。经任务授权，verifier 的
+governance 路径已放行合法轮换（`_validate_governance_contract` 支持 base
+恰有一份 contract 时的 contract-only 单文件 `M`，绑定/范围校验与 genesis
+同口径），轮换 PR 由 verifier 与 `validate-rotation` 双重复核；见证测试见
+`tests/test_m1_contract_cut.py`。
