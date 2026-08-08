@@ -1,6 +1,4 @@
-"""
-插件初始化器，负责整个插件的初始化编排逻辑。
-"""
+"""插件初始化器，负责整个插件的初始化编排逻辑。"""
 
 import asyncio
 import inspect
@@ -55,8 +53,6 @@ class PluginInitializer:
         self.context = context
         self.config_manager = config_manager
         self.data_dir = data_dir
-
-        # 组件实例
         self.embedding_provider: EmbeddingProvider | None = None
         self.llm_provider: Provider | None = None
         self.db: Any | None = None
@@ -85,30 +81,29 @@ class PluginInitializer:
         self.relation_store: Any | None = None
         self.relation_manager: Any | None = None
         self.prompt_protection: PromptProtectionService | None = None
-
-        # 初始化状态
         self._initialization_complete = False
         self._initialization_lock = asyncio.Lock()
         self._injection_close_lock = asyncio.Lock()
         self._evolution_close_lock = asyncio.Lock()
         self._initialization_failed = False
         self._initialization_error: str | None = None
-
-        # 子模块
         self._provider_loader = ProviderLoader(context, config_manager)
         self._provider_waiter = ProviderWaiter(max_attempts=60)
         self._faiss_checker = FaissChecker()
         self._db_setup = DatabaseSetup(config_manager)
         self._component_factory = ComponentFactory(context, config_manager, data_dir)
 
-        # 重试回调：Provider 后台就绪后自动完成初始化
-        self._provider_waiter.on_ready_callback = self._on_providers_ready
+        # 重试回调：Provider 后台重试结束后提交唯一终态
+        self._provider_waiter.on_terminal_callback = self._on_providers_ready
 
     async def initialize(self) -> bool:
         async with self._initialization_lock:
             if self._initialization_complete or self._initialization_failed:
                 return self._initialization_complete
+            return await self._initialize_once()
 
+    async def _initialize_once(self) -> bool:
+        """在初始化门内只执行一次 Provider 等待与组件构建。"""
         logger.info("记忆插件开始后台初始化...")
         provider_wait_started = time.perf_counter()
         report_debug_event(
@@ -188,22 +183,27 @@ class PluginInitializer:
             self._initialization_error = str(e)
             return False
 
-    async def _on_providers_ready(self, emb, llm):
-        """提供器后台重试成功后的回调。"""
-        self.embedding_provider, self.llm_provider = emb, llm
-        report_debug_event(
-            "provider_state",
-            component="initializer",
-            stage="provider_retry",
-            status="completed",
-            reason_code="providers_available_after_retry",
-            attempt_count=max(0, int(self._provider_waiter.attempts)),
-            capability="embedding_and_llm_ready",
-        )
+    async def _on_providers_ready(self, emb, llm, *, exhausted: bool = False):
+        """在初始化门内提交 Provider 重试的就绪或耗尽终态。"""
         try:
             async with self._initialization_lock:
-                if not self._initialization_complete:
-                    await self._run_full_init()
+                if self.is_initialized or self.is_failed:
+                    return
+                self.embedding_provider, self.llm_provider = emb, llm
+                if exhausted:
+                    self._initialization_failed = True
+                    self._initialization_error = "Provider 重试预算耗尽"
+                    return
+                report_debug_event(
+                    "provider_state",
+                    component="initializer",
+                    stage="provider_retry",
+                    status="completed",
+                    reason_code="providers_available_after_retry",
+                    attempt_count=max(0, int(self._provider_waiter.attempts)),
+                    capability="embedding_and_llm_ready",
+                )
+                await self._run_full_init()
         except Exception as e:
             logger.error(f"重试初始化失败: {e}", exc_info=True)
             self._initialization_failed = True
