@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
@@ -158,7 +158,7 @@ class SourceReadRequest:
     user_role: str
     source_role: str = "primary"
     max_content_chars: int = _MAX_EVIDENCE_CHARS
-    expected_revisions: Mapping[int, str] = ()
+    expected_revisions: Mapping[int, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """校验授权上下文和每个来源的修订约束。"""

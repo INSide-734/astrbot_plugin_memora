@@ -72,6 +72,7 @@ class TestMemoryEngineInitialize:
         assert engine.vector_retriever is not None
         assert engine.hybrid_retriever is not None
         assert engine.rrf_fusion is not None
+        assert engine.sse is None
 
         # Cleanup
         await engine.close()

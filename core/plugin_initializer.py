@@ -24,6 +24,7 @@ from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
 from .monitoring import report_debug_event, report_debug_exception
 from .monitoring.quality_scorer import MemoryQualityScorer
+from .platform.transport.realtime_hub import RealtimeHub
 from .processors.memory_processor import MemoryProcessor
 from .review.memory_quality_gate import MemoryQualityGate
 from .review.quarantine_store import MemoryQuarantineStore
@@ -81,6 +82,7 @@ class PluginInitializer:
         self.relation_store: Any | None = None
         self.relation_manager: Any | None = None
         self.prompt_protection: PromptProtectionService | None = None
+        self.realtime_hub: RealtimeHub | None = None
         self._initialization_complete = False
         self._initialization_lock = asyncio.Lock()
         self._injection_close_lock = asyncio.Lock()
@@ -272,6 +274,7 @@ class PluginInitializer:
             self.injection_decision_recorder = components["injection_decision_recorder"]
             self.memory_evolution_store = components.get("memory_evolution_store")
             self.memory_evolution_manager = components.get("memory_evolution_manager")
+            self.realtime_hub = components.get("realtime_hub")
             owns_injection_components = True
             owns_evolution_components = bool(
                 self.memory_evolution_store or self.memory_evolution_manager
@@ -294,6 +297,7 @@ class PluginInitializer:
                 ("memory_evolution_store", self.memory_evolution_store),
                 ("memory_evolution_manager", self.memory_evolution_manager),
                 ("prompt_protection", self.prompt_protection),
+                ("realtime_hub", self.realtime_hub),
             ):
                 is_ready = instance is not None
                 report_debug_event(
@@ -392,6 +396,13 @@ class PluginInitializer:
             except BaseException:
                 logger.error(
                     "初始化失败后收敛记忆引擎后台任务失败",
+                    exc_info=True,
+                )
+            try:
+                await self.close_realtime_hub()
+            except BaseException:
+                logger.error(
+                    "初始化失败后关闭实时事件 Hub 失败",
                     exc_info=True,
                 )
             if owns_evolution_components:
@@ -728,6 +739,16 @@ class PluginInitializer:
         result = stopper()
         if inspect.isawaitable(result):
             await result
+
+    async def close_realtime_hub(self) -> None:
+        """先于共享 Store 关闭实时 Hub，唤醒旧 SSE 客户端并拒绝新订阅。"""
+
+        hub = self.realtime_hub
+        if hub is None:
+            return
+        await hub.drain()
+        if self.realtime_hub is hub:
+            self.realtime_hub = None
 
     async def close_injection_components(self) -> None:
         async with self._injection_close_lock:

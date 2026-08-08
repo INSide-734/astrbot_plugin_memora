@@ -1,53 +1,58 @@
-"""D4：实时记忆流 —— 用于控制台实时更新的 SSE 端点。"""
+"""D4：实时记忆流的 AstrBot SSE 传输适配器。"""
 
 from __future__ import annotations
 
 import asyncio
-import json
-import time
 from typing import TYPE_CHECKING
 
 from astrbot.api import logger
 from astrbot.api.web import stream_response
+
+from ..platform.transport.realtime_hub import RealtimeHub, RealtimeHubClosed
 
 if TYPE_CHECKING:
     from ..managers.memory_engine import MemoryEngine
 
 
 class RealtimeSSE:
-    """管理 SSE 连接与事件广播，为实时记忆流提供服务。"""
+    """把共享 ``RealtimeHub`` 队列转换为 AstrBot 公共 SSE 响应。"""
 
     HEARTBEAT_SEC = 30
 
-    def __init__(self, memory_engine: MemoryEngine) -> None:
+    def __init__(
+        self,
+        memory_engine: MemoryEngine,
+        *,
+        hub: RealtimeHub | None = None,
+    ) -> None:
+        """创建兼容 SSE 适配器，队列生命周期由共享 Hub 管理。"""
+
         self._engine = memory_engine
-        self._queues: dict[str, asyncio.Queue] = {}
-        self._counter = 0
+        self._hub = hub or RealtimeHub(client_prefix="sse")
+        # 旧测试和少量兼容调用方读取该属性；真实状态由 Hub 唯一持有。
+        self._queues = self._hub.queues
 
     def register(self) -> tuple[str, asyncio.Queue]:
-        self._counter += 1
-        cid = f"sse_{self._counter}_{time.time():.0f}"
-        q: asyncio.Queue = asyncio.Queue(maxsize=256)
-        self._queues[cid] = q
+        """注册 SSE 客户端，关闭中的 Hub 会抛出稳定错误。"""
+
+        cid, queue = self._hub.subscribe()
         logger.debug(f"[SSE] client {cid} registered (total={len(self._queues)})")
-        return cid, q
+        return cid, queue
 
     def unregister(self, cid: str) -> None:
-        self._queues.pop(cid, None)
+        """移除 SSE 客户端，重复移除安全。"""
 
-    async def publish(self, event_type: str, data: dict) -> None:
-        payload = json.dumps(
-            {"event": event_type, "data": data, "ts": time.time()},
-            ensure_ascii=False,
-            default=str,
-        )
-        dead = [cid for cid, q in self._queues.items() if self._try_put(q, payload)]
-        for cid in dead:
-            self.unregister(cid)
+        self._hub.unsubscribe(cid)
+
+    async def publish(self, event_type: str, data: dict) -> bool:
+        """发布事件；关闭后返回 ``False`` 而不重建队列。"""
+
+        return await self._hub.publish(event_type, data)
 
     @staticmethod
     def _try_put(q: asyncio.Queue, payload: str) -> bool:
-        """若队列已满则返回 True（表示应移除该客户端）。"""
+        """兼容旧调用方的有界队列探针。"""
+
         try:
             q.put_nowait(payload)
             return False
@@ -55,21 +60,25 @@ class RealtimeSSE:
             return True
 
     async def stream(self):
-        """通过 AstrBot 公共响应工厂返回 SSE 流。"""
-        cid, q = self.register()
+        """通过 AstrBot 公共流式响应返回 SSE 流。"""
+
+        try:
+            cid, queue = self.register()
+        except RealtimeHubClosed:
+            return {"status": "error", "message": "SSE 服务正在关闭"}
 
         async def event_generator():
             try:
                 while True:
                     try:
-                        msg = await asyncio.wait_for(
-                            q.get(), timeout=self.HEARTBEAT_SEC
+                        message = await asyncio.wait_for(
+                            queue.get(), timeout=self.HEARTBEAT_SEC
                         )
-                        yield f"data: {msg}\n\n"
+                        if message is self._hub.CLOSE_SENTINEL:
+                            return
+                        yield f"data: {message}\n\n"
                     except asyncio.TimeoutError:
                         yield ": heartbeat\n\n"
-            except GeneratorExit:
-                pass
             finally:
                 self.unregister(cid)
 
@@ -85,7 +94,20 @@ class RealtimeSSE:
 
     @property
     def connected(self) -> int:
-        return len(self._queues)
+        """返回当前 SSE 订阅数量。"""
+
+        return self._hub.connected
+
+    @property
+    def state(self):
+        """返回共享 Hub 生命周期状态。"""
+
+        return self._hub.state
+
+    async def close(self) -> None:
+        """关闭共享 Hub；重复关闭安全。"""
+
+        await self._hub.close()
 
 
 __all__ = ["RealtimeSSE"]

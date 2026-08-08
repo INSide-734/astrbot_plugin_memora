@@ -29,6 +29,7 @@ from ..managers.memory_evolution_manager import MemoryEvolutionManager
 from ..managers.note_proposal_pipeline import NoteProposalPipeline
 from ..managers.profile_proposal_pipeline import ProfileProposalPipeline
 from ..managers.semantic_compressor import SemanticCompressor
+from ..platform.transport.realtime_hub import RealtimeHub
 from ..processors.knowledge_extractor import KnowledgeExtractor
 from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
@@ -187,11 +188,15 @@ class ComponentFactory:
         stopwords_dir.mkdir(parents=True, exist_ok=True)
 
         engine_config = self._build_engine_config(stopwords_dir, graph_memory_enabled)
+        # Hub 由组合根创建，运行时关闭权移交给 PluginInitializer。
+        # 延后到 Provider、配置和索引构造均通过后，缩小未登记资源的回滚窗口。
+        realtime_hub = RealtimeHub(client_prefix="sse")
         engine_config["memory_evolution"] = evolution_config
         engine_config["cost_control_runtime"] = cost_control
         engine_config["derived_expander"] = derived_expander
         engine_config["projection_reader"] = projection_reader
         engine_config["backup_manager"] = backup_manager
+        engine_config["realtime_hub"] = realtime_hub
         engine_config["auto_learning_evidence_provider"] = (
             FeedbackLearningEvidenceProvider(
                 FeedbackLearningEvidenceInbox(self.data_dir),
@@ -200,14 +205,15 @@ class ComponentFactory:
                 quality_gate_version="quality-gate-v1",
             )
         )
-        memory_engine = MemoryEngine(
-            db_path=str(db_path),
-            faiss_db=db,
-            graph_vector_db=graph_db,
-            llm_provider=llm_provider,
-            config=engine_config,
-        )
+        memory_engine = None
         try:
+            memory_engine = MemoryEngine(
+                db_path=str(db_path),
+                faiss_db=db,
+                graph_vector_db=graph_db,
+                llm_provider=llm_provider,
+                config=engine_config,
+            )
             # canonical Schema 迁移必须早于任何其他 memora.db 持久连接。
             await memory_engine.initialize()
             if graph_memory_enabled:
@@ -224,6 +230,7 @@ class ComponentFactory:
                 db,
                 None,
                 memory_evolution_store,
+                realtime_hub,
             )
             raise
         logger.info("数据库与索引组件已初始化")
@@ -420,6 +427,7 @@ class ComponentFactory:
                 db,
                 memory_evolution_manager,
                 memory_evolution_store,
+                realtime_hub,
             )
             raise
 
@@ -473,6 +481,7 @@ class ComponentFactory:
                 db,
                 memory_evolution_manager,
                 memory_evolution_store,
+                realtime_hub=realtime_hub,
             )
             raise
         conversation_manager.identity_runtime = identity_runtime
@@ -489,6 +498,7 @@ class ComponentFactory:
                 memory_evolution_manager,
                 memory_evolution_store,
                 identity_runtime,
+                realtime_hub,
             )
             raise
 
@@ -506,6 +516,7 @@ class ComponentFactory:
             "decay_scheduler": decay_scheduler,
             "memory_evolution_store": memory_evolution_store,
             "memory_evolution_manager": memory_evolution_manager,
+            "realtime_hub": realtime_hub,
             **injection_components,
         }
 
@@ -519,6 +530,7 @@ class ComponentFactory:
         memory_evolution_manager=None,
         memory_evolution_store=None,
         identity_runtime=None,
+        realtime_hub=None,
     ) -> None:
         """按依赖顺序尽力关闭工厂已经拥有的组件。"""
 
@@ -527,6 +539,7 @@ class ComponentFactory:
             ("MemoryEvolutionStore", memory_evolution_store, "close"),
             ("DecayScheduler", decay_scheduler, "stop"),
             ("ProtocolIdentityRuntime", identity_runtime, "close"),
+            ("RealtimeHub", realtime_hub, "close"),
             ("ConversationStore", conversation_store, "close"),
             ("MemoryEngine", memory_engine, "close"),
             ("GraphDB", graph_db, "close"),

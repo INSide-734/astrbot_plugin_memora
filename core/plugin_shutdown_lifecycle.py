@@ -92,6 +92,17 @@ async def stop_runtime_producers(
     else:
         report_skipped("engine_pending_tasks", "component_inactive")
 
+    close_hub = getattr(initializer, "close_realtime_hub", None)
+    if callable(close_hub):
+        await safe_step(
+            "realtime_hub",
+            "关闭实时事件 Hub",
+            close_hub(),
+            timeout=timeout,
+        )
+    else:
+        report_skipped("realtime_hub", "component_inactive")
+
     await safe_step(
         "memory_evolution",
         "关闭记忆演化组件",

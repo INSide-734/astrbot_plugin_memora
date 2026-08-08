@@ -463,8 +463,15 @@ class MemoryEngineLifecycleMixin:
 
         # D4：实时 SSE 事件流。
         from ..api.realtime_api import RealtimeSSE
+        from ..platform.transport.realtime_hub import RealtimeHub
 
-        self.sse = RealtimeSSE(self)
+        realtime_hub = self.config.get("realtime_hub")
+        if isinstance(realtime_hub, RealtimeHub):
+            self.sse = RealtimeSSE(self, hub=realtime_hub)
+        else:
+            # 组合根未注入共享 Hub 时关闭 SSE，避免引擎私自创建第二个实例。
+            self.sse = None
+            logger.warning("实时事件 Hub 未由组合根注入，SSE 已禁用")
 
     async def close(self):
         """停止后台组件、保存状态并关闭数据库与向量资源。"""

@@ -35,7 +35,12 @@ class RealtimeHub(RealtimePublisher):
     QUEUE_SIZE = 256
     CLOSE_SENTINEL = object()
 
-    def __init__(self, *, queue_size: int = QUEUE_SIZE) -> None:
+    def __init__(
+        self,
+        *,
+        queue_size: int = QUEUE_SIZE,
+        client_prefix: str = "hub",
+    ) -> None:
         """创建尚未关闭的 Hub。"""
 
         if (
@@ -44,7 +49,10 @@ class RealtimeHub(RealtimePublisher):
             or queue_size <= 0
         ):
             raise ValueError("queue_size_invalid")
+        if not isinstance(client_prefix, str) or not client_prefix.strip():
+            raise ValueError("client_prefix_invalid")
         self._queue_size = queue_size
+        self._client_prefix = client_prefix.strip()
         self._queues: dict[str, asyncio.Queue[Any]] = {}
         self._counter = 0
         self._state = HubState.OPEN
@@ -80,7 +88,7 @@ class RealtimeHub(RealtimePublisher):
         if self._state is not HubState.OPEN:
             raise RealtimeHubClosed("realtime_hub_closed")
         self._counter += 1
-        client_id = f"hub_{self._counter}_{time.time():.0f}"
+        client_id = f"{self._client_prefix}_{self._counter}_{time.time():.0f}"
         queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=self._queue_size)
         self._queues[client_id] = queue
         return client_id, queue

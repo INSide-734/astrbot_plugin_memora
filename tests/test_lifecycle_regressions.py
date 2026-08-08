@@ -256,6 +256,7 @@ async def test_shutdown_converges_producers_before_evolution_store() -> None:
         initializer=SimpleNamespace(
             stop_scheduler=lambda: mark("scheduler"),
             stop_memory_engine_tasks=lambda: mark("engine_tasks"),
+            close_realtime_hub=lambda: mark("realtime_hub"),
             close_memory_evolution_components=lambda: mark("evolution_store"),
             close_injection_components=lambda: mark("injection"),
         ),
@@ -269,7 +270,13 @@ async def test_shutdown_converges_producers_before_evolution_store() -> None:
         timeout=1.0,
     )
 
-    assert order == ["scheduler", "engine_tasks", "evolution_store", "injection"]
+    assert order == [
+        "scheduler",
+        "engine_tasks",
+        "realtime_hub",
+        "evolution_store",
+        "injection",
+    ]
     assert skipped == ["backfill_scheduler"]
 
 
