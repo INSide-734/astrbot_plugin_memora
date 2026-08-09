@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import json
 import sys
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,6 +28,19 @@ def test_plugin_version_sources_are_aligned() -> None:
 
     package_json = _read_text("pages/dashboard/package.json")
     assert f'"version": "{PLUGIN_VERSION}"' in package_json
+
+
+def test_development_environment_pins_astrbot_4_27_2() -> None:
+    """锁定开发宿主版本，同时保持插件安装依赖由 metadata 管理。"""
+
+    project = tomllib.loads(_read_text("pyproject.toml"))
+    assert project["tool"]["uv"]["constraint-dependencies"] == ["astrbot==4.27.2"]
+
+    lock = tomllib.loads(_read_text("uv.lock"))
+    astrbot_packages = [
+        package for package in lock["package"] if package["name"] == "astrbot"
+    ]
+    assert [package["version"] for package in astrbot_packages] == ["4.27.2"]
 
 
 def test_main_register_uses_metadata_author_and_repo() -> None:

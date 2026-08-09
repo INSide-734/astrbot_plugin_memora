@@ -33,6 +33,7 @@ dev = [
 [tool.uv]
 cache-dir = ".uv-cache"
 package = false
+constraint-dependencies = ["astrbot==4.27.2"]
 
 [tool.ruff]
 target-version = "py312"

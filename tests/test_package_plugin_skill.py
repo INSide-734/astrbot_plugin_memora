@@ -108,7 +108,7 @@ def test_runtime_archive_rejects_missing_plugin_skill(tmp_path: Path) -> None:
 def test_runtime_archive_skill_is_discoverable_after_astrbot_install(
     tmp_path: Path,
 ) -> None:
-    """AstrBot 4.26.7 解包安装后应发现只读的插件来源 Skill。"""
+    """AstrBot 4.27.2 解包安装后应发现只读的插件来源 Skill。"""
     archive_path = _build_runtime_archive(tmp_path)
     plugins_root = tmp_path / "plugins"
     skills_root = tmp_path / "global-skills"
@@ -123,7 +123,7 @@ from pathlib import Path
 
 import astrbot.core.skills.skill_manager as skill_manager_module
 from astrbot.core.skills.skill_manager import SkillManager
-from astrbot.core.star.updator import PluginUpdator
+from astrbot.core.star.updater import _PluginUpdater
 
 archive_path = Path(sys.argv[1])
 plugins_root = Path(sys.argv[2])
@@ -132,7 +132,10 @@ data_root = Path(sys.argv[4])
 plugin_root = plugins_root / "astrbot_plugin_memora"
 
 skill_manager_module.get_astrbot_data_path = lambda: str(data_root)
-PluginUpdator.__new__(PluginUpdator).unzip_file(str(archive_path), str(plugin_root))
+_PluginUpdater.__new__(_PluginUpdater)._extract_plugin_archive(
+    str(archive_path),
+    str(plugin_root),
+)
 skills = SkillManager(
     skills_root=str(skills_root),
     plugins_root=str(plugins_root),

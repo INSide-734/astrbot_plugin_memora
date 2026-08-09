@@ -81,10 +81,10 @@ def _passing_namespace(cycles: int = 3) -> dict[str, object]:
 def test_parse_versions_rejects_duplicates_and_invalid_values() -> None:
     """版本矩阵不得静默去重或接受模糊版本。"""
 
-    assert parse_versions("4.24.2, 4.26.7,4.27.1") == (
+    assert parse_versions("4.24.2, 4.26.7,4.27.2") == (
         "4.24.2",
         "4.26.7",
-        "4.27.1",
+        "4.27.2",
     )
     with pytest.raises(LifecycleVerificationError, match="duplicate"):
         parse_versions("4.26.7,4.26.7")
