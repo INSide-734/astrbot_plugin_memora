@@ -9,6 +9,7 @@ from .domain import (
     TrustedFeedbackEvent,
     build_trusted_feedback_event,
 )
+from .infrastructure import FeedbackSignalStore
 
 __all__ = [
     "FEEDBACK_REASON_CODES",
@@ -16,6 +17,7 @@ __all__ = [
     "FeedbackOutcome",
     "FeedbackSignalAggregate",
     "FeedbackSignalPolicy",
+    "FeedbackSignalStore",
     "TrustedFeedbackEvent",
     "build_trusted_feedback_event",
 ]

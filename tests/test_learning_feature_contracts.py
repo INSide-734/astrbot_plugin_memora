@@ -9,6 +9,7 @@ from core.features.learning.domain.models import (
     TrustedFeedbackEvent,
     build_trusted_feedback_event,
 )
+from core.features.learning.infrastructure import FeedbackSignalStore
 from core.models.feedback_signal import (
     FEEDBACK_REASON_CODES as LEGACY_FEEDBACK_REASON_CODES,
 )
@@ -28,6 +29,7 @@ from core.models.feedback_signal import (
 from core.models.feedback_signal import (
     build_trusted_feedback_event as legacy_build_trusted_feedback_event,
 )
+from core.storage.feedback_signal_store import FeedbackSignalStore as LegacyStore
 
 
 def test_legacy_feedback_model_imports_reuse_learning_types() -> None:
@@ -40,3 +42,9 @@ def test_legacy_feedback_model_imports_reuse_learning_types() -> None:
     assert LegacyFeedbackSignalPolicy is FeedbackSignalPolicy
     assert LegacyTrustedFeedbackEvent is TrustedFeedbackEvent
     assert legacy_build_trusted_feedback_event is build_trusted_feedback_event
+
+
+def test_legacy_feedback_store_import_reuses_learning_implementation() -> None:
+    """旧反馈 Store 路径只能导出 learning infrastructure 的唯一实现。"""
+
+    assert LegacyStore is FeedbackSignalStore

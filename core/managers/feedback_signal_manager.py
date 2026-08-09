@@ -14,7 +14,9 @@ from ..features.learning.domain.models import (
     TrustedFeedbackEvent,
     build_trusted_feedback_event,
 )
-from ..storage.feedback_signal_store import FeedbackSignalStore
+from ..features.learning.infrastructure.feedback_signal_store import (
+    FeedbackSignalStore,
+)
 
 
 @dataclass(frozen=True, slots=True)

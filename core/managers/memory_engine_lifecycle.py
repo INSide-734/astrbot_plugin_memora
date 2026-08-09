@@ -258,7 +258,9 @@ class MemoryEngineLifecycleMixin:
             FeedbackAdapterKind,
             FeedbackSignalPolicy,
         )
-        from ..storage.feedback_signal_store import FeedbackSignalStore
+        from ..features.learning.infrastructure.feedback_signal_store import (
+            FeedbackSignalStore,
+        )
         from .auto_learning import AutoLearningManager
         from .auto_learning_state import AutoLearningStatePersistenceError
         from .feedback_signal_manager import FeedbackSignalManager
