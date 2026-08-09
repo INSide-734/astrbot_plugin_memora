@@ -21,8 +21,8 @@ from ..features.profiles.domain.models import (
     UserProfile,
     UserTag,
 )
+from ..features.profiles.infrastructure.profile_store import ProfileStore
 from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from ..storage.profile_store import ProfileStore
 
 _EDITABLE_PREFERENCE_FIELDS = frozenset(
     {"reply_style", "preferred_topics", "avoided_topics", "active_hours"}

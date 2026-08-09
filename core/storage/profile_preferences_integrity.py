@@ -1,20 +1,7 @@
-"""ProfileStore 人工偏好写入的来源边界。"""
+"""用户画像人工偏好边界的兼容导出。"""
 
-from __future__ import annotations
-
-from ..features.profiles.domain.models import UserPreferences
-from ..models.domain_provenance import DomainObjectOrigin
-
-
-def require_manual_preferences(preferences: UserPreferences | None) -> None:
-    """拒绝把带 canonical 证据的偏好写入人工维护入口。"""
-
-    if (
-        preferences is not None
-        and preferences.provenance is not None
-        and preferences.provenance.origin is DomainObjectOrigin.DERIVED
-    ):
-        raise ValueError("derived_preferences_not_allowed")
-
+from ..features.profiles.infrastructure.profile_preferences_integrity import (
+    require_manual_preferences,
+)
 
 __all__ = ["require_manual_preferences"]
