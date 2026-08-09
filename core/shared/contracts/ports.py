@@ -106,6 +106,42 @@ class ContinuityPort(Protocol):
 
 
 @runtime_checkable
+class IdentityConversationPort(Protocol):
+    """协议身份与会话协作的最小应用端口。"""
+
+    @property
+    def enricher(self) -> Any | None:
+        """返回可选的历史别名只读增强器。"""
+
+    def resolve(self, event: Any) -> Any:
+        """同步解析平台事件中的稳定身份。"""
+
+    async def prepare(
+        self,
+        event: Any,
+        *,
+        writes_blocked: bool = False,
+    ) -> Any:
+        """解析身份，并在允许写入时尽力同步名称目录。"""
+
+    async def synchronize(
+        self,
+        event: Any,
+        identity: Any,
+        *,
+        writes_blocked: bool = False,
+    ) -> None:
+        """在可信且允许写入时同步身份与会话名称。"""
+
+    async def get_identity(
+        self,
+        identity_namespace: str,
+        stable_user_id: str,
+    ) -> Any | None:
+        """读取稳定身份的当前目录记录。"""
+
+
+@runtime_checkable
 class FinalVisibilityPort(Protocol):
     """注入前唯一最终可见性过滤端口。"""
 
@@ -158,6 +194,7 @@ __all__ = [
     "DerivedWorkPublisher",
     "EmbeddingPort",
     "FinalVisibilityPort",
+    "IdentityConversationPort",
     "PromptProtectionPort",
     "RecallPort",
     "RealtimePublisher",
