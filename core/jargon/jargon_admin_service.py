@@ -11,7 +11,7 @@ from typing import Any, TypeVar
 from astrbot.api import logger
 
 from ..api.editing_utils import finite_float, required_text
-from ..base.entity_editing import (
+from ..shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,

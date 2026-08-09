@@ -11,7 +11,7 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..base.entity_editing import (
+from ..shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,

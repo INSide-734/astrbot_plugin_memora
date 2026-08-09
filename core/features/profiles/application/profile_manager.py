@@ -8,12 +8,12 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
-from ....base.entity_editing import (
+from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....shared.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
     compute_entity_revision,
 )
-from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ....shared.list_sorting import SortQuery
 from ..contracts import ProfileStorePort
 from ..domain.models import (

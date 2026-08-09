@@ -7,12 +7,6 @@ from typing import Any
 
 import aiosqlite
 
-from core.base.entity_editing import (
-    EditConflictError,
-    EntityAlreadyExistsError,
-    EntityNotFoundError,
-    compute_entity_revision,
-)
 from core.features.memory.infrastructure.base import BaseStore
 from core.features.memory.infrastructure.canonical_source_validation import (
     validate_domain_provenance,
@@ -24,6 +18,12 @@ from core.models.domain_provenance import (
 )
 from core.storage.domain_object_integrity import filter_current_domain_objects
 
+from ....shared.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    compute_entity_revision,
+)
 from ....shared.list_sorting import SortQuery, order_by_clause
 from ..domain.models import UserPreferences, UserProfile, UserTag
 from .profile_preferences_integrity import require_manual_preferences

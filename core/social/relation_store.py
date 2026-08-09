@@ -8,13 +8,13 @@ from typing import Any
 
 import aiosqlite
 
-from ..base.entity_editing import (
+from ..features.memory.infrastructure.sql_contract import SOCIAL_RELATIONS_TABLE
+from ..shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     compute_entity_revision,
 )
-from ..features.memory.infrastructure.sql_contract import SOCIAL_RELATIONS_TABLE
 from ..shared.list_sorting import SortQuery, order_by_clause
 from ..storage.base import BaseStore
 from .models import SocialRelation

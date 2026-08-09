@@ -8,7 +8,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..base.entity_editing import EntityValidationError, compute_entity_revision
+from ..shared.entity_editing import EntityValidationError, compute_entity_revision
 from ..shared.list_sorting import SortQuery
 from .models import (
     RelationChange,

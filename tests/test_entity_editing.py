@@ -14,7 +14,7 @@ from core.api.editing_utils import (
     require_object,
     required_text,
 )
-from core.base.entity_editing import (
+from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityEditingError,

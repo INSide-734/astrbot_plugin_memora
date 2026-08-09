@@ -10,14 +10,14 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..base.entity_editing import (
+from ..features.profiles.domain.models import TagCategory, UserTag
+from ..features.profiles.infrastructure.profile_store import PROFILE_SORT_COLUMNS
+from ..shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     EntityValidationError,
 )
-from ..features.profiles.domain.models import TagCategory, UserTag
-from ..features.profiles.infrastructure.profile_store import PROFILE_SORT_COLUMNS
 from ..shared.list_sorting import parse_sort_query
 from .editing_utils import (
     conflict_error,

@@ -13,7 +13,7 @@ from ..affection.affection_store import (
     MOOD_HISTORY_SORT_COLUMNS,
 )
 from ..affection.models import MoodType
-from ..base.entity_editing import (
+from ..shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,

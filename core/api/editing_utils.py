@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
-from ..base.entity_editing import EntityValidationError, compute_entity_revision
+from ..shared.entity_editing import EntityValidationError, compute_entity_revision
 from .response_utils import error_response, ok_response
 
 
