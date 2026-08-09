@@ -1,5 +1,10 @@
 """profiles feature 的领域模型所有权与旧路径兼容契约。"""
 
+from core.features.profiles.contracts import (
+    ProfileExtractorPort,
+    ProfileSourceReaderPort,
+    ProfileStorePort,
+)
 from core.features.profiles.domain.models import (
     TagCategory,
     UserPreferences,
@@ -22,6 +27,7 @@ from core.models.user_profile import (
 from core.models.user_profile import (
     UserTag as LegacyUserTag,
 )
+from core.processors.profile_extractor import ProfileExtractor
 from core.storage.profile_queries import PROFILE_LIST_SQL as LEGACY_PROFILE_LIST_SQL
 from core.storage.profile_store import (
     PROFILE_SORT_COLUMNS as LEGACY_PROFILE_SORT_COLUMNS,
@@ -46,3 +52,15 @@ def test_legacy_profile_store_import_reuses_feature_implementation() -> None:
     assert LegacyProfileStore is ProfileStore
     assert LEGACY_PROFILE_SORT_COLUMNS is PROFILE_SORT_COLUMNS
     assert LEGACY_PROFILE_LIST_SQL
+
+
+def test_profile_ports_accept_existing_implementations_structurally() -> None:
+    """迁移端口应能接收现有 Store、source reader 和 extractor 实现。"""
+
+    class SourceReader:
+        async def load_sources(self, memory_ids, *, max_content_chars=4_000):
+            return []
+
+    assert isinstance(ProfileStore(":memory:"), ProfileStorePort)
+    assert isinstance(SourceReader(), ProfileSourceReaderPort)
+    assert isinstance(ProfileExtractor(), ProfileExtractorPort)
