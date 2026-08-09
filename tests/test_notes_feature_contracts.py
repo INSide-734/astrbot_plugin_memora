@@ -11,7 +11,7 @@ from core.features.notes.domain.models import (
     NoteStatus,
     NoteVersion,
 )
-from core.features.notes.infrastructure import NoteStore
+from core.features.notes.infrastructure import NoteGenerator, NoteStore
 from core.managers.note_manager import NoteManager as LegacyNoteManager
 from core.managers.note_proposal_pipeline import (
     NoteProposalPipeline as LegacyNoteProposalPipeline,
@@ -25,7 +25,7 @@ from core.models.note_models import (
 from core.models.note_models import (
     NoteVersion as LegacyNoteVersion,
 )
-from core.processors.note_generator import NoteGenerator
+from core.processors.note_generator import NoteGenerator as LegacyNoteGenerator
 from core.storage.note_store import NoteStore as LegacyNoteStore
 
 
@@ -53,6 +53,12 @@ def test_legacy_note_pipeline_import_reuses_feature_implementation() -> None:
     """旧笔记 pipeline 路径只能导出 notes application 的唯一实现。"""
 
     assert LegacyNoteProposalPipeline is NoteProposalPipeline
+
+
+def test_legacy_note_generator_import_reuses_feature_implementation() -> None:
+    """旧 processor 路径只能导出 notes infrastructure 的唯一实现。"""
+
+    assert LegacyNoteGenerator is NoteGenerator
 
 
 def test_note_ports_accept_existing_implementations_structurally() -> None:

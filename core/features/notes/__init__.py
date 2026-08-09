@@ -3,10 +3,11 @@
 from .application import NoteManager, NoteProposalPipeline
 from .contracts import NoteGeneratorPort, NoteSourceReaderPort, NoteStorePort
 from .domain import Note, NoteStatus, NoteVersion
-from .infrastructure import NoteStore
+from .infrastructure import NoteGenerator, NoteStore
 
 __all__ = [
     "Note",
+    "NoteGenerator",
     "NoteGeneratorPort",
     "NoteManager",
     "NoteProposalPipeline",
