@@ -42,7 +42,7 @@ def _check_interval(start: datetime | None, end: datetime | None) -> None:
         and normalized_end is not None
         and normalized_end < normalized_start
     ):
-        raise ValueError("valid_interval_invalid")
+        raise ValueError("valid_to must not precede valid_from")
 
 
 @dataclass(frozen=True)
