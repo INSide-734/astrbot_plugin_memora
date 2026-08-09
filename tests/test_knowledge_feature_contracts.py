@@ -1,5 +1,6 @@
 """knowledge feature 的领域模型所有权与旧路径兼容契约。"""
 
+from core.features.knowledge.application import KnowledgeManager
 from core.features.knowledge.contracts import (
     KnowledgeExtractorPort,
     KnowledgeSourceReaderPort,
@@ -9,6 +10,9 @@ from core.features.knowledge.domain.models import KnowledgeEntry, KnowledgeType
 from core.features.knowledge.infrastructure.knowledge_store import (
     KNOWLEDGE_SORT_COLUMNS,
     KnowledgeStore,
+)
+from core.managers.knowledge_manager import (
+    KnowledgeManager as LegacyKnowledgeManager,
 )
 from core.models.knowledge_models import (
     KnowledgeEntry as LegacyKnowledgeEntry,
@@ -33,6 +37,12 @@ def test_legacy_knowledge_store_import_reuses_feature_implementation() -> None:
 
     assert LegacyKnowledgeStore is KnowledgeStore
     assert LegacyKnowledgeSortColumns is KNOWLEDGE_SORT_COLUMNS
+
+
+def test_legacy_knowledge_manager_import_reuses_feature_implementation() -> None:
+    """旧知识 Manager 路径只能导出 knowledge application 的唯一实现。"""
+
+    assert LegacyKnowledgeManager is KnowledgeManager
 
 
 def test_knowledge_ports_accept_existing_implementations_structurally() -> None:
