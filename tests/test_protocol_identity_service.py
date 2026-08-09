@@ -8,9 +8,9 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
+from core.features.identity import ProtocolIdentityStore
 from core.identity import IdentityTrust, NameFieldState, ResolvedIdentity
 from core.identity.service import ProtocolIdentityService
-from core.storage.protocol_identity_store import ProtocolIdentityStore
 
 
 def _identity(

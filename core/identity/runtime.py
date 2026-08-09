@@ -7,7 +7,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..storage.protocol_identity_store import ProtocolIdentityStore, StoredIdentity
+from ..features.identity import ProtocolIdentityStore, StoredIdentity
 from .conversation_sync import ConversationIdentitySynchronizer
 from .memory import MemoryIdentityEnricher
 from .models import IdentityTrust, ResolvedIdentity

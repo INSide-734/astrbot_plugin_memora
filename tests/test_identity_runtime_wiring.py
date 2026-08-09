@@ -553,16 +553,16 @@ async def test_identity_store_partial_initialization_remains_closable(
 ) -> None:
     """连接成功但建表准备失败时，Store 仍能释放部分初始化连接。"""
 
-    from core.storage.protocol_identity_store import ProtocolIdentityStore
+    from core.features.identity import ProtocolIdentityStore
 
     connection = MagicMock()
     connection.close = AsyncMock()
     monkeypatch.setattr(
-        "core.storage.protocol_identity_store.aiosqlite.connect",
+        "core.features.identity.infrastructure.store.aiosqlite.connect",
         AsyncMock(return_value=connection),
     )
     monkeypatch.setattr(
-        "core.storage.protocol_identity_store.apply_perf_pragmas",
+        "core.features.identity.infrastructure.store.apply_identity_store_pragmas",
         AsyncMock(side_effect=RuntimeError("private")),
     )
     store = ProtocolIdentityStore(str(tmp_path / "memora.db"))

@@ -7,7 +7,16 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
-from core.storage.protocol_identity_store import ProtocolIdentityStore
+from core.features.identity import ProtocolIdentityStore
+from core.storage.protocol_identity_store import (
+    ProtocolIdentityStore as LegacyProtocolIdentityStore,
+)
+
+
+def test_legacy_store_import_is_feature_implementation() -> None:
+    """旧 storage 路径只能导出 feature 的唯一 Store 实现。"""
+
+    assert LegacyProtocolIdentityStore is ProtocolIdentityStore
 
 
 @pytest.mark.asyncio

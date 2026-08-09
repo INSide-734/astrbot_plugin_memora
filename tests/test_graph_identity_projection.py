@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.storage.protocol_identity_store import StoredIdentity
+from core.features.identity import StoredIdentity
 
 
 def _stored_identity(display_name: str) -> StoredIdentity:

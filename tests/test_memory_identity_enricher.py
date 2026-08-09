@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 
+from core.features.identity import ProtocolIdentityStore
 from core.identity import IdentityTrust, NameFieldState, ResolvedIdentity
 from core.identity.memory import (
     IDENTITY_SCHEMA_VERSION,
@@ -17,7 +18,6 @@ from core.identity.memory import (
 )
 from core.identity.service import ProtocolIdentityService
 from core.injection.models import InjectionExecutionResult, InjectionOutcome
-from core.storage.protocol_identity_store import ProtocolIdentityStore
 
 
 def _identity(

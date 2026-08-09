@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from ..storage.protocol_identity_store import (
+from ..features.identity import (
     ObservationMutation,
     ProtocolIdentityStore,
     StoredIdentity,

@@ -25,7 +25,7 @@
 | `runtime.py` | 解析、尽力持久化、同步、只读 Enricher 与 Store 关闭边界 |
 | `memory.py` | 稳定记忆参与者 metadata、固定 Prompt 约束和历史别名只读增强 |
 
-持久化实现位于 `core/storage/protocol_identity_store.py`，只维护 `identity_users`、`identity_scope_members`、`identity_aliases` 三张独立表。
+持久化实现位于 `core/features/identity/infrastructure/store.py`，只维护 `identity_users`、`identity_scope_members`、`identity_aliases` 三张独立表；`core/storage/protocol_identity_store.py` 仅保留兼容导出。
 
 ## 核心契约
 

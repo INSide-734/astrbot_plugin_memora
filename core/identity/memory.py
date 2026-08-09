@@ -12,7 +12,7 @@ from ..models.conversation_models import Message
 from .models import IdentityTrust, ResolvedIdentity
 
 if TYPE_CHECKING:
-    from ..storage.protocol_identity_store import ProtocolIdentityStore, StoredIdentity
+    from ..features.identity import ProtocolIdentityStore, StoredIdentity
 
 IDENTITY_SCHEMA_VERSION = "stable-identity-v1"
 _MAX_REFERENCE_LINES = 8

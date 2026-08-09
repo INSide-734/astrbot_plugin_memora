@@ -1,11 +1,11 @@
-"""协议身份目录 Store 的兼容导出。"""
+"""稳定身份与会话协作 feature 的持久化边界。"""
 
-from ..features.identity import (
+from .domain.models import (
     IdentityMerger,
     ObservationMutation,
-    ProtocolIdentityStore,
     StoredIdentity,
 )
+from .infrastructure.store import ProtocolIdentityStore
 
 __all__ = [
     "IdentityMerger",
