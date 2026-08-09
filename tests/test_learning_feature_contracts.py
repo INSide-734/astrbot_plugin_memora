@@ -9,6 +9,13 @@ from core.evaluation.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
 )
+from core.features.learning.application import (
+    auto_learning_persistence as learning_persistence,
+)
+from core.features.learning.application import auto_learning_reload as learning_reload
+from core.features.learning.application import (
+    auto_learning_retention as learning_retention,
+)
 from core.features.learning.application.feedback_signal_manager import (
     FeedbackIngestResult,
     FeedbackRevokeResult,
@@ -42,7 +49,12 @@ from core.features.learning.domain.models import (
 from core.features.learning.infrastructure import FeedbackSignalStore
 from core.features.learning.infrastructure import auto_learning_state as learning_state
 from core.managers import auto_learning_actions as legacy_learning_actions
+from core.managers import (
+    auto_learning_persistence as legacy_learning_persistence,
+)
 from core.managers import auto_learning_records as legacy_learning_records
+from core.managers import auto_learning_reload as legacy_learning_reload
+from core.managers import auto_learning_retention as legacy_learning_retention
 from core.managers import auto_learning_state as legacy_learning_state
 from core.managers.feedback_signal_manager import (
     FeedbackIngestResult as LegacyFeedbackIngestResult,
@@ -141,6 +153,22 @@ def test_legacy_auto_learning_state_imports_reuse_learning_implementation() -> N
 
     for name in legacy_learning_state.__all__:
         assert getattr(legacy_learning_state, name) is getattr(learning_state, name)
+
+
+def test_legacy_auto_learning_application_imports_reuse_feature_implementation() -> (
+    None
+):
+    """旧自主学习应用路径只能导出 learning application 的唯一实现。"""
+
+    module_pairs = (
+        (legacy_learning_persistence, learning_persistence),
+        (legacy_learning_reload, learning_reload),
+        (legacy_learning_retention, learning_retention),
+    )
+    for legacy_module, feature_module in module_pairs:
+        assert legacy_module.__all__ == feature_module.__all__
+        for name in feature_module.__all__:
+            assert getattr(legacy_module, name) is getattr(feature_module, name)
 
 
 def test_learning_ports_accept_existing_implementations_structurally(tmp_path) -> None:

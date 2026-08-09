@@ -11,6 +11,15 @@ from datetime import datetime
 from typing import Any
 
 from ..features.learning.application import FeedbackSignalManager
+from ..features.learning.application.auto_learning_persistence import (
+    AutoLearningPersistenceMixin,
+)
+from ..features.learning.application.auto_learning_reload import (
+    AutoLearningReloadMixin,
+)
+from ..features.learning.application.auto_learning_retention import (
+    AutoLearningRetentionMixin,
+)
 from ..features.learning.domain.auto_learning_actions import (
     CandidateBinding,
     aggregation_revision_for,
@@ -36,9 +45,6 @@ from ..features.learning.infrastructure.auto_learning_state import (
     AutoLearningStateStore,
 )
 from .auto_learning_operations import AutoLearningOperationsMixin
-from .auto_learning_persistence import AutoLearningPersistenceMixin
-from .auto_learning_reload import AutoLearningReloadMixin
-from .auto_learning_retention import AutoLearningRetentionMixin
 
 _STATE_FILE = "auto_learning.json"
 _BINDING_FIELDS = (
