@@ -323,7 +323,7 @@ class MemoryEngineLifecycleMixin:
 
         # 笔记系统初始化
         if bool(self.config.get("notes.enabled", True)):
-            from ..storage.note_store import NoteStore
+            from ..features.notes.infrastructure.note_store import NoteStore
             from .note_manager import NoteManager
 
             self.note_store = NoteStore(self.db_path)

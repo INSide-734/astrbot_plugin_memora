@@ -8,8 +8,8 @@ from typing import Any
 from astrbot.api import logger
 
 from ..features.notes.domain.models import Note, NoteStatus, NoteVersion
+from ..features.notes.infrastructure.note_store import NoteStore
 from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from ..storage.note_store import NoteStore
 
 
 class NoteManager:
