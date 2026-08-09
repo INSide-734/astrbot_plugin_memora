@@ -19,11 +19,24 @@ from typing import Any, Callable
 
 from astrbot.api import logger
 
-PROMPT_PROTECTION_SCOPE_EXTRA_KEY = "memora_prompt_protection_scope"
-PROMPT_PROTECTION_REQUIRED_EXTRA_KEY = "memora_prompt_protection_required"
-PROMPT_PROTECTION_SCOPE_ATTR = "_memora_prompt_protection_scope"
-PROMPT_PROTECTION_REQUIRED_ATTR = "_memora_prompt_protection_required"
+from ..shared.contracts.prompt_protection import (
+    PROMPT_PROTECTION_REQUIRED_ATTR,
+    PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
+    PROMPT_PROTECTION_SCOPE_ATTR,
+    PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
+)
 
+__all__ = [
+    "DoubleCheckValidator",
+    "MetaInstructionWrapper",
+    "PROMPT_PROTECTION_REQUIRED_ATTR",
+    "PROMPT_PROTECTION_REQUIRED_EXTRA_KEY",
+    "PROMPT_PROTECTION_SCOPE_ATTR",
+    "PROMPT_PROTECTION_SCOPE_EXTRA_KEY",
+    "PromptProtectionService",
+    "ResponseSanitizer",
+    "SanitizeReport",
+]
 
 # ---------------------------------------------------------------------------
 # MetaInstructionWrapper：标签包装层

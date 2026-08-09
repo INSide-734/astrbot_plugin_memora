@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from astrbot.api.provider import LLMResponse, ProviderRequest
 
     from .injection.recorder import InjectionDecisionRecorder
+    from .shared.contracts import PromptProtectionPort
 
 
 class EventHandler:
@@ -64,7 +65,7 @@ class EventHandler:
         affection_manager: Any | None = None,
         expression_learner: Any | None = None,
         relation_manager: Any | None = None,
-        prompt_protection_service: Any | None = None,
+        prompt_protection_service: PromptProtectionPort | None = None,
         write_guard_cb: Any | None = None,
         perf_tracker: Any | None = None,
         injection_recorder: InjectionDecisionRecorder | None = None,

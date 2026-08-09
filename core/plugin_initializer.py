@@ -24,13 +24,14 @@ from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
 from .monitoring import report_debug_event, report_debug_exception
 from .monitoring.quality_scorer import MemoryQualityScorer
+from .platform.security import build_prompt_protection_port
 from .platform.transport.realtime_hub import RealtimeHub
 from .processors.memory_processor import MemoryProcessor
 from .review.memory_quality_gate import MemoryQualityGate
 from .review.quarantine_store import MemoryQuarantineStore
 from .schedulers.backfill_scheduler import BackfillScheduler
 from .schedulers.decay_scheduler import DecayScheduler
-from .security import PromptProtectionService
+from .shared.contracts import PromptProtectionPort
 from .storage.injection_decision_store import InjectionDecisionStore
 from .validators.index_validator import IndexValidator
 
@@ -81,7 +82,7 @@ class PluginInitializer:
         self.jargon_query_service: Any | None = None
         self.relation_store: Any | None = None
         self.relation_manager: Any | None = None
-        self.prompt_protection: PromptProtectionService | None = None
+        self.prompt_protection: PromptProtectionPort | None = None
         self.realtime_hub: RealtimeHub | None = None
         self._initialization_complete = False
         self._initialization_lock = asyncio.Lock()
@@ -430,7 +431,7 @@ class PluginInitializer:
             self._initialization_error = str(e)
             raise InitializationError(f"初始化失败: {e}") from e
 
-    def _create_prompt_protection_service(self) -> PromptProtectionService | None:
+    def _create_prompt_protection_service(self) -> PromptProtectionPort | None:
         """按安全配置为 LLM 数据流创建共享的提示词保护服务。"""
         if not self.config_manager.get("security.prompt_protection_enabled", True):
             logger.info("提示词保护服务已关闭")
@@ -441,7 +442,7 @@ class PluginInitializer:
         enable_double_check = bool(
             self.config_manager.get("security.double_check_enabled", True)
         )
-        service = PromptProtectionService(
+        service = build_prompt_protection_port(
             wrapper_template_index=template_index,
             enable_double_check=enable_double_check,
         )

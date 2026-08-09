@@ -26,7 +26,7 @@ from .models import (
 from .selection import candidate_utility, select_candidates
 
 if TYPE_CHECKING:
-    from ..security.prompt_sanitizer import PromptProtectionService
+    from ..shared.contracts import PromptProtectionPort
     from ..utils.injection_adapter import InjectionAdapter
 
 __all__ = ["InjectionExecutionContext", "InjectionExecutor", "candidate_utility"]
@@ -68,7 +68,7 @@ class InjectionExecutor:
     def __init__(
         self,
         adapter: "InjectionAdapter",
-        prompt_protection_service: "PromptProtectionService | None" = None,
+        prompt_protection_service: "PromptProtectionPort | None" = None,
     ) -> None:
         self._adapter = adapter
         self._prompt_protection = prompt_protection_service

@@ -38,7 +38,7 @@ from ..managers.memory_engine import MemoryEngine
 from ..monitoring import monitored, report_debug_event, report_debug_exception
 from ..retrieval.query_planner import QueryPlanner
 from ..retrieval.query_rewriter import QueryRewriter, resolve_reference_time
-from ..security.prompt_sanitizer import (
+from ..shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
     PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
     PROMPT_PROTECTION_SCOPE_ATTR,
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 
     from ..identity.memory import MemoryIdentityEnricher
     from ..injection.recorder import InjectionDecisionRecorder
-    from ..security.prompt_sanitizer import PromptProtectionService
+    from ..shared.contracts import PromptProtectionPort
     from ..utils.injection_adapter import InjectionAdapter
 
 
@@ -94,7 +94,7 @@ class RecallHandler:
         expression_learner: Any | None = None,
         affection_manager: Any | None = None,
         relation_manager: Any | None = None,
-        prompt_protection_service: PromptProtectionService | None = None,
+        prompt_protection_service: PromptProtectionPort | None = None,
         perf_tracker: Any | None = None,
         injection_recorder: InjectionDecisionRecorder | None = None,
         memory_tool_available: bool = False,

@@ -17,7 +17,7 @@ from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..monitoring import report_debug_event, report_debug_exception
 from ..processors.memory_processor import MemoryProcessor
-from ..security.prompt_sanitizer import (
+from ..shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
     PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
     PROMPT_PROTECTION_SCOPE_ATTR,
@@ -47,6 +47,8 @@ if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import LLMResponse
 
+    from ..shared.contracts import PromptProtectionPort
+
 
 class ReflectionHandler(ReflectionBacklogMixin):
     """在 LLM 响应后执行反思与后台记忆存储。"""
@@ -63,7 +65,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         expression_learner: Any | None = None,
         jargon_miner: Any | None = None,
         relation_manager: Any | None = None,
-        prompt_protection_service: Any | None = None,
+        prompt_protection_service: PromptProtectionPort | None = None,
         write_guard_cb: Any | None = None,
         memory_evolution_manager: Any | None = None,
         memory_quality_gate: Any | None = None,

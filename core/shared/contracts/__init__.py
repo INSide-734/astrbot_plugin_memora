@@ -14,6 +14,7 @@ from .ports import (
     CanonicalMemoryPort,
     DerivedWorkPublisher,
     FinalVisibilityPort,
+    PromptProtectionPort,
     RealtimePublisher,
 )
 
@@ -24,6 +25,7 @@ __all__ = [
     "DerivedWorkPublisher",
     "FinalVisibilityPort",
     "MemorySourceRef",
+    "PromptProtectionPort",
     "RealtimePublisher",
     "SourceReadDenyReason",
     "SourceReadRequest",

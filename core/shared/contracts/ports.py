@@ -145,6 +145,9 @@ class PromptProtectionPort(Protocol):
     ) -> tuple[str, Mapping[str, Any]]:
         """清理模型回复并返回安全报告。"""
 
+    def has_scope(self, scope_id: str | None) -> bool:
+        """返回请求保护作用域是否仍然有效。"""
+
     def discard_scope(self, scope_id: str | None) -> None:
         """释放请求作用域中的保护状态。"""
 

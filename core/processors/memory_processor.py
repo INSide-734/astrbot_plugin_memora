@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
@@ -37,6 +37,9 @@ from .topic_segmentation_pipeline import (
     TOPIC_SEGMENTATION_OBSERVABILITY_FIELDS,
     TopicSegmentationPipeline,
 )
+
+if TYPE_CHECKING:
+    from ..shared.contracts import PromptProtectionPort
 
 
 class MemoryProcessor:
@@ -86,7 +89,7 @@ class MemoryProcessor:
         self.storage = StorageBuilder()
         self.grounding_validator = MemoryGroundingValidator()
         self._grounding_judge = grounding_judge or self._call_grounding_judge
-        self.prompt_protection_service: Any | None = None
+        self.prompt_protection_service: "PromptProtectionPort | None" = None
         self._topic_guidance = self._load_topic_guidance(prompt_dir)
         self._topic_segmentation_enabled = self.config.get(
             "topic_segmentation.enabled", True

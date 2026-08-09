@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -41,6 +42,27 @@ def unregister_plugin_page_routes(plugin: object) -> int:
     return removed
 
 
+async def close_prompt_protection(initializer: object) -> None:
+    """关闭组合根发布的提示词保护端口并清理运行时作用域。
+
+    参数:
+        initializer: 持有平台提示词保护端口的组合根。
+    """
+
+    protection = getattr(initializer, "prompt_protection", None)
+    if protection is None:
+        return
+    try:
+        closer = getattr(protection, "close", None)
+        if callable(closer):
+            result = closer()
+            if inspect.isawaitable(result):
+                await result
+    finally:
+        if getattr(initializer, "prompt_protection", None) is protection:
+            setattr(initializer, "prompt_protection", None)
+
+
 async def stop_runtime_producers(
     plugin: object,
     safe_step: Callable[..., Awaitable[None]],
@@ -54,7 +76,7 @@ async def stop_runtime_producers(
     等待这些生产者，再关闭它们共同使用的演化 Store 与注入组件。所有
     超时、取消和普通异常仍由插件入口提供的 ``safe_step`` 统一处理。
 
-    Args:
+    参数:
         plugin: 持有初始化器和可选回填调度器的插件实例。
         safe_step: 带超时、日志和降级处理的插件关停步骤包装器。
         report_skipped: 记录未装配组件的关停步骤。
@@ -92,6 +114,13 @@ async def stop_runtime_producers(
     else:
         report_skipped("engine_pending_tasks", "component_inactive")
 
+    await safe_step(
+        "prompt_protection",
+        "清理提示词保护作用域",
+        close_prompt_protection(initializer),
+        timeout=timeout,
+    )
+
     close_hub = getattr(initializer, "close_realtime_hub", None)
     if callable(close_hub):
         await safe_step(
@@ -117,4 +146,8 @@ async def stop_runtime_producers(
     )
 
 
-__all__ = ["stop_runtime_producers", "unregister_plugin_page_routes"]
+__all__ = [
+    "close_prompt_protection",
+    "stop_runtime_producers",
+    "unregister_plugin_page_routes",
+]
