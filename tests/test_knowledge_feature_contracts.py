@@ -1,5 +1,10 @@
 """knowledge feature 的领域模型所有权与旧路径兼容契约。"""
 
+from core.features.knowledge.contracts import (
+    KnowledgeExtractorPort,
+    KnowledgeSourceReaderPort,
+    KnowledgeStorePort,
+)
 from core.features.knowledge.domain.models import KnowledgeEntry, KnowledgeType
 from core.features.knowledge.infrastructure.knowledge_store import (
     KNOWLEDGE_SORT_COLUMNS,
@@ -9,6 +14,7 @@ from core.models.knowledge_models import (
     KnowledgeEntry as LegacyKnowledgeEntry,
 )
 from core.models.knowledge_models import KnowledgeType as LegacyKnowledgeType
+from core.processors.knowledge_extractor import KnowledgeExtractor
 from core.storage.knowledge_store import (
     KNOWLEDGE_SORT_COLUMNS as LegacyKnowledgeSortColumns,
 )
@@ -27,3 +33,15 @@ def test_legacy_knowledge_store_import_reuses_feature_implementation() -> None:
 
     assert LegacyKnowledgeStore is KnowledgeStore
     assert LegacyKnowledgeSortColumns is KNOWLEDGE_SORT_COLUMNS
+
+
+def test_knowledge_ports_accept_existing_implementations_structurally() -> None:
+    """迁移端口应能接收现有 Store、source reader 和 extractor 实现。"""
+
+    class SourceReader:
+        async def load_sources(self, memory_ids, *, max_content_chars=4_000):
+            return []
+
+    assert isinstance(KnowledgeStore(":memory:"), KnowledgeStorePort)
+    assert isinstance(SourceReader(), KnowledgeSourceReaderPort)
+    assert isinstance(KnowledgeExtractor(), KnowledgeExtractorPort)
