@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 from pydantic import ValidationError as PydanticValidationError
 
-from .config_migrations import migrate_legacy_config
+from ..platform.config.migrations import migrate_legacy_config
 from .config_validator import (
     MemoraConfig,
     get_default_config,

@@ -8,7 +8,7 @@ import pytest
 def test_legacy_reranker_config_migrates_to_embedding_similarity() -> None:
     """旧策略和权重键应迁移为新名称，且不修改调用方源字典。"""
 
-    from core.base.config_migrations import migrate_legacy_config
+    from core.platform.config import migrate_legacy_config
 
     source = {
         "reranker": {
@@ -31,7 +31,7 @@ def test_legacy_reranker_config_migrates_to_embedding_similarity() -> None:
 def test_new_reranker_weight_wins_over_legacy_weight() -> None:
     """新旧权重同时存在时保留新键，并移除旧键避免双轨运行。"""
 
-    from core.base.config_migrations import migrate_legacy_config
+    from core.platform.config import migrate_legacy_config
 
     migrated, applied = migrate_legacy_config(
         {

@@ -1,5 +1,6 @@
 """AstrBot 配置映射与运行时控制面契约。"""
 
+from .migrations import migrate_legacy_config
 from .ownership import (
     CONFIG_SECTION_OWNERSHIP,
     ConfigOwnershipKind,
@@ -17,6 +18,7 @@ __all__ = [
     "REBUILD_REQUIRED_PATHS",
     "ConfigOwnershipKind",
     "ConfigSectionOwnership",
+    "migrate_legacy_config",
     "RuntimeConfigEffect",
     "classify_config_effects",
     "resolve_config_ownership",
