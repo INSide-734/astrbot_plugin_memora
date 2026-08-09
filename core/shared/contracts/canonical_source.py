@@ -14,7 +14,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
 
-from ...models.temporal import normalize_datetime, validate_time_labels
+from ..temporal import normalize_datetime, validate_time_labels
+from .derived_metadata import DerivedMetadataSourceRef
 
 _PRIVACY_LEVELS = frozenset({"public", "shared", "confidential"})
 _USER_ROLES = frozenset({"user", "assistant", "system", "admin", "owner"})
@@ -288,8 +289,6 @@ def to_derived_metadata_source(
 
     if not isinstance(source, MemorySourceRef):
         raise TypeError("source must be MemorySourceRef")
-    from ...models.derived_metadata import DerivedMetadataSourceRef
-
     return DerivedMetadataSourceRef(
         memory_id=source.memory_id,
         revision_token=source.revision_token,

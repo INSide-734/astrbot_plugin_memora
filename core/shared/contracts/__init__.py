@@ -9,6 +9,7 @@ from .canonical_source import (
     raise_if_cancelled,
     to_derived_metadata_source,
 )
+from .derived_metadata import DerivedMetadataSourceRef
 from .events import CanonicalMemoryCommitted
 from .ports import (
     CanonicalMemoryPort,
@@ -23,6 +24,7 @@ __all__ = [
     "CanonicalMemoryPort",
     "CanonicalSourceReaderPort",
     "DerivedWorkPublisher",
+    "DerivedMetadataSourceRef",
     "FinalVisibilityPort",
     "MemorySourceRef",
     "PromptProtectionPort",

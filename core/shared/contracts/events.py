@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from ...models.temporal import normalize_datetime
+from ..temporal import normalize_datetime
 
 _PRIVACY_LEVELS = frozenset({"public", "shared", "confidential"})
 _SOURCE_ROLES = frozenset({"primary", "supporting"})
