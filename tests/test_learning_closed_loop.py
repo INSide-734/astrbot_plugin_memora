@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.auto_learning import AutoLearningManager
+from core.features.learning.application.auto_learning import AutoLearningManager
 from core.managers.feedback_signal_manager import FeedbackSignalManager
 from core.models.feedback_signal import (
     FeedbackAdapterKind,

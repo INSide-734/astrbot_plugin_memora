@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from core.managers.auto_learning import AutoLearningManager
+from core.features.learning.application.auto_learning import AutoLearningManager
 from core.plugin_reload_lifecycle import run_scheduled_plugin_reload
 
 _CANDIDATE_ID = "candidate_reload_state_01"

@@ -1,6 +1,7 @@
 """自主学习 feature 的公开领域边界。"""
 
 from .application import (
+    AutoLearningManager,
     FeedbackIngestResult,
     FeedbackRevokeResult,
     FeedbackSignalManager,
@@ -63,6 +64,7 @@ __all__ = [
     "CANDIDATE_STATUSES",
     "FEEDBACK_REASON_CODES",
     "STATE_SCHEMA_VERSION",
+    "AutoLearningManager",
     "AutoLearningStateError",
     "AutoLearningStateLoadResult",
     "AutoLearningStatePersistenceError",

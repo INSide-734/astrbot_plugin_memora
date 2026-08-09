@@ -1,5 +1,7 @@
 """自主学习 feature 的应用服务。"""
 
+from .auto_learning import AutoLearningManager
+from .auto_learning_operations import AutoLearningOperationsMixin
 from .auto_learning_persistence import AutoLearningPersistenceMixin
 from .auto_learning_reload import (
     AutoLearningReloadMixin,
@@ -18,6 +20,8 @@ from .feedback_signal_manager import (
 )
 
 __all__ = [
+    "AutoLearningManager",
+    "AutoLearningOperationsMixin",
     "AutoLearningPersistenceMixin",
     "AutoLearningReloadMixin",
     "AutoLearningRetentionMixin",

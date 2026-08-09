@@ -135,7 +135,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "auto_learning": _ownership(
         "auto_learning",
         ConfigOwnershipKind.EXPERIMENTAL,
-        "core.managers.auto_learning",
+        "core.features.learning.application.auto_learning",
     ),
     "knowledge_base": _ownership(
         "knowledge_base",

@@ -291,7 +291,7 @@ class TestMemoryEngineInitialize:
         mock_al_instance.reconcile_reload_operation = AsyncMock()
         mock_al_instance.save_state = AsyncMock()
         with patch(
-            "core.managers.auto_learning.AutoLearningManager",
+            "core.features.learning.application.auto_learning.AutoLearningManager",
             return_value=mock_al_instance,
         ) as mock_al_cls:
             with patch(

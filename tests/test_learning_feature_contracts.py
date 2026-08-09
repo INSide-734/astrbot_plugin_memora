@@ -10,6 +10,12 @@ from core.evaluation.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceProvider,
 )
 from core.features.learning.application import (
+    auto_learning as learning_application,
+)
+from core.features.learning.application import (
+    auto_learning_operations as learning_operations,
+)
+from core.features.learning.application import (
     auto_learning_persistence as learning_persistence,
 )
 from core.features.learning.application import auto_learning_reload as learning_reload
@@ -48,7 +54,9 @@ from core.features.learning.domain.models import (
 )
 from core.features.learning.infrastructure import FeedbackSignalStore
 from core.features.learning.infrastructure import auto_learning_state as learning_state
+from core.managers import auto_learning as legacy_learning_application
 from core.managers import auto_learning_actions as legacy_learning_actions
+from core.managers import auto_learning_operations as legacy_learning_operations
 from core.managers import (
     auto_learning_persistence as legacy_learning_persistence,
 )
@@ -161,6 +169,8 @@ def test_legacy_auto_learning_application_imports_reuse_feature_implementation()
     """旧自主学习应用路径只能导出 learning application 的唯一实现。"""
 
     module_pairs = (
+        (legacy_learning_application, learning_application),
+        (legacy_learning_operations, learning_operations),
         (legacy_learning_persistence, learning_persistence),
         (legacy_learning_reload, learning_reload),
         (legacy_learning_retention, learning_retention),

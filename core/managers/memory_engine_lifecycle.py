@@ -255,6 +255,7 @@ class MemoryEngineLifecycleMixin:
 
         # 自主学习关闭时仍恢复状态，确保已有发布或中断 intent 可显式回滚。
         from ..features.learning.application import FeedbackSignalManager
+        from ..features.learning.application.auto_learning import AutoLearningManager
         from ..features.learning.domain.models import (
             FeedbackAdapterKind,
             FeedbackSignalPolicy,
@@ -265,7 +266,6 @@ class MemoryEngineLifecycleMixin:
         from ..features.learning.infrastructure.feedback_signal_store import (
             FeedbackSignalStore,
         )
-        from .auto_learning import AutoLearningManager
 
         auto_learning_enabled = bool(self.config.get("auto_learning.enabled", False))
         feedback_store = FeedbackSignalStore(
