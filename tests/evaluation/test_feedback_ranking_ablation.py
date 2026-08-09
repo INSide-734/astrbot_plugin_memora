@@ -10,13 +10,6 @@ from typing import Any
 
 import pytest
 
-from core.evaluation.feedback_learning_evidence import (
-    EvidenceEvaluatorConfig,
-    validate_learning_evidence,
-)
-from core.evaluation.feedback_learning_evidence_contract import (
-    REQUIRED_EVIDENCE_REGRESSION_CHECKS,
-)
 from core.evaluation.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
 )
@@ -32,6 +25,13 @@ from core.evaluation.feedback_ranking_ablation import (
     run_feedback_ranking_ablation,
 )
 from core.evaluation.retrieval_quality import EvaluationCase
+from core.features.learning.domain.feedback_learning_evidence import (
+    EvidenceEvaluatorConfig,
+    validate_learning_evidence,
+)
+from core.features.learning.domain.feedback_learning_evidence_contract import (
+    REQUIRED_EVIDENCE_REGRESSION_CHECKS,
+)
 from core.models.feedback_signal import FeedbackSignalAggregate, FeedbackSignalPolicy
 
 

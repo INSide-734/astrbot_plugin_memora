@@ -14,20 +14,20 @@ from core.api.learning_config_adapter import (
     LearningConfigApplyResult,
     LearningConfigSnapshot,
 )
-from core.evaluation.feedback_learning_evidence import (
-    LatencyEvidence,
-    QualityMetricEvidence,
-    build_learning_evidence,
-)
-from core.evaluation.feedback_learning_evidence_contract import (
-    REQUIRED_EVIDENCE_REGRESSION_CHECKS,
-)
 from core.features.learning.domain.auto_learning_actions import (
     CandidateBinding,
     aggregation_revision_for,
     reduce_global_candidate,
     stable_revision,
     weight_snapshot_hash,
+)
+from core.features.learning.domain.feedback_learning_evidence import (
+    LatencyEvidence,
+    QualityMetricEvidence,
+    build_learning_evidence,
+)
+from core.features.learning.domain.feedback_learning_evidence_contract import (
+    REQUIRED_EVIDENCE_REGRESSION_CHECKS,
 )
 from core.managers.auto_learning import (
     AutoLearningManager,

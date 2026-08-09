@@ -10,19 +10,19 @@ import threading
 import pytest
 
 from core.evaluation import feedback_learning_evidence_store as store_module
-from core.evaluation.feedback_learning_evidence import (
+from core.evaluation.feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
+    FeedbackLearningEvidenceProvider,
+    LearningEvidenceInboxError,
+)
+from core.features.learning.domain.feedback_learning_evidence import (
     EvidenceEvaluatorConfig,
     LatencyEvidence,
     QualityMetricEvidence,
     build_learning_evidence,
 )
-from core.evaluation.feedback_learning_evidence_contract import (
+from core.features.learning.domain.feedback_learning_evidence_contract import (
     REQUIRED_EVIDENCE_REGRESSION_CHECKS,
-)
-from core.evaluation.feedback_learning_evidence_store import (
-    FeedbackLearningEvidenceInbox,
-    FeedbackLearningEvidenceProvider,
-    LearningEvidenceInboxError,
 )
 
 _AGGREGATION_REVISION = "a" * 64

@@ -1,6 +1,10 @@
 """learning feature 的领域模型所有权与旧路径兼容契约。"""
 
 from core.api.learning_config_adapter import LearningConfigAdapter
+from core.evaluation import feedback_learning_evidence as legacy_learning_evidence
+from core.evaluation import (
+    feedback_learning_evidence_contract as legacy_learning_evidence_contract,
+)
 from core.evaluation.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
@@ -20,6 +24,12 @@ from core.features.learning.contracts import (
 )
 from core.features.learning.domain import auto_learning_actions as learning_actions
 from core.features.learning.domain import auto_learning_records as learning_records
+from core.features.learning.domain import (
+    feedback_learning_evidence as learning_evidence,
+)
+from core.features.learning.domain import (
+    feedback_learning_evidence_contract as learning_evidence_contract,
+)
 from core.features.learning.domain.models import (
     FEEDBACK_REASON_CODES,
     FeedbackAdapterKind,
@@ -108,6 +118,22 @@ def test_legacy_auto_learning_domain_imports_reuse_learning_implementation() -> 
         assert getattr(legacy_learning_actions, name) is getattr(learning_actions, name)
     for name in learning_records.__all__:
         assert getattr(legacy_learning_records, name) is getattr(learning_records, name)
+
+
+def test_legacy_learning_evidence_imports_reuse_learning_implementation() -> None:
+    """旧评测证据路径只能导出 learning domain 的唯一实现。"""
+
+    for name in legacy_learning_evidence.__all__:
+        assert getattr(legacy_learning_evidence, name) is getattr(
+            learning_evidence, name
+        )
+    assert legacy_learning_evidence_contract.__all__ == (
+        learning_evidence_contract.__all__
+    )
+    for name in learning_evidence_contract.__all__:
+        assert getattr(legacy_learning_evidence_contract, name) is getattr(
+            learning_evidence_contract, name
+        )
 
 
 def test_legacy_auto_learning_state_imports_reuse_learning_implementation() -> None:

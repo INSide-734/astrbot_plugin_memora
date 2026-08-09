@@ -10,12 +10,6 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Any
 
-from ..evaluation.feedback_learning_evidence import (
-    LearningEvidenceArtifact,
-    artifact_from_record,
-    artifact_to_record,
-    validate_learning_evidence,
-)
 from ..features.learning.application import FeedbackSignalManager
 from ..features.learning.domain.auto_learning_actions import (
     CandidateBinding,
@@ -29,6 +23,12 @@ from ..features.learning.domain.auto_learning_records import (
     publication_view,
     safe_reason,
     safe_status,
+)
+from ..features.learning.domain.feedback_learning_evidence import (
+    LearningEvidenceArtifact,
+    artifact_from_record,
+    artifact_to_record,
+    validate_learning_evidence,
 )
 from ..features.learning.domain.models import FeedbackSignalAggregate
 from ..features.learning.infrastructure.auto_learning_state import (

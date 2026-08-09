@@ -18,20 +18,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.evaluation.feedback_learning_evidence import (  # noqa: E402
-    EvidenceEvaluatorConfig,
-    FeedbackRankingConfigSnapshot,
-    build_feedback_ranking_replay_manifest,
-    feedback_ranking_case_hash,
-    parse_evidence_utc_timestamp,
-)
-from core.evaluation.feedback_learning_evidence_contract import (  # noqa: E402
-    ALLOWED_EVIDENCE_REGRESSION_FAILURES,
-    SUPPORTED_EVIDENCE_QUALITY_GATES,
-    complete_evidence_regression_checks,
-    safe_evidence_code,
-    safe_evidence_stage_name,
-)
 from core.evaluation.feedback_learning_evidence_store import (  # noqa: E402
     LearningEvidenceInboxError,
 )
@@ -43,6 +29,20 @@ from core.evaluation.feedback_ranking_ablation import (  # noqa: E402
     FeedbackRankingPairedSample,
 )
 from core.evaluation.retrieval_quality import EvaluationCase  # noqa: E402
+from core.features.learning.domain.feedback_learning_evidence import (  # noqa: E402
+    EvidenceEvaluatorConfig,
+    FeedbackRankingConfigSnapshot,
+    build_feedback_ranking_replay_manifest,
+    feedback_ranking_case_hash,
+    parse_evidence_utc_timestamp,
+)
+from core.features.learning.domain.feedback_learning_evidence_contract import (  # noqa: E402
+    ALLOWED_EVIDENCE_REGRESSION_FAILURES,
+    SUPPORTED_EVIDENCE_QUALITY_GATES,
+    complete_evidence_regression_checks,
+    safe_evidence_code,
+    safe_evidence_stage_name,
+)
 from core.features.learning.domain.models import (  # noqa: E402
     FeedbackSignalAggregate,
     FeedbackSignalPolicy,

@@ -14,11 +14,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..features.learning.domain.models import (
-    FeedbackSignalAggregate,
-    FeedbackSignalPolicy,
-)
-from .feedback_learning_evidence import (
+from ..features.learning.domain.feedback_learning_evidence import (
     EvidenceEvaluatorConfig,
     FeedbackRankingConfigSnapshot,
     FeedbackRankingReplayManifest,
@@ -38,10 +34,14 @@ from .feedback_learning_evidence import (
     validate_feedback_ranking_snapshots,
     validate_learning_evidence,
 )
-from .feedback_learning_evidence_contract import (
+from ..features.learning.domain.feedback_learning_evidence_contract import (
     ALLOWED_EVIDENCE_REGRESSION_FAILURES,
     complete_evidence_regression_checks,
     valid_evidence_binding,
+)
+from ..features.learning.domain.models import (
+    FeedbackSignalAggregate,
+    FeedbackSignalPolicy,
 )
 from .retrieval_quality import EvaluationCase, ndcg_at_k, recall_at_k, reciprocal_rank
 

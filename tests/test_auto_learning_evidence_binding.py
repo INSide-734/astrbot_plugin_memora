@@ -12,15 +12,6 @@ from core.api.learning_config_adapter import (
     LearningConfigApplyResult,
     LearningConfigSnapshot,
 )
-from core.evaluation.feedback_learning_evidence import (
-    LatencyEvidence,
-    LearningEvidenceArtifact,
-    QualityMetricEvidence,
-    build_learning_evidence,
-)
-from core.evaluation.feedback_learning_evidence_contract import (
-    REQUIRED_EVIDENCE_REGRESSION_CHECKS,
-)
 from core.evaluation.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
@@ -29,6 +20,15 @@ from core.features.learning.domain.auto_learning_actions import (
     aggregation_revision_for,
     stable_revision,
     weight_snapshot_hash,
+)
+from core.features.learning.domain.feedback_learning_evidence import (
+    LatencyEvidence,
+    LearningEvidenceArtifact,
+    QualityMetricEvidence,
+    build_learning_evidence,
+)
+from core.features.learning.domain.feedback_learning_evidence_contract import (
+    REQUIRED_EVIDENCE_REGRESSION_CHECKS,
 )
 from core.managers.auto_learning import AutoLearningManager
 from core.models.feedback_signal import FeedbackSignalAggregate

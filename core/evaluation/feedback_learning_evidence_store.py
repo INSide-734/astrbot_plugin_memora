@@ -13,13 +13,13 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from .feedback_learning_evidence import (
+from ..features.learning.domain.feedback_learning_evidence import (
     LearningEvidenceArtifact,
     artifact_from_record,
     artifact_to_record,
     validate_learning_evidence,
 )
-from .feedback_learning_evidence_contract import (
+from ..features.learning.domain.feedback_learning_evidence_contract import (
     SUPPORTED_EVIDENCE_QUALITY_GATES,
     valid_evidence_binding,
 )
