@@ -17,6 +17,7 @@ from .identity.runtime import ProtocolIdentityRuntime
 from .initializer.component_factory import ComponentFactory
 from .initializer.db_setup import DatabaseSetup
 from .initializer.faiss_checker import FaissChecker
+from .initializer.identity_lifecycle import close_identity_runtime_after_failure
 from .initializer.provider_loader import ProviderLoader
 from .initializer.provider_waiter import ProviderWaiter
 from .injection.recorder import InjectionDecisionRecorder
@@ -65,6 +66,7 @@ class PluginInitializer:
         self.memory_quarantine_store: MemoryQuarantineStore | None = None
         self.memory_quality_gate: MemoryQualityGate | None = None
         self.conversation_manager: ConversationManager | None = None
+        self.identity_runtime: ProtocolIdentityRuntime | None = None
         self.index_validator: IndexValidator | None = None
         self.decay_scheduler: DecayScheduler | None = None
         self.backfill_scheduler: BackfillScheduler | None = None
@@ -269,6 +271,7 @@ class PluginInitializer:
             self.memory_quarantine_store = components["memory_quarantine_store"]
             self.memory_quality_gate = components["memory_quality_gate"]
             self.conversation_manager = components["conversation_manager"]
+            self.identity_runtime = components["identity_runtime"]
             self.index_validator = components["index_validator"]
             self.decay_scheduler = components["decay_scheduler"]
             self.injection_decision_store = components["injection_decision_store"]
@@ -291,6 +294,7 @@ class PluginInitializer:
                 ("memory_quarantine_store", self.memory_quarantine_store),
                 ("memory_quality_gate", self.memory_quality_gate),
                 ("conversation_manager", self.conversation_manager),
+                ("identity_runtime", self.identity_runtime),
                 ("index_validator", self.index_validator),
                 ("decay_scheduler", self.decay_scheduler),
                 ("injection_store", self.injection_decision_store),
@@ -422,6 +426,7 @@ class PluginInitializer:
                         "初始化失败后关闭注入决策组件失败",
                         exc_info=True,
                     )
+            await close_identity_runtime_after_failure(self.identity_runtime)
             if isinstance(e, asyncio.CancelledError):
                 raise
             if not isinstance(e, Exception):
@@ -808,7 +813,7 @@ class PluginInitializer:
                 raise first_error
 
     async def close_extension_components(self) -> None:
-        """关闭可选认知组件及会话管理器持有的身份运行时。"""
+        """关闭可选认知组件及组合根拥有的身份运行时。"""
 
         for label, obj in (
             ("AffectionStore", self.affection_store),
@@ -816,7 +821,6 @@ class PluginInitializer:
         ):
             if obj and hasattr(obj, "close"):
                 await self._safe_step(f"关闭{label}", obj.close())
-        conversation_manager = self.conversation_manager
-        identity_runtime = getattr(conversation_manager, "identity_runtime", None)
-        if isinstance(identity_runtime, ProtocolIdentityRuntime):
+        identity_runtime = self.identity_runtime
+        if identity_runtime is not None:
             await self._safe_step("关闭协议身份运行时", identity_runtime.close())

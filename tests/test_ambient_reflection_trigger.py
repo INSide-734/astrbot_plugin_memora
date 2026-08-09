@@ -51,12 +51,16 @@ def _group_event() -> MagicMock:
 async def test_group_capture_checks_only_ambient_messages_after_persisting() -> None:
     """环境消息落库后应检查阈值，唤醒 Bot 的消息则等待响应钩子。"""
 
+    from core.identity.runtime import ProtocolIdentityRuntime
+
     config = MagicMock()
     config.get.side_effect = lambda key, default=None: (
         True if key == "session_manager.enable_full_group_capture" else default
     )
     conversation = MagicMock()
-    conversation.identity_runtime = None
+    identity_runtime = ProtocolIdentityRuntime()
+    identity_runtime.resolve = MagicMock(return_value=_unsupported_group_identity())
+    conversation.identity_runtime = identity_runtime
     conversation.add_message_from_event = AsyncMock()
     handler = EventHandler(
         context=MagicMock(),
@@ -64,9 +68,6 @@ async def test_group_capture_checks_only_ambient_messages_after_persisting() -> 
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
-    )
-    handler._identity_runtime.resolve = MagicMock(
-        return_value=_unsupported_group_identity()
     )
     handler._extractor.extract_message_content = AsyncMock(return_value="普通群消息")
     handler._dedup.build_dedup_key = AsyncMock(return_value=None)

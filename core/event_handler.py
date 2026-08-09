@@ -27,7 +27,6 @@ from .handlers.recall_handler import RecallHandler
 from .handlers.recall_observability import RecallTimingContext
 from .handlers.reflection_handler import ReflectionHandler
 from .identity.models import IdentityTrust, ResolvedIdentity
-from .identity.runtime import ProtocolIdentityRuntime
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
 from .monitoring import (
@@ -37,6 +36,7 @@ from .monitoring import (
     report_debug_exception,
 )
 from .processors.memory_processor import MemoryProcessor
+from .shared.contracts import IdentityConversationPort
 from .utils.injection_adapter import InjectionAdapter
 
 if TYPE_CHECKING:
@@ -98,10 +98,10 @@ class EventHandler:
             else build_cost_control_from_config(cost_control_section)
         )
         identity_runtime = getattr(conversation_manager, "identity_runtime", None)
-        self._identity_runtime = (
+        self._identity_runtime: IdentityConversationPort | None = (
             identity_runtime
-            if isinstance(identity_runtime, ProtocolIdentityRuntime)
-            else ProtocolIdentityRuntime()
+            if isinstance(identity_runtime, IdentityConversationPort)
+            else None
         )
 
         self._dedup = DedupManager(max_size=1000, ttl=300)
@@ -125,7 +125,11 @@ class EventHandler:
             perf_tracker=perf_tracker,
             injection_recorder=injection_recorder,
             memory_tool_available=memory_tool_available,
-            identity_enricher=self._identity_runtime.enricher,
+            identity_enricher=(
+                self._identity_runtime.enricher
+                if self._identity_runtime is not None
+                else None
+            ),
             query_rewrite_llm_caller=partial(
                 memory_processor.llm_client.call_llm_with_retry,
                 system_prompt="只解析记忆查询意图并返回要求的 JSON。",
@@ -496,7 +500,6 @@ class EventHandler:
                         await asyncio.gather(*pending, return_exceptions=True)
                 finally:
                     self._maintenance_tasks.clear()
-            await self._identity_runtime.close()
             if self._injection_recorder is not None:
                 await self._injection_recorder.close(timeout=5.0)
         except asyncio.CancelledError:
@@ -537,6 +540,25 @@ class EventHandler:
 
     # ---- 内部方法 ----
 
+    @staticmethod
+    def _unavailable_identity() -> ResolvedIdentity:
+        """在未注入身份端口时返回拒绝身份写入的安全降级快照。"""
+
+        return ResolvedIdentity(
+            protocol="",
+            identity_namespace="",
+            stable_user_id=None,
+            canonical_user_id=None,
+            scope_type=None,
+            scope_id=None,
+            global_name=None,
+            scope_name=None,
+            display_name=None,
+            observed_at=0.0,
+            trust_status=IdentityTrust.UNSUPPORTED,
+            name_field_states={},
+        )
+
     def _resolve_identity(
         self,
         event: AstrMessageEvent,
@@ -545,7 +567,10 @@ class EventHandler:
     ) -> ResolvedIdentity:
         """同步解析身份，并把可信名称目录更新交给受管理任务。"""
 
-        identity = self._identity_runtime.resolve(event)
+        runtime = self._identity_runtime
+        if runtime is None:
+            return self._unavailable_identity()
+        identity = runtime.resolve(event)
         self._schedule_identity_sync(
             event,
             identity,
@@ -562,7 +587,12 @@ class EventHandler:
     ) -> None:
         """为同一事件至多调度一次可信身份目录同步。"""
 
-        if writes_blocked or identity.trust_status is not IdentityTrust.TRUSTED:
+        runtime = self._identity_runtime
+        if (
+            runtime is None
+            or writes_blocked
+            or identity.trust_status is not IdentityTrust.TRUSTED
+        ):
             return
         if getattr(event, self._IDENTITY_SYNC_MARKER_ATTR, False) is True:
             return
@@ -572,7 +602,7 @@ class EventHandler:
         except Exception:
             logger.debug("协议身份同步标记写入失败，将继续执行本次同步")
 
-        coroutine = self._identity_runtime.synchronize(
+        coroutine = runtime.synchronize(
             event,
             identity,
             writes_blocked=False,

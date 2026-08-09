@@ -48,6 +48,7 @@ async def test_runtime_write_and_quality_api_share_one_scorer(
             "memory_quarantine_store": MagicMock(),
             "memory_quality_gate": MagicMock(),
             "conversation_manager": MagicMock(),
+            "identity_runtime": SimpleNamespace(close=AsyncMock()),
             "index_validator": MagicMock(),
             "decay_scheduler": None,
             "injection_decision_store": MagicMock(),

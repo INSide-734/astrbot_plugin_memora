@@ -1,14 +1,4 @@
-"""
-会话管理器 - ConversationManager
-提供高级的会话和消息管理功能
-
-功能:
-- 会话生命周期管理
-- LRU缓存热点会话
-- 上下文窗口管理
-- 群聊场景支持
-- AstrBot事件集成
-"""
+"""会话、消息缓存与 AstrBot 事件适配管理器。"""
 
 import asyncio
 from collections import OrderedDict
@@ -16,7 +6,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..identity.runtime import ProtocolIdentityRuntime
+from ..shared.contracts import IdentityConversationPort
 from ..storage.conversation_store import ConversationStore
 from .event_adapter import EventAdapterMixin
 from .message_operations import MessageOperationsMixin
@@ -32,16 +22,7 @@ class ConversationManager(
     RangeAndMetadataMixin,
     SessionCacheMixin,
 ):
-    """
-    会话管理器 - 提供高级的会话和消息管理功能
-
-    功能:
-    - 会话生命周期管理
-    - LRU缓存热点会话
-    - 上下文窗口管理
-    - 群聊场景支持
-    - AstrBot事件集成
-    """
+    """管理会话生命周期、缓存、历史消息及其身份端口引用。"""
 
     def __init__(
         self,
@@ -49,23 +30,22 @@ class ConversationManager(
         max_cache_size: int = 100,
         context_window_size: int = 50,
         session_ttl: int = 3600,
-        identity_runtime: ProtocolIdentityRuntime | None = None,
+        identity_runtime: IdentityConversationPort | None = None,
     ) -> None:
-        """
-        初始化会话管理器
+        """初始化会话管理器。
 
-        Args:
-            store: ConversationStore实例
-            max_cache_size: LRU缓存大小
-            context_window_size: 上下文窗口大小(保留最近N条消息)
-            session_ttl: 会话过期时间(秒)
-            identity_runtime: 可选的协议身份运行时
+        参数:
+            store: 已初始化的会话持久化 Store。
+            max_cache_size: LRU 缓存中最多保留的会话数量。
+            context_window_size: 单会话上下文最多保留的消息数量。
+            session_ttl: 会话缓存的过期秒数。
+            identity_runtime: 由组合根注入的身份会话端口；缺失时保持关闭。
         """
         self.store = store
         self.max_cache_size = max_cache_size
         self.context_window_size = context_window_size
         self.session_ttl = session_ttl
-        self.identity_runtime = identity_runtime or ProtocolIdentityRuntime()
+        self.identity_runtime = identity_runtime
 
         # LRU缓存: {session_id: (messages, last_access_time)}
         self._cache: OrderedDict = OrderedDict()
@@ -78,26 +58,24 @@ class ConversationManager(
         )
 
     async def close_identity_runtime(self) -> None:
-        """关闭身份运行时持有的独立 Store 连接。"""
+        """兼容旧关闭入口；仅委托显式提供关闭能力的已注入运行时。"""
 
-        await self.identity_runtime.close()
+        close = getattr(self.identity_runtime, "close", None)
+        if callable(close):
+            await close()
 
 
 def create_conversation_manager(
     db_path: str, config: dict[str, Any] | None = None
 ) -> ConversationManager:
-    """
-    便捷创建函数
+    """按配置创建会话管理器，身份端口留待组合根后续注入。
 
-    Args:
-        db_path: 数据库路径
-        config: 配置字典,可包含:
-            - max_cache_size: LRU缓存大小
-            - context_window_size: 上下文窗口大小
-            - session_ttl: 会话过期时间
+    参数:
+        db_path: 会话 SQLite 数据库路径。
+        config: 可选配置，可含缓存大小、上下文窗口和会话过期秒数。
 
-    Returns:
-        ConversationManager实例
+    返回:
+        未拥有身份运行时的会话管理器实例。
     """
     config = config or {}
     store = ConversationStore(db_path)

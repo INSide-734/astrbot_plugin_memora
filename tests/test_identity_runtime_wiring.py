@@ -638,8 +638,92 @@ async def test_initializer_closes_identity_runtime_without_event_handler(
     store.close = AsyncMock()
     runtime = ProtocolIdentityRuntime(store=store)
     initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
-    initializer.conversation_manager = SimpleNamespace(identity_runtime=runtime)
+    initializer.conversation_manager = SimpleNamespace(identity_runtime=None)
+    initializer.identity_runtime = runtime
 
     await initializer.close_extension_components()
 
     store.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "cancel_initialization", [False, True], ids=["error", "cancel"]
+)
+@pytest.mark.asyncio
+async def test_initializer_closes_published_identity_runtime_after_init_failure(
+    tmp_path,
+    cancel_initialization: bool,
+) -> None:
+    """运行时发布后的初始化失败或取消都必须释放身份 Store。"""
+
+    from core.base.exceptions import InitializationError
+    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.plugin_initializer import PluginInitializer
+
+    store = MagicMock()
+    store.close = AsyncMock()
+    runtime = ProtocolIdentityRuntime(store=store)
+    memory_processor = MagicMock()
+    initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
+    initializer._faiss_checker.load_vec_db_class = MagicMock(return_value=MagicMock())
+    initializer._component_factory.build_all = AsyncMock(
+        return_value={
+            "db": MagicMock(),
+            "graph_db": None,
+            "memory_engine": MagicMock(),
+            "memory_processor": memory_processor,
+            "memory_quarantine_store": MagicMock(),
+            "memory_quality_gate": MagicMock(),
+            "conversation_manager": SimpleNamespace(identity_runtime=runtime),
+            "identity_runtime": runtime,
+            "index_validator": MagicMock(),
+            "decay_scheduler": None,
+            "injection_decision_store": None,
+            "injection_decision_recorder": None,
+        }
+    )
+    initializer._create_prompt_protection_service = MagicMock(return_value=None)
+
+    if cancel_initialization:
+        cognitive_started = asyncio.Event()
+
+        async def block_cognitive_initialization() -> None:
+            """等待测试任务取消，模拟发布后的初始化中断。"""
+
+            cognitive_started.set()
+            await asyncio.Future()
+
+        initializer._initialize_cognitive_components = block_cognitive_initialization
+        init_task = asyncio.create_task(initializer._run_full_init())
+        await cognitive_started.wait()
+        init_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await init_task
+    else:
+        initializer._initialize_cognitive_components = AsyncMock(
+            side_effect=RuntimeError("cognitive failed")
+        )
+        with pytest.raises(InitializationError, match="cognitive failed"):
+            await initializer._run_full_init()
+
+    store.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_init_identity_cleanup_propagates_only_cancellation() -> None:
+    """身份关闭普通错误应降级，取消信号必须继续传播。"""
+
+    from core.initializer.identity_lifecycle import (
+        close_identity_runtime_after_failure,
+    )
+
+    runtime = MagicMock()
+    runtime.close = AsyncMock(side_effect=RuntimeError("private"))
+
+    await close_identity_runtime_after_failure(runtime)
+
+    runtime.close.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await close_identity_runtime_after_failure(runtime)
+
+    assert runtime.close.await_count == 2
