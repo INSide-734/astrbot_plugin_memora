@@ -25,12 +25,12 @@ from core.evaluation.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
 )
-from core.managers.auto_learning import AutoLearningManager
-from core.managers.auto_learning_actions import (
+from core.features.learning.domain.auto_learning_actions import (
     aggregation_revision_for,
     stable_revision,
     weight_snapshot_hash,
 )
+from core.managers.auto_learning import AutoLearningManager
 from core.models.feedback_signal import FeedbackSignalAggregate
 
 

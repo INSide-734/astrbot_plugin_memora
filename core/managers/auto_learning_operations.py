@@ -9,12 +9,12 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .auto_learning_actions import (
+from ..features.learning.domain.auto_learning_actions import (
     is_opaque_id,
     new_opaque_id,
     weight_snapshot_hash,
 )
-from .auto_learning_records import (
+from ..features.learning.domain.auto_learning_records import (
     operation_key,
     publish_failure,
     rollback_failure,

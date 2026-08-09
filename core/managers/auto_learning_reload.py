@@ -8,7 +8,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .auto_learning_records import utc_now
+from ..features.learning.domain.auto_learning_records import utc_now
 from .auto_learning_state import AutoLearningStatePersistenceError
 
 _OPAQUE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{22,128}\Z", re.ASCII)

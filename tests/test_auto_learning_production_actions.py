@@ -22,16 +22,16 @@ from core.evaluation.feedback_learning_evidence import (
 from core.evaluation.feedback_learning_evidence_contract import (
     REQUIRED_EVIDENCE_REGRESSION_CHECKS,
 )
-from core.managers.auto_learning import (
-    AutoLearningManager,
-    AutoLearningStatePersistenceError,
-)
-from core.managers.auto_learning_actions import (
+from core.features.learning.domain.auto_learning_actions import (
     CandidateBinding,
     aggregation_revision_for,
     reduce_global_candidate,
     stable_revision,
     weight_snapshot_hash,
+)
+from core.managers.auto_learning import (
+    AutoLearningManager,
+    AutoLearningStatePersistenceError,
 )
 from core.models.feedback_signal import FeedbackSignalAggregate
 

@@ -6,8 +6,8 @@ import copy
 from collections.abc import Mapping
 from typing import Any
 
-from .auto_learning_actions import new_opaque_id
-from .auto_learning_records import (
+from ..features.learning.domain.auto_learning_actions import new_opaque_id
+from ..features.learning.domain.auto_learning_records import (
     legacy_candidate,
     legacy_intent,
     legacy_publication,

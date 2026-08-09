@@ -17,15 +17,12 @@ from ..evaluation.feedback_learning_evidence import (
     validate_learning_evidence,
 )
 from ..features.learning.application import FeedbackSignalManager
-from ..features.learning.domain.models import FeedbackSignalAggregate
-from .auto_learning_actions import (
+from ..features.learning.domain.auto_learning_actions import (
     CandidateBinding,
     aggregation_revision_for,
     reduce_global_candidate,
 )
-from .auto_learning_operations import AutoLearningOperationsMixin
-from .auto_learning_persistence import AutoLearningPersistenceMixin
-from .auto_learning_records import (
+from ..features.learning.domain.auto_learning_records import (
     candidate_status_view,
     claim_view,
     parse_datetime,
@@ -33,6 +30,9 @@ from .auto_learning_records import (
     safe_reason,
     safe_status,
 )
+from ..features.learning.domain.models import FeedbackSignalAggregate
+from .auto_learning_operations import AutoLearningOperationsMixin
+from .auto_learning_persistence import AutoLearningPersistenceMixin
 from .auto_learning_reload import AutoLearningReloadMixin
 from .auto_learning_retention import AutoLearningRetentionMixin
 from .auto_learning_state import (

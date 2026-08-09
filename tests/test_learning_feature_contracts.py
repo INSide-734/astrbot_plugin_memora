@@ -18,6 +18,8 @@ from core.features.learning.contracts import (
     LearningConfigAdapterPort,
     LearningEvidenceProviderPort,
 )
+from core.features.learning.domain import auto_learning_actions as learning_actions
+from core.features.learning.domain import auto_learning_records as learning_records
 from core.features.learning.domain.models import (
     FEEDBACK_REASON_CODES,
     FeedbackAdapterKind,
@@ -28,6 +30,8 @@ from core.features.learning.domain.models import (
     build_trusted_feedback_event,
 )
 from core.features.learning.infrastructure import FeedbackSignalStore
+from core.managers import auto_learning_actions as legacy_learning_actions
+from core.managers import auto_learning_records as legacy_learning_records
 from core.managers.feedback_signal_manager import (
     FeedbackIngestResult as LegacyFeedbackIngestResult,
 )
@@ -91,6 +95,17 @@ def test_legacy_feedback_service_imports_reuse_learning_implementation() -> None
     assert LegacyFeedbackSignalManager is FeedbackSignalManager
     assert legacy_record_explicit_correction is record_explicit_correction
     assert legacy_revoke_explicit_correction is revoke_explicit_correction
+
+
+def test_legacy_auto_learning_domain_imports_reuse_learning_implementation() -> None:
+    """旧自主学习领域路径只能导出 learning domain 的唯一实现。"""
+
+    assert legacy_learning_actions.__all__ == learning_actions.__all__
+    assert legacy_learning_records.__all__ == learning_records.__all__
+    for name in learning_actions.__all__:
+        assert getattr(legacy_learning_actions, name) is getattr(learning_actions, name)
+    for name in learning_records.__all__:
+        assert getattr(legacy_learning_records, name) is getattr(learning_records, name)
 
 
 def test_learning_ports_accept_existing_implementations_structurally(tmp_path) -> None:

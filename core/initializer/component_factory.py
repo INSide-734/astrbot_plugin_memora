@@ -19,6 +19,7 @@ from ..features.identity.application.service import ProtocolIdentityService
 from ..features.identity.infrastructure.store import ProtocolIdentityStore
 from ..features.knowledge.application import KnowledgeProposalPipeline
 from ..features.knowledge.infrastructure import KnowledgeExtractor
+from ..features.learning.domain.auto_learning_actions import aggregation_revision_for
 from ..features.memory.infrastructure.validators import IndexValidator
 from ..features.notes.application import NoteProposalPipeline
 from ..features.notes.infrastructure import NoteGenerator
@@ -29,7 +30,6 @@ from ..identity.memory import MemoryIdentityEnricher
 from ..identity.resolver import ProtocolIdentityResolver
 from ..identity.runtime import ProtocolIdentityRuntime
 from ..injection.recorder import InjectionDecisionRecorder
-from ..managers.auto_learning_actions import aggregation_revision_for
 from ..managers.backup_manager import BackupManager
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
