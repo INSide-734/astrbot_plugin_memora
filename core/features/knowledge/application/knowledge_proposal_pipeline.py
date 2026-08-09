@@ -10,16 +10,15 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
-from core.base.cost_control import CostControl
-from core.base.extra_llm_budget import budgeted_extra_llm_call
-from core.features.knowledge.contracts import (
+from ....base.cost_control import CostControl
+from ....base.extra_llm_budget import budgeted_extra_llm_call
+from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....shared.contracts import MemorySourceRef
+from ..contracts import (
     KnowledgeExtractorPort,
     KnowledgeSourceReaderPort,
 )
-from core.features.knowledge.domain.models import KnowledgeEntry, KnowledgeType
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.shared.contracts import MemorySourceRef
-
+from ..domain.models import KnowledgeEntry, KnowledgeType
 from .knowledge_manager import KnowledgeManager
 
 _MAX_TITLE_CHARS = 100

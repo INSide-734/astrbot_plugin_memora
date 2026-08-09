@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from core.shared.temporal import parse_datetime, serialize_datetime
-
+from ....shared.temporal import parse_datetime, serialize_datetime
 from ..domain.models import (
     DerivedState,
     ProjectionType,

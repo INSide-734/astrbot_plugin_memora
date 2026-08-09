@@ -7,9 +7,9 @@ from typing import Any
 
 from astrbot.api import logger
 
-from core.features.notes.contracts import NoteStorePort
-from core.features.notes.domain.models import Note, NoteStatus, NoteVersion
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ..contracts import NoteStorePort
+from ..domain.models import Note, NoteStatus, NoteVersion
 
 
 class NoteManager:

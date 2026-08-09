@@ -12,17 +12,16 @@ import uuid
 from datetime import datetime, timezone
 from typing import Iterable
 
-from core.adapter_capabilities import (
+from ....adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
     AdapterKind,
 )
-from core.features.memory.infrastructure.base_store import BaseStore
-from core.shared.temporal import (
+from ....shared.temporal import (
     infer_time_precision,
     parse_datetime,
 )
-
+from ...memory.infrastructure.base_store import BaseStore
 from ..domain.models import (
     DerivedApplyPlan,
     JobClaim,

@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from core.shared.contracts import MemorySourceRef
-from core.shared.temporal import normalize_datetime, validate_time_labels
+from ....shared.contracts import MemorySourceRef
+from ....shared.temporal import normalize_datetime, validate_time_labels
 
 
 class RelationType(str, Enum):

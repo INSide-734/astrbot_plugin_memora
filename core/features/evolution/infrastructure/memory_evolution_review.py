@@ -6,8 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from core.shared.temporal import serialize_datetime
-
+from ....shared.temporal import serialize_datetime
 from ..domain.models import (
     DerivedApplyPlan,
     DerivedState,

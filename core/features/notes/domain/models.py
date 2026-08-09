@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
 
 
 class NoteStatus(str, Enum):

@@ -6,17 +6,16 @@ from typing import Any
 
 import aiosqlite
 
-from core.features.memory.infrastructure.base import BaseStore
-from core.features.memory.infrastructure.canonical_source_validation import (
-    validate_domain_provenance,
-)
-from core.models.domain_provenance import (
+from ....models.domain_provenance import (
     DomainObjectOrigin,
     DomainProvenance,
     merge_domain_provenance,
 )
-from core.storage.domain_object_integrity import filter_current_domain_objects
-
+from ....storage.domain_object_integrity import filter_current_domain_objects
+from ...memory.infrastructure.base import BaseStore
+from ...memory.infrastructure.canonical_source_validation import (
+    validate_domain_provenance,
+)
 from ..domain.models import TagCategory, UserTag
 
 

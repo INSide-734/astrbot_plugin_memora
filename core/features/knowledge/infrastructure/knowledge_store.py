@@ -6,15 +6,14 @@ import json
 import time
 from typing import Any
 
-from core.features.knowledge.domain.models import KnowledgeEntry, KnowledgeType
-from core.features.memory.infrastructure.base import BaseStore
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.storage.domain_object_integrity import (
+from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....shared.list_sorting import SortQuery, order_by_clause
+from ....storage.domain_object_integrity import (
     filter_current_domain_objects,
     validate_domain_object_write,
 )
-
-from ....shared.list_sorting import SortQuery, order_by_clause
+from ...memory.infrastructure.base import BaseStore
+from ..domain.models import KnowledgeEntry, KnowledgeType
 
 KNOWLEDGE_SORT_COLUMNS = {
     "title": "title COLLATE NOCASE",
