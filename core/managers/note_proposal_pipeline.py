@@ -9,10 +9,10 @@ from typing import Any, Protocol
 
 from ..base.cost_control import CostControl
 from ..base.extra_llm_budget import budgeted_extra_llm_call
+from ..features.notes.application.note_manager import NoteManager
 from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ..models.memory_evolution import MemorySourceRef
 from ..processors.note_generator import NoteGenerator
-from .note_manager import NoteManager
 
 _MAX_SOURCE_CHARS = 4_000
 _MAX_TITLE_CHARS = 80
