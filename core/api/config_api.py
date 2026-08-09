@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import copy
-import json
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
@@ -94,23 +92,28 @@ class ConfigApiMixin:
             return None
         return astrbot_web_request
 
-    @staticmethod
-    def _load_local_schema() -> Mapping[str, Any] | None:
-        """当宿主未注入 Schema 时，从插件目录读取配置契约。"""
-        schema_path = Path(__file__).resolve().parents[2] / "_conf_schema.json"
-        try:
-            with schema_path.open(encoding="utf-8") as schema_file:
-                schema = json.load(schema_file)
-        except (OSError, json.JSONDecodeError, TypeError):
+    def _load_local_schema(self) -> Mapping[str, Any] | None:
+        """从插件组合根注入的资源定位器读取 Schema 兜底。"""
+
+        locator = getattr(self.plugin, "resource_locator", None)
+        if locator is None:
             return None
-        return schema if isinstance(schema, Mapping) and schema else None
+        try:
+            return locator.load_schema(None)
+        except Exception:
+            return None
 
     async def get_config_schema(self) -> dict[str, Any]:
         """返回 AstrBot 注入的 Schema、插件本地 Schema 兜底与可用 Provider。"""
         try:
             config_source = getattr(self.plugin, "astrbot_config", None)
             schema = getattr(config_source, "schema", _NO_DATA)
-            if schema is _NO_DATA:
+            locator = getattr(self.plugin, "resource_locator", None)
+            if locator is not None:
+                schema = locator.load_schema(
+                    None if schema is _NO_DATA else schema,
+                )
+            elif schema is _NO_DATA:
                 schema = self._load_local_schema()
             if not isinstance(schema, Mapping) or not schema:
                 raise ValueError("invalid schema")

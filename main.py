@@ -36,6 +36,10 @@ from .core.monitoring import (
     report_debug_exception,
     set_debug_mode,
 )
+from .core.platform.resources import (
+    PluginResourceLocator,
+    build_package_resource_reader,
+)
 from .core.plugin_initializer import PluginInitializer
 from .core.plugin_reload_lifecycle import run_scheduled_plugin_reload
 from .core.plugin_reload_lifecycle import (
@@ -77,7 +81,14 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
 
         # 保留 AstrBot 注入对象，配置变更通过其原子保存能力持久化
         self.astrbot_config = config
-        self.config_manager = ConfigManager(self.astrbot_config)
+        self.resource_locator = PluginResourceLocator(
+            Path(__file__).resolve().parent,
+            package_reader=build_package_resource_reader(__package__),
+        )
+        self.config_manager = ConfigManager(
+            self.astrbot_config,
+            resource_locator=self.resource_locator,
+        )
         self._update_manager = UpdateManager(
             data_dir,
             self.config_manager,
@@ -86,7 +97,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         self._update_installer = RuntimeUpdateInstaller(
             context=self.context,
             data_dir=data_dir,
-            plugin_root=Path(__file__).resolve().parent,
+            plugin_root=self.resource_locator.plugin_root,
             update_manager=self._update_manager,
         )
 

@@ -5,8 +5,10 @@ from .locator import (
     ResourceNotAllowedError,
     ResourceNotFoundError,
 )
+from .package_reader import build_package_resource_reader
 
 __all__ = [
+    "build_package_resource_reader",
     "PluginResourceLocator",
     "ResourceNotAllowedError",
     "ResourceNotFoundError",

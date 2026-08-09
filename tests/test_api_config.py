@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,6 +16,9 @@ from core.base.config_manager import (
     ConfigPersistenceError,
     ConfigValidationError,
 )
+from core.platform.resources import PluginResourceLocator
+
+_PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
 class _SchemaConfig(dict):
@@ -82,6 +86,7 @@ def _make_api(
             schema if schema is not None else {"field": {"type": "string"}}
         ),
         config_manager=config_manager or MagicMock(),
+        resource_locator=PluginResourceLocator(_PLUGIN_ROOT),
         context=context,
         instance_id="instance-123",
         supports_plugin_reload=MagicMock(return_value=hot_reload),
@@ -181,8 +186,11 @@ class TestConfigSchemaApi:
         }
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("schema", [None, [], {}, "bad-schema"])
-    async def test_invalid_or_unavailable_schema_has_stable_error_shape(
+    @pytest.mark.parametrize(
+        "schema",
+        [None, [], {}, "bad-schema", {"broken": "schema"}],
+    )
+    async def test_invalid_host_schema_falls_back_to_local_resource(
         self, schema: Any
     ) -> None:
         api, plugin = _make_api()
@@ -190,10 +198,31 @@ class TestConfigSchemaApi:
 
         result = await api.get_config_schema()
 
-        assert result["status"] == "error"
-        assert result["code"] == "schema_unavailable"
-        assert isinstance(result["message"], str) and result["message"]
-        assert set(result) == {"status", "code", "message"}
+        assert result["status"] == "ok"
+        assert "debug" in result["data"]["schema"]
+
+    @pytest.mark.asyncio
+    async def test_schema_unavailable_has_stable_error_when_fallback_fails(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """host 与 source Schema 均不可用时返回稳定错误 envelope。"""
+
+        api, plugin = _make_api()
+        plugin.astrbot_config.schema = {"broken": "schema"}
+        monkeypatch.setattr(
+            plugin.resource_locator,
+            "load_schema",
+            lambda _schema=None: None,
+        )
+
+        result = await api.get_config_schema()
+
+        assert result == {
+            "status": "error",
+            "code": "schema_unavailable",
+            "message": "AstrBot 配置 Schema 不可用",
+        }
 
     @pytest.mark.asyncio
     async def test_schema_read_does_not_require_initialized_memory_engine(self) -> None:

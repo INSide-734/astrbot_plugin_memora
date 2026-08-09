@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from core.platform.resources import PluginResourceLocator
 from tests.config_contract_support import BlockingSavingConfig, SavingConfig
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -498,7 +499,7 @@ async def test_apply_detects_external_source_change_during_persistence() -> None
 async def test_apply_rejects_unknown_leaf_when_schema_is_available() -> None:
     from core.base.config_manager import ConfigManager, ConfigValidationError
 
-    manager = ConfigManager({})
+    manager = ConfigManager({}, resource_locator=PluginResourceLocator(ROOT))
     _, revision = manager.get_config_snapshot()
 
     with pytest.raises(ConfigValidationError) as exc_info:
@@ -511,9 +512,7 @@ async def test_apply_rejects_unknown_leaf_when_schema_is_available() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_prefers_valid_injected_schema_when_repo_schema_is_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_apply_prefers_valid_injected_schema() -> None:
     from core.base.config_manager import ConfigManager, ConfigValidationError
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
@@ -524,10 +523,6 @@ async def test_apply_prefers_valid_injected_schema_when_repo_schema_is_missing(
         }
     }
 
-    def missing_schema(*args: Any, **kwargs: Any) -> str:
-        raise FileNotFoundError("repo schema unavailable")
-
-    monkeypatch.setattr(Path, "read_text", missing_schema)
     manager = ConfigManager(source)
     _, revision = manager.get_config_snapshot()
 
@@ -549,38 +544,10 @@ async def test_persistent_source_fails_closed_when_schema_is_missing(
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
 
-    def missing_schema(*args: Any, **kwargs: Any) -> str:
-        raise FileNotFoundError("repo schema unavailable")
-
-    monkeypatch.setattr(Path, "read_text", missing_schema)
-    manager = ConfigManager(source)
-    source_before = copy.deepcopy(dict(source))
-    snapshot_before = manager.get_config_snapshot()
-
-    with pytest.raises(ConfigValidationError) as exc_info:
-        await manager.apply_config_changes(
-            {"recall_engine.top_k": 8},
-            expected_revision=snapshot_before[1],
-        )
-
-    assert "*" in exc_info.value.field_errors
-    assert dict(source) == source_before
-    assert source.saved_snapshots == []
-    assert manager.get_config_snapshot() == snapshot_before
-
-
-@pytest.mark.asyncio
-async def test_persistent_source_fails_closed_when_schemas_are_malformed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
-
-    source = SavingConfig({"recall_engine": {"top_k": 5}})
-    source.schema = {"recall_engine": {"type": "object", "items": "not-an-object"}}
     monkeypatch.setattr(
-        Path,
-        "read_text",
-        lambda *args, **kwargs: "{malformed-json",
+        source.resource_locator,
+        "load_schema",
+        lambda _schema=None: None,
     )
     manager = ConfigManager(source)
     source_before = copy.deepcopy(dict(source))
@@ -599,15 +566,61 @@ async def test_persistent_source_fails_closed_when_schemas_are_malformed(
 
 
 @pytest.mark.asyncio
-async def test_plain_dict_remains_usable_without_schema(
+async def test_persistent_source_falls_back_to_resource_schema_for_malformed_host() -> (
+    None
+):
+    """持久化源的畸形 host Schema 应回退到合法资源 Schema。"""
+
+    from core.base.config_manager import ConfigManager, ConfigValidationError
+
+    source = SavingConfig({"recall_engine": {"top_k": 5}})
+    source.schema = {"recall_engine": {"type": "object", "items": "bad"}}
+    manager = ConfigManager(source)
+    _, revision = manager.get_config_snapshot()
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        await manager.apply_config_changes(
+            {"recall_engine.not_a_real_setting": True},
+            expected_revision=revision,
+        )
+
+    assert "recall_engine.not_a_real_setting" in exc_info.value.field_errors
+    assert source.saved_snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_persistent_source_fails_closed_when_schemas_are_malformed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from core.base.config_manager import ConfigManager, ConfigValidationError
+
+    source = SavingConfig({"recall_engine": {"top_k": 5}})
+    source.schema = {"recall_engine": {"type": "object", "items": "not-an-object"}}
+    monkeypatch.setattr(
+        source.resource_locator,
+        "load_schema",
+        lambda _schema=None: None,
+    )
+    manager = ConfigManager(source)
+    source_before = copy.deepcopy(dict(source))
+    snapshot_before = manager.get_config_snapshot()
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        await manager.apply_config_changes(
+            {"recall_engine.top_k": 8},
+            expected_revision=snapshot_before[1],
+        )
+
+    assert "*" in exc_info.value.field_errors
+    assert dict(source) == source_before
+    assert source.saved_snapshots == []
+    assert manager.get_config_snapshot() == snapshot_before
+
+
+@pytest.mark.asyncio
+async def test_plain_dict_remains_usable_without_schema() -> None:
     from core.base.config_manager import ConfigManager
 
-    def missing_schema(*args: Any, **kwargs: Any) -> str:
-        raise FileNotFoundError("repo schema unavailable")
-
-    monkeypatch.setattr(Path, "read_text", missing_schema)
     source: dict[str, Any] = {"recall_engine": {"top_k": 5}}
     manager = ConfigManager(source)
 

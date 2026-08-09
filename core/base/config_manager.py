@@ -9,8 +9,7 @@ import json
 import math
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 from pydantic import ValidationError as PydanticValidationError
@@ -22,6 +21,9 @@ from .config_validator import (
     merge_config_with_defaults,
 )
 from .exceptions import ConfigurationError
+
+if TYPE_CHECKING:
+    from ..platform.resources import PluginResourceLocator
 
 _SENTINEL = object()
 _INJECTION_PRESETS = {"tool_first", "low_cost", "balanced", "quality"}
@@ -74,10 +76,21 @@ class ConfigManager:
     def __init__(
         self,
         user_config: MutableMapping[str, Any] | None = None,
+        *,
+        resource_locator: PluginResourceLocator | None = None,
     ) -> None:
-        """载入外部配置源，并建立隔离的已校验运行时快照。"""
+        """载入外部配置源，并建立隔离的已校验运行时快照。
+
+        参数:
+            user_config: AstrBot 注入的可变配置映射。
+            resource_locator: 由组合根注入的插件资源定位器；用于读取
+                配置 Schema，缺失时只使用合法的 host 注入 Schema。
+        """
 
         self._source_config = user_config if user_config is not None else {}
+        self._resource_locator = resource_locator or getattr(
+            self._source_config, "resource_locator", None
+        )
         self._config: dict[str, Any] = {}
         self._config_obj: MemoraConfig | None = None
         self._revision = ""
@@ -239,7 +252,7 @@ class ConfigManager:
         return normalized, fallback_applied
 
     def _reconcile_source_locked(self) -> None:
-        """Publish external AstrBotConfig changes without persisting them."""
+        """协调外部 AstrBotConfig 变更，但不将其持久化。"""
         config_obj, config, revision = self._read_source_state()
         if revision == self._source_revision:
             return
@@ -342,28 +355,28 @@ class ConfigManager:
         ).encode("utf-8")
         return hashlib.sha256(canonical).hexdigest()
 
-    @classmethod
     def _load_schema_contract(
-        cls,
+        self,
         source_config: MutableMapping[str, Any],
     ) -> tuple[frozenset[str], dict[str, tuple[Any, ...]]] | None:
-        injected_schema = getattr(source_config, "schema", None)
-        injected_contract = cls._parse_schema_contract(injected_schema)
-        if injected_contract is not None:
-            return injected_contract
-        if injected_schema is not None:
-            logger.warning("AstrBot 注入的配置 schema 无效，尝试仓库 schema")
+        """按 host 注入优先、资源 locator 兜底的顺序读取 Schema。"""
 
-        schema_path = Path(__file__).resolve().parents[2] / "_conf_schema.json"
+        injected_schema = getattr(source_config, "schema", None)
+        locator = self._resource_locator
+        if locator is None and injected_schema is None:
+            return None
         try:
-            schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            if locator is not None:
+                schema = locator.load_schema(injected_schema)
+            else:
+                schema = injected_schema
+        except Exception as exc:
             logger.warning(f"无法加载 AstrBot 配置 schema，跳过未知字段检查: {exc}")
             return None
 
-        contract = cls._parse_schema_contract(schema)
+        contract = self._parse_schema_contract(schema)
         if contract is None:
-            logger.warning("仓库 AstrBot 配置 schema 无效，无法检查配置字段")
+            logger.warning("AstrBot 注入或插件资源配置 schema 无效，无法检查配置字段")
             return None
         return contract
 
@@ -436,7 +449,7 @@ class ConfigManager:
         return copy.deepcopy(self._config), self._revision
 
     async def get_config_snapshot_async(self) -> tuple[dict[str, Any], str]:
-        """Reconcile the live AstrBotConfig and return an isolated snapshot."""
+        """协调实时 AstrBotConfig 并返回隔离的配置快照。"""
         async with self._apply_lock:
             self._reconcile_source_locked()
             return self.get_config_snapshot()
