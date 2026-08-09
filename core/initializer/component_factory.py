@@ -16,6 +16,7 @@ from ..evaluation.feedback_learning_evidence_store import (
 from ..features.identity.application.service import ProtocolIdentityService
 from ..features.identity.infrastructure.store import ProtocolIdentityStore
 from ..features.knowledge.application import KnowledgeProposalPipeline
+from ..features.knowledge.infrastructure import KnowledgeExtractor
 from ..features.memory.infrastructure.validators import IndexValidator
 from ..features.profiles.application import ProfileProposalPipeline
 from ..features.profiles.infrastructure import ProfileExtractor
@@ -33,7 +34,6 @@ from ..managers.memory_evolution_manager import MemoryEvolutionManager
 from ..managers.note_proposal_pipeline import NoteProposalPipeline
 from ..managers.semantic_compressor import SemanticCompressor
 from ..platform.transport.realtime_hub import RealtimeHub
-from ..processors.knowledge_extractor import KnowledgeExtractor
 from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
 from ..processors.memory_processor import MemoryProcessor

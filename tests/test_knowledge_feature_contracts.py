@@ -10,6 +10,7 @@ from core.features.knowledge.contracts import (
     KnowledgeStorePort,
 )
 from core.features.knowledge.domain.models import KnowledgeEntry, KnowledgeType
+from core.features.knowledge.infrastructure import KnowledgeExtractor
 from core.features.knowledge.infrastructure.knowledge_store import (
     KNOWLEDGE_SORT_COLUMNS,
     KnowledgeStore,
@@ -24,7 +25,9 @@ from core.models.knowledge_models import (
     KnowledgeEntry as LegacyKnowledgeEntry,
 )
 from core.models.knowledge_models import KnowledgeType as LegacyKnowledgeType
-from core.processors.knowledge_extractor import KnowledgeExtractor
+from core.processors.knowledge_extractor import (
+    KnowledgeExtractor as LegacyKnowledgeExtractor,
+)
 from core.storage.knowledge_store import (
     KNOWLEDGE_SORT_COLUMNS as LegacyKnowledgeSortColumns,
 )
@@ -55,6 +58,12 @@ def test_legacy_knowledge_pipeline_import_reuses_feature_implementation() -> Non
     """旧知识 pipeline 路径只能导出 knowledge application 的唯一实现。"""
 
     assert LegacyKnowledgeProposalPipeline is KnowledgeProposalPipeline
+
+
+def test_legacy_knowledge_extractor_import_reuses_feature_implementation() -> None:
+    """旧 processor 路径只能导出 knowledge infrastructure 的唯一实现。"""
+
+    assert LegacyKnowledgeExtractor is KnowledgeExtractor
 
 
 def test_knowledge_ports_accept_existing_implementations_structurally() -> None:

@@ -7,12 +7,13 @@ from .contracts import (
     KnowledgeStorePort,
 )
 from .domain import KnowledgeEntry, KnowledgeType
-from .infrastructure import KNOWLEDGE_SORT_COLUMNS, KnowledgeStore
+from .infrastructure import KNOWLEDGE_SORT_COLUMNS, KnowledgeExtractor, KnowledgeStore
 
 __all__ = [
     "KNOWLEDGE_SORT_COLUMNS",
     "KnowledgeExtractorPort",
     "KnowledgeEntry",
+    "KnowledgeExtractor",
     "KnowledgeManager",
     "KnowledgeProposalPipeline",
     "KnowledgeSourceReaderPort",
