@@ -16,6 +16,7 @@ from ..evaluation.feedback_learning_evidence import (
     artifact_to_record,
     validate_learning_evidence,
 )
+from ..features.learning.application import FeedbackSignalManager
 from ..features.learning.domain.models import FeedbackSignalAggregate
 from .auto_learning_actions import (
     CandidateBinding,
@@ -38,7 +39,6 @@ from .auto_learning_state import (
     AutoLearningStatePersistenceError,
     AutoLearningStateStore,
 )
-from .feedback_signal_manager import FeedbackSignalManager
 
 _STATE_FILE = "auto_learning.json"
 _BINDING_FIELDS = (

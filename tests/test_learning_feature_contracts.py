@@ -5,6 +5,13 @@ from core.evaluation.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
 )
+from core.features.learning.application.feedback_signal_manager import (
+    FeedbackIngestResult,
+    FeedbackRevokeResult,
+    FeedbackSignalManager,
+    record_explicit_correction,
+    revoke_explicit_correction,
+)
 from core.features.learning.contracts import (
     FeedbackSignalServicePort,
     FeedbackSignalStorePort,
@@ -21,7 +28,21 @@ from core.features.learning.domain.models import (
     build_trusted_feedback_event,
 )
 from core.features.learning.infrastructure import FeedbackSignalStore
-from core.managers.feedback_signal_manager import FeedbackSignalManager
+from core.managers.feedback_signal_manager import (
+    FeedbackIngestResult as LegacyFeedbackIngestResult,
+)
+from core.managers.feedback_signal_manager import (
+    FeedbackRevokeResult as LegacyFeedbackRevokeResult,
+)
+from core.managers.feedback_signal_manager import (
+    FeedbackSignalManager as LegacyFeedbackSignalManager,
+)
+from core.managers.feedback_signal_manager import (
+    record_explicit_correction as legacy_record_explicit_correction,
+)
+from core.managers.feedback_signal_manager import (
+    revoke_explicit_correction as legacy_revoke_explicit_correction,
+)
 from core.models.feedback_signal import (
     FEEDBACK_REASON_CODES as LEGACY_FEEDBACK_REASON_CODES,
 )
@@ -60,6 +81,16 @@ def test_legacy_feedback_store_import_reuses_learning_implementation() -> None:
     """旧反馈 Store 路径只能导出 learning infrastructure 的唯一实现。"""
 
     assert LegacyStore is FeedbackSignalStore
+
+
+def test_legacy_feedback_service_imports_reuse_learning_implementation() -> None:
+    """旧反馈服务路径只能导出 learning application 的唯一实现。"""
+
+    assert LegacyFeedbackIngestResult is FeedbackIngestResult
+    assert LegacyFeedbackRevokeResult is FeedbackRevokeResult
+    assert LegacyFeedbackSignalManager is FeedbackSignalManager
+    assert legacy_record_explicit_correction is record_explicit_correction
+    assert legacy_revoke_explicit_correction is revoke_explicit_correction
 
 
 def test_learning_ports_accept_existing_implementations_structurally(tmp_path) -> None:

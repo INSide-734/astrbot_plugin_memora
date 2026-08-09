@@ -254,6 +254,7 @@ class MemoryEngineLifecycleMixin:
             self.personalized_ranker = PersonalizedRanker(boost_strength)
 
         # 自主学习关闭时仍恢复状态，确保已有发布或中断 intent 可显式回滚。
+        from ..features.learning.application import FeedbackSignalManager
         from ..features.learning.domain.models import (
             FeedbackAdapterKind,
             FeedbackSignalPolicy,
@@ -263,7 +264,6 @@ class MemoryEngineLifecycleMixin:
         )
         from .auto_learning import AutoLearningManager
         from .auto_learning_state import AutoLearningStatePersistenceError
-        from .feedback_signal_manager import FeedbackSignalManager
 
         auto_learning_enabled = bool(self.config.get("auto_learning.enabled", False))
         feedback_store = FeedbackSignalStore(

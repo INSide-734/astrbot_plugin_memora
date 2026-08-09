@@ -1,6 +1,6 @@
-"""反馈聚合应用服务的旧路径兼容导出。"""
+"""自主学习 feature 的应用服务。"""
 
-from ..features.learning.application.feedback_signal_manager import (
+from .feedback_signal_manager import (
     FeedbackIngestResult,
     FeedbackRevokeResult,
     FeedbackSignalManager,

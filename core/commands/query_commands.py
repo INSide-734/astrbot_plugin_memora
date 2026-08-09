@@ -11,9 +11,9 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from astrbot.api.platform import MessageType
 
+from ..features.learning.application import record_explicit_correction
 from ..i18n_backend import t, t_list
 from ..identity import IdentityTrust
-from ..managers.feedback_signal_manager import record_explicit_correction
 
 
 class QueryCommandMixin:
