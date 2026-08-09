@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from ..models.feedback_signal import (
+from ..features.learning.domain.models import (
     FeedbackAdapterKind,
     FeedbackOutcome,
     FeedbackSignalAggregate,

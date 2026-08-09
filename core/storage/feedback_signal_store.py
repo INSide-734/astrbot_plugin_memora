@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..models.feedback_signal import (
+from ..features.learning.domain.models import (
     FeedbackAdapterKind,
     FeedbackSignalAggregate,
     TrustedFeedbackEvent,
@@ -248,7 +248,7 @@ class FeedbackSignalStore:
                 ),
             },
         ).fetchall()
-        from ..models.feedback_signal import FeedbackOutcome
+        from ..features.learning.domain.models import FeedbackOutcome
 
         return [
             TrustedFeedbackEvent(

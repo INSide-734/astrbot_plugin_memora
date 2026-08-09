@@ -14,7 +14,10 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..models.feedback_signal import FeedbackSignalAggregate, FeedbackSignalPolicy
+from ..features.learning.domain.models import (
+    FeedbackSignalAggregate,
+    FeedbackSignalPolicy,
+)
 from .feedback_learning_evidence import (
     EvidenceEvaluatorConfig,
     FeedbackRankingConfigSnapshot,

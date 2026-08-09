@@ -1,6 +1,6 @@
-"""反馈信号模型的旧路径兼容导出。"""
+"""自主学习 feature 的公开领域边界。"""
 
-from ..features.learning.domain.models import (
+from .domain import (
     FEEDBACK_REASON_CODES,
     FeedbackAdapterKind,
     FeedbackOutcome,

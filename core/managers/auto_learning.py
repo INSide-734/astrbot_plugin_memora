@@ -16,7 +16,7 @@ from ..evaluation.feedback_learning_evidence import (
     artifact_to_record,
     validate_learning_evidence,
 )
-from ..models.feedback_signal import FeedbackSignalAggregate
+from ..features.learning.domain.models import FeedbackSignalAggregate
 from .auto_learning_actions import (
     CandidateBinding,
     aggregation_revision_for,

@@ -6,7 +6,10 @@ from collections.abc import Awaitable, Callable, Sequence
 from os import PathLike
 from typing import Any
 
-from ..models.feedback_signal import FeedbackSignalAggregate, FeedbackSignalPolicy
+from ..features.learning.domain.models import (
+    FeedbackSignalAggregate,
+    FeedbackSignalPolicy,
+)
 from .feedback_learning_evidence_store import FeedbackLearningEvidenceInbox
 from .feedback_ranking_ablation import (
     FeedbackRankingEvidenceRequest,

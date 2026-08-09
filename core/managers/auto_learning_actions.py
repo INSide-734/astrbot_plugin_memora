@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from ..models.feedback_signal import FeedbackSignalAggregate
+from ..features.learning.domain.models import FeedbackSignalAggregate
 
 _OPAQUE_ID_MIN_LENGTH = 22
 _OPAQUE_ID_MAX_LENGTH = 128

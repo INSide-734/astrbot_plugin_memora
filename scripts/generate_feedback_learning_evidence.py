@@ -43,7 +43,7 @@ from core.evaluation.feedback_ranking_ablation import (  # noqa: E402
     FeedbackRankingPairedSample,
 )
 from core.evaluation.retrieval_quality import EvaluationCase  # noqa: E402
-from core.models.feedback_signal import (  # noqa: E402
+from core.features.learning.domain.models import (  # noqa: E402
     FeedbackSignalAggregate,
     FeedbackSignalPolicy,
 )
