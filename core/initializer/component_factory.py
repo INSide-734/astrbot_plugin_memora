@@ -15,6 +15,7 @@ from ..evaluation.feedback_learning_evidence_store import (
 )
 from ..features.identity.application.service import ProtocolIdentityService
 from ..features.identity.infrastructure.store import ProtocolIdentityStore
+from ..features.knowledge.application import KnowledgeProposalPipeline
 from ..features.memory.infrastructure.validators import IndexValidator
 from ..features.profiles.application import ProfileProposalPipeline
 from ..features.profiles.infrastructure import ProfileExtractor
@@ -26,7 +27,6 @@ from ..injection.recorder import InjectionDecisionRecorder
 from ..managers.auto_learning_actions import aggregation_revision_for
 from ..managers.backup_manager import BackupManager
 from ..managers.conversation_manager import ConversationManager
-from ..managers.knowledge_proposal_pipeline import KnowledgeProposalPipeline
 from ..managers.memory_engine import MemoryEngine
 from ..managers.memory_evolution_gate import MemoryEvolutionGate
 from ..managers.memory_evolution_manager import MemoryEvolutionManager

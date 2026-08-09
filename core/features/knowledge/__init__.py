@@ -1,6 +1,6 @@
 """知识 feature 的公开领域边界。"""
 
-from .application import KnowledgeManager
+from .application import KnowledgeManager, KnowledgeProposalPipeline
 from .contracts import (
     KnowledgeExtractorPort,
     KnowledgeSourceReaderPort,
@@ -14,6 +14,7 @@ __all__ = [
     "KnowledgeExtractorPort",
     "KnowledgeEntry",
     "KnowledgeManager",
+    "KnowledgeProposalPipeline",
     "KnowledgeSourceReaderPort",
     "KnowledgeStore",
     "KnowledgeStorePort",
