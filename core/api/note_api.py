@@ -9,7 +9,7 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..models.note_models import Note, NoteStatus
+from ..features.notes.domain.models import Note, NoteStatus
 from .response_utils import error_response, ok_response
 
 

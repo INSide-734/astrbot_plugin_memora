@@ -6,8 +6,8 @@ import json
 import time
 from typing import Any
 
+from ..features.notes.domain.models import Note, NoteStatus, NoteVersion
 from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from ..models.note_models import Note, NoteStatus, NoteVersion
 from .base import BaseStore
 from .domain_object_integrity import (
     filter_current_domain_objects,
