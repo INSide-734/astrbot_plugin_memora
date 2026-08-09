@@ -73,7 +73,7 @@ async def test_provider_exhaustion_commits_terminal_failure(
 ) -> None:
     """Provider 重试耗尽必须提交失败态并拒绝晚到回调。"""
 
-    from core.initializer import provider_waiter as waiter_module
+    from core.platform.composition import provider_waiter as waiter_module
     from core.plugin_initializer import PluginInitializer
 
     class MissingLoader:
@@ -137,7 +137,7 @@ async def test_provider_retry_terminate_cancels_without_false_failure(
 ) -> None:
     """terminate 取消后台等待时不得伪造预算耗尽失败。"""
 
-    from core.initializer import provider_waiter as waiter_module
+    from core.platform.composition import provider_waiter as waiter_module
     from core.plugin_initializer import PluginInitializer
 
     class MissingLoader:

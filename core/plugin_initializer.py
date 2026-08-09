@@ -18,14 +18,16 @@ from .identity.runtime import ProtocolIdentityRuntime
 from .initializer.component_factory import ComponentFactory
 from .initializer.db_setup import DatabaseSetup
 from .initializer.faiss_checker import FaissChecker
-from .initializer.identity_lifecycle import close_identity_runtime_after_failure
 from .initializer.provider_loader import ProviderLoader
-from .initializer.provider_waiter import ProviderWaiter
 from .injection.recorder import InjectionDecisionRecorder
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
 from .monitoring import report_debug_event, report_debug_exception
 from .monitoring.quality_scorer import MemoryQualityScorer
+from .platform.composition import (
+    ProviderWaiter,
+    close_identity_runtime_after_failure,
+)
 from .platform.security import build_prompt_protection_port
 from .platform.transport.realtime_hub import RealtimeHub
 from .processors.memory_processor import MemoryProcessor
