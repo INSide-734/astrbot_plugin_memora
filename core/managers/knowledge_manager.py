@@ -8,12 +8,12 @@ from astrbot.api import logger
 
 from ..base.list_sorting import SortQuery
 from ..features.knowledge.domain.models import KnowledgeEntry
+from ..features.knowledge.infrastructure.knowledge_store import KnowledgeStore
 from ..models.domain_provenance import (
     DomainObjectOrigin,
     DomainProvenance,
     merge_domain_provenance,
 )
-from ..storage.knowledge_store import KnowledgeStore
 
 
 class KnowledgeManager:

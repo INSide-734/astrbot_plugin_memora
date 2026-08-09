@@ -13,7 +13,7 @@ from quart import request
 
 from ..base.list_sorting import parse_sort_query
 from ..features.knowledge.domain.models import KnowledgeEntry, KnowledgeType
-from ..storage.knowledge_store import KNOWLEDGE_SORT_COLUMNS
+from ..features.knowledge.infrastructure.knowledge_store import KNOWLEDGE_SORT_COLUMNS
 from .response_utils import error_response, ok_response
 
 

@@ -1,10 +1,18 @@
 """knowledge feature 的领域模型所有权与旧路径兼容契约。"""
 
 from core.features.knowledge.domain.models import KnowledgeEntry, KnowledgeType
+from core.features.knowledge.infrastructure.knowledge_store import (
+    KNOWLEDGE_SORT_COLUMNS,
+    KnowledgeStore,
+)
 from core.models.knowledge_models import (
     KnowledgeEntry as LegacyKnowledgeEntry,
 )
 from core.models.knowledge_models import KnowledgeType as LegacyKnowledgeType
+from core.storage.knowledge_store import (
+    KNOWLEDGE_SORT_COLUMNS as LegacyKnowledgeSortColumns,
+)
+from core.storage.knowledge_store import KnowledgeStore as LegacyKnowledgeStore
 
 
 def test_legacy_knowledge_model_imports_reuse_feature_types() -> None:
@@ -12,3 +20,10 @@ def test_legacy_knowledge_model_imports_reuse_feature_types() -> None:
 
     assert LegacyKnowledgeEntry is KnowledgeEntry
     assert LegacyKnowledgeType is KnowledgeType
+
+
+def test_legacy_knowledge_store_import_reuses_feature_implementation() -> None:
+    """旧知识 Store 路径只能导出 knowledge infrastructure 的唯一实现。"""
+
+    assert LegacyKnowledgeStore is KnowledgeStore
+    assert LegacyKnowledgeSortColumns is KNOWLEDGE_SORT_COLUMNS

@@ -300,8 +300,10 @@ class MemoryEngineLifecycleMixin:
 
         # 知识库初始化
         if bool(self.config.get("knowledge_base.enabled", True)):
+            from ..features.knowledge.infrastructure.knowledge_store import (
+                KnowledgeStore,
+            )
             from ..retrieval.knowledge_retriever import KnowledgeRetriever
-            from ..storage.knowledge_store import KnowledgeStore
             from .knowledge_manager import KnowledgeManager
 
             self.knowledge_store = KnowledgeStore(self.db_path)
