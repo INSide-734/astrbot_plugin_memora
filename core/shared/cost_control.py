@@ -1,0 +1,52 @@
+"""跨 feature 的不可变额外 LLM 成本许可策略。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class CostControl:
+    """根据成本模式判断额外 LLM 能力是否允许执行。"""
+
+    mode: str = "balanced"
+    max_extra_llm_calls_per_turn: int = 0
+    allow_llm_reranker_in_passive_recall: bool = False
+    allow_llm_topic_strategy_d: bool = False
+    max_reflection_parallel_llm_calls: int = 2
+    llm_reranker_min_candidates: int = 12
+    llm_reranker_prompt_chars: int = 3000
+
+    def allow(self, feature: str) -> bool:
+        """判断固定名称的额外 LLM 能力是否允许执行。"""
+
+        if self.mode == "quality":
+            return True
+        if self.mode == "low_cost":
+            return False
+        explicit_allows = {
+            "llm_reranker": self.allow_llm_reranker_in_passive_recall,
+            "topic_strategy_d": self.allow_llm_topic_strategy_d,
+            "reflection_extra_batch": self.allow_llm_topic_strategy_d,
+            "persona_interpretation": False,
+            "profile_extraction": False,
+            "knowledge_extraction": False,
+            "note_generation": False,
+            "llm_query_rewrite": False,
+            "memory_grounding_judge": False,
+        }
+        return explicit_allows.get(feature, False)
+
+    def deny_reason(self, feature: str) -> str:
+        """返回指定能力被拒绝时的稳定中文原因。"""
+
+        if self.mode == "quality":
+            return "质量模式已允许该额外 LLM 功能"
+        if self.mode == "low_cost":
+            return "低成本模式禁止额外 LLM 功能"
+        if not self.allow(feature):
+            return "均衡模式未显式允许该额外 LLM 功能"
+        return "该功能已允许或拒绝原因未知"
+
+
+__all__ = ["CostControl"]

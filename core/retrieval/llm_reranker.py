@@ -9,7 +9,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..base.cost_control import CostControl
+from ..shared.cost_control import CostControl
 from ..shared.extra_llm_budget import budgeted_extra_llm_call
 from .rrf_fusion import HybridResult
 

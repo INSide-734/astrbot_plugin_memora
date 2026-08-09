@@ -11,7 +11,6 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
-from ..base.cost_control import CostControl
 from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
@@ -23,6 +22,7 @@ from ..shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_SCOPE_ATTR,
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
+from ..shared.cost_control import CostControl
 from ..utils import OperationContext, get_persona_id
 from .continuity_hooks import resolve_continuity_session
 from .reflection_backlog import ReflectionBacklogMixin

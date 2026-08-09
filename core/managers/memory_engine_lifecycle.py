@@ -338,7 +338,7 @@ class MemoryEngineLifecycleMixin:
             )
 
         # v2.5 重排序器初始化（成本控制门）
-        from ..base.cost_control import CostControl
+        from ..shared.cost_control import CostControl
 
         configured_cost_control = self.config.get("cost_control_runtime")
         self.cost_control = (
