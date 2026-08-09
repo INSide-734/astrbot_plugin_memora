@@ -1,5 +1,11 @@
 """自主学习 feature 的公开领域边界。"""
 
+from .contracts import (
+    FeedbackSignalServicePort,
+    FeedbackSignalStorePort,
+    LearningConfigAdapterPort,
+    LearningEvidenceProviderPort,
+)
 from .domain import (
     FEEDBACK_REASON_CODES,
     FeedbackAdapterKind,
@@ -17,7 +23,11 @@ __all__ = [
     "FeedbackOutcome",
     "FeedbackSignalAggregate",
     "FeedbackSignalPolicy",
+    "FeedbackSignalServicePort",
     "FeedbackSignalStore",
+    "FeedbackSignalStorePort",
+    "LearningConfigAdapterPort",
+    "LearningEvidenceProviderPort",
     "TrustedFeedbackEvent",
     "build_trusted_feedback_event",
 ]

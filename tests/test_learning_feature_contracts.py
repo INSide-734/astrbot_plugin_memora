@@ -1,5 +1,16 @@
 """learning feature 的领域模型所有权与旧路径兼容契约。"""
 
+from core.api.learning_config_adapter import LearningConfigAdapter
+from core.evaluation.feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
+    FeedbackLearningEvidenceProvider,
+)
+from core.features.learning.contracts import (
+    FeedbackSignalServicePort,
+    FeedbackSignalStorePort,
+    LearningConfigAdapterPort,
+    LearningEvidenceProviderPort,
+)
 from core.features.learning.domain.models import (
     FEEDBACK_REASON_CODES,
     FeedbackAdapterKind,
@@ -10,6 +21,7 @@ from core.features.learning.domain.models import (
     build_trusted_feedback_event,
 )
 from core.features.learning.infrastructure import FeedbackSignalStore
+from core.managers.feedback_signal_manager import FeedbackSignalManager
 from core.models.feedback_signal import (
     FEEDBACK_REASON_CODES as LEGACY_FEEDBACK_REASON_CODES,
 )
@@ -48,3 +60,23 @@ def test_legacy_feedback_store_import_reuses_learning_implementation() -> None:
     """旧反馈 Store 路径只能导出 learning infrastructure 的唯一实现。"""
 
     assert LegacyStore is FeedbackSignalStore
+
+
+def test_learning_ports_accept_existing_implementations_structurally(tmp_path) -> None:
+    """learning 端口应接收现有 Store、服务和受控适配器实现。"""
+
+    store = FeedbackSignalStore(":memory:")
+    manager = FeedbackSignalManager(store)
+    evidence_provider = FeedbackLearningEvidenceProvider(
+        FeedbackLearningEvidenceInbox(tmp_path),
+        aggregation_revision_provider=lambda _items: "a" * 64,
+        source_config_revision_provider=lambda: "b" * 64,
+        quality_gate_version="quality-gate-v1",
+    )
+    try:
+        assert isinstance(store, FeedbackSignalStorePort)
+        assert isinstance(manager, FeedbackSignalServicePort)
+        assert isinstance(LearningConfigAdapter(object()), LearningConfigAdapterPort)
+        assert isinstance(evidence_provider, LearningEvidenceProviderPort)
+    finally:
+        store.close()
