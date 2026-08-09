@@ -1,6 +1,6 @@
-"""记忆演化模型的旧路径兼容导出。"""
+"""记忆演化 feature 的领域模型。"""
 
-from ..features.evolution.domain.models import (
+from .models import (
     DerivedApplyPlan,
     DerivedState,
     EvolutionProposal,
