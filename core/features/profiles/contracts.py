@@ -9,9 +9,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
-from core.models.domain_provenance import DomainProvenance
-from core.shared.contracts import MemorySourceRef
-
+from ...models.domain_provenance import DomainProvenance
+from ...shared.contracts import MemorySourceRef
 from .domain.models import UserPreferences, UserProfile, UserTag
 
 

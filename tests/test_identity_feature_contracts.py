@@ -5,7 +5,12 @@ from __future__ import annotations
 from core.features.identity.application.service import (
     ProtocolIdentityService as FeatureProtocolIdentityService,
 )
-from core.features.identity.contracts import IdentityDirectoryPort
+from core.features.identity.contracts import (
+    IDENTITY_SCHEMA_VERSION as FeatureIdentitySchemaVersion,
+)
+from core.features.identity.contracts import (
+    IdentityDirectoryPort,
+)
 from core.features.identity.domain.models import (
     IdentityProtocolAdapter as FeatureIdentityProtocolAdapter,
 )
@@ -32,6 +37,7 @@ def test_legacy_identity_model_and_service_exports_keep_type_identity() -> None:
     assert ResolvedIdentity is FeatureResolvedIdentity
     assert IdentityProtocolAdapter is FeatureIdentityProtocolAdapter
     assert ProtocolIdentityService is FeatureProtocolIdentityService
+    assert FeatureIdentitySchemaVersion == "stable-identity-v1"
 
 
 def test_protocol_identity_store_satisfies_identity_directory_port(tmp_path) -> None:

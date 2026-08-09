@@ -8,20 +8,20 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
-from core.base.entity_editing import (
+from ....base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
     compute_entity_revision,
 )
-from core.base.list_sorting import SortQuery
-from core.features.profiles.contracts import ProfileStorePort
-from core.features.profiles.domain.models import (
+from ....base.list_sorting import SortQuery
+from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ..contracts import ProfileStorePort
+from ..domain.models import (
     TagCategory,
     UserPreferences,
     UserProfile,
     UserTag,
 )
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
 
 _EDITABLE_PREFERENCE_FIELDS = frozenset(
     {"reply_style", "preferred_topics", "avoided_topics", "active_hours"}

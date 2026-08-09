@@ -11,6 +11,7 @@ from .canonical_source import (
 )
 from .derived_metadata import DerivedMetadataSourceRef
 from .events import CanonicalMemoryCommitted
+from .identity import IDENTITY_SCHEMA_VERSION
 from .ports import (
     CanonicalMemoryPort,
     DerivedWorkPublisher,
@@ -28,6 +29,7 @@ __all__ = [
     "DerivedMetadataSourceRef",
     "FinalVisibilityPort",
     "IdentityConversationPort",
+    "IDENTITY_SCHEMA_VERSION",
     "MemorySourceRef",
     "PromptProtectionPort",
     "RealtimePublisher",

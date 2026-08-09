@@ -1,6 +1,7 @@
 """跨 feature 共享的无状态契约与基础类型。"""
 
 from .contracts import (
+    IDENTITY_SCHEMA_VERSION,
     CanonicalMemoryCommitted,
     CanonicalMemoryPort,
     CanonicalSourceReaderPort,
@@ -23,6 +24,7 @@ __all__ = [
     "DerivedWorkPublisher",
     "FinalVisibilityPort",
     "IdentityConversationPort",
+    "IDENTITY_SCHEMA_VERSION",
     "MemorySourceRef",
     "PromptProtectionPort",
     "RealtimePublisher",

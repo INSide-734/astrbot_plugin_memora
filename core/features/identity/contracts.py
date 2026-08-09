@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Protocol, runtime_checkable
 
+from ...shared.contracts import IDENTITY_SCHEMA_VERSION
 from .domain.models import (
     IdentityMerger,
     IdentityObservation,
@@ -79,4 +80,4 @@ class IdentityDirectoryPort(Protocol):
         ...
 
 
-__all__ = ["IdentityDirectoryPort"]
+__all__ = ["IDENTITY_SCHEMA_VERSION", "IdentityDirectoryPort"]

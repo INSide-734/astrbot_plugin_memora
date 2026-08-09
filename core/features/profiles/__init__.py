@@ -1,6 +1,10 @@
 """用户画像 feature 的公开边界。"""
 
-from .application import ProfileManager
+from .application import (
+    ProfileManager,
+    ProfileProposalPipeline,
+    trusted_profile_subject_id,
+)
 from .contracts import (
     ProfileExtractorPort,
     ProfileSourceReaderPort,
@@ -13,6 +17,7 @@ __all__ = [
     "PROFILE_SORT_COLUMNS",
     "ProfileExtractorPort",
     "ProfileManager",
+    "ProfileProposalPipeline",
     "ProfileSourceReaderPort",
     "ProfileStorePort",
     "ProfileStore",
@@ -20,4 +25,5 @@ __all__ = [
     "UserPreferences",
     "UserProfile",
     "UserTag",
+    "trusted_profile_subject_id",
 ]
