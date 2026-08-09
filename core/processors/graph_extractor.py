@@ -7,7 +7,12 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..models.graph_models import ExtractedGraph, GraphEdge, GraphEntry, GraphNode
+from ..features.memory.graph.domain.models import (
+    ExtractedGraph,
+    GraphEdge,
+    GraphEntry,
+    GraphNode,
+)
 from ..security.guardrails import GraphExtractionResult, validate_llm_response
 from .atom_graph_extractor import (
     CAUSAL_CAUSED_BY as CAUSAL_CAUSED_BY,

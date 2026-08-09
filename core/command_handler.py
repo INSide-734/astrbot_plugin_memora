@@ -14,12 +14,12 @@ from .commands.diagnostic_commands import DiagnosticCommandMixin, DiagnosticProv
 from .commands.maintenance_commands import MaintenanceCommandMixin
 from .commands.query_commands import QueryCommandMixin
 from .commands.update_commands import UpdateCommandMixin
+from .features.memory.infrastructure.validators import IndexValidator
 from .handlers.reflection_candidate_writer import build_reflection_idempotency_key
 from .i18n_backend import t, t_list
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
 from .shared.contracts import IdentityConversationPort
-from .validators.index_validator import IndexValidator
 
 
 class CommandHandler(

@@ -19,9 +19,8 @@ from ..adapter_capabilities import (
     ScoreDirection,
     ScoreSemantics,
 )
-from ..processors.text_processor import TextProcessor
-from ..storage.base import apply_perf_pragmas
-from ..storage.sql_contract import (
+from ..features.memory.infrastructure.base import apply_perf_pragmas
+from ..features.memory.infrastructure.sql_contract import (
     DOCUMENTS_TABLE,
     MEMORY_FTS_CREATE_SQL,
     MEMORY_FTS_DELETE_BY_DOC_ID_SQL,
@@ -29,6 +28,7 @@ from ..storage.sql_contract import (
     MEMORY_FTS_SEARCH_SQL,
     MEMORY_FTS_TABLE,
 )
+from ..processors.text_processor import TextProcessor
 
 
 @dataclass

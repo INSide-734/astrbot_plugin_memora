@@ -10,15 +10,26 @@ from .domain import (
     compute_ttl,
     memory_revision,
 )
-from .infrastructure import AtomStore, SchemaManager, WriteOpJournal
+from .graph import GraphReplaceResult, GraphStore
+from .infrastructure import (
+    AtomStore,
+    IndexValidator,
+    PersistenceHealthValidator,
+    SchemaManager,
+    WriteOpJournal,
+)
 
 __all__ = [
     "AtomStatus",
     "AtomStore",
     "AtomType",
     "DecayType",
+    "GraphReplaceResult",
+    "GraphStore",
+    "IndexValidator",
     "MemoryAtom",
     "PrivacyLevel",
+    "PersistenceHealthValidator",
     "SchemaManager",
     "WriteOpJournal",
     "compute_decay_score",

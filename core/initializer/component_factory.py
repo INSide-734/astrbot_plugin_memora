@@ -15,6 +15,7 @@ from ..evaluation.feedback_learning_evidence_store import (
 )
 from ..features.identity.application.service import ProtocolIdentityService
 from ..features.identity.infrastructure.store import ProtocolIdentityStore
+from ..features.memory.infrastructure.validators import IndexValidator
 from ..identity.conversation_sync import ConversationIdentitySynchronizer
 from ..identity.memory import MemoryIdentityEnricher
 from ..identity.resolver import ProtocolIdentityResolver
@@ -47,7 +48,6 @@ from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
 from ..storage.memory_evolution_store import MemoryEvolutionStore
-from ..validators.index_validator import IndexValidator
 from .derived_rebuild_coordinator import DerivedRebuildCoordinator
 from .engine_runtime_config import build_engine_runtime_config
 

@@ -13,6 +13,7 @@ from astrbot.core.provider.provider import EmbeddingProvider, Provider
 from .base.config_manager import ConfigManager
 from .base.exceptions import InitializationError
 from .base.feature_config import is_jargon_discovery_enabled
+from .features.memory.infrastructure.validators import IndexValidator
 from .identity.runtime import ProtocolIdentityRuntime
 from .initializer.component_factory import ComponentFactory
 from .initializer.db_setup import DatabaseSetup
@@ -34,7 +35,6 @@ from .schedulers.backfill_scheduler import BackfillScheduler
 from .schedulers.decay_scheduler import DecayScheduler
 from .shared.contracts import PromptProtectionPort
 from .storage.injection_decision_store import InjectionDecisionStore
-from .validators.index_validator import IndexValidator
 
 
 class PluginInitializer:

@@ -11,6 +11,7 @@ from .schema_manager import (
     SchemaMigrationPlan,
     SchemaValidation,
 )
+from .validators import IndexValidator, PersistenceHealthValidator
 from .write_op_journal import WriteOpJournal
 
 __all__ = [
@@ -19,6 +20,8 @@ __all__ = [
     "CURRENT_DB_VERSION",
     "CanonicalSourceState",
     "ConnectionPool",
+    "IndexValidator",
+    "PersistenceHealthValidator",
     "SchemaInspection",
     "SchemaManager",
     "SchemaMigrationPlan",

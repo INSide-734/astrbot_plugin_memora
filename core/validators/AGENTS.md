@@ -3,13 +3,13 @@
 # Validators 模块上下文
 
 **最后更新：** 2026-07-21
-**源码范围：** `core/validators/*.py`（7 个 Python 文件）
+**源码范围：** `core/features/memory/infrastructure/validators/*.py`（唯一实现）；`core/validators/*.py` 仅保留兼容导出。
 
 ## 职责与边界
 
 `core/validators/` 检查 SQLite 主文档、FTS、FAISS、原子、图和笔记之间的一致性，并从 `documents` 重建 BM25/向量派生索引。它不负责业务 CRUD，也不应删除 `documents` 原始数据。
 
-包级只导出 `IndexValidator` 和 `PersistenceHealthValidator`。
+feature 包级只导出 `IndexValidator` 和 `PersistenceHealthValidator`；旧 `core.validators` 路径继续提供同一对象。
 
 ```mermaid
 graph TD
@@ -148,7 +148,7 @@ python -m pytest -q tests/test_managers_stats.py
 
 ## 依赖方向与改动守则
 
-- 允许：`validators → storage` 共享 PRAGMA、FAISS/NumPy、由调用方注入的 MemoryEngine。
+- 允许：`features.memory.infrastructure.validators → features.memory.infrastructure` 共享 PRAGMA/静态 SQL，并使用 FAISS/NumPy 与由调用方注入的 MemoryEngine。
 - 禁止 validators 启动 scheduler、持有页面 API 或直接编排业务删除。
 - 新增持久化实体或派生索引时同步扩展健康检查、计数、测试和修复策略。
 - 新重建算法必须遵循“主数据只读、临时构建、阈值门、原子替换、失败保留旧索引”。

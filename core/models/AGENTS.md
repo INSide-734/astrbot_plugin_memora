@@ -57,7 +57,9 @@ erDiagram
 - 情绪强度 `>= 0.85` 触发至少 365 天的 LINEAR 闪光灯路径；低重要性、未强化的 UNKNOWN/EPISODIC 默认进入 3 天基准的试用期路径；人格衰减倍率钳制到 `[0.1, 10.0]`；最终 TTL 至少 1 天。
 - `is_expired()` 只比较 `reference_time >= expires_at`。默认 `expires_at=0.0` 会立即判定过期，因此创建/落库链必须计算并写入真实过期时间，不能把 dataclass 默认值当完整生命周期初始化。
 
-### `graph_models.py`
+### `core/features/memory/graph/domain/models.py`
+
+`core/models/graph_models.py` 仅保留兼容导出，唯一实现归属 memory feature。
 
 - `GraphNode.node_key = "{node_type}:{canonical_value}"`，规范值由实体解析链负责生成。
 - `GraphEdge.edge_key` 包含 `source_memory_id`，用于来源级唯一性；`semantic_edge_key` 忽略记忆 ID，用于跨来源语义合并。

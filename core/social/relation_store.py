@@ -15,8 +15,8 @@ from ..base.entity_editing import (
     compute_entity_revision,
 )
 from ..base.list_sorting import SortQuery, order_by_clause
+from ..features.memory.infrastructure.sql_contract import SOCIAL_RELATIONS_TABLE
 from ..storage.base import BaseStore
-from ..storage.sql_contract import SOCIAL_RELATIONS_TABLE
 from .models import SocialRelation
 
 SOCIAL_SORT_COLUMNS = {

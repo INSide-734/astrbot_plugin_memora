@@ -1,10 +1,9 @@
-"""
-验证器模块
-包含索引验证器、配置验证器等验证组件
-"""
+"""FTS、FAISS 与持久化健康验证器的兼容入口。"""
 
-from .index_validator import IndexValidator
-from .persistence_health_validator import PersistenceHealthValidator
+from ..features.memory.infrastructure.validators import (
+    IndexValidator,
+    PersistenceHealthValidator,
+)
 
 __all__ = [
     "IndexValidator",

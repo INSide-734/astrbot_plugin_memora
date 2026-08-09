@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from ..features.memory.graph.infrastructure.graph_store import GraphStore
 from ..processors.graph_extractor import GraphExtractor
 from ..retrieval.graph_vector_retriever import GraphVectorRetriever
-from ..storage.graph_store import GraphStore
 
 
 class GraphMemoryManager:

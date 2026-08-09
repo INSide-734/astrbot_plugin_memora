@@ -5,7 +5,12 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from ..models.graph_models import ExtractedGraph, GraphEdge, GraphEntry, GraphNode
+from ..features.memory.graph.domain.models import (
+    ExtractedGraph,
+    GraphEdge,
+    GraphEntry,
+    GraphNode,
+)
 from .entity_resolver import EntityResolver
 
 # 时序边类型，表示事件发生的先后关系。

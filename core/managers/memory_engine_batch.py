@@ -10,7 +10,9 @@ import json
 
 from astrbot.api import logger
 
-from ..storage.sql_contract import MEMORY_FTS_DELETE_BY_JSON_IDS_SQL
+from ..features.memory.infrastructure.sql_contract import (
+    MEMORY_FTS_DELETE_BY_JSON_IDS_SQL,
+)
 
 
 class MemoryEngineBatchMixin:

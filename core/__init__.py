@@ -186,7 +186,9 @@ def __getattr__(name: str) -> Any:
 
     # ── validators ──
     if name == "IndexValidator":
-        from .validators import IndexValidator as IndexValidator
+        from .features.memory.infrastructure.validators import (
+            IndexValidator as IndexValidator,
+        )
 
         _lazy["IndexValidator"] = IndexValidator
         return IndexValidator

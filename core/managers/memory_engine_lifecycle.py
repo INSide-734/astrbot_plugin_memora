@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import aiosqlite
 from astrbot.api import logger
 
+from ..features.memory.graph.infrastructure.graph_store import GraphStore
 from ..features.memory.infrastructure.atom_store import AtomStore
 from ..features.memory.infrastructure.base import apply_perf_pragmas
 from ..managers.atom_lifecycle_manager import AtomLifecycleManager
@@ -30,7 +31,6 @@ from ..retrieval.graph_vector_retriever import GraphVectorRetriever
 from ..retrieval.hybrid_retriever import HybridRetriever
 from ..retrieval.rrf_fusion import RRFFusion
 from ..retrieval.vector_retriever import VectorRetriever
-from ..storage.graph_store import GraphStore
 from .schema_migration import SchemaMigrationCoordinator
 from .write_coordinator import ConnectionRegistry
 

@@ -11,7 +11,7 @@ from collections.abc import Mapping
 
 from astrbot.api import logger
 
-from ..validators.persistence_health_validator import PersistenceHealthValidator
+from ..features.memory.infrastructure.validators import PersistenceHealthValidator
 from .backup_api import BackupApiMixin
 from .response_utils import error_response, ok_response
 
