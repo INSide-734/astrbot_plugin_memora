@@ -7,10 +7,14 @@ from unittest.mock import AsyncMock
 import aiosqlite
 import pytest
 
-from core.features.identity import ProtocolIdentityStore
-from core.identity import IdentityTrust, NameFieldState, ResolvedIdentity
+from core.features.identity.application.service import ProtocolIdentityService
+from core.features.identity.domain.models import (
+    IdentityTrust,
+    NameFieldState,
+    ResolvedIdentity,
+)
+from core.features.identity.infrastructure.store import ProtocolIdentityStore
 from core.identity.conversation_sync import ConversationIdentitySynchronizer
-from core.identity.service import ProtocolIdentityService
 from core.models.conversation_models import Message
 from core.storage.conversation_store import ConversationStore
 

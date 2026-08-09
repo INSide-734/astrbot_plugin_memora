@@ -7,12 +7,16 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..features.identity import ProtocolIdentityStore, StoredIdentity
+from ..features.identity.application.service import ProtocolIdentityService
+from ..features.identity.domain.models import (
+    IdentityTrust,
+    ResolvedIdentity,
+    StoredIdentity,
+)
+from ..features.identity.infrastructure.store import ProtocolIdentityStore
 from .conversation_sync import ConversationIdentitySynchronizer
 from .memory import MemoryIdentityEnricher
-from .models import IdentityTrust, ResolvedIdentity
 from .resolver import ProtocolIdentityResolver
-from .service import ProtocolIdentityService
 
 
 class ProtocolIdentityRuntime:

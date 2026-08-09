@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
+from ..features.identity.application.service import ProtocolIdentityService
+from ..features.identity.domain.models import IdentityTrust, ResolvedIdentity
 from ..storage.conversation_store import ConversationStore
-from .models import IdentityTrust, ResolvedIdentity
-from .service import ProtocolIdentityService
 
 
 class ConversationIdentitySynchronizer:

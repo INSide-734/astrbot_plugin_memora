@@ -13,12 +13,12 @@ from ..evaluation.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
 )
-from ..features.identity import ProtocolIdentityStore
+from ..features.identity.application.service import ProtocolIdentityService
+from ..features.identity.infrastructure.store import ProtocolIdentityStore
 from ..identity.conversation_sync import ConversationIdentitySynchronizer
 from ..identity.memory import MemoryIdentityEnricher
 from ..identity.resolver import ProtocolIdentityResolver
 from ..identity.runtime import ProtocolIdentityRuntime
-from ..identity.service import ProtocolIdentityService
 from ..injection.recorder import InjectionDecisionRecorder
 from ..managers.auto_learning_actions import aggregation_revision_for
 from ..managers.backup_manager import BackupManager
