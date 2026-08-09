@@ -1,5 +1,11 @@
-"""evolution feature 的领域模型所有权与旧路径兼容契约。"""
+"""evolution feature 的领域、应用与基础设施所有权兼容契约。"""
 
+from core.features.evolution.application import (
+    memory_evolution_manager as feature_manager,
+)
+from core.features.evolution.application import (
+    memory_evolution_projection as feature_projection,
+)
 from core.features.evolution.domain import models as feature_models
 from core.features.evolution.infrastructure import (
     memory_evolution_candidate_sources as feature_candidate_sources,
@@ -19,6 +25,8 @@ from core.features.evolution.infrastructure import (
 from core.features.evolution.infrastructure import (
     memory_evolution_store as feature_store,
 )
+from core.managers import memory_evolution_manager as legacy_manager
+from core.managers import memory_evolution_projection as legacy_projection
 from core.models import memory_evolution as legacy_models
 from core.storage import (
     memory_evolution_candidate_sources as legacy_candidate_sources,
@@ -38,6 +46,11 @@ _INFRASTRUCTURE_MODULE_PAIRS = (
     (legacy_store, feature_store),
 )
 
+_APPLICATION_MODULE_PAIRS = (
+    (legacy_manager, feature_manager),
+    (legacy_projection, feature_projection),
+)
+
 
 def test_legacy_evolution_model_imports_reuse_feature_types() -> None:
     """旧模型路径只能导出 evolution feature 的唯一实现。"""
@@ -55,3 +68,12 @@ def test_legacy_evolution_infrastructure_reuses_feature_implementations() -> Non
         for name in feature_module.__all__:
             assert getattr(legacy_module, name) is getattr(feature_module, name)
     assert legacy_derived._serialized_write is feature_derived._serialized_write
+
+
+def test_legacy_evolution_application_reuses_feature_implementations() -> None:
+    """旧 Manager 路径只能导出 evolution application 的唯一实现。"""
+
+    for legacy_module, feature_module in _APPLICATION_MODULE_PAIRS:
+        assert legacy_module.__all__ == feature_module.__all__
+        for name in feature_module.__all__:
+            assert getattr(legacy_module, name) is getattr(feature_module, name)

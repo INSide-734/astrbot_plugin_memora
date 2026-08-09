@@ -13,6 +13,7 @@ from ..evaluation.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
 )
+from ..features.evolution.application import MemoryEvolutionManager
 from ..features.evolution.infrastructure import MemoryEvolutionStore
 from ..features.identity.application.service import ProtocolIdentityService
 from ..features.identity.infrastructure.store import ProtocolIdentityStore
@@ -33,7 +34,6 @@ from ..managers.backup_manager import BackupManager
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..managers.memory_evolution_gate import MemoryEvolutionGate
-from ..managers.memory_evolution_manager import MemoryEvolutionManager
 from ..managers.semantic_compressor import SemanticCompressor
 from ..platform.transport.realtime_hub import RealtimeHub
 from ..processors.memory_consolidator import MemoryConsolidator

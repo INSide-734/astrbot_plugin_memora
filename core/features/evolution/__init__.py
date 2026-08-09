@@ -1,5 +1,10 @@
 """记忆演化 feature 的公开边界。"""
 
+from .application import (
+    EvolutionLeaseLost,
+    EvolutionProposalRejected,
+    MemoryEvolutionManager,
+)
 from .domain import (
     DerivedApplyPlan,
     DerivedState,
@@ -38,7 +43,9 @@ __all__ = [
     "DerivedReviewNotFoundError",
     "DerivedReviewSourceError",
     "DerivedState",
+    "EvolutionLeaseLost",
     "EvolutionProposal",
+    "EvolutionProposalRejected",
     "EvolutionSignal",
     "ExpansionBudget",
     "GateDecision",
@@ -47,6 +54,7 @@ __all__ = [
     "JobState",
     "MemoryProjectionProposal",
     "MemoryEvolutionJob",
+    "MemoryEvolutionManager",
     "MemoryEvolutionStore",
     "MemoryRelationProposal",
     "MemorySourceRef",
