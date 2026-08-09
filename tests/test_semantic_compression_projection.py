@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.initializer.derived_rebuild_coordinator import DerivedRebuildCoordinator
 from core.managers.memory_evolution_manager import (
     EvolutionProposalRejected,
     MemoryEvolutionManager,
@@ -26,6 +25,7 @@ from core.models.memory_evolution import (
     ProjectionType,
     ProjectionView,
 )
+from core.platform.composition import DerivedRebuildCoordinator
 from core.retrieval.projection_reader import (
     ProjectionBudget,
     ProjectionReader,

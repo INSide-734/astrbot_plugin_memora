@@ -35,6 +35,7 @@ from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..managers.memory_evolution_gate import MemoryEvolutionGate
 from ..managers.semantic_compressor import SemanticCompressor
+from ..platform.composition import DerivedRebuildCoordinator
 from ..platform.transport.realtime_hub import RealtimeHub
 from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
@@ -48,7 +49,6 @@ from ..review.quarantine_store import MemoryQuarantineStore
 from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
-from .derived_rebuild_coordinator import DerivedRebuildCoordinator
 from .engine_runtime_config import build_engine_runtime_config
 
 

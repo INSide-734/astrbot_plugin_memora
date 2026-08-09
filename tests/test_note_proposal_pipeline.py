@@ -13,12 +13,12 @@ import pytest
 
 from core.base.cost_control import CostControl
 from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
-from core.initializer.derived_rebuild_coordinator import DerivedRebuildCoordinator
 from core.managers.memory_engine import MemoryEngine
 from core.managers.note_manager import NoteManager
 from core.managers.note_proposal_pipeline import NoteProposalPipeline
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.models.memory_evolution import MemorySourceRef
+from core.platform.composition import DerivedRebuildCoordinator
 from core.storage.note_store import NoteStore
 
 _CONTENT = "部署前需要完成数据库迁移。\n随后重建检索索引并核对健康状态。"

@@ -97,7 +97,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "index_rebuild_settings": _ownership(
         "index_rebuild_settings",
         ConfigOwnershipKind.RUNTIME,
-        "core.initializer.derived_rebuild_coordinator",
+        "core.platform.composition.derived_rebuild_coordinator",
     ),
     "backup_settings": _ownership(
         "backup_settings",

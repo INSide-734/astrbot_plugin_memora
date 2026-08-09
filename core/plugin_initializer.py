@@ -16,7 +16,6 @@ from .base.feature_config import is_jargon_discovery_enabled
 from .features.memory.infrastructure.validators import IndexValidator
 from .identity.runtime import ProtocolIdentityRuntime
 from .initializer.component_factory import ComponentFactory
-from .initializer.db_setup import DatabaseSetup
 from .initializer.faiss_checker import FaissChecker
 from .initializer.provider_loader import ProviderLoader
 from .injection.recorder import InjectionDecisionRecorder
@@ -25,6 +24,7 @@ from .managers.memory_engine import MemoryEngine
 from .monitoring import report_debug_event, report_debug_exception
 from .monitoring.quality_scorer import MemoryQualityScorer
 from .platform.composition import (
+    DatabaseSetup,
     ProviderWaiter,
     close_identity_runtime_after_failure,
 )
