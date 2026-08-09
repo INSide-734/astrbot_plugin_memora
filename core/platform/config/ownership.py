@@ -120,7 +120,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
         "core.managers.profile_manager",
     ),
     "cost_control": _ownership(
-        "cost_control", ConfigOwnershipKind.RUNTIME, "core.base.cost_control"
+        "cost_control", ConfigOwnershipKind.RUNTIME, "core.shared.cost_control"
     ),
     "memory_evolution": _ownership(
         "memory_evolution",
