@@ -243,9 +243,9 @@ class MemoryEngineLifecycleMixin:
 
         # 用户画像初始化
         if bool(self.config.get("user_profile.enabled", True)):
+            from ..features.profiles.application import ProfileManager
             from ..features.profiles.infrastructure.profile_store import ProfileStore
             from ..retrieval.personalized_ranker import PersonalizedRanker
-            from .profile_manager import ProfileManager
 
             self.profile_store = ProfileStore(self.db_path)
             await self.profile_store.init_table()

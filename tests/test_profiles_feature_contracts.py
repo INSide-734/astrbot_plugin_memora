@@ -1,5 +1,6 @@
 """profiles feature 的领域模型所有权与旧路径兼容契约。"""
 
+from core.features.profiles.application import ProfileManager
 from core.features.profiles.contracts import (
     ProfileExtractorPort,
     ProfileSourceReaderPort,
@@ -15,6 +16,7 @@ from core.features.profiles.infrastructure.profile_store import (
     PROFILE_SORT_COLUMNS,
     ProfileStore,
 )
+from core.managers.profile_manager import ProfileManager as LegacyProfileManager
 from core.models.user_profile import (
     TagCategory as LegacyTagCategory,
 )
@@ -52,6 +54,12 @@ def test_legacy_profile_store_import_reuses_feature_implementation() -> None:
     assert LegacyProfileStore is ProfileStore
     assert LEGACY_PROFILE_SORT_COLUMNS is PROFILE_SORT_COLUMNS
     assert LEGACY_PROFILE_LIST_SQL
+
+
+def test_legacy_profile_manager_import_reuses_feature_implementation() -> None:
+    """旧 Manager 路径只能导出 profiles application 的唯一实现。"""
+
+    assert LegacyProfileManager is ProfileManager
 
 
 def test_profile_ports_accept_existing_implementations_structurally() -> None:

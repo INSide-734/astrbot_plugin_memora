@@ -9,12 +9,12 @@ from typing import Any, Protocol
 
 from ..base.cost_control import CostControl
 from ..base.extra_llm_budget import budgeted_extra_llm_call
+from ..features.profiles.application import ProfileManager
 from ..features.profiles.domain.models import UserTag
 from ..identity.memory import IDENTITY_SCHEMA_VERSION
 from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ..models.memory_evolution import MemorySourceRef
 from ..processors.profile_extractor import ProfileExtractor
-from .profile_manager import ProfileManager
 
 _MAX_EVIDENCE_CHARS = 2_000
 _MAX_TOPIC_CHARS = 64
