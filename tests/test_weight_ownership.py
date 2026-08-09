@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.base.config_ownership import resolve_config_ownership
 from core.base.runtime_feature_config import RuntimeFeatureConfigSections
 from core.managers.memory_engine import MemoryEngine
 from core.platform.composition.engine_runtime_config import ENGINE_RUNTIME_FIELDS
+from core.platform.config import resolve_config_ownership
 
 _ROOT = Path(__file__).resolve().parents[1]
 

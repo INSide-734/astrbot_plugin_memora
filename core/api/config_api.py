@@ -13,8 +13,8 @@ from ..base.config_manager import (
     ConfigPersistenceError,
     ConfigValidationError,
 )
-from ..base.config_runtime_effects import classify_config_effects
 from ..monitoring import report_debug_event, set_debug_mode
+from ..platform.config import classify_config_effects
 from .response_utils import ok_response
 
 _PLUGIN_NAME = "astrbot_plugin_memora"

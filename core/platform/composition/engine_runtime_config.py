@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from ...base.config_runtime_effects import RuntimeConfigEffect
+from ..config.runtime_effects import RuntimeConfigEffect
 
 
 class ConfigReader(Protocol):

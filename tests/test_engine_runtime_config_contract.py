@@ -13,15 +13,15 @@ import pytest
 from astrbot.api.platform import MessageType
 
 from core.base.config_manager import ConfigApplyResult, ConfigManager
-from core.base.config_ownership import (
-    ConfigOwnershipKind,
-    resolve_config_ownership,
-)
 from core.base.config_validator import get_default_config, validate_config
 from core.initializer.component_factory import ComponentFactory
 from core.managers.decay_operations import DecayOperationsMixin
 from core.managers.memory_engine import MemoryEngine
 from core.managers.retrieval_optimizer import RetrievalOptimizer
+from core.platform.config import (
+    ConfigOwnershipKind,
+    resolve_config_ownership,
+)
 from core.processors.atom_classifier import classify_atoms
 from core.processors.memory_processor import MemoryProcessor
 from core.retrieval.rrf_fusion import FusedResult, HybridResult
@@ -253,11 +253,11 @@ def test_factory_projects_retrieval_graph_decay_and_atom_fields() -> None:
 def test_runtime_mapping_is_explicit_unique_and_marks_graph_rebuild() -> None:
     """运行时映射不得重复来源或目标，图边开关必须标记重建。"""
 
-    from core.base.config_runtime_effects import REBUILD_REQUIRED_PATHS
     from core.platform.composition.engine_runtime_config import (
         ENGINE_RUNTIME_FIELDS,
         RuntimeConfigEffect,
     )
+    from core.platform.config import REBUILD_REQUIRED_PATHS
 
     sources = [field.source_path for field in ENGINE_RUNTIME_FIELDS]
     targets = [field.target_key for field in ENGINE_RUNTIME_FIELDS]
