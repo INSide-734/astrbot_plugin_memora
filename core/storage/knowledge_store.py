@@ -7,8 +7,8 @@ import time
 from typing import Any
 
 from ..base.list_sorting import SortQuery, order_by_clause
+from ..features.knowledge.domain.models import KnowledgeEntry, KnowledgeType
 from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from ..models.knowledge_models import KnowledgeEntry, KnowledgeType
 from .base import BaseStore
 from .domain_object_integrity import (
     filter_current_domain_objects,

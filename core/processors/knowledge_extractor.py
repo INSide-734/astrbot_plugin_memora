@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from ..models.knowledge_models import KnowledgeEntry, KnowledgeType
+from ..features.knowledge.domain.models import KnowledgeEntry, KnowledgeType
 
 _EXTRACT_PROMPT = """Extract structured knowledge from this memory. Return ONLY JSON:
 {"title": "concise title", "content": "1-3 sentence summary", "category": "fact|concept|rule|event|procedure", "confidence": 0.0-1.0, "tags": ["tag1"]}"""

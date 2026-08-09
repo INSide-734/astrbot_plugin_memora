@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..models.knowledge_models import KnowledgeEntry
+from ..features.knowledge.domain.models import KnowledgeEntry
 from ..storage.knowledge_store import KnowledgeStore
 
 # 全文搜索停用词（中/英）

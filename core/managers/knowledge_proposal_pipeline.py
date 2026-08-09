@@ -12,8 +12,8 @@ from typing import Any, Protocol
 
 from ..base.cost_control import CostControl
 from ..base.extra_llm_budget import budgeted_extra_llm_call
+from ..features.knowledge.domain.models import KnowledgeEntry, KnowledgeType
 from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from ..models.knowledge_models import KnowledgeEntry, KnowledgeType
 from ..models.memory_evolution import MemorySourceRef
 from ..processors.knowledge_extractor import KnowledgeExtractor
 from .knowledge_manager import KnowledgeManager

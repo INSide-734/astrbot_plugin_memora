@@ -7,12 +7,12 @@ import time as _time
 from astrbot.api import logger
 
 from ..base.list_sorting import SortQuery
+from ..features.knowledge.domain.models import KnowledgeEntry
 from ..models.domain_provenance import (
     DomainObjectOrigin,
     DomainProvenance,
     merge_domain_provenance,
 )
-from ..models.knowledge_models import KnowledgeEntry
 from ..storage.knowledge_store import KnowledgeStore
 
 
