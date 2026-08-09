@@ -1,6 +1,6 @@
 """notes feature 的领域模型所有权与旧路径兼容契约。"""
 
-from core.features.notes.application import NoteManager
+from core.features.notes.application import NoteManager, NoteProposalPipeline
 from core.features.notes.contracts import (
     NoteGeneratorPort,
     NoteSourceReaderPort,
@@ -13,6 +13,9 @@ from core.features.notes.domain.models import (
 )
 from core.features.notes.infrastructure import NoteStore
 from core.managers.note_manager import NoteManager as LegacyNoteManager
+from core.managers.note_proposal_pipeline import (
+    NoteProposalPipeline as LegacyNoteProposalPipeline,
+)
 from core.models.note_models import (
     Note as LegacyNote,
 )
@@ -44,6 +47,12 @@ def test_legacy_note_manager_import_reuses_feature_implementation() -> None:
     """旧笔记 Manager 路径只能导出 notes application 的唯一实现。"""
 
     assert LegacyNoteManager is NoteManager
+
+
+def test_legacy_note_pipeline_import_reuses_feature_implementation() -> None:
+    """旧笔记 pipeline 路径只能导出 notes application 的唯一实现。"""
+
+    assert LegacyNoteProposalPipeline is NoteProposalPipeline
 
 
 def test_note_ports_accept_existing_implementations_structurally() -> None:

@@ -18,6 +18,7 @@ from ..features.identity.infrastructure.store import ProtocolIdentityStore
 from ..features.knowledge.application import KnowledgeProposalPipeline
 from ..features.knowledge.infrastructure import KnowledgeExtractor
 from ..features.memory.infrastructure.validators import IndexValidator
+from ..features.notes.application import NoteProposalPipeline
 from ..features.profiles.application import ProfileProposalPipeline
 from ..features.profiles.infrastructure import ProfileExtractor
 from ..identity.conversation_sync import ConversationIdentitySynchronizer
@@ -31,7 +32,6 @@ from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..managers.memory_evolution_gate import MemoryEvolutionGate
 from ..managers.memory_evolution_manager import MemoryEvolutionManager
-from ..managers.note_proposal_pipeline import NoteProposalPipeline
 from ..managers.semantic_compressor import SemanticCompressor
 from ..platform.transport.realtime_hub import RealtimeHub
 from ..processors.memory_consolidator import MemoryConsolidator
