@@ -254,7 +254,7 @@ def test_runtime_mapping_is_explicit_unique_and_marks_graph_rebuild() -> None:
     """运行时映射不得重复来源或目标，图边开关必须标记重建。"""
 
     from core.base.config_runtime_effects import REBUILD_REQUIRED_PATHS
-    from core.initializer.engine_runtime_config import (
+    from core.platform.composition.engine_runtime_config import (
         ENGINE_RUNTIME_FIELDS,
         RuntimeConfigEffect,
     )
@@ -276,7 +276,7 @@ def test_runtime_mapping_is_explicit_unique_and_marks_graph_rebuild() -> None:
 def test_runtime_mapping_fallbacks_match_pydantic_defaults() -> None:
     """映射表后备值必须与唯一 Pydantic 默认配置完全一致。"""
 
-    from core.initializer.engine_runtime_config import ENGINE_RUNTIME_FIELDS
+    from core.platform.composition.engine_runtime_config import ENGINE_RUNTIME_FIELDS
 
     defaults = get_default_config()
     mismatches = {

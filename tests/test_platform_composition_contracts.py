@@ -4,6 +4,7 @@ from core.initializer import db_setup as legacy_db_setup
 from core.initializer import (
     derived_rebuild_coordinator as legacy_derived_rebuild_coordinator,
 )
+from core.initializer import engine_runtime_config as legacy_engine_runtime_config
 from core.initializer import identity_lifecycle as legacy_identity_lifecycle
 from core.initializer import provider_waiter as legacy_provider_waiter
 from core.platform.composition import (
@@ -11,6 +12,9 @@ from core.platform.composition import (
     DerivedRebuildCoordinator,
     ProviderWaiter,
     close_identity_runtime_after_failure,
+)
+from core.platform.composition import (
+    engine_runtime_config as composition_engine_runtime_config,
 )
 
 
@@ -41,4 +45,22 @@ def test_rebuild_coordinator_old_path_reuses_composition_implementation() -> Non
     assert (
         legacy_derived_rebuild_coordinator.DerivedRebuildCoordinator
         is DerivedRebuildCoordinator
+    )
+
+
+def test_engine_runtime_config_old_path_reuses_composition_exports() -> None:
+    """旧运行时配置投影路径只能导出 composition 的唯一实现。"""
+
+    assert (
+        legacy_engine_runtime_config.__all__
+        == composition_engine_runtime_config.__all__
+    )
+    for name in composition_engine_runtime_config.__all__:
+        assert getattr(legacy_engine_runtime_config, name) is getattr(
+            composition_engine_runtime_config,
+            name,
+        )
+    assert (
+        legacy_engine_runtime_config.ConfigReader
+        is composition_engine_runtime_config.ConfigReader
     )
