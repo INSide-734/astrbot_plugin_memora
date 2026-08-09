@@ -6,8 +6,7 @@ from typing import Any
 
 import aiosqlite
 
-from core.features.memory.infrastructure.base import BaseStore
-
+from ...infrastructure.base import BaseStore
 from .graph_subgraph import GraphSubgraphMixin
 
 

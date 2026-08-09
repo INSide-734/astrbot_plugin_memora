@@ -377,7 +377,9 @@ def test_runtime_dependency_imports_are_declared_or_allowlisted() -> None:
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         imported_roots.add(alias.name.split(".", 1)[0])
-                elif isinstance(node, ast.ImportFrom) and node.module:
+                elif (
+                    isinstance(node, ast.ImportFrom) and node.module and node.level == 0
+                ):
                     imported_roots.add(node.module.split(".", 1)[0])
 
     missing: set[str] = set()

@@ -8,8 +8,8 @@ from typing import Any
 
 import aiosqlite
 
-from core.features.memory.infrastructure.base import BaseStore
-from core.utils.number_utils import safe_float
+from .....utils.number_utils import safe_float
+from ...infrastructure.base import BaseStore
 
 
 class GraphSubgraphMixin(BaseStore):

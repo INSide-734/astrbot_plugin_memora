@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import aiosqlite
 
-from core.features.memory.infrastructure.base import BaseStore
-
+from ...infrastructure.base import BaseStore
 from ..domain.models import GraphEdge, GraphEntry, GraphNode
 
 

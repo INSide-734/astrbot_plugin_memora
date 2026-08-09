@@ -6,7 +6,7 @@ import json
 
 import aiosqlite
 
-from core.features.memory.infrastructure.base import BaseStore
+from ...infrastructure.base import BaseStore
 
 
 class GraphDeleteMixin(BaseStore):

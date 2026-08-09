@@ -5,8 +5,7 @@ from typing import Any
 import aiosqlite
 from astrbot.api import logger
 
-from core.features.memory.infrastructure.base import apply_perf_pragmas
-
+from ..base import apply_perf_pragmas
 from .bm25_rebuilder import Bm25RebuilderMixin
 from .embedding_retry import EmbeddingRetryMixin
 from .vector_rebuilder import VectorRebuilderMixin

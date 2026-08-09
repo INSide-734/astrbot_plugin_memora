@@ -7,8 +7,8 @@ from typing import Any, cast
 import aiosqlite
 from astrbot.api import logger
 
-from core.features.memory.infrastructure.base import apply_perf_pragmas
-from core.features.memory.infrastructure.sql_contract import (
+from ..base import apply_perf_pragmas
+from ..sql_contract import (
     MEMORY_FTS_SELECT_DISTINCT_DOC_IDS_SQL,
     MEMORY_FTS_TABLE,
 )

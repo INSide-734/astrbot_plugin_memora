@@ -1,6 +1,6 @@
 """MemoryAtom 领域模型的兼容导出。"""
 
-from core.features.memory.domain.memory_atom import (
+from ..features.memory.domain.memory_atom import (
     AtomStatus,
     AtomType,
     DecayType,

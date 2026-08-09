@@ -8,7 +8,7 @@ from typing import Any
 
 import aiosqlite
 
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
 
 
 @dataclass(frozen=True, slots=True)
