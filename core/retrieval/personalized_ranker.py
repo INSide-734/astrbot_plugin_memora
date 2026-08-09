@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..models.user_profile import UserProfile
+from ..features.profiles.domain.models import UserProfile
 from .rrf_fusion import HybridResult
 
 

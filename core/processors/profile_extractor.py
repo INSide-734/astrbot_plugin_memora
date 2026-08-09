@@ -9,7 +9,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..models.user_profile import TagCategory, UserTag
+from ..features.profiles.domain.models import TagCategory, UserTag
 
 _EXTRACTION_PROMPT = """Analyze this conversation and extract user profile signals.
 Return ONLY valid JSON, no explanation.

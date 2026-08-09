@@ -17,7 +17,7 @@ from ..base.entity_editing import (
     EntityValidationError,
 )
 from ..base.list_sorting import parse_sort_query
-from ..models.user_profile import TagCategory, UserTag
+from ..features.profiles.domain.models import TagCategory, UserTag
 from ..storage.profile_store import PROFILE_SORT_COLUMNS
 from .editing_utils import (
     conflict_error,

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from ..features.profiles.domain.models import UserPreferences
 from ..models.domain_provenance import DomainObjectOrigin
-from ..models.user_profile import UserPreferences
 
 
 def require_manual_preferences(preferences: UserPreferences | None) -> None:

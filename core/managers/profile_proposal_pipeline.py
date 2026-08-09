@@ -9,10 +9,10 @@ from typing import Any, Protocol
 
 from ..base.cost_control import CostControl
 from ..base.extra_llm_budget import budgeted_extra_llm_call
+from ..features.profiles.domain.models import UserTag
 from ..identity.memory import IDENTITY_SCHEMA_VERSION
 from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ..models.memory_evolution import MemorySourceRef
-from ..models.user_profile import UserTag
 from ..processors.profile_extractor import ProfileExtractor
 from .profile_manager import ProfileManager
 

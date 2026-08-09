@@ -15,8 +15,13 @@ from ..base.entity_editing import (
     compute_entity_revision,
 )
 from ..base.list_sorting import SortQuery
+from ..features.profiles.domain.models import (
+    TagCategory,
+    UserPreferences,
+    UserProfile,
+    UserTag,
+)
 from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from ..models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
 from ..storage.profile_store import ProfileStore
 
 _EDITABLE_PREFERENCE_FIELDS = frozenset(
