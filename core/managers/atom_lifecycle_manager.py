@@ -12,7 +12,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..storage.atom_store import AtomStore
+from ..features.memory.infrastructure.atom_store import AtomStore
 
 
 def dedup_atoms_batch(

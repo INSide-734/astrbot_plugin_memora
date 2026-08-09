@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from ..storage.canonical_idempotency import (
+from ..features.memory.infrastructure.canonical_idempotency import (
     find_canonical_memory_id_by_idempotency_key,
     normalize_canonical_idempotency_key,
 )

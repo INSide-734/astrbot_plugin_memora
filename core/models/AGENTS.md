@@ -46,7 +46,9 @@ erDiagram
 - `from_dict()` 对 JSON 字符串元数据/参与者容错，非法 JSON 回退为空结构；缺失必填键仍会抛 `KeyError`。
 - `serialize_to_json()` 只对 `list/dict` 做 JSON 编码；`deserialize_from_json()` 对空值或解析失败返回调用方默认值（未给时为 `{}`）。
 
-### `memory_atom.py`
+### `core/features/memory/domain/memory_atom.py`
+
+`core/models/memory_atom.py` 仅保留兼容导出，唯一实现归属 memory feature。
 
 - `MemoryAtom` 是当前细粒度持久化/检索核心：`parent_memory_id` 必填；新写入链还保存 `parent_revision`、`parent_scope_key` 与 `parent_privacy_level`，旧行缺失时保持 `None`，不得伪造为当前 source。
 - 枚举：`AtomType`（episodic/factual/relational/preference/planned/unknown）、`DecayType`（linear/exponential/step）、`AtomStatus`（active/dormant/superseded/expired/forgotten/cold）、`PrivacyLevel`（public/shared/confidential）。Atom 的隐私快照保存在 `parent_privacy_level`，它只描述父 canonical 创建时边界，不形成独立召回身份。

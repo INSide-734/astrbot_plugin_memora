@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
-from ..models.memory_atom import MemoryAtom
-from ..storage.atom_store import AtomStore
+from ..features.memory.domain.memory_atom import MemoryAtom
+from ..features.memory.infrastructure.atom_store import AtomStore
 
 if TYPE_CHECKING:
     from ..processors.text_processor import TextProcessor

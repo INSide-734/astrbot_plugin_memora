@@ -92,7 +92,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "migration_settings": _ownership(
         "migration_settings",
         ConfigOwnershipKind.EXPERIMENTAL,
-        "core.managers.schema_manager",
+        "core.features.memory.infrastructure.schema_manager",
     ),
     "index_rebuild_settings": _ownership(
         "index_rebuild_settings",
@@ -107,7 +107,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "write_reliability": _ownership(
         "write_reliability",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.write_op_journal",
+        "core.features.memory.infrastructure.write_op_journal",
     ),
     "prompt_templates": _ownership(
         "prompt_templates",
@@ -183,7 +183,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "persona_decay": _ownership(
         "persona_decay",
         ConfigOwnershipKind.EXPERIMENTAL,
-        "core.models.memory_atom",
+        "core.features.memory.domain.memory_atom",
     ),
     "reconsolidation": _ownership(
         "reconsolidation",

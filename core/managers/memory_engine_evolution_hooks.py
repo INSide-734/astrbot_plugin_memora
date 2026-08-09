@@ -3,34 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from typing import Any
 
 from astrbot.api import logger
 
+from ..features.memory.domain.revision import memory_revision
 from ..monitoring import report_debug_event, report_debug_exception
 from .memory_engine_write_observability import measure_memory_write_stage
 from .write_coordinator import write_with_retry
-
-
-def memory_revision(memory: dict[str, Any]) -> str:
-    """从 canonical 读取结果提取稳定 revision token。"""
-
-    for field in ("updated_at", "created_at", "revision_token"):
-        value = memory.get(field)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    metadata = memory.get("metadata")
-    if isinstance(metadata, str):
-        try:
-            metadata = json.loads(metadata)
-        except (TypeError, json.JSONDecodeError):
-            metadata = None
-    if isinstance(metadata, dict):
-        value = metadata.get("updated_at")
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
 
 
 class MemoryEngineEvolutionHooksMixin:

@@ -15,6 +15,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..features.memory.infrastructure.write_op_serialization import safe_json_dict
 from ..utils.number_utils import clamp_float, safe_float
 from .write_coordinator import (
     ConnectionRegistry,
@@ -22,7 +23,6 @@ from .write_coordinator import (
     coordinated_transaction,
     is_connection_fatal,
 )
-from .write_op_serialization import safe_json_dict
 
 
 def _normalize_batch_metadata(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:

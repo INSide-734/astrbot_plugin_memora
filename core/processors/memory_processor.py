@@ -14,9 +14,9 @@ from astrbot.api import logger
 
 from ..base.cost_control import CostControl
 from ..base.extra_llm_budget import budgeted_extra_llm_call
+from ..features.memory.domain.memory_atom import MemoryAtom
 from ..identity.memory import build_memory_identity_context
 from ..models.conversation_models import Message
-from ..models.memory_atom import MemoryAtom
 from ..security.guardrails import (
     MemoryExtractionResult,
     validate_and_clean_json,

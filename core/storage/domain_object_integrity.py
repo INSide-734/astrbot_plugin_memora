@@ -8,12 +8,12 @@ from typing import Any, Iterable, TypeVar
 
 import aiosqlite
 
-from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from .canonical_source_validation import (
+from ..features.memory.infrastructure.canonical_source_validation import (
     load_canonical_source_states,
     source_matches_state,
     validate_domain_provenance,
 )
+from ..models.domain_provenance import DomainObjectOrigin, DomainProvenance
 
 _T = TypeVar("_T")
 

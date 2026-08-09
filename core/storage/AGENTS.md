@@ -9,6 +9,8 @@
 
 `core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存原子、图、会话消息、知识、笔记、画像和注入决策遥测，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
 
+canonical Schema、Atom、幂等映射、来源校验、写日志及共享连接实现已迁至 `core/features/memory/`；对应 `core/storage/` 路径仅保留单实现兼容导出，表名、数据目录和连接生命周期不变。
+
 `feedback_signal_store.py` 是显式隔离路径的同步 SQLite Store；它保存最小反馈事件和可重建聚合，使用 dedupe 唯一约束与事务，不得默认连接 `memora.db`，也不得把事件 key/domain/query/正文写入安全摘要。生产可信适配器写入前必须把决策、作用域和人格转换为稳定不可逆 token；Manager 在写入/重建时物理清理超期事件，并只允许受控适配器按同一匿名决策撤销后重建聚合。
 
 `sql_contract.py` 集中保存跨 retrieval、managers、validators 与 social 复用的固定表名和静态 FTS SQL；这些常量不接受运行时输入，调用方仍必须对值参数绑定，并在支持可替换标识符的入口保留白名单校验。
@@ -46,7 +48,7 @@ graph TD
 
 ## 连接模型与并发
 
-### `base.py`
+### `core/features/memory/infrastructure/base.py`
 
 - `apply_perf_pragmas()` 是共享 SQLite 设置的单一事实来源：`foreign_keys=ON`、`journal_mode=WAL`、`synchronous=NORMAL`、`busy_timeout=30000`、64 MB page cache、内存临时表、256 MB mmap。
 - `ConnectionPool` 用 `asyncio.Queue` 管理固定数量连接；`base.BaseStore._connect()` 优先借池连接，否则创建一次性连接。
@@ -62,7 +64,7 @@ graph TD
 
 ## Schema 与 Store
 
-### 记忆原子：`AtomStore` + `AtomFTSMixin`
+### 记忆原子：`core/features/memory/infrastructure/AtomStore`
 
 `memory_atoms` 保存 `parent_memory_id`、创建时 `parent_revision`/`parent_scope_key`/`parent_privacy_level`、类型、正文、实体 JSON、重要性/置信度、时间、TTL、状态、强化次数、衰减类型、session/persona 和 metadata；`memory_atoms_fts` 是 `content, atom_id UNINDEXED` 的 FTS5 表。三项父来源列缺失的旧行只可维护，读取时不主动召回。
 

@@ -12,6 +12,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from ..features.memory import SchemaManager, WriteOpJournal
 from .maintenance_operations import MaintenanceOperations
 from .memory_engine_batch import MemoryEngineBatchMixin
 from .memory_engine_crud import MemoryEngineCRUDMixin
@@ -19,8 +20,6 @@ from .memory_engine_domain_hooks import MemoryEngineDomainHooksMixin
 from .memory_engine_evolution_hooks import MemoryEngineEvolutionHooksMixin
 from .memory_engine_lifecycle import MemoryEngineLifecycleMixin
 from .retrieval_optimizer import RetrievalOptimizer
-from .schema_manager import SchemaManager
-from .write_op_journal import WriteOpJournal
 
 
 class MemoryEngine(

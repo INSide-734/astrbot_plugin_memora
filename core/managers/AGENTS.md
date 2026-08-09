@@ -20,12 +20,12 @@ graph TD
     Engine --> CRUD[MemoryEngineCRUDMixin]
     Engine --> Batch[MemoryEngineBatchMixin]
     Engine --> Retrieval[RetrievalOptimizer]
-    Engine --> Journal[WriteOpJournal]
+    Engine --> Journal[features.memory.WriteOpJournal]
     Engine --> Maintenance[MaintenanceOperations]
-    Engine --> Schema[SchemaManager]
+    Engine --> Schema[features.memory.SchemaManager]
     CRUD --> Hybrid[retrieval.HybridRetriever]
     CRUD --> GraphMgr[GraphMemoryManager]
-    CRUD --> AtomStore[storage.AtomStore]
+    CRUD --> AtomStore[features.memory.AtomStore]
     Maintenance --> SQLite[(SQLite documents)]
     Hybrid --> BM25[(SQLite FTS5)]
     Hybrid --> FAISS[(FAISS)]
@@ -144,14 +144,14 @@ sequenceDiagram
 |---|---|---|
 | 会话 | `conversation_manager.py` 及 6 个 mixin | `ConversationStore` 上层 LRU、上下文窗口、事件适配和元数据；缓存由 `_cache_lock` 保护 |
 | 图同步 | `graph_memory_manager.py` | 删除旧图产物后重建节点/边/条目与图向量；向量 ID 最终回写 SQLite |
-| 原子生命周期 | `atom_lifecycle_manager.py`、`atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理 |
+| 原子生命周期 | `atom_lifecycle_manager.py`、`features/memory/application/atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理 |
 | 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护 |
 | 画像 | `profile_manager.py`、`profile_proposal_pipeline.py`、`memory_engine_profile_hooks.py` | 管理员编辑使用修订值冲突检测；canonical 写后自动 proposal 仅绑定唯一可信主体，标签与偏好携带 derived provenance 并走存储层原子事务 |
 | 知识/笔记 | `knowledge_manager.py`、`knowledge_proposal_pipeline.py`、`note_proposal_pipeline.py`、`memory_engine_domain_hooks.py`、`note_manager.py` | 知识与笔记 canonical 写后 proposal、来源约束幂等与失效；自动笔记可无 Provider 重建，人工 CRUD、软删和版本历史保持领域权威 |
 | 异常检测 | `anomaly_detector.py`、`stats_operations.py` | 按 UTC 日聚合 canonical 创建量；只用当前日之前的完整窗口计算 3-sigma 基线，待投递告警随状态恢复，同一天只写一条脱敏诊断事件 |
 | 记忆再巩固 | `reconsolidation.py`、`reconsolidation_store.py` | 默认关闭；召回只生成 pending 候选；apply 先持久化唯一 intent，再按 source revision CAS 写 canonical 并恢复/失败收口；回滚同样持久化跨 Store 意图并刷新当前 source 的 graph 派生，状态、动作审计与操作清理原子收口；启动恢复不得覆盖后续编辑 |
 | 自主学习 | `auto_learning.py`、`feedback_signal_manager.py`、`feedback_signal_store.py` | 统一 FeedbackSignal 事件只进入隔离 Store；shadow 候选经单一 CAS 写入口发布；生产写入前持久化真实旧权重 intent，最终状态保存失败时保留可重启回滚快照；rebuild/publish/rollback/reset 共用状态锁，不直接修改生产权重 |
-| 可靠性 | `write_coordinator.py`、`write_op_*`、`memory_engine_write_observability.py` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复；canonical 写入指标与质量采样由独立 mixin 承担 |
+| 可靠性 | `write_coordinator.py`、`features/memory/infrastructure/write_op_*`、`memory_engine_write_observability.py` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复；canonical 写入指标与质量采样由独立 mixin 承担 |
 | 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py`、`memory_evolution_projection.py`、`semantic_compressor.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验、外部 Projection proposal 二次校验及语义摘要生成 |
 | canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |
 | 连续性 | `continuity_tracker.py`、`memory_engine_lifecycle.py` | 使用 `data_dir` 同步恢复/保存，按配置 TTL 和单 session 上限保留话题；关闭时不创建或读写 |

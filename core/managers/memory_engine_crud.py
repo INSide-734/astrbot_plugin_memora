@@ -10,19 +10,26 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..features.memory.application.atom_source_binding import (
+    bind_atoms_to_canonical_source,
+)
+from ..features.memory.domain.revision import memory_revision
+from ..features.memory.infrastructure.canonical_memory_reader import (
+    load_canonical_memory,
+)
+from ..features.memory.infrastructure.write_op_serialization import (
+    serialize_atom_for_repair,
+)
 from ..models.recall_strategy import RecallStrategy
 from ..models.temporal import canonical_visible_at, normalize_datetime
 from ..retrieval.query_rewriter import resolve_reference_time
 from ..retrieval.rrf_fusion import HybridResult
 from ..utils.number_utils import clamp_float
-from .atom_source_binding import bind_atoms_to_canonical_source
-from .canonical_memory_reader import load_canonical_memory
 from .memory_engine_atom_support import (
     prepare_atoms_for_write,
     reinforce_existing_atoms,
     successful_atoms,
 )
-from .memory_engine_evolution_hooks import memory_revision
 from .memory_engine_idempotency import MemoryEngineIdempotencyMixin
 from .memory_engine_semantic_updates import has_semantic_metadata_change
 from .memory_engine_write_observability import (
@@ -30,7 +37,6 @@ from .memory_engine_write_observability import (
     measure_memory_write_stage,
 )
 from .retrieval_timing import RetrievalTimingSink
-from .write_op_serialization import serialize_atom_for_repair
 
 
 class MemoryEngineCRUDMixin(

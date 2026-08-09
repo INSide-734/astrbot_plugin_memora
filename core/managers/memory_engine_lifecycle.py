@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 import aiosqlite
 from astrbot.api import logger
 
+from ..features.memory.infrastructure.atom_store import AtomStore
+from ..features.memory.infrastructure.base import apply_perf_pragmas
 from ..managers.atom_lifecycle_manager import AtomLifecycleManager
 from ..managers.graph_memory_manager import GraphMemoryManager
 from ..processors.graph_extractor import GraphExtractor
@@ -28,7 +30,6 @@ from ..retrieval.graph_vector_retriever import GraphVectorRetriever
 from ..retrieval.hybrid_retriever import HybridRetriever
 from ..retrieval.rrf_fusion import RRFFusion
 from ..retrieval.vector_retriever import VectorRetriever
-from ..storage.atom_store import AtomStore
 from ..storage.graph_store import GraphStore
 from .schema_migration import SchemaMigrationCoordinator
 from .write_coordinator import ConnectionRegistry
@@ -147,8 +148,6 @@ class MemoryEngineLifecycleMixin:
         self.db_connection = await aiosqlite.connect(self.db_path)
         self.db_connection.row_factory = aiosqlite.Row
         # ---- SQLite 写性能优化 PRAGMA ----
-        from ..storage.base import apply_perf_pragmas
-
         await apply_perf_pragmas(self.db_connection)
         # 降低 WAL checkpoint 频率，减少生命周期初始化阶段的写阻塞。
         await self.db_connection.execute("PRAGMA wal_autocheckpoint = 1000")

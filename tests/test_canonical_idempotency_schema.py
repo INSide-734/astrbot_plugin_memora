@@ -415,7 +415,8 @@ async def test_migration_failure_rolls_back_mapping_and_version(
     assert plan is not None
 
     with patch(
-        "core.managers.schema_manager.rebuild_canonical_idempotency_mapping",
+        "core.features.memory.infrastructure.schema_manager."
+        "rebuild_canonical_idempotency_mapping",
         new=AsyncMock(side_effect=RuntimeError("injected idempotency rebuild failure")),
     ):
         with pytest.raises(RuntimeError, match="injected idempotency rebuild failure"):
@@ -466,7 +467,8 @@ async def test_migration_cancellation_rolls_back_and_propagates(
     assert plan is not None
 
     with patch(
-        "core.managers.schema_manager.rebuild_canonical_idempotency_mapping",
+        "core.features.memory.infrastructure.schema_manager."
+        "rebuild_canonical_idempotency_mapping",
         new=AsyncMock(side_effect=asyncio.CancelledError()),
     ):
         with pytest.raises(asyncio.CancelledError):

@@ -21,7 +21,7 @@ from ..adapter_capabilities import (
     ScoreDirection,
     ScoreSemantics,
 )
-from ..models.memory_atom import compute_decay_score
+from ..features.memory.domain.memory_atom import compute_decay_score
 from ..models.temporal import normalize_datetime
 from ..utils.number_utils import clamp_float, safe_float
 from .graph_keyword_retriever import GraphKeywordRetriever

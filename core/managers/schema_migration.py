@@ -14,14 +14,14 @@ from typing import Protocol
 
 from astrbot.api import logger
 
-from .backup_manager import BackupManager
-from .backup_snapshot import atomic_write_json
-from .schema_manager import (
+from ..features.memory.infrastructure.schema_manager import (
     CURRENT_DB_VERSION,
     SchemaManager,
     SchemaMigrationPlan,
     WriteJournalCreateCallback,
 )
+from .backup_manager import BackupManager
+from .backup_snapshot import atomic_write_json
 
 _STATE_FILE = ".schema_migration_state.json"
 

@@ -11,7 +11,12 @@ from datetime import datetime, timedelta
 
 from astrbot.api import logger
 
-from ..models.memory_atom import AtomType, DecayType, MemoryAtom, compute_ttl
+from ..features.memory.domain.memory_atom import (
+    AtomType,
+    DecayType,
+    MemoryAtom,
+    compute_ttl,
+)
 
 # ---------- 分类模式 ----------
 

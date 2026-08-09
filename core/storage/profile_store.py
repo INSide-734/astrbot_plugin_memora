@@ -14,6 +14,9 @@ from ..base.entity_editing import (
     compute_entity_revision,
 )
 from ..base.list_sorting import SortQuery, order_by_clause
+from ..features.memory.infrastructure.canonical_source_validation import (
+    validate_domain_provenance,
+)
 from ..models.domain_provenance import (
     DomainObjectOrigin,
     DomainProvenance,
@@ -21,7 +24,6 @@ from ..models.domain_provenance import (
 )
 from ..models.user_profile import TagCategory, UserPreferences, UserProfile, UserTag
 from .base import BaseStore
-from .canonical_source_validation import validate_domain_provenance
 from .domain_object_integrity import filter_current_domain_objects
 from .profile_preferences_integrity import require_manual_preferences
 from .profile_queries import PROFILE_LIST_SQL

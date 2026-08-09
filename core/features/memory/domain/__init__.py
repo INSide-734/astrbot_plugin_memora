@@ -1,6 +1,6 @@
-"""MemoryAtom 领域模型的兼容导出。"""
+"""canonical memory feature 的纯领域类型与规则。"""
 
-from core.features.memory.domain.memory_atom import (
+from .memory_atom import (
     AtomStatus,
     AtomType,
     DecayType,
@@ -9,6 +9,7 @@ from core.features.memory.domain.memory_atom import (
     compute_decay_score,
     compute_ttl,
 )
+from .revision import memory_revision
 
 __all__ = [
     "AtomStatus",
@@ -18,4 +19,5 @@ __all__ = [
     "PrivacyLevel",
     "compute_decay_score",
     "compute_ttl",
+    "memory_revision",
 ]
