@@ -36,6 +36,14 @@ def _qq_official_c2c_event(*, sender_id: str = "OPENID-1") -> MagicMock:
     return event
 
 
+def _identity_runtime():
+    """构造命令测试显式注入的协议身份端口。"""
+
+    from core.identity.runtime import ProtocolIdentityRuntime
+
+    return ProtocolIdentityRuntime()
+
+
 # ============================================================================
 # QueryCommandMixin tests
 # ============================================================================
@@ -137,6 +145,31 @@ class TestHandleSearch:
         assert len(results) == 1
 
     @pytest.mark.asyncio
+    async def test_missing_identity_port_fails_closed(self) -> None:
+        """命令缺少身份端口时不得使用静态解析器继续检索。"""
+
+        from core.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=[])
+
+        class TestMixin(QueryCommandMixin):
+            memory_engine = engine
+
+        event = MagicMock()
+        event.unified_msg_origin = "test-session"
+        event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+        event.get_sender_id.return_value = "user-001"
+        event.plain_result.return_value = "no results"
+
+        results = []
+        async for result in TestMixin().handle_search(event, "private fact"):
+            results.append(result)
+
+        assert results == ["no results"]
+        engine.search_memories.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_clamps_k_to_range(self) -> None:
         from core.commands.query_commands import QueryCommandMixin
 
@@ -145,6 +178,7 @@ class TestHandleSearch:
 
         class TestMixin(QueryCommandMixin):
             memory_engine = engine
+            _identity_runtime = _identity_runtime()
 
         mixin = TestMixin()
         event = MagicMock()
@@ -169,6 +203,7 @@ class TestHandleSearch:
 
         class TestMixin(QueryCommandMixin):
             memory_engine = engine
+            _identity_runtime = _identity_runtime()
 
         mixin = TestMixin()
         event = MagicMock()
@@ -193,6 +228,7 @@ class TestHandleSearch:
 
         class TestMixin(QueryCommandMixin):
             memory_engine = engine
+            _identity_runtime = _identity_runtime()
 
         event = MagicMock()
         event.unified_msg_origin = "group:42"
@@ -218,6 +254,7 @@ class TestHandleSearch:
 
         class TestMixin(QueryCommandMixin):
             memory_engine = engine
+            _identity_runtime = _identity_runtime()
 
         event = _qq_official_c2c_event()
 
@@ -238,6 +275,7 @@ class TestHandleSearch:
 
         class TestMixin(QueryCommandMixin):
             memory_engine = engine
+            _identity_runtime = _identity_runtime()
 
         event = _qq_official_c2c_event(sender_id="OTHER-OPENID")
 

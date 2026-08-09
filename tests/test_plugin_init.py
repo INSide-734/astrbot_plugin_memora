@@ -1689,6 +1689,7 @@ class TestMemoraInjectionLifecycle:
             assert (
                 kwargs["memory_quality_gate"] is plugin.initializer.memory_quality_gate
             )
+            assert kwargs["identity_runtime"] is plugin.initializer.identity_runtime
             return event_handler
 
         with patch.object(module, "EventHandler", side_effect=build_event_handler):
@@ -1754,8 +1755,16 @@ class TestMemoraInjectionLifecycle:
             is plugin.initializer.memory_quality_gate
         )
         assert (
+            event_handler_type.call_args.kwargs["identity_runtime"]
+            is plugin.initializer.identity_runtime
+        )
+        assert (
             command_handler_type.call_args.kwargs["memory_quality_gate"]
             is plugin.initializer.memory_quality_gate
+        )
+        assert (
+            command_handler_type.call_args.kwargs["identity_runtime"]
+            is plugin.initializer.identity_runtime
         )
         memory_tool_type.assert_called_once()
         plugin.context.add_llm_tools.assert_not_called()

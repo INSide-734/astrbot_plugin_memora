@@ -236,6 +236,7 @@ async def test_event_handler_defers_and_deduplicates_identity_sync() -> None:
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
+        identity_runtime=runtime,
     )
     handler._recall_handler.handle_memory_recall = AsyncMock()
     handler._reflection_handler.handle_memory_reflection = AsyncMock()
@@ -270,6 +271,7 @@ def test_event_handler_retries_identity_sync_after_scheduling_failure() -> None:
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
+        identity_runtime=runtime,
     )
     handler._create_maintenance_task = MagicMock(side_effect=RuntimeError("boom"))
     event = SimpleNamespace()
@@ -332,6 +334,7 @@ async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> No
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
+        identity_runtime=runtime,
         relation_manager=relation,
     )
     handler._extractor.extract_message_content = AsyncMock(return_value="正文")
@@ -455,6 +458,7 @@ async def test_conflict_group_capture_skips_user_message_and_cognitive_state() -
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
+        identity_runtime=runtime,
         relation_manager=relation,
     )
     handler._extractor.extract_message_content = AsyncMock(return_value="正文")

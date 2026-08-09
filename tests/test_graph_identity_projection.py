@@ -170,9 +170,7 @@ async def test_graph_overview_projects_identity_runtime_into_response() -> None:
 
             return {
                 "memory_engine": engine,
-                "conversation_manager": SimpleNamespace(
-                    identity_runtime=identity_runtime
-                ),
+                "identity_runtime": identity_runtime,
             }, None
 
         def _get_graph_store(self, _engine):

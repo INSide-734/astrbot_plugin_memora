@@ -68,6 +68,7 @@ async def test_group_capture_checks_only_ambient_messages_after_persisting() -> 
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
+        identity_runtime=identity_runtime,
     )
     handler._extractor.extract_message_content = AsyncMock(return_value="普通群消息")
     handler._dedup.build_dedup_key = AsyncMock(return_value=None)

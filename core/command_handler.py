@@ -18,6 +18,7 @@ from .handlers.reflection_candidate_writer import build_reflection_idempotency_k
 from .i18n_backend import t, t_list
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
+from .shared.contracts import IdentityConversationPort
 from .validators.index_validator import IndexValidator
 
 
@@ -46,6 +47,7 @@ class CommandHandler(
         recall_trace_provider: DiagnosticProvider | None = None,
         update_manager=None,
         update_installer=None,
+        identity_runtime: IdentityConversationPort | None = None,
     ):
         """
         初始化命令处理器
@@ -64,12 +66,18 @@ class CommandHandler(
             recall_trace_provider: 召回追踪异步提供器
             update_manager: runtime 更新服务
             update_installer: runtime 安装、重载与回滚服务
+            identity_runtime: 组合根发布的协议身份端口
         """
         self.context = context
         self.config_manager = config_manager
         self.memory_engine = memory_engine
         self.conversation_manager = conversation_manager
         self.index_validator = index_validator
+        self._identity_runtime: IdentityConversationPort | None = (
+            identity_runtime
+            if isinstance(identity_runtime, IdentityConversationPort)
+            else None
+        )
         self._memory_processor = memory_processor
         self._memory_quality_gate = memory_quality_gate
         self.get_initialization_status = initialization_status_callback

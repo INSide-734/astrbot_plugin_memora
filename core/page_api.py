@@ -1271,6 +1271,9 @@ class PluginPageApi(
             return {
                 "memory_engine": memory_engine,
                 "conversation_manager": self.plugin.initializer.conversation_manager,
+                "identity_runtime": getattr(
+                    self.plugin.initializer, "identity_runtime", None
+                ),
                 "index_validator": self.plugin.initializer.index_validator,
             }, None
         except Exception as exc:

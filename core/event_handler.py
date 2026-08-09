@@ -72,8 +72,9 @@ class EventHandler:
         memory_tool_available: bool = False,
         memory_evolution_manager: Any | None = None,
         memory_quality_gate: Any | None = None,
+        identity_runtime: IdentityConversationPort | None = None,
     ) -> None:
-        """绑定事件主链依赖，并复用会话管理器持有的协议身份运行时。"""
+        """绑定事件主链依赖，并接收组合根发布的协议身份端口。"""
 
         self.context = context
         self.config_manager = config_manager
@@ -97,7 +98,6 @@ class EventHandler:
             if isinstance(configured_cost_control, CostControl)
             else build_cost_control_from_config(cost_control_section)
         )
-        identity_runtime = getattr(conversation_manager, "identity_runtime", None)
         self._identity_runtime: IdentityConversationPort | None = (
             identity_runtime
             if isinstance(identity_runtime, IdentityConversationPort)

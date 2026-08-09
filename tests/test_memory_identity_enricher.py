@@ -676,6 +676,7 @@ def test_event_handler_passes_runtime_enricher_to_recall_handler() -> None:
             memory_engine=MagicMock(),
             memory_processor=MagicMock(),
             conversation_manager=conversation,
+            identity_runtime=runtime,
         )
 
     assert (

@@ -12,10 +12,8 @@ from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from astrbot.api.platform import MessageType
 
 from ..i18n_backend import t, t_list
-from ..identity import IdentityTrust, ProtocolIdentityResolver
+from ..identity import IdentityTrust
 from ..managers.feedback_signal_manager import record_explicit_correction
-
-_READ_ONLY_IDENTITY_RESOLVER = ProtocolIdentityResolver.default()
 
 
 class QueryCommandMixin:
@@ -85,13 +83,8 @@ class QueryCommandMixin:
     def _event_user_id(self, event: AstrMessageEvent) -> str | None:
         """只读解析 canonical 用户标识；不可信身份拒绝检索。"""
 
-        conversation_manager = getattr(self, "conversation_manager", None)
-        identity_runtime = getattr(conversation_manager, "identity_runtime", None)
-        resolver = (
-            getattr(identity_runtime, "resolve", None)
-            if identity_runtime is not None
-            else _READ_ONLY_IDENTITY_RESOLVER.resolve
-        )
+        identity_runtime = getattr(self, "_identity_runtime", None)
+        resolver = getattr(identity_runtime, "resolve", None)
         if not callable(resolver):
             return None
         try:

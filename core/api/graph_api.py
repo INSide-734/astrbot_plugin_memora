@@ -347,9 +347,7 @@ class GraphApiMixin:
                     persona_id=persona_id,
                     full=True,
                 )
-            identity_runtime = getattr(
-                ready.get("conversation_manager"), "identity_runtime", None
-            )
+            identity_runtime = ready.get("identity_runtime")
             snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
                 self, snapshot, identity_runtime
             )
@@ -430,9 +428,7 @@ class GraphApiMixin:
                     oldest_timestamp=oldest_timestamp,
                     newest_timestamp=newest_timestamp,
                 )
-                identity_runtime = getattr(
-                    ready.get("conversation_manager"), "identity_runtime", None
-                )
+                identity_runtime = ready.get("identity_runtime")
                 snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
                     self, snapshot, identity_runtime
                 )
@@ -478,9 +474,7 @@ class GraphApiMixin:
                         persona_id=persona_id,
                         full=True,
                     )
-                identity_runtime = getattr(
-                    ready.get("conversation_manager"), "identity_runtime", None
-                )
+                identity_runtime = ready.get("identity_runtime")
                 snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
                     self, snapshot, identity_runtime
                 )
@@ -572,9 +566,7 @@ class GraphApiMixin:
                 oldest_timestamp=oldest_timestamp,
                 newest_timestamp=newest_timestamp,
             )
-            identity_runtime = getattr(
-                ready.get("conversation_manager"), "identity_runtime", None
-            )
+            identity_runtime = ready.get("identity_runtime")
             snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
                 self, snapshot, identity_runtime
             )

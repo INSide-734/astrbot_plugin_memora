@@ -488,6 +488,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     memory_engine=self.initializer.memory_engine,  # type: ignore[arg-type]
                     memory_processor=self.initializer.memory_processor,  # type: ignore[arg-type]
                     conversation_manager=self.initializer.conversation_manager,  # type: ignore[arg-type]
+                    identity_runtime=self.initializer.identity_runtime,
                     jargon_filter=getattr(self.initializer, "jargon_filter", None),
                     jargon_miner=getattr(self.initializer, "jargon_miner", None),
                     jargon_query_service=getattr(
@@ -525,6 +526,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     memory_engine=self.initializer.memory_engine,
                     conversation_manager=self.initializer.conversation_manager,
                     index_validator=self.initializer.index_validator,
+                    identity_runtime=self.initializer.identity_runtime,
                     memory_processor=self.initializer.memory_processor,
                     memory_quality_gate=getattr(
                         self.initializer, "memory_quality_gate", None
