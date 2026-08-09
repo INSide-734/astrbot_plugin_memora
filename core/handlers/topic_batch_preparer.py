@@ -13,11 +13,11 @@ from astrbot.api import logger
 
 from ..base.config_manager import ConfigManager
 from ..base.cost_control import CostControl
-from ..base.extra_llm_budget import budgeted_extra_llm_call
 from ..processors.topic_splitter import (
     TopicChunkingStrategy,
     TwoStageLLMStrategy,
 )
+from ..shared.extra_llm_budget import budgeted_extra_llm_call
 
 
 class TopicBatchPreparer:

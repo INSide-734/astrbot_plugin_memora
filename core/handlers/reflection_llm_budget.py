@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..base.cost_control import CostControl
-from ..base.extra_llm_budget import (
+from ..shared.extra_llm_budget import (
     budgeted_extra_llm_call,
     current_extra_llm_budget,
 )

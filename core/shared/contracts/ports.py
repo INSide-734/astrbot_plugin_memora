@@ -21,6 +21,17 @@ class RealtimePublisher(Protocol):
 
 
 @runtime_checkable
+class CostControlPort(Protocol):
+    """额外 LLM 成本许可门的最小同步端口。"""
+
+    def allow(self, feature: str) -> bool:
+        """判断指定额外 LLM 能力是否允许执行。"""
+
+    def deny_reason(self, feature: str) -> str:
+        """返回指定能力被拒绝时的稳定原因文本。"""
+
+
+@runtime_checkable
 class CanonicalMemoryPort(Protocol):
     """canonical memory CRUD 的最小应用端口。"""
 
@@ -190,6 +201,7 @@ class PromptProtectionPort(Protocol):
 
 __all__ = [
     "CanonicalMemoryPort",
+    "CostControlPort",
     "ContinuityPort",
     "DerivedWorkPublisher",
     "EmbeddingPort",

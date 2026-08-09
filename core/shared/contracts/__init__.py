@@ -14,6 +14,7 @@ from .events import CanonicalMemoryCommitted
 from .identity import IDENTITY_SCHEMA_VERSION
 from .ports import (
     CanonicalMemoryPort,
+    CostControlPort,
     DerivedWorkPublisher,
     FinalVisibilityPort,
     IdentityConversationPort,
@@ -24,6 +25,7 @@ from .ports import (
 __all__ = [
     "CanonicalMemoryCommitted",
     "CanonicalMemoryPort",
+    "CostControlPort",
     "CanonicalSourceReaderPort",
     "DerivedWorkPublisher",
     "DerivedMetadataSourceRef",

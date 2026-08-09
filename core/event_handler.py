@@ -15,11 +15,6 @@ from astrbot.api.platform import MessageType
 
 from .base.config_manager import ConfigManager
 from .base.cost_control import CostControl, build_cost_control_from_config
-from .base.extra_llm_budget import (
-    ExtraLlmBudget,
-    ExtraLlmBudgetObservation,
-    extra_llm_budget_scope,
-)
 from .cleaners.injection_cleaner import InjectionCleaner
 from .dedup.dedup_manager import DedupManager
 from .extractors.message_content_extractor import MessageContentExtractor
@@ -37,6 +32,11 @@ from .monitoring import (
 )
 from .processors.memory_processor import MemoryProcessor
 from .shared.contracts import IdentityConversationPort
+from .shared.extra_llm_budget import (
+    ExtraLlmBudget,
+    ExtraLlmBudgetObservation,
+    extra_llm_budget_scope,
+)
 from .utils.injection_adapter import InjectionAdapter
 
 if TYPE_CHECKING:

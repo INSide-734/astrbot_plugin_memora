@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 
 from ..base.cost_control import CostControl
-from ..base.extra_llm_budget import budgeted_extra_llm_call
 from ..features.memory.domain.memory_atom import MemoryAtom
 from ..identity.memory import build_memory_identity_context
 from ..models.conversation_models import Message
@@ -22,6 +21,7 @@ from ..security.guardrails import (
     validate_and_clean_json,
     validate_llm_response,
 )
+from ..shared.extra_llm_budget import budgeted_extra_llm_call
 from .atom_classifier import classify_atoms
 from .conversation_formatter import ConversationFormatter
 from .json_parser import JsonParser

@@ -17,8 +17,8 @@ from typing import Any
 from astrbot.api import logger
 
 from ..base.cost_control import CostControl
-from ..base.extra_llm_budget import budgeted_extra_llm_call
 from ..models.temporal import normalize_datetime, parse_datetime
+from ..shared.extra_llm_budget import budgeted_extra_llm_call
 from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
 
 # 规范化的意图标签（外部 LLM 或旧配置可能使用别名）

@@ -11,9 +11,9 @@ from dataclasses import replace
 from typing import Any
 
 from ....base.cost_control import CostControl
-from ....base.extra_llm_budget import budgeted_extra_llm_call
 from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ....shared.contracts import MemorySourceRef
+from ....shared.extra_llm_budget import budgeted_extra_llm_call
 from ..contracts import (
     KnowledgeExtractorPort,
     KnowledgeSourceReaderPort,
