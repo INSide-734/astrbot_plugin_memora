@@ -31,14 +31,14 @@ from ..features.learning.domain.auto_learning_records import (
     safe_status,
 )
 from ..features.learning.domain.models import FeedbackSignalAggregate
+from ..features.learning.infrastructure.auto_learning_state import (
+    AutoLearningStatePersistenceError,
+    AutoLearningStateStore,
+)
 from .auto_learning_operations import AutoLearningOperationsMixin
 from .auto_learning_persistence import AutoLearningPersistenceMixin
 from .auto_learning_reload import AutoLearningReloadMixin
 from .auto_learning_retention import AutoLearningRetentionMixin
-from .auto_learning_state import (
-    AutoLearningStatePersistenceError,
-    AutoLearningStateStore,
-)
 
 _STATE_FILE = "auto_learning.json"
 _BINDING_FIELDS = (

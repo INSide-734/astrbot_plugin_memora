@@ -9,8 +9,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from core.features.learning.infrastructure.auto_learning_state import (
+    AutoLearningStatePersistenceError,
+)
 from core.managers.auto_learning import AutoLearningManager
-from core.managers.auto_learning_state import AutoLearningStatePersistenceError
 
 
 class _FeedbackManager:

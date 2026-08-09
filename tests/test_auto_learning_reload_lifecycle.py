@@ -279,7 +279,7 @@ async def test_reload_callback_revision_conflict_is_fail_closed(
 ) -> None:
     """过期状态写入者应返回稳定 revision 冲突，不得覆盖新状态。"""
 
-    from core.managers.auto_learning_state import (
+    from core.features.learning.infrastructure.auto_learning_state import (
         AutoLearningStatePersistenceError,
         AutoLearningStateStore,
     )

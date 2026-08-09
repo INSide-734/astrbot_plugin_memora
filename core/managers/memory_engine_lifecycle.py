@@ -259,11 +259,13 @@ class MemoryEngineLifecycleMixin:
             FeedbackAdapterKind,
             FeedbackSignalPolicy,
         )
+        from ..features.learning.infrastructure.auto_learning_state import (
+            AutoLearningStatePersistenceError,
+        )
         from ..features.learning.infrastructure.feedback_signal_store import (
             FeedbackSignalStore,
         )
         from .auto_learning import AutoLearningManager
-        from .auto_learning_state import AutoLearningStatePersistenceError
 
         auto_learning_enabled = bool(self.config.get("auto_learning.enabled", False))
         feedback_store = FeedbackSignalStore(

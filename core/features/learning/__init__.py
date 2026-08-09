@@ -48,12 +48,26 @@ from .domain import (
     utc_now,
     weight_snapshot_hash,
 )
-from .infrastructure import FeedbackSignalStore
+from .infrastructure import (
+    STATE_SCHEMA_VERSION,
+    AutoLearningStateError,
+    AutoLearningStateLoadResult,
+    AutoLearningStatePersistenceError,
+    AutoLearningStateStore,
+    AutoLearningStateValidationError,
+    FeedbackSignalStore,
+)
 
 __all__ = [
     "CANDIDATE_REASONS",
     "CANDIDATE_STATUSES",
     "FEEDBACK_REASON_CODES",
+    "STATE_SCHEMA_VERSION",
+    "AutoLearningStateError",
+    "AutoLearningStateLoadResult",
+    "AutoLearningStatePersistenceError",
+    "AutoLearningStateStore",
+    "AutoLearningStateValidationError",
     "CandidateBinding",
     "FeedbackAdapterKind",
     "FeedbackIngestResult",

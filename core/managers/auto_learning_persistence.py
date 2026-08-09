@@ -15,8 +15,10 @@ from ..features.learning.domain.auto_learning_records import (
     normalize_candidate,
     utc_now,
 )
+from ..features.learning.infrastructure.auto_learning_state import (
+    AutoLearningStatePersistenceError,
+)
 from .auto_learning_reload import normalize_reload_operation
-from .auto_learning_state import AutoLearningStatePersistenceError
 
 
 class AutoLearningPersistenceMixin:

@@ -20,7 +20,9 @@ from ..features.learning.domain.auto_learning_records import (
     rollback_failure,
     utc_now,
 )
-from .auto_learning_state import AutoLearningStatePersistenceError
+from ..features.learning.infrastructure.auto_learning_state import (
+    AutoLearningStatePersistenceError,
+)
 
 
 class AutoLearningOperationsMixin:

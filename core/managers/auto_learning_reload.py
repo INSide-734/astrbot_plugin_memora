@@ -9,7 +9,9 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..features.learning.domain.auto_learning_records import utc_now
-from .auto_learning_state import AutoLearningStatePersistenceError
+from ..features.learning.infrastructure.auto_learning_state import (
+    AutoLearningStatePersistenceError,
+)
 
 _OPAQUE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{22,128}\Z", re.ASCII)
 _REVISION_PATTERN = re.compile(r"[\x21-\x7e]{1,128}\Z", re.ASCII)
