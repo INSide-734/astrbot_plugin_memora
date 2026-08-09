@@ -11,11 +11,12 @@ from .contracts import (
     ProfileStorePort,
 )
 from .domain import TagCategory, UserPreferences, UserProfile, UserTag
-from .infrastructure import PROFILE_SORT_COLUMNS, ProfileStore
+from .infrastructure import PROFILE_SORT_COLUMNS, ProfileExtractor, ProfileStore
 
 __all__ = [
     "PROFILE_SORT_COLUMNS",
     "ProfileExtractorPort",
+    "ProfileExtractor",
     "ProfileManager",
     "ProfileProposalPipeline",
     "ProfileSourceReaderPort",

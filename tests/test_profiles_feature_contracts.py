@@ -16,6 +16,7 @@ from core.features.profiles.domain.models import (
     UserProfile,
     UserTag,
 )
+from core.features.profiles.infrastructure import ProfileExtractor
 from core.features.profiles.infrastructure.profile_store import (
     PROFILE_SORT_COLUMNS,
     ProfileStore,
@@ -39,7 +40,9 @@ from core.models.user_profile import (
 from core.models.user_profile import (
     UserTag as LegacyUserTag,
 )
-from core.processors.profile_extractor import ProfileExtractor
+from core.processors.profile_extractor import (
+    ProfileExtractor as LegacyProfileExtractor,
+)
 from core.storage.profile_queries import PROFILE_LIST_SQL as LEGACY_PROFILE_LIST_SQL
 from core.storage.profile_store import (
     PROFILE_SORT_COLUMNS as LEGACY_PROFILE_SORT_COLUMNS,
@@ -77,6 +80,12 @@ def test_legacy_profile_pipeline_import_reuses_feature_implementation() -> None:
 
     assert LegacyProfileProposalPipeline is ProfileProposalPipeline
     assert legacy_trusted_profile_subject_id is trusted_profile_subject_id
+
+
+def test_legacy_profile_extractor_import_reuses_feature_implementation() -> None:
+    """旧 processor 路径只能导出 profiles infrastructure 的唯一实现。"""
+
+    assert LegacyProfileExtractor is ProfileExtractor
 
 
 def test_profile_ports_accept_existing_implementations_structurally() -> None:

@@ -17,6 +17,7 @@ from ..features.identity.application.service import ProtocolIdentityService
 from ..features.identity.infrastructure.store import ProtocolIdentityStore
 from ..features.memory.infrastructure.validators import IndexValidator
 from ..features.profiles.application import ProfileProposalPipeline
+from ..features.profiles.infrastructure import ProfileExtractor
 from ..identity.conversation_sync import ConversationIdentitySynchronizer
 from ..identity.memory import MemoryIdentityEnricher
 from ..identity.resolver import ProtocolIdentityResolver
@@ -37,7 +38,6 @@ from ..processors.memory_consolidator import MemoryConsolidator
 from ..processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
 from ..processors.memory_processor import MemoryProcessor
 from ..processors.note_generator import NoteGenerator
-from ..processors.profile_extractor import ProfileExtractor
 from ..provider_adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..retrieval.derived_relation_expander import DerivedRelationExpander
 from ..retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
