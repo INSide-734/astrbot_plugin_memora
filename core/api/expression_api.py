@@ -7,8 +7,8 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..base.list_sorting import SortQuery, parse_sort_query
 from ..expression.pattern_store import EXPRESSION_SORT_COLUMNS
+from ..shared.list_sorting import SortQuery, parse_sort_query
 from .response_utils import error_response, ok_response
 
 

@@ -14,8 +14,8 @@ from ..base.entity_editing import (
     EntityNotFoundError,
     compute_entity_revision,
 )
-from ..base.list_sorting import SortQuery, order_by_clause
 from ..features.memory.infrastructure.sql_contract import SOCIAL_RELATIONS_TABLE
+from ..shared.list_sorting import SortQuery, order_by_clause
 from ..storage.base import BaseStore
 from .models import SocialRelation
 

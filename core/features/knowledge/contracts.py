@@ -9,8 +9,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from ...base.list_sorting import SortQuery
 from ...shared.contracts import MemorySourceRef
+from ...shared.list_sorting import SortQuery
 from .domain.models import KnowledgeEntry
 
 

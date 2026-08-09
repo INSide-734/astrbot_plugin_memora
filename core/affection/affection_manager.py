@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from astrbot.api import logger
 
 from ..base.entity_editing import EntityValidationError, compute_entity_revision
-from ..base.list_sorting import SortQuery
+from ..shared.list_sorting import SortQuery
 from .affection_store import AffectionStore
 from .models import (
     INTERACTION_RULES,

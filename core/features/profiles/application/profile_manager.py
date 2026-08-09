@@ -13,8 +13,8 @@ from ....base.entity_editing import (
     EntityValidationError,
     compute_entity_revision,
 )
-from ....base.list_sorting import SortQuery
 from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....shared.list_sorting import SortQuery
 from ..contracts import ProfileStorePort
 from ..domain.models import (
     TagCategory,

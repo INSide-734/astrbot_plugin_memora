@@ -17,7 +17,7 @@ from ..base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
-from ..base.list_sorting import parse_sort_query
+from ..shared.list_sorting import parse_sort_query
 from ..social.relation_store import SOCIAL_SORT_COLUMNS
 from .editing_utils import (
     conflict_error,

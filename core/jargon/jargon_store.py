@@ -23,7 +23,7 @@ from ..base.entity_editing import (
     EntityValidationError,
     compute_entity_revision,
 )
-from ..base.list_sorting import SortQuery, order_by_clause
+from ..shared.list_sorting import SortQuery, order_by_clause
 from ..storage.base_store import BaseStore
 from .models import JargonMeaning
 

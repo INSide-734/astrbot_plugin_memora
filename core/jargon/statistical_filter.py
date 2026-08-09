@@ -20,7 +20,7 @@ from operator import attrgetter
 
 from astrbot.api import logger
 
-from ..base.list_sorting import SortQuery
+from ..shared.list_sorting import SortQuery
 from .models import JargonCandidate, JargonStats
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,6 @@ from core.base.entity_editing import (
     EntityNotFoundError,
     compute_entity_revision,
 )
-from core.base.list_sorting import SortQuery, order_by_clause
 from core.features.memory.infrastructure.base import BaseStore
 from core.features.memory.infrastructure.canonical_source_validation import (
     validate_domain_provenance,
@@ -25,6 +24,7 @@ from core.models.domain_provenance import (
 )
 from core.storage.domain_object_integrity import filter_current_domain_objects
 
+from ....shared.list_sorting import SortQuery, order_by_clause
 from ..domain.models import UserPreferences, UserProfile, UserTag
 from .profile_preferences_integrity import require_manual_preferences
 from .profile_queries import PROFILE_LIST_SQL

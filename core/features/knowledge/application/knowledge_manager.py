@@ -6,7 +6,6 @@ import time as _time
 
 from astrbot.api import logger
 
-from core.base.list_sorting import SortQuery
 from core.features.knowledge.contracts import KnowledgeStorePort
 from core.features.knowledge.domain.models import KnowledgeEntry
 from core.models.domain_provenance import (
@@ -14,6 +13,8 @@ from core.models.domain_provenance import (
     DomainProvenance,
     merge_domain_provenance,
 )
+
+from ....shared.list_sorting import SortQuery
 
 
 class KnowledgeManager:

@@ -17,9 +17,9 @@ from ..base.entity_editing import (
     EntityValidationError,
 )
 from ..base.feature_config import is_jargon_discovery_enabled
-from ..base.list_sorting import parse_sort_query
 from ..jargon.jargon_store import JARGON_MEANING_SORT_COLUMNS
 from ..jargon.statistical_filter import JARGON_CANDIDATE_SORT_FIELDS
+from ..shared.list_sorting import parse_sort_query
 from .editing_utils import (
     conflict_error,
     entity_ok,

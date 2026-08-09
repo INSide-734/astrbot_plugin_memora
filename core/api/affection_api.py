@@ -19,7 +19,7 @@ from ..base.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
-from ..base.list_sorting import parse_sort_query
+from ..shared.list_sorting import parse_sort_query
 from .editing_utils import (
     bounded_int,
     conflict_error,

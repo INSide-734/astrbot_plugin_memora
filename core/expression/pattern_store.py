@@ -8,7 +8,7 @@ from typing import Any
 
 import aiosqlite
 
-from ..base.list_sorting import SortQuery, order_by_clause
+from ..shared.list_sorting import SortQuery, order_by_clause
 from ..storage.base import apply_perf_pragmas
 from .models import ExpressionPattern, PatternScope
 
