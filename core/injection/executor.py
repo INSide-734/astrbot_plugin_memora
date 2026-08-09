@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
 
-from ..base.constants import FAKE_TOOL_CALL_ID_PREFIX, FAKE_TOOL_CALL_NAME
+from ..shared.constants import FAKE_TOOL_CALL_ID_PREFIX, FAKE_TOOL_CALL_NAME
 from ..utils.injection_budget import InjectionBudget, InjectionStats
 from .models import (
     ContentLevel,

@@ -15,7 +15,6 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
-from ..base.constants import FAKE_TOOL_CALL_NAME
 from ..base.cost_control import CostControl
 from ..cleaners.injection_cleaner import InjectionCleaner
 from ..extractors.message_content_extractor import MessageContentExtractor
@@ -38,6 +37,7 @@ from ..managers.memory_engine import MemoryEngine
 from ..monitoring import monitored, report_debug_event, report_debug_exception
 from ..retrieval.query_planner import QueryPlanner
 from ..retrieval.query_rewriter import QueryRewriter, resolve_reference_time
+from ..shared.constants import FAKE_TOOL_CALL_NAME
 from ..shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
     PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,

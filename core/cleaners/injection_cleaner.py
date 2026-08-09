@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from astrbot.api import logger
 
-from ..base.constants import (
+from ..shared.constants import (
     FAKE_TOOL_CALL_ID_PREFIX,
     FAKE_TOOL_CALL_NAME,
     MEMORY_INJECTION_FOOTER,

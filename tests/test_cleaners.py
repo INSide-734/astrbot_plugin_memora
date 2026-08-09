@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.base.constants import (
+from core.cleaners.injection_cleaner import InjectionCleaner
+from core.shared.constants import (
     FAKE_TOOL_CALL_ID_PREFIX,
     FAKE_TOOL_CALL_NAME,
     MEMORY_INJECTION_FOOTER,
     MEMORY_INJECTION_HEADER,
 )
-from core.cleaners.injection_cleaner import InjectionCleaner
 
 # ---------------------------------------------------------------------------
 # Helpers

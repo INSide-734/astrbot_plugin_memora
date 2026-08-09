@@ -1,7 +1,7 @@
 """Behavioral contract tests for hard memory-injection budgets."""
 
-from core.base.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 from core.injection.models import ContentLevel
+from core.shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 from core.utils.injection_budget import (
     InjectionBudget,
     format_compact_footer,

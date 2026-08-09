@@ -132,7 +132,7 @@ def format_memories_for_injection(
     未传预算时保留旧字符串返回格式；传入预算时返回文本与统计，并把
     ``total_chars`` 作为包装、metadata、分隔符和换行在内的完整硬上限。
     """
-    from ..base.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
+    from ..shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 
     stats = InjectionStats()
     if not memories:
@@ -389,7 +389,7 @@ def format_memories_for_fake_tool_call(
         两条 OpenAI 格式消息的列表 [assistant_msg, tool_msg]；
         若 memories 为空则返回空列表。
     """
-    from ..base.constants import FAKE_TOOL_CALL_ID_PREFIX, FAKE_TOOL_CALL_NAME
+    from ..shared.constants import FAKE_TOOL_CALL_ID_PREFIX, FAKE_TOOL_CALL_NAME
 
     if not memories:
         return []
@@ -492,7 +492,7 @@ def format_memories_for_fake_tool_call_deepseek_v4(
     persona_filtered: bool = True,
 ) -> str:
     """将伪工具调用转换成 DeepSeek V4 可接受的文本转录。"""
-    from ..base.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
+    from ..shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 
     fake_messages = format_memories_for_fake_tool_call(
         memories=memories,

@@ -10,8 +10,8 @@ from collections.abc import AsyncGenerator
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
-from ..base.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 from ..i18n_backend import t, t_list
+from ..shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 
 
 class MaintenanceCommandMixin:
