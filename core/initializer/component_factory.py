@@ -13,6 +13,7 @@ from ..evaluation.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
 )
+from ..features.evolution.infrastructure import MemoryEvolutionStore
 from ..features.identity.application.service import ProtocolIdentityService
 from ..features.identity.infrastructure.store import ProtocolIdentityStore
 from ..features.knowledge.application import KnowledgeProposalPipeline
@@ -47,7 +48,6 @@ from ..review.quarantine_store import MemoryQuarantineStore
 from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
-from ..storage.memory_evolution_store import MemoryEvolutionStore
 from .derived_rebuild_coordinator import DerivedRebuildCoordinator
 from .engine_runtime_config import build_engine_runtime_config
 
@@ -594,6 +594,14 @@ class ComponentFactory:
         )
 
     async def _build_injection_components(self, db_path: Path) -> dict[str, object]:
+        """初始化注入决策存储与异步记录器。
+
+        Args:
+            db_path: canonical SQLite 数据库路径。
+
+        Returns:
+            已启动的注入决策组件映射。
+        """
         decision_store = InjectionDecisionStore(db_path)
         decision_recorder: InjectionDecisionRecorder | None = None
         try:

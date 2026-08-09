@@ -1,17 +1,17 @@
-"""Memory Evolution 复核存储的旧路径兼容导出。"""
+"""记忆演化 feature 的 SQLite 基础设施。"""
 
-from ..features.evolution.infrastructure.memory_evolution_review import (
+from .memory_evolution_review import (
     DerivedReviewConflictError,
     DerivedReviewNotAllowedError,
     DerivedReviewNotFoundError,
     DerivedReviewSourceError,
-    MemoryEvolutionReviewMixin,
 )
+from .memory_evolution_store import MemoryEvolutionStore
 
 __all__ = [
     "DerivedReviewConflictError",
     "DerivedReviewNotAllowedError",
     "DerivedReviewNotFoundError",
     "DerivedReviewSourceError",
-    "MemoryEvolutionReviewMixin",
+    "MemoryEvolutionStore",
 ]

@@ -23,9 +23,20 @@ from .domain import (
     RetrySpec,
     ScopeContext,
 )
+from .infrastructure import (
+    DerivedReviewConflictError,
+    DerivedReviewNotAllowedError,
+    DerivedReviewNotFoundError,
+    DerivedReviewSourceError,
+    MemoryEvolutionStore,
+)
 
 __all__ = [
     "DerivedApplyPlan",
+    "DerivedReviewConflictError",
+    "DerivedReviewNotAllowedError",
+    "DerivedReviewNotFoundError",
+    "DerivedReviewSourceError",
     "DerivedState",
     "EvolutionProposal",
     "EvolutionSignal",
@@ -36,6 +47,7 @@ __all__ = [
     "JobState",
     "MemoryProjectionProposal",
     "MemoryEvolutionJob",
+    "MemoryEvolutionStore",
     "MemoryRelationProposal",
     "MemorySourceRef",
     "ProjectionType",

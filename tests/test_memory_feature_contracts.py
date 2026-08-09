@@ -6,10 +6,14 @@ from core.features.memory import (
     SchemaManager,
     WriteOpJournal,
 )
+from core.features.memory.infrastructure.base_store import (
+    BaseStore as FeatureInstanceBaseStore,
+)
 from core.managers.schema_manager import SchemaManager as LegacySchemaManager
 from core.managers.write_op_journal import WriteOpJournal as LegacyWriteOpJournal
 from core.models.memory_atom import MemoryAtom as LegacyMemoryAtom
 from core.storage.atom_store import AtomStore as LegacyAtomStore
+from core.storage.base_store import BaseStore as LegacyInstanceBaseStore
 
 
 def test_legacy_canonical_imports_are_feature_implementations() -> None:
@@ -17,5 +21,6 @@ def test_legacy_canonical_imports_are_feature_implementations() -> None:
 
     assert LegacyMemoryAtom is MemoryAtom
     assert LegacyAtomStore is AtomStore
+    assert LegacyInstanceBaseStore is FeatureInstanceBaseStore
     assert LegacySchemaManager is SchemaManager
     assert LegacyWriteOpJournal is WriteOpJournal

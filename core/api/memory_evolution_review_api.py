@@ -7,8 +7,8 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..models.memory_evolution import DerivedState
-from ..storage.memory_evolution_review import (
+from ..features.evolution.domain import DerivedState
+from ..features.evolution.infrastructure import (
     DerivedReviewConflictError,
     DerivedReviewNotAllowedError,
     DerivedReviewNotFoundError,
