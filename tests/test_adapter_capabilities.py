@@ -20,6 +20,17 @@ def test_legacy_adapter_capability_exports_are_identical() -> None:
         assert getattr(legacy, name) is getattr(shared, name)
 
 
+def test_legacy_mmr_exports_are_identical() -> None:
+    """检索旧路径与工厂必须导出 shared 中的同一 MMR 实现。"""
+
+    from core.retrieval import mmr_reranker as legacy_mmr
+    from core.retrieval import reranker_factory
+    from core.shared import mmr as shared_mmr
+
+    assert legacy_mmr.apply_mmr is shared_mmr.apply_mmr
+    assert reranker_factory.MMRReranker is shared_mmr.MMRReranker
+
+
 def _contract(*, kind="vector_backend", native=(), caller_enforced=(), score=None):
     """构建测试使用的最小能力契约。"""
 

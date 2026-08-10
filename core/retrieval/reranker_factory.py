@@ -6,16 +6,15 @@ from typing import Any, Protocol
 
 from ..adapter_capabilities import (
     AdapterCapability,
-    AdapterCapabilityContract,
-    AdapterKind,
-    ScoreDirection,
-    ScoreSemantics,
     adapter_contract,
 )
+from ..shared.mmr import MMRReranker
 from .rrf_fusion import HybridResult
 
 
 class RerankerStrategy(Protocol):
+    """统一重排器的结构化调用契约。"""
+
     def rerank(
         self, results: list[HybridResult], k: int, **kwargs: Any
     ) -> list[HybridResult]:
@@ -104,36 +103,6 @@ async def create_reranker(
     # 未知或默认策略使用不依赖外部 Provider 的 MMR。
     mmr_lambda = float(cfg.get("reranker.mmr_lambda", 0.7))
     return MMRReranker(mmr_lambda)
-
-
-class MMRReranker:
-    """不依赖外部 Provider 的 MMR 重排序器。"""
-
-    adapter_capabilities = AdapterCapabilityContract(
-        kind=AdapterKind.RERANKER,
-        native=frozenset({AdapterCapability.SCORING}),
-        score=ScoreSemantics(direction=ScoreDirection.HIGHER_IS_BETTER),
-    )
-
-    def __init__(
-        self,
-        mmr_lambda: float = 0.7,
-        *,
-        degradation_reason_code: str | None = None,
-    ) -> None:
-        """初始化 MMR 权重和可选的稳定降级原因码。"""
-
-        self._lambda = mmr_lambda
-        self.degradation_reason_code = degradation_reason_code
-
-    def rerank(
-        self, results: list[HybridResult], k: int, **kwargs: Any
-    ) -> list[HybridResult]:
-        """使用词袋相似度 MMR 重排，并返回最多 ``k`` 项。"""
-
-        from .mmr_reranker import apply_mmr
-
-        return apply_mmr(results, k, self._lambda)
 
 
 class HybridReranker:
