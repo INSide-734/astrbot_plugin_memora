@@ -18,8 +18,8 @@ from typing import Any
 import yaml
 from astrbot.api import logger
 
-from ..features.updates.domain import RuntimeUpdateError
-from .update_manager import DownloadedUpdate, UpdateError, UpdateManager
+from ..features.updates.application import UpdateManager
+from ..features.updates.domain import DownloadedUpdate, RuntimeUpdateError, UpdateError
 
 _PACKAGE_NAME = "astrbot_plugin_memora"
 _STATE_FILENAME = "install-state.json"

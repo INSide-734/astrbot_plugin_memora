@@ -328,8 +328,8 @@ async def _run_installer_case(
     """执行一次生产原子切换、重载失败与旧目录恢复。"""
 
     _ensure_repo_root_importable()
+    from core.features.updates.domain import DownloadedUpdate, UpdateRelease
     from core.managers.update_installer import RuntimeUpdateInstaller
-    from core.managers.update_manager import DownloadedUpdate, UpdateRelease
 
     plugin_store = root / "plugins"
     plugin_root = plugin_store / "astrbot_plugin_memora"
