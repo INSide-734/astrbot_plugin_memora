@@ -10,6 +10,13 @@ from .domain import (
     RestoreStatus,
     SnapshotResult,
 )
+from .infrastructure import (
+    atomic_write_json,
+    copy_regular_file,
+    ensure_free_space,
+    sha256_file,
+    snapshot_sqlite,
+)
 
 __all__ = [
     "BackupIntegrity",
@@ -20,4 +27,9 @@ __all__ = [
     "RestorePlan",
     "RestoreStatus",
     "SnapshotResult",
+    "atomic_write_json",
+    "copy_regular_file",
+    "ensure_free_space",
+    "sha256_file",
+    "snapshot_sqlite",
 ]

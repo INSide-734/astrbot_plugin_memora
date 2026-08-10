@@ -1,6 +1,6 @@
-"""备份快照基础设施的旧路径兼容导出。"""
+"""备份 feature 的基础设施实现。"""
 
-from ..features.backup.infrastructure.snapshot import (
+from .snapshot import (
     atomic_write_json,
     copy_regular_file,
     ensure_free_space,
