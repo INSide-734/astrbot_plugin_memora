@@ -10,6 +10,7 @@ from ..base.config_validator import CostControlConfig
 from ..base.cost_control import build_cost_control_from_config
 from ..base.exceptions import ProviderNotReadyError
 from ..features.backup.application import BackupManager
+from ..features.decay.application import DecayScheduler
 from ..features.evolution.application import MemoryEvolutionManager
 from ..features.evolution.infrastructure import MemoryEvolutionStore
 from ..features.identity.application.service import ProtocolIdentityService
@@ -47,7 +48,6 @@ from ..retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
 from ..retrieval.projection_reader import ProjectionReader
 from ..review.memory_quality_gate import MemoryQualityGate
 from ..review.quarantine_store import MemoryQuarantineStore
-from ..schedulers.decay_scheduler import DecayScheduler
 from ..storage.conversation_store import ConversationStore
 from ..storage.injection_decision_store import InjectionDecisionStore
 
