@@ -12,11 +12,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.evaluation.evaluation_service import EvaluationService
 from core.features.evaluation.application import (
     EvaluationReport,
     EvaluationResult,
 )
+from core.features.evaluation.infrastructure.evaluation_service import EvaluationService
 from core.features.evaluation.infrastructure.report_store import (
     EvaluationReportStore,
 )
