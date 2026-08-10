@@ -4,6 +4,7 @@ from core.evaluation import dataset_repository as legacy_dataset_repository
 from core.evaluation import (
     derived_metadata_ablation as legacy_derived_metadata_ablation,
 )
+from core.evaluation import evaluation_service as legacy_evaluation_service
 from core.evaluation import (
     feedback_learning_pipeline as legacy_feedback_learning_pipeline,
 )
@@ -38,6 +39,9 @@ from core.features.evaluation.domain import (
 )
 from core.features.evaluation.infrastructure import (
     dataset_repository as feature_dataset_repository,
+)
+from core.features.evaluation.infrastructure import (
+    evaluation_service as feature_evaluation_service,
 )
 from core.features.evaluation.infrastructure import report_store as feature_report_store
 
@@ -90,6 +94,16 @@ def test_legacy_retrieval_quality_reuses_feature_application() -> None:
             feature_retrieval_quality,
             name,
         )
+
+
+def test_legacy_evaluation_service_reuses_feature_infrastructure() -> None:
+    """旧 evaluation 路径只能导出 feature infrastructure 的评测服务。"""
+
+    assert legacy_evaluation_service.__all__ == feature_evaluation_service.__all__
+    assert (
+        legacy_evaluation_service.EvaluationService
+        is feature_evaluation_service.EvaluationService
+    )
 
 
 def test_legacy_retrieval_ablation_reuses_feature_application() -> None:
