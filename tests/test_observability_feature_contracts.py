@@ -3,10 +3,14 @@
 from core.features.observability.application import (
     perf_tracker as feature_perf_tracker,
 )
+from core.features.observability.application import (
+    quality_scorer as feature_quality_scorer,
+)
 from core.features.observability.domain import recall_timing as feature_recall_timing
 from core.features.observability.infrastructure import metrics as feature_metrics
 from core.monitoring import metrics as legacy_metrics
 from core.monitoring import perf_tracker as legacy_perf_tracker
+from core.monitoring import quality_scorer as legacy_quality_scorer
 from core.monitoring import recall_timing as legacy_recall_timing
 
 
@@ -29,6 +33,17 @@ def test_legacy_perf_tracker_reuses_feature_application_implementation() -> None
 
     assert legacy_perf_tracker.__all__ == feature_perf_tracker.__all__
     assert legacy_perf_tracker.PerfTracker is feature_perf_tracker.PerfTracker
+
+
+def test_legacy_quality_scorer_reuses_feature_application_implementation() -> None:
+    """旧 monitoring 路径只能导出 feature application 的质量评分实现。"""
+
+    assert legacy_quality_scorer.__all__ == feature_quality_scorer.__all__
+    for name in feature_quality_scorer.__all__:
+        assert getattr(legacy_quality_scorer, name) is getattr(
+            feature_quality_scorer,
+            name,
+        )
 
 
 def test_legacy_metrics_reuses_feature_infrastructure_objects() -> None:
