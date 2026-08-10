@@ -38,6 +38,7 @@ from .api.recall_trace_api import RecallTraceApiMixin
 from .api.reconsolidation_review_api import ReconsolidationReviewApiMixin
 from .api.response_utils import error_response, ok_response
 from .api.review_api import ReviewApiMixin
+from .api.route_registration import make_page_route_registrar
 from .api.social_api import SocialApiMixin
 from .api.topic_segmentation_api import TopicSegmentationApiMixin
 from .api.update_api import UpdateApiMixin
@@ -84,6 +85,8 @@ class PluginPageApi(
     """记忆插件的官方页面接口集合。"""
 
     def __init__(self, plugin) -> None:
+        """绑定插件实例并初始化路由元数据与共享页面状态。"""
+
         self.plugin = plugin
         self._route_metadata: list[dict[str, Any]] = []
 
@@ -96,24 +99,16 @@ class PluginPageApi(
         return await engine.sse.stream()
 
     def register_routes(self) -> None:
-        raw_register = self.plugin.context.register_web_api
-        self._route_metadata = []
+        """注册主前缀及兼容前缀下的全部 Page API 路由。"""
 
-        def register(path, handler, methods, description):
-            self._route_metadata.append(
-                self._build_route_metadata(path, handler, methods, description)
-            )
-            result = raw_register(path, handler, methods, description)
-            if path.startswith(PAGE_API_PREFIX):
-                suffix = path[len(PAGE_API_PREFIX) :]
-                for alias_prefix in PAGE_API_ALIAS_PREFIXES:
-                    raw_register(
-                        alias_prefix + suffix,
-                        handler,
-                        methods,
-                        f"{description}（别名）",
-                    )
-            return result
+        self._route_metadata = []
+        register = make_page_route_registrar(
+            raw_register=self.plugin.context.register_web_api,
+            route_metadata=self._route_metadata,
+            metadata_builder=self._build_route_metadata,
+            primary_prefix=PAGE_API_PREFIX,
+            alias_prefixes=PAGE_API_ALIAS_PREFIXES,
+        )
 
         register(
             f"{PAGE_API_PREFIX}/stats", self.get_stats, ["GET"], "页面接口：统计信息"
