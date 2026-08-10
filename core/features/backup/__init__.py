@@ -1,6 +1,6 @@
-"""备份领域模型的旧路径兼容导出。"""
+"""备份 feature 的公开边界。"""
 
-from ..features.backup.domain import (
+from .domain import (
     BackupIntegrity,
     BackupOperationError,
     BackupType,

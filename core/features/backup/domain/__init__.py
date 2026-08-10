@@ -1,8 +1,8 @@
-"""备份领域模型的旧路径兼容导出。"""
+"""备份 feature 的领域契约。"""
 
-from ..features.backup.domain import (
+from .errors import BackupOperationError
+from .models import (
     BackupIntegrity,
-    BackupOperationError,
     BackupType,
     FileRole,
     RestoreFileProgress,
