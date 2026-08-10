@@ -14,7 +14,9 @@ from ..features.reconsolidation.domain.errors import (
     ReconsolidationCandidateConflictError,
     ReconsolidationCandidateNotFoundError,
 )
-from .reconsolidation_schema import initialize_reconsolidation_schema
+from ..features.reconsolidation.infrastructure.reconsolidation_schema import (
+    initialize_reconsolidation_schema,
+)
 
 _STATUSES = frozenset({"pending", "approved", "rejected", "failed", "rolled_back"})
 _ACTIONS = frozenset({"stage", "apply", "reject", "rollback"})

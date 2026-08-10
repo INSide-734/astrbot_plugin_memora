@@ -4,8 +4,10 @@ from .domain import (
     ReconsolidationCandidateConflictError,
     ReconsolidationCandidateNotFoundError,
 )
+from .infrastructure import initialize_reconsolidation_schema
 
 __all__ = [
     "ReconsolidationCandidateConflictError",
     "ReconsolidationCandidateNotFoundError",
+    "initialize_reconsolidation_schema",
 ]
