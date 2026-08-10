@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .metric_provenance import (
+from ..features.evaluation.domain.metric_provenance import (
     RetrievalObservation,
     aggregate_case_metrics,
     annotated_latency,
@@ -166,6 +166,8 @@ class AblationReport:
         ndcg_at_k: float,
         observed_p95_latency_ms: float | None,
     ) -> "AblationReport":
+        """从独立指标构造可比较的消融报告。"""
+
         return cls(
             name=name,
             recall_at_k=round(float(recall_at_k), 4),
@@ -182,6 +184,8 @@ class AblationReport:
         name: str,
         report: EvaluationReport,
     ) -> "AblationReport":
+        """从完整评测报告构造可比较的消融报告。"""
+
         return cls.from_metrics(
             name=name,
             recall_at_k=report.recall_at_k,
