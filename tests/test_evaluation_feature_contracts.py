@@ -12,6 +12,7 @@ from core.evaluation import (
 )
 from core.evaluation import metric_provenance as legacy_metric_provenance
 from core.evaluation import report_store as legacy_report_store
+from core.evaluation import retrieval_ablation as legacy_retrieval_ablation
 from core.evaluation import retrieval_quality as legacy_retrieval_quality
 from core.evaluation import session_first_ablation as legacy_session_first_ablation
 from core.features.evaluation.application import (
@@ -22,6 +23,9 @@ from core.features.evaluation.application import (
 )
 from core.features.evaluation.application import (
     feedback_ranking_ablation as feature_feedback_ranking_ablation,
+)
+from core.features.evaluation.application import (
+    retrieval_ablation as feature_retrieval_ablation,
 )
 from core.features.evaluation.application import (
     retrieval_quality as feature_retrieval_quality,
@@ -84,6 +88,17 @@ def test_legacy_retrieval_quality_reuses_feature_application() -> None:
     for name in feature_retrieval_quality.__all__:
         assert getattr(legacy_retrieval_quality, name) is getattr(
             feature_retrieval_quality,
+            name,
+        )
+
+
+def test_legacy_retrieval_ablation_reuses_feature_application() -> None:
+    """旧 evaluation 路径只能导出 feature application 的检索消融实现。"""
+
+    assert legacy_retrieval_ablation.__all__ == feature_retrieval_ablation.__all__
+    for name in feature_retrieval_ablation.__all__:
+        assert getattr(legacy_retrieval_ablation, name) is getattr(
+            feature_retrieval_ablation,
             name,
         )
 
