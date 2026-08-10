@@ -7,7 +7,11 @@ from core.features.observability.application import (
     quality_scorer as feature_quality_scorer,
 )
 from core.features.observability.domain import recall_timing as feature_recall_timing
+from core.features.observability.infrastructure import (
+    debug_reporter as feature_debug_reporter,
+)
 from core.features.observability.infrastructure import metrics as feature_metrics
+from core.monitoring import debug_reporter as legacy_debug_reporter
 from core.monitoring import metrics as legacy_metrics
 from core.monitoring import perf_tracker as legacy_perf_tracker
 from core.monitoring import quality_scorer as legacy_quality_scorer
@@ -52,3 +56,14 @@ def test_legacy_metrics_reuses_feature_infrastructure_objects() -> None:
     assert legacy_metrics.__all__ == feature_metrics.__all__
     for name in feature_metrics.__all__:
         assert getattr(legacy_metrics, name) is getattr(feature_metrics, name)
+
+
+def test_legacy_debug_reporter_reuses_feature_infrastructure_objects() -> None:
+    """旧 monitoring 路径只能导出 feature infrastructure 的调试记录器。"""
+
+    assert legacy_debug_reporter.__all__ == feature_debug_reporter.__all__
+    for name in feature_debug_reporter.__all__:
+        assert getattr(legacy_debug_reporter, name) is getattr(
+            feature_debug_reporter,
+            name,
+        )

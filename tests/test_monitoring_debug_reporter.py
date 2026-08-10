@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from core.monitoring import debug_reporter
+from core.features.observability.infrastructure import debug_reporter
 
 
 @pytest.fixture(autouse=True)
