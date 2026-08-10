@@ -328,8 +328,8 @@ async def _run_installer_case(
     """执行一次生产原子切换、重载失败与旧目录恢复。"""
 
     _ensure_repo_root_importable()
+    from core.features.updates.application import RuntimeUpdateInstaller
     from core.features.updates.domain import DownloadedUpdate, UpdateRelease
-    from core.managers.update_installer import RuntimeUpdateInstaller
 
     plugin_store = root / "plugins"
     plugin_root = plugin_store / "astrbot_plugin_memora"
@@ -575,7 +575,7 @@ async def _exercise_runtime_update_rollback(
             if closed
             else "runtime_update_rollback_remaining"
         ),
-        "implementation": "core.managers.RuntimeUpdateInstaller/SchemaMigrationCoordinator",
+        "implementation": "core.features.updates.application.RuntimeUpdateInstaller/SchemaMigrationCoordinator",
         "stages": stages,
         "migration": migration,
         "blocked": blocked_migration,

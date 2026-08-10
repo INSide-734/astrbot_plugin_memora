@@ -8,10 +8,9 @@ from collections.abc import AsyncGenerator
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
-from ..features.updates.application import UpdateManager
+from ..features.updates.application import RuntimeUpdateInstaller, UpdateManager
 from ..features.updates.domain import RuntimeUpdateError, UpdateError
 from ..i18n_backend import t
-from ..managers.update_installer import RuntimeUpdateInstaller
 
 
 class UpdateCommandMixin:

@@ -7,9 +7,8 @@ from typing import Any
 
 from quart import request
 
-from ..features.updates.application import UpdateManager
+from ..features.updates.application import RuntimeUpdateInstaller, UpdateManager
 from ..features.updates.domain import RuntimeUpdateError, UpdateError
-from ..managers.update_installer import RuntimeUpdateInstaller
 from .response_utils import error_response, ok_response
 
 

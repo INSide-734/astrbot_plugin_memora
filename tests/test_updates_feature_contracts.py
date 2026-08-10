@@ -1,6 +1,7 @@
 """updates feature 与旧路径的唯一实现契约。"""
 
 from core.features.updates import domain as feature_domain
+from core.features.updates.application import installer as feature_installer
 from core.features.updates.application import manager as feature_manager
 from core.managers import update_installer as legacy_installer
 from core.managers import update_manager as legacy_manager
@@ -19,3 +20,11 @@ def test_legacy_update_manager_reuses_feature_implementation() -> None:
     """旧 UpdateManager 路径只能导出 application service 的唯一实现。"""
 
     assert legacy_manager.UpdateManager is feature_manager.UpdateManager
+
+
+def test_legacy_update_installer_reuses_feature_implementation() -> None:
+    """旧 installer 路径只能导出 updates application 的唯一实现。"""
+
+    assert legacy_installer.__all__ == feature_installer.__all__
+    for name in feature_installer.__all__:
+        assert getattr(legacy_installer, name) is getattr(feature_installer, name)
