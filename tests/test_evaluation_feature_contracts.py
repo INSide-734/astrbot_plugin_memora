@@ -2,6 +2,9 @@
 
 from core.evaluation import dataset_repository as legacy_dataset_repository
 from core.evaluation import (
+    derived_metadata_ablation as legacy_derived_metadata_ablation,
+)
+from core.evaluation import (
     feedback_learning_pipeline as legacy_feedback_learning_pipeline,
 )
 from core.evaluation import (
@@ -11,6 +14,9 @@ from core.evaluation import metric_provenance as legacy_metric_provenance
 from core.evaluation import report_store as legacy_report_store
 from core.evaluation import retrieval_quality as legacy_retrieval_quality
 from core.evaluation import session_first_ablation as legacy_session_first_ablation
+from core.features.evaluation.application import (
+    derived_metadata_ablation as feature_derived_metadata_ablation,
+)
 from core.features.evaluation.application import (
     feedback_learning_pipeline as feature_feedback_learning_pipeline,
 )
@@ -118,5 +124,19 @@ def test_legacy_session_first_reuses_feature_application() -> None:
     for name in feature_session_first_ablation.__all__:
         assert getattr(legacy_session_first_ablation, name) is getattr(
             feature_session_first_ablation,
+            name,
+        )
+
+
+def test_legacy_derived_metadata_reuses_feature_application() -> None:
+    """旧 evaluation 路径只能导出 feature application 的派生元数据实现。"""
+
+    assert (
+        legacy_derived_metadata_ablation.__all__
+        == feature_derived_metadata_ablation.__all__
+    )
+    for name in feature_derived_metadata_ablation.__all__:
+        assert getattr(legacy_derived_metadata_ablation, name) is getattr(
+            feature_derived_metadata_ablation,
             name,
         )
