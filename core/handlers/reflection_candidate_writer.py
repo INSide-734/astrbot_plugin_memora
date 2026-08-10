@@ -9,11 +9,11 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .continuity_hooks import record_continuity_topics
-from .reflection_storage_outcomes import (
+from ..features.reflection.domain.storage_outcomes import (
     ReflectionStoreOutcome,
     ReflectionStoreResult,
 )
+from .continuity_hooks import record_continuity_topics
 
 _MAX_CONCURRENT_WRITES = 3
 

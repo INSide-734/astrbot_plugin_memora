@@ -12,6 +12,11 @@ from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
 from ..features.observability.application import runtime as observability
+from ..features.reflection.domain.storage_outcomes import (
+    ReflectionStoreOutcome,
+    ReflectionStoreResult,
+    summarize_store_results,
+)
 from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
@@ -35,11 +40,6 @@ from .reflection_llm_budget import (
     process_reflection_batches,
 )
 from .reflection_metadata import commit_summary_metadata, persist_pending_summary
-from .reflection_storage_outcomes import (
-    ReflectionStoreOutcome,
-    ReflectionStoreResult,
-    summarize_store_results,
-)
 from .reflection_trigger import ReflectionTrigger
 from .topic_batch_preparer import TopicBatchPreparer
 

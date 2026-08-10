@@ -1,6 +1,6 @@
-"""向后兼容导出 reflection feature 的写入终态模型。"""
+"""反思 feature 的公开边界。"""
 
-from ..features.reflection.domain.storage_outcomes import (
+from .domain import (
     ReflectionStoreOutcome,
     ReflectionStoreResult,
     ReflectionStoreSummary,
