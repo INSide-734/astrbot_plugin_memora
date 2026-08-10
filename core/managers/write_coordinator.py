@@ -103,7 +103,7 @@ def get_write_metrics_snapshot() -> dict[str, Any]:
 
 def _inc_metric(metric_name: str, amount: float = 1.0) -> None:
     try:
-        from ..monitoring import metrics
+        from ..features.observability.infrastructure import metrics
 
         metric = getattr(metrics, metric_name)
         metric.inc(amount)
@@ -113,7 +113,7 @@ def _inc_metric(metric_name: str, amount: float = 1.0) -> None:
 
 def _inc_failure_metric(reason: str) -> None:
     try:
-        from ..monitoring import metrics
+        from ..features.observability.infrastructure import metrics
 
         metrics.WRITE_FAILURES_TOTAL.labels(reason=reason).inc()
     except Exception:

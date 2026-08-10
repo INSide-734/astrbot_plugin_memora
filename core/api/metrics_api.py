@@ -523,7 +523,7 @@ class MetricsApiMixin:
     @staticmethod
     def _build_prometheus_summary() -> dict[str, Any]:
         try:
-            from ..monitoring import metrics
+            from ..features.observability.infrastructure import metrics
 
             collectors = list(metrics.REGISTRY.collect())
             return {

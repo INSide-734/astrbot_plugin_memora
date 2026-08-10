@@ -11,7 +11,7 @@ from typing import Any, Callable, TypeVar
 
 from astrbot.api import logger
 
-from .metrics import REGISTRY, Counter, Histogram
+from ..features.observability.infrastructure.metrics import REGISTRY, Counter, Histogram
 
 # ---------------------------------------------------------------------------
 # 全局开关

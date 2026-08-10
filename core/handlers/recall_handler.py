@@ -1055,7 +1055,10 @@ class RecallHandler:
             filtered_count=max(0, int(filtered_count)),
         )
         try:
-            from ..monitoring.metrics import RECALL_DURATION, RECALL_REQUESTS
+            from ..features.observability.infrastructure.metrics import (
+                RECALL_DURATION,
+                RECALL_REQUESTS,
+            )
 
             RECALL_REQUESTS.inc()
             RECALL_DURATION.labels(stage="total").observe(max(0.0, total_ms) / 1000.0)

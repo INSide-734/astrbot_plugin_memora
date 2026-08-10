@@ -23,7 +23,9 @@ class MemoryEngineWriteObservabilityMixin:
         """按固定阶段记录 canonical 写入失败计数。"""
 
         try:
-            from ..monitoring.metrics import MEMORY_WRITE_FAILURES_TOTAL
+            from ..features.observability.infrastructure.metrics import (
+                MEMORY_WRITE_FAILURES_TOTAL,
+            )
 
             MEMORY_WRITE_FAILURES_TOTAL.labels(stage=stage).inc()
         except Exception:
@@ -41,7 +43,10 @@ class MemoryEngineWriteObservabilityMixin:
         """canonical 提交后记录低成本写入指标与质量样本。"""
 
         try:
-            from ..monitoring.metrics import MEMORY_ATOMS_TOTAL, MEMORY_WRITE_DURATION
+            from ..features.observability.infrastructure.metrics import (
+                MEMORY_ATOMS_TOTAL,
+                MEMORY_WRITE_DURATION,
+            )
 
             MEMORY_WRITE_DURATION.observe(max(0.0, duration_s))
             if atoms:

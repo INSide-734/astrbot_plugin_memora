@@ -1,4 +1,4 @@
-"""Bounded, asynchronous persistence for sanitized injection decisions."""
+"""有界异步持久化脱敏后的注入决策。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..monitoring.metrics import (
+from ..features.observability.infrastructure.metrics import (
     INJECTION_BUDGET_DROP_RATIO,
     INJECTION_CANDIDATE_RETENTION_RATIO,
     INJECTION_DECISION_QUEUE_SECONDS,
@@ -48,7 +48,7 @@ class RecorderWorkerState:
 
 
 class InjectionDecisionRecorder:
-    """Persist sanitized decisions off the request path with bounded memory use."""
+    """在请求链路外使用有界内存持久化脱敏决策。"""
 
     def __init__(
         self,
@@ -63,6 +63,22 @@ class InjectionDecisionRecorder:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
+        """初始化注入决策记录器。
+
+        Args:
+            store: 注入决策持久化存储。
+            retention_days: 决策记录保留天数，零表示不保留历史记录。
+            max_rows: 持久化记录的最大行数。
+            queue_capacity: 队列与失败保留批次共享的最大容量。
+            batch_size: 单次持久化的最大记录数。
+            flush_interval: 未满批次的最长等待秒数。
+            retry_base_delay: 持久化与清理失败后的基础重试秒数。
+            monotonic: 单调时钟函数，允许测试注入。
+            sleep: 异步休眠函数，允许测试注入。
+
+        Raises:
+            ValueError: 保留、容量、批次或时间参数不满足约束。
+        """
         if retention_days < 0:
             raise ValueError("retention_days must be non-negative")
         if max_rows < 1:
@@ -97,7 +113,7 @@ class InjectionDecisionRecorder:
         self._failures_total = 0
 
     async def start(self) -> None:
-        """Start the sole persistence worker once."""
+        """按需启动唯一的持久化 worker。"""
         if self._closing:
             return
         if self._worker is None or self._worker.done():
@@ -106,7 +122,11 @@ class InjectionDecisionRecorder:
             )
 
     def record(self, record: InjectionDecisionRecord) -> None:
-        """Enqueue one already-sanitized record without awaiting or doing I/O."""
+        """将一条已脱敏记录无阻塞地加入有界队列。
+
+        Args:
+            record: 已完成脱敏的注入决策记录。
+        """
         started = self._monotonic()
         try:
             if self._closing:
@@ -125,7 +145,7 @@ class InjectionDecisionRecorder:
             self._signal_wake()
             self._observe_record(record)
         except Exception:
-            # Observability and bounded-queue races must never reach chat callers.
+            # 可观测性故障和有界队列竞争不得影响聊天调用方。
             self._failures_total += 1
             self._safe_failure("enqueue")
         finally:
@@ -139,7 +159,15 @@ class InjectionDecisionRecorder:
         retention_days: int | None = None,
         max_rows: int | None = None,
     ) -> None:
-        """Replace pending cleanup limits and wake the worker without doing I/O."""
+        """替换待执行清理限制并唤醒 worker，不在调用路径执行 I/O。
+
+        Args:
+            retention_days: 新的保留天数；省略时沿用当前值。
+            max_rows: 新的最大行数；省略时沿用当前值。
+
+        Raises:
+            ValueError: 保留天数为负数或最大行数小于一。
+        """
         if self._closing:
             self._failures_total += 1
             self._safe_failure("closed")
@@ -159,7 +187,7 @@ class InjectionDecisionRecorder:
         self._signal_wake()
 
     def snapshot(self) -> dict[str, int | bool]:
-        """Return a stable, sanitized state snapshot."""
+        """返回稳定且已脱敏的运行状态快照。"""
         return {
             "queue_size": self._queue.qsize(),
             "retained_size": len(self._retained_batch),
@@ -172,18 +200,34 @@ class InjectionDecisionRecorder:
         }
 
     def queued_decision_ids(self) -> list[str]:
-        """Expose ordered sanitized identifiers as a deterministic test seam."""
-        queued = list(self._queue._queue)  # noqa: SLF001 - asyncio.Queue has no snapshot API
+        """返回按处理顺序排列的脱敏决策标识，供确定性测试使用。"""
+        queued = list(
+            self._queue._queue  # noqa: SLF001 - asyncio.Queue 没有只读快照接口
+        )
         return [row.decision_id for row in self._retained_batch] + [
             row.decision_id for row in queued
         ]
 
     async def wait_until_idle(self, timeout: float = 5.0) -> None:
-        """Wait until persistence and requested cleanup have completed."""
+        """等待持久化和已请求清理完成。
+
+        Args:
+            timeout: 最长等待秒数。
+
+        Raises:
+            TimeoutError: 等待超过指定时限。
+        """
         await asyncio.wait_for(self._idle.wait(), timeout=timeout)
 
     async def close(self, timeout: float = 5.0) -> None:
-        """Flush queued rows, then cancel a worker that exceeds the deadline."""
+        """冲刷排队记录，并在超时后取消 worker。
+
+        Args:
+            timeout: 等待 worker 正常退出的最长秒数。
+
+        Raises:
+            asyncio.CancelledError: 当前关闭任务被外部取消。
+        """
         if self._closing and self._worker is None:
             return
         self._closing = True
