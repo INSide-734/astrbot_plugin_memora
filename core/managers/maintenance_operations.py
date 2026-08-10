@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from .decay_operations import DecayOperationsMixin
+from ..features.decay.application import DecayOperationsMixin
 from .lifecycle_operations import LifecycleOperationsMixin
 from .stats_operations import StatsOperationsMixin
 

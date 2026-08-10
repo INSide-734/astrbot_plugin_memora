@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiosqlite
 import pytest
 
-from core.managers.decay_operations import (
+from core.features.decay.application.operations import (
     DecayOperationsMixin,
     _normalize_batch_metadata,
 )
@@ -104,6 +104,8 @@ class _DecayHost(DecayOperationsMixin):
     """用于验证衰减写边界的最小宿主。"""
 
     def __init__(self) -> None:
+        """构造带模拟数据库和标准衰减配置的宿主。"""
+
         self._config = {
             "access_decay_window_days": 30.0,
             "access_decay_max_count": 10.0,
@@ -118,7 +120,15 @@ class _DecayHost(DecayOperationsMixin):
 
 
 class _RealDecayHost(DecayOperationsMixin):
+    """用于验证真实 SQLite 衰减幂等性的最小宿主。"""
+
     def __init__(self, db: aiosqlite.Connection) -> None:
+        """绑定真实数据库连接并关闭类型感知衰减。
+
+        参数:
+            db: 测试专用的 SQLite 异步连接。
+        """
+
         self._config = {
             "access_decay_window_days": 30.0,
             "access_decay_max_count": 10.0,
@@ -132,13 +142,31 @@ class _RealDecayHost(DecayOperationsMixin):
 
 
 class _TxnContext:
+    """把模拟数据库适配为异步事务上下文。"""
+
     def __init__(self, db: MagicMock) -> None:
+        """保存需要由上下文返回的模拟数据库。
+
+        参数:
+            db: 协调事务中使用的模拟数据库。
+        """
+
         self.db = db
 
     async def __aenter__(self) -> MagicMock:
+        """进入事务上下文并返回模拟数据库。"""
+
         return self.db
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
+        """退出事务上下文且不抑制异常。
+
+        参数:
+            exc_type: 上下文内异常类型；正常退出时为空。
+            exc: 上下文内异常实例；正常退出时为空。
+            tb: 上下文内异常回溯；正常退出时为空。
+        """
+
         return None
 
 
@@ -147,6 +175,8 @@ class TestDecayWriteBoundaries:
 
     @pytest.mark.asyncio
     async def test_single_access_update_uses_one_coordinated_transaction(self) -> None:
+        """单条访问更新应只打开一次协调事务。"""
+
         host = _DecayHost()
         select_cursor = AsyncMock()
         select_cursor.fetchone.return_value = (json.dumps({"importance": 0.5}),)
@@ -154,7 +184,7 @@ class TestDecayWriteBoundaries:
 
         with (
             patch(
-                "core.managers.decay_operations.coordinated_transaction",
+                "core.features.decay.application.operations.coordinated_transaction",
                 return_value=_TxnContext(host._db),
             ) as txn_mock,
         ):
@@ -166,6 +196,8 @@ class TestDecayWriteBoundaries:
 
     @pytest.mark.asyncio
     async def test_batch_access_update_uses_one_coordinated_transaction(self) -> None:
+        """批量访问更新应在一次协调事务内完成。"""
+
         host = _DecayHost()
         select_cursor = AsyncMock()
         select_cursor.fetchall.return_value = [
@@ -177,7 +209,7 @@ class TestDecayWriteBoundaries:
 
         with (
             patch(
-                "core.managers.decay_operations.coordinated_transaction",
+                "core.features.decay.application.operations.coordinated_transaction",
                 return_value=_TxnContext(host._db),
             ) as txn_mock,
         ):
@@ -189,6 +221,8 @@ class TestDecayWriteBoundaries:
 
     @pytest.mark.asyncio
     async def test_daily_decay_uses_one_coordinated_transaction(self) -> None:
+        """每日衰减应在一次协调事务内完成。"""
+
         host = _DecayHost()
         select_cursor = AsyncMock()
         select_cursor.fetchall.return_value = [
@@ -209,7 +243,7 @@ class TestDecayWriteBoundaries:
 
         with (
             patch(
-                "core.managers.decay_operations.coordinated_transaction",
+                "core.features.decay.application.operations.coordinated_transaction",
                 return_value=_TxnContext(host._db),
             ) as txn_mock,
         ):
@@ -221,11 +255,19 @@ class TestDecayWriteBoundaries:
 
 
 class TestDecayIdempotency:
+    """验证同一自然日内的衰减幂等性。"""
+
     @pytest.mark.asyncio
     async def test_daily_decay_is_idempotent_for_same_calendar_day(
         self,
         tmp_db_path: str,
     ) -> None:
+        """同一自然日第二次执行不应重复衰减。
+
+        参数:
+            tmp_db_path: pytest 提供的隔离 SQLite 文件路径。
+        """
+
         db = await aiosqlite.connect(tmp_db_path)
         db.row_factory = aiosqlite.Row
         await apply_perf_pragmas(db)
