@@ -259,8 +259,8 @@ class TestRecallHandlerSearchParameters:
     async def test_sender_id_is_forwarded_as_user_id(self) -> None:
         from astrbot.api.platform import MessageType
 
+        from core.features.observability.application import PerfTracker
         from core.handlers.recall_handler import RecallHandler
-        from core.monitoring.perf_tracker import PerfTracker
 
         cfg = MagicMock()
         cfg.filtering_settings = {

@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.api.metrics_api import MetricsApiMixin
+from core.features.observability.application import PerfTracker
 from core.managers.write_coordinator import reset_write_metrics_snapshot
-from core.monitoring.perf_tracker import PerfTracker
 
 
 class _TaskStub:
