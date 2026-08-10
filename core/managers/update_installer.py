@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 from astrbot.api import logger
 
+from ..features.updates.domain import RuntimeUpdateError
 from .update_manager import DownloadedUpdate, UpdateError, UpdateManager
 
 _PACKAGE_NAME = "astrbot_plugin_memora"
@@ -50,10 +51,6 @@ _PUBLIC_STATE_FIELDS = (
     "requires_manual_restart",
     "error_code",
 )
-
-
-class RuntimeUpdateError(UpdateError):
-    """runtime 安装、重载或回滚无法安全完成。"""
 
 
 @dataclass(frozen=True, slots=True)

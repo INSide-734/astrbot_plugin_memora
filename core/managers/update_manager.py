@@ -9,13 +9,13 @@ import os
 import re
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import httpx
 from astrbot.api import logger
 
+from ..features.updates.domain import DownloadedUpdate, UpdateError, UpdateRelease
 from ..utils.version import PLUGIN_VERSION
 
 _REPOSITORY = "INSide-734/astrbot_plugin_memora"
@@ -27,36 +27,6 @@ _MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
 _VERSION_PATTERN = re.compile(r"^v?(\d+(?:\.\d+)*)(?:[-+].*)?$", re.IGNORECASE)
 _CHECKSUM_PATTERN = re.compile(r"^(?P<digest>[0-9a-fA-F]{64})\s+[* ]?(?P<name>.+?)\s*$")
 _STATE_FILENAME = "update-state.json"
-
-
-class UpdateError(RuntimeError):
-    """更新元数据、下载或校验失败。"""
-
-
-@dataclass(frozen=True, slots=True)
-class UpdateRelease:
-    """可下载的最新 runtime 发布信息。"""
-
-    tag: str
-    version: str
-    current_version: str
-    published_at: str
-    notes: str
-    runtime_filename: str
-    runtime_url: str
-    checksum_url: str
-    metadata_source: str
-
-
-@dataclass(frozen=True, slots=True)
-class DownloadedUpdate:
-    """已通过 SHA-256 校验并安全落盘的更新包。"""
-
-    release: UpdateRelease
-    path: Path
-    size: int
-    sha256: str
-    download_source: str
 
 
 class UpdateManager:
