@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.evaluation.retrieval_quality import (  # noqa: E402
+from core.features.evaluation.application import (  # noqa: E402
     ndcg_at_k,
     recall_at_k,
     reciprocal_rank,

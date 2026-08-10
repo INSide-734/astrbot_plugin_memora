@@ -25,7 +25,7 @@ from core.evaluation.feedback_ranking_ablation import (  # noqa: E402
     FeedbackRankingEvidenceRequest,
     FeedbackRankingPairedSample,
 )
-from core.evaluation.retrieval_quality import EvaluationCase  # noqa: E402
+from core.features.evaluation.application import EvaluationCase  # noqa: E402
 from core.features.learning.domain.feedback_learning_evidence import (  # noqa: E402
     EvidenceEvaluatorConfig,
     FeedbackRankingConfigSnapshot,
