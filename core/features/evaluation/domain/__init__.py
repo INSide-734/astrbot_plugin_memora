@@ -1,6 +1,6 @@
-"""离线评测 feature 的公开边界。"""
+"""离线评测 feature 的领域契约。"""
 
-from .domain import (
+from .metric_provenance import (
     RetrievalObservation,
     aggregate_case_metrics,
     annotated_latency,
@@ -10,18 +10,8 @@ from .domain import (
     reported_latency,
     split_retrieval_observation,
 )
-from .infrastructure import (
-    EvaluationDatasetRepository,
-    EvaluationDatasetValidationError,
-    EvaluationReportStore,
-    PreparedEvaluationDataset,
-)
 
 __all__ = [
-    "EvaluationDatasetRepository",
-    "EvaluationDatasetValidationError",
-    "EvaluationReportStore",
-    "PreparedEvaluationDataset",
     "RetrievalObservation",
     "aggregate_case_metrics",
     "annotated_latency",

@@ -1,7 +1,11 @@
 """evaluation feature 与旧路径的唯一实现契约。"""
 
 from core.evaluation import dataset_repository as legacy_dataset_repository
+from core.evaluation import metric_provenance as legacy_metric_provenance
 from core.evaluation import report_store as legacy_report_store
+from core.features.evaluation.domain import (
+    metric_provenance as feature_metric_provenance,
+)
 from core.features.evaluation.infrastructure import (
     dataset_repository as feature_dataset_repository,
 )
@@ -34,3 +38,14 @@ def test_legacy_report_store_reuses_feature_implementation() -> None:
         legacy_report_store.EvaluationReportStore
         is feature_report_store.EvaluationReportStore
     )
+
+
+def test_legacy_metric_provenance_reuses_feature_domain() -> None:
+    """旧 evaluation 路径只能导出 feature domain 的指标来源实现。"""
+
+    assert legacy_metric_provenance.__all__ == feature_metric_provenance.__all__
+    for name in feature_metric_provenance.__all__:
+        assert getattr(legacy_metric_provenance, name) is getattr(
+            feature_metric_provenance,
+            name,
+        )
