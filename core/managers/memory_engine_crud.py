@@ -20,6 +20,9 @@ from ..features.memory.infrastructure.canonical_memory_reader import (
 from ..features.memory.infrastructure.write_op_serialization import (
     serialize_atom_for_repair,
 )
+from ..features.observability.application.memory_write_timing import (
+    measure_memory_write_stage,
+)
 from ..models.recall_strategy import RecallStrategy
 from ..models.temporal import canonical_visible_at, normalize_datetime
 from ..retrieval.query_rewriter import resolve_reference_time
@@ -32,10 +35,7 @@ from .memory_engine_atom_support import (
 )
 from .memory_engine_idempotency import MemoryEngineIdempotencyMixin
 from .memory_engine_semantic_updates import has_semantic_metadata_change
-from .memory_engine_write_observability import (
-    MemoryEngineWriteObservabilityMixin,
-    measure_memory_write_stage,
-)
+from .memory_engine_write_observability import MemoryEngineWriteObservabilityMixin
 from .retrieval_timing import RetrievalTimingSink
 
 

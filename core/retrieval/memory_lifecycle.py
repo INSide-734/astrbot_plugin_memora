@@ -12,7 +12,9 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..monitoring.memory_write_timing import measure_memory_write_stage
+from ..features.observability.application.memory_write_timing import (
+    measure_memory_write_stage,
+)
 from .bm25_retriever import BM25Retriever
 from .vector_retriever import VectorRetriever
 

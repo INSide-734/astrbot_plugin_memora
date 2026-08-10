@@ -9,7 +9,7 @@ from ..features.memory.infrastructure.canonical_idempotency import (
     find_canonical_memory_id_by_idempotency_key,
     normalize_canonical_idempotency_key,
 )
-from .memory_engine_write_observability import (
+from ..features.observability.application.memory_write_timing import (
     measure_memory_write_stage,
     observe_memory_write,
 )

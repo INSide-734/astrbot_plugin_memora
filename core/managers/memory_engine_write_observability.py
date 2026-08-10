@@ -6,7 +6,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..monitoring.memory_write_timing import (
+from ..features.observability.application.memory_write_timing import (
     MemoryWriteTiming,
     measure_memory_write_stage,
     memory_write_timing_scope,

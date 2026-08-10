@@ -7,8 +7,10 @@ import asyncio
 from astrbot.api import logger
 
 from ..features.memory.domain.revision import memory_revision
+from ..features.observability.application.memory_write_timing import (
+    measure_memory_write_stage,
+)
 from ..monitoring import report_debug_event, report_debug_exception
-from .memory_engine_write_observability import measure_memory_write_stage
 from .write_coordinator import write_with_retry
 
 
