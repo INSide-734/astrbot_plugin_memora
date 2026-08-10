@@ -3,6 +3,10 @@
 from core.evaluation import dataset_repository as legacy_dataset_repository
 from core.evaluation import metric_provenance as legacy_metric_provenance
 from core.evaluation import report_store as legacy_report_store
+from core.evaluation import retrieval_quality as legacy_retrieval_quality
+from core.features.evaluation.application import (
+    retrieval_quality as feature_retrieval_quality,
+)
 from core.features.evaluation.domain import (
     metric_provenance as feature_metric_provenance,
 )
@@ -47,5 +51,16 @@ def test_legacy_metric_provenance_reuses_feature_domain() -> None:
     for name in feature_metric_provenance.__all__:
         assert getattr(legacy_metric_provenance, name) is getattr(
             feature_metric_provenance,
+            name,
+        )
+
+
+def test_legacy_retrieval_quality_reuses_feature_application() -> None:
+    """旧 evaluation 路径只能导出 feature application 的评测实现。"""
+
+    assert legacy_retrieval_quality.__all__ == feature_retrieval_quality.__all__
+    for name in feature_retrieval_quality.__all__:
+        assert getattr(legacy_retrieval_quality, name) is getattr(
+            feature_retrieval_quality,
             name,
         )
