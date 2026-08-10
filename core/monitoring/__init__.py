@@ -34,7 +34,9 @@ def monitored(func: _F) -> _F:
     def resolve_instrumented() -> _F:
         nonlocal instrumented_func
         if instrumented_func is None:
-            from .instrumentation import monitored as instrument
+            from ..features.observability.infrastructure.instrumentation import (
+                monitored as instrument,
+            )
 
             instrumented_func = instrument(func)
         return instrumented_func
@@ -62,7 +64,9 @@ def reset_trace_context() -> None:
     """启用监控时清理真实追踪上下文，禁用时保持 no-op。"""
     if not _runtime_debug_enabled:
         return
-    from .instrumentation import reset_trace_context as reset
+    from ..features.observability.infrastructure.instrumentation import (
+        reset_trace_context as reset,
+    )
 
     reset()
 
@@ -93,13 +97,17 @@ def set_debug_mode(
     _runtime_debug_enabled = bool(enabled)
 
     if enabled:
-        from .instrumentation import set_debug_mode as _set_debug
+        from ..features.observability.infrastructure.instrumentation import (
+            set_debug_mode as _set_debug,
+        )
 
         _set_debug(True)  # 立即生效
         return
 
     try:
-        from .instrumentation import set_debug_mode as _set_debug
+        from ..features.observability.infrastructure.instrumentation import (
+            set_debug_mode as _set_debug,
+        )
     except Exception:
         _set_debug = None
 
