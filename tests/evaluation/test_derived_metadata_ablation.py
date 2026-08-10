@@ -15,7 +15,7 @@ from core.evaluation.derived_metadata_ablation import (
     RunLocalDerivedMetadataIndex,
     run_derived_metadata_ablation,
 )
-from core.evaluation.retrieval_quality import EvaluationCase
+from core.features.evaluation.application import EvaluationCase
 from core.models.derived_metadata import (
     DerivedMetadataProposal,
     DerivedMetadataSourceRef,

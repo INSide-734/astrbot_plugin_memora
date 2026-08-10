@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 
-from core.evaluation.retrieval_quality import EvaluationCase, load_fixture_dir
 from core.evaluation.session_first_ablation import (
     SESSION_REASON_CODES,
     SessionFirstPreset,
@@ -18,6 +17,7 @@ from core.evaluation.session_first_ablation import (
     make_session_first_retrievers,
     run_session_first,
 )
+from core.features.evaluation.application import EvaluationCase, load_fixture_dir
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "retrieval"
 FIXTURE_PATH = FIXTURE_ROOT / "session_first.jsonl"

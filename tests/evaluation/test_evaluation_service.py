@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.evaluation.evaluation_service import EvaluationService
-from core.evaluation.retrieval_quality import (
+from core.features.evaluation.application import (
     EvaluationReport,
     EvaluationResult,
 )
@@ -363,7 +363,7 @@ async def test_evaluation_service_ablation_variants_use_real_config_keys(tmp_pat
 async def test_evaluation_service_runs_memory_evolution_variants_a_b_c(tmp_path):
     """验证记忆演化 A/B/C 变体使用各自有效配置。"""
 
-    from core.evaluation.retrieval_quality import load_fixture_dir
+    from core.features.evaluation.application import load_fixture_dir
 
     cases = load_fixture_dir("tests/fixtures/retrieval")["memory_evolution"]
     relevant_by_query = {

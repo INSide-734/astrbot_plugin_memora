@@ -21,7 +21,7 @@ from core.evaluation.feedback_ranking_ablation import (
     feedback_ranking_case_hash,
     run_feedback_ranking_ablation,
 )
-from core.evaluation.retrieval_quality import EvaluationCase
+from core.features.evaluation.application import EvaluationCase
 from core.features.learning.domain.feedback_learning_evidence import (
     EvidenceEvaluatorConfig,
     validate_learning_evidence,

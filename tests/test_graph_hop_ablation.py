@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.evaluation.retrieval_quality import (
+from core.features.evaluation.application import (
     EvaluationCase,
     RetrievedDocument,
     evaluate_variants,
