@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import core.features.observability.application.memory_write_timing as feature_write_timing
 import core.handlers.reflection_handler as reflection_handler_module
 import core.monitoring.memory_write_timing as write_timing
 from core.handlers.reflection_handler import ReflectionHandler
@@ -30,7 +31,7 @@ async def test_add_memory_reports_each_safe_write_stage_once(
 
         events.append({"event": event_name, **fields})
 
-    monkeypatch.setattr(write_timing, "report_debug_event", capture_event)
+    monkeypatch.setattr(feature_write_timing, "report_debug_event", capture_event)
     vector = MagicMock()
     vector.add_document = AsyncMock(return_value=42)
     bm25 = MagicMock()
@@ -73,7 +74,7 @@ async def test_failed_canonical_write_does_not_emit_completed_stages(
 
     events: list[dict[str, object]] = []
     monkeypatch.setattr(
-        write_timing,
+        feature_write_timing,
         "report_debug_event",
         lambda event_name, **fields: events.append({"event": event_name, **fields}),
     )

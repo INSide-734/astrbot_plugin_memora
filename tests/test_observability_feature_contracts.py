@@ -1,6 +1,9 @@
 """observability feature 与旧路径的唯一实现契约。"""
 
 from core.features.observability.application import (
+    memory_write_timing as feature_memory_write_timing,
+)
+from core.features.observability.application import (
     perf_tracker as feature_perf_tracker,
 )
 from core.features.observability.application import (
@@ -12,6 +15,7 @@ from core.features.observability.infrastructure import (
 )
 from core.features.observability.infrastructure import metrics as feature_metrics
 from core.monitoring import debug_reporter as legacy_debug_reporter
+from core.monitoring import memory_write_timing as legacy_memory_write_timing
 from core.monitoring import metrics as legacy_metrics
 from core.monitoring import perf_tracker as legacy_perf_tracker
 from core.monitoring import quality_scorer as legacy_quality_scorer
@@ -65,5 +69,16 @@ def test_legacy_debug_reporter_reuses_feature_infrastructure_objects() -> None:
     for name in feature_debug_reporter.__all__:
         assert getattr(legacy_debug_reporter, name) is getattr(
             feature_debug_reporter,
+            name,
+        )
+
+
+def test_legacy_memory_write_timing_reuses_feature_application_objects() -> None:
+    """旧 monitoring 路径只能导出 feature application 的写入计时对象。"""
+
+    assert legacy_memory_write_timing.__all__ == feature_memory_write_timing.__all__
+    for name in feature_memory_write_timing.__all__:
+        assert getattr(legacy_memory_write_timing, name) is getattr(
+            feature_memory_write_timing,
             name,
         )
