@@ -10,6 +10,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
+def test_legacy_adapter_capability_exports_are_identical() -> None:
+    """旧路径必须直接导出 shared 中的同一组能力契约对象。"""
+
+    from core import adapter_capabilities as legacy
+    from core.shared import adapter_capabilities as shared
+
+    for name in shared.__all__:
+        assert getattr(legacy, name) is getattr(shared, name)
+
+
 def _contract(*, kind="vector_backend", native=(), caller_enforced=(), score=None):
     """构建测试使用的最小能力契约。"""
 
