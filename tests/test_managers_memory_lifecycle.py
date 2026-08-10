@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.evaluation.feedback_learning_evidence import (
+from core.features.learning.domain.feedback_learning_evidence import (
     LatencyEvidence,
     QualityMetricEvidence,
     build_learning_evidence,
 )
-from core.evaluation.feedback_learning_evidence_contract import (
+from core.features.learning.domain.feedback_learning_evidence_contract import (
     REQUIRED_EVIDENCE_REGRESSION_CHECKS,
 )
 from core.features.learning.infrastructure.learning_config_adapter import (
