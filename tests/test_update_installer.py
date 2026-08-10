@@ -11,8 +11,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.managers.update_installer import RuntimeUpdateError, RuntimeUpdateInstaller
-from core.managers.update_manager import DownloadedUpdate, UpdateRelease
+from core.features.updates.application.installer import RuntimeUpdateInstaller
+from core.features.updates.domain import (
+    DownloadedUpdate,
+    RuntimeUpdateError,
+    UpdateRelease,
+)
 
 
 def _write_plugin_tree(plugin_root: Path, version: str, marker: str) -> None:

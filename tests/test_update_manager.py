@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from core.managers.update_manager import UpdateError, UpdateManager
+from core.features.updates.application.manager import UpdateManager
+from core.features.updates.domain import UpdateError
 
 
 def _release_payload(version: str = "v1.1.0") -> dict[str, object]:
