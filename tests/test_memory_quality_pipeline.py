@@ -186,7 +186,11 @@ async def test_reflection_reports_canonical_and_quarantine_separately(
 
         events.append((event_name, fields))
 
-    monkeypatch.setattr(reflection_handler_module, "report_debug_event", capture_event)
+    monkeypatch.setattr(
+        reflection_handler_module.observability,
+        "report_debug_event",
+        capture_event,
+    )
     handler = ReflectionHandler(
         context=MagicMock(),
         config_manager=MagicMock(),

@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING
 
 from astrbot.api import logger
 
-from ..monitoring import report_debug_event, report_debug_exception
+from ..features.observability.infrastructure.debug_reporter import (
+    report_debug_event,
+    report_debug_exception,
+)
 
 if TYPE_CHECKING:
     from ..managers.conversation_manager import ConversationManager

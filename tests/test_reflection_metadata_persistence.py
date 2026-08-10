@@ -71,7 +71,7 @@ class TestReflectionMetadataPersistence:
                 "core.handlers.reflection_metadata.report_debug_event"
             ) as metadata_report,
             patch(
-                "core.handlers.reflection_handler.report_debug_event"
+                "core.handlers.reflection_handler.observability.report_debug_event"
             ) as storage_report,
             patch(
                 "core.handlers.reflection_handler.resolve_continuity_session"

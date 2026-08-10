@@ -16,6 +16,10 @@ from .base.feature_config import is_jargon_discovery_enabled
 from .features.backfill.application import BackfillScheduler
 from .features.memory.infrastructure.validators import IndexValidator
 from .features.observability.application import MemoryQualityScorer
+from .features.observability.infrastructure.debug_reporter import (
+    report_debug_event,
+    report_debug_exception,
+)
 from .identity.runtime import ProtocolIdentityRuntime
 from .initializer.component_factory import ComponentFactory
 from .initializer.faiss_checker import FaissChecker
@@ -24,7 +28,6 @@ from .initializer.readiness import InitializerReadinessMixin
 from .injection.recorder import InjectionDecisionRecorder
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
-from .monitoring import report_debug_event, report_debug_exception
 from .platform.composition import (
     DatabaseSetup,
     ProviderWaiter,

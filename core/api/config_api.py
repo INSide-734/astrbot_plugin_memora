@@ -13,7 +13,8 @@ from ..base.config_manager import (
     ConfigPersistenceError,
     ConfigValidationError,
 )
-from ..monitoring import report_debug_event, set_debug_mode
+from ..features.observability.application.runtime import set_debug_mode
+from ..features.observability.infrastructure.debug_reporter import report_debug_event
 from ..platform.config import classify_config_effects
 from .response_utils import ok_response
 

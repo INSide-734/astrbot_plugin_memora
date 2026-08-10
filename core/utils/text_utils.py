@@ -225,7 +225,7 @@ def tokenize_bigrams(text: str) -> list[str]:
     对 CJK 密集文本使用重叠字符二元模型，
     对非 CJK 部分使用空格分割。无外部 NLP 依赖。
 
-    用于: :class:`~core.monitoring.quality_scorer.MemoryQualityScorer`
+    用于: :class:`~core.features.observability.application.quality_scorer.MemoryQualityScorer`
     的内容重叠 Jaccard 计算。
 
     Args:

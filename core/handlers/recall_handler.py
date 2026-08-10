@@ -17,6 +17,8 @@ from astrbot.api.platform import MessageType
 from ..base.config_manager import ConfigManager
 from ..cleaners.injection_cleaner import InjectionCleaner
 from ..extractors.message_content_extractor import MessageContentExtractor
+from ..features.observability.application import runtime as observability
+from ..features.observability.domain import recall_timing as rt
 from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..injection.executor import InjectionExecutionContext, InjectionExecutor
 from ..injection.headroom import estimate_context_headroom_chars
@@ -33,7 +35,6 @@ from ..injection.models import (
 from ..injection.router import InjectionRoutingConfig, InjectionStrategyRouter
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
-from ..monitoring import monitored, report_debug_event, report_debug_exception
 from ..retrieval.query_planner import QueryPlanner
 from ..retrieval.query_rewriter import QueryRewriter, resolve_reference_time
 from ..shared.constants import FAKE_TOOL_CALL_NAME
@@ -130,7 +131,7 @@ class RecallHandler:
         )
         self._auxiliary_recall = AuxiliaryRecall(config_manager, memory_engine)
 
-    @monitored
+    @observability.monitored
     async def handle_memory_recall(
         self,
         event: AstrMessageEvent,
@@ -157,7 +158,7 @@ class RecallHandler:
         injection_selected_count: int = 0
         recall_status = "completed"
         recall_reason = "recall_completed"
-        report_debug_event(
+        observability.report_debug_event(
             "recall_stage",
             component="recall",
             stage="request",
@@ -186,7 +187,7 @@ class RecallHandler:
                 if not has_prompt_text and not has_extra_parts:
                     recall_status = "skipped"
                     recall_reason = "empty_request"
-                    report_debug_event(
+                    observability.report_debug_event(
                         "recall_stage",
                         component="recall",
                         stage="request",
@@ -206,7 +207,7 @@ class RecallHandler:
                         session_id,
                     )
                     if removed > 0:
-                        report_debug_event(
+                        observability.report_debug_event(
                             "recall_stage",
                             component="recall",
                             stage="context_cleanup",
@@ -220,7 +221,7 @@ class RecallHandler:
 
                 query_analysis_started = time.perf_counter()
                 actual_query = await self._extractor.get_event_message_str(event)
-                report_debug_event(
+                observability.report_debug_event(
                     "recall_stage",
                     component="recall",
                     stage="query",
@@ -261,7 +262,7 @@ class RecallHandler:
                 if top_k <= 0:
                     recall_status = "skipped"
                     recall_reason = "top_k_disabled"
-                    report_debug_event(
+                    observability.report_debug_event(
                         "recall_stage",
                         component="recall",
                         stage="retrieval",
@@ -284,7 +285,7 @@ class RecallHandler:
                     else:
                         recall_status = "skipped"
                         recall_reason = "empty_query"
-                        report_debug_event(
+                        observability.report_debug_event(
                             "recall_stage",
                             component="recall",
                             stage="query",
@@ -351,7 +352,7 @@ class RecallHandler:
                 )
                 memory_type_filter = query_intent.memory_types or None
                 reference_time = resolve_reference_time(query_intent)
-                report_debug_event(
+                observability.report_debug_event(
                     "recall_stage",
                     component="recall",
                     stage="query_rewrite",
@@ -382,7 +383,7 @@ class RecallHandler:
                                 exc_info=True,
                             )
 
-                report_debug_event(
+                observability.report_debug_event(
                     "recall_stage",
                     component="recall",
                     stage="provider",
@@ -402,7 +403,7 @@ class RecallHandler:
                     routing_config, preflight_signals
                 )
                 preflight_ms = (time.perf_counter() - decision_started) * 1000.0
-                report_debug_event(
+                observability.report_debug_event(
                     "recall_stage",
                     component="recall",
                     stage="preflight",
@@ -463,7 +464,7 @@ class RecallHandler:
                     timing_sink=timing_context.retrieval,
                     deadline_monotonic=timing_context.deadline_monotonic,
                 )
-                report_debug_event(
+                observability.report_debug_event(
                     "recall_stage",
                     component="recall",
                     stage="retrieval",
@@ -481,7 +482,7 @@ class RecallHandler:
                     chat_type=chat_type,
                     deadline_monotonic=timing_context.deadline_monotonic,
                 )
-                report_debug_event(
+                observability.report_debug_event(
                     "recall_stage",
                     component="recall",
                     stage="spontaneous",
@@ -508,7 +509,7 @@ class RecallHandler:
                     chat_type=chat_type,
                     deadline_monotonic=timing_context.deadline_monotonic,
                 )
-                report_debug_event(
+                observability.report_debug_event(
                     "recall_stage",
                     component="recall",
                     stage="prospective",
@@ -530,7 +531,7 @@ class RecallHandler:
                 decision_ms = (
                     preflight_ms + (time.perf_counter() - decision_started) * 1000.0
                 )
-                report_debug_event(
+                observability.report_debug_event(
                     "recall_stage",
                     component="recall",
                     stage="decision",
@@ -548,7 +549,7 @@ class RecallHandler:
                     persona_id=persona_id or "default",
                 )
                 format_ms = (time.perf_counter() - format_started) * 1000.0
-                report_debug_event(
+                observability.report_debug_event(
                     "recall_stage",
                     component="recall",
                     stage="format",
@@ -586,7 +587,7 @@ class RecallHandler:
         except asyncio.CancelledError:
             recall_status = "cancelled"
             recall_reason = "recall_cancelled"
-            report_debug_event(
+            observability.report_debug_event(
                 "recall_stage",
                 component="recall",
                 stage="recall",
@@ -597,7 +598,7 @@ class RecallHandler:
         except Exception as e:
             recall_status = "failed"
             recall_reason = "recall_error"
-            report_debug_exception(
+            observability.report_debug_exception(
                 "recall_failed",
                 e,
                 component="recall",
@@ -944,7 +945,7 @@ class RecallHandler:
         """记录不含 Provider 或记忆内容的注入结果摘要。"""
         actual_delivery = result.actual_resolved_delivery or decision.resolved_delivery
         outcome = result.outcome.value
-        report_debug_event(
+        observability.report_debug_event(
             "injection_completed",
             component="injection",
             stage="injection",
@@ -1043,7 +1044,7 @@ class RecallHandler:
     ) -> None:
         """记录一次召回的安全总量、阶段计时和结果计数。"""
 
-        report_debug_event(
+        observability.report_debug_event(
             "recall_completed",
             component="recall",
             stage="recall",
@@ -1069,11 +1070,9 @@ class RecallHandler:
             return
         timing = timing_context.snapshot() if timing_context is not None else {}
         try:
-            from ..monitoring.recall_timing import BOOL_KEYS, COUNT_KEYS, TIMING_KEYS
-
             sample = {
                 key: timing[key]
-                for key in (*TIMING_KEYS, *COUNT_KEYS, *BOOL_KEYS)
+                for key in (*rt.TIMING_KEYS, *rt.COUNT_KEYS, *rt.BOOL_KEYS)
                 if key in timing
             }
             sample.update(
@@ -1321,7 +1320,7 @@ class RecallHandler:
             )
             return None
 
-    @monitored
+    @observability.monitored
     async def _maybe_spontaneous_recall(
         self,
         session_id: str | None,
@@ -1343,7 +1342,7 @@ class RecallHandler:
 
         return self._auxiliary_recall.prospective_enabled()
 
-    @monitored
+    @observability.monitored
     async def _maybe_prospective_recall(
         self,
         session_id: str | None,

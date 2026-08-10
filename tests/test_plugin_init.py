@@ -460,7 +460,7 @@ class TestMemoraPluginConfig:
                 "_create_tracked_task",
                 side_effect=lambda coro: coro.close(),
             ),
-            patch.object(module, "set_debug_mode") as set_debug_mode,
+            patch.object(module.observability, "set_debug_mode") as set_debug_mode,
         ):
             MemoraPlugin(context, astrbot_config)
 
@@ -787,8 +787,8 @@ class TestMemoraPluginTerminate:
         plugin._backfill_scheduler = None
 
         with (
-            patch.object(module, "report_debug_event") as report,
-            patch.object(module, "report_debug_exception"),
+            patch.object(module.observability, "report_debug_event") as report,
+            patch.object(module.observability, "report_debug_exception"),
         ):
             await plugin.terminate()
 
@@ -844,8 +844,8 @@ class TestMemoraPluginTerminate:
         plugin._backfill_scheduler = None
 
         with (
-            patch.object(module, "report_debug_event") as report,
-            patch.object(module, "report_debug_exception"),
+            patch.object(module.observability, "report_debug_event") as report,
+            patch.object(module.observability, "report_debug_exception"),
         ):
             await plugin.terminate()
 

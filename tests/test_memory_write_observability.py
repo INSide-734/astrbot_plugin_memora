@@ -162,7 +162,7 @@ async def test_reflection_evolution_reports_actual_gate_decision(
     )
     events: list[dict[str, object]] = []
     monkeypatch.setattr(
-        reflection_handler_module,
+        reflection_handler_module.observability,
         "report_debug_event",
         lambda event_name, **fields: events.append({"event": event_name, **fields}),
     )

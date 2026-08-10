@@ -11,10 +11,10 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
+from ..features.observability.application import runtime as observability
 from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
-from ..monitoring import report_debug_event, report_debug_exception
 from ..processors.memory_processor import MemoryProcessor
 from ..shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
@@ -113,7 +113,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         identity: ResolvedIdentity | None = None,
     ) -> None:
         """在 LLM 响应后检查反思与存储，并保留已解析协议作用域。"""
-        report_debug_event(
+        observability.report_debug_event(
             "reflection_state",
             component="reflection",
             stage="reflection",
@@ -127,7 +127,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         )
         if resp.role != "assistant":
             self._clear_prompt_protection_context(event, scope_id)
-            report_debug_event(
+            observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="response",
@@ -138,7 +138,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         if scope_lookup_failed:
             resp.completion_text = ""
             self._clear_prompt_protection_context(event, scope_id)
-            report_debug_event(
+            observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="protection",
@@ -150,7 +150,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         if protection_required and not scope_id:
             resp.completion_text = ""
             self._clear_prompt_protection_context(event, scope_id)
-            report_debug_event(
+            observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="protection",
@@ -173,7 +173,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             logger.debug(
                 f"[反思处理] 检测到工具调用响应（tools={resp.tools_call_name}），跳过记录"
             )
-            report_debug_event(
+            observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="response",
@@ -186,7 +186,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             logger.debug(
                 "[反思处理] 检测到工具循环总结响应（tools_call_extra_content 非空），跳过记录"
             )
-            report_debug_event(
+            observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="response",
@@ -199,7 +199,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             logger.debug(f"[反思处理] 获取到 unified_msg_origin: {session_id}")
 
             if not session_id:
-                report_debug_event(
+                observability.report_debug_event(
                     "reflection_state",
                     component="reflection",
                     stage="session",
@@ -210,7 +210,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                 return
 
             if self._writes_blocked():
-                report_debug_event(
+                observability.report_debug_event(
                     "reflection_state",
                     component="reflection",
                     stage="write_guard",
@@ -226,7 +226,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                 )
 
             if not response_text or not response_text.strip():
-                report_debug_event(
+                observability.report_debug_event(
                     "reflection_state",
                     component="reflection",
                     stage="response",
@@ -247,7 +247,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             ]
             response_lower = response_text.lower()
             if any(indicator in response_lower for indicator in error_indicators):
-                report_debug_event(
+                observability.report_debug_event(
                     "reflection_state",
                     component="reflection",
                     stage="response",
@@ -266,7 +266,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                 identity=identity,
             )
             await self._feed_cognitive_components(event, response_text, identity)
-            report_debug_event(
+            observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="response",
@@ -283,7 +283,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             await self.maybe_schedule_summary(event)
 
         except asyncio.CancelledError:
-            report_debug_event(
+            observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="reflection",
@@ -292,7 +292,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             )
             raise
         except Exception as e:
-            report_debug_exception(
+            observability.report_debug_exception(
                 "reflection_state",
                 e,
                 component="reflection",
@@ -320,7 +320,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
 
         session_id = getattr(event, "unified_msg_origin", "") or ""
         if not session_id:
-            report_debug_event(
+            observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="session",
@@ -330,7 +330,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             return
 
         if self._writes_blocked():
-            report_debug_event(
+            observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="write_guard",
@@ -345,7 +345,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                 return
 
             if self._shutting_down:
-                report_debug_event(
+                observability.report_debug_event(
                     "reflection_state",
                     component="reflection",
                     stage="summary_window",
@@ -355,7 +355,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                 return
 
             if not await self.try_begin_summary_window(session_id):
-                report_debug_event(
+                observability.report_debug_event(
                     "reflection_state",
                     component="reflection",
                     stage="summary_window",
@@ -377,7 +377,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                     completed, sid
                 )
             )
-            report_debug_event(
+            observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="reflection",
@@ -388,7 +388,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         except asyncio.CancelledError:
             raise
         except Exception as exception:
-            report_debug_exception(
+            observability.report_debug_exception(
                 "reflection_state",
                 exception,
                 component="reflection",
@@ -650,7 +650,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         self.finish_summary_window(session_id)
 
         if task.cancelled():
-            report_debug_event(
+            observability.report_debug_event(
                 "storage_task",
                 component="reflection",
                 stage="storage",
@@ -663,7 +663,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         try:
             exc = task.exception()
         except asyncio.CancelledError:
-            report_debug_event(
+            observability.report_debug_event(
                 "storage_task",
                 component="reflection",
                 stage="storage",
@@ -674,7 +674,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             return
 
         if exc:
-            report_debug_exception(
+            observability.report_debug_exception(
                 "storage_task",
                 exc,
                 component="reflection",
@@ -685,7 +685,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             )
             logger.error(f"[{session_id}] 记忆存储任务异常退出: {exc}")
         else:
-            report_debug_event(
+            observability.report_debug_event(
                 "storage_task",
                 component="reflection",
                 stage="storage",
@@ -728,7 +728,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
     ) -> None:
         """后台存储任务"""
         storage_started = time.perf_counter()
-        report_debug_event(
+        observability.report_debug_event(
             "storage_task",
             component="reflection",
             stage="storage",
@@ -770,7 +770,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                     }
 
                 if summarized_index >= end_index:
-                    report_debug_event(
+                    observability.report_debug_event(
                         "storage_task",
                         component="reflection",
                         stage="window_check",
@@ -797,7 +797,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                 )
 
                 if not self._memory_processor:
-                    report_debug_event(
+                    observability.report_debug_event(
                         "storage_task",
                         component="reflection",
                         stage="memory_extract",
@@ -821,7 +821,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                     batches = await self._prepare_message_batches(
                         history_messages, is_group_chat
                     )
-                    report_debug_event(
+                    observability.report_debug_event(
                         "storage_task",
                         component="reflection",
                         stage="batch_prepare",
@@ -866,7 +866,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                             all_memories.extend(result)
 
                     if batch_processing_failed:
-                        report_debug_event(
+                        observability.report_debug_event(
                             "storage_task",
                             component="reflection",
                             stage="memory_extract",
@@ -890,7 +890,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                         return
 
                     memories = all_memories
-                    report_debug_event(
+                    observability.report_debug_event(
                         "storage_task",
                         component="reflection",
                         stage="memory_extract",
@@ -921,7 +921,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    report_debug_exception(
+                    observability.report_debug_exception(
                         "storage_task",
                         e,
                         component="reflection",
@@ -947,7 +947,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
 
                 if self._memory_engine:
                     write_started = time.perf_counter()
-                    report_debug_event(
+                    observability.report_debug_event(
                         "storage_task",
                         component="reflection",
                         stage="memory_write",
@@ -984,7 +984,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                         store_summary.failed_count,
                         len(history_messages),
                     )
-                    report_debug_event(
+                    observability.report_debug_event(
                         "storage_task",
                         component="reflection",
                         stage="memory_write",
@@ -1013,7 +1013,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                         for _ in memories
                     )
                     successful_keys = set()
-                    report_debug_event(
+                    observability.report_debug_event(
                         "storage_task",
                         component="reflection",
                         stage="memory_write",
@@ -1061,7 +1061,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
 
                 resolve_continuity_session(self._memory_engine, session_id)
 
-                report_debug_event(
+                observability.report_debug_event(
                     "storage_task",
                     component="reflection",
                     stage="storage",
@@ -1079,7 +1079,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                 )
 
             except asyncio.CancelledError:
-                report_debug_event(
+                observability.report_debug_event(
                     "storage_task",
                     component="reflection",
                     stage="storage",
@@ -1092,7 +1092,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                 )
                 raise
             except Exception as e:
-                report_debug_exception(
+                observability.report_debug_exception(
                     "storage_task",
                     e,
                     component="reflection",
@@ -1156,7 +1156,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
 
         manager = self._memory_evolution_manager
         if manager is None or getattr(manager, "mode", None) == "disabled":
-            report_debug_event(
+            observability.report_debug_event(
                 "storage_task",
                 component="reflection",
                 stage="evolution_schedule",
@@ -1170,7 +1170,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             if sources:
                 decision = await manager.schedule_consider(sources[0])
                 should_enqueue = getattr(decision, "should_enqueue", False) is True
-                report_debug_event(
+                observability.report_debug_event(
                     "storage_task",
                     component="reflection",
                     stage="evolution_schedule",
@@ -1182,7 +1182,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                     count=1 if should_enqueue else 0,
                 )
             else:
-                report_debug_event(
+                observability.report_debug_event(
                     "storage_task",
                     component="reflection",
                     stage="evolution_schedule",
@@ -1191,7 +1191,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                     task_type="evolution",
                 )
         except asyncio.CancelledError:
-            report_debug_event(
+            observability.report_debug_event(
                 "storage_task",
                 component="reflection",
                 stage="storage",
@@ -1201,7 +1201,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
             )
             raise
         except Exception as exception:
-            report_debug_exception(
+            observability.report_debug_exception(
                 "storage_task",
                 exception,
                 component="reflection",

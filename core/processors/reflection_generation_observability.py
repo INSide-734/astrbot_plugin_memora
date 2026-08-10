@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from ..monitoring import report_debug_event
+from ..features.observability.infrastructure.debug_reporter import report_debug_event
 
 
 def report_generation_stage(

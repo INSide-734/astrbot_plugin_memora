@@ -10,7 +10,10 @@ from ..features.memory.domain.revision import memory_revision
 from ..features.observability.application.memory_write_timing import (
     measure_memory_write_stage,
 )
-from ..monitoring import report_debug_event, report_debug_exception
+from ..features.observability.infrastructure.debug_reporter import (
+    report_debug_event,
+    report_debug_exception,
+)
 from .write_coordinator import write_with_retry
 
 

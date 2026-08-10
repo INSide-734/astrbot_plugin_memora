@@ -42,7 +42,9 @@ from .api.route_registration import make_page_route_registrar
 from .api.social_api import SocialApiMixin
 from .api.topic_segmentation_api import TopicSegmentationApiMixin
 from .api.update_api import UpdateApiMixin
-from .monitoring.debug_reporter import report_debug_exception
+from .features.observability.infrastructure.debug_reporter import (
+    report_debug_exception,
+)
 from .utils.number_utils import safe_float
 
 PLUGIN_NAME = "astrbot_plugin_memora"
