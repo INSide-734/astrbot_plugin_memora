@@ -9,10 +9,6 @@ from astrbot.core.provider.provider import Provider
 from ..base.config_validator import CostControlConfig
 from ..base.cost_control import build_cost_control_from_config
 from ..base.exceptions import ProviderNotReadyError
-from ..evaluation.feedback_learning_evidence_store import (
-    FeedbackLearningEvidenceInbox,
-    FeedbackLearningEvidenceProvider,
-)
 from ..features.evolution.application import MemoryEvolutionManager
 from ..features.evolution.infrastructure import MemoryEvolutionStore
 from ..features.identity.application.service import ProtocolIdentityService
@@ -20,6 +16,10 @@ from ..features.identity.infrastructure.store import ProtocolIdentityStore
 from ..features.knowledge.application import KnowledgeProposalPipeline
 from ..features.knowledge.infrastructure import KnowledgeExtractor
 from ..features.learning.domain.auto_learning_actions import aggregation_revision_for
+from ..features.learning.infrastructure.feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
+    FeedbackLearningEvidenceProvider,
+)
 from ..features.memory.infrastructure.validators import IndexValidator
 from ..features.notes.application import NoteProposalPipeline
 from ..features.notes.infrastructure import NoteGenerator

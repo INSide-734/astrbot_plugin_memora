@@ -8,6 +8,11 @@ from .auto_learning_state import (
     AutoLearningStateStore,
     AutoLearningStateValidationError,
 )
+from .feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
+    FeedbackLearningEvidenceProvider,
+    LearningEvidenceInboxError,
+)
 from .feedback_signal_store import FeedbackSignalStore
 
 __all__ = [
@@ -17,5 +22,8 @@ __all__ = [
     "AutoLearningStatePersistenceError",
     "AutoLearningStateStore",
     "AutoLearningStateValidationError",
+    "FeedbackLearningEvidenceInbox",
+    "FeedbackLearningEvidenceProvider",
     "FeedbackSignalStore",
+    "LearningEvidenceInboxError",
 ]

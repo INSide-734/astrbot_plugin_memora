@@ -56,7 +56,10 @@ from .infrastructure import (
     AutoLearningStatePersistenceError,
     AutoLearningStateStore,
     AutoLearningStateValidationError,
+    FeedbackLearningEvidenceInbox,
+    FeedbackLearningEvidenceProvider,
     FeedbackSignalStore,
+    LearningEvidenceInboxError,
 )
 
 __all__ = [
@@ -73,6 +76,8 @@ __all__ = [
     "CandidateBinding",
     "FeedbackAdapterKind",
     "FeedbackIngestResult",
+    "FeedbackLearningEvidenceInbox",
+    "FeedbackLearningEvidenceProvider",
     "FeedbackOutcome",
     "FeedbackRevokeResult",
     "FeedbackSignalAggregate",
@@ -82,6 +87,7 @@ __all__ = [
     "FeedbackSignalStore",
     "FeedbackSignalStorePort",
     "LearningConfigAdapterPort",
+    "LearningEvidenceInboxError",
     "LearningEvidenceProviderPort",
     "GlobalLearningCandidate",
     "TrustedFeedbackEvent",

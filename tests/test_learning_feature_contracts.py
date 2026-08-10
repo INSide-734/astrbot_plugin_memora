@@ -5,9 +5,8 @@ from core.evaluation import feedback_learning_evidence as legacy_learning_eviden
 from core.evaluation import (
     feedback_learning_evidence_contract as legacy_learning_evidence_contract,
 )
-from core.evaluation.feedback_learning_evidence_store import (
-    FeedbackLearningEvidenceInbox,
-    FeedbackLearningEvidenceProvider,
+from core.evaluation import (
+    feedback_learning_evidence_store as legacy_learning_evidence_store,
 )
 from core.features.learning.application import (
     auto_learning as learning_application,
@@ -54,6 +53,13 @@ from core.features.learning.domain.models import (
 )
 from core.features.learning.infrastructure import FeedbackSignalStore
 from core.features.learning.infrastructure import auto_learning_state as learning_state
+from core.features.learning.infrastructure import (
+    feedback_learning_evidence_store as learning_evidence_store,
+)
+from core.features.learning.infrastructure.feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
+    FeedbackLearningEvidenceProvider,
+)
 from core.managers import auto_learning as legacy_learning_application
 from core.managers import auto_learning_actions as legacy_learning_actions
 from core.managers import auto_learning_operations as legacy_learning_operations
@@ -153,6 +159,16 @@ def test_legacy_learning_evidence_imports_reuse_learning_implementation() -> Non
     for name in learning_evidence_contract.__all__:
         assert getattr(legacy_learning_evidence_contract, name) is getattr(
             learning_evidence_contract, name
+        )
+
+
+def test_legacy_learning_evidence_store_reuses_learning_implementation() -> None:
+    """旧评测 Store 路径只能导出 learning infrastructure 的唯一实现。"""
+
+    assert legacy_learning_evidence_store.__all__ == learning_evidence_store.__all__
+    for name in learning_evidence_store.__all__:
+        assert getattr(legacy_learning_evidence_store, name) is getattr(
+            learning_evidence_store, name
         )
 
 

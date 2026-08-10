@@ -18,9 +18,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.evaluation.feedback_learning_evidence_store import (  # noqa: E402
-    LearningEvidenceInboxError,
-)
 from core.evaluation.feedback_learning_pipeline import (  # noqa: E402
     run_feedback_ranking_evaluation_and_publish_evidence,
 )
@@ -46,6 +43,9 @@ from core.features.learning.domain.feedback_learning_evidence_contract import ( 
 from core.features.learning.domain.models import (  # noqa: E402
     FeedbackSignalAggregate,
     FeedbackSignalPolicy,
+)
+from core.features.learning.infrastructure.feedback_learning_evidence_store import (  # noqa: E402
+    LearningEvidenceInboxError,
 )
 
 _INPUT_SCHEMA_VERSION = "feedback-learning-evidence-input-v1"

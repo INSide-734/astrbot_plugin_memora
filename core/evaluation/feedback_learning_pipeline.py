@@ -10,7 +10,9 @@ from ..features.learning.domain.models import (
     FeedbackSignalAggregate,
     FeedbackSignalPolicy,
 )
-from .feedback_learning_evidence_store import FeedbackLearningEvidenceInbox
+from ..features.learning.infrastructure.feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
+)
 from .feedback_ranking_ablation import (
     FeedbackRankingEvidenceRequest,
     FeedbackRankingReport,

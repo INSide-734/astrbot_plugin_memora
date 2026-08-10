@@ -9,11 +9,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from core.evaluation.feedback_learning_evidence_store import (
-    FeedbackLearningEvidenceInbox,
-)
 from core.features.learning.domain.feedback_learning_evidence_contract import (
     REQUIRED_EVIDENCE_REGRESSION_CHECKS,
+)
+from core.features.learning.infrastructure.feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
 )
 from scripts import generate_feedback_learning_evidence
 

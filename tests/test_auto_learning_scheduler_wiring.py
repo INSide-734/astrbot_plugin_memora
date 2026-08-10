@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.evaluation.feedback_learning_evidence_store import (
+from core.features.learning.infrastructure.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceProvider,
 )
 

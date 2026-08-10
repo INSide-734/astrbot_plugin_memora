@@ -12,10 +12,6 @@ from core.api.learning_config_adapter import (
     LearningConfigApplyResult,
     LearningConfigSnapshot,
 )
-from core.evaluation.feedback_learning_evidence_store import (
-    FeedbackLearningEvidenceInbox,
-    FeedbackLearningEvidenceProvider,
-)
 from core.features.learning.application.auto_learning import AutoLearningManager
 from core.features.learning.domain.auto_learning_actions import (
     aggregation_revision_for,
@@ -30,6 +26,10 @@ from core.features.learning.domain.feedback_learning_evidence import (
 )
 from core.features.learning.domain.feedback_learning_evidence_contract import (
     REQUIRED_EVIDENCE_REGRESSION_CHECKS,
+)
+from core.features.learning.infrastructure.feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
+    FeedbackLearningEvidenceProvider,
 )
 from core.models.feedback_signal import FeedbackSignalAggregate
 
