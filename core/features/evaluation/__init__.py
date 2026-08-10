@@ -3,11 +3,13 @@
 from .infrastructure import (
     EvaluationDatasetRepository,
     EvaluationDatasetValidationError,
+    EvaluationReportStore,
     PreparedEvaluationDataset,
 )
 
 __all__ = [
     "EvaluationDatasetRepository",
     "EvaluationDatasetValidationError",
+    "EvaluationReportStore",
     "PreparedEvaluationDataset",
 ]

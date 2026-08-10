@@ -1,9 +1,11 @@
 """evaluation feature 与旧路径的唯一实现契约。"""
 
 from core.evaluation import dataset_repository as legacy_dataset_repository
+from core.evaluation import report_store as legacy_report_store
 from core.features.evaluation.infrastructure import (
     dataset_repository as feature_dataset_repository,
 )
+from core.features.evaluation.infrastructure import report_store as feature_report_store
 
 
 def test_legacy_dataset_repository_reuses_feature_implementation() -> None:
@@ -21,4 +23,14 @@ def test_legacy_dataset_repository_reuses_feature_implementation() -> None:
     assert (
         legacy_dataset_repository.PreparedEvaluationDataset
         is feature_dataset_repository.PreparedEvaluationDataset
+    )
+
+
+def test_legacy_report_store_reuses_feature_implementation() -> None:
+    """旧 evaluation 路径只能导出 feature infrastructure 的报告存储实现。"""
+
+    assert legacy_report_store.__all__ == feature_report_store.__all__
+    assert (
+        legacy_report_store.EvaluationReportStore
+        is feature_report_store.EvaluationReportStore
     )

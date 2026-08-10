@@ -5,9 +5,11 @@ from .dataset_repository import (
     EvaluationDatasetValidationError,
     PreparedEvaluationDataset,
 )
+from .report_store import EvaluationReportStore
 
 __all__ = [
     "EvaluationDatasetRepository",
     "EvaluationDatasetValidationError",
+    "EvaluationReportStore",
     "PreparedEvaluationDataset",
 ]
