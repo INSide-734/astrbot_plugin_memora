@@ -8,10 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.learning_config_adapter import (
-    LearningConfigApplyResult,
-    LearningConfigSnapshot,
-)
 from core.evaluation.feedback_learning_evidence import (
     LatencyEvidence,
     QualityMetricEvidence,
@@ -19,6 +15,10 @@ from core.evaluation.feedback_learning_evidence import (
 )
 from core.evaluation.feedback_learning_evidence_contract import (
     REQUIRED_EVIDENCE_REGRESSION_CHECKS,
+)
+from core.features.learning.infrastructure.learning_config_adapter import (
+    LearningConfigApplyResult,
+    LearningConfigSnapshot,
 )
 from core.managers.auto_learning_actions import (
     aggregation_revision_for,

@@ -13,7 +13,9 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from .learning_config_adapter import LearningConfigAdapter
+from ..features.learning.infrastructure.learning_config_adapter import (
+    LearningConfigAdapter,
+)
 from .learning_reload_scheduler import schedule_learning_reload_operation
 from .learning_reload_view import learning_reload_view
 from .response_utils import error_response, ok_response

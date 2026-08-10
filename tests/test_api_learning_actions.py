@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.api.learning_api import LearningApiMixin, _candidate_view
-from core.api.learning_config_adapter import LearningConfigAdapter
+from core.features.learning.infrastructure.learning_config_adapter import (
+    LearningConfigAdapter,
+)
 
 _CANDIDATE_ID = "J6LuM5hGZz4h8Jx8KmsFjB9Q"
 _OPERATION_ID = "Q7VvN6iHak2Nz1cX4d8PmL0R"

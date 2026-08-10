@@ -59,6 +59,9 @@ from .infrastructure import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
     FeedbackSignalStore,
+    LearningConfigAdapter,
+    LearningConfigApplyResult,
+    LearningConfigSnapshot,
     LearningEvidenceInboxError,
 )
 
@@ -86,7 +89,10 @@ __all__ = [
     "FeedbackSignalServicePort",
     "FeedbackSignalStore",
     "FeedbackSignalStorePort",
+    "LearningConfigAdapter",
     "LearningConfigAdapterPort",
+    "LearningConfigApplyResult",
+    "LearningConfigSnapshot",
     "LearningEvidenceInboxError",
     "LearningEvidenceProviderPort",
     "GlobalLearningCandidate",

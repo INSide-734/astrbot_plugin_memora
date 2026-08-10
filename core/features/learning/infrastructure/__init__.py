@@ -14,6 +14,11 @@ from .feedback_learning_evidence_store import (
     LearningEvidenceInboxError,
 )
 from .feedback_signal_store import FeedbackSignalStore
+from .learning_config_adapter import (
+    LearningConfigAdapter,
+    LearningConfigApplyResult,
+    LearningConfigSnapshot,
+)
 
 __all__ = [
     "STATE_SCHEMA_VERSION",
@@ -25,5 +30,8 @@ __all__ = [
     "FeedbackLearningEvidenceInbox",
     "FeedbackLearningEvidenceProvider",
     "FeedbackSignalStore",
+    "LearningConfigAdapter",
+    "LearningConfigApplyResult",
+    "LearningConfigSnapshot",
     "LearningEvidenceInboxError",
 ]

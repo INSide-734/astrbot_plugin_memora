@@ -1,6 +1,6 @@
 """learning feature 的领域模型所有权与旧路径兼容契约。"""
 
-from core.api.learning_config_adapter import LearningConfigAdapter
+from core.api import learning_config_adapter as legacy_learning_config_adapter
 from core.evaluation import feedback_learning_evidence as legacy_learning_evidence
 from core.evaluation import (
     feedback_learning_evidence_contract as legacy_learning_evidence_contract,
@@ -56,9 +56,15 @@ from core.features.learning.infrastructure import auto_learning_state as learnin
 from core.features.learning.infrastructure import (
     feedback_learning_evidence_store as learning_evidence_store,
 )
+from core.features.learning.infrastructure import (
+    learning_config_adapter as learning_config_infrastructure,
+)
 from core.features.learning.infrastructure.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
+)
+from core.features.learning.infrastructure.learning_config_adapter import (
+    LearningConfigAdapter,
 )
 from core.managers import auto_learning as legacy_learning_application
 from core.managers import auto_learning_actions as legacy_learning_actions
@@ -169,6 +175,18 @@ def test_legacy_learning_evidence_store_reuses_learning_implementation() -> None
     for name in learning_evidence_store.__all__:
         assert getattr(legacy_learning_evidence_store, name) is getattr(
             learning_evidence_store, name
+        )
+
+
+def test_legacy_learning_config_adapter_reuses_learning_implementation() -> None:
+    """旧 API 适配器路径只能导出 learning infrastructure 的唯一实现。"""
+
+    assert (
+        legacy_learning_config_adapter.__all__ == learning_config_infrastructure.__all__
+    )
+    for name in learning_config_infrastructure.__all__:
+        assert getattr(legacy_learning_config_adapter, name) is getattr(
+            learning_config_infrastructure, name
         )
 
 
