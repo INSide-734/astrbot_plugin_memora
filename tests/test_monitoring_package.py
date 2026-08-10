@@ -9,8 +9,10 @@ from importlib.util import find_spec
 def _reload_monitoring_package():
     """重新加载监控包，隔离运行时 debug 开关状态。"""
 
+    import core.features.observability.application.runtime as runtime
     import core.monitoring as monitoring
 
+    importlib.reload(runtime)
     return importlib.reload(monitoring)
 
 

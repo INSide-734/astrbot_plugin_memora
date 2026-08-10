@@ -1,5 +1,6 @@
 """observability feature 与旧路径的唯一实现契约。"""
 
+import core.monitoring as legacy_runtime
 from core.features.observability.application import (
     memory_write_timing as feature_memory_write_timing,
 )
@@ -9,6 +10,7 @@ from core.features.observability.application import (
 from core.features.observability.application import (
     quality_scorer as feature_quality_scorer,
 )
+from core.features.observability.application import runtime as feature_runtime
 from core.features.observability.domain import recall_timing as feature_recall_timing
 from core.features.observability.infrastructure import (
     debug_reporter as feature_debug_reporter,
@@ -97,3 +99,12 @@ def test_legacy_instrumentation_reuses_feature_infrastructure_objects() -> None:
             feature_instrumentation,
             name,
         )
+
+
+def test_legacy_monitoring_facade_reuses_feature_runtime_objects() -> None:
+    """旧 monitoring 包门面只能委托 feature application 的运行时对象。"""
+
+    assert legacy_runtime.__all__ == feature_runtime.__all__
+    assert legacy_runtime.__getattr__ is feature_runtime.__getattr__
+    for name in feature_runtime.__all__:
+        assert getattr(legacy_runtime, name) is getattr(feature_runtime, name)
