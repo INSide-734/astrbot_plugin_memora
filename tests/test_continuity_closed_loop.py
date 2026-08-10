@@ -8,10 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.handlers.continuity_hooks import (
-    record_continuity_topics,
-    resolve_continuity_session,
-)
+from core.features.recall.application import continuity as recall_continuity
+from core.features.reflection.application import continuity as reflection_continuity
+from core.handlers import continuity_hooks as legacy_continuity
 from core.handlers.recall_handler import RecallHandler
 from core.handlers.reflection_handler import ReflectionHandler
 from core.managers.continuity_tracker import ContinuityTracker
@@ -21,6 +20,9 @@ from core.managers.memory_engine_lifecycle import (
     _build_continuity_tracker,
 )
 from core.review.memory_quality_gate import MemoryGateResult
+
+record_continuity_topics = reflection_continuity.record_continuity_topics
+resolve_continuity_session = reflection_continuity.resolve_continuity_session
 
 
 def _recall_handler(tracker: object | None) -> RecallHandler:
@@ -32,6 +34,28 @@ def _recall_handler(tracker: object | None) -> RecallHandler:
     handler._expression_learner = None
     handler._affection_manager = None
     return handler
+
+
+def test_legacy_continuity_hooks_reuse_feature_application_objects() -> None:
+    """旧 handlers 路径只能恒等导出两个 feature 的连续性服务。"""
+
+    assert legacy_continuity.__all__ == [
+        "build_continuity_context",
+        "record_continuity_topics",
+        "resolve_continuity_session",
+    ]
+    assert (
+        legacy_continuity.build_continuity_context
+        is recall_continuity.build_continuity_context
+    )
+    assert (
+        legacy_continuity.record_continuity_topics
+        is reflection_continuity.record_continuity_topics
+    )
+    assert (
+        legacy_continuity.resolve_continuity_session
+        is reflection_continuity.resolve_continuity_session
+    )
 
 
 def test_lifecycle_builder_uses_runtime_config_and_restores(tmp_path: Path) -> None:

@@ -12,6 +12,7 @@ from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
 from ..features.observability.application import runtime as observability
+from ..features.reflection.application.continuity import resolve_continuity_session
 from ..features.reflection.domain.storage_outcomes import (
     ReflectionStoreOutcome,
     ReflectionStoreResult,
@@ -29,7 +30,6 @@ from ..shared.contracts.prompt_protection import (
 )
 from ..shared.cost_control import CostControl
 from ..utils import OperationContext, get_persona_id
-from .continuity_hooks import resolve_continuity_session
 from .reflection_backlog import ReflectionBacklogMixin
 from .reflection_candidate_writer import (
     build_reflection_idempotency_key,

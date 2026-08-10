@@ -19,6 +19,7 @@ from ..cleaners.injection_cleaner import InjectionCleaner
 from ..extractors.message_content_extractor import MessageContentExtractor
 from ..features.observability.application import runtime as observability
 from ..features.observability.domain import recall_timing as rt
+from ..features.recall.application.continuity import build_continuity_context
 from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..injection.executor import InjectionExecutionContext, InjectionExecutor
 from ..injection.headroom import estimate_context_headroom_chars
@@ -47,7 +48,6 @@ from ..shared.contracts.prompt_protection import (
 from ..shared.cost_control import CostControl
 from ..utils import OperationContext, get_persona_id
 from .auxiliary_recall import AuxiliaryRecall
-from .continuity_hooks import build_continuity_context
 from .recall_observability import RecallTimingContext
 from .reconsolidation_dispatch import schedule_reconsolidation_proposal
 
