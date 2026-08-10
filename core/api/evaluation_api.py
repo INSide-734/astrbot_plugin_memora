@@ -10,13 +10,13 @@ import aiosqlite
 from astrbot.api import logger
 from quart import request
 
-from ..evaluation.evaluation_service import EvaluationService
 from ..features.evaluation import (
     EvaluationCase,
     EvaluationDatasetRepository,
     EvaluationDatasetValidationError,
     PreparedEvaluationDataset,
 )
+from ..features.evaluation.infrastructure.evaluation_service import EvaluationService
 from ..storage.base import apply_perf_pragmas
 from .response_utils import error_response, ok_response
 
