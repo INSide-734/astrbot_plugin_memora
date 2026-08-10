@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.managers.backup_manager import (
+from core.features.backup.application.manager import (
     _BACKUP_INFO_FILE,
     _BACKUP_NAME_RE,
     _VERSION_FILE,
@@ -170,7 +170,7 @@ class TestCreateBackup:
         (tmp_path / "memora.db").write_bytes(_db_bytes("failure"))
         mgr = BackupManager(data_dir=str(tmp_path))
         with patch(
-            "core.managers.backup_manager.snapshot_sqlite",
+            "core.features.backup.application.manager.snapshot_sqlite",
             side_effect=OSError("disk"),
         ):
             with pytest.raises(RuntimeError, match="backup_create_failed"):

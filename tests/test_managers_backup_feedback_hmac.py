@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.managers.backup_manager import _BACKUP_INFO_FILE, BackupManager
+from core.features.backup.application.manager import _BACKUP_INFO_FILE, BackupManager
 
 
 def _write_marker_database(path: Path, label: str) -> None:
@@ -263,7 +263,7 @@ class TestFeedbackHmacBackupRestore:
             original_replace(source, target)
 
         with patch(
-            "core.managers.backup_manager.os.replace",
+            "core.features.backup.application.restore_transaction.os.replace",
             side_effect=fail_on_key_install,
         ):
             applied = manager.apply_pending_restores()

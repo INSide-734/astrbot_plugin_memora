@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.managers.backup_manager import BackupManager
+from core.features.backup.application import BackupManager
 from core.managers.backup_snapshot import snapshot_sqlite
 from core.managers.memory_engine import MemoryEngine
 from core.managers.schema_manager import CURRENT_DB_VERSION, SchemaManager

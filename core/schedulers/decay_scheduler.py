@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 
 if TYPE_CHECKING:
-    from ..managers.backup_manager import BackupManager
+    from ..features.backup.application import BackupManager
     from ..managers.memory_engine import MemoryEngine
 
 

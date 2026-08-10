@@ -470,7 +470,7 @@ async def test_backup_and_restore_roundtrip(
 @pytest.mark.integration
 async def test_restore_reload_lifecycle_applies_then_validates(tmp_path: Path) -> None:
     """恢复事务在热重载模式下先应用并校验，再由新实例确认成功。"""
-    from core.managers.backup_manager import BackupManager
+    from core.features.backup.application import BackupManager
 
     db_path = tmp_path / "memora.db"
     connection = sqlite3.connect(db_path)

@@ -1,5 +1,6 @@
 """备份 feature 的公开边界。"""
 
+from .application import PLUGIN_VERSION, BackupManager
 from .domain import (
     BackupIntegrity,
     BackupOperationError,
@@ -34,6 +35,7 @@ from .infrastructure import (
 
 __all__ = [
     "BackupIntegrity",
+    "BackupManager",
     "BackupOperationError",
     "BackupType",
     "FEEDBACK_HMAC_KEY_NAME",
@@ -41,6 +43,7 @@ __all__ = [
     "FileRole",
     "OPERATIONAL_BACKUP_PATTERNS",
     "OPERATIONAL_FILE_SPECS",
+    "PLUGIN_VERSION",
     "RestoreFileProgress",
     "RestorePlan",
     "RestoreStatus",

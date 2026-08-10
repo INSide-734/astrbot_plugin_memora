@@ -7,7 +7,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..managers.backup_manager import BackupManager
+from ..features.backup.application import BackupManager
 from ..managers.backup_models import BackupOperationError
 from .response_utils import error_response, ok_response
 
