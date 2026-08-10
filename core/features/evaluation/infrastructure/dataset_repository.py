@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ....evaluation.retrieval_quality import EvaluationCase
+from ..application import EvaluationCase
 
 MAX_DATASET_BYTES = 1024 * 1024
 MAX_DATASET_CASES = 500
