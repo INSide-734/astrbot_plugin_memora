@@ -11,11 +11,11 @@ from typing import Any
 
 import pytest
 
-from core.evaluation.derived_metadata_ablation import (
+from core.features.evaluation.application import EvaluationCase
+from core.features.evaluation.application.derived_metadata_ablation import (
     RunLocalDerivedMetadataIndex,
     run_derived_metadata_ablation,
 )
-from core.features.evaluation.application import EvaluationCase
 from core.models.derived_metadata import (
     DerivedMetadataProposal,
     DerivedMetadataSourceRef,
