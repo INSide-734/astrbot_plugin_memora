@@ -18,10 +18,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.evaluation.feedback_learning_pipeline import (  # noqa: E402
+from core.features.evaluation.application import EvaluationCase  # noqa: E402
+from core.features.evaluation.application.feedback_learning_pipeline import (  # noqa: E402
     run_feedback_ranking_evaluation_and_publish_evidence,
 )
-from core.features.evaluation.application import EvaluationCase  # noqa: E402
 from core.features.evaluation.application.feedback_ranking_ablation import (  # noqa: E402
     FeedbackRankingEvidenceRequest,
     FeedbackRankingPairedSample,
