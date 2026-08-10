@@ -10,8 +10,12 @@ import pytest
 from astrbot.api.platform import MessageType
 
 from core.event_handler import EventHandler
+from core.features.reflection.application import reflection_trigger as feature_trigger
+from core.features.reflection.application.reflection_trigger import (
+    ReflectionWindowRequest,
+)
+from core.handlers import reflection_trigger as legacy_trigger
 from core.handlers.reflection_handler import ReflectionHandler
-from core.handlers.reflection_trigger import ReflectionWindowRequest
 from core.identity.models import IdentityTrust, ResolvedIdentity
 
 
@@ -45,6 +49,14 @@ def _group_event() -> MagicMock:
     event.get_self_id.return_value = "bot-1"
     event.is_at_or_wake_command = False
     return event
+
+
+def test_legacy_handler_path_reuses_feature_application_objects() -> None:
+    """旧 handlers 路径只能恒等导出反思窗口准备对象。"""
+
+    assert legacy_trigger.__all__ == feature_trigger.__all__
+    for name in feature_trigger.__all__:
+        assert getattr(legacy_trigger, name) is getattr(feature_trigger, name)
 
 
 @pytest.mark.asyncio
@@ -129,7 +141,7 @@ async def test_ambient_messages_schedule_summary_without_assistant_response() ->
     event = _group_event()
 
     with patch(
-        "core.handlers.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_trigger.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         await handler.maybe_schedule_summary(event)
@@ -217,7 +229,7 @@ async def test_summary_trigger_bounds_each_window_to_trigger_rounds() -> None:
     )
 
     with patch(
-        "core.handlers.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_trigger.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         request = await handler._summary_trigger.prepare(
@@ -273,9 +285,11 @@ async def test_summary_gate_reports_effective_five_round_threshold() -> None:
     )
 
     with (
-        patch("core.handlers.reflection_trigger.report_debug_event") as report,
         patch(
-            "core.handlers.reflection_trigger.get_persona_id",
+            "core.features.reflection.application.reflection_trigger.report_debug_event"
+        ) as report,
+        patch(
+            "core.features.reflection.application.reflection_trigger.get_persona_id",
             new=AsyncMock(return_value="persona-1"),
         ),
     ):
@@ -366,7 +380,7 @@ async def test_summary_backlog_drains_in_bounded_windows() -> None:
     handler._storage_task = AsyncMock(side_effect=store_window)
 
     with patch(
-        "core.handlers.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_trigger.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         request = await handler._summary_trigger.prepare(
@@ -430,7 +444,7 @@ async def test_pending_retry_keeps_original_bounded_end() -> None:
     )
 
     with patch(
-        "core.handlers.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_trigger.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         request = await handler._summary_trigger.prepare(

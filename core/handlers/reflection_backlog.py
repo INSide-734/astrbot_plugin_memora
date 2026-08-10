@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from astrbot.api import logger
 
-from .reflection_trigger import ReflectionWindowRequest
+from ..features.reflection.application.reflection_trigger import ReflectionWindowRequest
 
 
 class ReflectionBacklogMixin:

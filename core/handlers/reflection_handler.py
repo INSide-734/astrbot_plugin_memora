@@ -17,6 +17,7 @@ from ..features.reflection.application.candidate_writer import (
     store_reflection_candidates,
 )
 from ..features.reflection.application.continuity import resolve_continuity_session
+from ..features.reflection.application.reflection_trigger import ReflectionTrigger
 from ..features.reflection.domain.storage_outcomes import (
     ReflectionStoreOutcome,
     ReflectionStoreResult,
@@ -40,7 +41,6 @@ from .reflection_llm_budget import (
     process_reflection_batches,
 )
 from .reflection_metadata import commit_summary_metadata, persist_pending_summary
-from .reflection_trigger import ReflectionTrigger
 from .topic_batch_preparer import TopicBatchPreparer
 
 if TYPE_CHECKING:
