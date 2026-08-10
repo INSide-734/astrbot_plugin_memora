@@ -15,7 +15,9 @@ from ..features.reconsolidation.domain.errors import (
     ReconsolidationCandidateConflictError,
     ReconsolidationCandidateNotFoundError,
 )
-from ..storage.reconsolidation_store import ReconsolidationStore
+from ..features.reconsolidation.infrastructure.reconsolidation_store import (
+    ReconsolidationStore,
+)
 
 _EVIDENCE_TYPE = "llm_revision"
 

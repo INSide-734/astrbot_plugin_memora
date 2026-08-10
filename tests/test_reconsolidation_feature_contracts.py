@@ -7,6 +7,9 @@ from core.features.reconsolidation.domain.errors import (
 from core.features.reconsolidation.infrastructure import (
     reconsolidation_schema as feature_schema,
 )
+from core.features.reconsolidation.infrastructure import (
+    reconsolidation_store as feature_store,
+)
 from core.managers import reconsolidation as legacy_manager
 from core.storage import reconsolidation_schema as legacy_schema
 from core.storage import reconsolidation_store as legacy_store
@@ -39,3 +42,11 @@ def test_legacy_reconsolidation_schema_reuses_feature_implementation() -> None:
     assert legacy_schema.__all__ == feature_schema.__all__
     for name in feature_schema.__all__:
         assert getattr(legacy_schema, name) is getattr(feature_schema, name)
+
+
+def test_legacy_reconsolidation_store_reuses_feature_implementation() -> None:
+    """旧 Store 路径只能导出 reconsolidation infrastructure 的唯一实现。"""
+
+    assert legacy_store.__all__ == feature_store.__all__
+    for name in feature_store.__all__:
+        assert getattr(legacy_store, name) is getattr(feature_store, name)

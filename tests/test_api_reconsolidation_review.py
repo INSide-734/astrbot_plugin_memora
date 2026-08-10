@@ -9,9 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.features.reconsolidation.infrastructure.reconsolidation_store import (
+    ReconsolidationStore,
+)
 from core.managers.reconsolidation import ReconsolidationManager
 from core.page_api import PAGE_API_ALIAS_PREFIXES, PAGE_API_PREFIX, PluginPageApi
-from core.storage.reconsolidation_store import ReconsolidationStore
 
 
 def _mock_request(

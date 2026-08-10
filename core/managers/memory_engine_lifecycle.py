@@ -393,7 +393,9 @@ class MemoryEngineLifecycleMixin:
         self.reconsolidation = None
         self.reconsolidation_store = None
         if bool(self.config.get("reconsolidation.enabled", False)):
-            from ..storage.reconsolidation_store import ReconsolidationStore
+            from ..features.reconsolidation.infrastructure.reconsolidation_store import (
+                ReconsolidationStore,
+            )
             from .reconsolidation import ReconsolidationManager
 
             store = ReconsolidationStore(
