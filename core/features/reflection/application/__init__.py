@@ -5,10 +5,13 @@ from .candidate_writer import (
     store_reflection_candidates,
 )
 from .continuity import record_continuity_topics, resolve_continuity_session
+from .reflection_metadata import commit_summary_metadata, persist_pending_summary
 from .reflection_trigger import ReflectionTrigger, ReflectionWindowRequest
 
 __all__ = [
     "build_reflection_idempotency_key",
+    "commit_summary_metadata",
+    "persist_pending_summary",
     "record_continuity_topics",
     "ReflectionTrigger",
     "ReflectionWindowRequest",

@@ -8,6 +8,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.features.reflection.application import reflection_metadata as feature_metadata
+from core.handlers import reflection_metadata as legacy_metadata
+
+
+def test_legacy_handler_path_reuses_feature_application_objects() -> None:
+    """旧 handlers 路径只能恒等导出反思窗口元数据服务。"""
+
+    assert legacy_metadata.__all__ == feature_metadata.__all__
+    for name in feature_metadata.__all__:
+        assert getattr(legacy_metadata, name) is getattr(feature_metadata, name)
+
 
 def _build_storage_handler(conversation_manager: MagicMock) -> Any:
     """构造仅用于元数据提交回归的反思处理器。"""
@@ -68,7 +79,7 @@ class TestReflectionMetadataPersistence:
 
         with (
             patch(
-                "core.handlers.reflection_metadata.report_debug_event"
+                "core.features.reflection.application.reflection_metadata.report_debug_event"
             ) as metadata_report,
             patch(
                 "core.handlers.reflection_handler.observability.report_debug_event"
@@ -119,7 +130,9 @@ class TestReflectionMetadataPersistence:
     async def test_retry_success_emits_terminal_committed_event(self) -> None:
         """首次原子提交失败而补救成功时必须发出 completed 终态。"""
 
-        from core.handlers.reflection_metadata import commit_summary_metadata
+        from core.features.reflection.application.reflection_metadata import (
+            commit_summary_metadata,
+        )
 
         conversation_manager = MagicMock()
         conversation_manager.update_session_metadata_fields = AsyncMock(
@@ -129,10 +142,10 @@ class TestReflectionMetadataPersistence:
 
         with (
             patch(
-                "core.handlers.reflection_metadata.report_debug_event"
+                "core.features.reflection.application.reflection_metadata.report_debug_event"
             ) as report_event,
             patch(
-                "core.handlers.reflection_metadata.report_debug_exception"
+                "core.features.reflection.application.reflection_metadata.report_debug_exception"
             ) as report_exception,
         ):
             result = await commit_summary_metadata(
@@ -158,7 +171,9 @@ class TestReflectionMetadataPersistence:
     async def test_metadata_commit_cancellation_propagates(self) -> None:
         """原子元数据写入被取消时不得记录 pending 或降级为普通失败。"""
 
-        from core.handlers.reflection_metadata import commit_summary_metadata
+        from core.features.reflection.application.reflection_metadata import (
+            commit_summary_metadata,
+        )
 
         conversation_manager = MagicMock()
         conversation_manager.update_session_metadata_fields = AsyncMock(
@@ -180,7 +195,9 @@ class TestReflectionMetadataPersistence:
     async def test_pending_record_cancellation_propagates(self) -> None:
         """恢复窗口写入被取消时必须原样传播取消。"""
 
-        from core.handlers.reflection_metadata import persist_pending_summary
+        from core.features.reflection.application.reflection_metadata import (
+            persist_pending_summary,
+        )
 
         conversation_manager = MagicMock()
         conversation_manager.update_session_metadata = AsyncMock(

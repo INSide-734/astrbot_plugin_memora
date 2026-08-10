@@ -12,6 +12,7 @@ from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
 from ..features.observability.application import runtime as observability
+from ..features.reflection.application import reflection_metadata as metadata_ops
 from ..features.reflection.application.candidate_writer import (
     build_reflection_idempotency_key,
     store_reflection_candidates,
@@ -40,7 +41,6 @@ from .reflection_llm_budget import (
     fit_batches_to_extra_llm_budget,
     process_reflection_batches,
 )
-from .reflection_metadata import commit_summary_metadata, persist_pending_summary
 from .topic_batch_preparer import TopicBatchPreparer
 
 if TYPE_CHECKING:
@@ -1040,7 +1040,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                     return
 
                 if self._conversation_manager:
-                    metadata_committed = await commit_summary_metadata(
+                    metadata_committed = await metadata_ops.commit_summary_metadata(
                         self._conversation_manager,
                         session_id=session_id,
                         end_index=end_index,
@@ -1140,7 +1140,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         Raises:
             asyncio.CancelledError: 调用方取消持久化时原样传播。
         """
-        return await persist_pending_summary(
+        return await metadata_ops.persist_pending_summary(
             self._conversation_manager,
             session_id=session_id,
             start_index=start_index,
