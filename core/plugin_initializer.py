@@ -19,6 +19,7 @@ from .identity.runtime import ProtocolIdentityRuntime
 from .initializer.component_factory import ComponentFactory
 from .initializer.faiss_checker import FaissChecker
 from .initializer.provider_loader import ProviderLoader
+from .initializer.readiness import InitializerReadinessMixin
 from .injection.recorder import InjectionDecisionRecorder
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
@@ -39,7 +40,7 @@ from .shared.contracts import PromptProtectionPort
 from .storage.injection_decision_store import InjectionDecisionStore
 
 
-class PluginInitializer:
+class PluginInitializer(InitializerReadinessMixin):
     """插件初始化器"""
 
     # 关停超时配置（秒）
@@ -104,6 +105,8 @@ class PluginInitializer:
         self._provider_waiter.on_terminal_callback = self._on_providers_ready
 
     async def initialize(self) -> bool:
+        """在互斥门内初始化插件，并返回最终就绪状态。"""
+
         async with self._initialization_lock:
             if self._initialization_complete or self._initialization_failed:
                 return self._initialization_complete
@@ -655,63 +658,6 @@ class PluginInitializer:
             failed_count=failed_count,
         )
 
-    # ---- 对外属性 ----
-
-    @property
-    def is_initialized(self) -> bool:
-        return self._initialization_complete
-
-    @property
-    def is_failed(self) -> bool:
-        return self._initialization_failed
-
-    @property
-    def error_message(self) -> str | None:
-        return self._initialization_error
-
-    @property
-    def provider_check_attempts(self) -> int:
-        return self._provider_waiter.attempts
-
-    def get_readiness_snapshot(self) -> dict[str, Any]:
-        missing_provider = []
-        if self.embedding_provider is None:
-            missing_provider.append("embedding")
-        if self.llm_provider is None:
-            missing_provider.append("llm")
-        return {
-            "is_initialized": self._initialization_complete,
-            "is_failed": self._initialization_failed,
-            "error_message": self._initialization_error,
-            "provider_attempts": self.provider_check_attempts,
-            "missing_provider": missing_provider,
-            "components_ready": {
-                "db": self.db is not None,
-                "graph_db": self.graph_db is not None,
-                "memory_engine": self.memory_engine is not None,
-                "memory_processor": self.memory_processor is not None,
-                "memory_quarantine_store": self.memory_quarantine_store is not None,
-                "memory_quality_gate": self.memory_quality_gate is not None,
-                "conversation_manager": self.conversation_manager is not None,
-                "index_validator": self.index_validator is not None,
-                "memory_evolution_store": self.memory_evolution_store is not None,
-                "memory_evolution_manager": self.memory_evolution_manager is not None,
-            },
-        }
-
-    async def ensure_initialized(self, timeout: float = 30.0) -> bool:
-        if self._initialization_complete:
-            return True
-        if self._initialization_failed:
-            return False
-        start_time = time.time()
-        while not self._initialization_complete and not self._initialization_failed:
-            if time.time() - start_time > timeout:
-                logger.error(f"等待插件初始化超时（{timeout}秒）")
-                return False
-            await asyncio.sleep(0.2)
-        return self._initialization_complete
-
     # ---- 关停 ----
 
     async def _safe_step(self, label: str, coro, timeout: float | None = None) -> None:
@@ -727,6 +673,8 @@ class PluginInitializer:
             logger.error(f"关停步骤 '{label}' 失败: {e}")
 
     async def stop_scheduler(self) -> None:
+        """依次停止存量回填与衰减调度器。"""
+
         if self.backfill_scheduler:
             await self._safe_step("停止存量回填调度器", self.backfill_scheduler.stop())
             self.backfill_scheduler = None
@@ -735,6 +683,8 @@ class PluginInitializer:
             self.decay_scheduler = None
 
     async def stop_background_tasks(self) -> None:
+        """取消尚未结束的 Provider 后台等待任务。"""
+
         await self._safe_step("取消Provider等待", self._provider_waiter.cancel())
 
     async def stop_memory_engine_tasks(self) -> None:
@@ -759,6 +709,8 @@ class PluginInitializer:
             self.realtime_hub = None
 
     async def close_injection_components(self) -> None:
+        """按记录器后存储的顺序幂等关闭注入观测组件。"""
+
         async with self._injection_close_lock:
             first_error: BaseException | None = None
             recorder = self.injection_decision_recorder

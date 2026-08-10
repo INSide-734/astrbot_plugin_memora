@@ -15,6 +15,7 @@ flowchart TD
     PI[PluginInitializer] --> PL[ProviderLoader]
     PI --> PW[ProviderWaiter]
     PI --> FC[FaissChecker]
+    PI --> IR[InitializerReadinessMixin]
     PI --> CF[ComponentFactory.build_all]
     CF --> VDB[主 FAISS DB / 可选图 DB]
     CF --> ME[MemoryEngine]
@@ -37,6 +38,8 @@ flowchart TD
 ## 公共契约
 
 `__init__.py` 稳定导出：
+
+`readiness.py` 是 `PluginInitializer` 的内部状态查询 mixin，保持就绪属性、快照和有界等待方法，不作为包级公开导出。
 
 | 类型 | 关键接口 | 契约 |
 |---|---|---|
