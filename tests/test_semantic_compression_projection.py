@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.decay.application import DecayScheduler
 from core.managers.memory_evolution_manager import (
     EvolutionProposalRejected,
     MemoryEvolutionManager,
@@ -32,7 +33,6 @@ from core.retrieval.projection_reader import (
     ProjectionScope,
 )
 from core.retrieval.rrf_fusion import HybridResult
-from core.schedulers.decay_scheduler import DecayScheduler
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)

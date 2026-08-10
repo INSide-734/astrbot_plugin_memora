@@ -12,9 +12,9 @@ import aiosqlite
 import pytest
 
 from core.diagnostics.health_scorer import HealthScorer
+from core.features.decay.application import DecayScheduler
 from core.managers.anomaly_detector import AnomalyDetector
 from core.managers.memory_engine import MemoryEngine
-from core.schedulers.decay_scheduler import DecayScheduler
 
 
 def _day_ts(days_ago: int = 0) -> int:
