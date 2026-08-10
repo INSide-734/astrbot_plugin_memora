@@ -12,6 +12,10 @@ from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
 from ..features.observability.application import runtime as observability
+from ..features.reflection.application.candidate_writer import (
+    build_reflection_idempotency_key,
+    store_reflection_candidates,
+)
 from ..features.reflection.application.continuity import resolve_continuity_session
 from ..features.reflection.domain.storage_outcomes import (
     ReflectionStoreOutcome,
@@ -31,10 +35,6 @@ from ..shared.contracts.prompt_protection import (
 from ..shared.cost_control import CostControl
 from ..utils import OperationContext, get_persona_id
 from .reflection_backlog import ReflectionBacklogMixin
-from .reflection_candidate_writer import (
-    build_reflection_idempotency_key,
-    store_reflection_candidates,
-)
 from .reflection_llm_budget import (
     fit_batches_to_extra_llm_budget,
     process_reflection_batches,
