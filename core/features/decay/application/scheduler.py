@@ -449,7 +449,7 @@ class DecayScheduler:
         """
 
         if self._diagnostic_event_store is None:
-            from ....diagnostics.event_store import DiagnosticEventStore
+            from ...diagnostics import DiagnosticEventStore
 
             store = DiagnosticEventStore(self.data_dir / "diagnostics_events.db")
             await store.initialize()

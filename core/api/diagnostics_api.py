@@ -9,7 +9,8 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..diagnostics import DiagnosticEventStore, HealthScorer
+from ..diagnostics import HealthScorer
+from ..features.diagnostics import DiagnosticEventStore
 from .response_utils import error_response, ok_response
 
 
