@@ -1,6 +1,10 @@
 """observability feature 与旧路径的唯一实现契约。"""
 
+from core.features.observability.application import (
+    perf_tracker as feature_perf_tracker,
+)
 from core.features.observability.domain import recall_timing as feature_recall_timing
+from core.monitoring import perf_tracker as legacy_perf_tracker
 from core.monitoring import recall_timing as legacy_recall_timing
 
 
@@ -16,3 +20,10 @@ def test_legacy_recall_timing_reuses_feature_domain_implementation() -> None:
     assert legacy_recall_timing.COUNT_KEYS is feature_recall_timing.COUNT_KEYS
     assert legacy_recall_timing.BOOL_KEYS is feature_recall_timing.BOOL_KEYS
     assert legacy_recall_timing.STATUS_VALUES is feature_recall_timing.STATUS_VALUES
+
+
+def test_legacy_perf_tracker_reuses_feature_application_implementation() -> None:
+    """旧 monitoring 路径只能导出 feature application 的唯一实现。"""
+
+    assert legacy_perf_tracker.__all__ == feature_perf_tracker.__all__
+    assert legacy_perf_tracker.PerfTracker is feature_perf_tracker.PerfTracker

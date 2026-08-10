@@ -23,13 +23,13 @@ from .core.command_handler import CommandHandler
 from .core.event_handler import EventHandler
 from .core.feature_delegation import FeatureDelegation
 from .core.features.backup.application import BackupManager
+from .core.features.observability.application import PerfTracker
 from .core.features.updates.application import RuntimeUpdateInstaller, UpdateManager
 from .core.handlers.recall_observability import RecallTimingContext
 from .core.i18n_backend import init as i18n_init
 from .core.i18n_backend import t
 from .core.managers.backup_models import BackupOperationError
 from .core.monitoring import (
-    PerfTracker,
     close_debug_reporting,
     report_debug_event,
     report_debug_exception,
