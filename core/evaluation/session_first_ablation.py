@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from .retrieval_quality import (
+from ..features.evaluation.application import (
     EvaluationCase,
     make_memory_engine_retriever,
     ndcg_at_k,

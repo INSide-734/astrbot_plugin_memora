@@ -14,6 +14,12 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..features.evaluation.application import (
+    EvaluationCase,
+    ndcg_at_k,
+    recall_at_k,
+    reciprocal_rank,
+)
 from ..features.learning.domain.feedback_learning_evidence import (
     EvidenceEvaluatorConfig,
     FeedbackRankingConfigSnapshot,
@@ -43,7 +49,6 @@ from ..features.learning.domain.models import (
     FeedbackSignalAggregate,
     FeedbackSignalPolicy,
 )
-from .retrieval_quality import EvaluationCase, ndcg_at_k, recall_at_k, reciprocal_rank
 
 _EVALUATOR_VERSION = "feedback-ranking-evidence-v1"
 

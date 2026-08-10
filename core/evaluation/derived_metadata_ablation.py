@@ -14,13 +14,18 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from ..features.evaluation.application import (
+    EvaluationCase,
+    ndcg_at_k,
+    recall_at_k,
+    reciprocal_rank,
+)
 from ..models.derived_metadata import (
     DerivedMetadataAnnotation,
     DerivedMetadataProposal,
     DerivedMetadataValidationResult,
     validate_derived_metadata_proposal,
 )
-from .retrieval_quality import EvaluationCase, ndcg_at_k, recall_at_k, reciprocal_rank
 
 DERIVED_INDEX_REASON_CODES = frozenset(
     {

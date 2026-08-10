@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from os import PathLike
 from typing import Any
 
+from ..features.evaluation.application import EvaluationCase
 from ..features.learning.domain.models import (
     FeedbackSignalAggregate,
     FeedbackSignalPolicy,
@@ -18,7 +19,6 @@ from .feedback_ranking_ablation import (
     FeedbackRankingReport,
     run_feedback_ranking_ablation,
 )
-from .retrieval_quality import EvaluationCase
 
 
 async def run_feedback_ranking_evaluation_and_publish_evidence(
