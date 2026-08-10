@@ -1,4 +1,4 @@
-"""MemoryEngine CRUD Mixin 测试 — 记忆的添加/获取/更新/删除。"""
+"""MemoryEngine CRUD Mixin 测试：验证记忆的添加、获取、更新与删除。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-import core.monitoring.metrics as monitoring_metrics
+import core.features.observability.infrastructure.metrics as monitoring_metrics
 from core.managers.memory_engine import MemoryEngine
 from core.models.recall_strategy import RecallStrategy
 
@@ -28,13 +28,14 @@ def _metric_sample_value(
 
 
 class TestMemoryEngineGetMemory:
-    """Tests for get_memory method."""
+    """测试 get_memory 方法。"""
 
     @pytest.mark.asyncio
     async def test_get_memory_returns_none_when_not_found(self) -> None:
+        """未找到文档时应返回 None。"""
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
-        # Return empty list — doc not found
+        # 返回空列表，表示未找到文档。
         mock_faiss.document_storage.get_documents = AsyncMock(return_value=[])
 
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
@@ -43,6 +44,7 @@ class TestMemoryEngineGetMemory:
 
     @pytest.mark.asyncio
     async def test_get_memory_returns_doc_when_found(self) -> None:
+        """找到文档时应返回标准记忆对象。"""
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
         doc = {
@@ -61,6 +63,7 @@ class TestMemoryEngineGetMemory:
 
     @pytest.mark.asyncio
     async def test_get_memory_returns_none_on_exception(self) -> None:
+        """读取异常时应降级返回 None。"""
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
         mock_faiss.document_storage.get_documents = AsyncMock(
@@ -123,9 +126,10 @@ class TestMemoryEngineGetMemory:
 
 
 class TestMemoryEngineAddMemoryErrors:
-    """Tests for add_memory error paths (without full DB setup)."""
+    """测试不装配完整数据库时的 add_memory 错误路径。"""
 
     def test_add_memory_empty_content_raises(self) -> None:
+        """空记忆正文应触发参数错误。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
 
@@ -137,6 +141,7 @@ class TestMemoryEngineAddMemoryErrors:
             asyncio.run(engine.add_memory("   "))
 
     def test_add_memory_no_hybrid_retriever_raises(self) -> None:
+        """缺少混合检索器时写入应失败。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         engine.hybrid_retriever = None
@@ -149,6 +154,7 @@ class TestMemoryEngineAddMemoryErrors:
 
     @pytest.mark.asyncio
     async def test_add_memory_records_quality_sample_after_success(self) -> None:
+        """写入成功后应记录质量样本。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         engine.hybrid_retriever = MagicMock()
@@ -186,6 +192,7 @@ class TestMemoryEngineAddMemoryErrors:
 
     @pytest.mark.asyncio
     async def test_add_memory_records_document_write_failure_metric(self) -> None:
+        """文档写入失败时应增加失败指标。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         engine.hybrid_retriever = MagicMock()
@@ -213,10 +220,11 @@ class TestMemoryEngineAddMemoryErrors:
 
 
 class TestMemoryEngineDeleteMemoryErrors:
-    """Tests for delete_memory error paths."""
+    """测试 delete_memory 错误路径。"""
 
     @pytest.mark.asyncio
     async def test_delete_memory_no_hybrid_retriever(self) -> None:
+        """缺少混合检索器时删除应失败。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         engine.hybrid_retriever = None
@@ -228,6 +236,7 @@ class TestMemoryEngineDeleteMemoryErrors:
 
     @pytest.mark.asyncio
     async def test_delete_memory_hybrid_delete_fails(self) -> None:
+        """混合检索器删除失败时应返回失败。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         engine.hybrid_retriever = MagicMock()
@@ -240,12 +249,13 @@ class TestMemoryEngineDeleteMemoryErrors:
 
 
 class TestMemoryEngineUpdateMemoryErrors:
-    """Tests for update_memory error paths."""
+    """测试 update_memory 错误路径。"""
 
     @pytest.mark.asyncio
     async def test_update_memory_not_found(self) -> None:
+        """目标记忆不存在时更新应失败。"""
         mock_faiss = MagicMock()
-        # get_memory returns None
+        # get_memory 返回 None。
         mock_faiss.document_storage = MagicMock()
         mock_faiss.document_storage.get_documents = AsyncMock(return_value=[])
 
@@ -255,6 +265,7 @@ class TestMemoryEngineUpdateMemoryErrors:
 
     @pytest.mark.asyncio
     async def test_update_memory_content_empty(self) -> None:
+        """更新为空正文时应失败。"""
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
         doc = {"id": 42, "text": "old content", "metadata": {}}
@@ -266,6 +277,7 @@ class TestMemoryEngineUpdateMemoryErrors:
 
     @pytest.mark.asyncio
     async def test_update_memory_content_whitespace(self) -> None:
+        """更新为空白正文时应失败。"""
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
         doc = {"id": 42, "text": "old content", "metadata": {}}
@@ -277,13 +289,14 @@ class TestMemoryEngineUpdateMemoryErrors:
 
     @pytest.mark.asyncio
     async def test_update_memory_metadata_only_no_hybrid(self) -> None:
+        """缺少混合检索器时 metadata 更新应失败。"""
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
         doc = {"id": 42, "text": "old content", "metadata": {}}
         mock_faiss.document_storage.get_documents = AsyncMock(return_value=[doc])
 
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
-        engine.hybrid_retriever = None  # no hybrid
+        engine.hybrid_retriever = None  # 不启用混合检索。
         result = await engine.update_memory(42, {"importance": 0.9})
         assert result is False
 
@@ -293,6 +306,7 @@ class TestMemoryEngineSearchMemories:
 
     @pytest.mark.asyncio
     async def test_search_empty_query_returns_empty(self) -> None:
+        """空查询应直接返回空结果。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         result = await engine.search_memories("")
@@ -300,6 +314,7 @@ class TestMemoryEngineSearchMemories:
 
     @pytest.mark.asyncio
     async def test_search_whitespace_query_returns_empty(self) -> None:
+        """空白查询应直接返回空结果。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         result = await engine.search_memories("   ")
@@ -307,6 +322,7 @@ class TestMemoryEngineSearchMemories:
 
     @pytest.mark.asyncio
     async def test_search_no_hybrid_and_no_dual_route_raises(self) -> None:
+        """缺少两类检索器时查询应失败。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         engine.hybrid_retriever = None
@@ -361,6 +377,7 @@ class TestMemoryEngineSearchMemories:
 
     @pytest.mark.asyncio
     async def test_search_forwards_memory_types_and_user_id_to_dual_route(self) -> None:
+        """查询应向双路检索转发类型、用户与查询计划。"""
         from core.retrieval.rrf_fusion import HybridResult
 
         mock_faiss = MagicMock()
@@ -420,6 +437,7 @@ class TestMemoryEngineSearchMemories:
     async def test_search_forwards_strategy_and_debug_trace_to_retrieval_path(
         self,
     ) -> None:
+        """查询应向检索路径转发策略和调试追踪开关。"""
         from core.retrieval.rrf_fusion import HybridResult
 
         mock_faiss = MagicMock()
@@ -484,10 +502,11 @@ class TestMemoryEngineSearchMemories:
 
 
 class TestMemoryEngineDeleteSubResources:
-    """Tests for _delete_sub_resources."""
+    """测试 _delete_sub_resources。"""
 
     @pytest.mark.asyncio
     async def test_delete_sub_resources_graph_and_atom(self) -> None:
+        """删除子资源时应同时处理图和 Atom。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
 
@@ -508,6 +527,7 @@ class TestMemoryEngineDeleteSubResources:
 
     @pytest.mark.asyncio
     async def test_delete_sub_resources_graph_fails(self) -> None:
+        """图删除失败时应标记需要修复。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
 
@@ -522,11 +542,12 @@ class TestMemoryEngineDeleteSubResources:
         engine._write_journal.advance_op = AsyncMock()
 
         needs_repair = await engine._delete_sub_resources(42, None)
-        # Graph failed, atom succeeded — still needs_repair=True
+        # 图删除失败但 Atom 删除成功时仍需标记 needs_repair=True。
         assert needs_repair is True
 
     @pytest.mark.asyncio
     async def test_delete_sub_resources_atom_fails(self) -> None:
+        """Atom 删除失败时应标记需要修复。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
 
@@ -545,6 +566,7 @@ class TestMemoryEngineDeleteSubResources:
 
     @pytest.mark.asyncio
     async def test_delete_sub_resources_no_components(self) -> None:
+        """没有子组件时删除不应要求修复。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         engine.graph_memory_manager = None
@@ -556,10 +578,11 @@ class TestMemoryEngineDeleteSubResources:
 
 
 class TestMemoryEngineBatchDelete:
-    """Tests for batch_delete_memories."""
+    """测试 batch_delete_memories。"""
 
     @pytest.mark.asyncio
     async def test_batch_delete_empty_list(self) -> None:
+        """空批量删除请求应直接成功。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         result = await engine.batch_delete_memories([])
@@ -567,6 +590,7 @@ class TestMemoryEngineBatchDelete:
 
     @pytest.mark.asyncio
     async def test_batch_delete_no_db_connection(self) -> None:
+        """缺少数据库连接时批量删除应失败。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
         engine.db_connection = None
@@ -575,10 +599,11 @@ class TestMemoryEngineBatchDelete:
 
 
 class TestMemoryEngineUpdateMemoryContentSuccess:
-    """Tests for update_memory content replacement."""
+    """测试 update_memory 的内容替换路径。"""
 
     @pytest.mark.asyncio
     async def test_update_content_success(self) -> None:
+        """正文替换成功时应返回新记忆标识。"""
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
         doc = {"id": 42, "text": "old content", "metadata": {"session_id": "s1"}}
@@ -586,23 +611,23 @@ class TestMemoryEngineUpdateMemoryContentSuccess:
 
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
 
-        # Mock write journal
+        # 模拟写日志。
         engine._write_journal.start_op = AsyncMock(return_value=1)
         engine._write_journal.advance_op = AsyncMock()
 
-        # Mock hybrid retriever for the new add
+        # 为新记忆写入模拟混合检索器。
         engine.hybrid_retriever = MagicMock()
         engine.hybrid_retriever.add_memory = AsyncMock(return_value=99)
         engine.hybrid_retriever.delete_memory = AsyncMock(return_value=True)
 
-        # Mock graph
+        # 模拟图存储。
         engine.graph_memory_manager = None
 
-        # Mock _delete_sub_resources via override
+        # 通过覆盖方法模拟 _delete_sub_resources。
         engine._delete_sub_resources = AsyncMock(return_value=False)
         engine._retrieval = MagicMock()
         engine._retrieval.invalidate_cache = MagicMock()
-        # _create_tracked_task is safe (it just schedules)
+        # _create_tracked_task 只负责调度，测试中可直接使用。
         engine._create_tracked_task = MagicMock()
 
         result = await engine.update_memory(42, {"content": "new content"})
@@ -610,10 +635,11 @@ class TestMemoryEngineUpdateMemoryContentSuccess:
 
 
 class TestMemoryEngineUpdateMetadata:
-    """Tests for update_memory metadata-only path."""
+    """测试 update_memory 仅更新 metadata 的路径。"""
 
     @pytest.mark.asyncio
     async def test_update_metadata_success(self) -> None:
+        """仅更新 metadata 时应成功写入。"""
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
         doc = {"id": 42, "text": "content", "metadata": {"old_key": "old_val"}}
@@ -634,6 +660,7 @@ class TestMemoryEngineUpdateMetadata:
 
     @pytest.mark.asyncio
     async def test_update_metadata_with_graph_reindex(self) -> None:
+        """语义 metadata 更新后应重建图索引。"""
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
         doc = {"id": 42, "text": "content", "metadata": {}}
@@ -665,6 +692,7 @@ class TestMemoryEngineUpdateMetadata:
 
     @pytest.mark.asyncio
     async def test_update_metadata_graph_reindex_failure_marks_repair(self) -> None:
+        """图重建失败时应标记记忆需要修复。"""
         mock_faiss = MagicMock()
         mock_faiss.document_storage = MagicMock()
         doc = {"id": 42, "text": "content", "metadata": {"old": "value"}}
@@ -706,7 +734,7 @@ class TestMemoryEngineUpdateMetadata:
 
     @pytest.mark.asyncio
     async def test_update_metadata_string_metadata(self) -> None:
-        """Metadata stored as JSON string should be parsed."""
+        """以 JSON 字符串存储的 metadata 应被正确解析。"""
         import json
 
         mock_faiss = MagicMock()

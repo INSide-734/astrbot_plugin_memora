@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiosqlite
 import pytest
 
-import core.monitoring.metrics as monitoring_metrics
+import core.features.observability.infrastructure.metrics as monitoring_metrics
 from core.managers.write_coordinator import (
     ConnectionRegistry,
     check_db_alive,
@@ -37,25 +37,31 @@ class TestIsConnectionFatal:
     """测试 is_connection_fatal."""
 
     def test_detects_no_active_connection(self) -> None:
+        """应识别没有活动连接的致命错误。"""
         assert is_connection_fatal(Exception("no active connection")) is True
 
     def test_detects_database_not_initialized(self) -> None:
+        """应识别数据库未初始化的致命错误。"""
         assert is_connection_fatal(Exception("database is not initialized")) is True
 
     def test_detects_closed_database(self) -> None:
+        """应识别数据库已关闭的致命错误。"""
         assert (
             is_connection_fatal(Exception("cannot operate on a closed database"))
             is True
         )
 
     def test_case_insensitive(self) -> None:
+        """致命错误匹配应忽略大小写。"""
         assert is_connection_fatal(Exception("No Active Connection")) is True
 
     def test_normal_error_not_fatal(self) -> None:
+        """普通锁冲突和未知错误不应视为连接致命错误。"""
         assert is_connection_fatal(Exception("database is locked")) is False
         assert is_connection_fatal(Exception("some other error")) is False
 
     def test_empty_message(self) -> None:
+        """空异常消息不应视为连接致命错误。"""
         assert is_connection_fatal(Exception("")) is False
 
 
@@ -63,23 +69,28 @@ class TestCheckDbAlive:
     """测试 check_db_alive。"""
 
     def test_none_is_dead(self) -> None:
+        """空数据库对象应判定为不可用。"""
         assert check_db_alive(None) is False
 
     def test_live_connection(self) -> None:
+        """存在底层连接时应判定数据库可用。"""
         db = MagicMock()
-        db._conn = MagicMock()  # not None
+        db._conn = MagicMock()  # 提供非空底层连接。
         assert check_db_alive(db) is True
 
     def test_closed_connection(self) -> None:
+        """底层连接为空时应判定数据库不可用。"""
         db = MagicMock()
         db._conn = None
         assert check_db_alive(db) is False
 
     def test_missing_conn_attr(self) -> None:
-        db = MagicMock(spec=[])  # no _conn attribute
+        """缺少底层连接属性时应判定数据库不可用。"""
+        db = MagicMock(spec=[])  # 不提供 _conn 属性。
         assert check_db_alive(db) is False
 
     def test_value_error_treated_as_dead(self) -> None:
+        """读取连接属性触发 ValueError 时应判定数据库不可用。"""
         db = MagicMock()
         type(db)._conn = property(
             lambda self: (_ for _ in ()).throw(ValueError("boom"))
@@ -91,6 +102,7 @@ class TestConnectionRegistry:
     """测试 ConnectionRegistry 类方法。"""
 
     def test_register_sets_state(self) -> None:
+        """注册连接时应保存路径、连接和关联模块。"""
         mock_conn = MagicMock()
         mod_a = MagicMock()
         mod_b = MagicMock()
@@ -100,17 +112,20 @@ class TestConnectionRegistry:
         assert len(ConnectionRegistry._modules) == 2
 
     def test_is_alive_delegates_to_check_db_alive(self) -> None:
+        """存活检查应委托给数据库连接检查函数。"""
         db = MagicMock()
         db._conn = MagicMock()
         ConnectionRegistry.register("test.db", db, [])
         assert ConnectionRegistry.is_alive() is True
 
     def test_is_alive_detects_none(self) -> None:
+        """注册空连接后应报告不可用。"""
         ConnectionRegistry.register("test.db", None, [])
         assert ConnectionRegistry.is_alive() is False
 
     @pytest.mark.asyncio
     async def test_try_repair_when_alive_returns_true(self) -> None:
+        """连接仍可用时修复应直接成功。"""
         db = MagicMock()
         db._conn = MagicMock()
         ConnectionRegistry.register("test.db", db, [])
@@ -118,6 +133,7 @@ class TestConnectionRegistry:
 
     @pytest.mark.asyncio
     async def test_try_repair_reconnects(self, tmp_db_path: str) -> None:
+        """连接失效时修复应重新连接并更新关联模块。"""
         # 为重连测试创建真实数据库文件。
         async with aiosqlite.connect(tmp_db_path) as db:
             await db.execute("CREATE TABLE IF NOT EXISTS test (id INTEGER)")
@@ -140,6 +156,7 @@ class TestConnectionRegistry:
 
     @pytest.mark.asyncio
     async def test_try_repair_handles_reconnect_failure(self) -> None:
+        """重连失败时修复应关闭旧连接并返回失败。"""
         old_mock = MagicMock()
         old_mock._conn = None  # 确保存活检查返回 False。
         ConnectionRegistry.register("nonexistent.db", old_mock, [])
@@ -155,6 +172,8 @@ class TestWriteWithRetry:
 
     @pytest.mark.asyncio
     async def test_success_first_attempt(self) -> None:
+        """操作首次成功时不应重试。"""
+
         async def op() -> str:
             return "ok"
 
@@ -163,6 +182,7 @@ class TestWriteWithRetry:
 
     @pytest.mark.asyncio
     async def test_retry_on_lock_then_succeed(self) -> None:
+        """锁冲突后应重试并返回后续成功结果。"""
         reset_write_metrics_snapshot()
         call_count = [0]
 
@@ -181,6 +201,8 @@ class TestWriteWithRetry:
 
     @pytest.mark.asyncio
     async def test_raises_on_connection_fatal(self) -> None:
+        """连接致命错误应直接向上传播。"""
+
         async def op() -> str:
             raise Exception("cannot operate on a closed database")
 
@@ -189,6 +211,8 @@ class TestWriteWithRetry:
 
     @pytest.mark.asyncio
     async def test_raises_non_retryable(self) -> None:
+        """不可重试错误应直接向上传播。"""
+
         async def op() -> str:
             raise ValueError("unexpected error")
 
@@ -197,6 +221,8 @@ class TestWriteWithRetry:
 
     @pytest.mark.asyncio
     async def test_exhausts_retries_on_lock(self) -> None:
+        """持续锁冲突耗尽重试后应抛出错误。"""
+
         async def op() -> str:
             raise Exception("database is locked")
 
@@ -205,6 +231,7 @@ class TestWriteWithRetry:
 
     @pytest.mark.asyncio
     async def test_records_lock_retry_and_final_failure_metrics(self) -> None:
+        """锁重试及最终失败应写入对应指标。"""
         reset_write_metrics_snapshot()
         before_retry = _metric_sample_value("memora_write_lock_retries_total")
         before_failure = _metric_sample_value(
@@ -256,6 +283,8 @@ class TestWriteTransaction:
 
     @pytest.mark.asyncio
     async def test_success_first_attempt(self) -> None:
+        """事务操作首次成功时应返回结果。"""
+
         async def op() -> str:
             return "txn_ok"
 
@@ -264,6 +293,7 @@ class TestWriteTransaction:
 
     @pytest.mark.asyncio
     async def test_retry_on_lock_then_succeed(self) -> None:
+        """事务锁冲突后应重试并返回成功结果。"""
         call_count = [0]
 
         async def op() -> str:
@@ -278,6 +308,8 @@ class TestWriteTransaction:
 
     @pytest.mark.asyncio
     async def test_raises_on_connection_fatal(self) -> None:
+        """事务连接致命错误应直接向上传播。"""
+
         async def op() -> str:
             raise Exception("no active connection")
 
@@ -286,6 +318,8 @@ class TestWriteTransaction:
 
     @pytest.mark.asyncio
     async def test_exhausts_retries_on_lock(self) -> None:
+        """事务持续锁冲突耗尽重试后应抛出错误。"""
+
         async def op() -> str:
             raise Exception("database is locked")
 
@@ -294,6 +328,8 @@ class TestWriteTransaction:
 
     @pytest.mark.asyncio
     async def test_raises_non_retryable(self) -> None:
+        """事务不可重试错误应直接向上传播。"""
+
         async def op() -> str:
             raise TypeError("type error")
 
@@ -302,8 +338,11 @@ class TestWriteTransaction:
 
 
 class TestCoordinatedTransaction:
+    """测试 coordinated_transaction 上下文管理器。"""
+
     @pytest.mark.asyncio
     async def test_commits_inside_single_context(self) -> None:
+        """上下文正常退出时应提交同一连接上的事务。"""
         db = MagicMock()
         db.execute = AsyncMock()
         db.commit = AsyncMock()
@@ -320,6 +359,7 @@ class TestCoordinatedTransaction:
 
     @pytest.mark.asyncio
     async def test_rolls_back_on_body_error(self) -> None:
+        """上下文主体报错时应回滚并传播错误。"""
         db = MagicMock()
         db.execute = AsyncMock()
         db.commit = AsyncMock()

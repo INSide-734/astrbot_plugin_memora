@@ -1,4 +1,4 @@
-"""测试 monitoring.instrumentation behavior."""
+"""测试 monitoring.instrumentation 行为。"""
 
 from __future__ import annotations
 
@@ -60,12 +60,14 @@ def _reset_instrumentation_state():
 
 
 def test_sanitize_fqn_replaces_dots() -> None:
+    """函数全名中的点号应替换为下划线。"""
     assert inst._sanitize_fqn("core.mod.Class.method") == "core_mod_Class_method"
 
 
 def test_sync_monitored_records_metrics_when_debug_and_trace_disabled(
     monkeypatch,
 ) -> None:
+    """关闭调试与追踪时同步装饰器仍应记录基础指标。"""
     histogram = _FakeHistogram()
     counter = _FakeCounter()
     error_counter = _FakeCounter()
@@ -95,7 +97,8 @@ def test_sync_monitored_records_metrics_when_debug_and_trace_disabled(
 
 
 def test_dynamic_metrics_register_on_plugin_registry() -> None:
-    from core.monitoring import metrics
+    """动态指标应注册到插件独立 Registry。"""
+    from core.features.observability.infrastructure import metrics
 
     counter = inst._get_or_create_counter(
         "memora_test_instrumented_registry_total",
@@ -111,6 +114,7 @@ def test_dynamic_metrics_register_on_plugin_registry() -> None:
 def test_sync_monitored_records_call_and_latency_when_debug_enabled(
     monkeypatch,
 ) -> None:
+    """开启调试时同步装饰器应记录调用次数与延迟。"""
     histogram = _FakeHistogram()
     counter = _FakeCounter()
     error_counter = _FakeCounter()
@@ -163,6 +167,7 @@ def test_monitored_reports_safe_function_timing_without_arguments(monkeypatch) -
 
 
 def test_sync_monitored_records_errors_and_restores_trace_depth(monkeypatch) -> None:
+    """同步调用失败时应记录错误并恢复追踪深度。"""
     histogram = _FakeHistogram()
     counter = _FakeCounter()
     error_counter = _FakeCounter()
@@ -194,6 +199,7 @@ def test_sync_monitored_records_errors_and_restores_trace_depth(monkeypatch) -> 
 
 @pytest.mark.asyncio
 async def test_async_monitored_records_metrics_when_debug_enabled(monkeypatch) -> None:
+    """开启调试时异步装饰器应记录基础指标。"""
     histogram = _FakeHistogram()
     counter = _FakeCounter()
     error_counter = _FakeCounter()
@@ -221,6 +227,7 @@ async def test_async_monitored_records_metrics_when_debug_enabled(monkeypatch) -
 async def test_async_trace_mode_logs_nested_call_hierarchy_and_resets_depth(
     monkeypatch,
 ) -> None:
+    """异步追踪应记录嵌套层级并恢复追踪深度。"""
     histogram = _FakeHistogram()
     counter = _FakeCounter()
     error_counter = _FakeCounter()
@@ -256,6 +263,7 @@ async def test_async_trace_mode_logs_nested_call_hierarchy_and_resets_depth(
 async def test_async_monitored_records_nested_errors_and_restores_trace_depth(
     monkeypatch,
 ) -> None:
+    """异步嵌套调用失败时应记录错误并恢复追踪深度。"""
     histogram = _FakeHistogram()
     counter = _FakeCounter()
     error_counter = _FakeCounter()
@@ -315,6 +323,7 @@ async def test_async_monitored_reports_cancellation_without_swallowing_it(
 
 
 def test_trace_mode_logs_nested_call_hierarchy_and_resets_depth(monkeypatch) -> None:
+    """同步追踪应记录嵌套层级并恢复追踪深度。"""
     histogram = _FakeHistogram()
     counter = _FakeCounter()
     error_counter = _FakeCounter()
