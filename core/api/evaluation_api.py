@@ -11,8 +11,8 @@ from astrbot.api import logger
 from quart import request
 
 from ..evaluation.evaluation_service import EvaluationService
-from ..evaluation.retrieval_quality import EvaluationCase
 from ..features.evaluation import (
+    EvaluationCase,
     EvaluationDatasetRepository,
     EvaluationDatasetValidationError,
     PreparedEvaluationDataset,
