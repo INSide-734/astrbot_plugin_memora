@@ -1,3 +1,5 @@
+"""诊断 Page API 的路由、评分、事件与动作契约。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,16 +8,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.diagnostics import DiagnosticEventStore
+from core.features.diagnostics.infrastructure.event_store import DiagnosticEventStore
 from core.page_api import PAGE_API_PREFIX, PluginPageApi
 
 
 @pytest.fixture
 def diagnostics_data_dir(tmp_path: Path) -> Path:
+    """返回当前用例隔离的诊断数据目录。"""
     return tmp_path / "diagnostics-data"
 
 
 def _plugin(*, data_dir: Path | None = None, include_data_dir: bool = True):
+    """构造带最小 initializer 状态的插件替身。"""
     context = MagicMock()
     initializer_kwargs = {"memory_engine": object()}
     if include_data_dir:
@@ -25,10 +29,12 @@ def _plugin(*, data_dir: Path | None = None, include_data_dir: bool = True):
 
 
 def _api(tmp_path: Path) -> PluginPageApi:
+    """构造绑定隔离数据目录的 Page API。"""
     return PluginPageApi(_plugin(data_dir=tmp_path))
 
 
 def test_diagnostics_routes_registered(diagnostics_data_dir) -> None:
+    """Page API 应注册四条诊断路由。"""
     api = _api(diagnostics_data_dir)
 
     api.register_routes()
@@ -44,6 +50,7 @@ def test_diagnostics_routes_registered(diagnostics_data_dir) -> None:
 async def test_diagnostics_health_returns_score_level_domains_and_actions(
     diagnostics_data_dir,
 ) -> None:
+    """健康接口应返回分数、等级、领域明细和建议动作。"""
     api = _api(diagnostics_data_dir)
     api._build_recall_summary = MagicMock(return_value={"p95_total_ms": 1500.0})
     api._build_background_task_summary = MagicMock(return_value={"failed": 1})
@@ -75,6 +82,7 @@ async def test_diagnostics_health_returns_score_level_domains_and_actions(
 async def test_diagnostics_events_newest_first_and_detail_lookup(
     diagnostics_data_dir,
 ) -> None:
+    """事件接口应按新到旧列出并支持关联码详情查询。"""
     api = _api(diagnostics_data_dir)
     store = DiagnosticEventStore(diagnostics_data_dir / "diagnostics.sqlite3")
     await store.initialize()
@@ -137,6 +145,7 @@ async def test_diagnostics_events_missing_data_dir_fails_without_relative_db(
 
 @pytest.mark.asyncio
 async def test_rebuild_index_action_requires_confirmation(diagnostics_data_dir) -> None:
+    """索引重建动作缺少确认时不得调用执行器。"""
     api = _api(diagnostics_data_dir)
     api.rebuild_index = AsyncMock(return_value={"status": "ok", "data": {"ran": True}})
 
@@ -150,6 +159,7 @@ async def test_rebuild_index_action_requires_confirmation(diagnostics_data_dir) 
 async def test_rebuild_index_action_delegates_confirmed_response_unchanged(
     diagnostics_data_dir,
 ) -> None:
+    """已确认的索引重建应原样返回执行器响应。"""
     api = _api(diagnostics_data_dir)
     expected = {"status": "ok", "data": {"message": "rebuilt"}}
     api.rebuild_index = AsyncMock(return_value=expected)
@@ -166,6 +176,7 @@ async def test_rebuild_index_action_delegates_confirmed_response_unchanged(
 async def test_restart_backfill_action_delegates_response_unchanged(
     diagnostics_data_dir,
 ) -> None:
+    """回填重启动作应原样返回执行器响应。"""
     api = _api(diagnostics_data_dir)
     expected = {"status": "ok", "data": {"job_id": "bf_1"}}
     api.start_backfill = AsyncMock(return_value=expected)
@@ -194,6 +205,7 @@ async def test_diagnostics_action_delegate_exception_returns_error(
 async def test_refresh_metrics_action_succeeds_without_confirmation(
     diagnostics_data_dir,
 ) -> None:
+    """指标刷新是只读动作，无需确认即可返回新快照。"""
     api = _api(diagnostics_data_dir)
     api._build_recall_summary = MagicMock(return_value={"sample_count": 0})
     api._build_background_task_summary = MagicMock(return_value={"failed": 0})
@@ -220,6 +232,7 @@ async def test_refresh_metrics_action_succeeds_without_confirmation(
 async def test_metrics_summary_still_works_with_diagnostics_mixin(
     diagnostics_data_dir,
 ) -> None:
+    """组合诊断 mixin 后原指标摘要接口仍应正常工作。"""
     api = _api(diagnostics_data_dir)
 
     result = await api.get_metrics_summary()

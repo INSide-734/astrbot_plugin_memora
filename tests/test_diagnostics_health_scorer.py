@@ -1,3 +1,5 @@
+"""诊断健康评分和事件存储的行为契约。"""
+
 from __future__ import annotations
 
 import uuid
@@ -5,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from core.diagnostics.event_store import DiagnosticEventStore
-from core.diagnostics.health_scorer import HealthScorer
+from core.features.diagnostics.application.health_scorer import HealthScorer
+from core.features.diagnostics.infrastructure.event_store import DiagnosticEventStore
 
 
 def test_health_scorer_marks_provider_failure_as_critical():
+    """Provider 失败必须把整体健康等级压到 critical。"""
     scorer = HealthScorer()
     result = scorer.score(
         {
@@ -33,6 +36,7 @@ def test_health_scorer_marks_provider_failure_as_critical():
 
 
 def test_health_scorer_scores_waiting_provider_as_watch():
+    """Provider 等待重试时应产生 watch 领域并扣十分。"""
     scorer = HealthScorer()
     result = scorer.score(
         {
@@ -53,6 +57,7 @@ def test_health_scorer_scores_waiting_provider_as_watch():
 
 
 def test_health_scorer_treats_explicit_retry_active_as_waiting_provider_evidence():
+    """显式 retry_active 应作为 Provider 仍在等待的证据。"""
     result = HealthScorer().score(
         {
             "provider": {
@@ -70,6 +75,7 @@ def test_health_scorer_treats_explicit_retry_active_as_waiting_provider_evidence
 
 
 def test_health_scorer_penalizes_high_recall_p95():
+    """召回 P95 超过阈值时应扣除固定分值。"""
     result = HealthScorer().score(
         {"recall": {"sample_count": 3, "p95_total_ms": 1200.5}}
     )
@@ -80,6 +86,7 @@ def test_health_scorer_penalizes_high_recall_p95():
 
 
 def test_health_scorer_penalizes_write_failures_increased_since_last_event():
+    """实例应使用上次累计值检测写失败增长。"""
     scorer = HealthScorer()
     first = scorer.score({"write_coordinator": {"failures_total": 2}})
     second = scorer.score({"write_coordinator": {"failures_total": 5}})
@@ -90,6 +97,7 @@ def test_health_scorer_penalizes_write_failures_increased_since_last_event():
 
 
 def test_health_scorer_explicit_prior_write_failures_detects_increase_on_fresh_scorer():
+    """新实例应使用显式历史累计值检测写失败增长。"""
     result = HealthScorer().score(
         {"write_coordinator": {"failures_total": 5}},
         previous_write_failures_total=2,
@@ -100,6 +108,7 @@ def test_health_scorer_explicit_prior_write_failures_detects_increase_on_fresh_s
 
 
 def test_health_scorer_penalizes_background_failures_and_index_error_ratio():
+    """后台任务失败和索引错误率过高应分别扣分。"""
     result = HealthScorer().score(
         {
             "background_tasks": {"failed": 2, "active": 1},
@@ -114,6 +123,7 @@ def test_health_scorer_penalizes_background_failures_and_index_error_ratio():
 
 
 def test_health_scorer_treats_prometheus_unavailable_as_informational():
+    """Prometheus 不可用只应产生信息领域，不应扣分。"""
     result = HealthScorer().score({"prometheus": {"available": False}})
 
     assert result["score"] == 100
@@ -137,12 +147,14 @@ def test_health_scorer_treats_prometheus_unavailable_as_informational():
     ],
 )
 def test_health_scorer_level_boundaries(score: int, level: str):
+    """固定分数边界应映射到对应健康等级。"""
     scorer = HealthScorer()
 
     assert scorer.level_for_score(score) == level
 
 
 def test_health_scorer_handles_missing_and_malformed_inputs_defensively():
+    """缺失或畸形快照片段应安全退化为健康默认值。"""
     result = HealthScorer().score(
         {
             "provider": "not-a-dict",
@@ -247,4 +259,5 @@ async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload()
 
 
 def _domain(result: dict, name: str) -> dict:
+    """从健康摘要中读取指定领域。"""
     return next(item for item in result["domains"] if item["name"] == name)

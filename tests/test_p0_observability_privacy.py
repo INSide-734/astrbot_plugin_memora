@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.diagnostics.event_store import DiagnosticEventStore
+from core.features.diagnostics.infrastructure.event_store import DiagnosticEventStore
 from core.page_api import PluginPageApi
 from core.retrieval.explainable_recall import capture_explainable_recall
 from core.retrieval.trace_store import RecallTraceStore

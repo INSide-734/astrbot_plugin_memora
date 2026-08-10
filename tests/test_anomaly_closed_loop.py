@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiosqlite
 import pytest
 
-from core.diagnostics.health_scorer import HealthScorer
 from core.features.decay.application import DecayScheduler
+from core.features.diagnostics.application.health_scorer import HealthScorer
 from core.managers.anomaly_detector import AnomalyDetector
 from core.managers.memory_engine import MemoryEngine
 
@@ -139,7 +139,9 @@ async def test_daily_feed_is_idempotent_and_emits_sanitized_event(
     assert engine.count_canonical_created_on.await_count == first_calls
     assert len(detector._window) == 14
 
-    from core.diagnostics.event_store import DiagnosticEventStore
+    from core.features.diagnostics.infrastructure.event_store import (
+        DiagnosticEventStore,
+    )
 
     store = DiagnosticEventStore(tmp_path / "diagnostics_events.db")
     await store.initialize()
