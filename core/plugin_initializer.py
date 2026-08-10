@@ -13,6 +13,7 @@ from astrbot.core.provider.provider import EmbeddingProvider, Provider
 from .base.config_manager import ConfigManager
 from .base.exceptions import InitializationError
 from .base.feature_config import is_jargon_discovery_enabled
+from .features.backfill.application import BackfillScheduler
 from .features.memory.infrastructure.validators import IndexValidator
 from .identity.runtime import ProtocolIdentityRuntime
 from .initializer.component_factory import ComponentFactory
@@ -33,7 +34,6 @@ from .platform.transport.realtime_hub import RealtimeHub
 from .processors.memory_processor import MemoryProcessor
 from .review.memory_quality_gate import MemoryQualityGate
 from .review.quarantine_store import MemoryQuarantineStore
-from .schedulers.backfill_scheduler import BackfillScheduler
 from .schedulers.decay_scheduler import DecayScheduler
 from .shared.contracts import PromptProtectionPort
 from .storage.injection_decision_store import InjectionDecisionStore
