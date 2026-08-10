@@ -10,10 +10,10 @@ from typing import Any
 
 import pytest
 
-from core.evaluation.feedback_learning_pipeline import (
+from core.features.evaluation.application import EvaluationCase
+from core.features.evaluation.application.feedback_learning_pipeline import (
     run_feedback_ranking_evaluation_and_publish_evidence,
 )
-from core.features.evaluation.application import EvaluationCase
 from core.features.evaluation.application.feedback_ranking_ablation import (
     FeedbackRankingConfigSnapshot,
     FeedbackRankingEvidenceRequest,
