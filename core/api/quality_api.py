@@ -128,7 +128,7 @@ class QualityApiMixin:
                 return scorer
 
         # 若不存在则惰性创建默认实例，并缓存到插件对象
-        from ..monitoring.quality_scorer import MemoryQualityScorer
+        from ..features.observability.application import MemoryQualityScorer
 
         scorer = MemoryQualityScorer(window_size=100)
         plugin._quality_scorer = scorer
