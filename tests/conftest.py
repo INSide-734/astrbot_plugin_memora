@@ -613,7 +613,10 @@ def mock_feature_delegation_with_chatplus() -> MagicMock:
 @pytest.fixture
 def mock_monitored_context():
     """在测试期间启用调试监控，然后恢复默认设置。"""
-    from core.monitoring.instrumentation import set_debug_mode, set_trace_enabled
+    from core.features.observability.infrastructure.instrumentation import (
+        set_debug_mode,
+        set_trace_enabled,
+    )
 
     set_debug_mode(True)
     set_trace_enabled(True)
