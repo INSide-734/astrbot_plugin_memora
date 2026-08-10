@@ -7,7 +7,7 @@ from collections import deque
 from collections.abc import Mapping
 from typing import Any
 
-from .recall_timing import sanitize_recall_sample
+from ..features.observability.domain.recall_timing import sanitize_recall_sample
 
 # ---------------------------------------------------------------------------
 # 有序耗时键集合：每条记录都应包含这些字段
@@ -164,6 +164,8 @@ class PerfTracker:
         return len(self._samples)
 
     def __repr__(self) -> str:
+        """返回包含样本容量与总耗时均值的调试表示。"""
+
         return (
             f"<PerfTracker samples={len(self._samples)}/{self._maxlen}"
             f" avg_total_ms={self._mean['total_ms']:.2f}>"

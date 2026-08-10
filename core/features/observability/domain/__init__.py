@@ -1,6 +1,6 @@
-"""向后兼容导出可观测性 feature 的召回计时约束。"""
+"""可观测性的纯领域约束。"""
 
-from ..features.observability.domain.recall_timing import (
+from .recall_timing import (
     BOOL_KEYS,
     COUNT_KEYS,
     STATUS_VALUES,

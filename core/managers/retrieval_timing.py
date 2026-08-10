@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from ..monitoring.recall_timing import sanitize_recall_sample
+from ..features.observability.domain.recall_timing import sanitize_recall_sample
 
 
 class RetrievalTimingSink:
