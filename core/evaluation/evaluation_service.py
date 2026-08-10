@@ -17,12 +17,12 @@ from ..features.evaluation.application import (
     load_fixture_dir,
     make_memory_engine_retriever,
 )
-from ..features.evaluation.infrastructure import EvaluationReportStore
-from .retrieval_ablation import (
+from ..features.evaluation.application.retrieval_ablation import (
     RETRIEVAL_VARIANT_NAMES,
     PreparedVariant,
     RetrievalAblationController,
 )
+from ..features.evaluation.infrastructure import EvaluationReportStore
 
 _SUPPORTED_VARIANTS = frozenset(RETRIEVAL_VARIANT_NAMES)
 _METRICS = ("recall_at_k", "mrr", "ndcg_at_k", "observed_p95_latency_ms")
