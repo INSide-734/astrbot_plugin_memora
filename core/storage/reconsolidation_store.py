@@ -10,18 +10,14 @@ from typing import Any
 
 import aiosqlite
 
+from ..features.reconsolidation.domain.errors import (
+    ReconsolidationCandidateConflictError,
+    ReconsolidationCandidateNotFoundError,
+)
 from .reconsolidation_schema import initialize_reconsolidation_schema
 
 _STATUSES = frozenset({"pending", "approved", "rejected", "failed", "rolled_back"})
 _ACTIONS = frozenset({"stage", "apply", "reject", "rollback"})
-
-
-class ReconsolidationCandidateNotFoundError(LookupError):
-    """目标再巩固候选不存在。"""
-
-
-class ReconsolidationCandidateConflictError(RuntimeError):
-    """候选状态或 revision 已变化，调用方必须重新读取。"""
 
 
 class ReconsolidationStore:

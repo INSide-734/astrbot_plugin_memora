@@ -11,11 +11,11 @@ from typing import Any
 from astrbot.api import logger
 
 from ..features.memory.domain.revision import memory_revision
-from ..storage.reconsolidation_store import (
+from ..features.reconsolidation.domain.errors import (
     ReconsolidationCandidateConflictError,
     ReconsolidationCandidateNotFoundError,
-    ReconsolidationStore,
 )
+from ..storage.reconsolidation_store import ReconsolidationStore
 
 _EVIDENCE_TYPE = "llm_revision"
 

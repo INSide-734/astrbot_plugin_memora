@@ -7,7 +7,7 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..storage.reconsolidation_store import (
+from ..features.reconsolidation.domain.errors import (
     ReconsolidationCandidateConflictError,
     ReconsolidationCandidateNotFoundError,
 )
