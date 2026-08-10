@@ -10,18 +10,18 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from ..features.evaluation.infrastructure import EvaluationReportStore
-from .retrieval_ablation import (
-    RETRIEVAL_VARIANT_NAMES,
-    PreparedVariant,
-    RetrievalAblationController,
-)
-from .retrieval_quality import (
+from ..features.evaluation.application import (
     EvaluationCase,
     EvaluationReport,
     evaluate_cases,
     load_fixture_dir,
     make_memory_engine_retriever,
+)
+from ..features.evaluation.infrastructure import EvaluationReportStore
+from .retrieval_ablation import (
+    RETRIEVAL_VARIANT_NAMES,
+    PreparedVariant,
+    RetrievalAblationController,
 )
 
 _SUPPORTED_VARIANTS = frozenset(RETRIEVAL_VARIANT_NAMES)
