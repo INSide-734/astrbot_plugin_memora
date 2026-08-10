@@ -1,5 +1,8 @@
 """reconsolidation feature 的领域、应用与基础设施所有权兼容契约。"""
 
+from core.features.reconsolidation.application import (
+    reconsolidation as feature_manager,
+)
 from core.features.reconsolidation.domain.errors import (
     ReconsolidationCandidateConflictError,
     ReconsolidationCandidateNotFoundError,
@@ -50,3 +53,11 @@ def test_legacy_reconsolidation_store_reuses_feature_implementation() -> None:
     assert legacy_store.__all__ == feature_store.__all__
     for name in feature_store.__all__:
         assert getattr(legacy_store, name) is getattr(feature_store, name)
+
+
+def test_legacy_reconsolidation_manager_reuses_feature_implementation() -> None:
+    """旧 Manager 路径只能导出 reconsolidation application 的唯一实现。"""
+
+    assert legacy_manager.__all__ == feature_manager.__all__
+    for name in feature_manager.__all__:
+        assert getattr(legacy_manager, name) is getattr(feature_manager, name)

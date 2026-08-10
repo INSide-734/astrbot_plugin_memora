@@ -12,11 +12,13 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import aiosqlite
 import pytest
 
+from core.features.reconsolidation.application.reconsolidation import (
+    ReconsolidationManager,
+)
 from core.features.reconsolidation.infrastructure.reconsolidation_store import (
     ReconsolidationStore,
 )
 from core.managers.memory_engine import MemoryEngine
-from core.managers.reconsolidation import ReconsolidationManager
 from core.retrieval.rrf_fusion import HybridResult
 
 

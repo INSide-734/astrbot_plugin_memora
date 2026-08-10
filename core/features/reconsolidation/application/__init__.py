@@ -1,6 +1,6 @@
-"""记忆再巩固 Manager 的旧路径兼容导出。"""
+"""记忆再巩固 feature 的应用服务。"""
 
-from ..features.reconsolidation.application.reconsolidation import (
+from .reconsolidation import (
     ReconsolidationCandidateConflictError,
     ReconsolidationCandidateNotFoundError,
     ReconsolidationManager,

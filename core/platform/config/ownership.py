@@ -188,7 +188,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "reconsolidation": _ownership(
         "reconsolidation",
         ConfigOwnershipKind.EXPERIMENTAL,
-        "core.managers.reconsolidation",
+        "core.features.reconsolidation.application.reconsolidation",
     ),
     "export": _ownership(
         "export", ConfigOwnershipKind.RUNTIME, "core.managers.memory_exporter"
