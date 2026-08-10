@@ -1,9 +1,15 @@
 """evaluation feature 与旧路径的唯一实现契约。"""
 
 from core.evaluation import dataset_repository as legacy_dataset_repository
+from core.evaluation import (
+    feedback_ranking_ablation as legacy_feedback_ranking_ablation,
+)
 from core.evaluation import metric_provenance as legacy_metric_provenance
 from core.evaluation import report_store as legacy_report_store
 from core.evaluation import retrieval_quality as legacy_retrieval_quality
+from core.features.evaluation.application import (
+    feedback_ranking_ablation as feature_feedback_ranking_ablation,
+)
 from core.features.evaluation.application import (
     retrieval_quality as feature_retrieval_quality,
 )
@@ -62,5 +68,19 @@ def test_legacy_retrieval_quality_reuses_feature_application() -> None:
     for name in feature_retrieval_quality.__all__:
         assert getattr(legacy_retrieval_quality, name) is getattr(
             feature_retrieval_quality,
+            name,
+        )
+
+
+def test_legacy_feedback_ranking_reuses_feature_application() -> None:
+    """旧 evaluation 路径只能导出 feature application 的反馈排序实现。"""
+
+    assert (
+        legacy_feedback_ranking_ablation.__all__
+        == feature_feedback_ranking_ablation.__all__
+    )
+    for name in feature_feedback_ranking_ablation.__all__:
+        assert getattr(legacy_feedback_ranking_ablation, name) is getattr(
+            feature_feedback_ranking_ablation,
             name,
         )
