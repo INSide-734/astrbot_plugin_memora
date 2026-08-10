@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from .report_store import EvaluationReportStore
+from ..features.evaluation.infrastructure import EvaluationReportStore
 from .retrieval_ablation import (
     RETRIEVAL_VARIANT_NAMES,
     PreparedVariant,
