@@ -25,7 +25,7 @@ def test_set_debug_mode_toggles_functions_decorated_before_enable(monkeypatch) -
     monitoring = _reload_monitoring_package()
     events: list[tuple[str, dict[str, object]]] = []
     monkeypatch.setattr(
-        "core.monitoring.debug_reporter.report_debug_event",
+        "core.features.observability.infrastructure.debug_reporter.report_debug_event",
         lambda event_name, **fields: events.append((event_name, fields)),
     )
 

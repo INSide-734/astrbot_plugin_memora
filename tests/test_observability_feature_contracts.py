@@ -13,8 +13,12 @@ from core.features.observability.domain import recall_timing as feature_recall_t
 from core.features.observability.infrastructure import (
     debug_reporter as feature_debug_reporter,
 )
+from core.features.observability.infrastructure import (
+    instrumentation as feature_instrumentation,
+)
 from core.features.observability.infrastructure import metrics as feature_metrics
 from core.monitoring import debug_reporter as legacy_debug_reporter
+from core.monitoring import instrumentation as legacy_instrumentation
 from core.monitoring import memory_write_timing as legacy_memory_write_timing
 from core.monitoring import metrics as legacy_metrics
 from core.monitoring import perf_tracker as legacy_perf_tracker
@@ -80,5 +84,16 @@ def test_legacy_memory_write_timing_reuses_feature_application_objects() -> None
     for name in feature_memory_write_timing.__all__:
         assert getattr(legacy_memory_write_timing, name) is getattr(
             feature_memory_write_timing,
+            name,
+        )
+
+
+def test_legacy_instrumentation_reuses_feature_infrastructure_objects() -> None:
+    """旧 monitoring 路径只能导出 feature infrastructure 的插桩对象。"""
+
+    assert legacy_instrumentation.__all__ == feature_instrumentation.__all__
+    for name in feature_instrumentation.__all__:
+        assert getattr(legacy_instrumentation, name) is getattr(
+            feature_instrumentation,
             name,
         )

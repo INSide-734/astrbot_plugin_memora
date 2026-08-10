@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import core.monitoring.instrumentation as inst
+import core.features.observability.infrastructure.instrumentation as inst
 
 
 class _FakeLabeledMetric:
@@ -145,7 +145,7 @@ def test_monitored_reports_safe_function_timing_without_arguments(monkeypatch) -
     """函数级诊断只记录安全函数名、状态和耗时，不记录调用参数。"""
     events: list[tuple[str, dict[str, object]]] = []
     monkeypatch.setattr(
-        "core.monitoring.debug_reporter.report_debug_event",
+        "core.features.observability.infrastructure.debug_reporter.report_debug_event",
         lambda event_name, **fields: events.append((event_name, fields)),
     )
 
@@ -306,7 +306,7 @@ async def test_async_monitored_reports_cancellation_without_swallowing_it(
     """函数级诊断记录取消状态后必须继续传播取消信号。"""
     events: list[tuple[str, dict[str, object]]] = []
     monkeypatch.setattr(
-        "core.monitoring.debug_reporter.report_debug_event",
+        "core.features.observability.infrastructure.debug_reporter.report_debug_event",
         lambda event_name, **fields: events.append((event_name, fields)),
     )
 
