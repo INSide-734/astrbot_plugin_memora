@@ -39,3 +39,16 @@ def test_recall_package_lazily_exports_application_contract() -> None:
     )
     with pytest.raises(AttributeError, match="missing_recall_contract"):
         recall_feature.__getattr__("missing_recall_contract")
+
+
+def test_recall_config_old_path_reuses_feature_owner() -> None:
+    """根配置聚合器应恒等导出 recall feature 的配置模型与类型。"""
+
+    from core.base.config_validator import PresetName as LegacyPresetName
+    from core.base.config_validator import (
+        RecallEngineConfig as LegacyRecallEngineConfig,
+    )
+    from core.features.recall.domain import PresetName, RecallEngineConfig
+
+    assert LegacyPresetName is PresetName
+    assert LegacyRecallEngineConfig is RecallEngineConfig
