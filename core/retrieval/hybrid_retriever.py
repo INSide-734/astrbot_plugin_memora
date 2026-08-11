@@ -16,9 +16,9 @@ from ..adapter_capabilities import (
     ScoreDirection,
     ScoreSemantics,
 )
+from ..shared.mmr import apply_mmr
 from .bm25_retriever import BM25Retriever
 from .memory_lifecycle import MemoryLifecycleManager
-from .mmr_reranker import apply_mmr
 from .rrf_fusion import BM25Result, HybridResult, RRFFusion, VectorResult
 from .score_weighting import ScoreWeighting
 from .vector_deadline import run_local_and_bounded_vector

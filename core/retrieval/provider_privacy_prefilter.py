@@ -7,7 +7,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any
 
-from .mmr_reranker import apply_mmr
+from ..shared.mmr import apply_mmr
 from .rrf_fusion import HybridResult
 
 _PRIVACY_LEVELS = frozenset({"public", "shared", "confidential"})

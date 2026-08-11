@@ -1,8 +1,10 @@
-"""测试 MMR reranker — Maximum Marginal Relevance deduplication."""
+"""测试最大边际相关性重排与候选去重。"""
 
 from __future__ import annotations
 
 from typing import Any
+
+from core.shared.mmr import apply_mmr
 
 
 def _make_result(doc_id: int, final_score: float, content: str = "") -> Any:
@@ -21,41 +23,33 @@ def _make_result(doc_id: int, final_score: float, content: str = "") -> Any:
 
 class TestMMRReranker:
     def test_short_circuit_when_k_ge_results(self) -> None:
-        """当 k >= len(results), all results returned unchanged."""
-        from core.retrieval.mmr_reranker import apply_mmr
-
+        """当 k 不小于候选数时原样返回全部结果。"""
         results = [_make_result(1, 0.9), _make_result(2, 0.8)]
         output = apply_mmr(results, k=3, mmr_lambda=0.7)
         assert len(output) == 2
         assert output == results
 
     def test_empty_results(self) -> None:
-        """空 input returns empty output."""
-        from core.retrieval.mmr_reranker import apply_mmr
-
+        """空输入应返回空结果。"""
         output = apply_mmr([], k=3, mmr_lambda=0.7)
         assert output == []
 
     def test_deduplicates_similar_content(self) -> None:
-        """MMR removes near-duplicate content from top-k."""
-        from core.retrieval.mmr_reranker import apply_mmr
-
+        """MMR 应避免近似内容占满前 k 个位置。"""
         results = [
             _make_result(1, 0.95, "user likes coffee and tea"),
-            _make_result(2, 0.9, "user likes coffee and tea very much"),  # very similar
-            _make_result(3, 0.85, "user went to the gym"),  # different
-            _make_result(4, 0.8, "user likes coffee with milk"),  # similar
-            _make_result(5, 0.75, "user bought a new car"),  # different
+            _make_result(2, 0.9, "user likes coffee and tea very much"),
+            _make_result(3, 0.85, "user went to the gym"),
+            _make_result(4, 0.8, "user likes coffee with milk"),
+            _make_result(5, 0.75, "user bought a new car"),
         ]
         output = apply_mmr(results, k=3, mmr_lambda=0.7)
         assert len(output) == 3
-        # Doc 1 should be first (highest score)
+        # 首个结果始终是原始分数最高的候选。
         assert output[0].doc_id == 1
 
     def test_high_lambda_favors_relevance(self) -> None:
-        """lambda=1.0 means pure relevance ordering (no diversity penalty)."""
-        from core.retrieval.mmr_reranker import apply_mmr
-
+        """lambda 为 1.0 时应只按相关性排序。"""
         results = [
             _make_result(1, 0.9, "aaa bbb"),
             _make_result(2, 0.8, "aaa bbb ccc"),
@@ -64,25 +58,20 @@ class TestMMRReranker:
         assert len(output) == 2
 
     def test_low_lambda_favors_diversity(self) -> None:
-        """lambda=0.0 means pure diversity (ignore relevance)."""
-        from core.retrieval.mmr_reranker import apply_mmr
-
+        """lambda 为 0.0 时应优先选择多样候选。"""
         results = [
             _make_result(1, 0.9, "aaa bbb ccc"),
-            _make_result(2, 0.8, "aaa bbb ccc"),  # identical content
-            _make_result(3, 0.3, "xxx yyy zzz"),  # completely different
+            _make_result(2, 0.8, "aaa bbb ccc"),
+            _make_result(3, 0.3, "xxx yyy zzz"),
         ]
         output = apply_mmr(results, k=2, mmr_lambda=0.0)
         assert len(output) == 2
-        # First picked is highest score (doc 1)
-        # Second should pick the most DIVERSE one from doc 1 — i.e. doc 3
+        # 首个结果取最高分，第二个结果取与其差异最大的候选。
         assert output[0].doc_id == 1
         assert output[1].doc_id == 3
 
     def test_identical_content_deduplicated(self) -> None:
-        """多个 results with identical content — MMR picks the most diverse one for second slot."""
-        from core.retrieval.mmr_reranker import apply_mmr
-
+        """存在重复内容时，第二个位置应选择差异更大的候选。"""
         results = [
             _make_result(1, 0.9, "the same exact content"),
             _make_result(2, 0.85, "the same exact content"),
@@ -90,14 +79,12 @@ class TestMMRReranker:
         ]
         output = apply_mmr(results, k=2, mmr_lambda=0.5)
         assert len(output) == 2
-        assert output[0].doc_id == 1  # highest score always first
-        # Second should be the diverse one (doc 3), not another identical doc
+        assert output[0].doc_id == 1
+        # 不应再次选择内容完全相同的候选。
         assert output[1].doc_id == 3
 
     def test_single_result_unaffected(self) -> None:
-        """单个 result always returned as-is."""
-        from core.retrieval.mmr_reranker import apply_mmr
-
+        """单个候选应原样返回。"""
         results = [_make_result(1, 0.5, "only one")]
         output = apply_mmr(results, k=1, mmr_lambda=0.5)
         assert output == results

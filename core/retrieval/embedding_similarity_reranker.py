@@ -69,7 +69,7 @@ class EmbeddingSimilarityReranker:
     def _fallback_mmr(results: list[HybridResult], k: int) -> list[HybridResult]:
         """使用既有 MMR 默认权重完成本地安全降级。"""
 
-        from .mmr_reranker import apply_mmr
+        from ..shared.mmr import apply_mmr
 
         return apply_mmr(results, k, 0.7)
 
