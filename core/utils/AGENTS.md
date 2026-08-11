@@ -93,7 +93,7 @@ flowchart LR
 
 ## 依赖方向
 
-- **内部向下依赖：** `core.base.constants`、`core.injection.models`、`core.models.default_stopwords`、`core.processors.text_processor`（仅包级转导）。
+- **内部向下依赖：** `core.shared.constants`、`core.injection.models`、`core.models.default_stopwords`、`core.processors.text_processor`（仅包级转导）。
 - **外部依赖：** AstrBot API、`pytz`、`PyYAML`；`cachetools` 与 `APScheduler` 有显式降级路径。
 - **被依赖：** handlers/injection 使用格式化、预算和适配器；monitoring/processors/retrieval 使用分词；插件入口使用版本；多类管理器使用缓存、停用词和调度器。
 - **避免循环：** 新的低层工具优先放子模块并依赖模型/基础契约；不要再从 `__init__.py` 转导会反向导入 utils 的高层类。

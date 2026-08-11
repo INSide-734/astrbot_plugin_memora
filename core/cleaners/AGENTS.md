@@ -71,7 +71,7 @@ flowchart TD
 
 - `injection_cleaner.py`：正则、兼容 envelope、上下文/DB 清理和伪工具验证。
 - `__init__.py`：只导出 `InjectionCleaner`。
-- 下游依赖：`core.base.constants`；运行期请求类型仅用于类型检查。
+- 下游依赖：`core.shared.constants`；运行期请求类型仅用于类型检查。
 - 直接测试：`tests/test_cleaners.py`，包含真实 executor 输出 round-trip、System Prompt 不可变、DB dry-run/范围、严格 pair 保留/删除。
 - 主链测试：`tests/test_handlers.py`。
 

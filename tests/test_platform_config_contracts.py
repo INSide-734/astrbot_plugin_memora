@@ -1,4 +1,4 @@
-"""平台配置契约的旧路径兼容测试。"""
+"""平台配置 owner 与保留入口的契约测试。"""
 
 import subprocess
 import sys
@@ -8,18 +8,8 @@ import pytest
 import core.base as legacy_base
 import core.platform.config as platform_config
 from core.base import config_manager as legacy_config_manager
-from core.base import config_migrations as legacy_migrations
-from core.base import config_ownership as legacy_ownership
-from core.base import config_runtime_effects as legacy_runtime_effects
 from core.base import config_validator as legacy_validation
-from core.base.atom_quality_config import (
-    AtomQualityFilterConfig as LegacyAtomQualityFilterConfig,
-)
-from core.features.memory.domain.atom_quality_config import AtomQualityFilterConfig
 from core.platform.config import manager as platform_config_manager
-from core.platform.config import migrations as platform_migrations
-from core.platform.config import ownership as platform_ownership
-from core.platform.config import runtime_effects as platform_runtime_effects
 from core.platform.config import validation as platform_validation
 from core.platform.config.validation import (
     get_default_config,
@@ -78,12 +68,6 @@ def test_platform_config_package_lazily_exports_contracts() -> None:
         platform_config.__getattr__("missing_config_contract")
 
 
-def test_atom_quality_config_old_path_reuses_memory_feature_owner() -> None:
-    """旧配置路径只能恒等导出 memory feature 的唯一模型实现。"""
-
-    assert LegacyAtomQualityFilterConfig is AtomQualityFilterConfig
-
-
 def test_base_package_lazily_exports_config_manager_contracts() -> None:
     """base 包应惰性解析配置管理兼容符号，并拒绝未知属性。"""
 
@@ -93,36 +77,6 @@ def test_base_package_lazily_exports_config_manager_contracts() -> None:
     )
     with pytest.raises(AttributeError, match="missing_config_contract"):
         legacy_base.__getattr__("missing_config_contract")
-
-
-def test_runtime_effects_old_path_reuses_platform_exports() -> None:
-    """旧影响分类路径只能导出 platform config 的唯一实现。"""
-
-    assert legacy_runtime_effects.__all__ == platform_runtime_effects.__all__
-    for name in platform_runtime_effects.__all__:
-        assert getattr(legacy_runtime_effects, name) is getattr(
-            platform_runtime_effects,
-            name,
-        )
-
-
-def test_config_ownership_old_path_reuses_platform_exports() -> None:
-    """旧 owner 注册表路径只能导出 platform config 的唯一实现。"""
-
-    assert legacy_ownership.__all__ == platform_ownership.__all__
-    for name in platform_ownership.__all__:
-        assert getattr(legacy_ownership, name) is getattr(
-            platform_ownership,
-            name,
-        )
-
-
-def test_config_migrations_old_path_reuses_platform_exports() -> None:
-    """旧配置迁移路径只能导出 platform config 的唯一实现。"""
-
-    assert legacy_migrations.__all__ == platform_migrations.__all__
-    for name in platform_migrations.__all__:
-        assert getattr(legacy_migrations, name) is getattr(platform_migrations, name)
 
 
 def test_config_manager_old_path_reuses_platform_exports() -> None:

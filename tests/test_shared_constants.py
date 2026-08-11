@@ -1,12 +1,17 @@
-"""共享注入边界常量的旧路径兼容契约。"""
+"""共享注入边界常量契约。"""
 
-from core.base import constants as legacy_constants
-from core.shared import constants as shared_constants
+from core.shared.constants import (
+    FAKE_TOOL_CALL_ID_PREFIX,
+    FAKE_TOOL_CALL_NAME,
+    MEMORY_INJECTION_FOOTER,
+    MEMORY_INJECTION_HEADER,
+)
 
 
-def test_base_constants_reexport_shared_objects() -> None:
-    """旧常量模块必须只重新导出 shared 的唯一实现。"""
+def test_shared_constants_keep_stable_protocol_values() -> None:
+    """共享常量应保持注入边界和伪工具调用的稳定协议值。"""
 
-    assert legacy_constants.__all__ == shared_constants.__all__
-    for name in shared_constants.__all__:
-        assert getattr(legacy_constants, name) is getattr(shared_constants, name)
+    assert MEMORY_INJECTION_HEADER == "<RAG-Faiss-Memory>"
+    assert MEMORY_INJECTION_FOOTER == "</RAG-Faiss-Memory>"
+    assert FAKE_TOOL_CALL_NAME == "recall_long_term_memory"
+    assert FAKE_TOOL_CALL_ID_PREFIX == "fake_recall_"

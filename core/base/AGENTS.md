@@ -2,12 +2,15 @@
 
 # `core/base` 模块上下文
 
-**最后更新：** 2026-07-19
-**模块入口：** `core/base/__init__.py`、`config_manager.py`、`config_validator.py`
+**最后更新：** 2026-08-12
+**配置 owner：** `core/platform/config/__init__.py`
+**遗留入口：** `core/base/__init__.py`、`config_manager.py`、`config_validator.py`
 
 ## 职责与边界
 
-`core/base/` 是插件的低层基础契约，负责：
+配置事务、迁移、所有权和运行时影响分类的唯一 owner 已迁至 `core/platform/config/`；跨 feature 常量与 Adapter 能力归属 `core/shared/`。`core/base/` 目前保留配置模型聚合器、必要的异常/基础契约入口，以及尚未完成调用方切换的兼容模块。
+
+当前低层基础契约负责：
 
 - 以 Pydantic v2 描述配置树、默认值、数值范围和跨字段不变量；
 - 为每个公开配置分支声明产品分类、唯一责任模块以及保存后的重启/重建影响；
@@ -61,14 +64,14 @@ flowchart LR
 | 文件 | 核心接口 | 约束 |
 |---|---|---|
 | `config_validator.py` | `MemoraConfig`、其余分支模型、`validate_config()`、`get_default_config()`、`merge_config_with_defaults()`、`validate_runtime_config_changes()` | 默认值唯一运行时来源；顶层允许额外字段以兼容旧配置，已声明字段仍受类型/范围约束 |
-| `config_migrations.py` | `migrate_legacy_config()` | 旧公开键只在配置载入边界迁移到当前单一命名；不得在消费者中维护运行时别名 |
+| `../platform/config/migrations.py` | `migrate_legacy_config()` | 旧公开键只在配置载入边界迁移到当前单一命名；不得在消费者中维护运行时别名 |
 | `runtime_feature_config.py` | 运行时功能分支 Pydantic 模型 | 正式功能分支不得退回无类型字典；Hybrid/Graph 融合权重总和必须为 `1.0` |
-| `config_ownership.py` | `CONFIG_SECTION_OWNERSHIP`、`resolve_config_ownership()` | 每个 Schema 叶必须解析为 `runtime/dashboard_only/experimental/deprecated` 和唯一 owner；未知顶层分支不得静默归类 |
-| `config_runtime_effects.py` | `RuntimeConfigEffect`、`classify_config_effects()` | 非空保存保守要求重启；时序/因果图边变更还要求重建图派生数据 |
+| `../platform/config/ownership.py` | `CONFIG_SECTION_OWNERSHIP`、`resolve_config_ownership()` | 每个 Schema 叶必须解析为 `runtime/dashboard_only/experimental/deprecated` 和唯一 owner；未知顶层分支不得静默归类 |
+| `../platform/config/runtime_effects.py` | `RuntimeConfigEffect`、`classify_config_effects()` | 非空保存保守要求重启；时序/因果图边变更还要求重建图派生数据 |
 | `feature_config.py` | `AgentToolsConfig`、`JargonConfig`、`DashboardConfig`、`is_jargon_discovery_enabled()` | 轻量功能开关与 Dashboard 构建配置；黑话发现缺少有效配置时遵循调用方的兼容边界，正常插件运行时默认关闭 |
-| `config_manager.py` | `ConfigManager`、`ConfigApplyResult`、配置事务异常 | revision 是规范化 JSON 的 SHA-256；结果中的 `changed_paths` 排序且不可变 |
+| `../platform/config/manager.py` | `ConfigManager`、`ConfigApplyResult`、配置事务异常 | revision 是规范化 JSON 的 SHA-256；结果中的 `changed_paths` 排序且不可变；base 路径只保留受包级延迟导出约束的入口 |
 | `config_defaults.py` | 默认值维护说明 | 新键必须同步 Pydantic 模型、根级 `_conf_schema.json` 与访问处默认值 |
-| `constants.py` | `MEMORY_INJECTION_HEADER/FOOTER`、`FAKE_TOOL_CALL_NAME/ID_PREFIX` | 边界和伪调用标识同时被格式化器、清理器与测试依赖，不可单边改名 |
+| `../shared/constants.py` | `MEMORY_INJECTION_HEADER/FOOTER`、`FAKE_TOOL_CALL_NAME/ID_PREFIX` | 边界和伪调用标识同时被格式化器、清理器与测试依赖，不可单边改名 |
 | `exceptions.py` | `MemoraException` 及 16 个语义子类 | `message` 与稳定 `error_code` 是上层错误映射契约 |
 | `entity_editing.py` | `compute_entity_revision()`、编辑异常族 | revision 使用排序、紧凑、禁 NaN 的 JSON；该异常族独立于 `MemoraException` |
 | `cost_control.py` | `CostControl`、`build_cost_control_from_config()` | 只接受 `CostControlConfig` 或 `cost_control` 叶子映射，生成不可变功能许可门；不得传入完整配置树 |
@@ -94,7 +97,7 @@ flowchart LR
 
 ## 依赖方向
 
-- **向下依赖：** 标准库、`pydantic`、`astrbot.api.logger`。
+- **向下依赖：** 标准库、`pydantic`、`astrbot.api.logger`，以及已迁移的 `core/shared` / `core/platform/config` 契约。
 - **被依赖：** `main.py` 创建 `ConfigManager`；初始化器、处理器、检索器、调度器与 API 读取配置；格式化/清理链依赖注入常量；画像、黑话、社交等管理/API 使用实体编辑冲突契约。
 - **禁止方向：** 不得从 `core/base` 反向导入 handlers、storage、retrieval、API 或 Dashboard。
 
