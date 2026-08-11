@@ -66,7 +66,7 @@ erDiagram
 - `GraphEntry` 是可搜索且可回指记忆的图产物；`ExtractedGraph` 是一次抽取的 nodes/edges/entries 容器。
 - 模型不验证端点是否存在、置信度范围或 key 格式；这些由图提取器/存储层保证。
 
-### `core/features/knowledge/domain/models.py` 与 `note_models.py`
+### `core/features/knowledge/domain/models.py` 与 `core/features/notes/domain/models.py`
 
 - `KnowledgeEntry` 使用 `KnowledgeType`（fact/concept/rule/event/procedure），支持来源 ID、标签、过期时间与访问计数；显式 `derived` 条目必须携带 `DomainProvenance`，人工条目保持旧序列化形状。
 - `Note` 使用 `NoteStatus`（active/archived/deleted），保存当前版本号、用户和来源记忆 ID；显式 `derived` 笔记必须携带 `DomainProvenance`，`NoteVersion` 仍是独立快照类型。

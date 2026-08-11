@@ -1,11 +1,11 @@
-"""测试 NoteGenerator — generation + raw fallback path (N6 fix)."""
+"""测试 NoteGenerator 的生成与 raw 回退路径。"""
 
 import json
 from unittest.mock import AsyncMock
 
 import pytest
 
-from core.processors.note_generator import NoteGenerator
+from core.features.notes.infrastructure import NoteGenerator
 
 
 class TestNoteGenerator:
@@ -33,11 +33,11 @@ class TestNoteGenerator:
 
     @pytest.mark.asyncio
     async def test_non_json_fallback_no_nameerror(self, llm_client):
-        """N6: raw="" pre-declaration ensures fallback is reachable."""
+        """N6：预先声明空 raw 后应能进入回退路径。"""
         llm_client.complete.return_value = "plain text note title: Fallback"
         gen = self.make_gen(llm_client)
         result = await gen.generate("x" * 100)
-        # Must not raise NameError; may return None or parsed dict
+        # 不得触发 NameError；允许返回 None 或解析后的字典。
         assert result is None or isinstance(result, dict)
 
     @pytest.mark.asyncio

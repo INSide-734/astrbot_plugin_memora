@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.note_manager import NoteManager
+from core.features.notes.application import NoteManager
+from core.features.notes.domain import Note, NoteStatus, NoteVersion
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.models.memory_evolution import MemorySourceRef
-from core.models.note_models import Note, NoteStatus, NoteVersion
 
 
 def _provenance() -> DomainProvenance:
@@ -150,6 +150,7 @@ class TestUpdateNote:
         store.prune_versions = AsyncMock()
         mgr = NoteManager(store=store)
         result = await mgr.update_note(1, title="New Title")
+        assert result is not None
         assert result is note
         assert result.title == "New Title"
 
@@ -162,6 +163,7 @@ class TestUpdateNote:
         store.prune_versions = AsyncMock()
         mgr = NoteManager(store=store)
         result = await mgr.update_note(1, content="New Content")
+        assert result is not None
         assert result.content == "New Content"
 
     @pytest.mark.asyncio
@@ -173,6 +175,7 @@ class TestUpdateNote:
         store.prune_versions = AsyncMock()
         mgr = NoteManager(store=store)
         result = await mgr.update_note(1, tags=["new1", "new2"])
+        assert result is not None
         assert result.tags == ["new1", "new2"]
 
     @pytest.mark.asyncio
@@ -184,6 +187,7 @@ class TestUpdateNote:
         store.prune_versions = AsyncMock()
         mgr = NoteManager(store=store)
         result = await mgr.update_note(1, status="archived")
+        assert result is not None
         assert result.status == NoteStatus.ARCHIVED
 
     @pytest.mark.asyncio

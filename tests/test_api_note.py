@@ -1,6 +1,6 @@
 """core/api/note_api.py — NoteApiMixin 测试。
 
-Validates request validation, response format, and error handling.
+验证请求校验、响应格式与错误处理。
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.api.note_api import NoteApiMixin
-from core.models.note_models import Note, NoteStatus
+from core.features.notes.domain import Note, NoteStatus
 
 
 def _mock_request(**args):
@@ -24,16 +24,16 @@ def _make_mixin(
     *,
     store_available: bool = True,
     notes_list: list | None = None,
-    notes_total: int = 0,
+    notes_total: object = 0,
     search_notes: list | None = None,
-    search_total: int = 0,
-    detail_note: Note | None = None,
-    versions_list: list | None = None,
+    search_total: object = 0,
+    detail_note: object | None = None,
+    versions_list: object | None = None,
     create_id: int = 1,
     delete_result: bool = True,
     manager_available: bool = False,
 ):
-    """Create a NoteApiMixin stub."""
+    """创建 NoteApiMixin 测试替身。"""
 
     class Stub:
         list_notes = NoteApiMixin.list_notes

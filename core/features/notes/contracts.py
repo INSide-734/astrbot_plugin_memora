@@ -19,15 +19,19 @@ class NoteStorePort(Protocol):
 
     async def create(self, note: Note) -> int:
         """创建笔记及首个版本并返回内部 ID。"""
+        ...
 
     async def get(self, note_id: int) -> Note | None:
         """按内部 ID 读取可见笔记。"""
+        ...
 
     async def update(self, note: Note) -> bool:
         """按 revision/CAS 更新笔记并追加版本。"""
+        ...
 
     async def delete(self, note_id: int) -> bool:
         """按内部 ID 删除笔记及版本历史。"""
+        ...
 
     async def search(
         self,
@@ -35,9 +39,11 @@ class NoteStorePort(Protocol):
         limit: int = 20,
     ) -> tuple[list[Note], int]:
         """按关键词搜索可见笔记。"""
+        ...
 
     async def filter_current_sources(self, notes: list[Note]) -> list[Note]:
         """过滤来源已失效的派生笔记。"""
+        ...
 
     async def list_notes(
         self,
@@ -46,15 +52,19 @@ class NoteStorePort(Protocol):
         status: str = "",
     ) -> tuple[list[Note], int]:
         """按状态分页列出可见笔记。"""
+        ...
 
     async def get_versions(self, note_id: int) -> list[NoteVersion]:
         """按版本倒序返回笔记历史。"""
+        ...
 
     async def count(self) -> int:
         """返回未删除笔记总数。"""
+        ...
 
     async def prune_versions(self, max_versions: int = 20) -> int:
         """为每条笔记裁剪超过上限的旧版本。"""
+        ...
 
 
 @runtime_checkable
@@ -68,6 +78,7 @@ class NoteSourceReaderPort(Protocol):
         max_content_chars: int = 4_000,
     ) -> list[MemorySourceRef]:
         """按 canonical ID 返回带 revision、作用域和隐私证据的 source。"""
+        ...
 
     async def load_all_sources(
         self,
@@ -75,6 +86,7 @@ class NoteSourceReaderPort(Protocol):
         max_content_chars: int = 4_000,
     ) -> list[MemorySourceRef]:
         """按 canonical ID 顺序返回全部可用 source。"""
+        ...
 
 
 @runtime_checkable
@@ -87,6 +99,7 @@ class NoteGeneratorPort(Protocol):
         context: str = "",
     ) -> dict[str, Any] | None:
         """从有限 canonical evidence 生成一个笔记候选。"""
+        ...
 
 
 __all__ = [

@@ -768,7 +768,7 @@ class TestKnowledgeEntry:
 
 
 # ---------------------------------------------------------------------------
-# 4. core/models/note_models.py
+# 4. core/features/notes/domain/models.py
 # ---------------------------------------------------------------------------
 
 
@@ -776,7 +776,7 @@ class TestNoteStatus:
     """测试 NoteStatus 枚举。"""
 
     def test_all_members(self) -> None:
-        from core.models.note_models import NoteStatus
+        from core.features.notes import NoteStatus
 
         values = {m.value for m in NoteStatus}
         assert "active" in values
@@ -784,7 +784,7 @@ class TestNoteStatus:
         assert "deleted" in values
 
     def test_is_string_enum(self) -> None:
-        from core.models.note_models import NoteStatus
+        from core.features.notes import NoteStatus
 
         assert NoteStatus.ACTIVE == "active"
 
@@ -793,7 +793,7 @@ class TestNoteVersion:
     """测试 NoteVersion 数据类。"""
 
     def test_default_version(self) -> None:
-        from core.models.note_models import NoteVersion
+        from core.features.notes import NoteVersion
 
         nv = NoteVersion()
         assert nv.version == 1
@@ -801,7 +801,7 @@ class TestNoteVersion:
         assert nv.created_at > 0
 
     def test_custom_version(self) -> None:
-        from core.models.note_models import NoteVersion
+        from core.features.notes import NoteVersion
 
         nv = NoteVersion(version=3, content="第三次修改的内容")
         assert nv.version == 3
@@ -812,7 +812,7 @@ class TestNote:
     """测试 Note 数据类。"""
 
     def test_default_note(self) -> None:
-        from core.models.note_models import Note, NoteStatus
+        from core.features.notes import Note, NoteStatus
 
         note = Note()
         assert note.title == ""
@@ -825,7 +825,7 @@ class TestNote:
         assert note.source_memory_ids == []
 
     def test_full_note_creation(self) -> None:
-        from core.models.note_models import Note, NoteStatus
+        from core.features.notes import Note, NoteStatus
 
         note = Note(
             title="西湖游玩计划",
@@ -843,7 +843,7 @@ class TestNote:
         assert note.source_memory_ids == [101, 102]
 
     def test_to_dict(self) -> None:
-        from core.models.note_models import Note
+        from core.features.notes import Note
 
         note = Note(
             title="笔记标题",
@@ -860,7 +860,7 @@ class TestNote:
         assert d["user_id"] == "u1"
 
     def test_from_dict_complete(self) -> None:
-        from core.models.note_models import Note, NoteStatus
+        from core.features.notes import Note, NoteStatus
 
         data: dict[str, Any] = {
             "note_id": 7,
@@ -880,7 +880,7 @@ class TestNote:
         assert note.tags == ["a", "b"]
 
     def test_from_dict_minimal(self) -> None:
-        from core.models.note_models import Note, NoteStatus
+        from core.features.notes import Note, NoteStatus
 
         note = Note.from_dict({})
         assert note.title == ""
@@ -889,7 +889,7 @@ class TestNote:
         assert note.tags == []
 
     def test_from_dict_none_lists(self) -> None:
-        from core.models.note_models import Note
+        from core.features.notes import Note
 
         note = Note.from_dict({"tags": None, "source_memory_ids": None})
         assert note.tags == []

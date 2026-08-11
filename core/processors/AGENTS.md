@@ -8,7 +8,7 @@
 
 ## 职责边界
 
-`core/processors/` 将已经进入会话存储的 `list[Message]` 格式化、提交给 LLM、校验/修复响应，并构造成持久化层可消费的记忆、元数据与原子。目录还包含话题策略、图结构提取、文本检索预处理、Memory Evolution proposal 整理器，以及知识/笔记等独立派生处理器。
+`core/processors/` 将已经进入会话存储的 `list[Message]` 格式化、提交给 LLM、校验/修复响应，并构造成持久化层可消费的记忆、元数据与原子。目录还包含话题策略、图结构提取、文本检索预处理和 Memory Evolution proposal 整理器。
 
 `core/features/profiles/infrastructure/ProfileExtractor` 只负责把受限 evidence 转成标签和偏好，不写入 Store，也不决定画像主键。
 生产调用由 profiles application 的 `ProfileProposalPipeline` 编排；LLM 入口使用单次物理请求并由
@@ -18,9 +18,9 @@
 生产调用由 knowledge application 的 `KnowledgeProposalPipeline` 编排；LLM 入口使用单次物理请求并由
 `knowledge_extraction` 额外预算控制，没有请求预算时不得裸调用 Provider。
 
-`NoteGenerator` 只把达到长度门槛的有限 canonical evidence 转成 note dict，不写入 Store。
-生产调用由 manager 层的 `NoteProposalPipeline` 编排；`note_generation` 额外预算允许时才调用
-Provider，没有预算、功能门关闭或结构不可用时由 manager 管线生成确定性来源 fallback。
+`core/features/notes/infrastructure/NoteGenerator` 只把达到长度门槛的有限 canonical evidence 转成 note dict，不写入 Store。
+生产调用由 notes application 的 `NoteProposalPipeline` 编排；`note_generation` 额外预算允许时才调用
+Provider，没有预算、功能门关闭或结构不可用时由该管线生成确定性来源 fallback。
 重建路径强制关闭 Provider，并在写入前二次验证 source revision、scope 和 privacy。
 
 本模块不捕获 AstrBot 事件、不决定何时触发总结、不直接持久化主管道产物，也不执行召回。触发与批次编排见 [`../handlers/AGENTS.md`](../handlers/AGENTS.md)；消息组件标准化见 [`../extractors/AGENTS.md`](../extractors/AGENTS.md)；存储、图 CRUD 与检索属于相应 manager/store/retrieval 模块。
@@ -120,7 +120,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 | `chatroom_parser.py` | 从 AstrBot 群聊上下文包装中取最新消息 | 不匹配或异常时原样返回 prompt |
 | `features/profiles/infrastructure/profile_extractor.py` | LLM 提取用户标签/偏好，最多 5 个标签 | 无 client/调用失败返回空；另有关键词 fallback |
 | `features/knowledge/infrastructure/knowledge_extractor.py` | 有限 canonical evidence → `KnowledgeEntry` | 输入过短、无 client 或 JSON 无法恢复时 `None`；结构和长度边界由 proposal 管线再次校验 |
-| `note_generator.py` | 重要 canonical evidence → note dict | 未达长度、无 client 或 JSON 无法恢复时 `None`；manager 管线负责来源 fallback、配置上限和持久化 |
+| `features/notes/infrastructure/note_generator.py` | 重要 canonical evidence → note dict | 未达长度、无 client 或 JSON 无法恢复时 `None`；application 管线负责来源 fallback、配置上限和持久化 |
 | `memory_consolidator.py` | canonical evidence → 受约束的 relation/projection proposal | JSON/Schema/数量/字符预算失败抛出，由 manager 负责重试或拒绝 |
 | `message_utils.py` | 30KB 单消息截断；将一轮对话写成记忆 | 返回 `(success, error)`，不抛普通存储异常 |
 | `prompt_builder.py` | 模板与 persona system prompt | persona 不存在时使用基础 prompt |
@@ -140,7 +140,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 
 主管道：`memory_processor.py`、`llm_client.py`、`prompt_builder.py`、`conversation_formatter.py`、`json_parser.py`、`quality_validator.py`、`storage_builder.py`；`reflection_generation_observability.py` 只发射反思生成阶段的隐私安全标量。
 话题：`topic_splitter.py`、`topic_segmentation_pipeline.py`。
-派生与图：`memory_consolidator.py`、`memory_evolution_candidates.py`、`atom_classifier.py`、`graph_extractor.py`、`atom_graph_extractor.py`、`entity_resolver.py`、`contradiction_detector.py`、`episode_clusterer.py`、`note_generator.py`、`human_like_formatter.py`。画像与知识提取唯一实现分别位于 `core/features/profiles/infrastructure/profile_extractor.py` 和 `core/features/knowledge/infrastructure/knowledge_extractor.py`。
+派生与图：`memory_consolidator.py`、`memory_evolution_candidates.py`、`atom_classifier.py`、`graph_extractor.py`、`atom_graph_extractor.py`、`entity_resolver.py`、`contradiction_detector.py`、`episode_clusterer.py`、`human_like_formatter.py`。画像、知识与笔记提取唯一实现分别位于 `core/features/profiles/infrastructure/profile_extractor.py`、`core/features/knowledge/infrastructure/knowledge_extractor.py` 和 `core/features/notes/infrastructure/note_generator.py`。
 文本/兼容：`text_processor.py`、`chatroom_parser.py`、`message_utils.py`、`grounding_dates.py`、`__init__.py`。
 
 ## 测试定位与验证

@@ -7,10 +7,11 @@
 
 ## 职责与边界
 
-`core/managers/` 是业务生命周期与编排层。它把 SQLite 文档表、BM25、FAISS、记忆原子和图记忆组合成统一的 `MemoryEngine`，并提供会话、画像、知识、笔记、备份、导入导出、衰减、写故障恢复及 Memory Evolution 后台演化服务。
+`core/managers/` 是业务生命周期与编排层。它把 SQLite 文档表、BM25、FAISS、记忆原子和图记忆组合成统一的 `MemoryEngine`，并提供会话、备份、导入导出、衰减、写故障恢复及 Memory Evolution 后台演化服务。
 
 用户画像的领域服务与 proposal 管线唯一归属 `core/features/profiles/application/`；`core/managers/` 只保留 `MemoryEngine` 的画像写后钩子，不再转发画像应用类型。
 知识领域服务与 proposal 管线唯一归属 `core/features/knowledge/application/`；`core/managers/` 只保留 `MemoryEngine` 的知识写后钩子，不再转发知识应用类型。
+笔记领域服务与 proposal 管线唯一归属 `core/features/notes/application/`；`core/managers/` 只保留 `MemoryEngine` 的笔记写后钩子，不再转发笔记应用类型。
 
 `feedback_signal_manager.py` 只管理隔离评测 Store 中的可信反馈事件、限流、时间衰减和候选聚合；`auto_learning.py` 只从该聚合生成 shadow 候选并通过单一 CAS 写入口发布，不得直接修改生产检索权重或调用 `update_memory()`。
 
@@ -150,7 +151,7 @@ sequenceDiagram
 | 原子生命周期 | `atom_lifecycle_manager.py`、`features/memory/application/atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理 |
 | 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护 |
 | 画像 | `features/profiles/application/`、`memory_engine_profile_hooks.py` | 管理员编辑使用修订值冲突检测；canonical 写后自动 proposal 仅绑定唯一可信主体，标签与偏好携带 derived provenance 并走存储层原子事务 |
-| 知识/笔记 | `features/knowledge/application/`、`note_proposal_pipeline.py`、`memory_engine_domain_hooks.py`、`note_manager.py` | 知识与笔记 canonical 写后 proposal、来源约束幂等与失效；自动笔记可无 Provider 重建，人工 CRUD、软删和版本历史保持领域权威 |
+| 知识/笔记 | `features/knowledge/application/`、`features/notes/application/`、`memory_engine_domain_hooks.py` | 知识与笔记 canonical 写后 proposal、来源约束幂等与失效；自动笔记可无 Provider 重建，人工 CRUD、软删和版本历史保持领域权威 |
 | 异常检测 | `anomaly_detector.py`、`stats_operations.py` | 按 UTC 日聚合 canonical 创建量；只用当前日之前的完整窗口计算 3-sigma 基线，待投递告警随状态恢复，同一天只写一条脱敏诊断事件 |
 | 记忆再巩固 | `reconsolidation.py`、`reconsolidation_store.py` | 默认关闭；召回只生成 pending 候选；apply 先持久化唯一 intent，再按 source revision CAS 写 canonical 并恢复/失败收口；回滚同样持久化跨 Store 意图并刷新当前 source 的 graph 派生，状态、动作审计与操作清理原子收口；启动恢复不得覆盖后续编辑 |
 | 自主学习 | `auto_learning.py`、`feedback_signal_manager.py`、`feedback_signal_store.py` | 统一 FeedbackSignal 事件只进入隔离 Store；shadow 候选经单一 CAS 写入口发布；生产写入前持久化真实旧权重 intent，最终状态保存失败时保留可重启回滚快照；rebuild/publish/rollback/reset 共用状态锁，不直接修改生产权重 |

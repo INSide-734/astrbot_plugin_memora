@@ -7,7 +7,7 @@
 
 ## 职责与边界
 
-`core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存会话消息、笔记和注入决策遥测，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。原子与图存储已归属 memory feature，用户画像与知识存储分别归属 profiles 和 knowledge feature。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
+`core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存会话消息和注入决策遥测，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。原子与图存储已归属 memory feature，用户画像、知识与笔记存储分别归属 profiles、knowledge 和 notes feature。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
 
 canonical Schema、Atom、幂等映射、来源校验、写日志、graph store 及共享连接实现已迁至 `core/features/memory/`；对应 `core/storage/` 路径仅保留单实现兼容导出，表名、数据目录和连接生命周期不变。
 
@@ -36,7 +36,7 @@ graph TD
     PoolBase --> Atom[AtomStore]
     PoolBase --> Graph[GraphStore]
     PoolBase --> Knowledge[features.knowledge.KnowledgeStore]
-    PoolBase --> Note[NoteStore]
+    PoolBase --> Note[features.notes.NoteStore]
     PoolBase --> Profile[features.profiles.ProfileStore]
     InstanceBase --> Decision[InjectionDecisionStore]
     Conversation[ConversationStore] --> Messages[(sessions + messages)]
@@ -114,7 +114,7 @@ stateDiagram-v2
 - 管理员编辑以 `compute_entity_revision()` 做乐观并发检查，冲突抛 `EditConflictError`；不要把旧画像快照整行写回。
 - `_rollback_safely()` 保证回滚清理错误不覆盖原异常。
 
-### 知识：`core/features/knowledge/infrastructure/KnowledgeStore`；笔记：`NoteStore`
+### 知识：`core/features/knowledge/infrastructure/KnowledgeStore`；笔记：`core/features/notes/infrastructure/NoteStore`
 
 - `knowledge_entries`：title/content/category/confidence/source_ids/tags、时间、过期和访问计数，并以 `origin`/`provenance_json` 区分人工与派生；搜索是参数化 `LIKE`，不是 FTS。派生写入和读取会重新校验 source revision/scope/privacy。
 - `notes` + `note_versions`：创建时同事务写 v1；更新以 `WHERE id=? AND version=?` 乐观锁，成功后插入下一版本；notes 以 `origin`/`provenance_json` 保存派生来源，primary 仍有效时 supporting source 可在读取投影中裁剪。自动派生创建在 `BEGIN IMMEDIATE` 中按完整 provenance 幂等命中当前记录，不更新人工笔记或已有版本。
