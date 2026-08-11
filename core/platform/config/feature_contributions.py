@@ -15,10 +15,12 @@ from ...features.reflection.domain.config import (
     StrategyDConfig,
     TopicSegmentationConfig,
 )
+from ...features.retrieval.domain import FusionStrategyConfig, RerankerConfig
 
 __all__ = [
     "AtomQualityFilterConfig",
     "ForgettingAgentConfig",
+    "FusionStrategyConfig",
     "GraphMemoryConfig",
     "ImportanceDecayConfig",
     "LegacyBackfillConfig",
@@ -27,6 +29,7 @@ __all__ = [
     "PresetName",
     "RecallEngineConfig",
     "ReflectionEngineConfig",
+    "RerankerConfig",
     "SessionManagerConfig",
     "StrategyBConfig",
     "StrategyCConfig",
