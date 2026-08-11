@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from core import monitoring
+from core.features.observability.application import runtime as observability_runtime
 from core.features.observability.infrastructure import debug_reporter
 
 
 @pytest.fixture(autouse=True)
-def _reset_debug_reporter() -> None:
+def _reset_debug_reporter() -> Iterator[None]:
     """在每个用例前后重置模块级调试记录器。"""
     debug_reporter.close_debug_reporting()
     yield
@@ -43,11 +44,11 @@ def test_debug_timestamp_uses_configured_astrbot_timezone(tmp_path: Path) -> Non
     assert record["timestamp"].endswith("+08:00")
 
 
-def test_monitoring_facade_forwards_astrbot_timezone(
+def test_observability_runtime_forwards_astrbot_timezone(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """监控门面应把 AstrBot 时区原样传给调试记录器。"""
+    """可观测性运行时应把 AstrBot 时区原样传给调试记录器。"""
     calls: list[tuple[bool, str | Path | None, str | None]] = []
 
     def capture_configuration(
@@ -65,7 +66,7 @@ def test_monitoring_facade_forwards_astrbot_timezone(
         capture_configuration,
     )
 
-    monitoring.set_debug_mode(
+    observability_runtime.set_debug_mode(
         False,
         data_dir=tmp_path,
         timezone_name="Asia/Shanghai",
