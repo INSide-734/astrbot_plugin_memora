@@ -28,6 +28,8 @@ from ..platform.config.feature_contributions import (
 from ..platform.config.feature_contributions import (
     StrategyDConfig as StrategyDConfig,
 )
+from ..platform.config.provider_config import ProviderConfig
+from ..platform.config.rebuild_config import IndexRebuildSettings
 from .feature_config import (
     AgentToolsConfig,
     DashboardConfig,
@@ -133,43 +135,11 @@ class FilteringConfig(BaseModel):
     use_session_filtering: bool = Field(default=True, description="是否使用会话过滤")
 
 
-class ProviderConfig(BaseModel):
-    """Provider 配置"""
-
-    embedding_provider_id: str | None = Field(
-        default="", description="嵌入模型 Provider ID"
-    )
-    llm_provider_id: str | None = Field(default="", description="语言模型 Provider ID")
-
-
 class MigrationSettings(BaseModel):
     """数据库迁移设置"""
 
     auto_migrate: bool = Field(default=True, description="是否启用自动迁移")
     create_backup: bool = Field(default=True, description="迁移前是否创建备份")
-
-
-class IndexRebuildSettings(BaseModel):
-    """索引重建设置"""
-
-    batch_size: int = Field(default=50, ge=1, le=500, description="重建读取批量")
-    embedding_batch_size: int = Field(
-        default=8, ge=1, le=256, description="Embedding 请求批量"
-    )
-    tasks_limit: int = Field(default=1, ge=1, le=8, description="Embedding 并发上限")
-    max_retries: int = Field(default=5, ge=1, le=8, description="批次最大重试次数")
-    retry_base_delay: float = Field(
-        default=30.0, ge=0.0, le=60.0, description="重试基础等待秒数"
-    )
-    batch_delay: float = Field(
-        default=5.0, ge=0.0, le=10.0, description="读取批次间隔秒数"
-    )
-    request_delay: float = Field(
-        default=5.0, ge=0.0, le=60.0, description="Embedding 请求间隔秒数"
-    )
-    max_failure_ratio: float = Field(
-        default=0.02, ge=0.0, le=1.0, description="允许切换的最大失败比例"
-    )
 
 
 class RerankerConfig(BaseModel):

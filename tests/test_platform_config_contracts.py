@@ -168,3 +168,17 @@ def test_platform_config_validation_merges_and_checks_runtime_changes() -> None:
         config,
         {"recall_engine.top_k": -1},
     )
+
+
+def test_platform_runtime_configs_old_path_reuses_platform_owner() -> None:
+    """根配置聚合器应恒等导出 platform 拥有的运行时配置模型。"""
+
+    from core.base.config_validator import (
+        IndexRebuildSettings as LegacyIndexRebuildSettings,
+    )
+    from core.base.config_validator import ProviderConfig as LegacyProviderConfig
+    from core.platform.config.provider_config import ProviderConfig
+    from core.platform.config.rebuild_config import IndexRebuildSettings
+
+    assert LegacyProviderConfig is ProviderConfig
+    assert LegacyIndexRebuildSettings is IndexRebuildSettings
