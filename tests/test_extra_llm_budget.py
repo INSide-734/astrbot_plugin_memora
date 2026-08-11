@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,14 +13,22 @@ from pydantic import ValidationError
 
 from core.base.config_validator import CostControlConfig
 from core.base.cost_control import CostControl, build_cost_control_from_config
-from core.base.extra_llm_budget import (
+from core.features.reflection.application import llm_budget as feature_budget
+from core.handlers import reflection_llm_budget as legacy_budget
+from core.shared.extra_llm_budget import (
     ExtraLlmBudget,
     budgeted_extra_llm_call,
     current_extra_llm_budget,
     extra_llm_budget_scope,
 )
-from core.features.reflection.application import llm_budget as feature_budget
-from core.handlers import reflection_llm_budget as legacy_budget
+
+if TYPE_CHECKING:
+    from astrbot.api.event import AstrMessageEvent
+
+    from core.base.config_manager import ConfigManager
+    from core.managers.conversation_manager import ConversationManager
+    from core.managers.memory_engine import MemoryEngine
+    from core.processors.memory_processor import MemoryProcessor
 
 
 def test_legacy_handler_path_reuses_feature_application_objects() -> None:
@@ -330,12 +339,15 @@ async def test_passive_recall_and_reflection_share_one_budget(
         llm_client_instance=MagicMock(),
     )
     preparer = TopicBatchPreparer(
-        config_manager=_ConfigStub(
-            {
-                "topic_segmentation.strategy": "d",
-                "topic_segmentation.strategy_d.stage1_max_topics": 5,
-                "topic_segmentation.strategy_d.enable_parallel_stage2": True,
-            }
+        config_manager=cast(
+            "ConfigManager",
+            _ConfigStub(
+                {
+                    "topic_segmentation.strategy": "d",
+                    "topic_segmentation.strategy_d.stage1_max_topics": 5,
+                    "topic_segmentation.strategy_d.enable_parallel_stage2": True,
+                }
+            ),
         ),
         memory_processor=processor,
         cost_control=control,
@@ -398,10 +410,10 @@ async def test_event_handler_reuses_and_clears_turn_budget() -> None:
     )
     handler = EventHandler(
         context=MagicMock(),
-        config_manager=_ConfigStub({}),
-        memory_engine=SimpleNamespace(cost_control=control),
-        memory_processor=processor,
-        conversation_manager=SimpleNamespace(),
+        config_manager=cast("ConfigManager", _ConfigStub({})),
+        memory_engine=cast("MemoryEngine", SimpleNamespace(cost_control=control)),
+        memory_processor=cast("MemoryProcessor", processor),
+        conversation_manager=cast("ConversationManager", SimpleNamespace()),
     )
     identity = MagicMock()
     handler._resolve_identity = MagicMock(return_value=identity)
@@ -433,12 +445,13 @@ async def test_event_handler_reuses_and_clears_turn_budget() -> None:
         side_effect=_capture_reflection
     )
     event = SimpleNamespace()
+    typed_event = cast("AstrMessageEvent", event)
 
-    await handler.handle_memory_recall(event, MagicMock())
+    await handler.handle_memory_recall(typed_event, MagicMock())
     first_budget = event._memora_extra_llm_budget
-    await handler.handle_memory_recall(event, MagicMock())
+    await handler.handle_memory_recall(typed_event, MagicMock())
     second_budget = event._memora_extra_llm_budget
-    await handler.handle_memory_reflection(event, MagicMock())
+    await handler.handle_memory_reflection(typed_event, MagicMock())
 
     assert first_budget is not second_budget
     assert observed_contexts == [first_budget, second_budget, second_budget]
@@ -488,7 +501,9 @@ async def test_quality_runtime_constructs_llm_reranker(tmp_db_path: str) -> None
 
         assert engine.reranker is expected_reranker
         create_reranker.assert_awaited_once()
-        assert create_reranker.await_args.args[0] == "llm"
-        assert create_reranker.await_args.kwargs["cost_control"] is control
+        reranker_call = create_reranker.await_args
+        assert reranker_call is not None
+        assert reranker_call.args[0] == "llm"
+        assert reranker_call.kwargs["cost_control"] is control
     finally:
         await engine.close()

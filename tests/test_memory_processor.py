@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from core.base.cost_control import CostControl
-from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 from core.models.conversation_models import Message
 from core.processors.memory_processor import MemoryProcessor
+from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
+
+_ProcessorFactory = Callable[..., MemoryProcessor]
 
 
 def _quality_control() -> CostControl:
@@ -139,7 +142,7 @@ class TestBuildMemoryFromStructuredData:
 
 class TestProcessConversation:
     @pytest.fixture
-    def make_processor(self) -> callable:
+    def make_processor(self) -> _ProcessorFactory:
         def _make(
             llm_response: str = "", config: dict | None = None
         ) -> MemoryProcessor:
@@ -191,7 +194,7 @@ class TestProcessConversation:
         ]
 
     def test_process_basic_private_chat(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -204,7 +207,7 @@ class TestProcessConversation:
         assert "importance" in results[0]
 
     def test_process_group_chat(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -220,7 +223,7 @@ class TestProcessConversation:
 
     def test_trusted_message_identity_overrides_llm_participants(
         self,
-        make_processor: callable,
+        make_processor: _ProcessorFactory,
     ) -> None:
         """可信 Message 身份应确定参与者顺序、标签和当前名称快照。"""
 
@@ -307,15 +310,15 @@ class TestProcessConversation:
             "10002": "成员乙",
         }
         assert metadata["subject_ids"] == ["10001"]
-        prompt = processor.llm_client.call_llm_with_retry_result.await_args.kwargs[
-            "prompt"
-        ]
+        llm_call = processor.llm_client.call_llm_with_retry_result.await_args
+        assert llm_call is not None
+        prompt = llm_call.kwargs["prompt"]
         assert "新昵称（QQ:10001）" in prompt
         assert "禁止猜测、改写或交换稳定标识" in prompt
 
     def test_untrusted_message_metadata_keeps_legacy_participants(
         self,
-        make_processor: callable,
+        make_processor: _ProcessorFactory,
     ) -> None:
         """缺少可信标志时不得接受伪造 canonical 字段，旧参与者语义保持不变。"""
 
@@ -358,7 +361,7 @@ class TestProcessConversation:
             asyncio.run(proc.process_conversation([]))
 
     def test_process_with_serial_position_hint(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -374,7 +377,7 @@ class TestProcessConversation:
         assert results[0]["importance"] >= 0.5
 
     def test_process_with_interest_profile(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -392,7 +395,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_with_emotion_tags(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -406,7 +409,7 @@ class TestProcessConversation:
         assert "emotion_tags" in results[0]["metadata"]
 
     def test_process_with_causal_relations(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -420,7 +423,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_with_memories_array(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -446,7 +449,7 @@ class TestProcessConversation:
             asyncio.run(proc.process_conversation(sample_messages))
 
     def test_process_memories_with_string_entry_skipped(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -461,7 +464,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_memories_empty_summary_and_facts_skipped(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -476,7 +479,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_with_emotional_intensity_boost(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -492,7 +495,7 @@ class TestProcessConversation:
         assert results[0]["importance"] >= 0.5
 
     def test_process_with_persona_id(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -503,7 +506,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_with_continuity_context(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -517,7 +520,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_with_serial_position_first_and_last(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -532,7 +535,7 @@ class TestProcessConversation:
         assert results[0]["importance"] >= 0.5
 
     def test_process_serpent_metadata_serial_position(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -553,7 +556,7 @@ class TestProcessConversation:
         assert "emotion_tags" in results[0]["metadata"]
 
     def test_process_low_quality_still_returns(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -565,7 +568,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_guardrails_valid_memory_extraction(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -582,7 +585,7 @@ class TestProcessConversation:
         assert results[0]["importance"] == 0.8
 
     def test_process_guardrails_accepts_configured_summary_contract(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         """Prompt 约定的 summary 输出应通过护栏并完整进入存储 metadata。"""
 
@@ -606,7 +609,7 @@ class TestProcessConversation:
         assert results[0]["metadata"].get("guardrail_fallback") is not True
 
     def test_process_guardrails_empty_memories_falls_back_to_legacy_parser(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 

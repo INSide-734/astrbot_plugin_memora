@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.base.cost_control import CostControl
-from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 from core.retrieval.llm_reranker import LLMReranker
 from core.retrieval.rrf_fusion import HybridResult
+from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 
 
 def _candidate(

@@ -12,13 +12,14 @@ import aiosqlite
 import pytest
 
 from core.base.cost_control import CostControl
-from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
+from core.features.notes.infrastructure import NoteGenerator
 from core.managers.memory_engine import MemoryEngine
 from core.managers.note_manager import NoteManager
 from core.managers.note_proposal_pipeline import NoteProposalPipeline
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.models.memory_evolution import MemorySourceRef
 from core.platform.composition import DerivedRebuildCoordinator
+from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 from core.storage.note_store import NoteStore
 
 _CONTENT = "部署前需要完成数据库迁移。\n随后重建检索索引并核对健康状态。"
@@ -327,8 +328,9 @@ async def test_canonical_add_schedules_note_proposal_without_rollback() -> None:
     """canonical 成功后应触发笔记 proposal，派生失败不能回滚主写。"""
 
     engine = MemoryEngine(db_path=":memory:", faiss_db=MagicMock())
-    engine.hybrid_retriever = MagicMock()
-    engine.hybrid_retriever.add_memory = AsyncMock(return_value=123)
+    hybrid_retriever = MagicMock()
+    hybrid_retriever.add_memory = AsyncMock(return_value=123)
+    setattr(engine, "hybrid_retriever", hybrid_retriever)
     engine.graph_memory_manager = None
     engine.atom_store = None
     engine._write_journal.start_op = AsyncMock(return_value=1)
@@ -339,7 +341,7 @@ async def test_canonical_add_schedules_note_proposal_without_rollback() -> None:
     engine._retrieval.extract_triggers = AsyncMock()
     pipeline = MagicMock()
     pipeline.apply_for_memory = AsyncMock(side_effect=RuntimeError("derived failed"))
-    engine.note_proposal_pipeline = pipeline
+    setattr(engine, "note_proposal_pipeline", pipeline)
     tasks: list[asyncio.Task] = []
 
     def create_task(coroutine) -> None:
@@ -347,7 +349,7 @@ async def test_canonical_add_schedules_note_proposal_without_rollback() -> None:
 
         tasks.append(asyncio.create_task(coroutine))
 
-    engine._create_tracked_task = create_task
+    setattr(engine, "_create_tracked_task", create_task)
     doc_id = await engine.add_memory("达到阈值的可信 canonical 记忆正文")
     await asyncio.gather(*tasks)
 
@@ -416,6 +418,7 @@ async def test_note_store_rebuild_is_idempotent_and_preserves_manual_versions(
     )
 
     assert first_id == second_id
+    assert first_id is not None
     assert await store.count() == 2
     assert [version.content for version in await store.get_versions(manual_id)] == [
         "人工修订正文",
@@ -501,7 +504,9 @@ async def test_component_factory_wires_note_pipeline_with_runtime_sentinels(
     assert pipeline._note_manager is note_manager
     assert pipeline._auto_create_min_length == 73
     assert pipeline._max_tags == 3
-    assert pipeline._generator._min_length == 73
+    generator = pipeline._generator
+    assert isinstance(generator, NoteGenerator)
+    assert generator._min_length == 73
     await asyncio.gather(
         components["memory_evolution_store"].close(),
         components["identity_runtime"].close(),

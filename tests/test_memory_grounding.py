@@ -10,11 +10,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.base.cost_control import CostControl
-from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 from core.models.conversation_models import Message
 from core.processors.conversation_formatter import ConversationFormatter
 from core.processors.memory_grounding import MemoryGroundingValidator
 from core.processors.memory_processor import MemoryProcessor
+from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 
 
 def _message(
@@ -346,7 +346,9 @@ async def test_grounding_judge_only_receives_current_referenced_scope() -> None:
         await processor.process_conversation(messages)
 
     judge.assert_awaited_once()
-    judge_payload = judge.await_args.args[0]
+    judge_call = judge.await_args
+    assert judge_call is not None
+    judge_payload = judge_call.args[0]
     assert "换工作" in judge_payload["source_text"]
     assert "银行卡" not in judge_payload["source_text"]
 
