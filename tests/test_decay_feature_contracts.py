@@ -64,3 +64,18 @@ def test_legacy_decay_scheduler_reuses_feature_implementation() -> None:
 
     assert legacy_scheduler.__all__ == feature_scheduler.__all__
     assert legacy_scheduler.DecayScheduler is feature_scheduler.DecayScheduler
+
+
+def test_decay_configs_old_path_reuses_feature_owner() -> None:
+    """根配置聚合器应恒等导出 decay feature 的配置模型。"""
+
+    from core.base.config_validator import (
+        ForgettingAgentConfig as LegacyForgettingAgentConfig,
+    )
+    from core.base.config_validator import (
+        ImportanceDecayConfig as LegacyImportanceDecayConfig,
+    )
+    from core.features.decay.domain import ForgettingAgentConfig, ImportanceDecayConfig
+
+    assert LegacyForgettingAgentConfig is ForgettingAgentConfig
+    assert LegacyImportanceDecayConfig is ImportanceDecayConfig
