@@ -18,6 +18,7 @@ from .base.cost_control import build_cost_control_from_config
 from .cleaners.injection_cleaner import InjectionCleaner
 from .dedup.dedup_manager import DedupManager
 from .extractors.message_content_extractor import MessageContentExtractor
+from .features.identity.domain.models import IdentityTrust, ResolvedIdentity
 from .features.observability.application.runtime import monitored
 from .features.observability.infrastructure.debug_reporter import (
     debug_operation,
@@ -27,7 +28,6 @@ from .features.observability.infrastructure.debug_reporter import (
 from .handlers.recall_handler import RecallHandler
 from .handlers.recall_observability import RecallTimingContext
 from .handlers.reflection_handler import ReflectionHandler
-from .identity.models import IdentityTrust, ResolvedIdentity
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
 from .processors.memory_processor import MemoryProcessor

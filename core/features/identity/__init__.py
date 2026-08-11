@@ -12,6 +12,12 @@ from .domain.models import (
     ResolvedIdentity,
     StoredIdentity,
 )
+from .infrastructure.protocols import (
+    OneBot11IdentityAdapter,
+    ProtocolIdentityResolver,
+    QQOfficialIdentityAdapter,
+    build_default_protocol_parsers,
+)
 from .infrastructure.store import ProtocolIdentityStore
 
 __all__ = [
@@ -23,8 +29,12 @@ __all__ = [
     "IdentityTrust",
     "NameFieldState",
     "ObservationMutation",
+    "OneBot11IdentityAdapter",
     "ProtocolIdentityService",
+    "ProtocolIdentityResolver",
     "ProtocolIdentityStore",
+    "QQOfficialIdentityAdapter",
     "ResolvedIdentity",
     "StoredIdentity",
+    "build_default_protocol_parsers",
 ]

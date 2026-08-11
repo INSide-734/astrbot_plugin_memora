@@ -9,7 +9,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
@@ -17,10 +17,10 @@ from astrbot.api.platform import MessageType
 from ..base.config_manager import ConfigManager
 from ..cleaners.injection_cleaner import InjectionCleaner
 from ..extractors.message_content_extractor import MessageContentExtractor
+from ..features.identity.domain.models import IdentityTrust, ResolvedIdentity
 from ..features.observability.application import runtime as observability
 from ..features.observability.domain import recall_timing as rt
 from ..features.recall.application.continuity import build_continuity_context
-from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..injection.executor import InjectionExecutionContext, InjectionExecutor
 from ..injection.headroom import estimate_context_headroom_chars
 from ..injection.models import (
@@ -745,7 +745,7 @@ class RecallHandler:
             if not summary:
                 continue
             try:
-                confidence = float(item.get("confidence"))
+                confidence = float(cast(Any, item.get("confidence")))
             except (TypeError, ValueError):
                 continue
             if not math.isfinite(confidence):

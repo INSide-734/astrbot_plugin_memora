@@ -9,7 +9,8 @@ from astrbot.api.platform import MessageType
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
-from ..identity import IdentityTrust, ProtocolIdentityResolver
+from ..features.identity.domain.models import IdentityTrust
+from ..features.identity.infrastructure.protocols import ProtocolIdentityResolver
 
 _READ_ONLY_IDENTITY_RESOLVER = ProtocolIdentityResolver.default()
 

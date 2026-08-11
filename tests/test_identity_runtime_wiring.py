@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.identity import IdentityTrust, ResolvedIdentity
+from core.features.identity.domain.models import IdentityTrust, ResolvedIdentity
 
 
 def trusted_identity() -> ResolvedIdentity:
@@ -138,7 +139,7 @@ def recall_case() -> SimpleNamespace:
     handler._build_cognitive_context = AsyncMock(return_value="")
     event = MagicMock()
     event.unified_msg_origin = "aiocqhttp:private:10001"
-    event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
+    event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
     event.get_sender_id.return_value = "legacy-name"
     request = SimpleNamespace(
         prompt="问题",
@@ -276,8 +277,8 @@ def test_event_handler_retries_identity_sync_after_scheduling_failure() -> None:
     handler._create_maintenance_task = MagicMock(side_effect=RuntimeError("boom"))
     event = SimpleNamespace()
 
-    assert handler._resolve_identity(event, writes_blocked=False) is identity
-    assert handler._resolve_identity(event, writes_blocked=False) is identity
+    assert handler._resolve_identity(cast(Any, event), writes_blocked=False) is identity
+    assert handler._resolve_identity(cast(Any, event), writes_blocked=False) is identity
 
     assert handler._create_maintenance_task.call_count == 2
     assert getattr(event, handler._IDENTITY_SYNC_MARKER_ATTR) is False
@@ -348,16 +349,12 @@ async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> No
     await handler.handle_all_group_messages(event)
 
     runtime.resolve.assert_called_once_with(event)
-    assert (
-        handler._dedup.build_dedup_key.await_args.kwargs["sender_id_override"]
-        == "10001"
-    )
-    assert (
-        conversation.add_message_from_event.await_args.kwargs[
-            "identity"
-        ].canonical_user_id
-        == "10001"
-    )
+    dedup_args = handler._dedup.build_dedup_key.await_args
+    conversation_args = conversation.add_message_from_event.await_args
+    assert dedup_args is not None
+    assert conversation_args is not None
+    assert dedup_args.kwargs["sender_id_override"] == "10001"
+    assert conversation_args.kwargs["identity"].canonical_user_id == "10001"
     assert relation.apply_delta.await_args.kwargs["from_user"] == "10001"
 
 
@@ -517,7 +514,11 @@ async def test_reflection_passes_identity_and_uses_canonical_affection_user(
     )
     identity = trusted_identity()
 
-    await handler.handle_memory_reflection(event, response, identity=identity)
+    await handler.handle_memory_reflection(
+        event,
+        cast(Any, response),
+        identity=identity,
+    )
 
     assert conversation.add_message_from_event.await_args.kwargs["identity"] is identity
     assert affection.process_interaction.await_args.kwargs["user_id"] == "10001"
@@ -642,7 +643,7 @@ async def test_initializer_closes_identity_runtime_without_event_handler(
     store.close = AsyncMock()
     runtime = ProtocolIdentityRuntime(store=store)
     initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
-    initializer.conversation_manager = SimpleNamespace(identity_runtime=None)
+    cast(Any, initializer).conversation_manager = SimpleNamespace(identity_runtime=None)
     initializer.identity_runtime = runtime
 
     await initializer.close_extension_components()

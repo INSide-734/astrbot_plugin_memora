@@ -11,6 +11,7 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
+from ..features.identity.domain.models import IdentityTrust, ResolvedIdentity
 from ..features.observability.application import runtime as observability
 from ..features.reflection.application import llm_budget as budget_ops
 from ..features.reflection.application import reflection_metadata as metadata_ops
@@ -27,7 +28,6 @@ from ..features.reflection.domain.storage_outcomes import (
     ReflectionStoreResult,
     summarize_store_results,
 )
-from ..identity.models import IdentityTrust, ResolvedIdentity
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..processors.memory_processor import MemoryProcessor

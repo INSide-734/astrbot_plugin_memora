@@ -8,9 +8,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
+from ..features.identity.domain.models import IdentityTrust, ResolvedIdentity
 from ..models.conversation_models import Message
 from ..shared.contracts import IDENTITY_SCHEMA_VERSION
-from .models import IdentityTrust, ResolvedIdentity
 
 if TYPE_CHECKING:
     from ..features.identity import ProtocolIdentityStore, StoredIdentity
@@ -87,6 +87,7 @@ class MemoryIdentityEnricher:
         baseline = self._copy_candidates(candidates)
         if not self._is_trusted_scope(identity):
             return baseline
+        assert identity is not None
 
         working = self._copy_candidates(baseline)
         try:

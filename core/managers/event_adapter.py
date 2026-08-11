@@ -1,13 +1,11 @@
-"""
-事件适配 Mixin
-提供将 AstrBot 平台事件转换为内部消息格式的能力。
-"""
+"""提供将 AstrBot 平台事件转换为内部消息格式的 Mixin。"""
 
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from astrbot.api.platform import MessageType
 
-from ..identity.models import IdentityTrust, ResolvedIdentity
+from ..features.identity.domain.models import IdentityTrust, ResolvedIdentity
 from ..models.conversation_models import Message
 from .sender_resolver import _resolve_sender_name
 
@@ -102,7 +100,11 @@ class EventAdapterMixin:
             else "unknown"
         )
 
-        return await self.add_message(
+        add_message = cast(
+            Callable[..., Awaitable[Message]],
+            getattr(self, "add_message"),
+        )
+        return await add_message(
             session_id=session_id,
             role=role,
             content=content,

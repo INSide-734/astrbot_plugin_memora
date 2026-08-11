@@ -6,18 +6,43 @@
 import os
 from collections.abc import AsyncGenerator
 from datetime import datetime
+from typing import Any, Protocol
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from astrbot.api.platform import MessageType
 
+from ..features.identity.domain.models import IdentityTrust
 from ..features.learning.application import record_explicit_correction
 from ..i18n_backend import t, t_list
-from ..identity import IdentityTrust
+
+
+class _QueryMemoryEngine(Protocol):
+    """声明查询命令实际使用的记忆引擎最小接口。"""
+
+    db_path: str
+    feedback_signal_manager: Any
+
+    async def get_statistics(self) -> dict[str, Any]:
+        """返回命令状态页需要的统计快照。"""
+
+        ...
+
+    async def search_memories(self, **kwargs: Any) -> list[Any]:
+        """按已校验作用域检索记忆。"""
+
+        ...
+
+    async def delete_memory(self, doc_id: int) -> bool:
+        """删除指定 canonical 记忆。"""
+
+        ...
 
 
 class QueryCommandMixin:
     """查询类命令的 Mixin 基类"""
+
+    memory_engine: _QueryMemoryEngine | None
 
     @staticmethod
     def _maintenance_write_guard_message() -> str | None:

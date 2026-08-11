@@ -1,12 +1,11 @@
-"""协议身份适配器的固定注册与唯一选择。"""
+"""协议身份解析器的唯一选择与安全降级。"""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .models import IdentityProtocolAdapter, IdentityTrust, ResolvedIdentity
-from .onebot11 import OneBot11IdentityAdapter
-from .qq_official import QQOfficialIdentityAdapter
+from ...domain.models import IdentityProtocolAdapter, IdentityTrust, ResolvedIdentity
+from .registry import build_default_protocol_parsers
 
 
 def _untrusted_identity(trust_status: IdentityTrust) -> ResolvedIdentity:
@@ -29,7 +28,7 @@ def _untrusted_identity(trust_status: IdentityTrust) -> ResolvedIdentity:
 
 
 class ProtocolIdentityResolver:
-    """从固定适配器集合中唯一选择并解析协议身份。"""
+    """从不可变解析器集合中唯一选择并解析协议身份。"""
 
     def __init__(self, adapters: Iterable[IdentityProtocolAdapter]) -> None:
         """冻结适配器注册顺序，避免运行期动态接管事件。"""
@@ -37,10 +36,20 @@ class ProtocolIdentityResolver:
         self._adapters = tuple(adapters)
 
     @classmethod
-    def default(cls) -> "ProtocolIdentityResolver":
-        """构建固定注册 OneBot 11 与 QQ 官方协议的默认解析器。"""
+    def default(
+        cls,
+        additional_parsers: Iterable[IdentityProtocolAdapter] = (),
+    ) -> "ProtocolIdentityResolver":
+        """构建内置协议解析器，并按固定顺序追加调用方解析器。
 
-        return cls((OneBot11IdentityAdapter(), QQOfficialIdentityAdapter()))
+        参数:
+            additional_parsers: 追加到内置 manifest 后的协议解析器。
+
+        返回:
+            冻结解析器顺序的统一身份 resolver。
+        """
+
+        return cls(build_default_protocol_parsers(additional_parsers))
 
     def resolve(self, event: object) -> ResolvedIdentity:
         """解析事件；重复接管或普通适配器异常均按不可信结果降级。"""

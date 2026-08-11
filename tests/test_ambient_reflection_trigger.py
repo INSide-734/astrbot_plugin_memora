@@ -10,6 +10,7 @@ import pytest
 from astrbot.api.platform import MessageType
 
 from core.event_handler import EventHandler
+from core.features.identity.domain.models import IdentityTrust, ResolvedIdentity
 from core.features.reflection.application import reflection_backlog as feature_backlog
 from core.features.reflection.application import reflection_trigger as feature_trigger
 from core.features.reflection.application.reflection_trigger import (
@@ -18,7 +19,6 @@ from core.features.reflection.application.reflection_trigger import (
 from core.handlers import reflection_backlog as legacy_backlog
 from core.handlers import reflection_trigger as legacy_trigger
 from core.handlers.reflection_handler import ReflectionHandler
-from core.identity.models import IdentityTrust, ResolvedIdentity
 
 
 def _unsupported_group_identity() -> ResolvedIdentity:

@@ -15,6 +15,7 @@ from ...features.decay.application import DecayScheduler
 from ...features.evolution.application import MemoryEvolutionManager
 from ...features.evolution.infrastructure import MemoryEvolutionStore
 from ...features.identity.application.service import ProtocolIdentityService
+from ...features.identity.infrastructure.protocols import ProtocolIdentityResolver
 from ...features.identity.infrastructure.store import ProtocolIdentityStore
 from ...features.knowledge.application import KnowledgeProposalPipeline
 from ...features.knowledge.infrastructure import KnowledgeExtractor
@@ -30,7 +31,6 @@ from ...features.profiles.application import ProfileProposalPipeline
 from ...features.profiles.infrastructure import ProfileExtractor
 from ...identity.conversation_sync import ConversationIdentitySynchronizer
 from ...identity.memory import MemoryIdentityEnricher
-from ...identity.resolver import ProtocolIdentityResolver
 from ...identity.runtime import ProtocolIdentityRuntime
 from ...injection.recorder import InjectionDecisionRecorder
 from ...managers.conversation_manager import ConversationManager

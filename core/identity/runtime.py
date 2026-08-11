@@ -13,10 +13,10 @@ from ..features.identity.domain.models import (
     ResolvedIdentity,
     StoredIdentity,
 )
+from ..features.identity.infrastructure.protocols import ProtocolIdentityResolver
 from ..features.identity.infrastructure.store import ProtocolIdentityStore
 from .conversation_sync import ConversationIdentitySynchronizer
 from .memory import MemoryIdentityEnricher
-from .resolver import ProtocolIdentityResolver
 
 
 class ProtocolIdentityRuntime:

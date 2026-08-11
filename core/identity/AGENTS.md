@@ -3,12 +3,12 @@
 # 协议稳定身份模块
 
 **最后更新：** 2026-07-23
-**源码范围：** `core/identity/*.py`
-**上游装配：** `core/initializer/component_factory.py`、`core/event_handler.py`
+**源码范围：** `core/identity/{runtime.py,conversation_sync.py,memory.py}`、`core/features/identity/`
+**上游装配：** `core/platform/composition/component_factory.py`、`core/event_handler.py`
 
 ## 职责与边界
 
-`core/identity/` 把平台事件解析为稳定、不可变的用户身份，并尽力维护当前显示名称、作用域别名、历史会话名称和召回时的只读身份说明。它不负责修改 canonical memory、检索排序、平台事件模型或管理员画像。
+`core/features/identity/` 拥有协议身份模型、服务、Store 与解析器；`core/identity/` 仅保留尚未纵切的会话同步、记忆增强和运行时编排。两者共同把平台事件解析为稳定、不可变的用户身份，并尽力维护当前显示名称、作用域别名、历史会话名称和召回时的只读身份说明。它们不负责修改 canonical memory、检索排序、平台事件模型或管理员画像。
 
 当前内置 OneBot 11 与 QQ 官方机器人适配器；其他协议通过 `IdentityProtocolAdapter` 接口与固定注册表扩展，不在事件处理器或记忆处理器中增加协议分支。
 
@@ -16,16 +16,18 @@
 
 | 文件 | 职责 |
 |---|---|
-| `models.py` | `ResolvedIdentity`、信任状态、名称字段状态与适配器协议 |
-| `onebot11.py` | OneBot 11 严格识别、QQ/group 规范化、名称清理和匿名 opaque sender |
-| `qq_official.py` | QQ 官方 WebSocket/Webhook 场景识别、OpenID/实例隔离、冲突校验和 RFC3339 时间 |
-| `resolver.py` | 固定适配器顺序、冲突隔离与 unsupported 降级 |
-| `service.py` | 当前昵称/群名片合并和旧名称别名计划 |
+| `../features/identity/domain/models.py` | `ResolvedIdentity`、信任状态、名称字段状态与解析器协议 |
+| `../features/identity/infrastructure/protocols/onebot11.py` | OneBot 11 严格识别、QQ/group 规范化、名称清理和匿名 opaque sender |
+| `../features/identity/infrastructure/protocols/qq_official.py` | QQ 官方 WebSocket/Webhook 场景识别、OpenID/实例隔离、冲突校验和 RFC3339 时间 |
+| `../features/identity/infrastructure/protocols/registry.py` | 固定内置 manifest 与调用方解析器追加入口 |
+| `../features/identity/infrastructure/protocols/resolver.py` | 唯一选择、冲突隔离与 unsupported 降级 |
+| `../features/identity/application/service.py` | 当前昵称/群名片合并和旧名称别名计划 |
+| `../features/identity/infrastructure/store.py` | 三张身份目录表及查询实现 |
 | `conversation_sync.py` | 按可信作用域同步 user 消息显示名称并失效受影响缓存 |
 | `runtime.py` | 解析、尽力持久化、同步、只读 Enricher 与 Store 关闭边界 |
 | `memory.py` | 稳定记忆参与者 metadata、固定 Prompt 约束和历史别名只读增强 |
 
-持久化实现位于 `core/features/identity/infrastructure/store.py`，只维护 `identity_users`、`identity_scope_members`、`identity_aliases` 三张独立表；`core/storage/protocol_identity_store.py` 仅保留兼容导出。
+持久化实现只维护 `identity_users`、`identity_scope_members`、`identity_aliases` 三张独立表；已迁移的旧模型、服务、Store 与协议解析器路径不再提供兼容导出，所有调用方必须使用 feature owner。
 
 ## 核心契约
 
@@ -56,11 +58,11 @@
 
 ## 初始化、关闭与依赖
 
-`ComponentFactory` 在 `memora.db` 可用后构造 Store、Resolver、Service、Synchronizer、Enricher 和 Runtime，并把 Runtime 挂到 `ConversationManager`。`EventHandler` 复用该实例；不得为请求重新创建 Store 或注册表。
+`ComponentFactory` 在 `memora.db` 可用后从 `core.features.identity` 构造 Store、Resolver 和 Service，再组合 Synchronizer、Enricher 与 Runtime，并把 Runtime 挂到 `ConversationManager`。`EventHandler` 复用该实例；不得为请求重新创建 Store 或注册表。
 
 身份 Store 初始化普通失败时关闭部分连接并返回 resolver-only Runtime；取消继续传播。关闭由 Runtime 幂等释放 Store，不启动独立 worker，也不在关闭期同步名称。
 
-依赖方向为 `event_handler/initializer` → `identity` → `storage/models`。identity 不得导入 Page API、命令、handler 或 `main.py`；`memory.py` 对 Store 只使用类型边界与构造注入。
+依赖方向为 `event_handler/composition` → `core/identity` 运行时适配层 → `core/features/identity`。feature owner 不得反向导入旧适配层；两者都不得导入 Page API、命令、handler 或 `main.py`，`memory.py` 对 Store 只使用类型边界与构造注入。
 
 ## 验证入口
 

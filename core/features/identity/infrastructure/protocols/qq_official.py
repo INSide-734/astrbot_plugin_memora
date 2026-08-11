@@ -10,7 +10,7 @@ from datetime import datetime
 
 from astrbot.api.platform import MessageType
 
-from .models import IdentityTrust, NameFieldState, ResolvedIdentity
+from ...domain.models import IdentityTrust, NameFieldState, ResolvedIdentity
 
 _SUPPORTED_PLATFORMS = frozenset({"qq_official", "qq_official_webhook"})
 _PROTOCOL = "qq_official"

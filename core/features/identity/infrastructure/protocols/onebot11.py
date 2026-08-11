@@ -8,7 +8,7 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from .models import IdentityTrust, NameFieldState, ResolvedIdentity
+from ...domain.models import IdentityTrust, NameFieldState, ResolvedIdentity
 
 _INT64_MAX = 9_223_372_036_854_775_807
 _MISSING = object()

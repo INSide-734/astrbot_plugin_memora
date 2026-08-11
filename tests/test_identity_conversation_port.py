@@ -32,7 +32,7 @@ def test_event_handler_without_identity_port_returns_unsupported_identity() -> N
     """事件处理器不得从会话管理器间接取得身份端口。"""
 
     from core.event_handler import EventHandler
-    from core.identity import IdentityTrust
+    from core.features.identity.domain.models import IdentityTrust
     from core.identity.runtime import ProtocolIdentityRuntime
 
     config = MagicMock()
