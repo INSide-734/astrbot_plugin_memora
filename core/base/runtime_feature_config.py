@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from ..platform.config.feature_contributions import (
     AtomClassifierConfig,
     ExportConfig,
+    FlashbulbConfig,
     HumanLikeMemoryConfig,
     HybridScoringConfig,
     PersonaDecayConfig,
@@ -51,13 +52,6 @@ class EpisodeClusteringConfig(BaseModel):
     enabled: bool = True
     time_window_hours: float = 24.0
     topic_overlap_threshold: float = 0.5
-
-
-class FlashbulbConfig(BaseModel):
-    """高情绪强度记忆衰减保护配置。"""
-
-    enabled: bool = True
-    intensity_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
 
 
 class KnowledgeBaseConfig(BaseModel):

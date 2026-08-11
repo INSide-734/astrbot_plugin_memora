@@ -1,5 +1,5 @@
 """记忆衰减 feature 的领域配置。"""
 
-from .config import ForgettingAgentConfig, ImportanceDecayConfig
+from .config import FlashbulbConfig, ForgettingAgentConfig, ImportanceDecayConfig
 
-__all__ = ["ForgettingAgentConfig", "ImportanceDecayConfig"]
+__all__ = ["FlashbulbConfig", "ForgettingAgentConfig", "ImportanceDecayConfig"]

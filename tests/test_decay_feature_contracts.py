@@ -79,3 +79,14 @@ def test_decay_configs_old_path_reuses_feature_owner() -> None:
 
     assert LegacyForgettingAgentConfig is ForgettingAgentConfig
     assert LegacyImportanceDecayConfig is ImportanceDecayConfig
+
+
+def test_flashbulb_config_old_path_reuses_decay_feature_owner() -> None:
+    """旧运行时配置路径应恒等导出 decay 的闪光灯记忆模型。"""
+
+    from core.base.runtime_feature_config import (
+        FlashbulbConfig as LegacyFlashbulbConfig,
+    )
+    from core.features.decay.domain import FlashbulbConfig
+
+    assert LegacyFlashbulbConfig is FlashbulbConfig

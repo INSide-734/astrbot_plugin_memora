@@ -1,7 +1,11 @@
 """组合各 feature 拥有的配置模型。"""
 
 from ...features.conversation.domain import SessionManagerConfig
-from ...features.decay.domain import ForgettingAgentConfig, ImportanceDecayConfig
+from ...features.decay.domain import (
+    FlashbulbConfig,
+    ForgettingAgentConfig,
+    ImportanceDecayConfig,
+)
 from ...features.evolution.domain import MemoryEvolutionConfig
 from ...features.memory.domain.atom_classifier_config import AtomClassifierConfig
 from ...features.memory.domain.atom_quality_config import AtomQualityFilterConfig
@@ -35,6 +39,7 @@ __all__ = [
     "AtomQualityFilterConfig",
     "AtomClassifierConfig",
     "ExportConfig",
+    "FlashbulbConfig",
     "ForgettingAgentConfig",
     "FilteringConfig",
     "FusionStrategyConfig",

@@ -3,6 +3,13 @@
 from pydantic import BaseModel, Field
 
 
+class FlashbulbConfig(BaseModel):
+    """高情绪强度记忆衰减保护配置。"""
+
+    enabled: bool = True
+    intensity_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
+
+
 class ForgettingAgentConfig(BaseModel):
     """遗忘代理配置。"""
 
@@ -32,4 +39,4 @@ class ImportanceDecayConfig(BaseModel):
     )
 
 
-__all__ = ["ForgettingAgentConfig", "ImportanceDecayConfig"]
+__all__ = ["FlashbulbConfig", "ForgettingAgentConfig", "ImportanceDecayConfig"]
