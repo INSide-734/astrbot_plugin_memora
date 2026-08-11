@@ -46,7 +46,7 @@ flowchart LR
 
 - 上游：`core/plugin_initializer.py`、`core/api/social_api.py`、`core/tools/social_tools.py`。
 - 本模块：`relation_manager.py -> models.py + relation_store.py`。
-- 下游：`core/storage/base.py`、`core/base/entity_editing.py`、`aiosqlite`。
+- 下游：`core/storage/base.py`、`core/shared/entity_editing.py`、`aiosqlite`。
 - 相关上下文：[存储模块](../storage/AGENTS.md)、[基础领域能力](../base/AGENTS.md)。
 
 ## 隐私、安全与修改约束

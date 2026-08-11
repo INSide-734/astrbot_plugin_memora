@@ -9,14 +9,14 @@ from unittest.mock import patch
 import aiosqlite
 import pytest
 
-from core.base.entity_editing import (
-    EntityNotFoundError,
-    compute_entity_revision,
-)
 from core.managers.profile_manager import ProfileManager
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.models.memory_evolution import MemorySourceRef
 from core.models.user_profile import TagCategory, UserPreferences, UserTag
+from core.shared.entity_editing import (
+    EntityNotFoundError,
+    compute_entity_revision,
+)
 from core.storage.profile_store import ProfileStore
 
 _DERIVED_PROVENANCE = DomainProvenance(

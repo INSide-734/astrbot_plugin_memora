@@ -16,16 +16,16 @@ import pytest
 
 from core.api.jargon_api import JargonApiMixin
 from core.api.response_utils import error_response
-from core.base.entity_editing import (
-    EditConflictError,
-    EntityAlreadyExistsError,
-    EntityNotFoundError,
-)
 from core.base.list_sorting import SortQuery
 from core.jargon.jargon_admin_service import JargonAdminService
 from core.jargon.jargon_query import JargonQueryService
 from core.jargon.jargon_store import JargonStore
 from core.page_api import PluginPageApi
+from core.shared.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+)
 
 
 def _make_mock_request(**args):

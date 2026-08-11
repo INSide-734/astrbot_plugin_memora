@@ -11,13 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.api.social_api import SocialApiMixin
-from core.base.entity_editing import (
+from core.base.list_sorting import SortQuery
+from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     EntityValidationError,
 )
-from core.base.list_sorting import SortQuery
 
 
 def _mock_request(**args):

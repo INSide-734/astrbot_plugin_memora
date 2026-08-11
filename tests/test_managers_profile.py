@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.base.entity_editing import EntityValidationError
 from core.base.list_sorting import SortQuery
 from core.managers.profile_manager import ProfileManager
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
@@ -18,6 +17,7 @@ from core.models.user_profile import (
     UserProfile,
     UserTag,
 )
+from core.shared.entity_editing import EntityValidationError
 
 _DERIVED_PROVENANCE = DomainProvenance(
     DomainObjectOrigin.DERIVED,

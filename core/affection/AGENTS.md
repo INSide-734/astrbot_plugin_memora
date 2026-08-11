@@ -50,7 +50,7 @@ flowchart LR
 
 - 上游：`core/plugin_initializer.py`、`core/api/affection_api.py`、`core/tools/affection_tools.py`。
 - 本模块：`affection_manager.py -> models.py + affection_store.py + mood_cascade.py`；`mood_cascade.py -> models.py`。
-- 下游：`core/base/entity_editing.py`、`core/storage/base_store.py`、`aiosqlite`、可选 LLM 适配器。
+- 下游：`core/shared/entity_editing.py`、`core/storage/base_store.py`、`aiosqlite`、可选 LLM 适配器。
 - 相关上下文：[存储模块](../storage/AGENTS.md)、[基础领域能力](../base/AGENTS.md)。
 
 ## 隐私、安全与修改约束

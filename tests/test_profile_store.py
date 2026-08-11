@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock, patch
 import aiosqlite
 import pytest
 
-from core.base.entity_editing import (
+from core.base.list_sorting import SortQuery
+from core.models.user_profile import TagCategory, UserPreferences, UserTag
+from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     compute_entity_revision,
 )
-from core.base.list_sorting import SortQuery
-from core.models.user_profile import TagCategory, UserPreferences, UserTag
 from core.storage.profile_store import ProfileStore
 
 

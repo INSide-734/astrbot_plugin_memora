@@ -8,7 +8,7 @@
 
 ## 职责与边界
 
-配置事务、迁移、所有权和运行时影响分类的唯一 owner 已迁至 `core/platform/config/`；跨 feature 常量、异常与 Adapter 能力归属 `core/shared/`。`core/base/` 目前保留配置模型聚合器，以及实体编辑和排序尚未完成测试调用方切换的兼容模块。
+配置事务、迁移、所有权和运行时影响分类的唯一 owner 已迁至 `core/platform/config/`；跨 feature 常量、异常与 Adapter 能力归属 `core/shared/`。`core/base/` 目前保留配置模型聚合器，以及排序尚未完成测试调用方切换的兼容模块。
 
 当前低层基础契约负责：
 
@@ -73,7 +73,7 @@ flowchart LR
 | `config_defaults.py` | 默认值维护说明 | 新键必须同步 Pydantic 模型、根级 `_conf_schema.json` 与访问处默认值 |
 | `../shared/constants.py` | `MEMORY_INJECTION_HEADER/FOOTER`、`FAKE_TOOL_CALL_NAME/ID_PREFIX` | 边界和伪调用标识同时被格式化器、清理器与测试依赖，不可单边改名 |
 | `../shared/errors.py` | `MemoraException` 及 16 个语义子类 | `message` 与稳定 `error_code` 是上层错误映射契约；`core` 根门面保留 8 个常用异常的恒等导出 |
-| `entity_editing.py` | `compute_entity_revision()`、编辑异常族 | revision 使用排序、紧凑、禁 NaN 的 JSON；该异常族独立于 `MemoraException` |
+| `../shared/entity_editing.py` | `compute_entity_revision()`、编辑异常族 | revision 使用排序、紧凑、禁 NaN 的 JSON；该异常族独立于 `MemoraException` |
 | `cost_control.py` | `CostControl`、`build_cost_control_from_config()` | 只接受 `CostControlConfig` 或 `cost_control` 叶子映射，生成不可变功能许可门；不得传入完整配置树 |
 | `../shared/extra_llm_budget.py` | `ExtraLlmBudget`、`budgeted_extra_llm_call()`、`extra_llm_budget_scope()` | 请求级 reservation 防并发超卖；Provider 成功后 commit，普通失败或取消 release；观测只含固定标量 |
 | `__init__.py` | 配置事务类型 | 只保留配置管理迁移期延迟导出，不再转发已迁移的 shared 常量与异常 |
