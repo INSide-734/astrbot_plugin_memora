@@ -1,5 +1,8 @@
 """Memory feature 所有权与旧路径兼容契约。"""
 
+import subprocess
+import sys
+
 from core.features.memory import (
     AtomStore,
     MemoryAtom,
@@ -14,6 +17,27 @@ from core.managers.write_op_journal import WriteOpJournal as LegacyWriteOpJourna
 from core.models.memory_atom import MemoryAtom as LegacyMemoryAtom
 from core.storage.atom_store import AtomStore as LegacyAtomStore
 from core.storage.base_store import BaseStore as LegacyInstanceBaseStore
+
+
+def test_memory_domain_owner_first_import_stays_lightweight() -> None:
+    """全新解释器导入 memory 领域模块时不得提前加载 FAISS。"""
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; "
+            "from core.features.memory.domain.revision import memory_revision; "
+            "assert 'faiss' not in sys.modules; "
+            "print(memory_revision.__module__)",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "core.features.memory.domain.revision"
 
 
 def test_legacy_canonical_imports_are_feature_implementations() -> None:
