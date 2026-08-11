@@ -19,7 +19,7 @@
 | `../main.py` | AstrBot 插件入口；创建并持有初始化器、事件处理器、命令处理器、页面 API 与功能委托 | 本表其余入口 |
 | `plugin_initializer.py` · `PluginInitializer` | 提供商等待、数据库/FAISS 准备、组件装配、认知组件初始化与有序关闭 | `initializer/`、`managers/`、`processors/`、`storage/`、`schedulers/` |
 | `initializer/component_factory.py` · `ComponentFactory` | 在 `build_all(...)` 中构造共享数据库、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、协议身份 Runtime、验证器、调度器、注入记录与 Memory Evolution 组件 | `base/`、`identity/`、`storage/`、`retrieval/`、`managers/`、`processors/` |
-| `adapter_capabilities.py` / `provider_adapters.py` | 定义不可变能力快照，并在构建时冻结 LLM/Embedding Provider 调用入口 | `initializer/`、`processors/`、`validators/`、`retrieval/`、`utils/` |
+| `shared/adapter_capabilities.py` / `platform/provider/adapters.py` | 定义不可变能力快照，并在构建时冻结 LLM/Embedding Provider 调用入口；顶层旧路径只保留恒等导出 | `initializer/`、`processors/`、`validators/`、`retrieval/`、`utils/` |
 | `event_handler.py` · `EventHandler` | 处理全量群消息、LLM 请求前召回注入、LLM 响应后反思、会话重置与维护任务关闭 | `handlers/`、`injection/`、`cleaners/`、`dedup/`、`extractors/` |
 | `managers/memory_engine.py` · `MemoryEngine` | 长期记忆的统一运行时门面；组合 managers 中的生命周期、CRUD、召回、统计等能力 | `storage/`、`retrieval/`、`processors/`、`models/` |
 | `page_api.py` · `PluginPageApi` | 以 `PAGE_API_PREFIX` 为主前缀聚合 `api/` mixin，注册仪表盘读写、维护、诊断与评估端点 | `api/`、初始化器发布的共享组件 |

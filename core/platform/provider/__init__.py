@@ -1,6 +1,6 @@
-"""平台 Provider adapter 的旧路径兼容导出。"""
+"""AstrBot Provider 能力探测与冻结调用边界。"""
 
-from .platform.provider.adapters import (
+from .adapters import (
     AdapterResponseError,
     EmbeddingCallMode,
     EmbeddingProviderAdapter,

@@ -7,8 +7,8 @@ from typing import Any
 from astrbot.api import logger
 from astrbot.api.provider import Provider
 
-from ...adapter_capabilities import UnsupportedAdapterCapability
-from ...provider_adapters import EmbeddingProviderAdapter
+from ...shared.adapter_capabilities import UnsupportedAdapterCapability
+from ..provider import EmbeddingProviderAdapter
 
 
 def _supports_embedding(provider: Any) -> bool:
