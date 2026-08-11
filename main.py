@@ -17,7 +17,6 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 
-from .core.base.config_manager import ConfigManager
 from .core.command_endpoints import CommandEndpointsMixin
 from .core.command_handler import CommandHandler
 from .core.event_handler import EventHandler
@@ -31,15 +30,18 @@ from .core.i18n_backend import init as i18n_init
 from .core.i18n_backend import t
 from .core.managers.backup_models import BackupOperationError
 from .core.platform.composition.plugin_initializer import PluginInitializer
+from .core.platform.composition.reload_lifecycle import (
+    run_scheduled_plugin_reload,
+)
+from .core.platform.composition.reload_lifecycle import (
+    schedule_learning_reload as schedule_learning_reload_callback,
+)
+from .core.platform.composition.shutdown_lifecycle import stop_runtime_producers
+from .core.platform.config.manager import ConfigManager
 from .core.platform.resources import (
     PluginResourceLocator,
     build_package_resource_reader,
 )
-from .core.plugin_reload_lifecycle import run_scheduled_plugin_reload
-from .core.plugin_reload_lifecycle import (
-    schedule_learning_reload as schedule_learning_reload_callback,
-)
-from .core.plugin_shutdown_lifecycle import stop_runtime_producers
 from .core.tools import MemoryMemorizeTool, MemorySearchTool
 from .core.utils.version import PLUGIN_VERSION
 from .core.version_check import (  # noqa: F401
