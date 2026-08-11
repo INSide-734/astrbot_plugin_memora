@@ -9,6 +9,7 @@ from .memory_atom import (
     compute_decay_score,
     compute_ttl,
 )
+from .migration_config import MigrationSettings
 from .revision import memory_revision
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "AtomType",
     "DecayType",
     "MemoryAtom",
+    "MigrationSettings",
     "PrivacyLevel",
     "compute_decay_score",
     "compute_ttl",

@@ -57,3 +57,12 @@ def test_graph_config_old_path_reuses_feature_owner() -> None:
     from core.features.memory.domain.graph_memory_config import GraphMemoryConfig
 
     assert LegacyGraphMemoryConfig is GraphMemoryConfig
+
+
+def test_migration_config_old_path_reuses_memory_feature_owner() -> None:
+    """根配置聚合器应恒等导出 memory feature 的迁移配置模型。"""
+
+    from core.base.config_validator import MigrationSettings as LegacyMigrationSettings
+    from core.features.memory.domain.migration_config import MigrationSettings
+
+    assert LegacyMigrationSettings is MigrationSettings

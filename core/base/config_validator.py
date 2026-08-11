@@ -11,6 +11,7 @@ from ..platform.config.feature_contributions import (
     GraphMemoryConfig,
     ImportanceDecayConfig,
     MemoryEvolutionConfig,
+    MigrationSettings,
     RecallEngineConfig,
     ReflectionEngineConfig,
     TopicSegmentationConfig,
@@ -133,13 +134,6 @@ class FilteringConfig(BaseModel):
 
     use_persona_filtering: bool = Field(default=True, description="是否使用人格过滤")
     use_session_filtering: bool = Field(default=True, description="是否使用会话过滤")
-
-
-class MigrationSettings(BaseModel):
-    """数据库迁移设置"""
-
-    auto_migrate: bool = Field(default=True, description="是否启用自动迁移")
-    create_backup: bool = Field(default=True, description="迁移前是否创建备份")
 
 
 class RerankerConfig(BaseModel):

@@ -4,6 +4,7 @@ from ...features.decay.domain import ForgettingAgentConfig, ImportanceDecayConfi
 from ...features.evolution.domain import MemoryEvolutionConfig
 from ...features.memory.domain.atom_quality_config import AtomQualityFilterConfig
 from ...features.memory.domain.graph_memory_config import GraphMemoryConfig
+from ...features.memory.domain.migration_config import MigrationSettings
 from ...features.recall.domain import PresetName, RecallEngineConfig
 from ...features.reflection.domain.config import (
     LegacyBackfillConfig,
@@ -21,6 +22,7 @@ __all__ = [
     "ImportanceDecayConfig",
     "LegacyBackfillConfig",
     "MemoryEvolutionConfig",
+    "MigrationSettings",
     "PresetName",
     "RecallEngineConfig",
     "ReflectionEngineConfig",
