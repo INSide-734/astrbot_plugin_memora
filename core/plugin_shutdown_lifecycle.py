@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any
+
+from .platform.security.lifecycle import close_prompt_protection
 
 
 def unregister_plugin_page_routes(plugin: object) -> int:
@@ -40,27 +41,6 @@ def unregister_plugin_page_routes(plugin: object) -> int:
             retained.append(registration)
     registrations[:] = retained
     return removed
-
-
-async def close_prompt_protection(initializer: object) -> None:
-    """关闭组合根发布的提示词保护端口并清理运行时作用域。
-
-    参数:
-        initializer: 持有平台提示词保护端口的组合根。
-    """
-
-    protection = getattr(initializer, "prompt_protection", None)
-    if protection is None:
-        return
-    try:
-        closer = getattr(protection, "close", None)
-        if callable(closer):
-            result = closer()
-            if inspect.isawaitable(result):
-                await result
-    finally:
-        if getattr(initializer, "prompt_protection", None) is protection:
-            setattr(initializer, "prompt_protection", None)
 
 
 async def stop_runtime_producers(

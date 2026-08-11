@@ -36,7 +36,7 @@
 1. `main.py` 建立配置、插件级 `BackupManager` 与 `PluginInitializer(context, config_manager, data_dir)`；`_initialize_plugin()` 先执行按需自动备份和 `apply_pending_restores()`，再调用 `initialize()`，避免在恢复事务未应用时发布运行时。
 2. `PluginInitializer` 使用 `ProviderLoader` 与 `ProviderWaiter` 非阻塞等待 embedding/LLM provider；`ComponentFactory` 在索引或数据库 I/O 前验证文本生成和 Embedding 入口并冻结调用方式，能力不足时不发布半初始化运行时。
 3. provider 就绪后，`_run_full_init()` 调用 `ComponentFactory.build_all(...)`，完成数据库、图存储、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、`ProtocolIdentityRuntime`、索引验证器、衰减调度器、注入决策组件以及 Memory Evolution Store/Gate/Consolidator/Manager 的装配；身份目录普通初始化失败降级为仅解析模式，仅 `enabled=true` 且 mode 为 `readonly`/`active` 时向引擎注入派生 relation/projection 读取器。
-4. 初始化器再建立共享提示词保护服务，以及可选的 affection、expression、jargon、social 认知组件；可选组件失败按现有路径记录并隔离，不得伪装为已就绪。
+4. 初始化器再通过 `platform/security/prompt_protection.py` 建立共享提示词保护服务，并由 `platform/security/lifecycle.py` 负责关停清理；affection、expression、jargon、social 等可选认知组件失败按现有路径记录并隔离，不得伪装为已就绪。
 5. `main.py` 仅使用初始化器发布的实例创建 `EventHandler`、`CommandHandler` 和 `PluginPageApi`，保证消息、命令和页面请求共享同一存储与引擎。
 6. 关闭阶段先阻止新工作并等待/取消事件维护任务，再停止 Memory Evolution worker 并关闭其 Store，然后按依赖顺序关闭注入记录器、调度器、其他 manager/store 和数据库；`CancelledError` 必须继续传播，清理失败不能覆盖原始初始化失败。
 

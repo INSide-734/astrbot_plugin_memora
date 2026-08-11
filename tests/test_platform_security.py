@@ -6,9 +6,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.platform.security import build_prompt_protection_port
-from core.plugin_shutdown_lifecycle import close_prompt_protection
+from core.platform.security import build_prompt_protection_port, close_prompt_protection
 from core.shared.contracts import PromptProtectionPort
+
+
+def test_shutdown_old_path_reuses_platform_security_lifecycle() -> None:
+    """旧关停路径只能导出平台 security 的唯一关闭函数。"""
+
+    from core import plugin_shutdown_lifecycle as legacy_shutdown
+    from core.platform.security import close_prompt_protection as platform_close
+
+    assert legacy_shutdown.close_prompt_protection is platform_close
 
 
 def test_prompt_protection_adapter_exposes_port_and_consumes_scope() -> None:
