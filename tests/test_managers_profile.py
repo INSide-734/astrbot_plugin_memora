@@ -7,15 +7,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.profile_manager import ProfileManager
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.models.memory_evolution import MemorySourceRef
-from core.models.user_profile import (
+from core.features.profiles.application.profile_manager import ProfileManager
+from core.features.profiles.domain.models import (
     TagCategory,
     UserPreferences,
     UserProfile,
     UserTag,
 )
+from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from core.models.memory_evolution import MemorySourceRef
 from core.shared.entity_editing import EntityValidationError
 from core.shared.list_sorting import SortQuery
 

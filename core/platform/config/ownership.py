@@ -121,7 +121,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "user_profile": _ownership(
         "user_profile",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.profile_manager",
+        "core.features.profiles.application.profile_manager",
     ),
     "cost_control": _ownership(
         "cost_control", ConfigOwnershipKind.RUNTIME, "core.shared.cost_control"

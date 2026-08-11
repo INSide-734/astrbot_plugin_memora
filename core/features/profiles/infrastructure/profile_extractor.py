@@ -122,7 +122,7 @@ class ProfileExtractor:
             return {}
 
     @staticmethod
-    def _build_tags(tag_data: list[dict[str, Any]]) -> list[UserTag]:
+    def _build_tags(tag_data: list[dict[str, Any]] | None) -> list[UserTag]:
         """把不可信标签数据规范为最多五个领域模型。"""
 
         tags: list[UserTag] = []

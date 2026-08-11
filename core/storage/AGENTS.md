@@ -3,11 +3,11 @@
 # Storage 模块上下文
 
 **最后更新：** 2026-07-21
-**源码范围：** `core/storage/*.py`（19 个 Python 文件）
+**源码范围：** `core/storage/*.py` 与各 feature 自有持久化模块
 
 ## 职责与边界
 
-`core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存原子、图、会话消息、知识、笔记、画像和注入决策遥测，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
+`core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存会话消息、知识、笔记和注入决策遥测，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。原子与图存储已归属 memory feature，用户画像存储已归属 profiles feature。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
 
 canonical Schema、Atom、幂等映射、来源校验、写日志、graph store 及共享连接实现已迁至 `core/features/memory/`；对应 `core/storage/` 路径仅保留单实现兼容导出，表名、数据目录和连接生命周期不变。
 
@@ -37,7 +37,7 @@ graph TD
     PoolBase --> Graph[GraphStore]
     PoolBase --> Knowledge[KnowledgeStore]
     PoolBase --> Note[NoteStore]
-    PoolBase --> Profile[ProfileStore]
+    PoolBase --> Profile[features.profiles.ProfileStore]
     InstanceBase --> Decision[InjectionDecisionStore]
     Conversation[ConversationStore] --> Messages[(sessions + messages)]
     Atom --> AtomFTS[(memory_atoms_fts)]
@@ -105,7 +105,7 @@ stateDiagram-v2
 - `add_message()` 在 `_write_lock` 内写消息、upsert session、更新计数和参与者后一次 commit。
 - `trim_session_messages()` 只能删除已经总结的最旧消息；`sync_message_counts()` 修复 sessions 计数。任何范围查询都应以实际消息数为准。
 
-### 用户画像：`ProfileStore`
+### 用户画像：`core/features/profiles/infrastructure/ProfileStore`
 
 `user_profiles.user_id` 唯一；`user_tags` 对 `(user_id, category, value)` 唯一并以外键关联画像。
 

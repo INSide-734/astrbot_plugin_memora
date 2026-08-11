@@ -1,19 +1,18 @@
-"""core/api/profile_api.py — ProfileApiMixin 测试。
-
-Validates request validation, response format, and error handling.
-"""
+"""验证 ProfileApiMixin 的请求校验、响应格式和错误处理。"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from core.api.profile_api import ProfileApiMixin
-from core.managers.profile_manager import ProfileManager
+from core.features.profiles.application.profile_manager import ProfileManager
+from core.features.profiles.infrastructure.profile_store import ProfileStore
 from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
@@ -21,7 +20,6 @@ from core.shared.entity_editing import (
     EntityValidationError,
 )
 from core.shared.list_sorting import SortQuery
-from core.storage.profile_store import ProfileStore
 
 
 def _mock_request(**args):
@@ -39,7 +37,7 @@ def _make_mixin(
     detail_profile=None,
     plugin_ready: bool = True,
 ):
-    """Create a ProfileApiMixin stub."""
+    """创建带可控画像依赖的 ProfileApiMixin 测试替身。"""
 
     engine = MagicMock(spec=[])
     profile_manager = None
@@ -59,7 +57,7 @@ def _make_mixin(
         profile_manager.remove_tag = AsyncMock(return_value=detail_profile)
         engine.profile_manager = profile_manager
 
-    class Stub:
+    class Stub(ProfileApiMixin):
         list_profiles = ProfileApiMixin.list_profiles
         get_profile_detail = ProfileApiMixin.get_profile_detail
         update_profile = ProfileApiMixin.update_profile
@@ -79,7 +77,7 @@ def _make_mixin(
                 return None, {"status": "error", "message": "plugin not ready"}
             return {"memory_engine": engine}, None
 
-    stub = Stub()
+    stub: Any = Stub()
     stub.profile_manager = profile_manager
     return stub
 
@@ -109,7 +107,7 @@ def _make_profile(
 
 
 class TestProfileValidation:
-    """Profile API validates required fields."""
+    """验证画像 API 的必填字段。"""
 
     @pytest.mark.asyncio
     async def test_list_rejects_non_numeric_limit_or_offset(self) -> None:
@@ -395,7 +393,7 @@ class TestProfileValidation:
 
 
 class TestProfileHappyPath:
-    """Profile API with mocked manager."""
+    """使用模拟 Manager 验证画像 API。"""
 
     @pytest.mark.asyncio
     async def test_list_returns_profiles(self) -> None:
@@ -579,7 +577,7 @@ class TestProfileHappyPath:
 
 
 class TestProfileEdgeCases:
-    """Additional coverage for profile API edge cases."""
+    """补充验证画像 API 的边界场景。"""
 
     @pytest.mark.asyncio
     async def test_list_profiles_no_manager(self) -> None:

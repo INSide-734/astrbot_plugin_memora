@@ -983,7 +983,7 @@ class TestRecallRequest:
 
 
 # ---------------------------------------------------------------------------
-# 6. core/models/user_profile.py
+# 6. core/features/profiles/domain/models.py
 # ---------------------------------------------------------------------------
 
 
@@ -991,7 +991,7 @@ class TestTagCategory:
     """测试 TagCategory 枚举。"""
 
     def test_all_categories(self) -> None:
-        from core.models.user_profile import TagCategory
+        from core.features.profiles import TagCategory
 
         values = {m.value for m in TagCategory}
         expected = {
@@ -1006,7 +1006,7 @@ class TestTagCategory:
         assert values == expected
 
     def test_is_string_enum(self) -> None:
-        from core.models.user_profile import TagCategory
+        from core.features.profiles import TagCategory
 
         assert TagCategory.INTEREST == "interest"
 
@@ -1015,7 +1015,7 @@ class TestUserTag:
     """测试 UserTag 数据类。"""
 
     def test_default_tag(self) -> None:
-        from core.models.user_profile import TagCategory, UserTag
+        from core.features.profiles import TagCategory, UserTag
 
         tag = UserTag()
         assert tag.category == TagCategory.CUSTOM
@@ -1025,7 +1025,7 @@ class TestUserTag:
         assert tag.occurrence_count == 1
 
     def test_custom_tag(self) -> None:
-        from core.models.user_profile import TagCategory, UserTag
+        from core.features.profiles import TagCategory, UserTag
 
         tag = UserTag(
             category=TagCategory.INTEREST,
@@ -1041,7 +1041,7 @@ class TestUserTag:
         assert tag.occurrence_count == 3
 
     def test_to_dict(self) -> None:
-        from core.models.user_profile import TagCategory, UserTag
+        from core.features.profiles import TagCategory, UserTag
 
         tag = UserTag(
             category=TagCategory.HABIT,
@@ -1056,7 +1056,7 @@ class TestUserTag:
         assert d["occurrence_count"] == 1
 
     def test_from_dict(self) -> None:
-        from core.models.user_profile import TagCategory, UserTag
+        from core.features.profiles import TagCategory, UserTag
 
         data: dict[str, Any] = {
             "category": "preference",
@@ -1072,7 +1072,7 @@ class TestUserTag:
         assert tag.occurrence_count == 5
 
     def test_from_dict_defaults(self) -> None:
-        from core.models.user_profile import TagCategory, UserTag
+        from core.features.profiles import TagCategory, UserTag
 
         tag = UserTag.from_dict({})
         assert tag.category == TagCategory.CUSTOM
@@ -1084,7 +1084,7 @@ class TestUserPreferences:
     """测试 UserPreferences 数据类。"""
 
     def test_default_preferences(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         prefs = UserPreferences()
         assert prefs.reply_style == "casual"
@@ -1095,7 +1095,7 @@ class TestUserPreferences:
         assert prefs.interaction_frequency == 0.0
 
     def test_custom_preferences(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         prefs = UserPreferences(
             reply_style="formal",
@@ -1113,7 +1113,7 @@ class TestUserPreferences:
         assert prefs.interaction_frequency == 3.5
 
     def test_to_dict(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         prefs = UserPreferences(
             reply_style="casual",
@@ -1124,7 +1124,7 @@ class TestUserPreferences:
         assert d["preferred_topics"] == ["游戏"]
 
     def test_from_dict_complete(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         data: dict[str, Any] = {
             "reply_style": "technical",
@@ -1139,14 +1139,14 @@ class TestUserPreferences:
         assert prefs.preferred_topics == ["AI"]
 
     def test_from_dict_none_returns_default(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         prefs = UserPreferences.from_dict(None)
         assert prefs.reply_style == "casual"
         assert prefs.preferred_topics == []
 
     def test_from_dict_empty_dict(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         prefs = UserPreferences.from_dict({})
         assert prefs.reply_style == "casual"
@@ -1156,7 +1156,7 @@ class TestUserProfile:
     """测试 UserProfile 数据类及其方法。"""
 
     def test_default_profile(self) -> None:
-        from core.models.user_profile import UserProfile
+        from core.features.profiles import UserProfile
 
         profile = UserProfile()
         assert profile.user_id == ""
@@ -1166,7 +1166,7 @@ class TestUserProfile:
         assert profile.total_sessions == 0
 
     def test_profile_with_user_id(self) -> None:
-        from core.models.user_profile import UserProfile
+        from core.features.profiles import UserProfile
 
         profile = UserProfile(
             user_id="u-123",
@@ -1180,7 +1180,7 @@ class TestUserProfile:
         assert profile.total_sessions == 5
 
     def test_upsert_tag_new_tag(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         tag = UserTag(
@@ -1194,7 +1194,7 @@ class TestUserProfile:
         assert profile.tags[0].value == "咖啡"
 
     def test_upsert_tag_existing_updates_confidence(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         tag1 = UserTag(
@@ -1216,7 +1216,7 @@ class TestUserProfile:
         assert profile.tags[0].occurrence_count == 2
 
     def test_upsert_tag_different_category_same_value_adds(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         tag1 = UserTag(category=TagCategory.INTEREST, value="咖啡")
@@ -1227,7 +1227,7 @@ class TestUserProfile:
         assert len(profile.tags) == 2
 
     def test_get_tags_by_category(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         profile.upsert_tag(
@@ -1247,14 +1247,14 @@ class TestUserProfile:
         assert interest_tags[1].value == "编程"
 
     def test_get_tags_by_category_empty(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile
+        from core.features.profiles import TagCategory, UserProfile
 
         profile = UserProfile(user_id="u-1")
         result = profile.get_tags_by_category(TagCategory.RELATION)
         assert result == []
 
     def test_get_top_tags(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         for i in range(15):
@@ -1270,7 +1270,7 @@ class TestUserProfile:
         assert top[0].confidence > top[4].confidence
 
     def test_get_tag_values(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         profile.upsert_tag(
@@ -1290,7 +1290,7 @@ class TestUserProfile:
         assert "茶" not in values
 
     def test_get_weight_vector(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         profile.upsert_tag(
@@ -1318,7 +1318,7 @@ class TestUserProfile:
         assert "早起" not in weights  # below 0.2 threshold
 
     def test_decay_tags_reduces_confidence(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         tag = UserTag(
@@ -1335,7 +1335,7 @@ class TestUserProfile:
         assert profile.tags[0].confidence > 0.0
 
     def test_decay_tags_no_decay_for_recent_tag(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         now = time.time()
@@ -1352,7 +1352,7 @@ class TestUserProfile:
         assert profile.tags[0].confidence == pytest.approx(0.9, abs=0.001)
 
     def test_remove_stale_tags(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         profile.upsert_tag(
@@ -1368,7 +1368,7 @@ class TestUserProfile:
         assert profile.tags[0].value == "strong"
 
     def test_to_dict_and_from_dict_roundtrip(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(
             user_id="u-roundtrip",
@@ -1393,7 +1393,7 @@ class TestUserProfile:
         assert recon.tags[0].confidence == 0.85
 
     def test_from_dict_minimal(self) -> None:
-        from core.models.user_profile import UserProfile
+        from core.features.profiles import UserProfile
 
         profile = UserProfile.from_dict({})
         assert profile.user_id == ""
@@ -1401,7 +1401,7 @@ class TestUserProfile:
         assert profile.tags == []
 
     def test_from_dict_with_none_tags(self) -> None:
-        from core.models.user_profile import UserProfile
+        from core.features.profiles import UserProfile
 
         data: dict[str, Any] = {"user_id": "u-1", "tags": None}
         profile = UserProfile.from_dict(data)

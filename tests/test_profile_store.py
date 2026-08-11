@@ -1,14 +1,16 @@
-"""测试 ProfileStore — user profiles and tags CRUD."""
+"""测试 ProfileStore 的用户画像与标签增删改查。"""
 
 import asyncio
 import time
 from contextlib import asynccontextmanager
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 import pytest
 
-from core.models.user_profile import TagCategory, UserPreferences, UserTag
+from core.features.profiles.domain.models import TagCategory, UserPreferences, UserTag
+from core.features.profiles.infrastructure.profile_store import ProfileStore
 from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
@@ -16,7 +18,6 @@ from core.shared.entity_editing import (
     compute_entity_revision,
 )
 from core.shared.list_sorting import SortQuery
-from core.storage.profile_store import ProfileStore
 
 
 def _make_tag(category=TagCategory.INTEREST, value="编程", confidence=0.8):
@@ -523,14 +524,13 @@ class TestProfileStoreAtomicAdminCRUD:
     ):
         store = ProfileStore(tmp_db_path)
         await store.init_table()
-
         with pytest.raises(aiosqlite.IntegrityError) as exc_info:
-            await store.create_profile_strict(None)
-
+            await store.create_profile_strict(cast(str, None))
         assert not isinstance(exc_info.value, EntityAlreadyExistsError)
         async with store._connect() as db:
             cursor = await db.execute("SELECT COUNT(*) FROM user_profiles")
-            assert (await cursor.fetchone())[0] == 0
+            row = await cursor.fetchone()
+            assert row is not None and row[0] == 0
             assert db.in_transaction is False
 
         created = await store.create_profile_strict("usable-after-integrity-error")

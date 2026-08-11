@@ -77,7 +77,7 @@ erDiagram
 - `DomainObjectOrigin` 只允许 `manual` 与 `derived`。人工对象不得伪造 canonical source；派生对象必须有唯一 primary、可选 supporting、同一 scope 和不重复的正整数 source ID。
 - `DomainProvenance.to_dict()` 故意排除 canonical 正文，只保存 revision、scope、privacy、role 与时间窗口；Profile、Knowledge 和 Note 复用该契约，不创建第二套 source 类型。
 
-### `user_profile.py`
+### `core/features/profiles/domain/models.py`
 
 - `UserProfile` 聚合 `UserTag` 与 `UserPreferences`。自动标签/偏好可携带 `DomainProvenance`，人工值使用 manual authority；派生同名标签不能替换人工来源。
 - `get_tag_values()` 采用 `confidence >= 0.3`；权重向量忽略 `< 0.2` 的标签，并以出现次数最多 10 次封顶。

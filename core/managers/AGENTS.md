@@ -3,11 +3,13 @@
 # Managers 模块上下文
 
 **最后更新：** 2026-07-21
-**源码范围：** `core/managers/*.py`（40 个 Python 文件）
+**源码范围：** `core/managers/*.py` 与各 feature 自有应用服务
 
 ## 职责与边界
 
 `core/managers/` 是业务生命周期与编排层。它把 SQLite 文档表、BM25、FAISS、记忆原子和图记忆组合成统一的 `MemoryEngine`，并提供会话、画像、知识、笔记、备份、导入导出、衰减、写故障恢复及 Memory Evolution 后台演化服务。
+
+用户画像的领域服务与 proposal 管线唯一归属 `core/features/profiles/application/`；`core/managers/` 只保留 `MemoryEngine` 的画像写后钩子，不再转发画像应用类型。
 
 `feedback_signal_manager.py` 只管理隔离评测 Store 中的可信反馈事件、限流、时间衰减和候选聚合；`auto_learning.py` 只从该聚合生成 shadow 候选并通过单一 CAS 写入口发布，不得直接修改生产检索权重或调用 `update_memory()`。
 
@@ -146,7 +148,7 @@ sequenceDiagram
 | 图同步 | `graph_memory_manager.py`、`features/memory/graph/infrastructure/` | 删除旧图产物后重建节点/边/条目与图向量；向量 ID 最终回写 SQLite |
 | 原子生命周期 | `atom_lifecycle_manager.py`、`features/memory/application/atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理 |
 | 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护 |
-| 画像 | `profile_manager.py`、`profile_proposal_pipeline.py`、`memory_engine_profile_hooks.py` | 管理员编辑使用修订值冲突检测；canonical 写后自动 proposal 仅绑定唯一可信主体，标签与偏好携带 derived provenance 并走存储层原子事务 |
+| 画像 | `features/profiles/application/`、`memory_engine_profile_hooks.py` | 管理员编辑使用修订值冲突检测；canonical 写后自动 proposal 仅绑定唯一可信主体，标签与偏好携带 derived provenance 并走存储层原子事务 |
 | 知识/笔记 | `knowledge_manager.py`、`knowledge_proposal_pipeline.py`、`note_proposal_pipeline.py`、`memory_engine_domain_hooks.py`、`note_manager.py` | 知识与笔记 canonical 写后 proposal、来源约束幂等与失效；自动笔记可无 Provider 重建，人工 CRUD、软删和版本历史保持领域权威 |
 | 异常检测 | `anomaly_detector.py`、`stats_operations.py` | 按 UTC 日聚合 canonical 创建量；只用当前日之前的完整窗口计算 3-sigma 基线，待投递告警随状态恢复，同一天只写一条脱敏诊断事件 |
 | 记忆再巩固 | `reconsolidation.py`、`reconsolidation_store.py` | 默认关闭；召回只生成 pending 候选；apply 先持久化唯一 intent，再按 source revision CAS 写 canonical 并恢复/失败收口；回滚同样持久化跨 Store 意图并刷新当前 source 的 graph 派生，状态、动作审计与操作清理原子收口；启动恢复不得覆盖后续编辑 |

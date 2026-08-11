@@ -19,7 +19,7 @@ from ...memory.infrastructure.canonical_source_validation import (
 from ..domain.models import TagCategory, UserTag
 
 
-class ProfileTagMixin:
+class ProfileTagMixin(BaseStore):
     """为 ProfileStore 提供标签读取、写入和来源过滤能力。"""
 
     async def _get_tags(self, user_id: str) -> list[UserTag]:

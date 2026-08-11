@@ -74,7 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_user_tags_user_id ON user_tags(user_id)
 """
 
 
-class ProfileStore(ProfileTagMixin, BaseStore):
+class ProfileStore(ProfileTagMixin):
     """SQLite 中用户画像的 CRUD 操作。"""
 
     def __init__(self, db_path: str) -> None:
@@ -545,7 +545,9 @@ class ProfileStore(ProfileTagMixin, BaseStore):
         )
         async with self._connect() as db:
             cursor = await db.execute("SELECT COUNT(*) FROM user_profiles")
-            total = (await cursor.fetchone())[0]
+            count_row = await cursor.fetchone()
+            assert count_row is not None
+            total = int(count_row[0])
             cursor = await db.execute(
                 PROFILE_LIST_SQL,
                 {
