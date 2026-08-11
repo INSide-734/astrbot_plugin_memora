@@ -530,14 +530,14 @@ async def test_factory_identity_store_failure_returns_resolver_only_runtime(
     """身份表初始化普通失败时工厂继续启动并返回解析器降级运行时。"""
 
     from core.identity.runtime import ProtocolIdentityRuntime
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
 
     factory = ComponentFactory(MagicMock(), MagicMock(), str(tmp_path))
     store = MagicMock()
     store.initialize = AsyncMock(side_effect=RuntimeError("private"))
     store.close = AsyncMock()
     monkeypatch.setattr(
-        "core.initializer.component_factory.ProtocolIdentityStore",
+        "core.platform.composition.component_factory.ProtocolIdentityStore",
         MagicMock(return_value=store),
     )
 
@@ -584,14 +584,14 @@ async def test_factory_identity_runtime_propagates_initialization_cancellation(
 ) -> None:
     """工厂不能把身份 Store 初始化取消误降级为普通解析模式。"""
 
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
 
     factory = ComponentFactory(MagicMock(), MagicMock(), str(tmp_path))
     store = MagicMock()
     store.initialize = AsyncMock(side_effect=asyncio.CancelledError())
     store.close = AsyncMock()
     monkeypatch.setattr(
-        "core.initializer.component_factory.ProtocolIdentityStore",
+        "core.platform.composition.component_factory.ProtocolIdentityStore",
         MagicMock(return_value=store),
     )
 
@@ -607,14 +607,14 @@ async def test_factory_identity_runtime_builds_service_and_closes_owned_store(
 ) -> None:
     """正常工厂运行时绑定服务和同步器，并由运行时负责关闭 Store。"""
 
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
 
     factory = ComponentFactory(MagicMock(), MagicMock(), str(tmp_path))
     store = MagicMock()
     store.initialize = AsyncMock()
     store.close = AsyncMock()
     monkeypatch.setattr(
-        "core.initializer.component_factory.ProtocolIdentityStore",
+        "core.platform.composition.component_factory.ProtocolIdentityStore",
         MagicMock(return_value=store),
     )
     manager = MagicMock()

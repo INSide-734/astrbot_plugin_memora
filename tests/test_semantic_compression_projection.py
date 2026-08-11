@@ -515,7 +515,7 @@ async def test_component_factory_wires_semantic_compression_sentinels(
 
     from astrbot.core.provider.provider import Provider
 
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
 
     config = MagicMock()
     config.get.side_effect = lambda key, default=None: {
@@ -556,13 +556,13 @@ async def test_component_factory_wires_semantic_compression_sentinels(
     engine.note_manager = None
     engine.semantic_compressor = None
     monkeypatch.setattr(
-        "core.initializer.component_factory.MemoryEngine",
+        "core.platform.composition.component_factory.MemoryEngine",
         MagicMock(return_value=engine),
     )
     conversation_store = MagicMock()
     conversation_store.initialize = AsyncMock()
     monkeypatch.setattr(
-        "core.initializer.component_factory.ConversationStore",
+        "core.platform.composition.component_factory.ConversationStore",
         MagicMock(return_value=conversation_store),
     )
     scheduler = MagicMock()
@@ -570,7 +570,7 @@ async def test_component_factory_wires_semantic_compression_sentinels(
     scheduler.stop = AsyncMock()
     scheduler_factory = MagicMock(return_value=scheduler)
     monkeypatch.setattr(
-        "core.initializer.component_factory.DecayScheduler",
+        "core.platform.composition.component_factory.DecayScheduler",
         scheduler_factory,
     )
     faiss_checker = MagicMock()

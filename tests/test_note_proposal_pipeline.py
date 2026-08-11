@@ -441,7 +441,7 @@ async def test_component_factory_wires_note_pipeline_with_runtime_sentinels(
 
     from astrbot.core.provider.provider import Provider
 
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
 
     config = MagicMock()
     config.get.side_effect = lambda key, default=None: {
@@ -471,13 +471,13 @@ async def test_component_factory_wires_note_pipeline_with_runtime_sentinels(
     engine.knowledge_manager = None
     engine.note_manager = note_manager
     monkeypatch.setattr(
-        "core.initializer.component_factory.MemoryEngine",
+        "core.platform.composition.component_factory.MemoryEngine",
         MagicMock(return_value=engine),
     )
     conversation_store = MagicMock()
     conversation_store.initialize = AsyncMock()
     monkeypatch.setattr(
-        "core.initializer.component_factory.ConversationStore",
+        "core.platform.composition.component_factory.ConversationStore",
         MagicMock(return_value=conversation_store),
     )
     faiss_checker = MagicMock()

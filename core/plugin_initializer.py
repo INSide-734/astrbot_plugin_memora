@@ -21,7 +21,6 @@ from .features.observability.infrastructure.debug_reporter import (
     report_debug_exception,
 )
 from .identity.runtime import ProtocolIdentityRuntime
-from .initializer.component_factory import ComponentFactory
 from .initializer.faiss_checker import FaissChecker
 from .initializer.provider_loader import ProviderLoader
 from .initializer.readiness import InitializerReadinessMixin
@@ -33,6 +32,7 @@ from .platform.composition import (
     ProviderWaiter,
     close_identity_runtime_after_failure,
 )
+from .platform.composition.component_factory import ComponentFactory
 from .platform.security import build_prompt_protection_port
 from .platform.transport.realtime_hub import RealtimeHub
 from .processors.memory_processor import MemoryProcessor

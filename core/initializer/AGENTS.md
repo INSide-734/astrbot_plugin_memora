@@ -8,7 +8,7 @@
 
 ## 职责边界
 
-本目录只负责启动期基础组件装配：选择并等待 Embedding/LLM Provider、探测并延迟加载 FAISS、初始化主/图向量库与记忆组件、装配 Memory Evolution 的 Store/Gate/Consolidator/Manager 和可选读取器、按固定顺序协调可重建派生数据、修复索引和会话计数，以及启动注入决策持久化。配置的默认值合并、Schema 校验、修订冲突与持久化事务属于 `core/base/config_manager.py`，业务检索、API 和命令不应下沉到这里。
+启动期基础组件装配的唯一 owner 已迁至 `core/platform/composition/`。本目录暂时保留 FAISS 私有宿主兼容探针，以及供旧导入路径使用的恒等导出；配置默认合并、Schema 校验、修订冲突与持久化事务属于 `core/base/config_manager.py`，业务检索、API 和命令不应下沉到这里。
 
 ```mermaid
 flowchart TD
@@ -37,7 +37,7 @@ flowchart TD
 
 ## 公共契约
 
-`__init__.py` 稳定导出：
+`__init__.py` 继续稳定导出 `ComponentFactory`、`DatabaseSetup`、`FaissChecker`、`ProviderLoader` 和 `ProviderWaiter`；除 `FaissChecker` 外，这些旧模块不保留第二份实现。
 
 `platform/composition/readiness.py` 是 `PluginInitializer` 的内部状态查询 mixin；`initializer/readiness.py` 仅保留旧路径恒等导出，二者都不作为包级公开导出。
 
@@ -94,7 +94,7 @@ flowchart TD
 
 ## 依赖方向
 
-`plugin_initializer` → 本模块 → `base`、`managers`、`processors`、`schedulers`、`storage`、`validators`、`injection`。本模块不得反向依赖 Page API、Agent 工具或命令端点。
+`plugin_initializer` → `platform/composition` → `base`、`features`、`managers`、`processors`、`storage`、`injection`。initializer 旧路径不得重新承载实现，也不得反向依赖 Page API、Agent 工具或命令端点。
 
 ## 测试定位与精确验证
 

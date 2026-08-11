@@ -389,7 +389,7 @@ class TestComponentFactoryConfig:
     """测试 ComponentFactory 引擎配置构建。"""
 
     def test_engine_config_includes_data_dir(self, tmp_path) -> None:
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         config = MagicMock()
         config.get.side_effect = lambda _key, default=None: default
@@ -1006,7 +1006,7 @@ class TestInjectionDecisionLifecycle:
     ):
         from astrbot.core.provider.provider import Provider
 
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         order: list[str] = []
         db = MagicMock()
@@ -1033,15 +1033,15 @@ class TestInjectionDecisionLifecycle:
 
         scheduler.stop = AsyncMock(side_effect=stop_scheduler)
         monkeypatch.setattr(
-            "core.initializer.component_factory.MemoryEngine",
+            "core.platform.composition.component_factory.MemoryEngine",
             MagicMock(return_value=engine),
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.ConversationStore",
+            "core.platform.composition.component_factory.ConversationStore",
             MagicMock(return_value=conversation_store),
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.DecayScheduler",
+            "core.platform.composition.component_factory.DecayScheduler",
             MagicMock(return_value=scheduler),
         )
         config = MagicMock()
@@ -1139,7 +1139,7 @@ class TestInjectionDecisionLifecycle:
     async def test_component_factory_builds_started_injection_recorder(
         self, monkeypatch, tmp_path
     ) -> None:
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         store = MagicMock()
         store.initialize = AsyncMock()
@@ -1150,10 +1150,11 @@ class TestInjectionDecisionLifecycle:
         store_type = MagicMock(return_value=store)
         recorder_type = MagicMock(return_value=recorder)
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionStore", store_type
+            "core.platform.composition.component_factory.InjectionDecisionStore",
+            store_type,
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionRecorder",
+            "core.platform.composition.component_factory.InjectionDecisionRecorder",
             recorder_type,
         )
         config = MagicMock()
@@ -1179,7 +1180,7 @@ class TestInjectionDecisionLifecycle:
     async def test_component_factory_closes_partial_injection_components_on_failure(
         self, monkeypatch, tmp_path
     ) -> None:
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         order: list[str] = []
         store = MagicMock()
@@ -1191,11 +1192,11 @@ class TestInjectionDecisionLifecycle:
             side_effect=lambda **_kwargs: order.append("recorder")
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionStore",
+            "core.platform.composition.component_factory.InjectionDecisionStore",
             MagicMock(return_value=store),
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionRecorder",
+            "core.platform.composition.component_factory.InjectionDecisionRecorder",
             MagicMock(return_value=recorder),
         )
         config = MagicMock()
@@ -1212,7 +1213,7 @@ class TestInjectionDecisionLifecycle:
     async def test_component_factory_preserves_init_error_when_recorder_close_fails(
         self, monkeypatch, tmp_path
     ) -> None:
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         store = MagicMock()
         store.initialize = AsyncMock()
@@ -1221,11 +1222,11 @@ class TestInjectionDecisionLifecycle:
         recorder.start = AsyncMock(side_effect=RuntimeError("start failed"))
         recorder.close = AsyncMock(side_effect=RuntimeError("close failed"))
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionStore",
+            "core.platform.composition.component_factory.InjectionDecisionStore",
             MagicMock(return_value=store),
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionRecorder",
+            "core.platform.composition.component_factory.InjectionDecisionRecorder",
             MagicMock(return_value=recorder),
         )
         config = MagicMock()
@@ -1242,7 +1243,7 @@ class TestInjectionDecisionLifecycle:
     async def test_component_factory_closes_store_when_recorder_cleanup_is_cancelled(
         self, monkeypatch, tmp_path
     ) -> None:
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         store = MagicMock()
         store.initialize = AsyncMock()
@@ -1251,11 +1252,11 @@ class TestInjectionDecisionLifecycle:
         recorder.start = AsyncMock(side_effect=RuntimeError("start failed"))
         recorder.close = AsyncMock(side_effect=asyncio.CancelledError())
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionStore",
+            "core.platform.composition.component_factory.InjectionDecisionStore",
             MagicMock(return_value=store),
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionRecorder",
+            "core.platform.composition.component_factory.InjectionDecisionRecorder",
             MagicMock(return_value=recorder),
         )
         config = MagicMock()
@@ -1276,7 +1277,7 @@ class TestInjectionDecisionLifecycle:
 
         from astrbot.core.provider.provider import Provider
 
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         config = MagicMock()
         config.get.side_effect = lambda key, default=None: {
@@ -1300,13 +1301,13 @@ class TestInjectionDecisionLifecycle:
         engine.initialize = AsyncMock()
         engine.text_processor = None
         monkeypatch.setattr(
-            "core.initializer.component_factory.MemoryEngine",
+            "core.platform.composition.component_factory.MemoryEngine",
             MagicMock(return_value=engine),
         )
         conversation_store = MagicMock()
         conversation_store.initialize = AsyncMock()
         monkeypatch.setattr(
-            "core.initializer.component_factory.ConversationStore",
+            "core.platform.composition.component_factory.ConversationStore",
             MagicMock(return_value=conversation_store),
         )
         faiss_checker = MagicMock()

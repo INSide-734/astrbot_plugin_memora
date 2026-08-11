@@ -46,7 +46,7 @@ async def test_auto_learning_alone_starts_daily_maintenance_scheduler(
 
     from astrbot.core.provider.provider import Provider
 
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
 
     database = MagicMock()
     database.initialize = AsyncMock()
@@ -74,15 +74,15 @@ async def test_auto_learning_alone_starts_daily_maintenance_scheduler(
     scheduler_factory = MagicMock(return_value=scheduler)
 
     monkeypatch.setattr(
-        "core.initializer.component_factory.MemoryEngine",
+        "core.platform.composition.component_factory.MemoryEngine",
         memory_engine_factory,
     )
     monkeypatch.setattr(
-        "core.initializer.component_factory.ConversationStore",
+        "core.platform.composition.component_factory.ConversationStore",
         MagicMock(return_value=conversation_store),
     )
     monkeypatch.setattr(
-        "core.initializer.component_factory.DecayScheduler",
+        "core.platform.composition.component_factory.DecayScheduler",
         scheduler_factory,
     )
 

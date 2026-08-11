@@ -519,7 +519,7 @@ async def test_factory_migrates_before_opening_shared_database_stores(
 
     from astrbot.core.provider.provider import Provider
 
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
 
     events: list[str] = []
     database = MagicMock()
@@ -539,15 +539,15 @@ async def test_factory_migrates_before_opening_shared_database_stores(
     )
     conversation_store.close = AsyncMock()
     monkeypatch.setattr(
-        "core.initializer.component_factory.MemoryEngine",
+        "core.platform.composition.component_factory.MemoryEngine",
         MagicMock(return_value=engine),
     )
     monkeypatch.setattr(
-        "core.initializer.component_factory.MemoryEvolutionStore",
+        "core.platform.composition.component_factory.MemoryEvolutionStore",
         MagicMock(return_value=evolution_store),
     )
     monkeypatch.setattr(
-        "core.initializer.component_factory.ConversationStore",
+        "core.platform.composition.component_factory.ConversationStore",
         MagicMock(return_value=conversation_store),
     )
     config = MagicMock()
