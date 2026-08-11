@@ -40,7 +40,11 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "bot_language": _ownership(
         "bot_language", ConfigOwnershipKind.RUNTIME, "main.MemoraPlugin"
     ),
-    "debug": _ownership("debug", ConfigOwnershipKind.RUNTIME, "core.diagnostics"),
+    "debug": _ownership(
+        "debug",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.diagnostics",
+    ),
     "provider_settings": _ownership(
         "provider_settings",
         ConfigOwnershipKind.RUNTIME,

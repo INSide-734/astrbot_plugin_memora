@@ -4,9 +4,12 @@
 
 **最后更新：** 2026-07-20
 
+> 可执行实现已迁移到 `core/features/diagnostics/`；`core/diagnostics/` 仅保留
+> 架构文档，不再是 Python 导入边界。
+
 ## 职责与边界
 
-`core/diagnostics/` 保存结构化诊断事件并把现有运行时快照转换为 0–100 健康分、领域明细和建议。它不采集 Prometheus 指标、不调度恢复任务，也不主动探测 Provider；`core/api/diagnostics_api.py` 负责从插件现有组件组装快照、查询事件和暴露有限恢复动作。
+`core/features/diagnostics/` 保存结构化诊断事件并把现有运行时快照转换为 0–100 健康分、领域明细和建议。它不采集 Prometheus 指标、不调度恢复任务，也不主动探测 Provider；`core/api/diagnostics_api.py` 负责从插件现有组件组装快照、查询事件和暴露有限恢复动作。
 
 ## 架构与数据流
 
