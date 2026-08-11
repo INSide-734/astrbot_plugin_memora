@@ -299,6 +299,10 @@ def test_every_schema_leaf_has_an_explicit_owner_classification() -> None:
 
     assert len(paths) == len(set(paths))
     assert all(item.owner for item in ownership.values())
+    assert (
+        ownership["topic_segmentation.strategy"].owner
+        == "core.features.reflection.application.topic_batch_preparer"
+    )
     assert {
         ownership["recall_engine.top_k"].kind,
         ownership["dashboard.allow_runtime_build"].kind,

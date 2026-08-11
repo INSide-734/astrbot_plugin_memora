@@ -30,6 +30,19 @@ def test_legacy_handler_path_reuses_feature_application_objects() -> None:
         assert getattr(legacy_budget, name) is getattr(feature_budget, name)
 
 
+def test_legacy_topic_batch_path_reuses_feature_application_objects() -> None:
+    """旧 handlers 路径只能恒等导出反思话题批次准备器。"""
+
+    from core.features.reflection.application import (
+        topic_batch_preparer as feature_topic_batch,
+    )
+    from core.handlers import topic_batch_preparer as legacy_topic_batch
+
+    assert legacy_topic_batch.__all__ == feature_topic_batch.__all__
+    for name in feature_topic_batch.__all__:
+        assert getattr(legacy_topic_batch, name) is getattr(feature_topic_batch, name)
+
+
 class _ConfigStub:
     """为话题批次准备器提供最小点号配置读取接口。"""
 
@@ -290,7 +303,9 @@ async def test_passive_recall_and_reflection_share_one_budget(
 ) -> None:
     """查询改写占用额度后，反思 Strategy D 不得再次调用 Provider。"""
 
-    from core.handlers.topic_batch_preparer import TopicBatchPreparer
+    from core.features.reflection.application.topic_batch_preparer import (
+        TopicBatchPreparer,
+    )
     from core.processors.topic_splitter import TwoStageLLMStrategy
     from core.retrieval.query_rewriter import QueryRewriter
 

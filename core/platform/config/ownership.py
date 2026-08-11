@@ -196,7 +196,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "topic_segmentation": _ownership(
         "topic_segmentation",
         ConfigOwnershipKind.RUNTIME,
-        "core.handlers.topic_batch_preparer",
+        "core.features.reflection.application.topic_batch_preparer",
     ),
     "atom_classifier": _ownership(
         "atom_classifier",

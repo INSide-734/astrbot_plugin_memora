@@ -12,6 +12,7 @@ from .llm_budget import (
 )
 from .reflection_metadata import commit_summary_metadata, persist_pending_summary
 from .reflection_trigger import ReflectionTrigger, ReflectionWindowRequest
+from .topic_batch_preparer import TopicBatchPreparer
 
 __all__ = [
     "build_reflection_idempotency_key",
@@ -25,4 +26,5 @@ __all__ = [
     "ReflectionWindowRequest",
     "resolve_continuity_session",
     "store_reflection_candidates",
+    "TopicBatchPreparer",
 ]
