@@ -16,6 +16,7 @@ from ...features.reflection.domain.config import (
     TopicSegmentationConfig,
 )
 from ...features.retrieval.domain import FusionStrategyConfig, RerankerConfig
+from ...features.updates.domain import UpdateSettings
 
 __all__ = [
     "AtomQualityFilterConfig",
@@ -36,4 +37,5 @@ __all__ = [
     "StrategyCConfig",
     "StrategyDConfig",
     "TopicSegmentationConfig",
+    "UpdateSettings",
 ]

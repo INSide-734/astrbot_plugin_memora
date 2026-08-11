@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..platform.config.feature_contributions import UpdateSettings
+
 
 class AgentToolsConfig(BaseModel):
     """控制注册到 Agent 的工具。"""
@@ -67,22 +69,6 @@ class DashboardConfig(BaseModel):
         ge=1000,
         le=200000,
         description="运行时 dashboard 构建命令回传输出的最大字符数",
-    )
-
-
-class UpdateSettings(BaseModel):
-    """插件 runtime 更新设置。"""
-
-    enabled: bool = Field(default=True, description="是否允许管理员检查和下载插件更新")
-    mirror_url: str = Field(
-        default="",
-        description="GitHub 下载镜像前缀；留空使用官方地址",
-    )
-    timeout_seconds: int = Field(
-        default=30,
-        ge=5,
-        le=120,
-        description="更新元数据和安装包请求超时时间（秒）",
     )
 
 

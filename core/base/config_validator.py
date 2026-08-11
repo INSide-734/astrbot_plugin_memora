@@ -19,6 +19,7 @@ from ..platform.config.feature_contributions import (
     RerankerConfig,
     SessionManagerConfig,
     TopicSegmentationConfig,
+    UpdateSettings,
 )
 from ..platform.config.feature_contributions import (
     LegacyBackfillConfig as LegacyBackfillConfig,
@@ -41,7 +42,6 @@ from .feature_config import (
     AgentToolsConfig,
     DashboardConfig,
     JargonConfig,
-    UpdateSettings,
 )
 from .runtime_feature_config import RuntimeFeatureConfigSections
 

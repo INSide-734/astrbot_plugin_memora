@@ -54,6 +54,18 @@ def test_legacy_update_types_reuse_feature_domain_types() -> None:
     assert legacy_manager.DownloadedUpdate is feature_domain.DownloadedUpdate
 
 
+def test_legacy_update_config_reuses_feature_domain_owner() -> None:
+    """旧配置路径只能导出 updates feature 的唯一配置模型。"""
+
+    from core.base.config_validator import UpdateSettings as LegacyRootUpdateSettings
+    from core.base.feature_config import (
+        UpdateSettings as LegacyFeatureUpdateSettings,
+    )
+
+    assert LegacyRootUpdateSettings is feature_domain.UpdateSettings
+    assert LegacyFeatureUpdateSettings is feature_domain.UpdateSettings
+
+
 def test_legacy_update_manager_reuses_feature_implementation() -> None:
     """旧 UpdateManager 路径只能导出 application service 的唯一实现。"""
 
