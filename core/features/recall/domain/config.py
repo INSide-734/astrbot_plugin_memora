@@ -14,6 +14,16 @@ class FilteringConfig(BaseModel):
     use_session_filtering: bool = Field(default=True, description="是否使用会话过滤")
 
 
+class HumanLikeMemoryConfig(BaseModel):
+    """类人召回增强和衰减配置。"""
+
+    recency_bump_enabled: bool = True
+    seasonal_recall_enabled: bool = True
+    emotion_scoring_mode: Literal["enhanced", "basic", "disabled"] = "enhanced"
+    human_like_formatter_mode: Literal["rule", "disabled"] = "rule"
+    type_aware_decay_enabled: bool = True
+
+
 class RecallEngineConfig(BaseModel):
     """回忆引擎配置"""
 
@@ -184,4 +194,9 @@ class RecallEngineConfig(BaseModel):
         return self
 
 
-__all__ = ["FilteringConfig", "PresetName", "RecallEngineConfig"]
+__all__ = [
+    "FilteringConfig",
+    "HumanLikeMemoryConfig",
+    "PresetName",
+    "RecallEngineConfig",
+]

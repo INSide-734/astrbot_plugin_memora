@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from ..platform.config.feature_contributions import (
     AtomClassifierConfig,
     ExportConfig,
+    HumanLikeMemoryConfig,
     HybridScoringConfig,
     PersonaDecayConfig,
     WriteReliabilityConfig,
@@ -57,16 +58,6 @@ class FlashbulbConfig(BaseModel):
 
     enabled: bool = True
     intensity_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
-
-
-class HumanLikeMemoryConfig(BaseModel):
-    """类人召回增强和衰减配置。"""
-
-    recency_bump_enabled: bool = True
-    seasonal_recall_enabled: bool = True
-    emotion_scoring_mode: Literal["enhanced", "basic", "disabled"] = "enhanced"
-    human_like_formatter_mode: Literal["rule", "disabled"] = "rule"
-    type_aware_decay_enabled: bool = True
 
 
 class KnowledgeBaseConfig(BaseModel):

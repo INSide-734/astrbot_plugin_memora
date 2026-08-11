@@ -61,3 +61,14 @@ def test_recall_filtering_config_old_path_reuses_feature_owner() -> None:
     from core.features.recall.domain import FilteringConfig
 
     assert LegacyFilteringConfig is FilteringConfig
+
+
+def test_human_like_memory_config_old_path_reuses_recall_feature_owner() -> None:
+    """旧运行时路径应恒等导出 recall 的类人召回配置模型。"""
+
+    from core.base.runtime_feature_config import (
+        HumanLikeMemoryConfig as LegacyHumanLikeMemoryConfig,
+    )
+    from core.features.recall.domain import HumanLikeMemoryConfig
+
+    assert LegacyHumanLikeMemoryConfig is HumanLikeMemoryConfig
