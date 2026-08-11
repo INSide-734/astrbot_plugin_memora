@@ -7,7 +7,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from ..platform.config.feature_contributions import WriteReliabilityConfig
+from ..platform.config.feature_contributions import (
+    AtomClassifierConfig,
+    ExportConfig,
+    PersonaDecayConfig,
+    WriteReliabilityConfig,
+)
 
 
 def _require_unit_weight_sum(values: tuple[float, ...], section: str) -> None:
@@ -24,12 +29,6 @@ class AnomalyDetectionConfig(BaseModel):
     enabled: bool = True
     window_days: int = 7
     sigma_threshold: float = 3.0
-
-
-class AtomClassifierConfig(BaseModel):
-    """记忆原子分类规则配置。"""
-
-    negation_detection_enabled: bool = True
 
 
 class AutoLearningConfig(BaseModel):
@@ -59,12 +58,6 @@ class EpisodeClusteringConfig(BaseModel):
     enabled: bool = True
     time_window_hours: float = 24.0
     topic_overlap_threshold: float = 0.5
-
-
-class ExportConfig(BaseModel):
-    """记忆导入导出能力配置。"""
-
-    enabled: bool = True
 
 
 class FlashbulbConfig(BaseModel):
@@ -118,13 +111,6 @@ class NotesConfig(BaseModel):
     auto_create_min_length: int = 50
     max_tags: int = 10
     max_versions: int = 20
-
-
-class PersonaDecayConfig(BaseModel):
-    """人格差异化衰减配置。"""
-
-    enabled: bool = True
-    default_modifier: float = 1.0
 
 
 class PromptTemplatesConfig(BaseModel):

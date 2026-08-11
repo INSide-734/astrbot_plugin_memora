@@ -79,3 +79,24 @@ def test_write_reliability_config_old_path_reuses_memory_feature_owner() -> None
     )
 
     assert LegacyWriteReliabilityConfig is WriteReliabilityConfig
+
+
+def test_memory_runtime_configs_old_path_reuses_memory_feature_owner() -> None:
+    """其余 memory 运行时配置旧路径应恒等导出唯一领域模型。"""
+
+    from core.base.runtime_feature_config import (
+        AtomClassifierConfig as LegacyAtomClassifierConfig,
+    )
+    from core.base.runtime_feature_config import ExportConfig as LegacyExportConfig
+    from core.base.runtime_feature_config import (
+        PersonaDecayConfig as LegacyPersonaDecayConfig,
+    )
+    from core.features.memory.domain.atom_classifier_config import (
+        AtomClassifierConfig,
+    )
+    from core.features.memory.domain.export_config import ExportConfig
+    from core.features.memory.domain.persona_decay_config import PersonaDecayConfig
+
+    assert LegacyAtomClassifierConfig is AtomClassifierConfig
+    assert LegacyExportConfig is ExportConfig
+    assert LegacyPersonaDecayConfig is PersonaDecayConfig
