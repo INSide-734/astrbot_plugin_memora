@@ -10,6 +10,7 @@ from .llm_budget import (
     fit_batches_to_extra_llm_budget,
     process_reflection_batches,
 )
+from .reflection_backlog import ReflectionBacklogMixin
 from .reflection_metadata import commit_summary_metadata, persist_pending_summary
 from .reflection_trigger import ReflectionTrigger, ReflectionWindowRequest
 from .topic_batch_preparer import TopicBatchPreparer
@@ -22,6 +23,7 @@ __all__ = [
     "persist_pending_summary",
     "process_reflection_batches",
     "record_continuity_topics",
+    "ReflectionBacklogMixin",
     "ReflectionTrigger",
     "ReflectionWindowRequest",
     "resolve_continuity_session",

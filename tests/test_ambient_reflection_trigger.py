@@ -10,10 +10,12 @@ import pytest
 from astrbot.api.platform import MessageType
 
 from core.event_handler import EventHandler
+from core.features.reflection.application import reflection_backlog as feature_backlog
 from core.features.reflection.application import reflection_trigger as feature_trigger
 from core.features.reflection.application.reflection_trigger import (
     ReflectionWindowRequest,
 )
+from core.handlers import reflection_backlog as legacy_backlog
 from core.handlers import reflection_trigger as legacy_trigger
 from core.handlers.reflection_handler import ReflectionHandler
 from core.identity.models import IdentityTrust, ResolvedIdentity
@@ -57,6 +59,17 @@ def test_legacy_handler_path_reuses_feature_application_objects() -> None:
     assert legacy_trigger.__all__ == feature_trigger.__all__
     for name in feature_trigger.__all__:
         assert getattr(legacy_trigger, name) is getattr(feature_trigger, name)
+
+
+def test_legacy_backlog_path_reuses_feature_application_objects() -> None:
+    """旧 handlers 路径只能恒等导出反思积压续跑协作。"""
+
+    assert legacy_backlog.__all__ == feature_backlog.__all__
+    assert (
+        legacy_backlog.ReflectionBacklogMixin is feature_backlog.ReflectionBacklogMixin
+    )
+    for name in feature_backlog.__all__:
+        assert getattr(legacy_backlog, name) is getattr(feature_backlog, name)
 
 
 @pytest.mark.asyncio

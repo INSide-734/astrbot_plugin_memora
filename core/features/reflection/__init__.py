@@ -2,6 +2,7 @@
 
 from .application import (
     ExtraLlmBudgetDenied,
+    ReflectionBacklogMixin,
     ReflectionTrigger,
     ReflectionWindowRequest,
     TopicBatchPreparer,
@@ -25,6 +26,7 @@ __all__ = [
     "ReflectionStoreOutcome",
     "ReflectionStoreResult",
     "ReflectionStoreSummary",
+    "ReflectionBacklogMixin",
     "ReflectionTrigger",
     "ReflectionWindowRequest",
     "TopicBatchPreparer",

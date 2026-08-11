@@ -19,6 +19,7 @@ from ..features.reflection.application.candidate_writer import (
     store_reflection_candidates,
 )
 from ..features.reflection.application.continuity import resolve_continuity_session
+from ..features.reflection.application.reflection_backlog import ReflectionBacklogMixin
 from ..features.reflection.application.reflection_trigger import ReflectionTrigger
 from ..features.reflection.application.topic_batch_preparer import TopicBatchPreparer
 from ..features.reflection.domain.storage_outcomes import (
@@ -38,7 +39,6 @@ from ..shared.contracts.prompt_protection import (
 )
 from ..shared.cost_control import CostControl
 from ..utils import OperationContext, get_persona_id
-from .reflection_backlog import ReflectionBacklogMixin
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
