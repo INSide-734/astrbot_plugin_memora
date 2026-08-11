@@ -11,6 +11,10 @@ from core.base import config_migrations as legacy_migrations
 from core.base import config_ownership as legacy_ownership
 from core.base import config_runtime_effects as legacy_runtime_effects
 from core.base import config_validator as legacy_validation
+from core.base.atom_quality_config import (
+    AtomQualityFilterConfig as LegacyAtomQualityFilterConfig,
+)
+from core.features.memory.domain.atom_quality_config import AtomQualityFilterConfig
 from core.platform.config import manager as platform_config_manager
 from core.platform.config import migrations as platform_migrations
 from core.platform.config import ownership as platform_ownership
@@ -60,6 +64,12 @@ def test_platform_config_validation_supports_owner_first_import() -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "core.platform.config.validation"
+
+
+def test_atom_quality_config_old_path_reuses_memory_feature_owner() -> None:
+    """旧配置路径只能恒等导出 memory feature 的唯一模型实现。"""
+
+    assert LegacyAtomQualityFilterConfig is AtomQualityFilterConfig
 
 
 def test_base_package_lazily_exports_config_manager_contracts() -> None:

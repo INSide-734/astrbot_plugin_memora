@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from .atom_quality_config import AtomQualityFilterConfig
+from ..features.memory.domain.atom_quality_config import AtomQualityFilterConfig
 from .feature_config import (
     AgentToolsConfig,
     DashboardConfig,
