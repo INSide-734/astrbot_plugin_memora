@@ -17,7 +17,7 @@
 | 入口 | 公开职责 | 主要下游 |
 |---|---|---|
 | `../main.py` | AstrBot 插件入口；创建并持有初始化器、事件处理器、命令处理器、页面 API 与功能委托 | 本表其余入口 |
-| `plugin_initializer.py` · `PluginInitializer` | 提供商等待、数据库/FAISS 准备、组件装配、认知组件初始化与有序关闭 | `initializer/`、`managers/`、`processors/`、`storage/`、`schedulers/` |
+| `platform/composition/plugin_initializer.py` · `PluginInitializer` | 提供商等待、数据库/FAISS 准备、组件装配、认知组件初始化与有序关闭；旧根路径只保留恒等导出 | `initializer/`、`managers/`、`processors/`、`storage/`、`schedulers/` |
 | `platform/composition/component_factory.py` · `ComponentFactory` | 在 `build_all(...)` 中构造共享数据库、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、协议身份 Runtime、验证器、调度器、注入记录与 Memory Evolution 组件；旧 initializer 路径只保留恒等导出 | `base/`、`identity/`、`storage/`、`retrieval/`、`managers/`、`processors/` |
 | `shared/adapter_capabilities.py` / `platform/provider/adapters.py` | 定义不可变能力快照，并在构建时冻结 LLM/Embedding Provider 调用入口；顶层旧路径只保留恒等导出 | `initializer/`、`processors/`、`validators/`、`retrieval/`、`utils/` |
 | `event_handler.py` · `EventHandler` | 处理全量群消息、LLM 请求前召回注入、LLM 响应后反思、会话重置与维护任务关闭 | `handlers/`、`injection/`、`cleaners/`、`dedup/`、`extractors/` |

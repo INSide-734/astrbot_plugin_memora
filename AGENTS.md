@@ -48,7 +48,7 @@ flowchart LR
 ```
 
 - `main.py`：插件注册、hooks、生命周期与工具注册。
-- `core/plugin_initializer.py`：Provider 等待、组件构建、失败回滚与关停。
+- `core/platform/composition/plugin_initializer.py`：Provider 等待、组件构建、失败回滚与关停；旧根路径仅保留兼容导出。
 - `core/event_handler.py`：消息捕获、召回、反思与维护任务协调。
 - `core/page_api.py`：Page API mixin 组合与 `/astrbot_plugin_memora/page/*` 路由。
 - `pages/dashboard/src/main.tsx`、`App.tsx`：前端入口与 Hash 导航。

@@ -1,7 +1,7 @@
 """测试插件初始化与版本检查模块。
 
 覆盖范围：
-- core/plugin_initializer.py — PluginInitializer；
+- core/platform/composition/plugin_initializer.py — PluginInitializer；
 - core/version_check.py — 版本解析与比较。
 """
 
@@ -368,7 +368,9 @@ class TestPluginInitializerConstruction:
         )
         initializer._run_full_init = AsyncMock()
 
-        with patch("core.plugin_initializer.report_debug_event") as report:
+        with patch(
+            "core.platform.composition.plugin_initializer.report_debug_event"
+        ) as report:
             assert await initializer.initialize() is True
 
         provider_events = [
@@ -1489,7 +1491,9 @@ class TestInjectionDecisionLifecycle:
         )
         initializer._initialize_cognitive_components = AsyncMock()
 
-        with patch("core.plugin_initializer.report_debug_event") as report:
+        with patch(
+            "core.platform.composition.plugin_initializer.report_debug_event"
+        ) as report:
             await initializer._run_full_init()
 
         assert initializer.injection_decision_store is store

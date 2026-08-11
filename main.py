@@ -30,11 +30,11 @@ from .core.handlers.recall_observability import RecallTimingContext
 from .core.i18n_backend import init as i18n_init
 from .core.i18n_backend import t
 from .core.managers.backup_models import BackupOperationError
+from .core.platform.composition.plugin_initializer import PluginInitializer
 from .core.platform.resources import (
     PluginResourceLocator,
     build_package_resource_reader,
 )
-from .core.plugin_initializer import PluginInitializer
 from .core.plugin_reload_lifecycle import run_scheduled_plugin_reload
 from .core.plugin_reload_lifecycle import (
     schedule_learning_reload as schedule_learning_reload_callback,

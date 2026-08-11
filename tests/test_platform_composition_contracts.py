@@ -1,5 +1,6 @@
 """平台 composition 组件的旧路径兼容契约。"""
 
+from importlib import import_module
 from unittest.mock import MagicMock
 
 from astrbot.api.provider import Provider
@@ -73,6 +74,22 @@ def test_component_factory_old_path_reuses_composition_implementation() -> None:
         legacy_component_factory.ComponentFactory is component_factory.ComponentFactory
     )
     assert component_factory.Provider is Provider
+
+
+def test_plugin_initializer_old_path_reuses_composition_implementation() -> None:
+    """旧根路径只能导出 composition 的唯一插件初始化器实现。"""
+
+    legacy_plugin_initializer = import_module("core.plugin_initializer")
+    plugin_initializer = import_module("core.platform.composition.plugin_initializer")
+
+    assert getattr(legacy_plugin_initializer, "__all__") == getattr(
+        plugin_initializer,
+        "__all__",
+    )
+    assert getattr(legacy_plugin_initializer, "PluginInitializer") is getattr(
+        plugin_initializer, "PluginInitializer"
+    )
+    assert getattr(plugin_initializer, "Provider") is Provider
 
 
 def test_readiness_old_path_reuses_composition_implementation() -> None:

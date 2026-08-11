@@ -58,7 +58,7 @@ async def test_runtime_write_and_quality_api_share_one_scorer(
     initializer._create_prompt_protection_service = MagicMock(return_value=MagicMock())
     initializer._initialize_cognitive_components = AsyncMock()
 
-    with patch("core.plugin_initializer.report_debug_event"):
+    with patch("core.platform.composition.plugin_initializer.report_debug_event"):
         await initializer._run_full_init()
 
     engine._record_add_memory_observability(
