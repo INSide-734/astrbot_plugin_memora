@@ -20,12 +20,6 @@ from core.models.memory_evolution import (
     RelationView,
     ScopeContext,
 )
-from core.models.temporal import (
-    canonical_visible_at,
-    infer_time_precision,
-    parse_datetime,
-    visible_at,
-)
 from core.retrieval.derived_relation_expander import DerivedRelationExpander
 from core.retrieval.projection_reader import (
     ProjectionBudget,
@@ -34,6 +28,12 @@ from core.retrieval.projection_reader import (
 )
 from core.retrieval.query_rewriter import QueryIntent, resolve_reference_time
 from core.retrieval.rrf_fusion import HybridResult
+from core.shared.temporal import (
+    canonical_visible_at,
+    infer_time_precision,
+    parse_datetime,
+    visible_at,
+)
 from core.storage.memory_evolution_store import MemoryEvolutionStore
 
 UTC = timezone.utc

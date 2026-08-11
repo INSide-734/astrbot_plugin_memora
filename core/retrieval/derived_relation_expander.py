@@ -19,7 +19,7 @@ from ..models.memory_evolution import (
     RelationView,
     ScopeContext,
 )
-from ..models.temporal import normalize_datetime, visible_at
+from ..shared.temporal import normalize_datetime, visible_at
 from .rrf_fusion import HybridResult
 
 _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}

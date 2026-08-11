@@ -15,7 +15,7 @@ from ..models.memory_evolution import (
     MemorySourceRef,
     ProjectionType,
 )
-from ..models.temporal import normalize_datetime
+from ..shared.temporal import normalize_datetime
 
 _DEFAULT_AGE_DAYS = 60.0
 _DEFAULT_SIMILARITY = 0.85

@@ -150,7 +150,7 @@ flowchart TD
 - `to_dict()` 的键名、Enum `.value`、`node_key/edge_key` 拼接格式是存储与 API 兼容契约。
 - 列表/字典字段必须继续使用 `default_factory`，禁止共享可变默认值。
 - 新字段要同步存储 schema、行映射、API 序列化和相关集成测试；仅修改 dataclass 不代表持久化完成。
-- canonical metadata 中既有 Unix 秒字段仍按原契约读取；Memory Evolution 新增时间统一使用 UTC ISO 8601，并由 `core.models.temporal` 兼容解析 naive/Unix/ISO 输入。不要把 `documents.updated_at` 当事实发生时间。
+- canonical metadata 中既有 Unix 秒字段仍按原契约读取；Memory Evolution 新增时间统一使用 UTC ISO 8601，并由 `core.shared.temporal` 兼容解析 naive/Unix/ISO 输入。不要把 `documents.updated_at` 当事实发生时间。
 - Projection 必须始终能回指 canonical source 及其 revision；不得把 projection ID、摘要或 source mapping 提升为 canonical `doc_id`，也不得在模型层放宽 scope/privacy/role 约束。
 
 ## 测试定位与精确验证

@@ -20,7 +20,7 @@ from ..adapter_capabilities import (
 )
 from ..models.memory_evolution import ExpansionBudget, ScopeContext
 from ..models.recall_strategy import RecallStrategy
-from ..models.temporal import normalize_datetime
+from ..shared.temporal import normalize_datetime
 from .dual_route_fusion import (
     build_score_breakdown,
     compute_strategy_weights,

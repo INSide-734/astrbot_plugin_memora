@@ -1,14 +1,23 @@
-"""共享时间原语与旧模型路径的兼容性回归。"""
+"""共享时间原语导出契约。"""
 
 from __future__ import annotations
 
-import core.models.temporal as model_temporal
 import core.shared.temporal as shared_temporal
 
 
-def test_model_temporal_reexports_shared_temporal_primitives() -> None:
-    """旧模型路径必须继续导出共享实现的全部稳定时间原语。"""
+def test_shared_temporal_exports_public_contract() -> None:
+    """shared 模块必须稳定导出全部时间原语。"""
 
-    assert model_temporal.__all__ == shared_temporal.__all__
-    for name in shared_temporal.__all__:
-        assert getattr(model_temporal, name) is getattr(shared_temporal, name)
+    assert shared_temporal.__all__ == [
+        "TIME_PRECISIONS",
+        "TIME_SOURCES",
+        "canonical_visible_at",
+        "infer_time_precision",
+        "normalize_datetime",
+        "normalize_reference_time",
+        "parse_datetime",
+        "reference_time_key",
+        "serialize_datetime",
+        "validate_time_labels",
+        "visible_at",
+    ]

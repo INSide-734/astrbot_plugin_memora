@@ -24,9 +24,9 @@ from ..features.observability.application.memory_write_timing import (
     measure_memory_write_stage,
 )
 from ..models.recall_strategy import RecallStrategy
-from ..models.temporal import canonical_visible_at, normalize_datetime
 from ..retrieval.query_rewriter import resolve_reference_time
 from ..retrieval.rrf_fusion import HybridResult
+from ..shared.temporal import canonical_visible_at, normalize_datetime
 from ..utils.number_utils import clamp_float
 from .memory_engine_atom_support import (
     prepare_atoms_for_write,
