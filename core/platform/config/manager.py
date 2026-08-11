@@ -14,13 +14,10 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 from pydantic import ValidationError as PydanticValidationError
 
-from ...base.config_validator import (
-    MemoraConfig,
-    get_default_config,
-    merge_config_with_defaults,
-)
+from ...base.config_validator import MemoraConfig
 from ...shared.errors import ConfigurationError
 from .migrations import migrate_legacy_config
+from .validation import get_default_config, merge_config_with_defaults
 
 if TYPE_CHECKING:
     from ..resources import PluginResourceLocator

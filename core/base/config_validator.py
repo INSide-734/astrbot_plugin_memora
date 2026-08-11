@@ -4,9 +4,8 @@ config_validator.py - 配置验证模块
 """
 
 import math
-from typing import Any, Literal
+from typing import Literal
 
-from astrbot.api import logger
 from pydantic import BaseModel, Field, model_validator
 
 from .atom_quality_config import AtomQualityFilterConfig
@@ -681,106 +680,10 @@ class MemoraConfig(RuntimeFeatureConfigSections):
     model_config = {"extra": "allow"}  # 允许额外字段，向前兼容
 
 
-def validate_config(raw_config: dict[str, Any]) -> MemoraConfig:
-    """
-    验证并返回规范化的配置对象。
+# 旧模块继续暴露原有名称，但平台层持有唯一校验编排实现。
+from ..platform.config import validation as _platform_validation  # noqa: E402
 
-    参数：
-        raw_config: 原始配置字典。
-
-    返回：
-        MemoraConfig: 验证后的配置对象。
-
-    可能引发的异常：
-        ValueError: 配置验证失败。
-    """
-    try:
-        config = MemoraConfig(**raw_config)
-        logger.info("配置验证成功")
-        return config
-    except Exception as e:
-        logger.error(f"配置验证失败: {e}")
-        raise ValueError(f"插件配置无效: {e}") from e
-
-
-def get_default_config() -> dict[str, Any]:
-    """
-    获取默认配置字典。
-
-    返回：
-        dict[str, Any]: 默认配置字典。
-    """
-    return MemoraConfig().model_dump()
-
-
-def merge_config_with_defaults(user_config: dict[str, Any]) -> dict[str, Any]:
-    """
-    将用户配置与默认配置合并。
-
-    参数：
-        user_config: 用户提供的配置。
-
-    返回：
-        dict[str, Any]: 合并后的配置字典。
-    """
-    default_config = get_default_config()
-
-    def deep_merge(default: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-        """深度合并两个字典"""
-        result = default.copy()
-        for key, value in user.items():
-            if (
-                key in result
-                and isinstance(result[key], dict)
-                and isinstance(value, dict)
-            ):
-                result[key] = deep_merge(result[key], value)
-            else:
-                result[key] = value
-        return result
-
-    merged = deep_merge(default_config, user_config)
-    logger.debug("配置已与默认值合并")
-    return merged
-
-
-def validate_runtime_config_changes(
-    current_config: MemoraConfig, changes: dict[str, Any]
-) -> bool:
-    """
-    验证运行时配置更改是否有效。
-
-    参数：
-        current_config: 当前配置。
-        changes: 要更改的配置项。
-
-    返回：
-        bool: 更改是否有效。
-    """
-    try:
-        # 创建更新后的配置副本以进行验证
-        updated_dict = current_config.model_dump()
-
-        def update_nested_dict(target: dict[str, Any], updates: dict[str, Any]):
-            for key, value in updates.items():
-                if "." in key:
-                    # 处理嵌套键，如 "recall_engine.top_k"
-                    parts = key.split(".")
-                    current = target
-                    for part in parts[:-1]:
-                        if part not in current:
-                            current[part] = {}
-                        current = current[part]
-                    current[parts[-1]] = value
-                else:
-                    target[key] = value
-
-        update_nested_dict(updated_dict, changes)
-
-        # 验证更新后的配置
-        MemoraConfig(**updated_dict)
-        return True
-
-    except Exception as e:
-        logger.error(f"运行时配置更改验证失败: {e}")
-        return False
+get_default_config = _platform_validation.get_default_config
+merge_config_with_defaults = _platform_validation.merge_config_with_defaults
+validate_config = _platform_validation.validate_config
+validate_runtime_config_changes = _platform_validation.validate_runtime_config_changes

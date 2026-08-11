@@ -19,6 +19,12 @@ from .runtime_effects import (
     RuntimeConfigEffect,
     classify_config_effects,
 )
+from .validation import (
+    get_default_config,
+    merge_config_with_defaults,
+    validate_config,
+    validate_runtime_config_changes,
+)
 
 __all__ = [
     "CONFIG_SECTION_OWNERSHIP",
@@ -30,8 +36,12 @@ __all__ = [
     "ConfigPersistenceError",
     "ConfigSectionOwnership",
     "ConfigValidationError",
+    "get_default_config",
+    "merge_config_with_defaults",
     "migrate_legacy_config",
     "RuntimeConfigEffect",
     "classify_config_effects",
     "resolve_config_ownership",
+    "validate_config",
+    "validate_runtime_config_changes",
 ]
