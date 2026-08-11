@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 from astrbot.api.provider import Provider
 
+from core import plugin_reload_lifecycle as legacy_plugin_reload_lifecycle
 from core.initializer import db_setup as legacy_db_setup
 from core.initializer import (
     derived_rebuild_coordinator as legacy_derived_rebuild_coordinator,
@@ -68,6 +69,19 @@ def test_readiness_old_path_reuses_composition_implementation() -> None:
         legacy_readiness.InitializerReadinessMixin
         is composition_readiness.InitializerReadinessMixin
     )
+
+
+def test_reload_lifecycle_old_path_reuses_composition_implementation() -> None:
+    """旧重载路径只能导出唯一函数并保留共享 monkeypatch 目标。"""
+
+    from core.platform.composition import reload_lifecycle
+
+    for name in reload_lifecycle.__all__:
+        assert getattr(legacy_plugin_reload_lifecycle, name) is getattr(
+            reload_lifecycle,
+            name,
+        )
+    assert legacy_plugin_reload_lifecycle.asyncio is reload_lifecycle.asyncio
 
 
 def test_provider_loader_accepts_configured_embedding_capability() -> None:
