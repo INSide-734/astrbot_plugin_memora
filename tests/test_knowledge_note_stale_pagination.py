@@ -8,11 +8,11 @@ from datetime import datetime, timezone
 import aiosqlite
 import pytest
 
+from core.features.knowledge.domain import KnowledgeEntry
+from core.features.knowledge.infrastructure import KnowledgeStore
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.models.knowledge_models import KnowledgeEntry
 from core.models.memory_evolution import MemorySourceRef
 from core.models.note_models import Note
-from core.storage.knowledge_store import KnowledgeStore
 from core.storage.note_store import NoteStore
 
 _OCCURRED_AT = datetime(2026, 7, 21, tzinfo=timezone.utc)

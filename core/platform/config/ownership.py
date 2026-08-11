@@ -144,7 +144,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "knowledge_base": _ownership(
         "knowledge_base",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.knowledge_manager",
+        "core.features.knowledge.application.knowledge_manager",
     ),
     "notes": _ownership(
         "notes", ConfigOwnershipKind.RUNTIME, "core.managers.note_manager"

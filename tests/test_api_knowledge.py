@@ -1,7 +1,7 @@
 """core/api/knowledge_api.py — KnowledgeApiMixin 测试。
 
-Validates request validation, response format, and error handling.
-Uses unittest.mock.patch to mock quart.request imports.
+验证请求校验、响应格式与错误处理，并使用 `unittest.mock.patch`
+替换 `quart.request` 导入。
 """
 
 from __future__ import annotations
@@ -11,13 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.api.knowledge_api import KnowledgeApiMixin
-from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+from core.features.knowledge.domain import KnowledgeEntry, KnowledgeType
 
 
 def _make_mock_request(**args):
-    """Create a mock quart.request with args dict and async get_json."""
+    """创建带查询参数和异步 ``get_json`` 的请求替身。"""
     mock = MagicMock()
-    mock.args = args  # plain dict for .get() access
+    mock.args = args  # 使用普通字典提供 get() 查询。
     mock.get_json = AsyncMock(return_value=None)
     return mock
 
@@ -34,7 +34,7 @@ def _make_mixin(
     delete_result: bool = True,
     plugin_ready: bool = True,
 ):
-    """Create a KnowledgeApiMixin stub with mocked MemoryEngine."""
+    """创建注入 MemoryEngine 替身的 KnowledgeApiMixin 测试对象。"""
 
     class Stub:
         list_knowledge = KnowledgeApiMixin.list_knowledge
@@ -77,7 +77,7 @@ def _make_mixin(
 
 
 class TestKnowledgeValidation:
-    """Knowledge API validates required fields."""
+    """验证 Knowledge API 的必填字段约束。"""
 
     @pytest.mark.asyncio
     async def test_create_requires_title_and_content(self) -> None:
@@ -440,21 +440,21 @@ class TestKnowledgeValidation:
 
 
 class TestKnowledgeStoreUnavailable:
-    """Knowledge API when store is unavailable."""
+    """验证知识存储不可用时的 API 行为。"""
 
     @pytest.mark.asyncio
     async def test_search_requires_query_when_store_unavailable(self) -> None:
-        """When store is unavailable, empty query still returns error."""
+        """知识存储不可用时，空查询仍应返回校验错误。"""
         mock_req = _make_mock_request(query="")
         with patch("core.api.knowledge_api.request", mock_req):
             mixin = _make_mixin(store_available=False)
             result = await mixin.search_knowledge()
-        # Empty query triggers validation before store check
+        # 空查询应在检查存储可用性前被拒绝。
         assert result["status"] == "error"
 
 
 class TestKnowledgeHappyPath:
-    """Knowledge API with mocked store."""
+    """验证使用知识存储替身时的 API 成功路径。"""
 
     @pytest.mark.asyncio
     async def test_list_skips_malformed_entry_items(self) -> None:

@@ -20,9 +20,11 @@ class KnowledgeStorePort(Protocol):
 
     async def insert(self, entry: KnowledgeEntry) -> int:
         """插入知识条目并返回内部 ID。"""
+        ...
 
     async def get(self, entry_id: int) -> KnowledgeEntry | None:
         """按内部 ID 读取可见知识条目。"""
+        ...
 
     async def search(
         self,
@@ -32,6 +34,7 @@ class KnowledgeStorePort(Protocol):
         sort: SortQuery = SortQuery("updated_at", "desc"),
     ) -> tuple[list[KnowledgeEntry], int]:
         """按关键词分页搜索知识条目。"""
+        ...
 
     async def search_merge_candidates(
         self,
@@ -39,6 +42,7 @@ class KnowledgeStorePort(Protocol):
         limit: int = 5,
     ) -> list[KnowledgeEntry]:
         """返回去重合并候选。"""
+        ...
 
     async def list_entries(
         self,
@@ -48,21 +52,26 @@ class KnowledgeStorePort(Protocol):
         sort: SortQuery = SortQuery("updated_at", "desc"),
     ) -> tuple[list[KnowledgeEntry], int]:
         """按稳定排序分页列出知识条目。"""
+        ...
 
     async def filter_current_sources(
         self,
         entries: list[KnowledgeEntry],
     ) -> list[KnowledgeEntry]:
         """过滤来源已失效的派生知识。"""
+        ...
 
     async def update(self, entry: KnowledgeEntry) -> None:
         """更新知识条目并重新校验来源。"""
+        ...
 
     async def delete(self, entry_id: int) -> bool:
         """按内部 ID 删除知识条目。"""
+        ...
 
     async def count(self) -> int:
         """返回知识条目总数。"""
+        ...
 
 
 @runtime_checkable
@@ -76,6 +85,7 @@ class KnowledgeSourceReaderPort(Protocol):
         max_content_chars: int = 4_000,
     ) -> list[MemorySourceRef]:
         """按 canonical ID 返回带 revision、作用域和隐私证据的 source。"""
+        ...
 
 
 @runtime_checkable
@@ -88,6 +98,7 @@ class KnowledgeExtractorPort(Protocol):
         memory_type: str = "",
     ) -> KnowledgeEntry | None:
         """从有限 canonical evidence 抽取一个知识条目。"""
+        ...
 
 
 __all__ = [

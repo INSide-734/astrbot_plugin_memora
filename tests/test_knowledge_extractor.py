@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.processors.knowledge_extractor import KnowledgeExtractor
+from core.features.knowledge.infrastructure import KnowledgeExtractor
 
 
 class TestKnowledgeExtractor:
@@ -50,7 +50,7 @@ class TestKnowledgeExtractor:
 
     @pytest.mark.asyncio
     async def test_non_json_fallback_no_nameerror(self, llm_client):
-        """N6: raw="" ensures fallback is reachable (no NameError)."""
+        """N6：空 raw 状态应能进入回退路径且不触发 NameError。"""
         llm_client.complete.return_value = "plain text: title=fallback, content=test"
         extractor = self.make_extractor(llm_client)
         result = await extractor.extract("test " * 20)

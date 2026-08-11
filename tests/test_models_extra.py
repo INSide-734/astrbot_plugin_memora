@@ -648,7 +648,7 @@ class TestExtractedGraph:
 
 
 # ---------------------------------------------------------------------------
-# 3. core/models/knowledge_models.py
+# 3. core/features/knowledge/domain/models.py
 # ---------------------------------------------------------------------------
 
 
@@ -656,7 +656,7 @@ class TestKnowledgeType:
     """测试 KnowledgeType 枚举。"""
 
     def test_all_members(self) -> None:
-        from core.models.knowledge_models import KnowledgeType
+        from core.features.knowledge import KnowledgeType
 
         values = {m.value for m in KnowledgeType}
         assert "fact" in values
@@ -666,12 +666,12 @@ class TestKnowledgeType:
         assert "procedure" in values
 
     def test_is_string_enum(self) -> None:
-        from core.models.knowledge_models import KnowledgeType
+        from core.features.knowledge import KnowledgeType
 
-        # StrEnum compares equal to its value
+        # StrEnum 可直接与其值比较。
         assert KnowledgeType.FACT == "fact"
         assert KnowledgeType.FACT.value == "fact"
-        # str(StrEnum) returns the fully-qualified name; use .value for the string
+        # 字符串契约使用 .value，避免依赖 StrEnum 的限定名称表示。
         assert KnowledgeType.FACT.value == "fact"
 
 
@@ -679,7 +679,7 @@ class TestKnowledgeEntry:
     """测试 KnowledgeEntry 数据类。"""
 
     def test_default_entry(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
 
         entry = KnowledgeEntry()
         assert entry.title == ""
@@ -691,7 +691,7 @@ class TestKnowledgeEntry:
         assert entry.entry_id == 0
 
     def test_full_entry_creation(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
 
         entry = KnowledgeEntry(
             title="咖啡知识",
@@ -709,7 +709,7 @@ class TestKnowledgeEntry:
         assert entry.access_count == 5
 
     def test_to_dict(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
 
         entry = KnowledgeEntry(
             title="测试标题",
@@ -727,7 +727,7 @@ class TestKnowledgeEntry:
         assert d["tags"] == ["标签1"]
 
     def test_from_dict_complete(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
 
         data: dict[str, Any] = {
             "entry_id": 99,
@@ -750,7 +750,7 @@ class TestKnowledgeEntry:
         assert entry.source_ids == [10, 20]
 
     def test_from_dict_minimal(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
 
         entry = KnowledgeEntry.from_dict({})
         assert entry.title == ""
@@ -761,7 +761,7 @@ class TestKnowledgeEntry:
         assert entry.tags == []
 
     def test_from_dict_with_none_source_ids(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry
+        from core.features.knowledge import KnowledgeEntry
 
         entry = KnowledgeEntry.from_dict({"source_ids": None})
         assert entry.source_ids == []
@@ -1242,7 +1242,7 @@ class TestUserProfile:
 
         interest_tags = profile.get_tags_by_category(TagCategory.INTEREST)
         assert len(interest_tags) == 2
-        # Should be sorted by confidence descending
+        # 应按置信度降序排列。
         assert interest_tags[0].value == "咖啡"
         assert interest_tags[1].value == "编程"
 
@@ -1284,7 +1284,7 @@ class TestUserProfile:
         )
 
         values = profile.get_tag_values()
-        # "茶" has confidence 0.2 < 0.3 threshold, should be excluded
+        # “茶”的置信度 0.2 低于 0.3 阈值，应被排除。
         assert "咖啡" in values
         assert "早起" in values
         assert "茶" not in values
@@ -1301,7 +1301,7 @@ class TestUserProfile:
                 occurrence_count=5,
             )
         )
-        # Below 0.2 confidence threshold
+        # 低于 0.2 的置信度阈值。
         profile.upsert_tag(
             UserTag(
                 category=TagCategory.HABIT,
@@ -1329,7 +1329,7 @@ class TestUserProfile:
         )
         profile.upsert_tag(tag)
 
-        # Decay with reference time = now (not last_seen_at)
+        # 以当前时间而非 last_seen_at 作为衰减参考时间。
         profile.decay_tags(reference_time=time.time())
         assert profile.tags[0].confidence < 0.9
         assert profile.tags[0].confidence > 0.0
@@ -1348,7 +1348,7 @@ class TestUserProfile:
         profile.upsert_tag(tag)
 
         profile.decay_tags(reference_time=now)
-        # Almost no decay for 1 second
+        # 一秒内几乎不发生衰减。
         assert profile.tags[0].confidence == pytest.approx(0.9, abs=0.001)
 
     def test_remove_stale_tags(self) -> None:
@@ -1435,7 +1435,7 @@ class TestDefaultStopwords:
     def test_contains_common_chinese_stopwords(self) -> None:
         from core.models.default_stopwords import DEFAULT_STOPWORDS
 
-        # Some very common Chinese stopwords that should be present
+        # 常见中文停用词应全部存在。
         expected = {"的", "了", "是", "我", "你", "他", "在", "和"}
         found = expected & DEFAULT_STOPWORDS
         assert found == expected, f"Missing common stopwords: {expected - found}"
@@ -1458,13 +1458,12 @@ class TestDefaultStopwords:
     def test_is_immutable(self) -> None:
         from core.models.default_stopwords import DEFAULT_STOPWORDS
 
-        # frozensets cannot be modified
+        # frozenset 不允许修改。
         with pytest.raises(AttributeError):
             DEFAULT_STOPWORDS.add("new_word")  # type: ignore[union-attr]
 
     def test_no_duplicates(self) -> None:
         from core.models.default_stopwords import DEFAULT_STOPWORDS
 
-        # frozenset inherently has no duplicates, but verify size matches
-        # the number of unique strings in the source
+        # frozenset 天然去重，仍需确认其大小等于来源字符串的唯一值数量。
         assert len(DEFAULT_STOPWORDS) == len(set(DEFAULT_STOPWORDS))
