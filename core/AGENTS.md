@@ -38,7 +38,7 @@
 3. provider 就绪后，`_run_full_init()` 调用 `ComponentFactory.build_all(...)`，完成数据库、图存储、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、`ProtocolIdentityRuntime`、索引验证器、衰减调度器、注入决策组件以及 Memory Evolution Store/Gate/Consolidator/Manager 的装配；身份目录普通初始化失败降级为仅解析模式，仅 `enabled=true` 且 mode 为 `readonly`/`active` 时向引擎注入派生 relation/projection 读取器。
 4. 初始化器再通过 `platform/security/prompt_protection.py` 建立共享提示词保护服务，并由 `platform/security/lifecycle.py` 负责关停清理；affection、expression、jargon、social 等可选认知组件失败按现有路径记录并隔离，不得伪装为已就绪。
 5. `main.py` 仅使用初始化器发布的实例创建 `EventHandler`、`CommandHandler` 和 `PluginPageApi`，保证消息、命令和页面请求共享同一存储与引擎。
-6. 关闭阶段先阻止新工作并等待/取消事件维护任务，再停止 Memory Evolution worker 并关闭其 Store，然后按依赖顺序关闭注入记录器、调度器、其他 manager/store 和数据库；`CancelledError` 必须继续传播，清理失败不能覆盖原始初始化失败。
+6. 关闭阶段由 `platform/composition/shutdown_lifecycle.py` 先收敛调度器、引擎任务等生产者，再关闭 Memory Evolution、注入组件和后续 manager/store/数据库；`CancelledError` 必须继续传播，清理失败不能覆盖原始初始化失败。
 
 恢复事务在初始化器和 `_ensure_runtime_components()` 均成功后才标记为 `succeeded`；任一阶段失败都由 `BackupManager` 保留失败/回滚状态。支持 AstrBot 插件重载时，`platform/composition/reload_lifecycle.py` 通过延迟重载安排热恢复，`plugin_reload_lifecycle.py` 仅保留旧路径恒等导出；重载能力不可用或调度失败时，事务保持 `staged`/可手动重启状态，不能伪造已应用成功。
 

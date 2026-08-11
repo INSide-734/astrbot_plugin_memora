@@ -84,6 +84,18 @@ def test_reload_lifecycle_old_path_reuses_composition_implementation() -> None:
     assert legacy_plugin_reload_lifecycle.asyncio is reload_lifecycle.asyncio
 
 
+def test_shutdown_lifecycle_old_path_reuses_composition_implementation() -> None:
+    """旧关停路径只能导出 composition 的唯一生产者收敛函数。"""
+
+    from core import plugin_shutdown_lifecycle as legacy_shutdown_lifecycle
+    from core.platform.composition import shutdown_lifecycle
+
+    assert (
+        legacy_shutdown_lifecycle.stop_runtime_producers
+        is shutdown_lifecycle.stop_runtime_producers
+    )
+
+
 def test_provider_loader_accepts_configured_embedding_capability() -> None:
     """配置 ID 指向具备 Embedding 能力的对象时应保留原实例。"""
 
