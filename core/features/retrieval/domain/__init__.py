@@ -1,5 +1,5 @@
 """检索 feature 的领域配置。"""
 
-from .config import FusionStrategyConfig, RerankerConfig
+from .config import FusionStrategyConfig, HybridScoringConfig, RerankerConfig
 
-__all__ = ["FusionStrategyConfig", "RerankerConfig"]
+__all__ = ["FusionStrategyConfig", "HybridScoringConfig", "RerankerConfig"]

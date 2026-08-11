@@ -19,7 +19,11 @@ from ...features.reflection.domain.config import (
     StrategyDConfig,
     TopicSegmentationConfig,
 )
-from ...features.retrieval.domain import FusionStrategyConfig, RerankerConfig
+from ...features.retrieval.domain import (
+    FusionStrategyConfig,
+    HybridScoringConfig,
+    RerankerConfig,
+)
 from ...features.updates.domain import UpdateSettings
 
 __all__ = [
@@ -30,6 +34,7 @@ __all__ = [
     "FilteringConfig",
     "FusionStrategyConfig",
     "GraphMemoryConfig",
+    "HybridScoringConfig",
     "ImportanceDecayConfig",
     "LegacyBackfillConfig",
     "MemoryEvolutionConfig",

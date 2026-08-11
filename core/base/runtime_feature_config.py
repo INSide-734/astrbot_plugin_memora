@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-import math
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from ..platform.config.feature_contributions import (
     AtomClassifierConfig,
     ExportConfig,
+    HybridScoringConfig,
     PersonaDecayConfig,
     WriteReliabilityConfig,
 )
-
-
-def _require_unit_weight_sum(values: tuple[float, ...], section: str) -> None:
-    """要求一组融合权重非零且总和为一，避免运行时隐式归一化。"""
-
-    total = sum(values)
-    if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=1e-6):
-        raise ValueError(f"{section} 权重总和必须为 1.0")
 
 
 class AnomalyDetectionConfig(BaseModel):
@@ -75,25 +67,6 @@ class HumanLikeMemoryConfig(BaseModel):
     emotion_scoring_mode: Literal["enhanced", "basic", "disabled"] = "enhanced"
     human_like_formatter_mode: Literal["rule", "disabled"] = "rule"
     type_aware_decay_enabled: bool = True
-
-
-class HybridScoringConfig(BaseModel):
-    """文档混合检索评分与多样性配置。"""
-
-    score_alpha: float = Field(default=0.5, ge=0.0, le=1.0)
-    score_beta: float = Field(default=0.25, ge=0.0, le=1.0)
-    score_gamma: float = Field(default=0.25, ge=0.0, le=1.0)
-    mmr_lambda: float = Field(default=0.7, ge=0.0, le=1.0)
-
-    @model_validator(mode="after")
-    def validate_score_weights(self) -> "HybridScoringConfig":
-        """验证相关性、重要性与新鲜度权重总和为一。"""
-
-        _require_unit_weight_sum(
-            (self.score_alpha, self.score_beta, self.score_gamma),
-            "hybrid_scoring",
-        )
-        return self
 
 
 class KnowledgeBaseConfig(BaseModel):
