@@ -18,17 +18,23 @@ import pytest
 
 
 def _load_memora_plugin_class():
+    """在隔离包名下加载插件类并安装所需 AstrBot 测试桩。"""
+
     root = Path(__file__).resolve().parents[1]
     package_name = "memora_testpkg"
     package = types.ModuleType(package_name)
     package.__path__ = [str(root)]
     sys.modules[package_name] = package
     star_mod = sys.modules["astrbot.api.star"]
-    star_mod.Star = type(
-        "TestStar",
-        (object,),
-        {"__init__": lambda self, context=None: None},
-    )  # type: ignore[attr-defined]
+    setattr(
+        star_mod,
+        "Star",
+        type(
+            "TestStar",
+            (object,),
+            {"__init__": lambda self, context=None: None},
+        ),
+    )
     temp_data_dir = root / ".pytest_memora_data"
     temp_data_dir.mkdir(exist_ok=True)
     star_mod.StarTools = types.SimpleNamespace(get_data_dir=lambda: temp_data_dir)  # type: ignore[attr-defined]
@@ -53,8 +59,12 @@ def _load_memora_plugin_class():
     event_mod.filter.command_group.side_effect = lambda *args, **kwargs: _CommandGroup()  # type: ignore[attr-defined]
 
     filter_submodule = types.ModuleType("astrbot.api.event.filter")
-    filter_submodule.PermissionType = types.SimpleNamespace(ADMIN="admin")
-    filter_submodule.permission_type = lambda *args, **kwargs: lambda fn: fn
+    setattr(filter_submodule, "PermissionType", types.SimpleNamespace(ADMIN="admin"))
+    setattr(
+        filter_submodule,
+        "permission_type",
+        lambda *args, **kwargs: lambda fn: fn,
+    )
     sys.modules["astrbot.api.event.filter"] = filter_submodule
 
     spec = importlib.util.spec_from_file_location(
@@ -1520,8 +1530,8 @@ class TestInjectionDecisionLifecycle:
     async def test_run_full_init_closes_owned_injection_components_on_error(
         self, tmp_path
     ) -> None:
-        from core.base.exceptions import InitializationError
         from core.plugin_initializer import PluginInitializer
+        from core.shared.errors import InitializationError
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         initializer._faiss_checker.load_vec_db_class = MagicMock(

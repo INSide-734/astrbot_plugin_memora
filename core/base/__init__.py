@@ -1,33 +1,7 @@
-"""
-基础模块
-包含异常、常量、配置管理等基础组件
-"""
+"""配置模型与迁移期配置入口。"""
 
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
-
-from ..shared.constants import (
-    FAKE_TOOL_CALL_ID_PREFIX as FAKE_TOOL_CALL_ID_PREFIX,
-)
-from ..shared.constants import (
-    FAKE_TOOL_CALL_NAME as FAKE_TOOL_CALL_NAME,
-)
-from ..shared.constants import (
-    MEMORY_INJECTION_FOOTER as MEMORY_INJECTION_FOOTER,
-)
-from ..shared.constants import (
-    MEMORY_INJECTION_HEADER as MEMORY_INJECTION_HEADER,
-)
-from .exceptions import (
-    ConfigurationError,
-    DatabaseError,
-    InitializationError,
-    MemoraException,
-    MemoryProcessingError,
-    ProviderNotReadyError,
-    RetrievalError,
-    ValidationError,
-)
 
 if TYPE_CHECKING:
     from .config_manager import (
@@ -49,14 +23,6 @@ _CONFIG_MANAGER_EXPORTS = frozenset(
 )
 
 __all__ = [
-    "ConfigurationError",
-    "DatabaseError",
-    "InitializationError",
-    "MemoraException",
-    "MemoryProcessingError",
-    "ProviderNotReadyError",
-    "RetrievalError",
-    "ValidationError",
     "ConfigApplyResult",
     "ConfigConflictError",
     "ConfigManager",

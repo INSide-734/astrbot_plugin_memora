@@ -9,7 +9,6 @@ from astrbot.api import logger
 from astrbot.api.provider import Provider
 
 from ...base.cost_control import build_cost_control_from_config
-from ...base.exceptions import ProviderNotReadyError
 from ...features.backup.application import BackupManager
 from ...features.decay.application import DecayScheduler
 from ...features.evolution.application import MemoryEvolutionManager
@@ -46,6 +45,7 @@ from ...retrieval.projection_reader import ProjectionReader
 from ...review.memory_quality_gate import MemoryQualityGate
 from ...review.quarantine_store import MemoryQuarantineStore
 from ...shared.cost_control import CostControlConfig
+from ...shared.errors import ProviderNotReadyError
 from ...storage.conversation_store import ConversationStore
 from ...storage.injection_decision_store import InjectionDecisionStore
 from ..provider.adapters import EmbeddingProviderAdapter, LLMProviderAdapter

@@ -8,14 +8,14 @@
 
 ## 职责与边界
 
-配置事务、迁移、所有权和运行时影响分类的唯一 owner 已迁至 `core/platform/config/`；跨 feature 常量与 Adapter 能力归属 `core/shared/`。`core/base/` 目前保留配置模型聚合器、必要的异常/基础契约入口，以及尚未完成调用方切换的兼容模块。
+配置事务、迁移、所有权和运行时影响分类的唯一 owner 已迁至 `core/platform/config/`；跨 feature 常量、异常与 Adapter 能力归属 `core/shared/`。`core/base/` 目前保留配置模型聚合器，以及实体编辑、排序和额外 LLM 预算等尚未完成测试调用方切换的兼容模块。
 
 当前低层基础契约负责：
 
 - 以 Pydantic v2 描述配置树、默认值、数值范围和跨字段不变量；
 - 为每个公开配置分支声明产品分类、唯一责任模块以及保存后的重启/重建影响；
 - 将 AstrBot 注入的可变配置映射规范化为隔离快照，并提供带修订号的原子更新；
-- 提供稳定的异常码、记忆注入边界常量、领域无关实体编辑冲突类型；
+- 复用 shared 的稳定异常码、记忆注入边界常量和领域无关实体编辑冲突类型；
 - 对额外 LLM 调用实施成本模式门控；
 - 描述 `memory_evolution` 的安全默认、运行模式、队列/租约和读时扩展预算。
 
@@ -72,11 +72,11 @@ flowchart LR
 | `../platform/config/manager.py` | `ConfigManager`、`ConfigApplyResult`、配置事务异常 | revision 是规范化 JSON 的 SHA-256；结果中的 `changed_paths` 排序且不可变；base 路径只保留受包级延迟导出约束的入口 |
 | `config_defaults.py` | 默认值维护说明 | 新键必须同步 Pydantic 模型、根级 `_conf_schema.json` 与访问处默认值 |
 | `../shared/constants.py` | `MEMORY_INJECTION_HEADER/FOOTER`、`FAKE_TOOL_CALL_NAME/ID_PREFIX` | 边界和伪调用标识同时被格式化器、清理器与测试依赖，不可单边改名 |
-| `exceptions.py` | `MemoraException` 及 16 个语义子类 | `message` 与稳定 `error_code` 是上层错误映射契约 |
+| `../shared/errors.py` | `MemoraException` 及 16 个语义子类 | `message` 与稳定 `error_code` 是上层错误映射契约；`core` 根门面保留 8 个常用异常的恒等导出 |
 | `entity_editing.py` | `compute_entity_revision()`、编辑异常族 | revision 使用排序、紧凑、禁 NaN 的 JSON；该异常族独立于 `MemoraException` |
 | `cost_control.py` | `CostControl`、`build_cost_control_from_config()` | 只接受 `CostControlConfig` 或 `cost_control` 叶子映射，生成不可变功能许可门；不得传入完整配置树 |
 | `extra_llm_budget.py` | `ExtraLlmBudget`、`budgeted_extra_llm_call()`、`extra_llm_budget_scope()` | 请求级 reservation 防并发超卖；Provider 成功后 commit，普通失败或取消 release；观测只含固定标量 |
-| `__init__.py` | 配置事务类型、8 个常用异常 | 常量通过星号导入到包命名空间，但不在 `__all__`；其余异常和成本/实体接口需从子模块直接导入 |
+| `__init__.py` | 配置事务类型 | 只保留配置管理迁移期延迟导出，不再转发已迁移的 shared 常量与异常 |
 
 ## 配置不变量
 
@@ -105,7 +105,7 @@ flowchart LR
 
 - 配置输入、Schema 内容和外部源映射都按不可信数据处理；不得绕过 Pydantic 或 Schema 叶子检查直接持久化。
 - 不要把非有限浮点数加入 revision 输入；`allow_nan=False` 会拒绝它们。
-- 新异常若需要从 `core.base` 导入，必须显式加入 `__init__.__all__`；不要依赖星号导出的偶然行为。
+- 新异常统一定义并从 `core.shared.errors` 导入；不得恢复 `core.base.exceptions` 或 base 包级隐式转发。
 - 修改注入边界常量时必须同步格式化器、清理器和兼容测试；这些是协议，不是展示文本。
 - 成本控制是策略门而非计费器，不记录 token 或货币成本。
 - 预算观测只允许 `feature/allowed/used/remaining/reason_code`；不得记录 query、Prompt、记忆正文、ID、身份或 Provider 连接信息。
@@ -114,7 +114,7 @@ flowchart LR
 
 | 变更 | 首选测试 |
 |---|---|
-| 常量、异常、默认配置 | `tests/test_base.py` |
+| shared 常量、异常与根门面 | `tests/test_shared_constants.py tests/test_shared_error_contracts.py tests/test_base.py` |
 | Schema 与 Pydantic 默认/范围、Hybrid 顺序、revision、冲突和持久化 | `tests/test_config_contract.py tests/test_engine_runtime_config_contract.py` |
 | Memory Evolution 默认、模式和范围契约 | `tests/test_config_contract.py tests/test_memory_evolution_gate.py` |
 | 请求级额外 LLM 双门、并发 reservation 与轮次复用 | `tests/test_extra_llm_budget.py tests/test_llm_reranker.py` |

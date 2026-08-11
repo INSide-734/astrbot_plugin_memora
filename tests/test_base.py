@@ -1,21 +1,19 @@
-"""core/base/ 测试 — 配置默认值、配置管理器、配置验证器、
-constants, and exceptions.
-"""
+"""测试 core/base 配置入口与 core/shared 异常契约。"""
 
 from __future__ import annotations
 
 import pytest
 
 # ---------------------------------------------------------------------------
-# 2. core/base/exceptions.py
+# core/shared/errors.py
 # ---------------------------------------------------------------------------
 
 
 class TestMemoraException:
-    """Test the base MemoraException and its hierarchy."""
+    """验证 MemoraException 基类及其继承关系。"""
 
     def test_base_exception_with_default_error_code(self) -> None:
-        from core.base.exceptions import MemoraException
+        from core.shared.errors import MemoraException
 
         exc = MemoraException("test message")
         assert exc.message == "test message"
@@ -23,7 +21,7 @@ class TestMemoraException:
         assert str(exc) == "test message"
 
     def test_base_exception_with_custom_error_code(self) -> None:
-        from core.base.exceptions import MemoraException
+        from core.shared.errors import MemoraException
 
         exc = MemoraException("custom error", error_code="CUSTOM_ERR")
         assert exc.message == "custom error"
@@ -31,13 +29,13 @@ class TestMemoraException:
         assert str(exc) == "custom error"
 
     def test_base_exception_is_exception_subclass(self) -> None:
-        from core.base.exceptions import MemoraException
+        from core.shared.errors import MemoraException
 
         assert issubclass(MemoraException, Exception)
 
 
 class TestExceptionSubclasses:
-    """Verify each subclass carries the correct error_code."""
+    """验证每个异常子类携带稳定错误码。"""
 
     @pytest.mark.parametrize(
         "exc_class, expected_code",
@@ -52,7 +50,7 @@ class TestExceptionSubclasses:
         ],
     )
     def test_subclass_error_code(self, exc_class: str, expected_code: str) -> None:
-        from core.base import exceptions
+        from core.shared import errors as exceptions
 
         cls = getattr(exceptions, exc_class)
         exc = cls("test")
@@ -71,20 +69,20 @@ class TestExceptionSubclasses:
         ],
     )
     def test_subclass_is_memora_exception(self, exc_class: str) -> None:
-        from core.base import exceptions
-        from core.base.exceptions import MemoraException
+        from core.shared import errors as exceptions
+        from core.shared.errors import MemoraException
 
         cls = getattr(exceptions, exc_class)
         assert issubclass(cls, MemoraException)
 
     def test_provider_not_ready_has_default_message(self) -> None:
-        from core.base.exceptions import ProviderNotReadyError
+        from core.shared.errors import ProviderNotReadyError
 
         exc = ProviderNotReadyError()
         assert exc.message == "Provider未就绪"
 
     def test_provider_not_ready_accepts_custom_message(self) -> None:
-        from core.base.exceptions import ProviderNotReadyError
+        from core.shared.errors import ProviderNotReadyError
 
         exc = ProviderNotReadyError("Custom message")
         assert exc.message == "Custom message"
@@ -352,41 +350,43 @@ class TestValidateRuntimeConfigChanges:
 
 
 class TestMemoraConfigBoundaries:
-    """Test boundary values for Pydantic field constraints."""
+    """验证 Pydantic 字段约束的边界值。"""
 
     def test_session_manager_max_sessions_boundary_min(self) -> None:
         from core.base.config_validator import MemoraConfig
 
-        cfg = MemoraConfig(session_manager={"max_sessions": 1})
+        cfg = MemoraConfig.model_validate({"session_manager": {"max_sessions": 1}})
         assert cfg.session_manager.max_sessions == 1
 
     def test_session_manager_max_sessions_boundary_max(self) -> None:
         from core.base.config_validator import MemoraConfig
 
-        cfg = MemoraConfig(session_manager={"max_sessions": 10000})
+        cfg = MemoraConfig.model_validate({"session_manager": {"max_sessions": 10000}})
         assert cfg.session_manager.max_sessions == 10000
 
     def test_recall_engine_top_k_boundary_zero(self) -> None:
         from core.base.config_validator import MemoraConfig
 
-        cfg = MemoraConfig(recall_engine={"top_k": 0})
+        cfg = MemoraConfig.model_validate({"recall_engine": {"top_k": 0}})
         assert cfg.recall_engine.top_k == 0
 
     def test_recall_engine_can_disable_auto_recall(self) -> None:
         from core.base.config_validator import MemoraConfig
 
-        # Setting top_k=0 disables automatic recall per the description
-        cfg = MemoraConfig(recall_engine={"top_k": 0})
+        # top_k=0 按配置契约关闭自动召回。
+        cfg = MemoraConfig.model_validate({"recall_engine": {"top_k": 0}})
         assert cfg.recall_engine.top_k == 0
 
     def test_graph_memory_route_weights_normalized(self) -> None:
         from core.base.config_validator import MemoraConfig
 
-        # Values within field bounds (le=1.0) but sum != 1.0 should be normalized
-        cfg = MemoraConfig(
-            graph_memory={
-                "document_route_weight": 0.4,
-                "graph_route_weight": 0.2,
+        # 字段值各自合法但总和不为 1.0 时仍应归一化。
+        cfg = MemoraConfig.model_validate(
+            {
+                "graph_memory": {
+                    "document_route_weight": 0.4,
+                    "graph_route_weight": 0.2,
+                }
             }
         )
         total = 0.4 + 0.2

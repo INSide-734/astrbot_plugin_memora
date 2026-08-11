@@ -681,9 +681,9 @@ async def test_initializer_closes_published_identity_runtime_after_init_failure(
 ) -> None:
     """运行时发布后的初始化失败或取消都必须释放身份 Store。"""
 
-    from core.base.exceptions import InitializationError
     from core.identity.runtime import ProtocolIdentityRuntime
     from core.platform.composition.plugin_initializer import PluginInitializer
+    from core.shared.errors import InitializationError
 
     store = MagicMock()
     store.close = AsyncMock()

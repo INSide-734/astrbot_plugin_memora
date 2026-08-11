@@ -167,8 +167,8 @@ async def test_component_factory_rejects_missing_provider_capability_before_io(
 
     from astrbot.core.provider.provider import Provider
 
-    from core.base.exceptions import ProviderNotReadyError
     from core.initializer.component_factory import ComponentFactory
+    from core.shared.errors import ProviderNotReadyError
 
     config = MagicMock()
     config.get.return_value = False

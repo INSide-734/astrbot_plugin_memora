@@ -60,9 +60,15 @@ def __getattr__(name: str) -> Any:
     if name in _lazy:
         return _lazy[name]
 
-    # ── base ──
+    # 基础配置门面
+    if name == "ConfigManager":
+        from .base import ConfigManager as ConfigManager
+
+        _lazy["ConfigManager"] = ConfigManager
+        return ConfigManager
+
+    # 共享异常门面
     if name in (
-        "ConfigManager",
         "ConfigurationError",
         "DatabaseError",
         "InitializationError",
@@ -72,31 +78,28 @@ def __getattr__(name: str) -> Any:
         "RetrievalError",
         "ValidationError",
     ):
-        from .base import (
-            ConfigManager as ConfigManager,
-        )
-        from .base import (
+        from .shared.errors import (
             ConfigurationError as ConfigurationError,
         )
-        from .base import (
+        from .shared.errors import (
             DatabaseError as DatabaseError,
         )
-        from .base import (
+        from .shared.errors import (
             InitializationError as InitializationError,
         )
-        from .base import (
+        from .shared.errors import (
             MemoraException as MemoraException,
         )
-        from .base import (
+        from .shared.errors import (
             MemoryProcessingError as MemoryProcessingError,
         )
-        from .base import (
+        from .shared.errors import (
             ProviderNotReadyError as ProviderNotReadyError,
         )
-        from .base import (
+        from .shared.errors import (
             RetrievalError as RetrievalError,
         )
-        from .base import (
+        from .shared.errors import (
             ValidationError as ValidationError,
         )
 

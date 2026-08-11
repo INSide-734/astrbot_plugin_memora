@@ -8,6 +8,8 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..shared.errors import InitializationError
+
 FaissVecDB: Any = None
 FAISS_RUNTIME_CHECK_TIMEOUT_SECONDS = 30
 
@@ -38,8 +40,6 @@ class FaissChecker:
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            from ..base.exceptions import InitializationError
-
             raise InitializationError(
                 "FAISS 运行时检查在 "
                 f"{FAISS_RUNTIME_CHECK_TIMEOUT_SECONDS} 秒内未完成，"
@@ -48,16 +48,12 @@ class FaissChecker:
                 "若持续超时请检查 faiss-cpu 安装与运行环境。"
             ) from exc
         except OSError as exc:
-            from ..base.exceptions import InitializationError
-
             raise InitializationError(
                 "无法启动 FAISS 运行时检查子进程。"
                 "请检查当前 Python 解释器和 faiss-cpu 安装状态。"
             ) from exc
 
         if result.returncode != 0:
-            from ..base.exceptions import InitializationError
-
             details = (result.stderr or result.stdout or "").strip()
             if result.returncode < 0:
                 details = f"进程被信号 {-result.returncode} 终止。{details}".strip()
@@ -87,8 +83,6 @@ class FaissChecker:
                 FaissVecDB as LoadedFaissVecDB,
             )
         except (ImportError, ModuleNotFoundError, SystemError, OSError) as exc:
-            from ..base.exceptions import InitializationError
-
             raise InitializationError(
                 "FAISS 初始化失败，无法加载 AstrBot FaissVecDB。"
                 "请检查 faiss-cpu 安装状态和 CPU 指令集兼容性。"
@@ -117,8 +111,6 @@ class FaissChecker:
             try:
                 import faiss
             except (ImportError, ModuleNotFoundError, SystemError, OSError) as exc:
-                from ..base.exceptions import InitializationError
-
                 raise InitializationError(
                     "FAISS 初始化失败，无法读取索引文件。"
                     "请检查 faiss-cpu 安装状态和 CPU 指令集兼容性。"
@@ -140,8 +132,6 @@ class FaissChecker:
                 logger.info(f"已删除不兼容的旧索引文件: {index_path}")
 
         except Exception as e:
-            from ..base.exceptions import InitializationError
-
             if isinstance(e, InitializationError):
                 raise
             quarantine_path = f"{index_path}.corrupt_{int(time.time())}"
