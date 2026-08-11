@@ -12,6 +12,7 @@ from astrbot.api.platform import MessageType
 
 from ..base.config_manager import ConfigManager
 from ..features.observability.application import runtime as observability
+from ..features.reflection.application import llm_budget as budget_ops
 from ..features.reflection.application import reflection_metadata as metadata_ops
 from ..features.reflection.application.candidate_writer import (
     build_reflection_idempotency_key,
@@ -37,10 +38,6 @@ from ..shared.contracts.prompt_protection import (
 from ..shared.cost_control import CostControl
 from ..utils import OperationContext, get_persona_id
 from .reflection_backlog import ReflectionBacklogMixin
-from .reflection_llm_budget import (
-    fit_batches_to_extra_llm_budget,
-    process_reflection_batches,
-)
 from .topic_batch_preparer import TopicBatchPreparer
 
 if TYPE_CHECKING:
@@ -715,7 +712,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         batches = await self._batch_preparer.prepare_batches(
             history_messages, is_group_chat
         )
-        return fit_batches_to_extra_llm_budget(batches, self._cost_control)
+        return budget_ops.fit_batches_to_extra_llm_budget(batches, self._cost_control)
 
     async def _storage_task(
         self,
@@ -843,7 +840,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
                     batch_processing_failed = False
                     failed_batch_count = 0
                     extraction_started = time.perf_counter()
-                    batch_results = await process_reflection_batches(
+                    batch_results = await budget_ops.process_reflection_batches(
                         batches,
                         process_conversation=(
                             self._memory_processor.process_conversation

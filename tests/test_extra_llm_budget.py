@@ -18,6 +18,16 @@ from core.base.extra_llm_budget import (
     current_extra_llm_budget,
     extra_llm_budget_scope,
 )
+from core.features.reflection.application import llm_budget as feature_budget
+from core.handlers import reflection_llm_budget as legacy_budget
+
+
+def test_legacy_handler_path_reuses_feature_application_objects() -> None:
+    """旧 handlers 路径只能恒等导出反思批次预算服务。"""
+
+    assert legacy_budget.__all__ == feature_budget.__all__
+    for name in feature_budget.__all__:
+        assert getattr(legacy_budget, name) is getattr(feature_budget, name)
 
 
 class _ConfigStub:
@@ -332,7 +342,7 @@ async def test_passive_recall_and_reflection_share_one_budget(
 async def test_reflection_extra_batch_uses_single_reservation() -> None:
     """额外反思批次必须单次调用 Provider，并提交一个共享预算槽。"""
 
-    from core.handlers.reflection_llm_budget import (
+    from core.features.reflection.application.llm_budget import (
         fit_batches_to_extra_llm_budget,
         process_reflection_batches,
     )
