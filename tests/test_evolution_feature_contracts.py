@@ -1,5 +1,9 @@
 """evolution feature 的领域、应用与基础设施所有权兼容契约。"""
 
+import subprocess
+import sys
+
+import core.features.evolution as evolution_feature
 from core.features.evolution.application import (
     memory_evolution_manager as feature_manager,
 )
@@ -50,6 +54,40 @@ _APPLICATION_MODULE_PAIRS = (
     (legacy_manager, feature_manager),
     (legacy_projection, feature_projection),
 )
+
+
+def test_evolution_domain_owner_first_import_stays_lightweight() -> None:
+    """全新解释器导入 evolution 领域模块时不得加载运行组件。"""
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; "
+            "from core.features.evolution.domain.models import EvolutionSignal; "
+            "assert 'core.features.evolution.application' not in sys.modules; "
+            "assert 'core.features.evolution.infrastructure' not in sys.modules; "
+            "assert 'faiss' not in sys.modules; "
+            "print(EvolutionSignal.__module__)",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "core.features.evolution.domain.models"
+
+
+def test_evolution_package_lazily_exports_each_feature_layer() -> None:
+    """包级兼容入口应恒等导出领域、应用与基础设施符号。"""
+
+    assert evolution_feature.EvolutionSignal is feature_models.EvolutionSignal
+    assert (
+        evolution_feature.MemoryEvolutionManager
+        is feature_manager.MemoryEvolutionManager
+    )
+    assert evolution_feature.MemoryEvolutionStore is feature_store.MemoryEvolutionStore
 
 
 def test_legacy_evolution_model_imports_reuse_feature_types() -> None:
