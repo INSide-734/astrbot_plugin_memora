@@ -43,7 +43,7 @@ flowchart TD
 
 | 类型 | 关键接口 | 契约 |
 |---|---|---|
-| `ProviderLoader` | `initialize_providers(embedding_provider, llm_provider, silent=False)` | 返回 `(embedding, llm)`；优先配置 ID，再回退 AstrBot 当前可用 Provider；LLM 必须是 `Provider`，Embedding 必须是 `EmbeddingProvider` |
+| `ProviderLoader` | `initialize_providers(embedding_provider, llm_provider, silent=False)` | 返回 `(embedding, llm)`；优先配置 ID，再回退 AstrBot 当前可用 Provider；LLM 必须是公开 `Provider`，Embedding 候选必须通过 `EmbeddingProviderAdapter` 能力探针且仍返回原实例 |
 | `ProviderLoader` | `get_provider_by_id(provider_id, *, silent)` | 正常模式走 Context API；静默轮询只读 `provider_manager.inst_map`，避免尚未完成的框架访问产生噪声 |
 | `ProviderWaiter` | `wait_non_blocking(..., max_wait=5.0)` | 每秒检查，返回 `(embedding, llm, ready)`，不在 5 秒窗口内阻塞整个插件生命周期 |
 | `ProviderWaiter` | `start_retry_if_needed(...)` / `cancel()` | 单后台任务；2 秒起、1.5 倍退避、30 秒封顶，默认最多 60 次；就绪后调用异步回调 |
@@ -88,7 +88,7 @@ flowchart TD
 - FAISS 子进程参数固定且无用户输入；保持超时和 `check=False` 后显式检查返回码。
 - 索引维度变化属于可重建数据失配；数据库文件不是可随意删除的缓存。不要扩展删除范围。
 - `ProviderWaiter` 必须保持单任务、可取消；插件卸载时应调用 `cancel()`。
-- `ComponentFactory` 要求聊天 Provider 的真实类型，不能用 truthy mock/任意对象绕过生产校验。
+- `ProviderLoader` 与 `ComponentFactory` 分别要求公开聊天 Provider 类型和可冻结的 Embedding 调用入口，不能用 truthy mock/任意对象绕过生产校验。
 - 注入决策存储与主记忆共用 `memora.db`，其生命周期必须随初始化器关闭；详见 [注入模块 AGENTS.md](../injection/AGENTS.md)。
 - Memory Evolution Manager 必须先于 Store 关闭；`PluginInitializer.close_memory_evolution_components()` 以独立锁保证幂等，并在初始化失败和插件卸载路径复用。`asyncio.CancelledError`/其他 `BaseException` 不能阻止后续资源执行尽力关闭。
 

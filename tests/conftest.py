@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -156,8 +157,9 @@ def _install_astrbot_mocks() -> None:
     _event_filter.permission_type = _identity_decorator  # type: ignore[attr-defined]
     sys.modules["astrbot.api.event.filter"] = _event_filter
 
-    # astrbot.api.provider — ProviderRequest、LLMResponse
+    # astrbot.api.provider — Provider、ProviderRequest、LLMResponse
     _provider = _mkmod("astrbot.api.provider")
+    _provider.Provider = MagicMock  # type: ignore[attr-defined]
     _provider.ProviderRequest = MagicMock  # type: ignore[attr-defined]
     _provider.LLMResponse = MagicMock  # type: ignore[attr-defined]
     sys.modules["astrbot.api.provider"] = _provider
@@ -406,7 +408,7 @@ def test_config(test_config_dict: dict[str, Any]) -> Any:
 
 
 @pytest.fixture
-def tmp_db_path() -> str:
+def tmp_db_path() -> Iterator[str]:
     """临时 SQLite 数据库路径（基于文件，而非 :memory:）。
 
     使用真实文件使得测试基于 aiosqlite 的代码更加容易。

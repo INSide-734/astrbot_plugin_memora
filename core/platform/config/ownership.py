@@ -44,7 +44,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "provider_settings": _ownership(
         "provider_settings",
         ConfigOwnershipKind.RUNTIME,
-        "core.initializer.provider_loader",
+        "core.platform.composition.provider_loader",
     ),
     "session_manager": _ownership(
         "session_manager",
