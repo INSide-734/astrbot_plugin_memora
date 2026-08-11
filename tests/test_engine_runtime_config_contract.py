@@ -6,6 +6,7 @@ import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
@@ -413,6 +414,8 @@ def test_recency_bump_can_be_disabled_without_disabling_decay() -> None:
         recency_bump_enabled=False,
     ).apply_weighting([fused], now)[0]
 
+    assert enabled.score_breakdown is not None
+    assert disabled.score_breakdown is not None
     assert enabled.score_breakdown["recency_weight"] == pytest.approx(1.5)
     assert disabled.score_breakdown["recency_weight"] == pytest.approx(1.0)
 
@@ -547,8 +550,9 @@ def _tool_context() -> MagicMock:
     """构造 MemorySearchTool 所需的最小工具上下文。"""
 
     event = MagicMock(unified_msg_origin="session-1")
-    event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
+    event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
     event.get_sender_id.return_value = "user-1"
+    event.get_extra.return_value = SimpleNamespace(trust_status="unsupported")
     return MagicMock(context=SimpleNamespace(event=event))
 
 
@@ -572,7 +576,9 @@ async def test_memory_search_formatter_mode_can_return_structured_only() -> None
         ),
         memory_engine=engine,
     )
-    disabled_data = json.loads(await disabled_tool.call(_tool_context(), query="拿铁"))
+    disabled_result = await disabled_tool.call(_tool_context(), query="拿铁")
+    assert isinstance(disabled_result, str)
+    disabled_data = json.loads(disabled_result)
     assert disabled_data["results"]
     assert disabled_data["formatted_recall"] == []
 
@@ -583,7 +589,9 @@ async def test_memory_search_formatter_mode_can_return_structured_only() -> None
         ),
         memory_engine=engine,
     )
-    rule_data = json.loads(await rule_tool.call(_tool_context(), query="拿铁"))
+    rule_result = await rule_tool.call(_tool_context(), query="拿铁")
+    assert isinstance(rule_result, str)
+    rule_data = json.loads(rule_result)
     assert rule_data["formatted_recall"]
 
 
@@ -595,6 +603,8 @@ async def test_config_apply_reports_restart_and_graph_rebuild_effects() -> None:
 
     class _ConfigApi(ConfigApiMixin):
         """暴露配置 API mixin 的最小测试实现。"""
+
+        plugin: Any
 
         def _maintenance_write_guard(self):
             """测试中不阻止配置写入。"""
