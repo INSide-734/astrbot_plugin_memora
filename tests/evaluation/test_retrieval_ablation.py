@@ -29,7 +29,7 @@ def _engine(
         graph_retriever=graph,
         config=config,
     )
-    from core.adapter_capabilities import (
+    from core.shared.adapter_capabilities import (
         ASTRBOT_FAISS_CAPABILITIES,
         AdapterCapability,
         AdapterCapabilityContract,

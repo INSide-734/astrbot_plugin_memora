@@ -11,14 +11,6 @@ from typing import Any
 import aiosqlite
 from astrbot.api import logger
 
-from ..adapter_capabilities import (
-    AdapterCapability,
-    AdapterCapabilityContract,
-    AdapterKind,
-    NormalizationScope,
-    ScoreDirection,
-    ScoreSemantics,
-)
 from ..features.memory.infrastructure.base import apply_perf_pragmas
 from ..features.memory.infrastructure.sql_contract import (
     DOCUMENTS_TABLE,
@@ -29,6 +21,14 @@ from ..features.memory.infrastructure.sql_contract import (
     MEMORY_FTS_TABLE,
 )
 from ..processors.text_processor import TextProcessor
+from ..shared.adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+    NormalizationScope,
+    ScoreDirection,
+    ScoreSemantics,
+)
 
 
 @dataclass

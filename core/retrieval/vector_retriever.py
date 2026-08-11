@@ -11,7 +11,7 @@ from typing import Any
 
 from astrbot.core.db.vec_db.faiss_impl.vec_db import FaissVecDB
 
-from ..adapter_capabilities import (
+from ..shared.adapter_capabilities import (
     ASTRBOT_FAISS_CAPABILITIES,
     AdapterCapability,
     AdapterCapabilityContract,

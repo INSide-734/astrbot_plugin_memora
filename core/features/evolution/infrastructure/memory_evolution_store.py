@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Iterable
 
-from ....adapter_capabilities import (
+from ....shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
     AdapterKind,

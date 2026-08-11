@@ -7,12 +7,12 @@
 from dataclasses import dataclass
 from typing import Any
 
-from ..adapter_capabilities import (
+from ..injection.models import DeliveryMode
+from ..shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
     AdapterKind,
 )
-from ..injection.models import DeliveryMode
 
 
 @dataclass(frozen=True, slots=True)

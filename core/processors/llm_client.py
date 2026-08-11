@@ -6,12 +6,12 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..adapter_capabilities import (
+from ..provider_adapters import LLMGenerationResult, LLMProviderAdapter
+from ..shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
     AdapterKind,
 )
-from ..provider_adapters import LLMGenerationResult, LLMProviderAdapter
 
 
 class LLMClient:

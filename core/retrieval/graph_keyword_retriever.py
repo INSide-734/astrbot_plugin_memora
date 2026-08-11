@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..adapter_capabilities import (
+from ..features.memory.graph.infrastructure.graph_store import GraphStore
+from ..processors.text_processor import TextProcessor
+from ..shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
     AdapterKind,
@@ -13,8 +15,6 @@ from ..adapter_capabilities import (
     ScoreDirection,
     ScoreSemantics,
 )
-from ..features.memory.graph.infrastructure.graph_store import GraphStore
-from ..processors.text_processor import TextProcessor
 from ..storage.hierarchy_store import EntityHierarchyStore
 
 

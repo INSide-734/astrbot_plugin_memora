@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from ..adapter_capabilities import (
+from ..shared.adapter_capabilities import (
     AdapterCapability,
     adapter_contract,
 )

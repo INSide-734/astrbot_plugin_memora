@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.adapter_capabilities import ASTRBOT_FAISS_CAPABILITIES
 from core.retrieval.dual_route_retriever import DualRouteRetriever
 from core.retrieval.graph_keyword_retriever import GraphKeywordResult
 from core.retrieval.graph_retriever import GraphRetriever
 from core.retrieval.graph_vector_retriever import GraphVectorResult
 from core.retrieval.rrf_fusion import HybridResult, RRFFusion
+from core.shared.adapter_capabilities import ASTRBOT_FAISS_CAPABILITIES
 
 
 def _candidate(doc_id: int, score: float, content: str) -> HybridResult:

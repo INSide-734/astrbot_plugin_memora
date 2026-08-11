@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from ..adapter_capabilities import (
+from ..shared.adapter_capabilities import (
     ASTRBOT_FAISS_CAPABILITIES,
     AdapterCapability,
     AdapterCapabilityContract,

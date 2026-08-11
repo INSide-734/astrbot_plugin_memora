@@ -29,7 +29,7 @@ class TestRerankerFactory:
     def faiss_db(self) -> MagicMock:
         """构造显式声明文档向量访问能力的测试后端。"""
 
-        from core.adapter_capabilities import (
+        from core.shared.adapter_capabilities import (
             AdapterCapability,
             AdapterCapabilityContract,
             AdapterKind,
@@ -48,7 +48,7 @@ class TestRerankerFactory:
     def llm_client(self) -> MagicMock:
         """构造显式声明同步文本生成能力的测试客户端。"""
 
-        from core.adapter_capabilities import (
+        from core.shared.adapter_capabilities import (
             AdapterCapability,
             AdapterCapabilityContract,
             AdapterKind,

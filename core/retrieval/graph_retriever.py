@@ -13,7 +13,8 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..adapter_capabilities import (
+from ..features.memory.domain.memory_atom import compute_decay_score
+from ..shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
     AdapterKind,
@@ -21,7 +22,6 @@ from ..adapter_capabilities import (
     ScoreDirection,
     ScoreSemantics,
 )
-from ..features.memory.domain.memory_atom import compute_decay_score
 from ..shared.temporal import normalize_datetime
 from ..utils.number_utils import clamp_float, safe_float
 from .graph_keyword_retriever import GraphKeywordRetriever

@@ -14,16 +14,6 @@ if TYPE_CHECKING:
     from core.shared.adapter_capabilities import AdapterCapabilityContract
 
 
-def test_legacy_adapter_capability_exports_are_identical() -> None:
-    """旧路径必须直接导出 shared 中的同一组能力契约对象。"""
-
-    from core import adapter_capabilities as legacy
-    from core.shared import adapter_capabilities as shared
-
-    for name in shared.__all__:
-        assert getattr(legacy, name) is getattr(shared, name)
-
-
 def test_reranker_factory_uses_shared_mmr_implementation() -> None:
     """重排工厂必须直接使用 shared 中的唯一 MMR 实现。"""
 
@@ -42,7 +32,7 @@ def _contract(
 ) -> AdapterCapabilityContract:
     """使用待规范化的原始值构建最小能力契约。"""
 
-    from core.adapter_capabilities import AdapterCapabilityContract
+    from core.shared.adapter_capabilities import AdapterCapabilityContract
 
     return AdapterCapabilityContract(
         kind=kind,
@@ -71,7 +61,7 @@ def _hybrid_result(doc_id: int, score: float = 0.9):
 def test_capability_contract_is_immutable_and_uses_three_levels() -> None:
     """能力契约必须不可变，并区分 native/caller-enforced/unsupported。"""
 
-    from core.adapter_capabilities import AdapterCapability, SupportLevel
+    from core.shared.adapter_capabilities import AdapterCapability, SupportLevel
 
     contract = _contract(
         native=(AdapterCapability.SCORING,),
@@ -94,7 +84,7 @@ def test_capability_contract_is_immutable_and_uses_three_levels() -> None:
 def test_contract_rejects_overlap_and_invalid_score_range() -> None:
     """同一能力不能同时属于两种等级，score range 必须有限且有序。"""
 
-    from core.adapter_capabilities import (
+    from core.shared.adapter_capabilities import (
         AdapterCapability,
         NormalizationScope,
         ScoreDirection,
@@ -126,7 +116,7 @@ def test_contract_rejects_overlap_and_invalid_score_range() -> None:
 def test_unknown_adapter_is_conservative_and_error_is_safe() -> None:
     """未知 adapter 默认关闭能力，错误只包含固定枚举。"""
 
-    from core.adapter_capabilities import (
+    from core.shared.adapter_capabilities import (
         AdapterCapability,
         UnsupportedAdapterCapability,
         adapter_contract,
@@ -199,8 +189,8 @@ async def test_component_factory_rejects_missing_provider_capability_before_io(
 async def test_embedding_adapter_supports_native_batch_and_single_emulation() -> None:
     """Embedding adapter 必须保持 native batch 和逐项模拟的输入顺序。"""
 
-    from core.adapter_capabilities import AdapterCapability, SupportLevel
     from core.provider_adapters import EmbeddingProviderAdapter
+    from core.shared.adapter_capabilities import AdapterCapability, SupportLevel
 
     native = MagicMock(spec=[])
     native.get_embeddings = AsyncMock(return_value=[[1.0, 0.0], [0.0, 1.0]])
@@ -437,15 +427,15 @@ async def test_vector_mutations_unsupported_do_not_touch_backend() -> None:
 def test_current_adapter_snapshots_state_real_filter_and_score_semantics() -> None:
     """当前 BM25/Vector/Derived/Store 必须公开实际而非理想化的快照。"""
 
-    from core.adapter_capabilities import (
-        AdapterCapability,
-        ScoreSemantics,
-        SupportLevel,
-    )
     from core.retrieval.bm25_retriever import BM25Retriever
     from core.retrieval.derived_relation_expander import DerivedRelationExpander
     from core.retrieval.projection_reader import ProjectionReader
     from core.retrieval.vector_retriever import VectorRetriever
+    from core.shared.adapter_capabilities import (
+        AdapterCapability,
+        ScoreSemantics,
+        SupportLevel,
+    )
     from core.storage.memory_evolution_store import MemoryEvolutionStore
 
     assert (
@@ -474,8 +464,8 @@ def test_current_faiss_backend_exposes_vector_access_after_fixed_adapter_setup()
 ):
     """固定 AstrBot FAISS 装配后必须向重排工厂公开向量访问能力。"""
 
-    from core.adapter_capabilities import AdapterCapability, adapter_contract
     from core.retrieval.vector_retriever import VectorRetriever
+    from core.shared.adapter_capabilities import AdapterCapability, adapter_contract
 
     backend = MagicMock()
     VectorRetriever(backend)
@@ -513,7 +503,7 @@ async def test_dual_route_skips_explicitly_unsupported_derived_reference_time() 
 def test_injection_provider_contract_preserves_legacy_tuple_and_safe_summary() -> None:
     """Provider 新 contract 不得破坏旧 tuple 调用方，也不得输出实例身份。"""
 
-    from core.adapter_capabilities import AdapterCapability
+    from core.shared.adapter_capabilities import AdapterCapability
     from core.utils.injection_adapter import InjectionAdapter
 
     provider = MagicMock()
@@ -535,7 +525,7 @@ def test_injection_provider_contract_preserves_legacy_tuple_and_safe_summary() -
 def test_injection_unknown_provider_does_not_infer_runtime_capabilities() -> None:
     """未知 Provider 不得因 MagicMock 属性或方法存在而获得能力。"""
 
-    from core.adapter_capabilities import AdapterCapability
+    from core.shared.adapter_capabilities import AdapterCapability
     from core.utils.injection_adapter import InjectionAdapter
 
     snapshot = InjectionAdapter().describe_capabilities(MagicMock())

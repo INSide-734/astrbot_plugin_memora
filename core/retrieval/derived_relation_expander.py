@@ -5,19 +5,19 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from ..adapter_capabilities import (
+from ..models.memory_evolution import (
+    ExpansionBudget,
+    MemorySourceRef,
+    RelationView,
+    ScopeContext,
+)
+from ..shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
     AdapterKind,
     NormalizationScope,
     ScoreDirection,
     ScoreSemantics,
-)
-from ..models.memory_evolution import (
-    ExpansionBudget,
-    MemorySourceRef,
-    RelationView,
-    ScopeContext,
 )
 from ..shared.temporal import normalize_datetime, visible_at
 from .rrf_fusion import HybridResult

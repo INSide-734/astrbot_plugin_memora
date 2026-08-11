@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
-from ..adapter_capabilities import (
+from ..models.memory_evolution import ExpansionBudget, ScopeContext
+from ..models.recall_strategy import RecallStrategy
+from ..shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
     AdapterKind,
@@ -18,8 +20,6 @@ from ..adapter_capabilities import (
     ScoreSemantics,
     declared_adapter_contract,
 )
-from ..models.memory_evolution import ExpansionBudget, ScopeContext
-from ..models.recall_strategy import RecallStrategy
 from ..shared.temporal import normalize_datetime
 from .dual_route_fusion import (
     build_score_breakdown,

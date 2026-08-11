@@ -9,7 +9,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..adapter_capabilities import (
+from ..shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
     AdapterKind,
