@@ -4,12 +4,16 @@ import subprocess
 import sys
 
 import core.features.evolution as evolution_feature
+from core.base.config_validator import (
+    MemoryEvolutionConfig as LegacyMemoryEvolutionConfig,
+)
 from core.features.evolution.application import (
     memory_evolution_manager as feature_manager,
 )
 from core.features.evolution.application import (
     memory_evolution_projection as feature_projection,
 )
+from core.features.evolution.domain import MemoryEvolutionConfig
 from core.features.evolution.domain import models as feature_models
 from core.features.evolution.infrastructure import (
     memory_evolution_candidate_sources as feature_candidate_sources,
@@ -88,6 +92,12 @@ def test_evolution_package_lazily_exports_each_feature_layer() -> None:
         is feature_manager.MemoryEvolutionManager
     )
     assert evolution_feature.MemoryEvolutionStore is feature_store.MemoryEvolutionStore
+
+
+def test_evolution_config_old_path_reuses_feature_owner() -> None:
+    """根配置聚合器应恒等导出 evolution feature 的唯一配置模型。"""
+
+    assert LegacyMemoryEvolutionConfig is MemoryEvolutionConfig
 
 
 def test_legacy_evolution_model_imports_reuse_feature_types() -> None:
