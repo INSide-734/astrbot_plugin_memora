@@ -78,7 +78,7 @@ def test_config_manager_reports_each_legacy_migration_once(
     from core.base.config_manager import ConfigManager
 
     warnings: list[str] = []
-    monkeypatch.setattr("core.base.config_manager.logger.warning", warnings.append)
+    monkeypatch.setattr("core.platform.config.manager.logger.warning", warnings.append)
     manager = ConfigManager({"reranker": {"strategy": "cross_encoder"}})
 
     manager._read_source_state()
