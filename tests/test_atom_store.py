@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from core.models.memory_atom import AtomStatus, AtomType, MemoryAtom
+from core.features.memory.domain.memory_atom import AtomStatus, AtomType, MemoryAtom
 from core.storage.atom_store import AtomStore
 
 

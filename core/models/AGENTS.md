@@ -48,7 +48,7 @@ erDiagram
 
 ### `core/features/memory/domain/memory_atom.py`
 
-`core/models/memory_atom.py` 仅保留兼容导出，唯一实现归属 memory feature。
+该模块是 MemoryAtom 领域模型的唯一导入路径，`core/models/` 不再转发这些类型与计算函数。
 
 - `MemoryAtom` 是当前细粒度持久化/检索核心：`parent_memory_id` 必填；新写入链还保存 `parent_revision`、`parent_scope_key` 与 `parent_privacy_level`，旧行缺失时保持 `None`，不得伪造为当前 source。
 - 枚举：`AtomType`（episodic/factual/relational/preference/planned/unknown）、`DecayType`（linear/exponential/step）、`AtomStatus`（active/dormant/superseded/expired/forgotten/cold）、`PrivacyLevel`（public/shared/confidential）。Atom 的隐私快照保存在 `parent_privacy_level`，它只描述父 canonical 创建时边界，不形成独立召回身份。

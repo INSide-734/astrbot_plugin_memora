@@ -5,7 +5,6 @@ import sys
 
 from core.features.memory import (
     AtomStore,
-    MemoryAtom,
     SchemaManager,
     WriteOpJournal,
 )
@@ -14,7 +13,6 @@ from core.features.memory.infrastructure.base_store import (
 )
 from core.managers.schema_manager import SchemaManager as LegacySchemaManager
 from core.managers.write_op_journal import WriteOpJournal as LegacyWriteOpJournal
-from core.models.memory_atom import MemoryAtom as LegacyMemoryAtom
 from core.storage.atom_store import AtomStore as LegacyAtomStore
 from core.storage.base_store import BaseStore as LegacyInstanceBaseStore
 
@@ -40,10 +38,9 @@ def test_memory_domain_owner_first_import_stays_lightweight() -> None:
     assert result.stdout.strip() == "core.features.memory.domain.revision"
 
 
-def test_legacy_canonical_imports_are_feature_implementations() -> None:
-    """旧 canonical 路径只能导出 memory feature 的唯一实现。"""
+def test_legacy_canonical_infrastructure_imports_are_feature_implementations() -> None:
+    """旧 canonical 基础设施路径只能导出 memory feature 的唯一实现。"""
 
-    assert LegacyMemoryAtom is MemoryAtom
     assert LegacyAtomStore is AtomStore
     assert LegacyInstanceBaseStore is FeatureInstanceBaseStore
     assert LegacySchemaManager is SchemaManager

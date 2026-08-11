@@ -83,6 +83,7 @@ class TestWriteOpJournalDBOps:
                 "SELECT * FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert json.loads(row["payload"]) == {}
 
     async def test_advance_op_skips_when_db_none(self) -> None:
@@ -121,6 +122,7 @@ class TestWriteOpJournalDBOps:
                 "SELECT * FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["step"] == "indexed"
             assert row["status"] == "pending"
             assert row["memory_id"] == 99
@@ -143,6 +145,7 @@ class TestWriteOpJournalDBOps:
                 "SELECT * FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["error"] == "some error"
 
             # Complete — should clear error
@@ -151,6 +154,7 @@ class TestWriteOpJournalDBOps:
                 "SELECT * FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["error"] is None
 
 
@@ -200,6 +204,7 @@ class TestWriteOpRepairMixinBasics:
                 "SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["status"] == "failed"
             assert row["step"] == "unrepairable"
 
@@ -227,6 +232,7 @@ class TestWriteOpRepairMixinBasics:
                 "SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["status"] == "failed"
 
     async def test_repair_delete_missing_memory_id(self, tmp_db_path: str) -> None:
@@ -298,6 +304,7 @@ class TestWriteOpRepairMixinBasics:
                 "SELECT status FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["status"] == "completed"
 
     async def test_repair_batch_delete_happy_path(self, tmp_db_path: str) -> None:
@@ -334,6 +341,7 @@ class TestWriteOpRepairMixinBasics:
                 "SELECT status FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["status"] == "completed"
 
     async def test_repair_add_source_missing(self, tmp_db_path: str) -> None:
@@ -364,6 +372,7 @@ class TestWriteOpRepairMixinBasics:
                 "SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["status"] == "failed"
             assert row["step"] == "source_missing"
 
@@ -435,6 +444,7 @@ class TestWriteOpRepairAddIntegration:
                 "SELECT status FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["status"] == "completed"
 
     async def test_repair_add_with_graph_manager(self, tmp_db_path: str) -> None:
@@ -474,6 +484,7 @@ class TestWriteOpRepairAddIntegration:
                 "SELECT status FROM memory_write_ops WHERE id = ?", (op_id,)
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["status"] == "completed"
 
     async def test_repair_add_with_failed_atoms_dedup(self, tmp_db_path: str) -> None:
@@ -493,7 +504,7 @@ class TestWriteOpRepairAddIntegration:
             }
             mock_get = AsyncMock(return_value=existing_doc)
 
-            from core.models.memory_atom import AtomType, MemoryAtom
+            from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
 
             existing_atom = MemoryAtom(
                 parent_memory_id=42,
@@ -598,6 +609,7 @@ class TestWriteOpRepairAddIntegration:
                 (op_id,),
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["status"] == "completed"
             assert row["step"] == "completed"
 
@@ -635,6 +647,7 @@ class TestWriteOpRepairAddIntegration:
                 (op_id,),
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["status"] == "failed"
             assert row["step"] == "source_missing"
             assert "source document missing" in row["error"]

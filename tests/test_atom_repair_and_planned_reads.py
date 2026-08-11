@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock
 import aiosqlite
 import pytest
 
+from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
 from core.managers.write_op_journal import WriteOpJournal
 from core.managers.write_op_serialization import serialize_atom_for_repair
-from core.models.memory_atom import AtomType, MemoryAtom
 from core.storage.atom_store import AtomStore
 
 
@@ -115,7 +115,9 @@ async def test_public_reads_drop_stale_atom_but_raw_reads_preserve_it(
 
     assert await store.get(atom_id) is None
     assert await store.get_by_parent(17) == []
-    assert (await store.get_raw(atom_id)).atom_id == atom_id
+    raw_atom = await store.get_raw(atom_id)
+    assert raw_atom is not None
+    assert raw_atom.atom_id == atom_id
     assert [atom.atom_id for atom in await store.get_by_parent_raw(17)] == [atom_id]
 
 
@@ -280,4 +282,5 @@ async def test_failed_atom_repair_restores_through_real_store(
     assert [(item.content, item.parent_revision) for item in restored] == [
         ("修复后的计划", "rev-42")
     ]
+    assert row is not None
     assert row["status"] == "completed"

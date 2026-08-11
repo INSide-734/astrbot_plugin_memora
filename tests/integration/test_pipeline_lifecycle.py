@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from core.models.memory_atom import (
+from core.features.memory.domain.memory_atom import (
     AtomStatus,
     AtomType,
     DecayType,
@@ -458,8 +458,9 @@ async def test_backup_and_restore_roundtrip(
         )
 
         # 清理 — 关闭 restored store 的连接
-        if hasattr(restored_store, "db_connection") and restored_store.db_connection:
-            await restored_store.db_connection.close()
+        restored_connection = getattr(restored_store, "db_connection", None)
+        if restored_connection:
+            await restored_connection.close()
 
     finally:
         # 清理备份目录

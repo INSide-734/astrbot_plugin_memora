@@ -21,6 +21,7 @@ import os
 import sys
 import tempfile
 import time
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -51,7 +52,7 @@ def pytest_configure(config: Any) -> None:
 
 
 @pytest.fixture
-def integration_db_path() -> str:
+def integration_db_path() -> Iterator[str]:
     """每个测试独立的临时 SQLite 文件，确保测试之间完全隔离。
 
     函数作用域可防止测试以随机顺序运行或使用并行执行器
@@ -144,7 +145,7 @@ async def integration_engine(
     integration_db_path: str,
     integration_faiss: Any,
     integration_config: dict[str, Any],
-) -> Any:
+) -> AsyncIterator[Any]:
     """组装一个使用真实存储和 Mock 提供者的 MemoryEngine。
 
     引擎使用：
@@ -194,8 +195,9 @@ async def integration_engine(
     try:
         await engine.initialize()
     except Exception as exc:
-        if hasattr(engine, "db_connection") and engine.db_connection:
-            await engine.db_connection.close()
+        connection = getattr(engine, "db_connection", None)
+        if connection:
+            await connection.close()
         pytest.fail(f"MemoryEngine.initialize() failed: {exc}")
 
     yield engine
@@ -266,7 +268,7 @@ async def preloaded_engine(
     这些原子涵盖全部五种类型（EPISODIC、FACTUAL、PREFERENCE、
     RELATIONAL、PLANNED），其向量已添加到 FAISS 索引中。
     """
-    from core.models.memory_atom import AtomType, MemoryAtom
+    from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
 
     engine = integration_engine
     atom_store = engine.atom_store
