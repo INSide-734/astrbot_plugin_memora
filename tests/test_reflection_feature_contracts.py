@@ -45,3 +45,35 @@ def test_reflection_package_lazily_exports_feature_layers() -> None:
     )
     with pytest.raises(AttributeError, match="missing_reflection_contract"):
         reflection_feature.__getattr__("missing_reflection_contract")
+
+
+def test_reflection_configs_old_path_reuses_feature_owner() -> None:
+    """根配置聚合器应恒等导出 reflection feature 的配置模型。"""
+
+    from core.base.config_validator import (
+        LegacyBackfillConfig as LegacyLegacyBackfillConfig,
+    )
+    from core.base.config_validator import (
+        ReflectionEngineConfig as LegacyReflectionEngineConfig,
+    )
+    from core.base.config_validator import StrategyBConfig as LegacyStrategyBConfig
+    from core.base.config_validator import StrategyCConfig as LegacyStrategyCConfig
+    from core.base.config_validator import StrategyDConfig as LegacyStrategyDConfig
+    from core.base.config_validator import (
+        TopicSegmentationConfig as LegacyTopicSegmentationConfig,
+    )
+    from core.features.reflection.domain import (
+        LegacyBackfillConfig,
+        ReflectionEngineConfig,
+        StrategyBConfig,
+        StrategyCConfig,
+        StrategyDConfig,
+        TopicSegmentationConfig,
+    )
+
+    assert LegacyReflectionEngineConfig is ReflectionEngineConfig
+    assert LegacyStrategyBConfig is StrategyBConfig
+    assert LegacyStrategyCConfig is StrategyCConfig
+    assert LegacyStrategyDConfig is StrategyDConfig
+    assert LegacyLegacyBackfillConfig is LegacyBackfillConfig
+    assert LegacyTopicSegmentationConfig is TopicSegmentationConfig

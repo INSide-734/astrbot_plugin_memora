@@ -1,5 +1,13 @@
 """反思 feature 的纯领域约束。"""
 
+from .config import (
+    LegacyBackfillConfig,
+    ReflectionEngineConfig,
+    StrategyBConfig,
+    StrategyCConfig,
+    StrategyDConfig,
+    TopicSegmentationConfig,
+)
 from .storage_outcomes import (
     ReflectionStoreOutcome,
     ReflectionStoreResult,
@@ -8,8 +16,14 @@ from .storage_outcomes import (
 )
 
 __all__ = [
+    "LegacyBackfillConfig",
+    "ReflectionEngineConfig",
     "ReflectionStoreOutcome",
     "ReflectionStoreResult",
     "ReflectionStoreSummary",
+    "StrategyBConfig",
+    "StrategyCConfig",
+    "StrategyDConfig",
+    "TopicSegmentationConfig",
     "summarize_store_results",
 ]
