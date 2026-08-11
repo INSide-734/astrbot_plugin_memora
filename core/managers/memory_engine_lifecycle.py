@@ -593,7 +593,7 @@ class MemoryEngineLifecycleMixin:
     def _build_reconsolidation_llm_caller(self) -> Any | None:
         """构造带形状校验的再巩固 LLM 调用器，Provider 缺失时返回 None。"""
 
-        from ..provider_adapters import LLMProviderAdapter
+        from ..platform.provider.adapters import LLMProviderAdapter
 
         provider = getattr(self, "llm_provider", None)
         if provider is None:

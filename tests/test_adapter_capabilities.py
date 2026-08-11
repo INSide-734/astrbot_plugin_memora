@@ -137,7 +137,7 @@ def test_unknown_adapter_is_conservative_and_error_is_safe() -> None:
 async def test_llm_adapter_requires_text_chat_and_propagates_cancellation() -> None:
     """LLM adapter 构建时冻结 text_chat，取消信号必须传播。"""
 
-    from core.provider_adapters import LLMProviderAdapter
+    from core.platform.provider.adapters import LLMProviderAdapter
 
     with pytest.raises(RuntimeError, match="adapter_capability_unsupported"):
         LLMProviderAdapter.from_provider(MagicMock(spec=[]))
@@ -189,7 +189,7 @@ async def test_component_factory_rejects_missing_provider_capability_before_io(
 async def test_embedding_adapter_supports_native_batch_and_single_emulation() -> None:
     """Embedding adapter 必须保持 native batch 和逐项模拟的输入顺序。"""
 
-    from core.provider_adapters import EmbeddingProviderAdapter
+    from core.platform.provider.adapters import EmbeddingProviderAdapter
     from core.shared.adapter_capabilities import AdapterCapability, SupportLevel
 
     native = MagicMock(spec=[])
@@ -224,7 +224,7 @@ async def test_embedding_batch_internal_type_error_is_not_retried_as_signature()
 ):
     """Provider 内部 TypeError 不得被误判为另一种 batch 签名。"""
 
-    from core.provider_adapters import EmbeddingProviderAdapter
+    from core.platform.provider.adapters import EmbeddingProviderAdapter
 
     provider = MagicMock(spec=[])
     calls = 0
@@ -253,7 +253,7 @@ async def test_embedding_batch_internal_type_error_is_not_retried_as_signature()
 async def test_embedding_adapter_rejects_invalid_result(vectors, reason) -> None:
     """Embedding 数量、统一维度和有限性必须在 adapter 边界验证。"""
 
-    from core.provider_adapters import EmbeddingProviderAdapter
+    from core.platform.provider.adapters import EmbeddingProviderAdapter
 
     provider = MagicMock(spec=[])
     provider.get_embeddings = AsyncMock(return_value=vectors)
@@ -302,7 +302,7 @@ async def test_embedding_adapter_rejects_string_vector_shapes(
 ) -> None:
     """字符串不得被按字符误解释为二维数值向量。"""
 
-    from core.provider_adapters import EmbeddingProviderAdapter
+    from core.platform.provider.adapters import EmbeddingProviderAdapter
 
     provider = MagicMock(spec=[])
     provider.get_embeddings = AsyncMock(return_value=raw_vectors)

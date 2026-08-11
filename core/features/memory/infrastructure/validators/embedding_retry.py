@@ -5,7 +5,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .....provider_adapters import EmbeddingProviderAdapter
+from .....platform.provider.adapters import EmbeddingProviderAdapter
 
 
 class EmbeddingRetryMixin:

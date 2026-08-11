@@ -6,7 +6,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..provider_adapters import LLMGenerationResult, LLMProviderAdapter
+from ..platform.provider.adapters import LLMGenerationResult, LLMProviderAdapter
 from ..shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
