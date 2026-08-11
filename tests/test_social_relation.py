@@ -14,13 +14,13 @@ import time
 
 import pytest
 
-from core.base.list_sorting import SortQuery
 from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     EntityValidationError,
 )
+from core.shared.list_sorting import SortQuery
 from core.social.models import (
     RELATION_CATEGORIES,
     RELATION_DIFFICULTY,

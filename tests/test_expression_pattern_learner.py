@@ -18,13 +18,13 @@ import time
 
 import pytest
 
-from core.base.list_sorting import SortQuery
 from core.expression.models import ExpressionPattern, GroupState, PatternScope
 from core.expression.pattern_learner import ExpressionPatternLearner
 from core.expression.pattern_store import (
     EXPRESSION_SORT_COLUMNS,
     ExpressionPatternStore,
 )
+from core.shared.list_sorting import SortQuery
 
 # ---------------------------------------------------------------------------
 # Helpers

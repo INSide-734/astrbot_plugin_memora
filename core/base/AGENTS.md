@@ -8,7 +8,7 @@
 
 ## 职责与边界
 
-配置事务、迁移、所有权和运行时影响分类的唯一 owner 已迁至 `core/platform/config/`；跨 feature 常量、异常与 Adapter 能力归属 `core/shared/`。`core/base/` 目前保留配置模型聚合器，以及排序尚未完成测试调用方切换的兼容模块。
+配置事务、迁移、所有权和运行时影响分类的唯一 owner 已迁至 `core/platform/config/`；跨 feature 常量、异常与 Adapter 能力归属 `core/shared/`。`core/base/` 目前只保留配置模型聚合器和成本控制策略。
 
 当前低层基础契约负责：
 

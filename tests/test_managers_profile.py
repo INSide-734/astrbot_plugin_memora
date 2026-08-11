@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.base.list_sorting import SortQuery
 from core.managers.profile_manager import ProfileManager
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.models.memory_evolution import MemorySourceRef
@@ -18,6 +17,7 @@ from core.models.user_profile import (
     UserTag,
 )
 from core.shared.entity_editing import EntityValidationError
+from core.shared.list_sorting import SortQuery
 
 _DERIVED_PROVENANCE = DomainProvenance(
     DomainObjectOrigin.DERIVED,

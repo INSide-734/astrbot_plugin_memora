@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.api.expression_api import ExpressionApiMixin
-from core.base.list_sorting import SortQuery
+from core.shared.list_sorting import SortQuery
 
 
 def _make_mock_request(**args):

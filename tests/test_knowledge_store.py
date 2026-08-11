@@ -2,8 +2,8 @@
 
 import pytest
 
-from core.base.list_sorting import SortQuery
 from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+from core.shared.list_sorting import SortQuery
 from core.storage.knowledge_store import KnowledgeStore
 
 

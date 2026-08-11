@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from core.api.affection_api import AffectionApiMixin
-from core.base.list_sorting import SortQuery
 from core.shared.entity_editing import EditConflictError
+from core.shared.list_sorting import SortQuery
 
 
 def _mock_request(**args):

@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.api.profile_api import ProfileApiMixin
-from core.base.list_sorting import SortQuery
 from core.managers.profile_manager import ProfileManager
 from core.shared.entity_editing import (
     EditConflictError,
@@ -21,6 +20,7 @@ from core.shared.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,
 )
+from core.shared.list_sorting import SortQuery
 from core.storage.profile_store import ProfileStore
 
 

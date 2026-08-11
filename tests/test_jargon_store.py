@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from core.base.list_sorting import SortQuery
 from core.jargon.jargon_store import JARGON_MEANING_SORT_COLUMNS, JargonStore
 from core.jargon.models import JargonMeaning
+from core.shared.list_sorting import SortQuery
 
 
 @pytest.mark.asyncio

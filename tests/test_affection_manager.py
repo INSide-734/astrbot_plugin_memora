@@ -26,13 +26,13 @@ from core.affection.models import (
     UserAffection,
     classify_by_keywords,
 )
-from core.base.list_sorting import SortQuery
 from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     EntityValidationError,
 )
+from core.shared.list_sorting import SortQuery
 
 # ============================================================================
 # 管理员好感度与情绪操作测试
