@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from core.features.learning.application.auto_learning import AutoLearningManager
-from core.plugin_reload_lifecycle import run_scheduled_plugin_reload
+from core.platform.composition.reload_lifecycle import run_scheduled_plugin_reload
+
+if TYPE_CHECKING:
+    from core.features.learning.application.feedback_signal_manager import (
+        FeedbackSignalManager,
+    )
 
 _CANDIDATE_ID = "candidate_reload_state_01"
 _PUBLICATION_ID = "publication_reload_st01"
@@ -31,8 +38,8 @@ class _FeedbackManager:
 def _manager(data_dir: str) -> AutoLearningManager:
     """构造使用真实安全状态文件的 manager。"""
 
-    return AutoLearningManager(  # type: ignore[arg-type]
-        _FeedbackManager(),
+    return AutoLearningManager(
+        cast("FeedbackSignalManager", _FeedbackManager()),
         data_dir=data_dir,
         enabled=True,
     )
@@ -61,7 +68,7 @@ def _install_active_publication(manager: AutoLearningManager) -> None:
 
 @pytest.mark.asyncio
 async def test_queued_reload_is_persisted_and_reconciled_after_restart(
-    tmp_path: object,
+    tmp_path: Path,
 ) -> None:
     """新生命周期加载目标权重后把 queued operation 收口为 succeeded。"""
 
@@ -76,6 +83,7 @@ async def test_queued_reload_is_persisted_and_reconciled_after_restart(
         changed_paths=_LEARNING_PATHS,
         state="queued",
     )
+    assert recorded is not None
     assert recorded["state"] == "queued"
 
     restarted = _manager(data_dir)
@@ -93,7 +101,7 @@ async def test_queued_reload_is_persisted_and_reconciled_after_restart(
 
 @pytest.mark.asyncio
 async def test_restart_with_wrong_effective_weights_marks_reload_failed(
-    tmp_path: object,
+    tmp_path: Path,
 ) -> None:
     """新生命周期未加载目标权重时明确标记 failed，不伪造成功。"""
 
@@ -128,7 +136,7 @@ async def test_restart_with_wrong_effective_weights_marks_reload_failed(
 
 @pytest.mark.asyncio
 async def test_corrupt_state_keeps_reload_pending_without_blocking_startup(
-    tmp_path: object,
+    tmp_path: Path,
 ) -> None:
     """主状态损坏时 reload 对账不得写回或阻断生命周期启动。"""
 
@@ -149,7 +157,9 @@ async def test_corrupt_state_keeps_reload_pending_without_blocking_startup(
         reason_code="reload_started",
     )
 
-    state_path = manager._state_store.path
+    state_store = manager._state_store
+    assert state_store is not None
+    state_path = state_store.path
     state_path.write_text("{broken-primary", encoding="utf-8")
     restarted = _manager(data_dir)
     await restarted.load_state()
@@ -166,7 +176,7 @@ async def test_corrupt_state_keeps_reload_pending_without_blocking_startup(
 
 
 @pytest.mark.asyncio
-async def test_reload_failure_callback_is_persisted(tmp_path: object) -> None:
+async def test_reload_failure_callback_is_persisted(tmp_path: Path) -> None:
     """宿主重载失败回调把 queued/running operation 收口为 failed。"""
 
     manager = _manager(str(tmp_path))
@@ -193,7 +203,7 @@ async def test_reload_failure_callback_is_persisted(tmp_path: object) -> None:
 
 @pytest.mark.asyncio
 async def test_invalid_reload_transition_does_not_overwrite_terminal_state(
-    tmp_path: object,
+    tmp_path: Path,
 ) -> None:
     """succeeded 终态不能被迟到的旧宿主失败回调覆盖。"""
 
@@ -225,7 +235,7 @@ async def test_invalid_reload_transition_does_not_overwrite_terminal_state(
 
 @pytest.mark.asyncio
 async def test_stale_reload_callback_cannot_regress_new_instance_terminal_state(
-    tmp_path: object,
+    tmp_path: Path,
 ) -> None:
     """旧插件实例的回调不能覆盖新实例已经持久化的成功终态。"""
 
@@ -258,7 +268,10 @@ async def test_stale_reload_callback_cannot_regress_new_instance_terminal_state(
             memory_engine=SimpleNamespace(auto_learning=old_manager)
         ),
     )
-    with patch("core.plugin_reload_lifecycle.asyncio.sleep", new=AsyncMock()):
+    with patch(
+        "core.platform.composition.reload_lifecycle.asyncio.sleep",
+        new=AsyncMock(),
+    ):
         await run_scheduled_plugin_reload(
             old_plugin,
             reload_plugin,
@@ -268,14 +281,16 @@ async def test_stale_reload_callback_cannot_regress_new_instance_terminal_state(
         )
 
     reload_plugin.assert_not_awaited()
-    persisted = await old_manager._state_store.load()
+    state_store = old_manager._state_store
+    assert state_store is not None
+    persisted = await state_store.load()
     assert persisted.payload is not None
     assert persisted.payload["reload_operation"]["state"] == "succeeded"
 
 
 @pytest.mark.asyncio
 async def test_reload_callback_revision_conflict_is_fail_closed(
-    tmp_path: object,
+    tmp_path: Path,
 ) -> None:
     """过期状态写入者应返回稳定 revision 冲突，不得覆盖新状态。"""
 

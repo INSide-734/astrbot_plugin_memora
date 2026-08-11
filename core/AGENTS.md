@@ -40,7 +40,7 @@
 5. `main.py` 仅使用初始化器发布的实例创建 `EventHandler`、`CommandHandler` 和 `PluginPageApi`，保证消息、命令和页面请求共享同一存储与引擎。
 6. 关闭阶段由 `platform/composition/shutdown_lifecycle.py` 先收敛调度器、引擎任务等生产者，再关闭 Memory Evolution、注入组件和后续 manager/store/数据库；`CancelledError` 必须继续传播，清理失败不能覆盖原始初始化失败。
 
-恢复事务在初始化器和 `_ensure_runtime_components()` 均成功后才标记为 `succeeded`；任一阶段失败都由 `BackupManager` 保留失败/回滚状态。支持 AstrBot 插件重载时，`platform/composition/reload_lifecycle.py` 通过延迟重载安排热恢复，`plugin_reload_lifecycle.py` 仅保留旧路径恒等导出；重载能力不可用或调度失败时，事务保持 `staged`/可手动重启状态，不能伪造已应用成功。
+恢复事务在初始化器和 `_ensure_runtime_components()` 均成功后才标记为 `succeeded`；任一阶段失败都由 `BackupManager` 保留失败/回滚状态。支持 AstrBot 插件重载时，`platform/composition/reload_lifecycle.py` 通过延迟重载安排热恢复；重载能力不可用或调度失败时，事务保持 `staged`/可手动重启状态，不能伪造已应用成功。
 
 ## 架构与数据流
 

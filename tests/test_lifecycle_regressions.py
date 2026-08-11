@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
 from core.handlers.recall_handler import RecallHandler
-from core.plugin_shutdown_lifecycle import stop_runtime_producers
+from core.platform.composition.shutdown_lifecycle import stop_runtime_producers
 
 
 @pytest.mark.asyncio
@@ -28,8 +29,8 @@ async def test_initializer_coalesces_concurrent_full_initialization(tmp_path) ->
             return object(), object(), True
 
     initializer = PluginInitializer(
-        SimpleNamespace(),
-        SimpleNamespace(),
+        cast(Any, SimpleNamespace()),
+        cast(Any, SimpleNamespace()),
         str(tmp_path),
     )
     initializer._provider_waiter = ReadyWaiter()
@@ -94,8 +95,12 @@ async def test_provider_exhaustion_commits_terminal_failure(
     async def immediate_sleep(_delay: float) -> None:
         """立即推进确定性的重试预算。"""
 
-    initializer = PluginInitializer(SimpleNamespace(), SimpleNamespace(), str(tmp_path))
-    initializer._provider_loader = MissingLoader()
+    initializer = PluginInitializer(
+        cast(Any, SimpleNamespace()),
+        cast(Any, SimpleNamespace()),
+        str(tmp_path),
+    )
+    setattr(initializer, "_provider_loader", MissingLoader())
     initializer._provider_waiter._max_attempts = 2
     initializer._provider_waiter.wait_non_blocking = foreground_wait
     build_count = 0
@@ -163,8 +168,12 @@ async def test_provider_retry_terminate_cancels_without_false_failure(
         retry_entered.set()
         await asyncio.Future()
 
-    initializer = PluginInitializer(SimpleNamespace(), SimpleNamespace(), str(tmp_path))
-    initializer._provider_loader = MissingLoader()
+    initializer = PluginInitializer(
+        cast(Any, SimpleNamespace()),
+        cast(Any, SimpleNamespace()),
+        str(tmp_path),
+    )
+    setattr(initializer, "_provider_loader", MissingLoader())
     initializer._provider_waiter.wait_non_blocking = foreground_wait
     monkeypatch.setattr(waiter_module.asyncio, "sleep", blocked_sleep)
 
@@ -206,9 +215,13 @@ async def test_reconsolidation_proposal_is_detached_from_pre_llm_hook() -> None:
         return task
 
     handler = object.__new__(RecallHandler)
-    handler._memory_engine = SimpleNamespace(
-        reconsolidation=manager,
-        _create_tracked_task=track,
+    setattr(
+        handler,
+        "_memory_engine",
+        SimpleNamespace(
+            reconsolidation=manager,
+            _create_tracked_task=track,
+        ),
     )
 
     await asyncio.wait_for(

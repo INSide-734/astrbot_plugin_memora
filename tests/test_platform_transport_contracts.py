@@ -1,19 +1,10 @@
-"""平台 transport 宿主生命周期兼容契约测试。"""
+"""平台 transport 宿主生命周期契约测试。"""
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-from core import plugin_shutdown_lifecycle as legacy_shutdown
 from core.platform.transport.route_lifecycle import unregister_plugin_page_routes
-
-
-def test_shutdown_old_path_reuses_transport_route_lifecycle() -> None:
-    """旧关停路径只能导出 transport 的唯一 Page 路由清理函数。"""
-
-    assert (
-        legacy_shutdown.unregister_plugin_page_routes is unregister_plugin_page_routes
-    )
 
 
 def test_route_lifecycle_removes_only_current_page_instance_routes() -> None:
