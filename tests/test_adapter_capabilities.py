@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 from dataclasses import FrozenInstanceError
 from math import inf, nan
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from core.shared.adapter_capabilities import AdapterCapabilityContract
 
 
 def test_legacy_adapter_capability_exports_are_identical() -> None:
@@ -20,19 +24,23 @@ def test_legacy_adapter_capability_exports_are_identical() -> None:
         assert getattr(legacy, name) is getattr(shared, name)
 
 
-def test_legacy_mmr_exports_are_identical() -> None:
-    """检索旧路径与工厂必须导出 shared 中的同一 MMR 实现。"""
+def test_reranker_factory_uses_shared_mmr_implementation() -> None:
+    """重排工厂必须直接使用 shared 中的唯一 MMR 实现。"""
 
-    from core.retrieval import mmr_reranker as legacy_mmr
     from core.retrieval import reranker_factory
     from core.shared import mmr as shared_mmr
 
-    assert legacy_mmr.apply_mmr is shared_mmr.apply_mmr
     assert reranker_factory.MMRReranker is shared_mmr.MMRReranker
 
 
-def _contract(*, kind="vector_backend", native=(), caller_enforced=(), score=None):
-    """构建测试使用的最小能力契约。"""
+def _contract(
+    *,
+    kind: Any = "vector_backend",
+    native: tuple[Any, ...] = (),
+    caller_enforced: tuple[Any, ...] = (),
+    score: Any = None,
+) -> AdapterCapabilityContract:
+    """使用待规范化的原始值构建最小能力契约。"""
 
     from core.adapter_capabilities import AdapterCapabilityContract
 
@@ -80,13 +88,18 @@ def test_capability_contract_is_immutable_and_uses_three_levels() -> None:
     assert contract.level(AdapterCapability.FILTERING) is SupportLevel.CALLER_ENFORCED
     assert contract.level(AdapterCapability.DELETE) is SupportLevel.UNSUPPORTED
     with pytest.raises(FrozenInstanceError):
-        contract.kind = "other"
+        setattr(contract, "kind", "other")
 
 
 def test_contract_rejects_overlap_and_invalid_score_range() -> None:
     """同一能力不能同时属于两种等级，score range 必须有限且有序。"""
 
-    from core.adapter_capabilities import AdapterCapability, ScoreSemantics
+    from core.adapter_capabilities import (
+        AdapterCapability,
+        NormalizationScope,
+        ScoreDirection,
+        ScoreSemantics,
+    )
 
     with pytest.raises(ValueError, match="capability_level_overlap"):
         _contract(
@@ -95,18 +108,18 @@ def test_contract_rejects_overlap_and_invalid_score_range() -> None:
         )
     with pytest.raises(ValueError, match="score_range_invalid"):
         ScoreSemantics(
-            direction="higher_is_better",
+            direction=ScoreDirection.HIGHER_IS_BETTER,
             minimum=1.0,
             maximum=0.0,
-            normalization="backend",
+            normalization=NormalizationScope.BACKEND,
         )
     for invalid in (nan, inf):
         with pytest.raises(ValueError, match="score_range_invalid"):
             ScoreSemantics(
-                direction="higher_is_better",
+                direction=ScoreDirection.HIGHER_IS_BETTER,
                 minimum=0.0,
                 maximum=invalid,
-                normalization="backend",
+                normalization=NormalizationScope.BACKEND,
             )
 
 
@@ -265,6 +278,7 @@ async def test_embedding_retry_wraps_invalid_count_without_leaking_provider_erro
 ):
     """重试边界必须保留安全原因链，并隐藏 Provider 原始错误正文。"""
 
+    from core.platform.provider.adapters import AdapterResponseError
     from core.validators.embedding_retry import EmbeddingRetryMixin
 
     provider = MagicMock(spec=[])
@@ -278,7 +292,9 @@ async def test_embedding_retry_wraps_invalid_count_without_leaking_provider_erro
             retry_base_delay=0.001,
         )
 
-    assert captured.value.__cause__.reason_code == "embedding_count_mismatch"
+    cause = captured.value.__cause__
+    assert isinstance(cause, AdapterResponseError)
+    assert cause.reason_code == "embedding_count_mismatch"
     assert "provider" not in str(captured.value).casefold()
 
 
@@ -421,7 +437,11 @@ async def test_vector_mutations_unsupported_do_not_touch_backend() -> None:
 def test_current_adapter_snapshots_state_real_filter_and_score_semantics() -> None:
     """当前 BM25/Vector/Derived/Store 必须公开实际而非理想化的快照。"""
 
-    from core.adapter_capabilities import AdapterCapability, SupportLevel
+    from core.adapter_capabilities import (
+        AdapterCapability,
+        ScoreSemantics,
+        SupportLevel,
+    )
     from core.retrieval.bm25_retriever import BM25Retriever
     from core.retrieval.derived_relation_expander import DerivedRelationExpander
     from core.retrieval.projection_reader import ProjectionReader
@@ -432,8 +452,12 @@ def test_current_adapter_snapshots_state_real_filter_and_score_semantics() -> No
         BM25Retriever.adapter_capabilities.level(AdapterCapability.FILTERING)
         is SupportLevel.CALLER_ENFORCED
     )
-    assert BM25Retriever.adapter_capabilities.score.maximum == 1.0
-    assert VectorRetriever.adapter_capabilities.score.maximum is None
+    bm25_score = BM25Retriever.adapter_capabilities.score
+    vector_score = VectorRetriever.adapter_capabilities.score
+    assert isinstance(bm25_score, ScoreSemantics)
+    assert isinstance(vector_score, ScoreSemantics)
+    assert bm25_score.maximum == 1.0
+    assert vector_score.maximum is None
     assert DerivedRelationExpander.adapter_capabilities.supports(
         AdapterCapability.REFERENCE_TIME
     )
