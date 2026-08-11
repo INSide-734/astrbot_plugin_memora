@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from core.models.graph_models import GraphEdge, GraphNode
+from core.features.memory.graph.domain.models import GraphEdge, GraphNode
 from core.storage.graph_store import GraphStore
 
 

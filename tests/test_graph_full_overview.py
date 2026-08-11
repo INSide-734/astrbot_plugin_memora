@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.api.graph_api import GraphApiMixin
-from core.models.graph_models import GraphEdge, GraphEntry, GraphNode
+from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
 from core.storage.graph_store import GraphStore
 
 

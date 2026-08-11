@@ -59,7 +59,7 @@ erDiagram
 
 ### `core/features/memory/graph/domain/models.py`
 
-`core/models/graph_models.py` 仅保留兼容导出，唯一实现归属 memory feature。
+该模块是 graph 领域模型的唯一导入路径，`core/models/` 不再转发这些类型。
 
 - `GraphNode.node_key = "{node_type}:{canonical_value}"`，规范值由实体解析链负责生成。
 - `GraphEdge.edge_key` 包含 `source_memory_id`，用于来源级唯一性；`semantic_edge_key` 忽略记忆 ID，用于跨来源语义合并。
@@ -110,10 +110,9 @@ erDiagram
 
 `core/models/__init__.py` 仅公开：
 
-- `Message`、`Session`、`MemoryEvent`、`serialize_to_json`、`deserialize_from_json`；
-- `GraphNode`、`GraphEdge`、`GraphEntry`、`ExtractedGraph`。
+- `Message`、`Session`、`MemoryEvent`、`serialize_to_json`、`deserialize_from_json`。
 
-`MemoryAtom`、画像、知识、笔记、召回策略和停用词必须从对应子模块导入。不要假设文件内 `__all__` 会自动汇总到包入口；若扩展包级 API，需显式编辑 `__init__.py` 并增加导出契约测试。
+Graph 模型必须从 `core.features.memory.graph.domain.models` 导入；`MemoryAtom`、画像、知识、笔记、召回策略和停用词必须从对应 owner 子模块导入。不要假设文件内 `__all__` 会自动汇总到包入口；若扩展包级 API，需显式编辑 `__init__.py` 并增加导出契约测试。
 
 Memory Evolution 类型同样从 `core.models.memory_evolution` 直接导入；该模块自己的 `__all__` 不是 `core.models` 包级再导出。新增 evolution 类型时要同步直接调用方和模型测试，不要无意扩大包入口。
 

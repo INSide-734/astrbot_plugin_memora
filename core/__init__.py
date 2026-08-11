@@ -31,10 +31,6 @@ __all__ = [
     "MemoryEvent",
     "Message",
     "Session",
-    "GraphNode",
-    "GraphEdge",
-    "GraphEntry",
-    "ExtractedGraph",
     # 管理器
     "ConversationManager",
     "GraphMemoryManager",
@@ -111,23 +107,7 @@ def __getattr__(name: str) -> Any:
         "MemoryEvent",
         "Message",
         "Session",
-        "GraphNode",
-        "GraphEdge",
-        "GraphEntry",
-        "ExtractedGraph",
     ):
-        from .models import (
-            ExtractedGraph as ExtractedGraph,
-        )
-        from .models import (
-            GraphEdge as GraphEdge,
-        )
-        from .models import (
-            GraphEntry as GraphEntry,
-        )
-        from .models import (
-            GraphNode as GraphNode,
-        )
         from .models import (
             MemoryEvent as MemoryEvent,
         )

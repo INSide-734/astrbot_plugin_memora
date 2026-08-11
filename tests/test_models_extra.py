@@ -476,7 +476,7 @@ class TestGraphNode:
     """测试 GraphNode 数据类。"""
 
     def test_basic_node_creation(self) -> None:
-        from core.models.graph_models import GraphNode
+        from core.features.memory.graph.domain.models import GraphNode
 
         node = GraphNode(
             node_type="person",
@@ -489,7 +489,7 @@ class TestGraphNode:
         assert node.metadata == {}
 
     def test_node_key_property(self) -> None:
-        from core.models.graph_models import GraphNode
+        from core.features.memory.graph.domain.models import GraphNode
 
         node = GraphNode(
             node_type="entity",
@@ -499,7 +499,7 @@ class TestGraphNode:
         assert node.node_key == "entity:west_lake"
 
     def test_node_with_metadata(self) -> None:
-        from core.models.graph_models import GraphNode
+        from core.features.memory.graph.domain.models import GraphNode
 
         node = GraphNode(
             node_type="topic",
@@ -514,7 +514,7 @@ class TestGraphEdge:
     """测试 GraphEdge 数据类。"""
 
     def test_basic_edge_creation(self) -> None:
-        from core.models.graph_models import GraphEdge
+        from core.features.memory.graph.domain.models import GraphEdge
 
         edge = GraphEdge(
             source_key="person:xiaoming",
@@ -531,7 +531,7 @@ class TestGraphEdge:
         assert edge.status == "active"
 
     def test_edge_key_property(self) -> None:
-        from core.models.graph_models import GraphEdge
+        from core.features.memory.graph.domain.models import GraphEdge
 
         edge = GraphEdge(
             source_key="a",
@@ -542,7 +542,7 @@ class TestGraphEdge:
         assert edge.edge_key == "a|knows|b|42"
 
     def test_semantic_edge_key_ignores_memory_id(self) -> None:
-        from core.models.graph_models import GraphEdge
+        from core.features.memory.graph.domain.models import GraphEdge
 
         edge1 = GraphEdge(
             source_key="a",
@@ -564,7 +564,7 @@ class TestGraphEntry:
     """测试 GraphEntry 数据类。"""
 
     def test_basic_entry_creation(self) -> None:
-        from core.models.graph_models import GraphEntry
+        from core.features.memory.graph.domain.models import GraphEntry
 
         entry = GraphEntry(
             entry_key="ent-001",
@@ -581,7 +581,7 @@ class TestGraphEntry:
         assert entry.content == "小明周末去了西湖"
 
     def test_entry_defaults(self) -> None:
-        from core.models.graph_models import GraphEntry
+        from core.features.memory.graph.domain.models import GraphEntry
 
         entry = GraphEntry(
             entry_key="ent-002",
@@ -600,7 +600,7 @@ class TestExtractedGraph:
     """测试 ExtractedGraph 数据类。"""
 
     def test_empty_extracted_graph(self) -> None:
-        from core.models.graph_models import ExtractedGraph
+        from core.features.memory.graph.domain.models import ExtractedGraph
 
         eg = ExtractedGraph()
         assert eg.nodes == []
@@ -608,7 +608,7 @@ class TestExtractedGraph:
         assert eg.entries == []
 
     def test_extracted_graph_with_data(self) -> None:
-        from core.models.graph_models import (
+        from core.features.memory.graph.domain.models import (
             ExtractedGraph,
             GraphEdge,
             GraphEntry,

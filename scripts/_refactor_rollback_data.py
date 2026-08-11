@@ -9,7 +9,7 @@ import sqlite3
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def _ensure_repo_root_importable() -> None:
@@ -223,9 +223,11 @@ async def _rebuild_fts5(
 
     try:
         _ensure_repo_root_importable()
+        from core.processors.text_processor import TextProcessor
         from core.retrieval.bm25_retriever import BM25Retriever
 
-        retriever = BM25Retriever(str(database), _LiteralTextProcessor())
+        text_processor = cast(TextProcessor, _LiteralTextProcessor())
+        retriever = BM25Retriever(str(database), text_processor)
         await retriever.initialize()
         for row in rows:
             await retriever.add_document(int(row[0]), str(row[1]))
@@ -312,7 +314,11 @@ async def _rebuild_graph(
 
     try:
         _ensure_repo_root_importable()
-        from core.models.graph_models import GraphEdge, GraphEntry, GraphNode
+        from core.features.memory.graph.domain.models import (
+            GraphEdge,
+            GraphEntry,
+            GraphNode,
+        )
         from core.storage.graph_store import GraphStore
 
         source_id = int(rows[0][0])
