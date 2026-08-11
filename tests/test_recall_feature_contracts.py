@@ -52,3 +52,12 @@ def test_recall_config_old_path_reuses_feature_owner() -> None:
 
     assert LegacyPresetName is PresetName
     assert LegacyRecallEngineConfig is RecallEngineConfig
+
+
+def test_recall_filtering_config_old_path_reuses_feature_owner() -> None:
+    """根配置聚合器应恒等导出 recall feature 的过滤配置模型。"""
+
+    from core.base.config_validator import FilteringConfig as LegacyFilteringConfig
+    from core.features.recall.domain import FilteringConfig
+
+    assert LegacyFilteringConfig is FilteringConfig

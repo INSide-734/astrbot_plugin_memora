@@ -7,6 +7,13 @@ from pydantic import BaseModel, Field, model_validator
 PresetName = Literal["tool_first", "low_cost", "balanced", "quality"]
 
 
+class FilteringConfig(BaseModel):
+    """过滤配置"""
+
+    use_persona_filtering: bool = Field(default=True, description="是否使用人格过滤")
+    use_session_filtering: bool = Field(default=True, description="是否使用会话过滤")
+
+
 class RecallEngineConfig(BaseModel):
     """回忆引擎配置"""
 
@@ -177,4 +184,4 @@ class RecallEngineConfig(BaseModel):
         return self
 
 
-__all__ = ["PresetName", "RecallEngineConfig"]
+__all__ = ["FilteringConfig", "PresetName", "RecallEngineConfig"]

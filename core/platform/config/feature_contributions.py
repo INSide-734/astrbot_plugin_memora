@@ -6,7 +6,7 @@ from ...features.evolution.domain import MemoryEvolutionConfig
 from ...features.memory.domain.atom_quality_config import AtomQualityFilterConfig
 from ...features.memory.domain.graph_memory_config import GraphMemoryConfig
 from ...features.memory.domain.migration_config import MigrationSettings
-from ...features.recall.domain import PresetName, RecallEngineConfig
+from ...features.recall.domain import FilteringConfig, PresetName, RecallEngineConfig
 from ...features.reflection.domain.config import (
     LegacyBackfillConfig,
     ReflectionEngineConfig,
@@ -20,6 +20,7 @@ from ...features.retrieval.domain import FusionStrategyConfig, RerankerConfig
 __all__ = [
     "AtomQualityFilterConfig",
     "ForgettingAgentConfig",
+    "FilteringConfig",
     "FusionStrategyConfig",
     "GraphMemoryConfig",
     "ImportanceDecayConfig",

@@ -3,10 +3,11 @@ config_validator.py - 配置验证模块
 提供配置验证和默认值管理功能。
 """
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from ..platform.config.feature_contributions import (
     AtomQualityFilterConfig,
+    FilteringConfig,
     ForgettingAgentConfig,
     FusionStrategyConfig,
     GraphMemoryConfig,
@@ -43,13 +44,6 @@ from .feature_config import (
     UpdateSettings,
 )
 from .runtime_feature_config import RuntimeFeatureConfigSections
-
-
-class FilteringConfig(BaseModel):
-    """过滤配置"""
-
-    use_persona_filtering: bool = Field(default=True, description="是否使用人格过滤")
-    use_session_filtering: bool = Field(default=True, description="是否使用会话过滤")
 
 
 class MemoraConfig(RuntimeFeatureConfigSections):
