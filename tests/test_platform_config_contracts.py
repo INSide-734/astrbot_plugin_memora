@@ -6,6 +6,7 @@ import sys
 import pytest
 
 import core.base as legacy_base
+import core.platform.config as platform_config
 from core.base import config_manager as legacy_config_manager
 from core.base import config_migrations as legacy_migrations
 from core.base import config_ownership as legacy_ownership
@@ -64,6 +65,17 @@ def test_platform_config_validation_supports_owner_first_import() -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "core.platform.config.validation"
+
+
+def test_platform_config_package_lazily_exports_contracts() -> None:
+    """平台配置包应惰性解析公开契约，并拒绝未知属性。"""
+
+    assert (
+        platform_config.__getattr__("ConfigManager")
+        is platform_config_manager.ConfigManager
+    )
+    with pytest.raises(AttributeError, match="missing_config_contract"):
+        platform_config.__getattr__("missing_config_contract")
 
 
 def test_atom_quality_config_old_path_reuses_memory_feature_owner() -> None:
