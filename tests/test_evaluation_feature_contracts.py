@@ -6,9 +6,6 @@ from core.evaluation import (
 )
 from core.evaluation import evaluation_service as legacy_evaluation_service
 from core.evaluation import (
-    feedback_learning_pipeline as legacy_feedback_learning_pipeline,
-)
-from core.evaluation import (
     feedback_ranking_ablation as legacy_feedback_ranking_ablation,
 )
 from core.evaluation import metric_provenance as legacy_metric_provenance
@@ -18,9 +15,6 @@ from core.evaluation import retrieval_quality as legacy_retrieval_quality
 from core.evaluation import session_first_ablation as legacy_session_first_ablation
 from core.features.evaluation.application import (
     derived_metadata_ablation as feature_derived_metadata_ablation,
-)
-from core.features.evaluation.application import (
-    feedback_learning_pipeline as feature_feedback_learning_pipeline,
 )
 from core.features.evaluation.application import (
     feedback_ranking_ablation as feature_feedback_ranking_ablation,
@@ -33,6 +27,9 @@ from core.features.evaluation.application import (
 )
 from core.features.evaluation.application import (
     session_first_ablation as feature_session_first_ablation,
+)
+from core.features.evaluation.application.feedback_learning_pipeline import (
+    run_feedback_ranking_evaluation_and_publish_evidence,
 )
 from core.features.evaluation.domain import (
     metric_provenance as feature_metric_provenance,
@@ -131,16 +128,11 @@ def test_legacy_feedback_ranking_reuses_feature_application() -> None:
         )
 
 
-def test_legacy_feedback_learning_pipeline_reuses_feature_application() -> None:
-    """旧 evaluation 路径只能导出 feature application 的反馈投递编排。"""
+def test_feedback_learning_pipeline_is_owned_by_evaluation_feature() -> None:
+    """反馈评测投递编排应由 evaluation feature application 唯一拥有。"""
 
-    assert (
-        legacy_feedback_learning_pipeline.__all__
-        == feature_feedback_learning_pipeline.__all__
-    )
-    assert (
-        legacy_feedback_learning_pipeline.run_feedback_ranking_evaluation_and_publish_evidence
-        is feature_feedback_learning_pipeline.run_feedback_ranking_evaluation_and_publish_evidence
+    assert run_feedback_ranking_evaluation_and_publish_evidence.__module__ == (
+        "core.features.evaluation.application.feedback_learning_pipeline"
     )
 
 

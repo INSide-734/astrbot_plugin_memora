@@ -12,6 +12,8 @@
 
 `derived_metadata_ablation.py` 只构造 process-local source-backed annotation index；`feedback_ranking_ablation.py` 只在内存中应用隔离 aggregate 的 document/graph 权重。`derived_metadata.jsonl` 和 `feedback_ranking.jsonl` 与 Session-first 一样默认排除在标准 fixture 目录之外，三类实验均不注册到 `EvaluationService` 或 Page API。
 
+反馈学习证据模型、校验契约与私有 Inbox 唯一归属 `core/features/learning/domain/` 和 `core/features/learning/infrastructure/`；离线反馈排序完成后的投递编排唯一归属 `core/features/evaluation/application/feedback_learning_pipeline.py`。`core/evaluation/` 不再转发这些类型或函数。
+
 ## Memory Evolution A/B/C 评测
 
 `tests/fixtures/retrieval/memory_evolution.jsonl` 使用 21 条匿名合成样本覆盖 direct/single-hop、multi-hop、noise-negative、revision unchanged/revised、single/multi-source conflict、canonical delete、derived rebuild、scope/privacy/role/validity negative、stale job、retry recovery、temporal consistency、UTC `reference_time`、future/valid window 和 source-backed projection。Projection 用例的相关文档必须是 canonical source IDs，不能为派生摘要伪造独立 `doc_id`；fixture 不能混入真实对话、身份或凭据。
