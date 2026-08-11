@@ -2,13 +2,14 @@
 
 # 初始化与组件装配
 
-**最后核对：** 2026-08-01
-**公共入口：** `core/initializer/__init__.py`  
-**上游编排：** `core/plugin_initializer.py`
+**最后核对：** 2026-08-12
+**真实入口：** `core/platform/composition/__init__.py`
+**遗留入口：** `core/initializer/__init__.py`
+**上游编排：** `core/platform/composition/plugin_initializer.py`
 
 ## 职责边界
 
-启动期基础组件装配的唯一 owner 已迁至 `core/platform/composition/`。本目录暂时保留 FAISS 私有宿主兼容探针，以及供旧导入路径使用的恒等导出；配置默认合并、Schema 校验、修订冲突与持久化事务属于 `core/base/config_manager.py`，业务检索、API 和命令不应下沉到这里。
+启动期基础组件装配的唯一 owner 已迁至 `core/platform/composition/`。本目录只保留 FAISS 私有宿主兼容探针，以及受架构 C0/入口台账约束的 `ComponentFactory`、`ProviderWaiter` 恒等导出；配置默认合并、Schema 校验、修订冲突与持久化事务属于 `core/base/config_manager.py`，业务检索、API 和命令不应下沉到这里。
 
 ```mermaid
 flowchart TD
@@ -35,11 +36,11 @@ flowchart TD
     CF --> IDS[InjectionDecisionStore / Recorder]
 ```
 
-## 公共契约
+## Composition 契约
 
-`__init__.py` 继续稳定导出 `ComponentFactory`、`DatabaseSetup`、`FaissChecker`、`ProviderLoader` 和 `ProviderWaiter`；除 `FaissChecker` 外，这些旧模块不保留第二份实现。
+`core/platform/composition/__init__.py` 导出 `DatabaseSetup`、`DerivedRebuildCoordinator`、`ProviderLoader`、`ProviderWaiter` 和身份失败清理函数。运行时配置投影、readiness mixin、组件工厂与插件初始化器从各自的 composition 子模块导入。
 
-`platform/composition/readiness.py` 是 `PluginInitializer` 的内部状态查询 mixin；`initializer/readiness.py` 仅保留旧路径恒等导出，二者都不作为包级公开导出。
+`core/initializer/__init__.py` 仅导出 `ComponentFactory`、`FaissChecker` 和 `ProviderWaiter`。除 FAISS 探针的真实实现外，本目录不承载启动逻辑；已迁移组件不得重新增加旧路径 shim。
 
 | 类型 | 关键接口 | 契约 |
 |---|---|---|
@@ -94,7 +95,7 @@ flowchart TD
 
 ## 依赖方向
 
-`plugin_initializer` → `platform/composition` → `base`、`features`、`managers`、`processors`、`storage`、`injection`。initializer 旧路径不得重新承载实现，也不得反向依赖 Page API、Agent 工具或命令端点。
+`platform/composition` → `base`、`features`、`managers`、`processors`、`storage`、`injection`。initializer 遗留入口只能指向 composition 或持有 FAISS 探针，不得重新承载实现，也不得反向依赖 Page API、Agent 工具或命令端点。
 
 ## 测试定位与精确验证
 
@@ -112,6 +113,6 @@ python -m pytest tests/test_config_contract.py tests/test_api_config.py -q
 - [注入模块 AGENTS.md](../injection/AGENTS.md)
 - [Memory Evolution 管理器 AGENTS.md](../managers/AGENTS.md)
 - [派生检索 AGENTS.md](../retrieval/AGENTS.md)
-- `core/plugin_initializer.py`
+- `../platform/composition/plugin_initializer.py`
 - `core/base/config_manager.py`
 - `core/storage/injection_decision_store.py`

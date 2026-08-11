@@ -1,20 +1,9 @@
-"""平台 composition 组件的旧路径兼容契约。"""
+"""平台 composition 组件的新 owner 与 Provider 契约。"""
 
-from importlib import import_module
 from unittest.mock import MagicMock
 
 from astrbot.api.provider import Provider
 
-from core import plugin_reload_lifecycle as legacy_plugin_reload_lifecycle
-from core.initializer import db_setup as legacy_db_setup
-from core.initializer import (
-    derived_rebuild_coordinator as legacy_derived_rebuild_coordinator,
-)
-from core.initializer import engine_runtime_config as legacy_engine_runtime_config
-from core.initializer import identity_lifecycle as legacy_identity_lifecycle
-from core.initializer import provider_loader as legacy_provider_loader
-from core.initializer import provider_waiter as legacy_provider_waiter
-from core.initializer import readiness as legacy_readiness
 from core.platform import composition as composition_package
 from core.platform.composition import (
     DatabaseSetup,
@@ -23,11 +12,11 @@ from core.platform.composition import (
     ProviderWaiter,
     close_identity_runtime_after_failure,
 )
+from core.platform.composition import component_factory as composition_component_factory
 from core.platform.composition import (
-    engine_runtime_config as composition_engine_runtime_config,
+    plugin_initializer as composition_plugin_initializer,
 )
 from core.platform.composition import provider_loader as composition_provider_loader
-from core.platform.composition import readiness as composition_readiness
 
 
 class _EmbeddingCandidate:
@@ -50,80 +39,32 @@ def _config_manager(**values: str | None) -> MagicMock:
     return manager
 
 
-def test_provider_waiter_old_path_reuses_composition_implementation() -> None:
-    """旧 initializer 路径只能导出 composition 的唯一 ProviderWaiter。"""
+def test_composition_package_exports_owned_components() -> None:
+    """composition 包应从新 owner 导出基础装配组件。"""
 
-    assert legacy_provider_waiter.ProviderWaiter is ProviderWaiter
-
-
-def test_provider_loader_old_path_reuses_composition_implementation() -> None:
-    """旧 initializer 路径只能导出 composition 的唯一 ProviderLoader。"""
-
-    assert legacy_provider_loader.ProviderLoader is ProviderLoader
+    assert composition_package.__all__ == [
+        "DatabaseSetup",
+        "DerivedRebuildCoordinator",
+        "ProviderLoader",
+        "ProviderWaiter",
+        "close_identity_runtime_after_failure",
+    ]
+    assert composition_package.DatabaseSetup is DatabaseSetup
+    assert composition_package.DerivedRebuildCoordinator is DerivedRebuildCoordinator
     assert composition_package.ProviderLoader is ProviderLoader
-
-
-def test_component_factory_old_path_reuses_composition_implementation() -> None:
-    """旧组件工厂路径只能导出 composition 的唯一实现。"""
-
-    from core.initializer import component_factory as legacy_component_factory
-    from core.platform.composition import component_factory
-
-    assert legacy_component_factory.__all__ == component_factory.__all__
+    assert composition_package.ProviderWaiter is ProviderWaiter
     assert (
-        legacy_component_factory.ComponentFactory is component_factory.ComponentFactory
-    )
-    assert component_factory.Provider is Provider
-
-
-def test_plugin_initializer_old_path_reuses_composition_implementation() -> None:
-    """旧根路径只能导出 composition 的唯一插件初始化器实现。"""
-
-    legacy_plugin_initializer = import_module("core.plugin_initializer")
-    plugin_initializer = import_module("core.platform.composition.plugin_initializer")
-
-    assert getattr(legacy_plugin_initializer, "__all__") == getattr(
-        plugin_initializer,
-        "__all__",
-    )
-    assert getattr(legacy_plugin_initializer, "PluginInitializer") is getattr(
-        plugin_initializer, "PluginInitializer"
-    )
-    assert getattr(plugin_initializer, "Provider") is Provider
-
-
-def test_readiness_old_path_reuses_composition_implementation() -> None:
-    """旧初始化就绪路径只能导出 composition 的唯一 mixin。"""
-
-    assert (
-        legacy_readiness.InitializerReadinessMixin
-        is composition_readiness.InitializerReadinessMixin
+        composition_package.close_identity_runtime_after_failure
+        is close_identity_runtime_after_failure
     )
 
 
-def test_reload_lifecycle_old_path_reuses_composition_implementation() -> None:
-    """旧重载路径只能导出唯一函数并保留共享 monkeypatch 目标。"""
+def test_composition_uses_public_provider_contract() -> None:
+    """组合根应统一使用 AstrBot 公开 Provider 类型。"""
 
-    from core.platform.composition import reload_lifecycle
-
-    for name in reload_lifecycle.__all__:
-        assert getattr(legacy_plugin_reload_lifecycle, name) is getattr(
-            reload_lifecycle,
-            name,
-        )
-    assert legacy_plugin_reload_lifecycle.asyncio is reload_lifecycle.asyncio
-
-
-def test_shutdown_lifecycle_old_path_reuses_composition_implementation() -> None:
-    """旧关停路径只能导出 composition 的唯一生产者收敛函数。"""
-
-    from core import plugin_shutdown_lifecycle as legacy_shutdown_lifecycle
-    from core.platform.composition import shutdown_lifecycle
-
-    assert (
-        legacy_shutdown_lifecycle.stop_runtime_producers
-        is shutdown_lifecycle.stop_runtime_producers
-    )
+    assert composition_component_factory.Provider is Provider
+    assert composition_plugin_initializer.Provider is Provider
+    assert composition_provider_loader.Provider is Provider
 
 
 def test_provider_loader_accepts_configured_embedding_capability() -> None:
@@ -189,45 +130,3 @@ def test_provider_loader_requires_public_chat_provider_type() -> None:
     _, rejected_llm = loader.initialize_providers(None, None, silent=True)
 
     assert rejected_llm is None
-
-
-def test_identity_lifecycle_old_path_reuses_composition_implementation() -> None:
-    """旧身份失败清理路径只能导出 composition 的唯一函数。"""
-
-    assert (
-        legacy_identity_lifecycle.close_identity_runtime_after_failure
-        is close_identity_runtime_after_failure
-    )
-
-
-def test_database_setup_old_path_reuses_composition_implementation() -> None:
-    """旧数据库启动维护路径只能导出 composition 的唯一实现。"""
-
-    assert legacy_db_setup.DatabaseSetup is DatabaseSetup
-
-
-def test_rebuild_coordinator_old_path_reuses_composition_implementation() -> None:
-    """旧派生重建路径只能导出 composition 的唯一协调器。"""
-
-    assert (
-        legacy_derived_rebuild_coordinator.DerivedRebuildCoordinator
-        is DerivedRebuildCoordinator
-    )
-
-
-def test_engine_runtime_config_old_path_reuses_composition_exports() -> None:
-    """旧运行时配置投影路径只能导出 composition 的唯一实现。"""
-
-    assert (
-        legacy_engine_runtime_config.__all__
-        == composition_engine_runtime_config.__all__
-    )
-    for name in composition_engine_runtime_config.__all__:
-        assert getattr(legacy_engine_runtime_config, name) is getattr(
-            composition_engine_runtime_config,
-            name,
-        )
-    assert (
-        legacy_engine_runtime_config.ConfigReader
-        is composition_engine_runtime_config.ConfigReader
-    )

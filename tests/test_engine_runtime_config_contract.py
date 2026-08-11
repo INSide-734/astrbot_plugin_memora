@@ -15,10 +15,10 @@ from astrbot.api.platform import MessageType
 
 from core.base.config_manager import ConfigApplyResult, ConfigManager
 from core.base.config_validator import get_default_config, validate_config
-from core.initializer.component_factory import ComponentFactory
 from core.managers.decay_operations import DecayOperationsMixin
 from core.managers.memory_engine import MemoryEngine
 from core.managers.retrieval_optimizer import RetrievalOptimizer
+from core.platform.composition.component_factory import ComponentFactory
 from core.platform.config import (
     ConfigOwnershipKind,
     resolve_config_ownership,

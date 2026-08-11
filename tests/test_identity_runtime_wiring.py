@@ -657,7 +657,7 @@ async def test_initializer_closes_identity_runtime_without_event_handler(
     """未创建事件处理器时，初始化器关闭链仍释放身份 Store。"""
 
     from core.identity.runtime import ProtocolIdentityRuntime
-    from core.plugin_initializer import PluginInitializer
+    from core.platform.composition.plugin_initializer import PluginInitializer
 
     store = MagicMock()
     store.close = AsyncMock()
@@ -683,7 +683,7 @@ async def test_initializer_closes_published_identity_runtime_after_init_failure(
 
     from core.base.exceptions import InitializationError
     from core.identity.runtime import ProtocolIdentityRuntime
-    from core.plugin_initializer import PluginInitializer
+    from core.platform.composition.plugin_initializer import PluginInitializer
 
     store = MagicMock()
     store.close = AsyncMock()
@@ -738,7 +738,7 @@ async def test_initializer_closes_published_identity_runtime_after_init_failure(
 async def test_failed_init_identity_cleanup_propagates_only_cancellation() -> None:
     """身份关闭普通错误应降级，取消信号必须继续传播。"""
 
-    from core.initializer.identity_lifecycle import (
+    from core.platform.composition.identity_lifecycle import (
         close_identity_runtime_after_failure,
     )
 
