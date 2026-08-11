@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import cast
 
 import pytest
 
-from core.models.feedback_signal import (
+from core.features.learning.domain.models import (
     FeedbackAdapterKind,
     FeedbackOutcome,
     FeedbackSignalAggregate,
@@ -54,7 +55,7 @@ def test_builder_rejects_free_outcome_and_naive_time() -> None:
             adapter_kind=FeedbackAdapterKind.RETRIEVAL_RESULT,
             decision_key="decision",
             variant_key="document_route",
-            outcome="positive",
+            outcome=cast(FeedbackOutcome, "positive"),
             scope_domain="scope",
             persona_domain=None,
             observed_at=datetime.now(timezone.utc),

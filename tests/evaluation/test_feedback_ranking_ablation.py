@@ -29,10 +29,13 @@ from core.features.learning.domain.feedback_learning_evidence import (
 from core.features.learning.domain.feedback_learning_evidence_contract import (
     REQUIRED_EVIDENCE_REGRESSION_CHECKS,
 )
+from core.features.learning.domain.models import (
+    FeedbackSignalAggregate,
+    FeedbackSignalPolicy,
+)
 from core.features.learning.infrastructure.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
 )
-from core.models.feedback_signal import FeedbackSignalAggregate, FeedbackSignalPolicy
 
 
 def _aggregate(status: str = "candidate") -> FeedbackSignalAggregate:

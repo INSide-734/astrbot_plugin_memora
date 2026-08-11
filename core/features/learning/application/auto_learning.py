@@ -6,10 +6,11 @@ import asyncio
 import copy
 import inspect
 import os
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from ..contracts import FeedbackSignalServicePort, LearningEvidenceProviderPort
 from ..domain.auto_learning_actions import (
     CandidateBinding,
     aggregation_revision_for,
@@ -44,7 +45,6 @@ from .auto_learning_reload import (
 from .auto_learning_retention import (
     AutoLearningRetentionMixin,
 )
-from .feedback_signal_manager import FeedbackSignalManager
 
 _STATE_FILE = "auto_learning.json"
 _BINDING_FIELDS = (
@@ -70,19 +70,13 @@ class AutoLearningManager(
 
     def __init__(
         self,
-        feedback_manager: FeedbackSignalManager,
+        feedback_manager: FeedbackSignalServicePort,
         *,
         data_dir: str = "",
         enabled: bool = False,
         min_independent_windows: int = 2,
         min_samples: int = 3,
-        evidence_provider: Callable[
-            [Sequence[FeedbackSignalAggregate]],
-            LearningEvidenceArtifact
-            | Awaitable[LearningEvidenceArtifact | None]
-            | None,
-        ]
-        | None = None,
+        evidence_provider: LearningEvidenceProviderPort | None = None,
         quality_gate_version: str = "quality-gate-v1",
     ) -> None:
         """初始化反馈来源、证据绑定入口及单一状态权威。"""
@@ -401,11 +395,14 @@ class AutoLearningManager(
         async with self._state_lock:
             candidate = copy.deepcopy(self._candidates.get(candidate_id))
             provider = self._evidence_provider
-            artifact_record = (
-                copy.deepcopy(
-                    self._evidence_artifacts.get(candidate.get("evidence_revision"))
-                )
+            evidence_revision = (
+                candidate.get("evidence_revision")
                 if isinstance(candidate, dict)
+                else None
+            )
+            artifact_record = (
+                copy.deepcopy(self._evidence_artifacts.get(evidence_revision))
+                if isinstance(evidence_revision, str)
                 else None
             )
         if candidate is None:
@@ -468,14 +465,15 @@ class AutoLearningManager(
         aggregation_revision = candidate.get("aggregation_revision")
         source_config_revision = candidate.get("source_config_revision")
         quality_gate_version = candidate.get("quality_gate_version")
-        if not all(
-            isinstance(value, str) and value
-            for value in (
-                evidence_revision,
-                aggregation_revision,
-                source_config_revision,
-                quality_gate_version,
-            )
+        if not (
+            isinstance(evidence_revision, str)
+            and evidence_revision
+            and isinstance(aggregation_revision, str)
+            and aggregation_revision
+            and isinstance(source_config_revision, str)
+            and source_config_revision
+            and isinstance(quality_gate_version, str)
+            and quality_gate_version
         ):
             return False
         if quality_gate_version != self._quality_gate_version:

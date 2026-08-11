@@ -23,6 +23,7 @@ from ..domain.feedback_learning_evidence_contract import (
     SUPPORTED_EVIDENCE_QUALITY_GATES,
     valid_evidence_binding,
 )
+from ..domain.models import FeedbackSignalAggregate
 
 _SCHEMA_VERSION = 1
 _INBOX_PARTS = ("evaluation", "feedback_learning_evidence")
@@ -188,14 +189,21 @@ class FeedbackLearningEvidenceInbox:
         pointer = _read_document(self.current_path, self._max_pointer_bytes)
         if not _valid_pointer(pointer):
             return None
+        if not isinstance(pointer, Mapping):
+            return None
+        pointer_aggregation_revision = pointer.get("aggregation_revision")
+        pointer_source_config_revision = pointer.get("source_config_revision")
+        pointer_quality_gate_version = pointer.get("quality_gate_version")
         if (
-            pointer["aggregation_revision"] != aggregation_revision
-            or pointer["source_config_revision"] != source_config_revision
-            or pointer["quality_gate_version"] != quality_gate_version
+            pointer_aggregation_revision != aggregation_revision
+            or pointer_source_config_revision != source_config_revision
+            or pointer_quality_gate_version != quality_gate_version
         ):
             return None
 
-        evidence_revision = pointer["evidence_revision"]
+        evidence_revision = pointer.get("evidence_revision")
+        if not isinstance(evidence_revision, str):
+            return None
         try:
             path = self.artifact_path(evidence_revision)
         except ValueError:
@@ -220,7 +228,9 @@ class FeedbackLearningEvidenceProvider:
         self,
         inbox: FeedbackLearningEvidenceInbox,
         *,
-        aggregation_revision_provider: Callable[[Sequence[object]], str],
+        aggregation_revision_provider: Callable[
+            [Sequence[FeedbackSignalAggregate]], str
+        ],
         source_config_revision_provider: Callable[[], str | Awaitable[str]],
         quality_gate_version: str,
     ) -> None:
@@ -235,7 +245,7 @@ class FeedbackLearningEvidenceProvider:
 
     async def __call__(
         self,
-        aggregates: Sequence[object],
+        aggregates: Sequence[FeedbackSignalAggregate],
     ) -> LearningEvidenceArtifact | None:
         """按真实聚合和当前 ConfigManager revision 读取 artifact。"""
 
@@ -277,15 +287,13 @@ class FeedbackLearningEvidenceProvider:
             and current == artifact
         )
 
-    async def _current_config_revision(self) -> object:
+    async def _current_config_revision(self) -> str:
         """读取一次当前 ConfigManager revision，并保持取消语义。"""
 
         revision_value = self._source_config_revision_provider()
-        return (
-            await revision_value
-            if inspect.isawaitable(revision_value)
-            else revision_value
-        )
+        if inspect.isawaitable(revision_value):
+            return await revision_value
+        return revision_value
 
 
 def _artifact_document(artifact: LearningEvidenceArtifact) -> dict[str, Any]:

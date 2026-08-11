@@ -11,7 +11,7 @@
 
 canonical Schema、Atom、幂等映射、来源校验、写日志、graph store 及共享连接实现已迁至 `core/features/memory/`；对应 `core/storage/` 路径仅保留单实现兼容导出，表名、数据目录和连接生命周期不变。
 
-`feedback_signal_store.py` 是显式隔离路径的同步 SQLite Store；它保存最小反馈事件和可重建聚合，使用 dedupe 唯一约束与事务，不得默认连接 `memora.db`，也不得把事件 key/domain/query/正文写入安全摘要。生产可信适配器写入前必须把决策、作用域和人格转换为稳定不可逆 token；Manager 在写入/重建时物理清理超期事件，并只允许受控适配器按同一匿名决策撤销后重建聚合。
+`core/features/learning/infrastructure/feedback_signal_store.py` 是显式隔离路径的同步 SQLite Store，也是反馈持久化的唯一入口；`core/storage/` 不再转发它。该 Store 保存最小反馈事件和可重建聚合，使用 dedupe 唯一约束与事务，不得默认连接 `memora.db`，也不得把事件 key/domain/query/正文写入安全摘要。生产可信适配器写入前必须把决策、作用域和人格转换为稳定不可逆 token；Manager 在写入/重建时物理清理超期事件，并只允许受控适配器按同一匿名决策撤销后重建聚合。
 
 `core/features/memory/infrastructure/sql_contract.py` 集中保存跨 retrieval、managers、validators 与 social 复用的固定表名和静态 FTS SQL；`core/storage/sql_contract.py` 仅保留兼容导出。这些常量不接受运行时输入，调用方仍必须对值参数绑定，并在支持可替换标识符的入口保留白名单校验。
 

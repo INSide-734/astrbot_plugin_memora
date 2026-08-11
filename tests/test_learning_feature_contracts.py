@@ -1,30 +1,17 @@
-"""learning feature 的领域模型所有权与旧路径兼容契约。"""
+"""learning feature 的分层所有权与端口契约。"""
 
-from core.api import learning_config_adapter as legacy_learning_config_adapter
-from core.evaluation import feedback_learning_evidence as legacy_learning_evidence
-from core.evaluation import (
-    feedback_learning_evidence_contract as legacy_learning_evidence_contract,
-)
-from core.evaluation import (
-    feedback_learning_evidence_store as legacy_learning_evidence_store,
-)
+import core.features.learning as learning_feature
 from core.features.learning.application import (
-    auto_learning as learning_application,
-)
-from core.features.learning.application import (
-    auto_learning_operations as learning_operations,
-)
-from core.features.learning.application import (
-    auto_learning_persistence as learning_persistence,
-)
-from core.features.learning.application import auto_learning_reload as learning_reload
-from core.features.learning.application import (
-    auto_learning_retention as learning_retention,
-)
-from core.features.learning.application.feedback_signal_manager import (
+    AutoLearningManager,
+    AutoLearningOperationsMixin,
+    AutoLearningPersistenceMixin,
+    AutoLearningReloadMixin,
+    AutoLearningRetentionMixin,
     FeedbackIngestResult,
     FeedbackRevokeResult,
     FeedbackSignalManager,
+    TombstoneRetentionResult,
+    normalize_reload_operation,
     record_explicit_correction,
     revoke_explicit_correction,
 )
@@ -34,185 +21,113 @@ from core.features.learning.contracts import (
     LearningConfigAdapterPort,
     LearningEvidenceProviderPort,
 )
-from core.features.learning.domain import auto_learning_actions as learning_actions
-from core.features.learning.domain import auto_learning_records as learning_records
 from core.features.learning.domain import (
-    feedback_learning_evidence as learning_evidence,
-)
-from core.features.learning.domain import (
-    feedback_learning_evidence_contract as learning_evidence_contract,
-)
-from core.features.learning.domain.models import (
     FEEDBACK_REASON_CODES,
+    CandidateBinding,
     FeedbackAdapterKind,
     FeedbackOutcome,
     FeedbackSignalAggregate,
     FeedbackSignalPolicy,
+    GlobalLearningCandidate,
     TrustedFeedbackEvent,
+    aggregation_revision_for,
     build_trusted_feedback_event,
-)
-from core.features.learning.infrastructure import FeedbackSignalStore
-from core.features.learning.infrastructure import auto_learning_state as learning_state
-from core.features.learning.infrastructure import (
-    feedback_learning_evidence_store as learning_evidence_store,
+    stable_revision,
 )
 from core.features.learning.infrastructure import (
-    learning_config_adapter as learning_config_infrastructure,
-)
-from core.features.learning.infrastructure.feedback_learning_evidence_store import (
+    STATE_SCHEMA_VERSION,
+    AutoLearningStateError,
+    AutoLearningStateLoadResult,
+    AutoLearningStatePersistenceError,
+    AutoLearningStateStore,
+    AutoLearningStateValidationError,
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
-)
-from core.features.learning.infrastructure.learning_config_adapter import (
+    FeedbackSignalStore,
     LearningConfigAdapter,
+    LearningConfigApplyResult,
+    LearningConfigSnapshot,
+    LearningEvidenceInboxError,
 )
-from core.managers import auto_learning as legacy_learning_application
-from core.managers import auto_learning_actions as legacy_learning_actions
-from core.managers import auto_learning_operations as legacy_learning_operations
-from core.managers import (
-    auto_learning_persistence as legacy_learning_persistence,
-)
-from core.managers import auto_learning_records as legacy_learning_records
-from core.managers import auto_learning_reload as legacy_learning_reload
-from core.managers import auto_learning_retention as legacy_learning_retention
-from core.managers import auto_learning_state as legacy_learning_state
-from core.managers.feedback_signal_manager import (
-    FeedbackIngestResult as LegacyFeedbackIngestResult,
-)
-from core.managers.feedback_signal_manager import (
-    FeedbackRevokeResult as LegacyFeedbackRevokeResult,
-)
-from core.managers.feedback_signal_manager import (
-    FeedbackSignalManager as LegacyFeedbackSignalManager,
-)
-from core.managers.feedback_signal_manager import (
-    record_explicit_correction as legacy_record_explicit_correction,
-)
-from core.managers.feedback_signal_manager import (
-    revoke_explicit_correction as legacy_revoke_explicit_correction,
-)
-from core.models.feedback_signal import (
-    FEEDBACK_REASON_CODES as LEGACY_FEEDBACK_REASON_CODES,
-)
-from core.models.feedback_signal import (
-    FeedbackAdapterKind as LegacyFeedbackAdapterKind,
-)
-from core.models.feedback_signal import FeedbackOutcome as LegacyFeedbackOutcome
-from core.models.feedback_signal import (
-    FeedbackSignalAggregate as LegacyFeedbackSignalAggregate,
-)
-from core.models.feedback_signal import (
-    FeedbackSignalPolicy as LegacyFeedbackSignalPolicy,
-)
-from core.models.feedback_signal import (
-    TrustedFeedbackEvent as LegacyTrustedFeedbackEvent,
-)
-from core.models.feedback_signal import (
-    build_trusted_feedback_event as legacy_build_trusted_feedback_event,
-)
-from core.storage.feedback_signal_store import FeedbackSignalStore as LegacyStore
 
 
-def test_legacy_feedback_model_imports_reuse_learning_types() -> None:
-    """旧反馈模型路径只能导出 learning feature 的唯一实现。"""
+def test_learning_feature_exports_application_owner() -> None:
+    """feature 包级入口应恒等导出自主学习与反馈应用服务。"""
 
-    assert LEGACY_FEEDBACK_REASON_CODES is FEEDBACK_REASON_CODES
-    assert LegacyFeedbackAdapterKind is FeedbackAdapterKind
-    assert LegacyFeedbackOutcome is FeedbackOutcome
-    assert LegacyFeedbackSignalAggregate is FeedbackSignalAggregate
-    assert LegacyFeedbackSignalPolicy is FeedbackSignalPolicy
-    assert LegacyTrustedFeedbackEvent is TrustedFeedbackEvent
-    assert legacy_build_trusted_feedback_event is build_trusted_feedback_event
-
-
-def test_legacy_feedback_store_import_reuses_learning_implementation() -> None:
-    """旧反馈 Store 路径只能导出 learning infrastructure 的唯一实现。"""
-
-    assert LegacyStore is FeedbackSignalStore
+    assert learning_feature.AutoLearningManager is AutoLearningManager
+    assert learning_feature.FeedbackIngestResult is FeedbackIngestResult
+    assert learning_feature.FeedbackRevokeResult is FeedbackRevokeResult
+    assert learning_feature.FeedbackSignalManager is FeedbackSignalManager
+    assert learning_feature.record_explicit_correction is record_explicit_correction
+    assert learning_feature.revoke_explicit_correction is revoke_explicit_correction
 
 
-def test_legacy_feedback_service_imports_reuse_learning_implementation() -> None:
-    """旧反馈服务路径只能导出 learning application 的唯一实现。"""
+def test_learning_application_assembles_feature_owned_mixins() -> None:
+    """自主学习 Manager 应只组合 feature application 内的职责 mixin。"""
 
-    assert LegacyFeedbackIngestResult is FeedbackIngestResult
-    assert LegacyFeedbackRevokeResult is FeedbackRevokeResult
-    assert LegacyFeedbackSignalManager is FeedbackSignalManager
-    assert legacy_record_explicit_correction is record_explicit_correction
-    assert legacy_revoke_explicit_correction is revoke_explicit_correction
-
-
-def test_legacy_auto_learning_domain_imports_reuse_learning_implementation() -> None:
-    """旧自主学习领域路径只能导出 learning domain 的唯一实现。"""
-
-    assert legacy_learning_actions.__all__ == learning_actions.__all__
-    assert legacy_learning_records.__all__ == learning_records.__all__
-    for name in learning_actions.__all__:
-        assert getattr(legacy_learning_actions, name) is getattr(learning_actions, name)
-    for name in learning_records.__all__:
-        assert getattr(legacy_learning_records, name) is getattr(learning_records, name)
-
-
-def test_legacy_learning_evidence_imports_reuse_learning_implementation() -> None:
-    """旧评测证据路径只能导出 learning domain 的唯一实现。"""
-
-    for name in legacy_learning_evidence.__all__:
-        assert getattr(legacy_learning_evidence, name) is getattr(
-            learning_evidence, name
-        )
-    assert legacy_learning_evidence_contract.__all__ == (
-        learning_evidence_contract.__all__
+    assert AutoLearningOperationsMixin in AutoLearningManager.__mro__
+    assert AutoLearningPersistenceMixin in AutoLearningManager.__mro__
+    assert AutoLearningReloadMixin in AutoLearningManager.__mro__
+    assert AutoLearningRetentionMixin in AutoLearningManager.__mro__
+    assert callable(normalize_reload_operation)
+    assert TombstoneRetentionResult.__module__.startswith(
+        "core.features.learning.application"
     )
-    for name in learning_evidence_contract.__all__:
-        assert getattr(legacy_learning_evidence_contract, name) is getattr(
-            learning_evidence_contract, name
-        )
 
 
-def test_legacy_learning_evidence_store_reuses_learning_implementation() -> None:
-    """旧评测 Store 路径只能导出 learning infrastructure 的唯一实现。"""
+def test_learning_feature_exports_domain_owner() -> None:
+    """feature 包级入口应恒等导出反馈领域模型的唯一实现。"""
 
-    assert legacy_learning_evidence_store.__all__ == learning_evidence_store.__all__
-    for name in learning_evidence_store.__all__:
-        assert getattr(legacy_learning_evidence_store, name) is getattr(
-            learning_evidence_store, name
-        )
+    assert learning_feature.FEEDBACK_REASON_CODES is FEEDBACK_REASON_CODES
+    assert learning_feature.FeedbackAdapterKind is FeedbackAdapterKind
+    assert learning_feature.FeedbackOutcome is FeedbackOutcome
+    assert learning_feature.FeedbackSignalAggregate is FeedbackSignalAggregate
+    assert learning_feature.FeedbackSignalPolicy is FeedbackSignalPolicy
+    assert learning_feature.TrustedFeedbackEvent is TrustedFeedbackEvent
+    assert learning_feature.build_trusted_feedback_event is build_trusted_feedback_event
 
 
-def test_legacy_learning_config_adapter_reuses_learning_implementation() -> None:
-    """旧 API 适配器路径只能导出 learning infrastructure 的唯一实现。"""
+def test_learning_feature_exports_candidate_domain_owner() -> None:
+    """feature 包级入口应恒等导出候选归并领域契约。"""
+
+    assert learning_feature.CandidateBinding is CandidateBinding
+    assert learning_feature.GlobalLearningCandidate is GlobalLearningCandidate
+    assert learning_feature.aggregation_revision_for is aggregation_revision_for
+    assert learning_feature.stable_revision is stable_revision
+
+
+def test_learning_feature_exports_infrastructure_owner() -> None:
+    """feature 包级入口应恒等导出状态、反馈与配置基础设施。"""
+
+    assert learning_feature.STATE_SCHEMA_VERSION == STATE_SCHEMA_VERSION
+    assert learning_feature.AutoLearningStateError is AutoLearningStateError
+    assert learning_feature.AutoLearningStateLoadResult is AutoLearningStateLoadResult
+    assert (
+        learning_feature.AutoLearningStatePersistenceError
+        is AutoLearningStatePersistenceError
+    )
+    assert learning_feature.AutoLearningStateStore is AutoLearningStateStore
+    assert (
+        learning_feature.AutoLearningStateValidationError
+        is AutoLearningStateValidationError
+    )
+    assert learning_feature.FeedbackSignalStore is FeedbackSignalStore
+    assert learning_feature.LearningConfigAdapter is LearningConfigAdapter
+    assert learning_feature.LearningConfigApplyResult is LearningConfigApplyResult
+    assert learning_feature.LearningConfigSnapshot is LearningConfigSnapshot
+
+
+def test_learning_feature_exports_evidence_infrastructure_owner() -> None:
+    """feature 包级入口应恒等导出私有证据 inbox 与读取 Provider。"""
 
     assert (
-        legacy_learning_config_adapter.__all__ == learning_config_infrastructure.__all__
+        learning_feature.FeedbackLearningEvidenceInbox is FeedbackLearningEvidenceInbox
     )
-    for name in learning_config_infrastructure.__all__:
-        assert getattr(legacy_learning_config_adapter, name) is getattr(
-            learning_config_infrastructure, name
-        )
-
-
-def test_legacy_auto_learning_state_imports_reuse_learning_implementation() -> None:
-    """旧状态路径只能导出 learning infrastructure 的唯一实现。"""
-
-    for name in legacy_learning_state.__all__:
-        assert getattr(legacy_learning_state, name) is getattr(learning_state, name)
-
-
-def test_legacy_auto_learning_application_imports_reuse_feature_implementation() -> (
-    None
-):
-    """旧自主学习应用路径只能导出 learning application 的唯一实现。"""
-
-    module_pairs = (
-        (legacy_learning_application, learning_application),
-        (legacy_learning_operations, learning_operations),
-        (legacy_learning_persistence, learning_persistence),
-        (legacy_learning_reload, learning_reload),
-        (legacy_learning_retention, learning_retention),
+    assert (
+        learning_feature.FeedbackLearningEvidenceProvider
+        is FeedbackLearningEvidenceProvider
     )
-    for legacy_module, feature_module in module_pairs:
-        assert legacy_module.__all__ == feature_module.__all__
-        for name in feature_module.__all__:
-            assert getattr(legacy_module, name) is getattr(feature_module, name)
+    assert learning_feature.LearningEvidenceInboxError is LearningEvidenceInboxError
 
 
 def test_learning_ports_accept_existing_implementations_structurally(tmp_path) -> None:

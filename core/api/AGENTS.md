@@ -61,6 +61,8 @@ flowchart TD
 
 启动读取配置时由 `ConfigManager` 将 Pydantic 默认值与用户映射深合并；Page API 不维护第二份持久化 JSON，也不得对 `config_manager._config` 原地写入。
 
+自主学习权重的 revision-CAS 适配器唯一归属 `core/features/learning/infrastructure/learning_config_adapter.py`；`learning_api.py` 只消费该 feature 边界，`core/api/` 不再提供同名转发模块。
+
 ## 编辑与持久化冲突
 
 `editing_utils.py` 提供 JSON 对象要求、未知字段拒绝、有限数值/有界整数/文本/字符串列表规范化，以及 revisioned entity 的成功/冲突响应。画像、社交、好感度和黑话人工编辑使用不透明 revision、允许字段集合、批量上限与安全审计；知识、笔记、记忆各自保持领域兼容契约。布尔值不能悄悄当作整数/浮点 ID 或评分。

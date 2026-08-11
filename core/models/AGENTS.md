@@ -101,10 +101,11 @@ erDiagram
 - `ProjectionSourceView` 固定允许 `primary/supporting/conflict_left/conflict_right` 四种 role，并携带每个 canonical source 的 revision token、ordinal 和可选的 source-level 时间窗口。旧 mapping 缺少时间字段时保持未知，不从 projection 生命周期时间推断。`ProjectionBundle` 将一个 projection 和非空、同 projection ID 的 source mapping 组合起来，供读取侧批量校验。
 - `DerivedApplyPlan` 聚合 relation、projection、source mapping 与 `source_revisions`，用于一次原子应用；任一来源 revision 变化时应由管理/存储层拒绝或失效派生结果。
 
-### `derived_metadata.py` 与 `feedback_signal.py`
+### `derived_metadata.py` 与 `core/features/learning/domain/models.py`
 
 - `DerivedMetadataSourceRef`、`DerivedMetadataProposal` 和 `DerivedMetadataAnnotation` 只描述 process-local 的 source-backed 派生注解；validator 固定执行 NFKC、去重、内容安全和字段/总预算校验，不写 canonical metadata。
 - `TrustedFeedbackEvent` 只能由受控 builder 从固定 outcome 枚举派生 reward/window/dedupe；`FeedbackSignalPolicy` 与 `FeedbackSignalAggregate` 只表达有界候选权重，不是生产配置或 canonical 身份。
+- 反馈领域模型的唯一入口是 `core/features/learning/domain/models.py`；`core/models/` 不再转发这些类型。
 
 ## 导出契约
 

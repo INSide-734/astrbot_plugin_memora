@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -23,6 +22,10 @@ from core.features.learning.domain.feedback_learning_evidence import (
 from core.features.learning.domain.feedback_learning_evidence_contract import (
     REQUIRED_EVIDENCE_REGRESSION_CHECKS,
 )
+from core.features.learning.domain.models import (
+    FeedbackSignalAggregate,
+    FeedbackSignalPolicy,
+)
 from core.features.learning.infrastructure.feedback_learning_evidence_store import (
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
@@ -31,7 +34,6 @@ from core.features.learning.infrastructure.learning_config_adapter import (
     LearningConfigApplyResult,
     LearningConfigSnapshot,
 )
-from core.models.feedback_signal import FeedbackSignalAggregate
 
 
 class _FeedbackManager:
@@ -41,10 +43,7 @@ class _FeedbackManager:
         """保存测试聚合与固定基线。"""
 
         self.aggregates = aggregates
-        self.policy = SimpleNamespace(
-            baseline_document_weight=0.7,
-            baseline_graph_weight=0.3,
-        )
+        self.policy = FeedbackSignalPolicy()
 
     def rebuild(self, *, reference_time: datetime) -> list[FeedbackSignalAggregate]:
         """返回聚合副本，避免 manager 修改测试输入。"""

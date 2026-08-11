@@ -6,16 +6,18 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from core.models.feedback_signal import (
+from core.features.learning.domain.models import (
     FeedbackAdapterKind,
     FeedbackOutcome,
     FeedbackSignalAggregate,
+    TrustedFeedbackEvent,
     build_trusted_feedback_event,
 )
-from core.storage.feedback_signal_store import FeedbackSignalStore
+from core.features.learning.infrastructure import FeedbackSignalStore
 
 
 def _event(
@@ -138,7 +140,9 @@ def test_store_rolls_back_partial_batch_on_non_sql_error(tmp_path) -> None:
     store.initialize()
 
     with pytest.raises(AttributeError):
-        store.insert_events([_event("decision-a"), object()])
+        store.insert_events(
+            [_event("decision-a"), cast(TrustedFeedbackEvent, object())]
+        )
 
     try:
         assert store.safe_summary()["event_count"] == 0

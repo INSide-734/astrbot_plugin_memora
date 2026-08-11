@@ -4,10 +4,20 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.features.learning.application import (
+    AutoLearningManager,
+    FeedbackSignalManager,
+)
+from core.features.learning.domain.auto_learning_actions import (
+    aggregation_revision_for,
+    stable_revision,
+    weight_snapshot_hash,
+)
 from core.features.learning.domain.feedback_learning_evidence import (
     LatencyEvidence,
     QualityMetricEvidence,
@@ -16,18 +26,12 @@ from core.features.learning.domain.feedback_learning_evidence import (
 from core.features.learning.domain.feedback_learning_evidence_contract import (
     REQUIRED_EVIDENCE_REGRESSION_CHECKS,
 )
+from core.features.learning.domain.models import FeedbackSignalAggregate
 from core.features.learning.infrastructure.learning_config_adapter import (
     LearningConfigApplyResult,
     LearningConfigSnapshot,
 )
-from core.managers.auto_learning_actions import (
-    aggregation_revision_for,
-    stable_revision,
-    weight_snapshot_hash,
-)
-from core.managers.feedback_signal_manager import FeedbackSignalManager
 from core.managers.memory_engine import MemoryEngine
-from core.models.feedback_signal import FeedbackSignalAggregate
 
 
 class TestMemoryEngineInitialize:
@@ -35,7 +39,7 @@ class TestMemoryEngineInitialize:
 
     @pytest.mark.asyncio
     async def test_initialize_basic(self, tmp_db_path: str) -> None:
-        """Test basic initialization — DB PRAGMAs, schema, minimal components."""
+        """验证基础初始化会建立数据库设置、Schema 与最小组件。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(
             db_path=tmp_db_path,
@@ -45,7 +49,7 @@ class TestMemoryEngineInitialize:
                 "recall_engine.stopwords_path": "",
                 "rrf_k": 60,
                 "write_reliability.repair_enabled": False,
-                # Disable optional subsystems
+                # 关闭与当前用例无关的可选子系统。
                 "user_profile.enabled": False,
                 "auto_learning.enabled": False,
                 "knowledge_base.enabled": False,
@@ -54,9 +58,9 @@ class TestMemoryEngineInitialize:
                 "export.enabled": False,
             },
         )
-        # Mock SchemaManager to avoid creating memory_write_ops table
+        # 替换 SchemaManager，避免当前用例创建写操作日志表。
         engine._schema.create_tables = AsyncMock()
-        # Mock BM25Retriever initialize
+        # 替换 BM25Retriever 初始化以隔离生命周期编排。
         with patch(
             "core.managers.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
@@ -64,9 +68,8 @@ class TestMemoryEngineInitialize:
             mock_bm25.initialize = AsyncMock()
             await engine.initialize()
 
-        # Should have DB connection
+        # 基础初始化必须发布数据库连接与检索组件。
         assert engine.db_connection is not None
-        # Should have basic retrievers
         assert engine.text_processor is not None
         assert engine.bm25_retriever is not None
         assert engine.vector_retriever is not None
@@ -74,7 +77,7 @@ class TestMemoryEngineInitialize:
         assert engine.rrf_fusion is not None
         assert engine.sse is None
 
-        # Cleanup
+        # 显式关闭以验证资源能够正常释放。
         await engine.close()
 
     @pytest.mark.asyncio
@@ -106,7 +109,7 @@ class TestMemoryEngineInitialize:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
-        # Graph should NOT be initialized
+        # 图功能关闭时不得初始化图组件。
         assert engine.graph_store is None
         assert engine.graph_memory_manager is None
         assert engine.atom_store is None
@@ -140,13 +143,15 @@ class TestMemoryEngineInitialize:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
-        # Verify WAL PRAGMA was set
-        cursor = await engine.db_connection.execute("PRAGMA journal_mode")
+        # 验证连接启用了 WAL。
+        db_connection = cast(Any, engine.db_connection)
+        assert db_connection is not None
+        cursor = await db_connection.execute("PRAGMA journal_mode")
         row = await cursor.fetchone()
         assert row[0].upper() == "WAL"
 
-        # Verify synchronous setting
-        cursor = await engine.db_connection.execute("PRAGMA synchronous")
+        # 验证连接使用预期的同步级别。
+        cursor = await db_connection.execute("PRAGMA synchronous")
         row = await cursor.fetchone()
         assert row[0] == 1  # NORMAL
 
@@ -464,17 +469,20 @@ class TestMemoryEngineInitialize:
             enabled_engine = build_engine(True)
             await enabled_engine.initialize()
 
-        enabled_engine.feedback_signal_manager.rebuild = MagicMock(
-            return_value=aggregates
+        feedback_manager = cast(
+            FeedbackSignalManager,
+            enabled_engine.feedback_signal_manager,
         )
-        candidates = await enabled_engine.auto_learning.rebuild_candidates(
+        auto_learning = cast(AutoLearningManager, enabled_engine.auto_learning)
+        feedback_manager.rebuild = MagicMock(return_value=aggregates)
+        candidates = await auto_learning.rebuild_candidates(
             reference_time=datetime(2026, 8, 3, tzinfo=timezone.utc),
             evidence_artifact=artifact,
         )
         ready = next(
             item for item in candidates if item["status"] == "ready_for_review"
         )
-        published = await enabled_engine.auto_learning.publish_candidate(
+        published = await auto_learning.publish_candidate(
             ready["candidate_id"],
             config_adapter=adapter,
             expected_revision=config_revision,
@@ -489,9 +497,13 @@ class TestMemoryEngineInitialize:
             disabled_engine = build_engine(False)
             await disabled_engine.initialize()
 
-        assert disabled_engine.auto_learning.enabled is False
-        assert await disabled_engine.auto_learning.rebuild_candidates() == []
-        blocked = await disabled_engine.auto_learning.publish_candidate(
+        disabled_auto_learning = cast(
+            AutoLearningManager,
+            disabled_engine.auto_learning,
+        )
+        assert disabled_auto_learning.enabled is False
+        assert await disabled_auto_learning.rebuild_candidates() == []
+        blocked = await disabled_auto_learning.publish_candidate(
             ready["candidate_id"],
             config_adapter=adapter,
             expected_revision=snapshot_holder["value"].revision,
@@ -500,7 +512,7 @@ class TestMemoryEngineInitialize:
         assert blocked["reason_code"] == "disabled"
         assert adapter.apply_weights.await_count == 1
 
-        rollback = await disabled_engine.auto_learning.rollback_last_publish(
+        rollback = await disabled_auto_learning.rollback_last_publish(
             ready["candidate_id"],
             config_adapter=adapter,
             expected_revision=snapshot_holder["value"].revision,
@@ -514,7 +526,7 @@ class TestMemoryEngineInitialize:
     async def test_initialize_reranker_failure_does_not_break(
         self, tmp_db_path: str
     ) -> None:
-        """When reranker creation fails, initialize should still succeed."""
+        """验证重排序器创建失败时基础初始化仍可完成。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(
             db_path=tmp_db_path,
@@ -543,7 +555,7 @@ class TestMemoryEngineInitialize:
             ):
                 await engine.initialize()
 
-        # Should still have basic components
+        # 可选组件失败后仍须保留基础组件。
         assert engine.text_processor is not None
         assert engine.hybrid_retriever is not None
 
@@ -553,7 +565,7 @@ class TestMemoryEngineInitialize:
     async def test_initialize_optional_subsystems_disabled(
         self, tmp_db_path: str
     ) -> None:
-        """Optional subsystems should stay None when disabled."""
+        """验证关闭的可选子系统保持未装配状态。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(
             db_path=tmp_db_path,
@@ -581,7 +593,7 @@ class TestMemoryEngineInitialize:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
-        # These attrs are initialized conditionally in initialize(), so they won't exist
+        # 这些属性只在 initialize() 命中对应配置时创建，关闭时不应存在。
         assert (
             not hasattr(engine, "continuity_tracker")
             or engine.continuity_tracker is None
@@ -592,7 +604,7 @@ class TestMemoryEngineInitialize:
 
 
 class TestMemoryEngineLifecycleClose:
-    """Tests for close() with initialized components."""
+    """验证已初始化组件的关闭流程。"""
 
     @pytest.mark.asyncio
     async def test_close_with_save_state(self, tmp_db_path: str) -> None:
@@ -622,7 +634,7 @@ class TestMemoryEngineLifecycleClose:
 
         mock_al = MagicMock()
         mock_al.save_state = AsyncMock()
-        engine.auto_learning = mock_al
+        setattr(engine, "auto_learning", mock_al)
 
         await engine.close()
 

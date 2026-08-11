@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from core.managers.feedback_signal_manager import FeedbackSignalManager
-from core.models.feedback_signal import (
+from core.features.learning.application import FeedbackSignalManager
+from core.features.learning.domain.models import (
     FeedbackAdapterKind,
     FeedbackOutcome,
     FeedbackSignalPolicy,
     build_trusted_feedback_event,
 )
-from core.storage.feedback_signal_store import FeedbackSignalStore
+from core.features.learning.infrastructure import FeedbackSignalStore
 
 REFERENCE_TIME = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
 
