@@ -108,6 +108,8 @@ Memory Evolution 只在 canonical 写入之后生成可失效、可重建的 rel
 
 `PluginPageApi` 聚合 `api/` mixin，并通过插件/初始化器取得共享运行时组件。端点负责 readiness/write guard、参数校验、稳定响应形状和安全错误映射；不得返回凭据、原始数据库对象、未清洗提示词或内部异常。备份恢复端点只返回脱敏摘要、稳定错误码和恢复状态；恢复进度与取消通过 `/backup/status`、`/backup/restore/cancel` 观察和控制。修改路由、方法或响应字段时，同时核对 `pages/dashboard/` 调用方、`tests/test_page_api.py` 与 `tests/test_page_api_contract.py`。
 
+AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注册接口；`platform/transport/route_lifecycle.py` 仅隔离 Context 能力探针，并在关停时原地移除当前 `PluginPageApi` 实例拥有的登记，不作为稳定宿主契约向 feature 暴露。
+
 ## 依赖与安全约束
 
 - **共享实例：** 消息、命令和页面路径必须复用初始化器发布的 provider、store、manager 和 engine；禁止在请求内重新创建数据库、索引或模型。

@@ -6,41 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .platform.security.lifecycle import close_prompt_protection
-
-
-def unregister_plugin_page_routes(plugin: object) -> int:
-    """移除绑定方法属于当前 Page 实例的路由。
-
-    AstrBot 公开了路由注册接口但未提供反注册接口。受支持版本把注册记录
-    保存在注入的 Context 上，因此这里先检查宿主能力，再原地更新共享列表。
-
-    参数:
-        plugin: 持有 Context 与 Page API 对象的插件实例。
-
-    返回:
-        从 Context 中移除的注册项数量。
-    """
-
-    page_api = getattr(plugin, "page_api", None)
-    context = getattr(plugin, "context", None)
-    registrations = getattr(context, "registered_web_apis", None)
-    if page_api is None or not isinstance(registrations, list):
-        return 0
-
-    retained = []
-    removed = 0
-    for registration in registrations:
-        handler = (
-            registration[1]
-            if isinstance(registration, (list, tuple)) and len(registration) > 1
-            else None
-        )
-        if getattr(handler, "__self__", None) is page_api:
-            removed += 1
-        else:
-            retained.append(registration)
-    registrations[:] = retained
-    return removed
+from .platform.transport.route_lifecycle import unregister_plugin_page_routes
 
 
 async def stop_runtime_producers(
