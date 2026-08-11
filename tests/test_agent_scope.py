@@ -8,16 +8,26 @@ from unittest.mock import MagicMock
 
 from astrbot.api.platform import MessageType
 
+from core.features.identity.infrastructure.protocols import ProtocolIdentityResolver
 from core.tools.agent_scope import resolve_agent_read_scope
 
 
-def _context(*, message_type, sender_id="user-1") -> MagicMock:
+def _context(
+    *,
+    message_type,
+    sender_id: str | None = "user-1",
+    with_identity: bool = True,
+) -> MagicMock:
     """构造最小 Agent 上下文。"""
 
     event = MagicMock()
     event.unified_msg_origin = "private:user-1"
     event.get_message_type.return_value = message_type
     event.get_sender_id.return_value = sender_id
+    if with_identity:
+        event.get_extra.return_value = SimpleNamespace(trust_status="unsupported")
+    else:
+        event.get_extra.return_value = None
     wrapper = MagicMock()
     wrapper.context.event = event
     return wrapper
@@ -42,6 +52,7 @@ def _qq_official_context(*, sender_id: str = "OPENID-1") -> MagicMock:
     event.get_platform_id.return_value = platform_id
     event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
     event.get_sender_id.return_value = sender_id
+    event.get_extra.return_value = ProtocolIdentityResolver.default().resolve(event)
     wrapper = MagicMock()
     wrapper.context.event = event
     instance_key = hashlib.sha256(platform_id.encode("ascii")).hexdigest()[:24]
@@ -53,6 +64,29 @@ def test_unknown_message_type_is_denied() -> None:
     """未知消息类型不能默认降级为 private。"""
 
     assert resolve_agent_read_scope(_context(message_type=object())) is None
+
+
+def test_missing_resolved_identity_is_denied() -> None:
+    """有效消息缺少主链解析快照时必须 fail-closed。"""
+
+    assert (
+        resolve_agent_read_scope(
+            _context(
+                message_type=MessageType.FRIEND_MESSAGE,
+                with_identity=False,
+            )
+        )
+        is None
+    )
+
+
+def test_resolved_identity_read_failure_is_denied() -> None:
+    """事件 extras 读取失败时必须 fail-closed。"""
+
+    context = _context(message_type=MessageType.FRIEND_MESSAGE)
+    context.context.event.get_extra.side_effect = RuntimeError("private")
+
+    assert resolve_agent_read_scope(context) is None
 
 
 def test_group_without_sender_is_denied() -> None:
@@ -74,6 +108,7 @@ def test_qq_official_scope_uses_canonical_user_id() -> None:
     scope = resolve_agent_read_scope(context)
 
     assert scope is not None
+    context.context.event.get_extra.assert_called_once_with("memora.resolved_identity")
     assert scope.user_id == context.expected_canonical_user_id
 
 

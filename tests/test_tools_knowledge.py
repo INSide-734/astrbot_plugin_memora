@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,6 +15,14 @@ from core.tools.knowledge_tools import KnowledgeReadTool, KnowledgeSearchTool
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _call_text(tool: Any, *args: Any, **kwargs: Any) -> str:
+    """调用具体 Agent 工具，并断言其当前文本返回契约。"""
+
+    result = await tool.call(*args, **kwargs)
+    assert isinstance(result, str)
+    return result
 
 
 def _make_mock_knowledge_entry(
@@ -45,7 +55,8 @@ def _make_mock_ctx() -> MagicMock:
     event = MagicMock()
     event.unified_msg_origin = "private:user-001"
     event.get_sender_id.return_value = "user-001"
-    event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
+    event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+    event.get_extra.return_value = SimpleNamespace(trust_status="unsupported")
     inner = MagicMock()
     inner.event = event
     wrapper = MagicMock()
@@ -87,7 +98,7 @@ class TestKnowledgeSearchTool:
         mock_mgr.search_for_scope = AsyncMock(return_value=([entry1, entry2], 2))
 
         tool = KnowledgeSearchTool(knowledge_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), query="test")
+        result = await _call_text(tool, _make_mock_ctx(), query="test")
 
         data = json.loads(result)
         assert data["query"] == "test"
@@ -104,7 +115,7 @@ class TestKnowledgeSearchTool:
         mock_mgr.search_for_scope = AsyncMock(return_value=([], 0))
 
         tool = KnowledgeSearchTool(knowledge_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), query="nonexistent")
+        result = await _call_text(tool, _make_mock_ctx(), query="nonexistent")
 
         data = json.loads(result)
         assert data["count"] == 0
@@ -114,7 +125,7 @@ class TestKnowledgeSearchTool:
     async def test_search_manager_not_available(self):
         """当 knowledge_manager is None, tool should return an error dict."""
         tool = KnowledgeSearchTool(knowledge_manager=None)
-        result = await tool.call(_make_mock_ctx(), query="test")
+        result = await _call_text(tool, _make_mock_ctx(), query="test")
 
         data = json.loads(result)
         assert data["count"] == 0
@@ -128,7 +139,7 @@ class TestKnowledgeSearchTool:
         mock_mgr.search_for_scope = AsyncMock(side_effect=RuntimeError("DB down"))
 
         tool = KnowledgeSearchTool(knowledge_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), query="test")
+        result = await _call_text(tool, _make_mock_ctx(), query="test")
 
         data = json.loads(result)
         assert data["count"] == 0
@@ -141,7 +152,7 @@ class TestKnowledgeSearchTool:
         mock_mgr.search_for_scope = AsyncMock(return_value=([], 0))
 
         tool = KnowledgeSearchTool(knowledge_manager=mock_mgr)
-        await tool.call(_make_mock_ctx(), query="q", limit=5, category="rule")
+        await _call_text(tool, _make_mock_ctx(), query="q", limit=5, category="rule")
 
         mock_mgr.search_for_scope.assert_called_once_with(
             "q", scope_key="private:user-001", limit=5, category="rule"
@@ -175,7 +186,7 @@ class TestKnowledgeReadTool:
         mock_mgr.get_entry_for_scope = AsyncMock(return_value=entry)
 
         tool = KnowledgeReadTool(knowledge_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), entry_id=7)
+        result = await _call_text(tool, _make_mock_ctx(), entry_id=7)
 
         data = json.loads(result)
         assert data["entry_id"] == 7
@@ -192,7 +203,7 @@ class TestKnowledgeReadTool:
         mock_mgr.get_entry_for_scope = AsyncMock(return_value=None)
 
         tool = KnowledgeReadTool(knowledge_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), entry_id=999)
+        result = await _call_text(tool, _make_mock_ctx(), entry_id=999)
 
         data = json.loads(result)
         assert data["entry_id"] == 999
@@ -202,7 +213,7 @@ class TestKnowledgeReadTool:
     async def test_read_manager_not_available(self):
         """当 knowledge_manager is None, tool should return an error."""
         tool = KnowledgeReadTool(knowledge_manager=None)
-        result = await tool.call(_make_mock_ctx(), entry_id=1)
+        result = await _call_text(tool, _make_mock_ctx(), entry_id=1)
 
         data = json.loads(result)
         assert data["found"] is False
@@ -215,7 +226,7 @@ class TestKnowledgeReadTool:
         mock_mgr.get_entry_for_scope = AsyncMock(side_effect=RuntimeError("DB down"))
 
         tool = KnowledgeReadTool(knowledge_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), entry_id=1)
+        result = await _call_text(tool, _make_mock_ctx(), entry_id=1)
 
         data = json.loads(result)
         assert data["found"] is False

@@ -9,10 +9,7 @@ from astrbot.api.platform import MessageType
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
-from ..features.identity.domain.models import IdentityTrust
-from ..features.identity.infrastructure.protocols import ProtocolIdentityResolver
-
-_READ_ONLY_IDENTITY_RESOLVER = ProtocolIdentityResolver.default()
+_RESOLVED_IDENTITY_EVENT_EXTRA = "memora.resolved_identity"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,16 +44,17 @@ def resolve_agent_read_scope(
 
 
 def _event_user_id(event: Any) -> str | None:
-    """只读解析 canonical 用户标识；未接管协议保留原始发送者。"""
+    """读取主链发布的 canonical 用户标识；缺失快照时拒绝读取。"""
 
     try:
-        identity = _READ_ONLY_IDENTITY_RESOLVER.resolve(event)
+        identity = event.get_extra(_RESOLVED_IDENTITY_EVENT_EXTRA)
     except Exception:
         return None
     trust_status = getattr(identity, "trust_status", None)
-    if trust_status is IdentityTrust.TRUSTED:
+    trust_value = getattr(trust_status, "value", trust_status)
+    if trust_value == "trusted":
         return _normalized_text(getattr(identity, "canonical_user_id", None))
-    if trust_status is not IdentityTrust.UNSUPPORTED:
+    if trust_value != "unsupported":
         return None
 
     return _raw_event_sender_id(event)

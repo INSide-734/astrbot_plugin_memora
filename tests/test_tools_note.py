@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,6 +14,14 @@ from core.tools.note_tools import NoteReadTool, NoteSearchTool, NoteWriteTool
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _call_text(tool: Any, *args: Any, **kwargs: Any) -> str:
+    """调用具体 Agent 工具，并断言其当前文本返回契约。"""
+
+    result = await tool.call(*args, **kwargs)
+    assert isinstance(result, str)
+    return result
 
 
 def _make_mock_note(
@@ -34,7 +44,8 @@ def _make_mock_ctx() -> MagicMock:
     event = MagicMock()
     event.unified_msg_origin = "private:user-001"
     event.get_sender_id.return_value = "user-001"
-    event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
+    event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+    event.get_extra.return_value = SimpleNamespace(trust_status="unsupported")
     inner = MagicMock()
     inner.event = event
     wrapper = MagicMock()
@@ -75,7 +86,7 @@ class TestNoteSearchTool:
         mock_mgr.search_for_scope = AsyncMock(return_value=([note1, note2], 2))
 
         tool = NoteSearchTool(note_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), query="shop")
+        result = await _call_text(tool, _make_mock_ctx(), query="shop")
 
         assert "Found 2 note(s)" in result
         assert "[1] Shopping List (v2)" in result
@@ -89,7 +100,7 @@ class TestNoteSearchTool:
         mock_mgr.search_for_scope = AsyncMock(return_value=([], 0))
 
         tool = NoteSearchTool(note_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), query="nothing")
+        result = await _call_text(tool, _make_mock_ctx(), query="nothing")
 
         assert "No notes found for: nothing" == result
 
@@ -97,7 +108,7 @@ class TestNoteSearchTool:
     async def test_search_manager_not_available(self):
         """当 note_manager is None, tool should return an error message."""
         tool = NoteSearchTool(note_manager=None)
-        result = await tool.call(_make_mock_ctx(), query="test")
+        result = await _call_text(tool, _make_mock_ctx(), query="test")
 
         assert "Error: note_manager not available" == result
 
@@ -108,7 +119,7 @@ class TestNoteSearchTool:
         mock_mgr.search_for_scope = AsyncMock(return_value=([], 0))
 
         tool = NoteSearchTool(note_manager=mock_mgr)
-        await tool.call(_make_mock_ctx(), query="q", limit=5)
+        await _call_text(tool, _make_mock_ctx(), query="q", limit=5)
 
         mock_mgr.search_for_scope.assert_called_once_with(
             "q",
@@ -147,7 +158,7 @@ class TestNoteReadTool:
         mock_mgr.get_note_for_scope = AsyncMock(return_value=note)
 
         tool = NoteReadTool(note_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), note_id=3)
+        result = await _call_text(tool, _make_mock_ctx(), note_id=3)
 
         assert "# My Note" in result
         assert "Full content\nLine 2." in result
@@ -161,7 +172,7 @@ class TestNoteReadTool:
         mock_mgr.get_note_for_scope = AsyncMock(return_value=None)
 
         tool = NoteReadTool(note_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), note_id=999)
+        result = await _call_text(tool, _make_mock_ctx(), note_id=999)
 
         assert "Note 999 not found." == result
 
@@ -169,7 +180,7 @@ class TestNoteReadTool:
     async def test_read_manager_not_available(self):
         """当 note_manager is None, tool should return an error message."""
         tool = NoteReadTool(note_manager=None)
-        result = await tool.call(_make_mock_ctx(), note_id=1)
+        result = await _call_text(tool, _make_mock_ctx(), note_id=1)
 
         assert "Error: note_manager not available" == result
 
@@ -203,7 +214,8 @@ class TestNoteWriteTool:
         mock_mgr.create_note = AsyncMock(return_value=42)
 
         tool = NoteWriteTool(note_manager=mock_mgr)
-        result = await tool.call(
+        result = await _call_text(
+            tool,
             _make_mock_ctx(),
             title="New Note",
             content="Some content",
@@ -225,7 +237,8 @@ class TestNoteWriteTool:
         mock_mgr.update_note_for_scope = AsyncMock(return_value=updated_note)
 
         tool = NoteWriteTool(note_manager=mock_mgr)
-        result = await tool.call(
+        result = await _call_text(
+            tool,
             _make_mock_ctx(),
             title="Updated Title",
             content="New content",
@@ -250,7 +263,8 @@ class TestNoteWriteTool:
         mock_mgr.update_note_for_scope = AsyncMock(return_value=None)
 
         tool = NoteWriteTool(note_manager=mock_mgr)
-        result = await tool.call(
+        result = await _call_text(
+            tool,
             _make_mock_ctx(),
             title="Missing",
             content="content",
@@ -263,7 +277,8 @@ class TestNoteWriteTool:
     async def test_write_manager_not_available(self):
         """当 note_manager is None, tool should return an error message."""
         tool = NoteWriteTool(note_manager=None)
-        result = await tool.call(
+        result = await _call_text(
+            tool,
             _make_mock_ctx(),
             title="Test",
             content="content",
@@ -278,7 +293,8 @@ class TestNoteWriteTool:
         mock_mgr.create_note = AsyncMock(return_value=1)
 
         tool = NoteWriteTool(note_manager=mock_mgr)
-        await tool.call(
+        await _call_text(
+            tool,
             _make_mock_ctx(),
             title="Tagged Note",
             content="content",
@@ -298,7 +314,7 @@ class TestNoteWriteTool:
         mock_mgr.create_note = AsyncMock(return_value=1)
 
         tool = NoteWriteTool(note_manager=mock_mgr)
-        result = await tool.call(_make_mock_ctx(), title="Title", content="   ")
+        result = await _call_text(tool, _make_mock_ctx(), title="Title", content="   ")
 
         assert result.startswith("Error:")
         mock_mgr.create_note.assert_not_called()
@@ -310,13 +326,15 @@ class TestNoteWriteTool:
         tool = NoteWriteTool(note_manager=mock_mgr)
 
         long_title = "T" * 121
-        title_result = await tool.call(
+        title_result = await _call_text(
+            tool,
             _make_mock_ctx(),
             title=long_title,
             content="content",
         )
         long_content = "C" * 20001
-        content_result = await tool.call(
+        content_result = await _call_text(
+            tool,
             _make_mock_ctx(),
             title="Title",
             content=long_content,
@@ -332,13 +350,15 @@ class TestNoteWriteTool:
         mock_mgr.create_note = AsyncMock(return_value=1)
         tool = NoteWriteTool(note_manager=mock_mgr)
 
-        too_many = await tool.call(
+        too_many = await _call_text(
+            tool,
             _make_mock_ctx(),
             title="Title",
             content="content",
             tags=[f"tag{i}" for i in range(11)],
         )
-        invalid = await tool.call(
+        invalid = await _call_text(
+            tool,
             _make_mock_ctx(),
             title="Title",
             content="content",

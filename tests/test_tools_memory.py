@@ -5,18 +5,28 @@ from __future__ import annotations
 import hashlib
 import json
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from astrbot.api.platform import MessageType
 
 from core.base.config_manager import ConfigManager
+from core.features.identity.infrastructure.protocols import ProtocolIdentityResolver
 from core.tools.memory_memorize_tool import MemoryMemorizeTool
 from core.tools.memory_search_tool import MemorySearchTool
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _call_text(tool: Any, *args: Any, **kwargs: Any) -> str:
+    """调用具体 Agent 工具，并断言其当前文本返回契约。"""
+
+    result = await tool.call(*args, **kwargs)
+    assert isinstance(result, str)
+    return result
 
 
 def _make_mock_ctx_with_event(session_id: str = "s-001") -> MagicMock:
@@ -26,6 +36,7 @@ def _make_mock_ctx_with_event(session_id: str = "s-001") -> MagicMock:
     event.get_message_type.return_value = MessageType.GROUP_MESSAGE
     event.get_sender_id.return_value = "user-001"
     event.session_id = session_id
+    event.get_extra.return_value = SimpleNamespace(trust_status="unsupported")
 
     inner_ctx = MagicMock()
     inner_ctx.event = event
@@ -55,6 +66,7 @@ def _make_qq_official_ctx() -> tuple[MagicMock, str]:
     event.get_platform_id.return_value = platform_id
     event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
     event.get_sender_id.return_value = openid
+    event.get_extra.return_value = ProtocolIdentityResolver.default().resolve(event)
     wrapper = MagicMock()
     wrapper.context.event = event
     instance_key = hashlib.sha256(platform_id.encode("ascii")).hexdigest()[:24]
@@ -154,7 +166,7 @@ class TestMemorySearchTool:
                 config_manager=cm,
                 memory_engine=mock_engine,
             )
-            result = await tool.call(ctx, query="test query", k=3)
+            result = await _call_text(tool, ctx, query="test query", k=3)
 
         data = json.loads(result)
         assert data["query"] == "test query"
@@ -180,7 +192,9 @@ class TestMemorySearchTool:
             memory_engine=mock_engine,
         )
 
-        await tool.call(_make_mock_ctx_with_event("group:42"), query="private fact")
+        await _call_text(
+            tool, _make_mock_ctx_with_event("group:42"), query="private fact"
+        )
 
         kwargs = mock_engine.search_memories.call_args.kwargs
         assert kwargs["chat_type"] == "group"
@@ -199,7 +213,7 @@ class TestMemorySearchTool:
         )
         context, canonical_user_id = _make_qq_official_ctx()
 
-        await tool.call(context, query="private fact")
+        await _call_text(tool, context, query="private fact")
 
         kwargs = mock_engine.search_memories.call_args.kwargs
         assert kwargs["chat_type"] == "private"
@@ -219,7 +233,7 @@ class TestMemorySearchTool:
             memory_engine=mock_engine,
         )
 
-        result = await tool.call(context, query="private fact")
+        result = await _call_text(tool, context, query="private fact")
 
         assert json.loads(result)["error"] == "event_scope_unavailable"
         mock_engine.search_memories.assert_not_awaited()
@@ -231,9 +245,7 @@ class TestMemorySearchTool:
         mock_engine = MagicMock()
         mock_engine.search_memories = AsyncMock(return_value=[])
         context = _make_mock_ctx_with_event("private:user-42")
-        context.context.event.get_message_type.return_value = (
-            MessageType.PRIVATE_MESSAGE
-        )
+        context.context.event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
         context.context.event.get_sender_id.return_value = None
         tool = MemorySearchTool(
             context=MagicMock(),
@@ -241,7 +253,7 @@ class TestMemorySearchTool:
             memory_engine=mock_engine,
         )
 
-        result = await tool.call(context, query="private fact")
+        result = await _call_text(tool, context, query="private fact")
 
         assert json.loads(result)["error"] == "event_scope_unavailable"
         mock_engine.search_memories.assert_not_awaited()
@@ -254,7 +266,7 @@ class TestMemorySearchTool:
             config_manager=_make_test_config_manager(),
             memory_engine=MagicMock(),
         )
-        result = await tool.call(_make_mock_ctx_with_event(), query="   ")
+        result = await _call_text(tool, _make_mock_ctx_with_event(), query="   ")
 
         data = json.loads(result)
         assert data["count"] == 0
@@ -268,7 +280,7 @@ class TestMemorySearchTool:
             config_manager=None,
             memory_engine=None,
         )
-        result = await tool.call(_make_mock_ctx_with_event(), query="test")
+        result = await _call_text(tool, _make_mock_ctx_with_event(), query="test")
 
         data = json.loads(result)
         assert data["error"] == "memory search tool is not initialized"
@@ -294,7 +306,7 @@ class TestMemorySearchTool:
                 config_manager=cm,
                 memory_engine=mock_engine,
             )
-            result = await tool.call(ctx, query="nothing")
+            result = await _call_text(tool, ctx, query="nothing")
 
         data = json.loads(result)
         assert data["count"] == 0
@@ -323,14 +335,14 @@ class TestMemorySearchTool:
             )
 
             # k=0 should be clamped to 1
-            await tool.call(ctx, query="q", k=0)
+            await _call_text(tool, ctx, query="q", k=0)
             first_call_k = mock_engine.search_memories.call_args_list[0].kwargs["k"]
             assert first_call_k == 1
 
             mock_engine.search_memories.reset_mock()
 
             # k=100 should be clamped to max_k=10
-            await tool.call(ctx, query="q", k=100)
+            await _call_text(tool, ctx, query="q", k=100)
             second_call_k = mock_engine.search_memories.call_args_list[0].kwargs["k"]
             assert second_call_k == 10
 
@@ -355,7 +367,7 @@ class TestMemorySearchTool:
                 config_manager=cm,
                 memory_engine=mock_engine,
             )
-            result = await tool.call(ctx, query="test")
+            result = await _call_text(tool, ctx, query="test")
 
         data = json.loads(result)
         assert data["error"] == "internal_error"
@@ -420,7 +432,8 @@ class TestMemoryMemorizeTool:
                 memory_engine=mock_engine,
                 memory_processor=mock_processor,
             )
-            result = await tool.call(
+            result = await _call_text(
+                tool,
                 wrapper,
                 memory="User prefers dark mode.",
                 topics=["ui", "preference"],
@@ -456,7 +469,7 @@ class TestMemoryMemorizeTool:
             memory_engine=MagicMock(),
             memory_processor=MagicMock(),
         )
-        result = await tool.call(_make_mock_ctx_with_event(), memory="   ")
+        result = await _call_text(tool, _make_mock_ctx_with_event(), memory="   ")
 
         data = json.loads(result)
         assert data["memorized"] is False
@@ -470,7 +483,7 @@ class TestMemoryMemorizeTool:
             memory_engine=None,
             memory_processor=None,
         )
-        result = await tool.call(_make_mock_ctx_with_event(), memory="test")
+        result = await _call_text(tool, _make_mock_ctx_with_event(), memory="test")
 
         data = json.loads(result)
         assert data["memorized"] is False
@@ -509,7 +522,7 @@ class TestMemoryMemorizeTool:
                 memory_engine=mock_engine,
                 memory_processor=mock_processor,
             )
-            result = await tool.call(wrapper, memory="test", sentiment="angry")
+            result = await _call_text(tool, wrapper, memory="test", sentiment="angry")
 
         data = json.loads(result)
         assert data["memorized"] is True
@@ -550,7 +563,7 @@ class TestMemoryMemorizeTool:
                 memory_engine=mock_engine,
                 memory_processor=mock_processor,
             )
-            result = await tool.call(wrapper, memory="test")
+            result = await _call_text(tool, wrapper, memory="test")
 
         data = json.loads(result)
         assert data["memorized"] is False
@@ -589,7 +602,7 @@ class TestMemoryMemorizeTool:
                 memory_engine=mock_engine,
                 memory_processor=mock_processor,
             )
-            await tool.call(wrapper, memory="test", reason="user said so")
+            await _call_text(tool, wrapper, memory="test", reason="user said so")
 
         metadata = mock_engine.add_memory.call_args.kwargs["metadata"]
         assert metadata["memorize_reason"] == "user said so"
@@ -627,7 +640,7 @@ class TestMemoryMemorizeTool:
                 memory_engine=mock_engine,
                 memory_processor=mock_processor,
             )
-            await tool.call(wrapper, memory="test", reason="   ")
+            await _call_text(tool, wrapper, memory="test", reason="   ")
 
         metadata = mock_engine.add_memory.call_args.kwargs["metadata"]
         assert "memorize_reason" not in metadata

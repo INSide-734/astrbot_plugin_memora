@@ -170,10 +170,15 @@ async def test_runtime_persists_only_trusted_and_unblocked() -> None:
     synchronizer = MagicMock()
     synchronizer.synchronize = AsyncMock()
     runtime = ProtocolIdentityRuntime(resolver, synchronizer=synchronizer)
-    event = SimpleNamespace(unified_msg_origin="aiocqhttp:private:10001")
+    event = MagicMock()
+    event.unified_msg_origin = "aiocqhttp:private:10001"
 
     assert runtime.resolve(event) == resolver.resolve.return_value
     resolver.resolve.assert_called_once_with(event)
+    event.set_extra.assert_called_once_with(
+        "memora.resolved_identity",
+        resolver.resolve.return_value,
+    )
 
     resolved = await runtime.prepare(event, writes_blocked=False)
     assert resolved.trust_status is IdentityTrust.TRUSTED
@@ -209,6 +214,21 @@ async def test_runtime_degrades_storage_errors_but_propagates_cancellation() -> 
     synchronizer.synchronize.side_effect = asyncio.CancelledError()
     with pytest.raises(asyncio.CancelledError):
         await runtime.prepare(event)
+
+
+def test_runtime_keeps_identity_when_event_extra_publication_fails() -> None:
+    """事件 extras 不可写时保留解析结果，避免破坏聊天主链。"""
+
+    from core.identity.runtime import ProtocolIdentityRuntime
+
+    resolver = MagicMock()
+    identity = trusted_identity()
+    resolver.resolve.return_value = identity
+    runtime = ProtocolIdentityRuntime(resolver)
+    event = MagicMock()
+    event.set_extra.side_effect = RuntimeError("private")
+
+    assert runtime.resolve(event) is identity
 
 
 @pytest.mark.asyncio

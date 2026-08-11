@@ -18,6 +18,8 @@ from ..features.identity.infrastructure.store import ProtocolIdentityStore
 from .conversation_sync import ConversationIdentitySynchronizer
 from .memory import MemoryIdentityEnricher
 
+_RESOLVED_IDENTITY_EVENT_EXTRA = "memora.resolved_identity"
+
 
 class ProtocolIdentityRuntime:
     """始终解析协议身份，并按可用能力尽力维护名称目录。"""
@@ -85,9 +87,14 @@ class ProtocolIdentityRuntime:
         return identity
 
     def resolve(self, event: Any) -> ResolvedIdentity:
-        """同步解析事件中的稳定身份，不执行目录或会话 I/O。"""
+        """同步解析稳定身份，并向当前事件发布同一只读快照。"""
 
-        return self._resolver.resolve(event)
+        identity = self._resolver.resolve(event)
+        try:
+            event.set_extra(_RESOLVED_IDENTITY_EVENT_EXTRA, identity)
+        except Exception:
+            logger.debug("协议身份快照发布失败，Agent 读取将安全拒绝")
+        return identity
 
     async def synchronize(
         self,
