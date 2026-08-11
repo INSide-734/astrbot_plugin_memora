@@ -15,6 +15,9 @@
 - 环境群消息：全量捕获成功且消息不会唤醒 Bot 时，也通过共享阈值入口检查并调度反思，不再依赖后续 LLM 响应。
 - `TopicBatchPreparer` 只负责为反思链准备消息批次；A/B 策略保持单批次，C/D 才在 LLM 抽取前预切分。
 
+反思窗口、批次预算、候选写入、连续性与写入终态实现归
+`core/features/reflection/` 所有；本目录只保留召回与反思主链编排器。
+
 不属于本模块：AstrBot 装饰器注册和群聊全量捕获在 `main.py` / `core/event_handler.py`；实际检索在 `core/retrieval/` 与 `MemoryEngine`；结构化抽取在 [`../processors/AGENTS.md`](../processors/AGENTS.md)；注入路由/执行在 `core/injection/`；持久化由 manager/store 完成。
 
 ## 主链与数据流
@@ -119,12 +122,12 @@ flowchart TD
 |---|---|
 | `recall_handler.py` | 请求前召回、路由、注入、安全关联和可观测性 |
 | `reflection_handler.py` | 响应清洗、会话记录、窗口控制、后台抽取与幂等写入 |
-| `reflection_candidate_writer.py` | 质量路由后的限流写入、取消传播与单候选终态归一化 |
-| `reflection_storage_outcomes.py` | canonical、quarantine、失败与幂等跳过的互斥结果及窗口汇总 |
-| `continuity_hooks.py` | canonical 写后话题标记、窗口收尾和只读临时连续性上下文边界 |
-| `reflection_llm_budget.py` | 按请求额度拟合反思批次，并执行基础/额外批次的并发与 reservation 协议 |
-| `reflection_trigger.py` | 共享反思阈值判断、pending 兼容与窗口参数准备 |
-| `topic_batch_preparer.py` | 反思前 C/D 话题预切分及成本回退 |
+| `../features/reflection/application/candidate_writer.py` | 质量路由后的限流写入、取消传播与单候选终态归一化 |
+| `../features/reflection/domain/storage_outcomes.py` | canonical、quarantine、失败与幂等跳过的互斥结果及窗口汇总 |
+| `../features/recall/application/continuity.py`、`../features/reflection/application/continuity.py` | 只读临时连续性上下文、canonical 写后话题标记与窗口收尾 |
+| `../features/reflection/application/llm_budget.py` | 按请求额度拟合反思批次，并执行基础/额外批次的并发与 reservation 协议 |
+| `../features/reflection/application/reflection_trigger.py` | 共享反思阈值判断、pending 兼容与窗口参数准备 |
+| `../features/reflection/application/topic_batch_preparer.py` | 反思前 C/D 话题预切分及成本回退 |
 | `__init__.py` | 仅导出 `RecallHandler`、`ReflectionHandler` |
 
 ## 测试定位与验证

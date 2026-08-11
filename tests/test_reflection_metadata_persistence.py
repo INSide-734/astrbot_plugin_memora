@@ -8,17 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.features.reflection.application import reflection_metadata as feature_metadata
-from core.handlers import reflection_metadata as legacy_metadata
-
-
-def test_legacy_handler_path_reuses_feature_application_objects() -> None:
-    """旧 handlers 路径只能恒等导出反思窗口元数据服务。"""
-
-    assert legacy_metadata.__all__ == feature_metadata.__all__
-    for name in feature_metadata.__all__:
-        assert getattr(legacy_metadata, name) is getattr(feature_metadata, name)
-
 
 def _build_storage_handler(conversation_manager: MagicMock) -> Any:
     """构造仅用于元数据提交回归的反思处理器。"""

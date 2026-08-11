@@ -13,8 +13,6 @@ from pydantic import ValidationError
 
 from core.base.config_validator import CostControlConfig
 from core.base.cost_control import CostControl, build_cost_control_from_config
-from core.features.reflection.application import llm_budget as feature_budget
-from core.handlers import reflection_llm_budget as legacy_budget
 from core.shared.extra_llm_budget import (
     ExtraLlmBudget,
     budgeted_extra_llm_call,
@@ -29,27 +27,6 @@ if TYPE_CHECKING:
     from core.managers.conversation_manager import ConversationManager
     from core.managers.memory_engine import MemoryEngine
     from core.processors.memory_processor import MemoryProcessor
-
-
-def test_legacy_handler_path_reuses_feature_application_objects() -> None:
-    """旧 handlers 路径只能恒等导出反思批次预算服务。"""
-
-    assert legacy_budget.__all__ == feature_budget.__all__
-    for name in feature_budget.__all__:
-        assert getattr(legacy_budget, name) is getattr(feature_budget, name)
-
-
-def test_legacy_topic_batch_path_reuses_feature_application_objects() -> None:
-    """旧 handlers 路径只能恒等导出反思话题批次准备器。"""
-
-    from core.features.reflection.application import (
-        topic_batch_preparer as feature_topic_batch,
-    )
-    from core.handlers import topic_batch_preparer as legacy_topic_batch
-
-    assert legacy_topic_batch.__all__ == feature_topic_batch.__all__
-    for name in feature_topic_batch.__all__:
-        assert getattr(legacy_topic_batch, name) is getattr(feature_topic_batch, name)
 
 
 class _ConfigStub:

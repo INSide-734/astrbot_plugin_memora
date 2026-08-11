@@ -1,4 +1,4 @@
-"""reflection candidate writer 的应用与兼容契约。"""
+"""reflection candidate writer 的应用契约。"""
 
 from __future__ import annotations
 
@@ -9,30 +9,34 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.features.reflection.application import candidate_writer as feature_writer
-from core.handlers import reflection_candidate_writer as legacy_writer
 
 
 def test_idempotency_key_is_stable_and_does_not_expose_content() -> None:
     """相同窗口和规范正文必须得到稳定摘要，输出不得泄露正文。"""
 
-    arguments = {
-        "session_id": "session-1",
-        "start_index": 2,
-        "end_index": 8,
-        "batch_index": 1,
-        "memory_index": 3,
-    }
     key = feature_writer.build_reflection_idempotency_key(
-        **arguments,
+        session_id="session-1",
+        start_index=2,
+        end_index=8,
+        batch_index=1,
+        memory_index=3,
         content="secret-canary",
     )
 
     assert key == feature_writer.build_reflection_idempotency_key(
-        **arguments,
+        session_id="session-1",
+        start_index=2,
+        end_index=8,
+        batch_index=1,
+        memory_index=3,
         content="  secret-canary  ",
     )
     assert key != feature_writer.build_reflection_idempotency_key(
-        **(arguments | {"memory_index": 4}),
+        session_id="session-1",
+        start_index=2,
+        end_index=8,
+        batch_index=1,
+        memory_index=4,
         content="secret-canary",
     )
     assert len(key) == 64
@@ -61,11 +65,3 @@ async def test_candidate_writer_propagates_canonical_write_cancellation() -> Non
             memory_quality_gate=None,
             schedule_evolution_after_write=AsyncMock(),
         )
-
-
-def test_legacy_handler_path_reuses_feature_application_objects() -> None:
-    """旧 handlers 路径只能恒等导出 reflection feature 的 writer。"""
-
-    assert legacy_writer.__all__ == feature_writer.__all__
-    for name in feature_writer.__all__:
-        assert getattr(legacy_writer, name) is getattr(feature_writer, name)

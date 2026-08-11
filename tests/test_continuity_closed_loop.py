@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.features.recall.application import continuity as recall_continuity
 from core.features.reflection.application import continuity as reflection_continuity
-from core.handlers import continuity_hooks as legacy_continuity
 from core.handlers.recall_handler import RecallHandler
 from core.handlers.reflection_handler import ReflectionHandler
 from core.managers.continuity_tracker import ContinuityTracker
@@ -29,33 +28,11 @@ def _recall_handler(tracker: object | None) -> RecallHandler:
     """构造只启用连续性上下文的最小召回处理器。"""
 
     handler = object.__new__(RecallHandler)
-    handler._memory_engine = SimpleNamespace(continuity_tracker=tracker)
+    setattr(handler, "_memory_engine", SimpleNamespace(continuity_tracker=tracker))
     handler._jargon_query_service = None
     handler._expression_learner = None
     handler._affection_manager = None
     return handler
-
-
-def test_legacy_continuity_hooks_reuse_feature_application_objects() -> None:
-    """旧 handlers 路径只能恒等导出两个 feature 的连续性服务。"""
-
-    assert legacy_continuity.__all__ == [
-        "build_continuity_context",
-        "record_continuity_topics",
-        "resolve_continuity_session",
-    ]
-    assert (
-        legacy_continuity.build_continuity_context
-        is recall_continuity.build_continuity_context
-    )
-    assert (
-        legacy_continuity.record_continuity_topics
-        is reflection_continuity.record_continuity_topics
-    )
-    assert (
-        legacy_continuity.resolve_continuity_session
-        is reflection_continuity.resolve_continuity_session
-    )
 
 
 def test_lifecycle_builder_uses_runtime_config_and_restores(tmp_path: Path) -> None:
@@ -106,14 +83,17 @@ async def test_lifecycle_close_calls_sync_continuity_save() -> None:
     """关闭引擎时应同步保存连续性状态，不把同步接口错误 await。"""
 
     tracker = MagicMock()
-    host = SimpleNamespace(
-        atom_lifecycle_manager=None,
-        continuity_tracker=tracker,
-        auto_learning=None,
-        anomaly_detector=None,
-        _pending_tasks=set(),
-        db_connection=None,
-        graph_vector_db=None,
+    host = cast(
+        MemoryEngineLifecycleMixin,
+        SimpleNamespace(
+            atom_lifecycle_manager=None,
+            continuity_tracker=tracker,
+            auto_learning=None,
+            anomaly_detector=None,
+            _pending_tasks=set(),
+            db_connection=None,
+            graph_vector_db=None,
+        ),
     )
 
     await MemoryEngineLifecycleMixin.close(host)
