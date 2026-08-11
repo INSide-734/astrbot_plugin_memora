@@ -48,3 +48,12 @@ def test_legacy_canonical_imports_are_feature_implementations() -> None:
     assert LegacyInstanceBaseStore is FeatureInstanceBaseStore
     assert LegacySchemaManager is SchemaManager
     assert LegacyWriteOpJournal is WriteOpJournal
+
+
+def test_graph_config_old_path_reuses_feature_owner() -> None:
+    """根配置聚合器应恒等导出 graph feature 的唯一配置模型。"""
+
+    from core.base.config_validator import GraphMemoryConfig as LegacyGraphMemoryConfig
+    from core.features.memory.domain.graph_memory_config import GraphMemoryConfig
+
+    assert LegacyGraphMemoryConfig is GraphMemoryConfig

@@ -1,5 +1,5 @@
 """记忆原子质量配置模型的旧路径兼容导出。"""
 
-from ..features.memory.domain.atom_quality_config import AtomQualityFilterConfig
+from ..platform.config.feature_contributions import AtomQualityFilterConfig
 
 __all__ = ["AtomQualityFilterConfig"]
