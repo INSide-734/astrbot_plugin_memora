@@ -26,3 +26,12 @@ def test_shared_cost_control_preserves_mode_semantics() -> None:
     assert low_cost.allow("llm_reranker") is False
     assert balanced.allow("llm_reranker") is True
     assert balanced.allow("llm_query_rewrite") is False
+
+
+def test_cost_control_config_old_path_reuses_shared_owner() -> None:
+    """根配置聚合器应恒等导出 shared 拥有的成本配置模型。"""
+
+    from core.base.config_validator import CostControlConfig as LegacyCostControlConfig
+    from core.shared.cost_control import CostControlConfig
+
+    assert LegacyCostControlConfig is CostControlConfig

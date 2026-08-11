@@ -31,6 +31,7 @@ from ..platform.config.feature_contributions import (
 )
 from ..platform.config.provider_config import ProviderConfig
 from ..platform.config.rebuild_config import IndexRebuildSettings
+from ..shared.cost_control import CostControlConfig
 from .feature_config import (
     AgentToolsConfig,
     DashboardConfig,
@@ -73,36 +74,6 @@ class FusionStrategyConfig(BaseModel):
     """结果融合策略配置"""
 
     rrf_k: int = Field(default=60, ge=1, le=1000, description="RRF参数k")
-
-
-class CostControlConfig(BaseModel):
-    """成本控制配置 — 统一管理高成本 LLM 功能的启用/降级策略。"""
-
-    mode: str = Field(
-        default="balanced",
-        description="成本模式: balanced(默认，禁止额外LLM调用), low_cost(最小化token), quality(允许高成本路径)",
-    )
-    max_extra_llm_calls_per_turn: int = Field(
-        default=0,
-        ge=0,
-        le=10,
-        description="每轮额外 LLM 调用上限。balanced/low_cost 下默认 0",
-    )
-    allow_llm_reranker_in_passive_recall: bool = Field(
-        default=False, description="是否允许被动召回中触发 LLM reranker"
-    )
-    allow_llm_topic_strategy_d: bool = Field(
-        default=False, description="是否允许两阶段 LLM 话题分割（strategy D）"
-    )
-    max_reflection_parallel_llm_calls: int = Field(
-        default=2, ge=1, le=8, description="反思时并行 LLM 调用上限"
-    )
-    llm_reranker_min_candidates: int = Field(
-        default=12, ge=1, le=50, description="触发 LLM reranker 的最小候选数"
-    )
-    llm_reranker_prompt_chars: int = Field(
-        default=3000, ge=500, le=10000, description="LLM reranker prompt 最大字符数"
-    )
 
 
 class SecurityConfig(BaseModel):

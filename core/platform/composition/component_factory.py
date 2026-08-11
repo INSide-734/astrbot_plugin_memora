@@ -8,7 +8,6 @@ from typing import Any, cast
 from astrbot.api import logger
 from astrbot.api.provider import Provider
 
-from ...base.config_validator import CostControlConfig
 from ...base.cost_control import build_cost_control_from_config
 from ...base.exceptions import ProviderNotReadyError
 from ...features.backup.application import BackupManager
@@ -46,6 +45,7 @@ from ...retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
 from ...retrieval.projection_reader import ProjectionReader
 from ...review.memory_quality_gate import MemoryQualityGate
 from ...review.quarantine_store import MemoryQuarantineStore
+from ...shared.cost_control import CostControlConfig
 from ...storage.conversation_store import ConversationStore
 from ...storage.injection_decision_store import InjectionDecisionStore
 from ..provider.adapters import EmbeddingProviderAdapter, LLMProviderAdapter

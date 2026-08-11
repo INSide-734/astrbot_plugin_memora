@@ -5,8 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ..shared.cost_control import CostControl
-from .config_validator import CostControlConfig
+from ..shared.cost_control import CostControl, CostControlConfig
 
 
 def build_cost_control_from_config(
