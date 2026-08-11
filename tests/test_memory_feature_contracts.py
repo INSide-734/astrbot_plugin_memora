@@ -66,3 +66,16 @@ def test_migration_config_old_path_reuses_memory_feature_owner() -> None:
     from core.features.memory.domain.migration_config import MigrationSettings
 
     assert LegacyMigrationSettings is MigrationSettings
+
+
+def test_write_reliability_config_old_path_reuses_memory_feature_owner() -> None:
+    """旧运行时配置路径应恒等导出 memory feature 的写入可靠性模型。"""
+
+    from core.base.runtime_feature_config import (
+        WriteReliabilityConfig as LegacyWriteReliabilityConfig,
+    )
+    from core.features.memory.domain.write_reliability_config import (
+        WriteReliabilityConfig,
+    )
+
+    assert LegacyWriteReliabilityConfig is WriteReliabilityConfig

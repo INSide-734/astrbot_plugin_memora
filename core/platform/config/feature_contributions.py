@@ -6,6 +6,7 @@ from ...features.evolution.domain import MemoryEvolutionConfig
 from ...features.memory.domain.atom_quality_config import AtomQualityFilterConfig
 from ...features.memory.domain.graph_memory_config import GraphMemoryConfig
 from ...features.memory.domain.migration_config import MigrationSettings
+from ...features.memory.domain.write_reliability_config import WriteReliabilityConfig
 from ...features.recall.domain import FilteringConfig, PresetName, RecallEngineConfig
 from ...features.reflection.domain.config import (
     LegacyBackfillConfig,
@@ -38,4 +39,5 @@ __all__ = [
     "StrategyDConfig",
     "TopicSegmentationConfig",
     "UpdateSettings",
+    "WriteReliabilityConfig",
 ]

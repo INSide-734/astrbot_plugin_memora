@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from ..platform.config.feature_contributions import WriteReliabilityConfig
+
 
 def _require_unit_weight_sum(values: tuple[float, ...], section: str) -> None:
     """要求一组融合权重非零且总和为一，避免运行时隐式归一化。"""
@@ -154,13 +156,6 @@ class UserProfileConfig(BaseModel):
     boost_strength: float = 0.15
     tag_decay_rate: float = 0.98
     min_tag_confidence: float = 0.1
-
-
-class WriteReliabilityConfig(BaseModel):
-    """canonical 写入日志修复配置。"""
-
-    repair_enabled: bool = True
-    max_retries: int = 3
 
 
 class RuntimeFeatureConfigSections(BaseModel):
