@@ -40,6 +40,6 @@
 
 **变更理由**：用户问题报告需要在不暴露隐私的前提下定位初始化、持久化和关闭阶段的降级与耗时。
 
-**影响范围**：`core/monitoring/`、`PluginInitializer`、`MemoraPlugin`、`EventHandler`、`ReflectionHandler` 及对应 pytest 契约。
+**影响范围**：`core/features/observability/`、`PluginInitializer`、`MemoraPlugin`、`EventHandler`、`ReflectionHandler` 及对应 pytest 契约。
 
 **决策依据**：继续复用现有 `debug` 开关、事件 allowlist 和 JSONL sink；只增加低基数标量与固定枚举，不记录业务正文或身份标识。

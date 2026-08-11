@@ -4,9 +4,12 @@
 
 **最后更新：** 2026-07-19
 
+> 可执行实现已迁移到 `core/features/observability/`；`core/monitoring/` 仅保留
+> 架构与隐私设计文档，不再是 Python 导入边界。
+
 ## 职责与边界
 
-`core/monitoring/` 包含五类相互独立但同属可观测性的能力：Prometheus 指标定义、可选函数插桩、召回耗时环形统计、记忆原子五维质量评分与告警，以及面向用户问题报告的隐私安全诊断记录器。Prometheus 指标和性能追踪不保存诊断事件；系统健康评分属于 [诊断模块](../diagnostics/AGENTS.md)，人工分诊属于 [审查模块](../review/AGENTS.md)。
+`core/features/observability/` 包含五类相互独立但同属可观测性的能力：Prometheus 指标定义、可选函数插桩、召回耗时环形统计、记忆原子五维质量评分与告警，以及面向用户问题报告的隐私安全诊断记录器。Prometheus 指标和性能追踪不保存诊断事件；系统健康评分属于 [诊断模块](../diagnostics/AGENTS.md)，人工分诊属于 [审查模块](../review/AGENTS.md)。
 
 ## 架构与数据流
 
@@ -79,7 +82,7 @@ flowchart LR
 
 ## 测试定位与验证
 
-- `tests/test_monitoring_package.py`：包级懒加载、缓存和 debug stub 切换。
+- `tests/test_observability_runtime.py`：feature runtime 的懒加载、缓存和 debug stub 切换。
 - `tests/test_monitoring_metrics.py`：真实/降级 Registry、已知 collector 与 bucket 契约。
 - `tests/test_monitoring_instrumentation.py`：同步/异步插桩、动态指标、错误和 trace。
 - `tests/test_perf_tracker.py`：环形溢出后的滚动统计、部分键、百分位和边界。
@@ -89,5 +92,5 @@ flowchart LR
 精确验证命令：
 
 ```bash
-python -m pytest -q tests/test_monitoring_package.py tests/test_monitoring_metrics.py tests/test_monitoring_instrumentation.py tests/test_perf_tracker.py tests/test_quality_scorer.py tests/test_api_metrics.py
+python -m pytest -q tests/test_observability_runtime.py tests/test_monitoring_metrics.py tests/test_monitoring_instrumentation.py tests/test_perf_tracker.py tests/test_quality_scorer.py tests/test_api_metrics.py
 ```

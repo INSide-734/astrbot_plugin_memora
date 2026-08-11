@@ -62,7 +62,7 @@ def test_feature_modules_import_under_astrbot_package_name(monkeypatch):
             "data.plugins.astrbot_plugin_memora.core.injection.recorder"
         )
         perf_tracker_module = importlib.import_module(
-            "data.plugins.astrbot_plugin_memora.core.monitoring.perf_tracker"
+            "data.plugins.astrbot_plugin_memora.core.features.observability.application.perf_tracker"
         )
         assert trace_module.RecallTraceApiMixin.__name__ == "RecallTraceApiMixin"
         assert recorder_module.InjectionDecisionRecorder.__name__ == (
