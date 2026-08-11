@@ -37,12 +37,9 @@ from ..platform.config.feature_contributions import (
 from ..platform.config.provider_config import ProviderConfig
 from ..platform.config.rebuild_config import IndexRebuildSettings
 from ..platform.config.security_config import SecurityConfig
+from ..platform.config.transport_config import AgentToolsConfig, DashboardConfig
 from ..shared.cost_control import CostControlConfig
-from .feature_config import (
-    AgentToolsConfig,
-    DashboardConfig,
-    JargonConfig,
-)
+from .feature_config import JargonConfig
 from .runtime_feature_config import RuntimeFeatureConfigSections
 
 

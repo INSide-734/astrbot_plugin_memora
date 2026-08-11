@@ -184,6 +184,25 @@ def test_platform_runtime_configs_old_path_reuses_platform_owner() -> None:
     assert LegacyIndexRebuildSettings is IndexRebuildSettings
 
 
+def test_platform_transport_configs_old_paths_reuse_platform_owner() -> None:
+    """宿主工具与控制台配置旧路径应恒等导出 platform 唯一模型。"""
+
+    from core.base.config_validator import (
+        AgentToolsConfig as LegacyRootAgentToolsConfig,
+    )
+    from core.base.config_validator import DashboardConfig as LegacyRootDashboardConfig
+    from core.base.feature_config import (
+        AgentToolsConfig as LegacyAgentToolsConfig,
+    )
+    from core.base.feature_config import DashboardConfig as LegacyDashboardConfig
+    from core.platform.config.transport_config import AgentToolsConfig, DashboardConfig
+
+    assert LegacyRootAgentToolsConfig is AgentToolsConfig
+    assert LegacyAgentToolsConfig is AgentToolsConfig
+    assert LegacyRootDashboardConfig is DashboardConfig
+    assert LegacyDashboardConfig is DashboardConfig
+
+
 def test_security_config_old_path_reuses_platform_owner() -> None:
     """根配置聚合器应恒等导出 platform 拥有的安全配置模型。"""
 
