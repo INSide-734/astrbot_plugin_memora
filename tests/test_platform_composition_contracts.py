@@ -12,6 +12,7 @@ from core.initializer import engine_runtime_config as legacy_engine_runtime_conf
 from core.initializer import identity_lifecycle as legacy_identity_lifecycle
 from core.initializer import provider_loader as legacy_provider_loader
 from core.initializer import provider_waiter as legacy_provider_waiter
+from core.initializer import readiness as legacy_readiness
 from core.platform import composition as composition_package
 from core.platform.composition import (
     DatabaseSetup,
@@ -24,6 +25,7 @@ from core.platform.composition import (
     engine_runtime_config as composition_engine_runtime_config,
 )
 from core.platform.composition import provider_loader as composition_provider_loader
+from core.platform.composition import readiness as composition_readiness
 
 
 class _EmbeddingCandidate:
@@ -57,6 +59,15 @@ def test_provider_loader_old_path_reuses_composition_implementation() -> None:
 
     assert legacy_provider_loader.ProviderLoader is ProviderLoader
     assert composition_package.ProviderLoader is ProviderLoader
+
+
+def test_readiness_old_path_reuses_composition_implementation() -> None:
+    """旧初始化就绪路径只能导出 composition 的唯一 mixin。"""
+
+    assert (
+        legacy_readiness.InitializerReadinessMixin
+        is composition_readiness.InitializerReadinessMixin
+    )
 
 
 def test_provider_loader_accepts_configured_embedding_capability() -> None:

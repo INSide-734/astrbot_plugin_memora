@@ -39,7 +39,7 @@ flowchart TD
 
 `__init__.py` 稳定导出：
 
-`readiness.py` 是 `PluginInitializer` 的内部状态查询 mixin，保持就绪属性、快照和有界等待方法，不作为包级公开导出。
+`platform/composition/readiness.py` 是 `PluginInitializer` 的内部状态查询 mixin；`initializer/readiness.py` 仅保留旧路径恒等导出，二者都不作为包级公开导出。
 
 | 类型 | 关键接口 | 契约 |
 |---|---|---|
