@@ -182,3 +182,12 @@ def test_platform_runtime_configs_old_path_reuses_platform_owner() -> None:
 
     assert LegacyProviderConfig is ProviderConfig
     assert LegacyIndexRebuildSettings is IndexRebuildSettings
+
+
+def test_security_config_old_path_reuses_platform_owner() -> None:
+    """根配置聚合器应恒等导出 platform 拥有的安全配置模型。"""
+
+    from core.base.config_validator import SecurityConfig as LegacySecurityConfig
+    from core.platform.config.security_config import SecurityConfig
+
+    assert LegacySecurityConfig is SecurityConfig
