@@ -9,13 +9,13 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..features.evolution.domain import (
+from ....shared.contracts import MemorySourceRef
+from ....shared.temporal import normalize_datetime
+from ..domain import (
     EvolutionProposal,
     MemoryProjectionProposal,
     ProjectionType,
 )
-from ..shared.contracts import MemorySourceRef
-from ..shared.temporal import normalize_datetime
 
 _DEFAULT_AGE_DAYS = 60.0
 _DEFAULT_SIMILARITY = 0.85

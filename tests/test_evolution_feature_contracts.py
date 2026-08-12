@@ -29,6 +29,9 @@ from core.features.evolution.application import (
 from core.features.evolution.application import (
     memory_evolution_projection as feature_projection,
 )
+from core.features.evolution.application import (
+    semantic_compressor as feature_compressor,
+)
 from core.features.evolution.domain import MemoryEvolutionConfig
 from core.features.evolution.domain import models as feature_models
 from core.features.evolution.infrastructure import (
@@ -120,6 +123,9 @@ def test_evolution_foundation_services_use_feature_application_owner() -> None:
     )
     assert feature_projection.MemoryEvolutionProjectionProposalMixin.__module__ == (
         "core.features.evolution.application.memory_evolution_projection"
+    )
+    assert feature_compressor.SemanticCompressor.__module__ == (
+        "core.features.evolution.application.semantic_compressor"
     )
 
 

@@ -13,7 +13,7 @@
 知识领域服务与 proposal 管线唯一归属 `core/features/knowledge/application/`；`core/managers/` 只保留 `MemoryEngine` 的知识写后钩子，不再转发知识应用类型。
 笔记领域服务与 proposal 管线唯一归属 `core/features/notes/application/`；`core/managers/` 只保留 `MemoryEngine` 的笔记写后钩子，不再转发笔记应用类型。
 自主学习与反馈聚合唯一归属 `core/features/learning/`：application 管理可信反馈聚合、shadow 候选和单一 CAS 发布，domain 保存候选与反馈模型，infrastructure 保存隔离事件、状态和配置适配；`core/managers/` 只在 `MemoryEngine` 生命周期中装配和持有这些组件，不再转发 Learning 类型。自主学习不得直接修改生产检索权重或调用 `update_memory()`。
-Memory Evolution 的 Gate、候选生成、LLM proposal、worker 与 Projection 应用唯一归属 `core/features/evolution/application/`，Store 唯一归属 `core/features/evolution/infrastructure/`；`core/managers/` 只保留 MemoryEngine 写后钩子与尚待迁移的语义压缩协作对象，不再转发 Evolution 应用类型。
+Memory Evolution 的 Gate、候选生成、LLM proposal、worker、Projection 应用与语义压缩唯一归属 `core/features/evolution/application/`，Store 唯一归属 `core/features/evolution/infrastructure/`；`core/managers/` 只保留 MemoryEngine 写后钩子，不再转发 Evolution 应用类型。
 
 本层负责“何时、按什么顺序、失败后如何补偿”；底层表 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，候选召回和排序属于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)，定时触发属于 [`core/schedulers/AGENTS.md`](../schedulers/AGENTS.md)。Memory Evolution 的关系/Projection 事务与 revision 校验由 feature application 编排，具体 SQLite 表访问属于 feature infrastructure。
 
@@ -157,7 +157,7 @@ sequenceDiagram
 | 记忆再巩固 | `reconsolidation.py`、`reconsolidation_store.py` | 默认关闭；召回只生成 pending 候选；apply 先持久化唯一 intent，再按 source revision CAS 写 canonical 并恢复/失败收口；回滚同样持久化跨 Store 意图并刷新当前 source 的 graph 派生，状态、动作审计与操作清理原子收口；启动恢复不得覆盖后续编辑 |
 | 自主学习 | `features/learning/application/`、`features/learning/domain/`、`features/learning/infrastructure/` | 统一 FeedbackSignal 事件只进入隔离 Store；shadow 候选经单一 CAS 写入口发布；生产写入前持久化真实旧权重 intent，最终状态保存失败时保留可重启回滚快照；rebuild/publish/rollback/reset 共用状态锁，不直接修改生产权重 |
 | 可靠性 | `write_coordinator.py`、`features/memory/infrastructure/write_op_*`、`memory_engine_write_observability.py` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复；canonical 写入指标与质量采样由独立 mixin 承担 |
-| 记忆演化 | `features/evolution/application/`、`features/evolution/infrastructure/`、`semantic_compressor.py` | canonical 写后门控、确定性/LLM proposal、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验及语义摘要生成 |
+| 记忆演化 | `features/evolution/application/`、`features/evolution/infrastructure/` | canonical 写后门控、确定性/LLM proposal、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验及语义摘要生成 |
 | canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |
 | 连续性 | `continuity_tracker.py`、`memory_engine_lifecycle.py` | 使用 `data_dir` 同步恢复/保存，按配置 TTL 和单 session 上限保留话题；关闭时不创建或读写 |
 | 文件状态 | `features/learning/infrastructure/auto_learning_state.py` | JSON 状态属于运行数据，不是配置；加载失败通常降级为空状态；状态写入失败必须显式返回/抛出，不能把生产发布报告为成功 |

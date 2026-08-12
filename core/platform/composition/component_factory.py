@@ -16,6 +16,7 @@ from ...features.evolution.application import (
     MemoryEvolutionCandidateGenerator,
     MemoryEvolutionGate,
     MemoryEvolutionManager,
+    SemanticCompressor,
 )
 from ...features.evolution.infrastructure import MemoryEvolutionStore
 from ...features.identity.application.service import ProtocolIdentityService
@@ -39,7 +40,6 @@ from ...identity.runtime import ProtocolIdentityRuntime
 from ...injection.recorder import InjectionDecisionRecorder
 from ...managers.conversation_manager import ConversationManager
 from ...managers.memory_engine import MemoryEngine
-from ...managers.semantic_compressor import SemanticCompressor
 from ...processors.memory_processor import MemoryProcessor
 from ...retrieval.derived_relation_expander import DerivedRelationExpander
 from ...retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy

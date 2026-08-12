@@ -15,6 +15,7 @@ from core.features.decay.application import DecayScheduler
 from core.features.evolution.application import (
     EvolutionProposalRejected,
     MemoryEvolutionManager,
+    SemanticCompressor,
 )
 from core.features.evolution.domain import (
     DerivedState,
@@ -25,7 +26,6 @@ from core.features.evolution.domain import (
     ProjectionType,
     ProjectionView,
 )
-from core.managers.semantic_compressor import SemanticCompressor
 from core.platform.composition import DerivedRebuildCoordinator
 from core.retrieval.projection_reader import (
     ProjectionBudget,

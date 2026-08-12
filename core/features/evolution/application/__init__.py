@@ -9,6 +9,7 @@ from .memory_evolution_manager import (
     MemoryEvolutionManager,
 )
 from .memory_evolution_projection import MemoryEvolutionProjectionProposalMixin
+from .semantic_compressor import SemanticCompressor
 
 __all__ = [
     "EvolutionLeaseLost",
@@ -18,4 +19,5 @@ __all__ = [
     "MemoryEvolutionGate",
     "MemoryEvolutionManager",
     "MemoryEvolutionProjectionProposalMixin",
+    "SemanticCompressor",
 ]

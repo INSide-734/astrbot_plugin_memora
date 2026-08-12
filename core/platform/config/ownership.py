@@ -164,7 +164,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "semantic_compression": _ownership(
         "semantic_compression",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.semantic_compressor",
+        "core.features.evolution.application.semantic_compressor",
     ),
     "episode_clustering": _ownership(
         "episode_clustering",

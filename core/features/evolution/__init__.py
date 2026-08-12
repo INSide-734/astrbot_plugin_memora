@@ -13,6 +13,7 @@ if TYPE_CHECKING:
         MemoryEvolutionCandidateGenerator,
         MemoryEvolutionGate,
         MemoryEvolutionManager,
+        SemanticCompressor,
     )
     from .domain import (
         DerivedApplyPlan,
@@ -78,6 +79,7 @@ __all__ = [
     "RelationView",
     "RetrySpec",
     "ScopeContext",
+    "SemanticCompressor",
 ]
 
 _APPLICATION_EXPORTS = frozenset(
@@ -88,6 +90,7 @@ _APPLICATION_EXPORTS = frozenset(
         "MemoryEvolutionCandidateGenerator",
         "MemoryEvolutionGate",
         "MemoryEvolutionManager",
+        "SemanticCompressor",
     }
 )
 _INFRASTRUCTURE_EXPORTS = frozenset(

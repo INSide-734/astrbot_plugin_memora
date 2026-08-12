@@ -310,6 +310,9 @@ def test_every_schema_leaf_has_an_explicit_owner_classification() -> None:
     assert ownership["episode_clustering.enabled"].owner == (
         "core.features.evolution.application.episode_clusterer"
     )
+    assert ownership["semantic_compression.enabled"].owner == (
+        "core.features.evolution.application.semantic_compressor"
+    )
     assert {
         ownership["recall_engine.top_k"].kind,
         ownership["dashboard.allow_runtime_build"].kind,

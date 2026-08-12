@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core.managers.semantic_compressor import (
+from core.features.evolution.application.semantic_compressor import (
     SemanticCompressor,
     _cluster_sources,
     _eligible_source,

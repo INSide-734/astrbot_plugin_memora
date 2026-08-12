@@ -9,10 +9,12 @@ from unittest.mock import AsyncMock
 import aiosqlite
 import pytest
 
-from core.features.evolution.application import MemoryEvolutionManager
+from core.features.evolution.application import (
+    MemoryEvolutionManager,
+    SemanticCompressor,
+)
 from core.features.evolution.domain import ProjectionType
 from core.features.evolution.infrastructure import MemoryEvolutionStore
-from core.managers.semantic_compressor import SemanticCompressor
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 1, tzinfo=UTC)
