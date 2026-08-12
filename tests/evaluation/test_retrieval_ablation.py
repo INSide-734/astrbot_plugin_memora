@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 
 def _engine(
     *, hop: int = 1, reranker: object | None = None, vector_access: bool = True
-):
+) -> Any:
     """构造覆盖 config、retriever、cache 和向量能力的轻量引擎。"""
 
     config = {
@@ -61,7 +62,7 @@ def _engine(
 
             return []
 
-    engine = Engine()
+    engine: Any = Engine()
     engine.config = config
     engine.hybrid_retriever = hybrid
     engine.graph_keyword_retriever = keyword
@@ -108,7 +109,7 @@ def test_descriptors_require_engine_and_tolerate_malformed_live_state() -> None:
 
     engine = _engine()
     engine.graph_keyword_retriever.expansion_hops = object()
-    malformed_mmr = type("MMRReranker", (), {})()
+    malformed_mmr: Any = type("MMRReranker", (), {})()
     malformed_mmr._lambda = object()
     engine.dual_route_retriever.reranker = malformed_mmr
     descriptors = RetrievalAblationController(engine).descriptors()
@@ -187,6 +188,7 @@ def test_prepare_copies_components_config_and_caches() -> None:
     prepared = RetrievalAblationController(live).prepare("graph_neighbors_2_hops")
 
     assert prepared.available is True
+    assert prepared.engine is not None
     assert prepared.engine is not live
     assert prepared.engine.graph_keyword_retriever.expansion_hops == 2
     assert live.graph_keyword_retriever.expansion_hops == 1
@@ -206,6 +208,7 @@ def test_prepare_config_variant_does_not_mutate_live_engine() -> None:
     live = _engine()
     prepared = RetrievalAblationController(live).prepare("graph_expansion_off")
 
+    assert prepared.engine is not None
     assert (
         prepared.engine.config["recall_engine.chain_graph_expansion_enabled"] is False
     )
@@ -244,6 +247,7 @@ async def test_snapshot_search_uses_snapshot_method_binding() -> None:
     live = _engine()
     prepared = RetrievalAblationController(live).prepare("baseline")
 
+    assert prepared.engine is not None
     assert await prepared.engine.search_memories(query="synthetic") == []
 
 
@@ -262,6 +266,7 @@ def test_snapshot_disables_retrieval_optimizer_canonical_writes() -> None:
 
     prepared = RetrievalAblationController(live).prepare("baseline")
 
+    assert prepared.engine is not None
     assert prepared.engine._retrieval._update_memory is None
     assert callable(prepared.engine._retrieval._create_tracked_task)
     assert live._retrieval._update_memory is live_update
@@ -354,6 +359,7 @@ def test_embedding_variant_does_not_silently_fallback_on_vector_failure() -> Non
     prepared = RetrievalAblationController(live).prepare(
         "final_reranker_embedding_similarity"
     )
+    assert prepared.engine is not None
     reranker = prepared.engine.dual_route_retriever.reranker
     candidates = [
         HybridResult(1, 0.9, 0.9, None, None, "候选一", {}),
@@ -378,6 +384,7 @@ def test_embedding_probe_failure_is_sticky_across_later_success() -> None:
     prepared = RetrievalAblationController(live).prepare(
         "final_reranker_embedding_similarity"
     )
+    assert prepared.engine is not None
     reranker = prepared.engine.dual_route_retriever.reranker
     candidates = [
         HybridResult(1, 0.9, 0.9, None, None, "候选一", {}),
@@ -405,6 +412,7 @@ def test_embedding_probe_success_is_not_reset_by_unexercised_case() -> None:
     prepared = RetrievalAblationController(_engine()).prepare(
         "final_reranker_embedding_similarity"
     )
+    assert prepared.engine is not None
     reranker = prepared.engine.dual_route_retriever.reranker
     candidates = [
         HybridResult(1, 0.9, 0.9, None, None, "候选一", {}),
@@ -425,7 +433,7 @@ async def test_snapshot_shallow_copies_real_memory_evolution_store_config(
     from core.features.evaluation.application.retrieval_ablation import (
         RetrievalAblationController,
     )
-    from core.storage.memory_evolution_store import MemoryEvolutionStore
+    from core.features.evolution.infrastructure import MemoryEvolutionStore
 
     store = MemoryEvolutionStore(str(tmp_path / "evolution.db"))
     await store.initialize()
@@ -437,6 +445,7 @@ async def test_snapshot_shallow_copies_real_memory_evolution_store_config(
 
     try:
         assert prepared.available is True
+        assert prepared.engine is not None
         assert prepared.engine.config is not live.config
         assert (
             prepared.engine.config["memory_evolution"]

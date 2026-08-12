@@ -30,7 +30,6 @@ from core.features.evolution.infrastructure import (
 from core.managers import memory_evolution_manager as legacy_manager
 from core.managers import memory_evolution_projection as legacy_projection
 from core.shared.contracts import MemorySourceRef
-from core.storage import memory_evolution_store as legacy_store
 
 _APPLICATION_MODULE_PAIRS = (
     (legacy_manager, feature_manager),
@@ -103,12 +102,6 @@ def test_evolution_store_assembles_feature_owned_mixins() -> None:
         feature_derived.MemoryEvolutionDerivedMixin
         in feature_store.MemoryEvolutionStore.__mro__
     )
-
-
-def test_remaining_legacy_evolution_store_reuses_feature_owner() -> None:
-    """待迁移评测消费者使用的旧 Store 入口仍须恒等转发。"""
-
-    assert legacy_store.MemoryEvolutionStore is feature_store.MemoryEvolutionStore
 
 
 def test_legacy_evolution_application_reuses_feature_implementations() -> None:
