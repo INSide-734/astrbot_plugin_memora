@@ -114,4 +114,4 @@ python -m pytest tests/test_api_memory_evolution_review.py tests/test_page_api_c
 - [注入模块 AGENTS.md](../injection/AGENTS.md)
 - [Dashboard AGENTS.md](../../pages/dashboard/AGENTS.md)
 - `core/page_api.py`
-- `core/base/config_manager.py`
+- `core/platform/config/manager.py`

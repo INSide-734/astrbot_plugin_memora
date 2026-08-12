@@ -246,7 +246,7 @@ def test_memory_evolution_rejects_unknown_mode() -> None:
     from core.base.config_validator import MemoraConfig
 
     with pytest.raises(ValidationError):
-        MemoraConfig(memory_evolution={"mode": "running"})
+        MemoraConfig.model_validate({"memory_evolution": {"mode": "running"}})
 
 
 def test_hybrid_preset_order_is_rejected() -> None:
@@ -263,7 +263,7 @@ def test_hybrid_preset_order_is_rejected() -> None:
 
 
 def test_runtime_bad_retention_and_row_cap_default_only_those_leaves() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     manager = ConfigManager(
         {
@@ -291,7 +291,7 @@ def test_runtime_bad_retention_and_row_cap_default_only_those_leaves() -> None:
 
 
 def test_runtime_invalid_strategy_defaults_to_safe_manual_strategy() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     manager = ConfigManager(
         {
@@ -324,7 +324,7 @@ def test_runtime_invalid_strategy_defaults_to_safe_manual_strategy() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_rejects_invalid_hybrid_preset_order() -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     manager = ConfigManager({})
     snapshot_before = manager.get_config_snapshot()
@@ -363,7 +363,7 @@ def test_main_does_not_reference_legacy_persisted_config_file() -> None:
 
 
 def test_config_revision_is_stable_across_dict_insertion_order() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     first = ConfigManager(
         {
@@ -388,7 +388,7 @@ def test_config_revision_is_stable_across_dict_insertion_order() -> None:
 
 
 def test_config_snapshots_are_deeply_isolated() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     manager = ConfigManager(
         {"topic_segmentation": {"strategy_b": {"similarity_threshold": 0.75}}}
@@ -405,7 +405,7 @@ def test_config_snapshots_are_deeply_isolated() -> None:
 
 
 def test_get_mutable_value_cannot_bypass_config_revision() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     manager = ConfigManager(
         {"topic_segmentation": {"strategy_b": {"similarity_threshold": 0.75}}}
@@ -422,7 +422,7 @@ def test_get_mutable_value_cannot_bypass_config_revision() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_rejects_a_stale_revision_with_current_revision() -> None:
-    from core.base.config_manager import ConfigConflictError, ConfigManager
+    from core.platform.config import ConfigConflictError, ConfigManager
 
     manager = ConfigManager({"recall_engine": {"top_k": 5}})
     _, original_revision = manager.get_config_snapshot()
@@ -445,7 +445,7 @@ async def test_apply_rejects_a_stale_revision_with_current_revision() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_rejects_external_source_change_without_overwriting_it() -> None:
-    from core.base.config_manager import ConfigConflictError, ConfigManager
+    from core.platform.config import ConfigConflictError, ConfigManager
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
     manager = ConfigManager(source)
@@ -469,7 +469,7 @@ async def test_apply_rejects_external_source_change_without_overwriting_it() -> 
 
 @pytest.mark.asyncio
 async def test_apply_detects_external_source_change_during_persistence() -> None:
-    from core.base.config_manager import ConfigConflictError, ConfigManager
+    from core.platform.config import ConfigConflictError, ConfigManager
 
     source = BlockingSavingConfig({"recall_engine": {"top_k": 5}})
     manager = ConfigManager(source)
@@ -497,7 +497,7 @@ async def test_apply_detects_external_source_change_during_persistence() -> None
 
 @pytest.mark.asyncio
 async def test_apply_rejects_unknown_leaf_when_schema_is_available() -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     manager = ConfigManager({}, resource_locator=PluginResourceLocator(ROOT))
     _, revision = manager.get_config_snapshot()
@@ -513,7 +513,7 @@ async def test_apply_rejects_unknown_leaf_when_schema_is_available() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_prefers_valid_injected_schema() -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
     source.schema = {
@@ -540,7 +540,7 @@ async def test_apply_prefers_valid_injected_schema() -> None:
 async def test_persistent_source_fails_closed_when_schema_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
 
@@ -571,7 +571,7 @@ async def test_persistent_source_falls_back_to_resource_schema_for_malformed_hos
 ):
     """持久化源的畸形 host Schema 应回退到合法资源 Schema。"""
 
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
     source.schema = {"recall_engine": {"type": "object", "items": "bad"}}
@@ -592,7 +592,7 @@ async def test_persistent_source_falls_back_to_resource_schema_for_malformed_hos
 async def test_persistent_source_fails_closed_when_schemas_are_malformed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
     source.schema = {"recall_engine": {"type": "object", "items": "not-an-object"}}
@@ -619,7 +619,7 @@ async def test_persistent_source_fails_closed_when_schemas_are_malformed(
 
 @pytest.mark.asyncio
 async def test_plain_dict_remains_usable_without_schema() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     source: dict[str, Any] = {"recall_engine": {"top_k": 5}}
     manager = ConfigManager(source)
@@ -633,7 +633,7 @@ async def test_plain_dict_remains_usable_without_schema() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_reports_pydantic_errors_by_dotted_field_path() -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     manager = ConfigManager({})
     _, revision = manager.get_config_snapshot()
@@ -654,7 +654,7 @@ async def test_apply_enforces_every_schema_options_list(
     default: Any,
     options: tuple[Any, ...],
 ) -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     assert default is not _MISSING
     assert any(
@@ -688,7 +688,7 @@ async def test_apply_enforces_every_schema_options_list(
 
 @pytest.mark.asyncio
 async def test_schema_options_use_exact_json_scalar_equality() -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     source = SavingConfig({"recall_engine": {"top_k": 1}})
     source.schema = {

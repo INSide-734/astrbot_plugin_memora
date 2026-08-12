@@ -11,7 +11,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ....base.config_manager import ConfigManager
+from ....platform.config.manager import ConfigManager
 from ....processors.topic_splitter import (
     TopicChunkingStrategy,
     TwoStageLLMStrategy,

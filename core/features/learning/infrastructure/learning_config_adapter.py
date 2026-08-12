@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ....base.config_manager import (
+from ....platform.config.manager import (
     ConfigConflictError,
     ConfigPersistenceError,
     ConfigValidationError,

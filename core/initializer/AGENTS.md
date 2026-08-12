@@ -9,7 +9,7 @@
 
 ## 职责边界
 
-启动期基础组件装配的唯一 owner 已迁至 `core/platform/composition/`。`FaissChecker`、`ComponentFactory`、`ProviderWaiter` 与 `PluginInitializer` 的旧路径均已删除，本目录不再包含 Python 运行时代码。配置默认合并、Schema 校验、修订冲突与持久化事务属于 `core/base/config_manager.py`，业务检索、API 和命令不应下沉到这里。
+启动期基础组件装配的唯一 owner 已迁至 `core/platform/composition/`。`FaissChecker`、`ComponentFactory`、`ProviderWaiter` 与 `PluginInitializer` 的旧路径均已删除，本目录不再包含 Python 运行时代码。配置默认合并、Schema 校验、修订冲突与持久化事务属于 `core/platform/config/manager.py`，业务检索、API 和命令不应下沉到这里。
 
 ```mermaid
 flowchart TD
@@ -114,5 +114,5 @@ python -m pytest tests/test_config_contract.py tests/test_api_config.py -q
 - [Memory Evolution 生命周期边界](../managers/AGENTS.md)
 - [派生检索 AGENTS.md](../retrieval/AGENTS.md)
 - `../platform/composition/plugin_initializer.py`
-- `core/base/config_manager.py`
+- `core/platform/config/manager.py`
 - `core/storage/injection_decision_store.py`

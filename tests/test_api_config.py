@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.base.config_manager import (
+from core.platform.config import (
     ConfigApplyResult,
     ConfigConflictError,
     ConfigPersistenceError,
@@ -36,6 +36,7 @@ class _Request:
         json_error: Exception | None = None,
     ) -> None:
         self.args = args or {}
+        self.query: dict[str, Any] = {}
         self._body = body
         self._json_error = json_error
 
@@ -74,7 +75,8 @@ def _make_api(
     from core.api.config_api import ConfigApiMixin
 
     class _ConfigApi(ConfigApiMixin):
-        pass
+        plugin: Any
+        _maintenance_write_guard: Any
 
     context = SimpleNamespace(
         request=request or _Request(),
@@ -176,6 +178,23 @@ class TestConfigSchemaApi:
         plugin.context.get_all_providers = MagicMock(
             side_effect=RuntimeError("providers are still initializing")
         )
+
+        result = await api.get_config_schema()
+
+        assert result["status"] == "ok"
+        assert result["data"]["provider_options"] == {
+            "llm": [],
+            "embedding": [{"id": "embed-ok", "label": "bge-m3"}],
+        }
+
+    @pytest.mark.asyncio
+    async def test_non_iterable_provider_result_degrades_to_empty_options(self) -> None:
+        """Provider getter 返回未就绪对象时应安全降级为空列表。"""
+
+        api, plugin = _make_api(
+            embedding_providers=[_Provider("embed-ok", "bge-m3", "ollama_embedding")]
+        )
+        plugin.context.get_all_providers = MagicMock(return_value=object())
 
         result = await api.get_config_schema()
 
@@ -311,7 +330,7 @@ class TestConfigStateApi:
     async def test_reconciles_external_source_change_before_returning_state(
         self,
     ) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         source = {"recall_engine": {"top_k": 5}}
         manager = ConfigManager(source)

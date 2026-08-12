@@ -399,7 +399,7 @@ class TestMemoraConfigBoundaries:
 
 
 # ---------------------------------------------------------------------------
-# 4. core/base/config_manager.py
+# 4. core/platform/config/manager.py
 # ---------------------------------------------------------------------------
 
 
@@ -407,13 +407,13 @@ class TestConfigManager:
     """Tests for ConfigManager — get, get_section, get_all, and properties."""
 
     def test_get_top_level_key(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"test_key": "test_value"})
         assert mgr.get("test_key") == "test_value"
 
     def test_get_nested_key_with_dot_notation(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager(
             {
@@ -427,7 +427,7 @@ class TestConfigManager:
         assert mgr.get("recall_engine.max_k") == 25
 
     def test_get_deeply_nested_key(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager(
             {
@@ -441,25 +441,25 @@ class TestConfigManager:
         assert mgr.get("topic_segmentation.strategy_b.similarity_threshold") == 0.75
 
     def test_get_missing_key_returns_default(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({})
         assert mgr.get("nonexistent.key", default=42) == 42
 
     def test_get_missing_key_no_default_returns_none(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({})
         assert mgr.get("nonexistent.key") is None
 
     def test_get_non_dict_intermediate_returns_default(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"flat_key": 123})
         assert mgr.get("flat_key.nested", default="fallback") == "fallback"
 
     def test_get_section_returns_dict(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"recall_engine": {"top_k": 5, "max_k": 10}})
         section = mgr.get_section("recall_engine")
@@ -467,13 +467,13 @@ class TestConfigManager:
         assert section["top_k"] == 5
 
     def test_get_section_missing_returns_empty_dict(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({})
         assert mgr.get_section("nonexistent") == {}
 
     def test_get_all_returns_copy(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"test_key": "test_value"})
         all_config = mgr.get_all()
@@ -484,7 +484,7 @@ class TestConfigManager:
         assert mgr.get("new_key") is None
 
     def test_provider_settings_property(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"provider_settings": {"llm_provider_id": "test-provider"}})
         ps = mgr.provider_settings
@@ -492,28 +492,28 @@ class TestConfigManager:
         assert ps["llm_provider_id"] == "test-provider"
 
     def test_session_manager_property(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"session_manager": {"max_sessions": 200}})
         sm = mgr.session_manager
         assert sm["max_sessions"] == 200
 
     def test_graph_memory_property(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"graph_memory": {"enabled": False}})
         gm = mgr.graph_memory
         assert gm["enabled"] is False
 
     def test_empty_user_config_loads_defaults(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager()
         assert mgr.get("session_manager.max_sessions") == 100
         assert mgr.get("recall_engine.top_k") == 5
 
     def test_merges_user_override_with_defaults(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager(
             {
@@ -525,8 +525,8 @@ class TestConfigManager:
         assert mgr.get("graph_memory.enabled") is False
 
     def test_invalid_section_falls_back_without_losing_other_sections(self) -> None:
-        from core.base.config_manager import ConfigManager
         from core.base.config_validator import get_default_config
+        from core.platform.config import ConfigManager
 
         defaults = get_default_config()
         mgr = ConfigManager(
@@ -555,25 +555,25 @@ class TestConfigManagerEdgeCases:
     """Edge case tests for ConfigManager."""
 
     def test_zero_value_is_not_treated_as_missing(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"recall_engine": {"top_k": 0}})
         assert mgr.get("recall_engine.top_k") == 0
 
     def test_false_value_is_not_treated_as_missing(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"graph_memory": {"enabled": False}})
         assert mgr.get("graph_memory.enabled") is False
 
     def test_empty_string_value_is_returned(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"provider_settings": {"llm_provider_id": ""}})
         assert mgr.get("provider_settings.llm_provider_id") == ""
 
     def test_empty_dict_value_is_returned(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"filtering_settings": {}})
         # Empty user dict gets deep-merged with defaults, so filtering_settings
@@ -582,7 +582,7 @@ class TestConfigManagerEdgeCases:
         assert isinstance(result, dict)
 
     def test_none_value_is_returned_not_default(self) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         mgr = ConfigManager({"provider_settings": {"embedding_provider_id": None}})
         # None is an explicit value, should be returned not replaced with default

@@ -16,7 +16,7 @@ from tests.config_contract_support import BlockingSavingConfig, SavingConfig
 async def test_apply_updates_source_and_saves_before_publishing() -> None:
     """配置发布前必须先更新来源并完成同步持久化。"""
 
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
     manager = ConfigManager(source)
@@ -39,7 +39,7 @@ async def test_apply_updates_source_and_saves_before_publishing() -> None:
 async def test_apply_rolls_back_source_and_snapshot_when_save_fails() -> None:
     """同步保存失败时必须回滚来源映射与运行时快照。"""
 
-    from core.base.config_manager import ConfigManager, ConfigPersistenceError
+    from core.platform.config import ConfigManager, ConfigPersistenceError
 
     source = SavingConfig({"recall_engine": {"top_k": 5}}, fail_save=True)
     manager = ConfigManager(source)
@@ -60,7 +60,7 @@ async def test_apply_rolls_back_source_and_snapshot_when_save_fails() -> None:
 async def test_failed_save_preserves_concurrent_external_source_change() -> None:
     """保存失败后的协调不得覆盖并发写入的外部来源值。"""
 
-    from core.base.config_manager import ConfigManager, ConfigPersistenceError
+    from core.platform.config import ConfigManager, ConfigPersistenceError
 
     source = BlockingSavingConfig(
         {"recall_engine": {"top_k": 5}},
@@ -92,7 +92,7 @@ async def test_failed_save_preserves_concurrent_external_source_change() -> None
 async def test_cancelled_apply_publishes_successful_save_before_propagating() -> None:
     """取消到达时若保存已成功，应先发布新快照再传播取消。"""
 
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     source = BlockingSavingConfig({"recall_engine": {"top_k": 5}})
     manager = ConfigManager(source)
@@ -128,7 +128,7 @@ async def test_cancelled_apply_publishes_successful_save_before_propagating() ->
 async def test_cancelled_apply_rolls_back_after_failed_save() -> None:
     """取消期间保存失败时必须保持来源和快照均未发布。"""
 
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     source = BlockingSavingConfig(
         {"recall_engine": {"top_k": 5}},
@@ -162,7 +162,7 @@ async def test_cancelled_apply_rolls_back_after_failed_save() -> None:
 async def test_concurrent_writes_with_same_revision_are_serialized() -> None:
     """同一 revision 的并发写入只能成功一次并报告一次冲突。"""
 
-    from core.base.config_manager import (
+    from core.platform.config import (
         ConfigApplyResult,
         ConfigConflictError,
         ConfigManager,
@@ -203,7 +203,7 @@ async def test_concurrent_writes_with_same_revision_are_serialized() -> None:
 async def test_persist_false_changes_only_runtime_snapshot() -> None:
     """关闭持久化时只更新隔离运行时快照，不改写来源。"""
 
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
     manager = ConfigManager(source)
@@ -226,7 +226,7 @@ async def test_persist_false_changes_only_runtime_snapshot() -> None:
 async def test_update_runtime_config_wraps_apply_contract() -> None:
     """兼容更新入口应复用正式事务并把校验失败映射为 False。"""
 
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     source: dict[str, Any] = {"recall_engine": {"top_k": 5}}
     manager = ConfigManager(source)

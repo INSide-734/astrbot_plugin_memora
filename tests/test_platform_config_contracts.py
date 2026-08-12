@@ -1,13 +1,14 @@
-"""平台配置 owner 与保留入口的契约测试。"""
+"""平台配置 owner 与旧入口清理契约测试。"""
 
+import importlib.util
 import subprocess
 import sys
 
 import pytest
 
-import core.base as legacy_base
+import core
+import core.base
 import core.platform.config as platform_config
-from core.base import config_manager as legacy_config_manager
 from core.base import config_validator as legacy_validation
 from core.platform.config import manager as platform_config_manager
 from core.platform.config import validation as platform_validation
@@ -68,26 +69,14 @@ def test_platform_config_package_lazily_exports_contracts() -> None:
         platform_config.__getattr__("missing_config_contract")
 
 
-def test_base_package_lazily_exports_config_manager_contracts() -> None:
-    """base 包应惰性解析配置管理兼容符号，并拒绝未知属性。"""
+def test_migrated_config_manager_compatibility_paths_are_removed() -> None:
+    """配置管理迁移完成后不得恢复 base 或 core 根兼容入口。"""
 
-    assert (
-        legacy_base.__getattr__("ConfigManager")
-        is platform_config_manager.ConfigManager
-    )
-    with pytest.raises(AttributeError, match="missing_config_contract"):
-        legacy_base.__getattr__("missing_config_contract")
-
-
-def test_config_manager_old_path_reuses_platform_exports() -> None:
-    """旧配置管理路径只能导出 platform config 的唯一实现。"""
-
-    assert legacy_config_manager.__all__ == platform_config_manager.__all__
-    for name in platform_config_manager.__all__:
-        assert getattr(legacy_config_manager, name) is getattr(
-            platform_config_manager,
-            name,
-        )
+    assert importlib.util.find_spec("core.base.config_manager") is None
+    assert "ConfigManager" not in core.base.__all__
+    assert "ConfigManager" not in core.__all__
+    assert not hasattr(core.base, "ConfigManager")
+    assert not hasattr(core, "ConfigManager")
 
 
 def test_config_validation_old_path_reuses_platform_exports() -> None:

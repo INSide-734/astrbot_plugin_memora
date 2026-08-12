@@ -26,6 +26,7 @@ class SavingConfig(dict[str, Any]):
             Path(__file__).resolve().parents[1]
         )
         self.fail_save = fail_save
+        self.schema: Any = None
         self.saved_snapshots: list[dict[str, Any]] = []
         self.save_thread_id: int | None = None
 

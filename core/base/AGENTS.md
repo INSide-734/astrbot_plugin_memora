@@ -2,9 +2,9 @@
 
 # `core/base` 模块上下文
 
-**最后更新：** 2026-08-12
+**最后更新：** 2026-08-13
 **配置 owner：** `core/platform/config/__init__.py`
-**遗留入口：** `core/base/__init__.py`、`config_manager.py`、`config_validator.py`
+**保留实现：** `config_validator.py`、功能配置模型与成本控制策略
 
 ## 职责与边界
 
@@ -69,14 +69,14 @@ flowchart LR
 | `../platform/config/ownership.py` | `CONFIG_SECTION_OWNERSHIP`、`resolve_config_ownership()` | 每个 Schema 叶必须解析为 `runtime/dashboard_only/experimental/deprecated` 和唯一 owner；未知顶层分支不得静默归类 |
 | `../platform/config/runtime_effects.py` | `RuntimeConfigEffect`、`classify_config_effects()` | 非空保存保守要求重启；时序/因果图边变更还要求重建图派生数据 |
 | `feature_config.py` | `AgentToolsConfig`、`JargonConfig`、`DashboardConfig`、`is_jargon_discovery_enabled()` | 轻量功能开关与 Dashboard 构建配置；黑话发现缺少有效配置时遵循调用方的兼容边界，正常插件运行时默认关闭 |
-| `../platform/config/manager.py` | `ConfigManager`、`ConfigApplyResult`、配置事务异常 | revision 是规范化 JSON 的 SHA-256；结果中的 `changed_paths` 排序且不可变；base 路径只保留受包级延迟导出约束的入口 |
+| `../platform/config/manager.py` | `ConfigManager`、`ConfigApplyResult`、配置事务异常 | revision 是规范化 JSON 的 SHA-256；结果中的 `changed_paths` 排序且不可变；旧 base 与 core 根配置管理入口已删除 |
 | `config_defaults.py` | 默认值维护说明 | 新键必须同步 Pydantic 模型、根级 `_conf_schema.json` 与访问处默认值 |
 | `../shared/constants.py` | `MEMORY_INJECTION_HEADER/FOOTER`、`FAKE_TOOL_CALL_NAME/ID_PREFIX` | 边界和伪调用标识同时被格式化器、清理器与测试依赖，不可单边改名 |
 | `../shared/errors.py` | `MemoraException` 及 16 个语义子类 | `message` 与稳定 `error_code` 是上层错误映射契约；`core` 根门面保留 8 个常用异常的恒等导出 |
 | `../shared/entity_editing.py` | `compute_entity_revision()`、编辑异常族 | revision 使用排序、紧凑、禁 NaN 的 JSON；该异常族独立于 `MemoraException` |
 | `cost_control.py` | `CostControl`、`build_cost_control_from_config()` | 只接受 `CostControlConfig` 或 `cost_control` 叶子映射，生成不可变功能许可门；不得传入完整配置树 |
 | `../shared/extra_llm_budget.py` | `ExtraLlmBudget`、`budgeted_extra_llm_call()`、`extra_llm_budget_scope()` | 请求级 reservation 防并发超卖；Provider 成功后 commit，普通失败或取消 release；观测只含固定标量 |
-| `__init__.py` | 配置事务类型 | 只保留配置管理迁移期延迟导出，不再转发已迁移的 shared 常量与异常 |
+| `__init__.py` | base 包边界 | 不再转发已迁移的配置管理、shared 常量或异常 |
 
 ## 配置不变量
 

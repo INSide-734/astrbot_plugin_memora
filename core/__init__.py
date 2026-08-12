@@ -18,7 +18,6 @@ from typing import Any
 
 __all__ = [
     # 基础组件
-    "ConfigManager",
     "ConfigurationError",
     "DatabaseError",
     "InitializationError",
@@ -55,13 +54,6 @@ def __getattr__(name: str) -> Any:
 
     if name in _lazy:
         return _lazy[name]
-
-    # 基础配置门面
-    if name == "ConfigManager":
-        from .base import ConfigManager as ConfigManager
-
-        _lazy["ConfigManager"] = ConfigManager
-        return ConfigManager
 
     # 共享异常门面
     if name in (

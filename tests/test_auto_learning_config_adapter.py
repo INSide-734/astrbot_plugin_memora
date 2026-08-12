@@ -9,14 +9,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.base.config_manager import (
+from core.features.learning.infrastructure.learning_config_adapter import (
+    LearningConfigAdapter,
+)
+from core.platform.config import (
     ConfigApplyResult,
     ConfigConflictError,
     ConfigPersistenceError,
     ConfigValidationError,
-)
-from core.features.learning.infrastructure.learning_config_adapter import (
-    LearningConfigAdapter,
 )
 
 

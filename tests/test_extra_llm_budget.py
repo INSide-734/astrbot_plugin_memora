@@ -23,9 +23,9 @@ from core.shared.extra_llm_budget import (
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
 
-    from core.base.config_manager import ConfigManager
     from core.managers.conversation_manager import ConversationManager
     from core.managers.memory_engine import MemoryEngine
+    from core.platform.config import ConfigManager
     from core.processors.memory_processor import MemoryProcessor
 
 

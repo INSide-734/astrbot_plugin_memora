@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from astrbot.api import logger
 
-from ..base.config_manager import (
+from ..features.observability.application.runtime import set_debug_mode
+from ..features.observability.infrastructure.debug_reporter import report_debug_event
+from ..platform.config import classify_config_effects
+from ..platform.config.manager import (
     ConfigConflictError,
     ConfigPersistenceError,
     ConfigValidationError,
 )
-from ..features.observability.application.runtime import set_debug_mode
-from ..features.observability.infrastructure.debug_reporter import report_debug_event
-from ..platform.config import classify_config_effects
 from .response_utils import ok_response
 
 _PLUGIN_NAME = "astrbot_plugin_memora"
@@ -80,6 +80,9 @@ def _config_error(
 
 class ConfigApiMixin:
     """向 Dashboard 暴露配置 Schema 与事务式配置操作。"""
+
+    plugin: Any
+    _maintenance_write_guard: Callable[[], dict[str, Any] | None]
 
     def _get_web_request(self) -> Any:
         """获取当前页面请求，兼容旧版 Context.request 适配。"""
@@ -442,6 +445,9 @@ class ConfigApiMixin:
             logger.warning("[ConfigApi] Provider 列表暂不可用: %s", getter_name)
             return []
         if providers is None:
+            return []
+        if not isinstance(providers, Iterable):
+            logger.warning("[ConfigApi] Provider 列表不可迭代: %s", getter_name)
             return []
 
         options: list[dict[str, str]] = []

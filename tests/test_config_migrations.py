@@ -53,7 +53,7 @@ def test_new_reranker_weight_wins_over_legacy_weight() -> None:
 def test_config_manager_runtime_snapshot_contains_only_new_reranker_names() -> None:
     """生产配置快照应消费迁移结果，且不再暴露任何旧运行时键。"""
 
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     manager = ConfigManager(
         {
@@ -75,7 +75,7 @@ def test_config_manager_reports_each_legacy_migration_once(
 ) -> None:
     """同一管理器重复协调旧源配置时不得重复输出迁移告警。"""
 
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     warnings: list[str] = []
     monkeypatch.setattr("core.platform.config.manager.logger.warning", warnings.append)
@@ -92,7 +92,7 @@ def test_config_manager_reports_each_legacy_migration_once(
 async def test_next_config_save_persists_only_new_reranker_names() -> None:
     """旧配置载入后的下一次正常保存应把外部源收敛到新名称。"""
 
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     source = {
         "reranker": {
