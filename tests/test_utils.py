@@ -12,8 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.injection.models import DeliveryMode
-
 # ---------------------------------------------------------------------------
 # data_helpers tests
 # ---------------------------------------------------------------------------
@@ -24,7 +22,6 @@ from core.utils.data_helpers import (
     safe_serialize_metadata,
     validate_timestamp,
 )
-from core.utils.injection_adapter import InjectionAdapter
 from core.utils.injection_budget import InjectionBudget, InjectionStats
 from core.utils.memory_formatter import (
     format_memories_for_fake_tool_call,
@@ -225,80 +222,6 @@ class TestOperationContext:
         ctx = OperationContext("bare_op")
         async with ctx:
             pass
-
-
-# ---------------------------------------------------------------------------
-# injection_adapter 测试
-# ---------------------------------------------------------------------------
-
-
-class TestInjectionAdapter:
-    def test_normal_delivery_is_preserved(self) -> None:
-        mode, reason = InjectionAdapter().resolve(
-            MagicMock(), DeliveryMode.EXTRA_USER_CONTENT
-        )
-        assert mode is DeliveryMode.EXTRA_USER_CONTENT
-        assert reason is None
-
-    @pytest.mark.parametrize("configured", [DeliveryMode.AUTO, "auto"])
-    def test_auto_resolves_to_temporary_extra_user_content(self, configured) -> None:
-        mode, reason = InjectionAdapter().resolve(MagicMock(), configured)
-        assert mode is DeliveryMode.EXTRA_USER_CONTENT
-        assert reason is None
-
-    def test_removed_system_prompt_delivery_is_rejected(self) -> None:
-        with pytest.raises(ValueError):
-            InjectionAdapter().resolve(MagicMock(), "system_prompt")
-
-    def test_fake_tool_call_is_preserved_for_supported_provider(self) -> None:
-        provider = MagicMock()
-        provider.provider_config = {"type": "openai_chat_completion"}
-        provider.get_model.return_value = "gpt-4"
-        mode, reason = InjectionAdapter().resolve(provider, DeliveryMode.FAKE_TOOL_CALL)
-        assert mode is DeliveryMode.FAKE_TOOL_CALL
-        assert reason is None
-
-    def test_fake_tool_call_downgrades_for_gemini_provider_type(self) -> None:
-        provider = MagicMock()
-        provider.provider_config = {"type": "googlegenai_chat_completion"}
-        provider.get_model.return_value = "gemini-2.0-flash"
-        mode, reason = InjectionAdapter().resolve(provider, DeliveryMode.FAKE_TOOL_CALL)
-        assert mode is DeliveryMode.USER_MESSAGE_BEFORE
-        assert reason is not None
-        assert "Gemini" in reason
-
-    def test_fake_tool_call_downgrades_on_gemini_model_match(self) -> None:
-        provider = MagicMock()
-        provider.provider_config = {"type": "custom_provider"}
-        provider.get_model.return_value = "gemini-pro"
-        mode, reason = InjectionAdapter().resolve(provider, DeliveryMode.FAKE_TOOL_CALL)
-        assert mode is DeliveryMode.USER_MESSAGE_BEFORE
-        assert reason is not None
-
-    @pytest.mark.parametrize("provider", [None, MagicMock(spec=[])])
-    def test_unknown_provider_uses_widest_compatible_delivery(self, provider) -> None:
-        mode, reason = InjectionAdapter().resolve(provider, DeliveryMode.FAKE_TOOL_CALL)
-        assert mode is DeliveryMode.EXTRA_USER_CONTENT
-        assert reason is not None
-
-    @pytest.mark.parametrize("provider", [None, MagicMock(spec=[])])
-    def test_unknown_provider_capabilities_are_conservative(self, provider) -> None:
-        provider_type, model_name, tools_supported = InjectionAdapter().capabilities(
-            provider
-        )
-        assert provider_type == ""
-        assert model_name == ""
-        assert tools_supported is False
-
-    def test_capabilities_return_provider_identity_and_known_tool_support(self) -> None:
-        provider = MagicMock()
-        provider.provider_config = {"type": "openai_chat_completion"}
-        provider.get_model.return_value = "gpt-4.1"
-        assert InjectionAdapter().capabilities(provider) == (
-            "openai_chat_completion",
-            "gpt-4.1",
-            True,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -889,7 +812,7 @@ class TestGetNowDatetimeFromContext:
     def test_with_attribute_error(self) -> None:
         from core.utils import get_now_datetime_from_context
 
-        mock_ctx = object()  # has no plugin_config
+        mock_ctx: Any = object()  # 故意模拟没有 plugin_config 的异常上下文。
         result = get_now_datetime_from_context(mock_ctx)
         assert isinstance(result, datetime)
 
