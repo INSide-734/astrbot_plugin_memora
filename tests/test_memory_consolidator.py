@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.models.memory_evolution import MemorySourceRef
 from core.processors.memory_consolidator import MemoryConsolidator
+from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
 
@@ -53,7 +53,9 @@ async def test_consolidator_assigns_ephemeral_aliases() -> None:
     assert proposal.relations[0].source_alias == "M1"
     assert proposal.relations[0].target_alias == "M2"
     caller.assert_awaited_once()
-    prompt = caller.await_args.kwargs["prompt"]
+    awaited_call = caller.await_args
+    assert awaited_call is not None
+    prompt = awaited_call.kwargs["prompt"]
     assert "alias=M1" in prompt
     assert "真实 memory id" in prompt
 

@@ -15,7 +15,7 @@ from core.features.knowledge.infrastructure import KnowledgeStore
 from core.features.notes.domain import Note
 from core.features.notes.infrastructure import NoteStore
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.models.memory_evolution import MemorySourceRef
+from core.shared.contracts import MemorySourceRef
 
 
 def _provenance(*memory_ids: int) -> DomainProvenance:

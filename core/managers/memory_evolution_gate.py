@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from datetime import timezone
 from typing import Any
 
-from ..models.memory_evolution import EvolutionSignal, GateDecision
+from ..features.evolution.domain import EvolutionSignal, GateDecision
 
 
 class MemoryEvolutionGate:

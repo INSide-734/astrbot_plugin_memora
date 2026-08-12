@@ -380,7 +380,7 @@ async def _rebuild_evolution(
     store = None
     try:
         _ensure_repo_root_importable()
-        from core.models.memory_evolution import (
+        from core.features.evolution.domain import (
             DerivedApplyPlan,
             ProjectionSourceView,
             ProjectionType,
@@ -388,7 +388,7 @@ async def _rebuild_evolution(
             RelationType,
             RelationView,
         )
-        from core.storage.memory_evolution_store import MemoryEvolutionStore
+        from core.features.evolution.infrastructure import MemoryEvolutionStore
 
         first, second = rows[0], rows[1]
         first_metadata = json.loads(str(first[2]))

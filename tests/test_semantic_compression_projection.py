@@ -6,26 +6,26 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from core.features.decay.application import DecayScheduler
-from core.managers.memory_evolution_manager import (
-    EvolutionProposalRejected,
-    MemoryEvolutionManager,
-)
-from core.managers.semantic_compressor import SemanticCompressor
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedState,
     EvolutionProposal,
     MemoryProjectionProposal,
-    MemorySourceRef,
     ProjectionBundle,
     ProjectionSourceView,
     ProjectionType,
     ProjectionView,
 )
+from core.managers.memory_evolution_manager import (
+    EvolutionProposalRejected,
+    MemoryEvolutionManager,
+)
+from core.managers.semantic_compressor import SemanticCompressor
 from core.platform.composition import DerivedRebuildCoordinator
 from core.retrieval.projection_reader import (
     ProjectionBudget,
@@ -33,6 +33,7 @@ from core.retrieval.projection_reader import (
     ProjectionScope,
 )
 from core.retrieval.rrf_fusion import HybridResult
+from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)
@@ -472,7 +473,7 @@ async def test_daily_scheduler_invokes_semantic_compression() -> None:
     """每日可选维护应真实触发已经装配的语义压缩器。"""
 
     compressor = SimpleNamespace(compress_old_memories=AsyncMock(return_value={}))
-    engine = SimpleNamespace(
+    engine: Any = SimpleNamespace(
         semantic_compressor=compressor,
         profile_manager=None,
         knowledge_manager=None,

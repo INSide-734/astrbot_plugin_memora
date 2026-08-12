@@ -14,7 +14,7 @@ from core.managers.semantic_compressor import (
     _synthesize_abstract,
     _topic_similarity,
 )
-from core.models.memory_evolution import MemorySourceRef
+from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 1, tzinfo=UTC)

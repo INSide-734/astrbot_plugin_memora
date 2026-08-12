@@ -12,7 +12,7 @@ from core.models.domain_provenance import (
     DomainProvenance,
     merge_domain_provenance,
 )
-from core.models.memory_evolution import MemorySourceRef
+from core.shared.contracts import MemorySourceRef
 
 REFERENCE_TIME = datetime(2026, 7, 21, 8, 0, tzinfo=timezone.utc)
 
@@ -153,6 +153,19 @@ def test_provenance_round_trip_excludes_evidence_content() -> None:
         ),
     )
     assert all(source.content is None for source in restored.sources)
+
+
+def test_provenance_restore_rejects_missing_source_identity() -> None:
+    """持久化来源缺少整数 canonical ID 时必须 fail closed。"""
+
+    payload = DomainProvenance(
+        DomainObjectOrigin.DERIVED,
+        (_source(),),
+    ).to_dict()
+    payload["sources"][0]["memory_id"] = None
+
+    with pytest.raises(ValueError, match="memory_id"):
+        DomainProvenance.from_dict(payload)
 
 
 def test_provenance_merge_preserves_manual_and_combines_sources() -> None:

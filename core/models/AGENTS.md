@@ -90,9 +90,9 @@ erDiagram
 - `RecallStrategy` 固定四类调用意图，检索器据此调整文档/图路权重。
 - `DEFAULT_STOPWORDS` 是不可变 `frozenset[str]`，仅作为无外部词表时的共享后备；运行时加载与持久化属于 [`../utils/AGENTS.md`](../utils/AGENTS.md) 的 `StopwordsManager`。
 
-### `memory_evolution.py`
+### `core/features/evolution/domain/models.py` 与 `core/shared/contracts/canonical_source.py`
 
-- `MemorySourceRef` / `EvolutionSignal` 是 canonical memory 的带 revision 证据视图；`memory_id` 必须是非负整数，`scope_key` 与 `revision_token` 必须非空，privacy 只能是 `public/shared/confidential`，证据正文受本地长度上限约束。`topic_keys` 是去重限长的只读主题证据，`subject_key` 是从可信参与者字段生成的不可逆匿名主体键；二者都不创建新的 canonical ID 或模型可见身份。
+- `MemorySourceRef` 的唯一 owner 是 `core/shared/contracts/canonical_source.py`，Evolution domain 只复用该共享 canonical 来源契约；`EvolutionSignal` 是演化触发的带 revision 证据视图。`memory_id` 必须是非负整数，`scope_key` 与 `revision_token` 必须非空，privacy 只能是 `public/shared/confidential`，证据正文受本地长度上限约束。`topic_keys` 是去重限长的只读主题证据，`subject_key` 是从可信参与者字段生成的不可逆匿名主体键；二者都不创建新的 canonical ID 或模型可见身份。
 - `MemoryRelationProposal`、`MemoryProjectionProposal` 与 `EvolutionProposal` 表达 LLM 的结构化提案；alias 在 manager 边界解析，提案本身不能直接写入 canonical memory 或派生表。
 - `RelationType`、`ProjectionType`、`JobState` 和 `DerivedState` 是稳定持久化枚举。关系类型包括 supports/updates/contradicts/same_episode/preference_change/causes/supersedes/related；projection 类型固定为 episode_summary/semantic_summary/preference_state/relationship_state/conflict_set。
 - `JobSpec`、`MemoryEvolutionJob`、`JobClaim`、`RetrySpec` 描述去重键、创建时 source revision、租约、尝试次数和重试时间；`source_revisions` 只能引用同一 job 的 `source_ids`。模型只做结构约束，lease 所有权和状态迁移由 Store 保证。
@@ -115,7 +115,7 @@ erDiagram
 
 Graph 模型必须从 `core.features.memory.graph.domain.models` 导入；`MemoryAtom`、画像、知识、笔记、召回策略和停用词必须从对应 owner 子模块导入。不要假设文件内 `__all__` 会自动汇总到包入口；若扩展包级 API，需显式编辑 `__init__.py` 并增加导出契约测试。
 
-Memory Evolution 类型同样从 `core.models.memory_evolution` 直接导入；该模块自己的 `__all__` 不是 `core.models` 包级再导出。新增 evolution 类型时要同步直接调用方和模型测试，不要无意扩大包入口。
+Memory Evolution 类型从 `core.features.evolution.domain` 导入，canonical `MemorySourceRef` 从 `core.shared.contracts` 导入；`core/models/` 不再转发这些类型。新增 evolution 类型时要同步 feature 导出、直接调用方和模型测试，不要无意扩大包入口。
 
 ## 典型数据流
 

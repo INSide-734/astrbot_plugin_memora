@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedApplyPlan,
     DerivedState,
     RelationType,
     RelationView,
 )
+from core.features.evolution.infrastructure import MemoryEvolutionStore
 from core.page_api import PAGE_API_PREFIX, PluginPageApi
-from core.storage.memory_evolution_store import MemoryEvolutionStore
 
 
 def _mock_request(*, args: dict[str, str] | None = None, payload=None):

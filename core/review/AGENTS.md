@@ -6,7 +6,7 @@
 
 ## 职责与边界
 
-`core/review/` 提供两条明确分离的人工审查边界：既有 `ReviewStore` 分诊已经存在的 canonical memory；`MemoryQuarantineStore` 与 `MemoryQualityGate` 处理 canonical 写入前的低质量或来源未验证候选。Memory Evolution 的高影响 relation 复核由 `core/storage/memory_evolution_review.py` 和专用 Page API 持有，属于第三条独立队列。三者不得共用 memory/candidate/relation ID、状态机或持久化表，也不得让 quarantine 或 derived candidate ID 冒充 canonical `doc_id`。
+`core/review/` 提供两条明确分离的人工审查边界：既有 `ReviewStore` 分诊已经存在的 canonical memory；`MemoryQuarantineStore` 与 `MemoryQualityGate` 处理 canonical 写入前的低质量或来源未验证候选。Memory Evolution 的高影响 relation 复核由 `core/features/evolution/infrastructure/memory_evolution_review.py` 和专用 Page API 持有，属于第三条独立队列。三者不得共用 memory/candidate/relation ID、状态机或持久化表，也不得让 quarantine 或 derived candidate ID 冒充 canonical `doc_id`。
 
 ## 架构与数据流
 

@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
 import pytest
 
-from core.managers.memory_engine import MemoryEngine
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedApplyPlan,
     DerivedState,
     ProjectionSourceView,
@@ -20,8 +20,9 @@ from core.models.memory_evolution import (
     RelationType,
     RelationView,
 )
+from core.features.evolution.infrastructure import MemoryEvolutionStore
+from core.managers.memory_engine import MemoryEngine
 from core.retrieval.vector_retriever import VectorRetriever
-from core.storage.memory_evolution_store import MemoryEvolutionStore
 
 UTC = timezone.utc
 
@@ -233,7 +234,7 @@ async def test_engine_rejects_stale_update_and_invalidates_deleted_source():
             }
         ]
     )
-    engine = MemoryEngine(db_path=":memory:", faiss_db=faiss_db)
+    engine: Any = MemoryEngine(db_path=":memory:", faiss_db=faiss_db)
     engine.hybrid_retriever = MagicMock()
     engine.hybrid_retriever.update_metadata = AsyncMock(return_value=True)
     engine._retrieval = MagicMock()
@@ -260,7 +261,7 @@ async def test_engine_rejects_stale_update_and_invalidates_deleted_source():
 @pytest.mark.asyncio
 async def test_engine_schedules_evolution_only_after_canonical_add_succeeds():
     faiss_db = MagicMock()
-    engine = MemoryEngine(db_path=":memory:", faiss_db=faiss_db)
+    engine: Any = MemoryEngine(db_path=":memory:", faiss_db=faiss_db)
     engine.hybrid_retriever = MagicMock()
     engine.hybrid_retriever.add_memory = AsyncMock(return_value=17)
     engine.graph_memory_manager = None

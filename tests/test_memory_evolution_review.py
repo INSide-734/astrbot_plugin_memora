@@ -6,18 +6,18 @@ import json
 
 import pytest
 
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedApplyPlan,
     DerivedState,
     RelationType,
     RelationView,
 )
-from core.storage.memory_evolution_review import (
+from core.features.evolution.infrastructure import (
     DerivedReviewConflictError,
     DerivedReviewNotAllowedError,
     DerivedReviewSourceError,
+    MemoryEvolutionStore,
 )
-from core.storage.memory_evolution_store import MemoryEvolutionStore
 
 
 def _candidate_plan(
@@ -50,7 +50,9 @@ def _candidate_plan(
 async def _seed_canonical_sources(store: MemoryEvolutionStore) -> None:
     """写入审批时需要二次核对的最小 canonical source 快照。"""
 
-    await store.connection.execute(
+    connection = store.connection
+    assert connection is not None
+    await connection.execute(
         """CREATE TABLE IF NOT EXISTS documents (
         id INTEGER PRIMARY KEY,
         metadata TEXT NOT NULL,
@@ -61,14 +63,14 @@ async def _seed_canonical_sources(store: MemoryEvolutionStore) -> None:
     metadata = json.dumps(
         {"scope_key": "private:user", "privacy_level": "confidential"}
     )
-    await store.connection.executemany(
+    await connection.executemany(
         "INSERT INTO documents(id,metadata,created_at,updated_at) VALUES (?,?,?,?)",
         (
             (1, metadata, "revision-1", "revision-1"),
             (2, metadata, "revision-2", "revision-2"),
         ),
     )
-    await store.connection.commit()
+    await connection.commit()
 
 
 @pytest.mark.asyncio
@@ -148,13 +150,15 @@ async def test_reject_can_be_replayed_and_stale_revision_cannot_overwrite(
         expected_revision=rejected["revision"],
     )
     fixed_time = "2026-08-04T00:00:00+00:00"
-    await store.connection.execute(
+    connection = store.connection
+    assert connection is not None
+    await connection.execute(
         "UPDATE memory_derived_review_actions "
         "SET action_id=CASE action WHEN 'reject' THEN ? WHEN 'replay' THEN ? "
         "ELSE action_id END, created_at=? WHERE relation_id=?",
         ("f" * 32, "0" * 32, fixed_time, "conflict-1"),
     )
-    await store.connection.commit()
+    await connection.commit()
     actions = await store.list_relation_review_actions("conflict-1")
     await store.close()
 
@@ -220,11 +224,13 @@ async def test_approve_and_replay_fail_when_source_revision_changed(tmp_path) ->
     await store.initialize()
     await _seed_canonical_sources(store)
     await store.apply_derived_plan(_candidate_plan())
-    await store.connection.execute(
+    connection = store.connection
+    assert connection is not None
+    await connection.execute(
         "UPDATE documents SET updated_at=? WHERE id=?",
         ("revision-1-new", 1),
     )
-    await store.connection.commit()
+    await connection.commit()
 
     with pytest.raises(DerivedReviewSourceError):
         await store.review_relation_candidate(

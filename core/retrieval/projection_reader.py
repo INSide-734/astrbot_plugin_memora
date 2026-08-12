@@ -11,9 +11,8 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..models.memory_evolution import (
+from ..features.evolution.domain import (
     DerivedState,
-    MemorySourceRef,
     ProjectionBundle,
     ProjectionSourceView,
     ProjectionType,
@@ -24,6 +23,7 @@ from ..shared.adapter_capabilities import (
     AdapterCapabilityContract,
     AdapterKind,
 )
+from ..shared.contracts import MemorySourceRef
 from ..shared.temporal import normalize_datetime, visible_at
 from .rrf_fusion import HybridResult
 

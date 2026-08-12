@@ -4,14 +4,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     ExpansionBudget,
-    MemorySourceRef,
     RelationType,
     RelationView,
     ScopeContext,
 )
 from core.retrieval.rrf_fusion import HybridResult
+from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
 NOW = datetime.now(UTC)

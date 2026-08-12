@@ -16,8 +16,8 @@ from core.features.notes.application import NoteManager, NoteProposalPipeline
 from core.features.notes.infrastructure import NoteGenerator, NoteStore
 from core.managers.memory_engine import MemoryEngine
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.models.memory_evolution import MemorySourceRef
 from core.platform.composition import DerivedRebuildCoordinator
+from core.shared.contracts import MemorySourceRef
 from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 
 _CONTENT = "部署前需要完成数据库迁移。\n随后重建检索索引并核对健康状态。"

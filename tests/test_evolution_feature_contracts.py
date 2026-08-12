@@ -1,4 +1,4 @@
-"""evolution feature 的领域、应用与基础设施所有权兼容契约。"""
+"""evolution feature 的分层所有权与剩余兼容入口契约。"""
 
 import subprocess
 import sys
@@ -22,37 +22,15 @@ from core.features.evolution.infrastructure import (
     memory_evolution_derived as feature_derived,
 )
 from core.features.evolution.infrastructure import (
-    memory_evolution_derived_helpers as feature_derived_helpers,
-)
-from core.features.evolution.infrastructure import (
     memory_evolution_review as feature_review,
-)
-from core.features.evolution.infrastructure import (
-    memory_evolution_source_helpers as feature_source_helpers,
 )
 from core.features.evolution.infrastructure import (
     memory_evolution_store as feature_store,
 )
 from core.managers import memory_evolution_manager as legacy_manager
 from core.managers import memory_evolution_projection as legacy_projection
-from core.models import memory_evolution as legacy_models
-from core.storage import (
-    memory_evolution_candidate_sources as legacy_candidate_sources,
-)
-from core.storage import memory_evolution_derived as legacy_derived
-from core.storage import memory_evolution_derived_helpers as legacy_derived_helpers
-from core.storage import memory_evolution_review as legacy_review
-from core.storage import memory_evolution_source_helpers as legacy_source_helpers
+from core.shared.contracts import MemorySourceRef
 from core.storage import memory_evolution_store as legacy_store
-
-_INFRASTRUCTURE_MODULE_PAIRS = (
-    (legacy_candidate_sources, feature_candidate_sources),
-    (legacy_derived, feature_derived),
-    (legacy_derived_helpers, feature_derived_helpers),
-    (legacy_review, feature_review),
-    (legacy_source_helpers, feature_source_helpers),
-    (legacy_store, feature_store),
-)
 
 _APPLICATION_MODULE_PAIRS = (
     (legacy_manager, feature_manager),
@@ -87,6 +65,7 @@ def test_evolution_package_lazily_exports_each_feature_layer() -> None:
     """包级兼容入口应恒等导出领域、应用与基础设施符号。"""
 
     assert evolution_feature.EvolutionSignal is feature_models.EvolutionSignal
+    assert evolution_feature.MemorySourceRef is MemorySourceRef
     assert (
         evolution_feature.MemoryEvolutionManager
         is feature_manager.MemoryEvolutionManager
@@ -100,22 +79,36 @@ def test_evolution_config_old_path_reuses_feature_owner() -> None:
     assert LegacyMemoryEvolutionConfig is MemoryEvolutionConfig
 
 
-def test_legacy_evolution_model_imports_reuse_feature_types() -> None:
-    """旧模型路径只能导出 evolution feature 的唯一实现。"""
+def test_evolution_domain_reuses_shared_canonical_source() -> None:
+    """Evolution domain 必须复用 shared 的唯一 canonical 来源类型。"""
 
-    assert legacy_models.__all__ == feature_models.__all__
-    for name in feature_models.__all__:
-        assert getattr(legacy_models, name) is getattr(feature_models, name)
+    assert feature_models.MemorySourceRef is MemorySourceRef
+    assert feature_models.EvolutionSignal.__module__ == (
+        "core.features.evolution.domain.models"
+    )
 
 
-def test_legacy_evolution_infrastructure_reuses_feature_implementations() -> None:
-    """旧 Store 路径只能导出 evolution infrastructure 的唯一实现。"""
+def test_evolution_store_assembles_feature_owned_mixins() -> None:
+    """Evolution Store 必须只组合 feature infrastructure 的职责 mixin。"""
 
-    for legacy_module, feature_module in _INFRASTRUCTURE_MODULE_PAIRS:
-        assert legacy_module.__all__ == feature_module.__all__
-        for name in feature_module.__all__:
-            assert getattr(legacy_module, name) is getattr(feature_module, name)
-    assert legacy_derived._serialized_write is feature_derived._serialized_write
+    assert (
+        feature_candidate_sources.MemoryEvolutionCandidateSourceMixin
+        in feature_store.MemoryEvolutionStore.__mro__
+    )
+    assert (
+        feature_review.MemoryEvolutionReviewMixin
+        in feature_store.MemoryEvolutionStore.__mro__
+    )
+    assert (
+        feature_derived.MemoryEvolutionDerivedMixin
+        in feature_store.MemoryEvolutionStore.__mro__
+    )
+
+
+def test_remaining_legacy_evolution_store_reuses_feature_owner() -> None:
+    """待迁移评测消费者使用的旧 Store 入口仍须恒等转发。"""
+
+    assert legacy_store.MemoryEvolutionStore is feature_store.MemoryEvolutionStore
 
 
 def test_legacy_evolution_application_reuses_feature_implementations() -> None:

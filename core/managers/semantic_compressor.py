@@ -9,12 +9,12 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..models.memory_evolution import (
+from ..features.evolution.domain import (
     EvolutionProposal,
     MemoryProjectionProposal,
-    MemorySourceRef,
     ProjectionType,
 )
+from ..shared.contracts import MemorySourceRef
 from ..shared.temporal import normalize_datetime
 
 _DEFAULT_AGE_DAYS = 60.0

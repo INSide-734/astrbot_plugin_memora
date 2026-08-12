@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from typing import Any, cast
 
 import pytest
 
 from core.models.derived_metadata import DerivedMetadataSourceRef
-from core.models.memory_evolution import MemorySourceRef as LegacyMemorySourceRef
 from core.shared.contracts import (
     CanonicalMemoryCommitted,
     MemorySourceRef,
@@ -32,13 +32,7 @@ def _source(**overrides: object) -> MemorySourceRef:
         "stable_user_id": "user-1",
     }
     values.update(overrides)
-    return MemorySourceRef(**values)
-
-
-def test_legacy_source_import_is_a_single_canonical_type() -> None:
-    """旧模块只提供 re-export，不产生第二个 source 类型。"""
-
-    assert LegacyMemorySourceRef is MemorySourceRef
+    return cast(Any, MemorySourceRef)(**values)
 
 
 @pytest.mark.parametrize(
@@ -70,7 +64,7 @@ def test_source_request_rejects_missing_or_invalid_authorization(
     }
     values[field] = value
     with pytest.raises(ValueError, match=reason):
-        SourceReadRequest(**values)
+        cast(Any, SourceReadRequest)(**values)
 
 
 def test_denied_result_cannot_carry_source_body() -> None:

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from itertools import combinations
 from typing import Sequence
 
-from ..models.memory_evolution import MemorySourceRef
+from ..shared.contracts import MemorySourceRef
 
 
 @dataclass(frozen=True, slots=True)

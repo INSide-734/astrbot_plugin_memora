@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core.models.memory_evolution import MemorySourceRef
 from core.processors.episode_clusterer import EpisodeClusterer
+from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)

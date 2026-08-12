@@ -13,7 +13,7 @@ from core.features.profiles.application.profile_manager import ProfileManager
 from core.features.profiles.domain.models import TagCategory, UserPreferences, UserTag
 from core.features.profiles.infrastructure.profile_store import ProfileStore
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.models.memory_evolution import MemorySourceRef
+from core.shared.contracts import MemorySourceRef
 from core.shared.entity_editing import (
     EntityNotFoundError,
     compute_entity_revision,

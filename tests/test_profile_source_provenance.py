@@ -12,7 +12,7 @@ from core.features.profiles.application.profile_manager import ProfileManager
 from core.features.profiles.domain.models import TagCategory, UserTag
 from core.features.profiles.infrastructure.profile_store import ProfileStore
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.models.memory_evolution import MemorySourceRef
+from core.shared.contracts import MemorySourceRef
 
 
 def _derived_provenance(

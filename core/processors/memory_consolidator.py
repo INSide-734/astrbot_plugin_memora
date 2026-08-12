@@ -8,15 +8,15 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..models.memory_evolution import (
+from ..features.evolution.domain import (
     EvolutionProposal,
     MemoryProjectionProposal,
     MemoryRelationProposal,
-    MemorySourceRef,
     ProjectionType,
     RelationType,
 )
 from ..security.guardrails import validate_and_clean_json
+from ..shared.contracts import MemorySourceRef
 
 
 class _RelationOutput(BaseModel):

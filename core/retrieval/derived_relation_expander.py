@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypeGuard
 
-from ..models.memory_evolution import (
+from ..features.evolution.domain import (
     ExpansionBudget,
-    MemorySourceRef,
     RelationView,
     ScopeContext,
 )
@@ -19,6 +18,7 @@ from ..shared.adapter_capabilities import (
     ScoreDirection,
     ScoreSemantics,
 )
+from ..shared.contracts import MemorySourceRef
 from ..shared.temporal import normalize_datetime, visible_at
 from .rrf_fusion import HybridResult
 
@@ -249,7 +249,7 @@ def _source_is_current(
     expected_revision: str,
     scope: ScopeContext,
     reference_time: datetime,
-) -> bool:
+) -> TypeGuard[MemorySourceRef]:
     return bool(
         source is not None
         and source.revision_token == expected_revision

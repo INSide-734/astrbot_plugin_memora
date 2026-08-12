@@ -10,18 +10,19 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
-from core.managers.memory_evolution_gate import MemoryEvolutionGate
-from core.managers.memory_evolution_manager import MemoryEvolutionManager
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedState,
     EvolutionProposal,
     JobState,
     MemoryRelationProposal,
+    RelationType,
 )
+from core.features.evolution.infrastructure import MemoryEvolutionStore
+from core.managers.memory_evolution_gate import MemoryEvolutionGate
+from core.managers.memory_evolution_manager import MemoryEvolutionManager
 from core.processors.memory_evolution_candidates import (
     MemoryEvolutionCandidateGenerator,
 )
-from core.storage.memory_evolution_store import MemoryEvolutionStore
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)
@@ -209,7 +210,7 @@ async def test_cross_subject_private_conflict_is_rejected_by_manager(pipeline) -
             MemoryRelationProposal(
                 "M1",
                 "M2",
-                "contradicts",
+                RelationType.CONTRADICTS,
                 0.9,
                 "候选",
                 None,

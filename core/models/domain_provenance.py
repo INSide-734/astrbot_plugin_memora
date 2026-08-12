@@ -7,8 +7,8 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
 
+from ..shared.contracts import MemorySourceRef
 from ..shared.temporal import parse_datetime, serialize_datetime
-from .memory_evolution import MemorySourceRef
 
 _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}
 _DOMAIN_SOURCE_ROLES = frozenset({"primary", "supporting"})
@@ -163,11 +163,14 @@ def _source_from_dict(data: Any) -> MemorySourceRef:
 
     if not isinstance(data, Mapping):
         raise ValueError("domain_source_invalid")
+    memory_id = data.get("memory_id")
+    if isinstance(memory_id, bool) or not isinstance(memory_id, int):
+        raise ValueError("memory_id must be a positive integer")
     occurred_at = parse_datetime(data.get("occurred_at"))
     if occurred_at is None:
         raise ValueError("source_occurred_at_required")
     return MemorySourceRef(
-        memory_id=data.get("memory_id"),
+        memory_id=memory_id,
         revision_token=str(data.get("revision_token") or ""),
         scope_key=str(data.get("scope_key") or ""),
         privacy_level=str(data.get("privacy_level") or ""),

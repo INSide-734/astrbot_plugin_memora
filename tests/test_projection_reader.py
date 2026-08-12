@@ -8,9 +8,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedState,
-    MemorySourceRef,
     ProjectionBundle,
     ProjectionSourceView,
     ProjectionType,
@@ -22,6 +21,7 @@ from core.retrieval.projection_reader import (
     ProjectionScope,
 )
 from core.retrieval.rrf_fusion import HybridResult
+from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
 NOW = datetime(2026, 7, 19, tzinfo=UTC)

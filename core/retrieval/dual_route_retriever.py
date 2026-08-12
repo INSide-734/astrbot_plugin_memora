@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
-from ..models.memory_evolution import ExpansionBudget, ScopeContext
+from ..features.evolution.domain import ExpansionBudget, ScopeContext
 from ..models.recall_strategy import RecallStrategy
 from ..shared.adapter_capabilities import (
     AdapterCapability,
@@ -28,7 +28,7 @@ from .dual_route_fusion import (
     route_weights_for_query,
 )
 from .evidence_scorer import RetrievalEvidenceScorer
-from .graph_retriever import GraphRetriever
+from .graph_retriever import GraphResult, GraphRetriever
 from .hybrid_retriever import HybridRetriever
 from .multi_query_fusion import fuse_query_results, split_candidate_budget
 from .projection_reader import ProjectionBudget, ProjectionScope
@@ -742,7 +742,7 @@ class DualRouteRetriever:
     async def _merge_dual_results(
         self,
         doc_results: list[HybridResult],
-        graph_results: list[HybridResult],
+        graph_results: list[GraphResult],
         query: str,
         strategy: RecallStrategy | None = None,
         query_intent: QueryIntent | None = None,

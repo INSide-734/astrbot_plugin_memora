@@ -5,12 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from ..models.memory_evolution import (
+from ..features.evolution.domain import (
     EvolutionProposal,
     MemoryRelationProposal,
-    MemorySourceRef,
     RelationType,
 )
+from ..shared.contracts import MemorySourceRef
 from .contradiction_detector import ContradictionDetector
 from .episode_clusterer import EpisodeClusterer
 

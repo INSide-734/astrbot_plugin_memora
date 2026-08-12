@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedApplyPlan,
     DerivedState,
     RelationType,
     RelationView,
 )
-from core.storage.memory_evolution_store import MemoryEvolutionStore
+from core.features.evolution.infrastructure import MemoryEvolutionStore
 from core.tools import __all__ as exported_tools
 from core.tools.memory_memorize_tool import MemoryMemorizeTool
 
@@ -62,7 +63,7 @@ async def test_memorize_call_rejects_update_delete_arguments() -> None:
     )
 
     with pytest.raises(TypeError):
-        await tool.call(
+        await cast(Any, tool.call)(
             MagicMock(),
             memory="尝试覆盖已有记忆",
             memory_id=17,
