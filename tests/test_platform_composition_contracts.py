@@ -5,13 +5,12 @@ from unittest.mock import MagicMock
 
 from astrbot.api.provider import Provider
 
-from core import initializer as initializer_package
-from core.initializer.faiss_checker import FaissChecker
 from core.platform import composition as composition_package
 from core.platform.composition import (
     ComponentFactory,
     DatabaseSetup,
     DerivedRebuildCoordinator,
+    FaissChecker,
     PluginInitializer,
     ProviderLoader,
     ProviderWaiter,
@@ -51,6 +50,7 @@ def test_composition_package_exports_owned_components() -> None:
         "ComponentFactory",
         "DatabaseSetup",
         "DerivedRebuildCoordinator",
+        "FaissChecker",
         "PluginInitializer",
         "ProviderLoader",
         "ProviderWaiter",
@@ -59,6 +59,7 @@ def test_composition_package_exports_owned_components() -> None:
     assert composition_package.ComponentFactory is ComponentFactory
     assert composition_package.DatabaseSetup is DatabaseSetup
     assert composition_package.DerivedRebuildCoordinator is DerivedRebuildCoordinator
+    assert composition_package.FaissChecker is FaissChecker
     assert composition_package.PluginInitializer is PluginInitializer
     assert composition_package.ProviderLoader is ProviderLoader
     assert composition_package.ProviderWaiter is ProviderWaiter
@@ -68,19 +69,13 @@ def test_composition_package_exports_owned_components() -> None:
     )
 
 
-def test_initializer_package_only_exports_faiss_checker() -> None:
-    """initializer 遗留包应只保留尚未迁移的 FAISS 探针。"""
-
-    assert initializer_package.__all__ == ["FaissChecker"]
-    assert initializer_package.FaissChecker is FaissChecker
-
-
 def test_migrated_composition_compatibility_modules_are_removed() -> None:
-    """已迁移的三个 Composition 旧模块不得重新出现。"""
+    """已迁移的 Composition 旧模块不得重新出现。"""
 
     legacy_modules = (
         "core.plugin_initializer",
         "core.initializer.component_factory",
+        "core.initializer.faiss_checker",
         "core.initializer.provider_waiter",
     )
 

@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.initializer import faiss_checker as faiss_checker_module
-from core.initializer.faiss_checker import FaissChecker
+from core.platform.composition import faiss_checker as faiss_checker_module
+from core.platform.composition.faiss_checker import FaissChecker
 from core.shared.errors import InitializationError
 
 

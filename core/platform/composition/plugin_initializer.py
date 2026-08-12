@@ -20,7 +20,6 @@ from ...features.observability.infrastructure.debug_reporter import (
     report_debug_exception,
 )
 from ...identity.runtime import ProtocolIdentityRuntime
-from ...initializer.faiss_checker import FaissChecker
 from ...injection.recorder import InjectionDecisionRecorder
 from ...managers.conversation_manager import ConversationManager
 from ...managers.memory_engine import MemoryEngine
@@ -35,6 +34,7 @@ from ..security import build_prompt_protection_port
 from ..transport.realtime_hub import RealtimeHub
 from .component_factory import ComponentFactory
 from .db_setup import DatabaseSetup
+from .faiss_checker import FaissChecker
 from .identity_lifecycle import close_identity_runtime_after_failure
 from .provider_loader import ProviderLoader
 from .provider_waiter import ProviderWaiter

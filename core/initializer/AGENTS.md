@@ -1,15 +1,15 @@
 [根级 AGENTS.md](../../AGENTS.md) / core / initializer
 
-# 初始化与组件装配
+# 旧初始化目录导航
 
-**最后核对：** 2026-08-12
+**最后核对：** 2026-08-13
 **真实入口：** `core/platform/composition/__init__.py`
-**剩余入口：** `core/initializer/__init__.py`
+**剩余入口：** 无；本目录仅保留迁移导航文档
 **上游编排：** `core/platform/composition/plugin_initializer.py`
 
 ## 职责边界
 
-启动期基础组件装配的唯一 owner 已迁至 `core/platform/composition/`。本目录只保留 FAISS 私有宿主兼容探针；`ComponentFactory`、`ProviderWaiter` 与 `PluginInitializer` 的旧路径已删除。配置默认合并、Schema 校验、修订冲突与持久化事务属于 `core/base/config_manager.py`，业务检索、API 和命令不应下沉到这里。
+启动期基础组件装配的唯一 owner 已迁至 `core/platform/composition/`。`FaissChecker`、`ComponentFactory`、`ProviderWaiter` 与 `PluginInitializer` 的旧路径均已删除，本目录不再包含 Python 运行时代码。配置默认合并、Schema 校验、修订冲突与持久化事务属于 `core/base/config_manager.py`，业务检索、API 和命令不应下沉到这里。
 
 ```mermaid
 flowchart TD
@@ -38,9 +38,9 @@ flowchart TD
 
 ## Composition 契约
 
-`core/platform/composition/__init__.py` 导出 `ComponentFactory`、`DatabaseSetup`、`DerivedRebuildCoordinator`、`PluginInitializer`、`ProviderLoader`、`ProviderWaiter` 和身份失败清理函数。运行时配置投影与 readiness mixin 从各自的 composition 子模块导入。
+`core/platform/composition/__init__.py` 导出 `ComponentFactory`、`DatabaseSetup`、`DerivedRebuildCoordinator`、`FaissChecker`、`PluginInitializer`、`ProviderLoader`、`ProviderWaiter` 和身份失败清理函数。运行时配置投影与 readiness mixin 从各自的 composition 子模块导入。
 
-`core/initializer/__init__.py` 仅导出 `FaissChecker`。本目录不再承载其他启动逻辑；已迁移组件不得重新增加旧路径 shim。
+`core/initializer/` 不再提供包或模块导出。已迁移组件不得重新增加旧路径 shim。
 
 | 类型 | 关键接口 | 契约 |
 |---|---|---|
@@ -95,7 +95,7 @@ flowchart TD
 
 ## 依赖方向
 
-`platform/composition` → `base`、`features`、`managers`、`processors`、`storage`、`injection`。initializer 剩余入口只持有 FAISS 探针，不得重新承载装配实现，也不得反向依赖 Page API、Agent 工具或命令端点。
+`platform/composition` → `base`、`features`、`managers`、`processors`、`storage`、`injection`。旧 initializer 目录不得重新承载装配实现，也不得反向依赖 Page API、Agent 工具或命令端点。
 
 ## 测试定位与精确验证
 

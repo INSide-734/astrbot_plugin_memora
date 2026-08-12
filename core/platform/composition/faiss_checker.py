@@ -8,7 +8,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..shared.errors import InitializationError
+from ...shared.errors import InitializationError
 
 FaissVecDB: Any = None
 FAISS_RUNTIME_CHECK_TIMEOUT_SECONDS = 30
