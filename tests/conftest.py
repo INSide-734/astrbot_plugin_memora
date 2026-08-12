@@ -208,7 +208,7 @@ def _install_astrbot_mocks() -> None:
     _msg_comp.Forward = type("Forward", (MagicMock,), {})  # type: ignore[attr-defined]
     sys.modules["astrbot.core.message.components"] = _msg_comp
 
-    # astrbot.core.agent.run_context —（被工具使用，必须支持下标访问）
+    # 保留内部运行上下文替身，供架构门禁构造违规导入样本。
     _run_ctx = _mkmod("astrbot.core.agent.run_context")
     _cw = type("ContextWrapper", (MagicMock,), {})
     _cw.__class_getitem__ = classmethod(lambda cls, item: cls)  # type: ignore[attr-defined]
@@ -216,21 +216,19 @@ def _install_astrbot_mocks() -> None:
     _run_ctx.ContextWrapper = _cw  # type: ignore[attr-defined]
     sys.modules["astrbot.core.agent.run_context"] = _run_ctx
 
-    # astrbot.core.agent.tool —（被工具使用，必须支持：
-    #   - class X(FunctionTool[Context]): 子类语法
-    #   - @FunctionTool[...] 装饰器语法
-    #   使用普通对象作为基类以避免 MagicMock.__setattr__ 干扰
+    # FunctionTool 使用普通对象作为基类，避免 MagicMock 干扰 dataclass 初始化。
     _tool_mod = _mkmod("astrbot.core.agent.tool")
     _Ft = type("FunctionTool", (object,), {})
     _Ft.__class_getitem__ = classmethod(lambda cls, item: cls)  # type: ignore[attr-defined]
     _Ft.name = "mock_tool"  # type: ignore[attr-defined]
     _Ft.description = "mock tool"  # type: ignore[attr-defined]
     _tool_mod.FunctionTool = _Ft  # type: ignore[attr-defined]
+    sys.modules["astrbot.api"].FunctionTool = _Ft  # type: ignore[attr-defined]
     _tr_cls = type("ToolExecResult", (str,), {})
     _tool_mod.ToolExecResult = _tr_cls  # type: ignore[attr-defined]
     sys.modules["astrbot.core.agent.tool"] = _tool_mod
 
-    # astrbot.core.astr_agent_context —（被工具使用）
+    # 保留内部 Agent 上下文替身，供架构门禁构造违规导入样本。
     _aac = _mkmod("astrbot.core.astr_agent_context")
     _aac.AstrAgentContext = MagicMock  # type: ignore[attr-defined]
     sys.modules["astrbot.core.astr_agent_context"] = _aac
