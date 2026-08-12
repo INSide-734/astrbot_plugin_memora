@@ -7,14 +7,15 @@
 
 ## 职责与边界
 
-`core/managers/` 是业务生命周期与编排层。它把 SQLite 文档表、BM25、FAISS、记忆原子和图记忆组合成统一的 `MemoryEngine`，并提供会话、备份、导入导出、衰减、写故障恢复及 Memory Evolution 后台演化服务。
+`core/managers/` 是业务生命周期与编排层。它把 SQLite 文档表、BM25、FAISS、记忆原子和图记忆组合成统一的 `MemoryEngine`，并提供会话、备份、导入导出、衰减与写故障恢复。
 
 用户画像的领域服务与 proposal 管线唯一归属 `core/features/profiles/application/`；`core/managers/` 只保留 `MemoryEngine` 的画像写后钩子，不再转发画像应用类型。
 知识领域服务与 proposal 管线唯一归属 `core/features/knowledge/application/`；`core/managers/` 只保留 `MemoryEngine` 的知识写后钩子，不再转发知识应用类型。
 笔记领域服务与 proposal 管线唯一归属 `core/features/notes/application/`；`core/managers/` 只保留 `MemoryEngine` 的笔记写后钩子，不再转发笔记应用类型。
 自主学习与反馈聚合唯一归属 `core/features/learning/`：application 管理可信反馈聚合、shadow 候选和单一 CAS 发布，domain 保存候选与反馈模型，infrastructure 保存隔离事件、状态和配置适配；`core/managers/` 只在 `MemoryEngine` 生命周期中装配和持有这些组件，不再转发 Learning 类型。自主学习不得直接修改生产检索权重或调用 `update_memory()`。
+Memory Evolution 的 Gate、候选生成、LLM proposal、worker 与 Projection 应用唯一归属 `core/features/evolution/application/`，Store 唯一归属 `core/features/evolution/infrastructure/`；`core/managers/` 只保留 MemoryEngine 写后钩子、语义压缩协作对象，以及尚待后续清理的 Manager/Projection 恒等导出。
 
-本层负责“何时、按什么顺序、失败后如何补偿”；底层表 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，候选召回和排序属于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)，定时触发属于 [`core/schedulers/AGENTS.md`](../schedulers/AGENTS.md)。Memory Evolution 的关系/Projection 事务和 revision 校验由 manager 编排，具体 SQLite 表访问仍属于 storage。
+本层负责“何时、按什么顺序、失败后如何补偿”；底层表 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，候选召回和排序属于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)，定时触发属于 [`core/schedulers/AGENTS.md`](../schedulers/AGENTS.md)。Memory Evolution 的关系/Projection 事务与 revision 校验由 feature application 编排，具体 SQLite 表访问属于 feature infrastructure。
 
 ```mermaid
 graph TD
@@ -120,9 +121,10 @@ sequenceDiagram
 
 ## Memory Evolution 生命周期与安全边界
 
-`memory_evolution_gate.py`、`memory_evolution_manager.py` 负责 canonical 写入后的派生演化，不替代 `MemoryEngine` 的主写路径：
+`core/features/evolution/application/` 负责 canonical 写入后的派生演化，不替代 `MemoryEngine` 的主写路径：
 
 - `MemoryEvolutionGate` 仅基于 source revision、scope、topic/entity 信号、阈值、去抖桶和待处理上限生成稳定 idempotency key；`enabled=false` 或非法 mode 必须返回 `mode_disabled`。
+- `MemoryConsolidator` 只把有界 canonical evidence 转为经过 JSON/Pydantic 校验的 `EvolutionProposal`；临时 alias、输入/输出预算和 Projection 字符上限保持强制约束，解析或预算失败交由 worker 重试/死信，取消继续传播。
 - `MemoryEvolutionManager.schedule_consider()` 只在 canonical 写入成功后入队；Store 在 SQL 限流前按同 scope 选择最多 6 条近期 source，并把创建时全部 revision 写入 job provenance，其他 scope 的新记录不能挤掉同 scope 证据。worker 以单任务循环领取 job，持有可续租 lease；领取后先核对 job revision，stale job 进入 invalidated；取消会恢复 pending，普通异常按指数退避重试，超过 `max_attempts` 进入 dead，proposal 规则拒绝进入 rejected。
 - `MemoryEngine` 在 canonical add/语义 metadata update 提交后统一重载 source 并调度；`ReflectionHandler` 仍覆盖反思链兼容调度，重复触发由稳定 idempotency key 去重。派生计划写入 `origin_job_id`，启动时先做 orphan/stale cleanup；回滚 job 只能失效自身派生对象，不能删除 canonical。
 - 处理 proposal 时先运行本地 `MemoryEvolutionCandidateGenerator`：episode/conflict 候选非空时不调用 LLM，只有确定性候选为空才回退 Consolidator。随后必须再次读取 source 并比较每个 revision；source 缺失、scope 不一致、alias 未知、自关系、重复/成环边、冲突 Projection 少于三类角色均拒绝，不能污染派生表。
@@ -155,7 +157,7 @@ sequenceDiagram
 | 记忆再巩固 | `reconsolidation.py`、`reconsolidation_store.py` | 默认关闭；召回只生成 pending 候选；apply 先持久化唯一 intent，再按 source revision CAS 写 canonical 并恢复/失败收口；回滚同样持久化跨 Store 意图并刷新当前 source 的 graph 派生，状态、动作审计与操作清理原子收口；启动恢复不得覆盖后续编辑 |
 | 自主学习 | `features/learning/application/`、`features/learning/domain/`、`features/learning/infrastructure/` | 统一 FeedbackSignal 事件只进入隔离 Store；shadow 候选经单一 CAS 写入口发布；生产写入前持久化真实旧权重 intent，最终状态保存失败时保留可重启回滚快照；rebuild/publish/rollback/reset 共用状态锁，不直接修改生产权重 |
 | 可靠性 | `write_coordinator.py`、`features/memory/infrastructure/write_op_*`、`memory_engine_write_observability.py` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复；canonical 写入指标与质量采样由独立 mixin 承担 |
-| 记忆演化 | `memory_evolution_gate.py`、`memory_evolution_manager.py`、`memory_evolution_projection.py`、`semantic_compressor.py` | canonical 写后门控、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验、外部 Projection proposal 二次校验及语义摘要生成 |
+| 记忆演化 | `features/evolution/application/`、`features/evolution/infrastructure/`、`semantic_compressor.py` | canonical 写后门控、确定性/LLM proposal、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验及语义摘要生成 |
 | canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |
 | 连续性 | `continuity_tracker.py`、`memory_engine_lifecycle.py` | 使用 `data_dir` 同步恢复/保存，按配置 TTL 和单 session 上限保留话题；关闭时不创建或读写 |
 | 文件状态 | `features/learning/infrastructure/auto_learning_state.py` | JSON 状态属于运行数据，不是配置；加载失败通常降级为空状态；状态写入失败必须显式返回/抛出，不能把生产发布报告为成功 |
@@ -171,7 +173,7 @@ sequenceDiagram
 4. `BackupManager.validate_backup_name()`、备案目录集合和 `relative_to(backups_root)` 共同阻止路径穿越；备份源、manifest 和恢复 payload 还必须拒绝符号链接、绝对路径、分隔符及白名单外文件。不可绕过这些 API 直接拼接路径。
 5. 写日志中的修复载荷和备份目录具有与原始记忆相同的保密级别。不得通过 SSE、诊断 API 或导出默认暴露。
 6. LLM 再巩固和高成本重排会把记忆内容送给配置的 provider；只有在用户授权且 provider 数据策略允许时启用。
-7. Memory Evolution 的 proposal 输入是受长度限制的不可信 evidence；模型输出先由 processor 结构校验，manager 再拒绝非 `EvolutionProposal`、超出 `candidate_limit` 或重复 source，并做 source revision、scope/privacy、role 和影响级别校验。任何 source 证据不得进入模型可见的 Projection metadata。
+7. Memory Evolution 的 proposal 输入是受长度限制的不可信 evidence；模型输出先由 feature application 的 Consolidator 结构校验，Manager 再拒绝非 `EvolutionProposal`、超出 `candidate_limit` 或重复 source，并做 source revision、scope/privacy、role 和影响级别校验。任何 source 证据不得进入模型可见的 Projection metadata。
 
 ## 异常规则
 

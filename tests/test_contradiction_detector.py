@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from core.processors.contradiction_detector import (
+from core.features.evolution.application.contradiction_detector import (
     ContradictionDetector,
     _detect_semantic_contradiction,
     _jaccard,

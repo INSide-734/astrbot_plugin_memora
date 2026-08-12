@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Sequence
 
-from ..shared.contracts import MemorySourceRef
+from ....shared.contracts import MemorySourceRef
 
 
 @dataclass(frozen=True, slots=True)

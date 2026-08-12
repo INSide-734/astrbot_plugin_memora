@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.processors.memory_consolidator import MemoryConsolidator
+from core.features.evolution.application import MemoryConsolidator
 from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc

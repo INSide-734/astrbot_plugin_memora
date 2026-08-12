@@ -304,6 +304,12 @@ def test_every_schema_leaf_has_an_explicit_owner_classification() -> None:
         ownership["topic_segmentation.strategy"].owner
         == "core.features.reflection.application.topic_batch_preparer"
     )
+    assert ownership["memory_evolution.enabled"].owner == (
+        "core.features.evolution.application.memory_evolution_manager"
+    )
+    assert ownership["episode_clustering.enabled"].owner == (
+        "core.features.evolution.application.episode_clusterer"
+    )
     assert {
         ownership["recall_engine.top_k"].kind,
         ownership["dashboard.allow_runtime_build"].kind,

@@ -11,7 +11,12 @@ from astrbot.api.provider import Provider
 from ...base.cost_control import build_cost_control_from_config
 from ...features.backup.application import BackupManager
 from ...features.decay.application import DecayScheduler
-from ...features.evolution.application import MemoryEvolutionManager
+from ...features.evolution.application import (
+    MemoryConsolidator,
+    MemoryEvolutionCandidateGenerator,
+    MemoryEvolutionGate,
+    MemoryEvolutionManager,
+)
 from ...features.evolution.infrastructure import MemoryEvolutionStore
 from ...features.identity.application.service import ProtocolIdentityService
 from ...features.identity.infrastructure.protocols import ProtocolIdentityResolver
@@ -34,10 +39,7 @@ from ...identity.runtime import ProtocolIdentityRuntime
 from ...injection.recorder import InjectionDecisionRecorder
 from ...managers.conversation_manager import ConversationManager
 from ...managers.memory_engine import MemoryEngine
-from ...managers.memory_evolution_gate import MemoryEvolutionGate
 from ...managers.semantic_compressor import SemanticCompressor
-from ...processors.memory_consolidator import MemoryConsolidator
-from ...processors.memory_evolution_candidates import MemoryEvolutionCandidateGenerator
 from ...processors.memory_processor import MemoryProcessor
 from ...retrieval.derived_relation_expander import DerivedRelationExpander
 from ...retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy

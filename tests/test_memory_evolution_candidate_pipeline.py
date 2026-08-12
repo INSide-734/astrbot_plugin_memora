@@ -10,6 +10,10 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
+from core.features.evolution.application import (
+    MemoryEvolutionCandidateGenerator,
+    MemoryEvolutionGate,
+)
 from core.features.evolution.domain import (
     DerivedState,
     EvolutionProposal,
@@ -18,11 +22,7 @@ from core.features.evolution.domain import (
     RelationType,
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
-from core.managers.memory_evolution_gate import MemoryEvolutionGate
 from core.managers.memory_evolution_manager import MemoryEvolutionManager
-from core.processors.memory_evolution_candidates import (
-    MemoryEvolutionCandidateGenerator,
-)
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)

@@ -8,7 +8,7 @@
 
 ## 职责边界
 
-`core/processors/` 将已经进入会话存储的 `list[Message]` 格式化、提交给 LLM、校验/修复响应，并构造成持久化层可消费的记忆、元数据与原子。目录还包含话题策略、图结构提取、文本检索预处理和 Memory Evolution proposal 整理器。
+`core/processors/` 将已经进入会话存储的 `list[Message]` 格式化、提交给 LLM、校验/修复响应，并构造成持久化层可消费的记忆、元数据与原子。目录还包含话题策略、图结构提取和文本检索预处理。
 
 `core/features/profiles/infrastructure/ProfileExtractor` 只负责把受限 evidence 转成标签和偏好，不写入 Store，也不决定画像主键。
 生产调用由 profiles application 的 `ProfileProposalPipeline` 编排；LLM 入口使用单次物理请求并由
@@ -93,16 +93,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 
 策略输出必须保持输入顺序、边界合法和至少可回退为单段；C/D 的运行成本门控由 handlers 中的 `TopicBatchPreparer` 负责。
 
-## Memory Evolution proposal 协议
-
-`memory_consolidator.py` 的 `MemoryConsolidator.propose(sources)` 只把 canonical evidence 转为受约束的 `EvolutionProposal`，不直接写 Store、canonical memory 或派生表：
-
-- 给每个 source 分配临时 `M1`、`M2` alias；Prompt 明确 evidence 为不可信数据，模型不能执行其中指令、调用工具或输出真实 memory ID。
-- 输入总量受 `max_input_chars` 限制；输出必须通过 JSON 清洗和 Pydantic `extra="forbid"` 校验，并满足 relation、projection 数量和 summary 字符预算。
-- relation/projection 类型、confidence、时间范围及 alias 形状在此校验；alias 是否存在、source revision 是否仍新鲜、scope/privacy/role 是否兼容、是否成环以及 candidate/active 状态由 `MemoryEvolutionManager` 在应用前确定。
-- `MemoryEvolutionCandidateGenerator` 先组合本地确定性候选：`ContradictionDetector` 生成同主体的 `updates`/`contradicts`，`EpisodeClusterer` 生成带完整时间窗口的 `same_episode`；同一 source pair 上冲突优先于 episode。候选非空时 Manager 不再调用 Consolidator，候选为空时才回退现有 LLM proposal。
-- 解析、结构或预算失败必须抛出异常交给 worker 重试/死信；不要回退成空 proposal 并伪造成功。`asyncio.CancelledError` 必须继续传播。
-- Projection 是带 source/revision 证据的派生解释，不是新 canonical memory，不得生成独立 `doc_id` 或进入主管道的 `MemoryProcessor` 返回列表。
+Memory Evolution 的 Gate、候选生成、episode/conflict 启发式与 LLM proposal 服务已全部归属 `core/features/evolution/application/`；`core/processors/` 不再提供旧路径或兼容导出。其 source/revision、alias、预算和取消契约见 [`../managers/AGENTS.md`](../managers/AGENTS.md) 的 Evolution 生命周期说明。
 
 ## 其他处理器地图
 
@@ -112,16 +103,12 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 | `graph_extractor.py` | `GraphExtractor.extract()`：在结构化图、原子和旧 metadata 路径间路由并生成节点/边/entry | 非法结构化载荷回退旧提取；实体交给 `EntityResolver` |
 | `atom_graph_extractor.py` | 原子图提取、父记忆人物/主题角色恢复及时序/因果边生成 | 缺少角色 metadata 的原子实体保持 topic 兼容行为 |
 | `entity_resolver.py` | 实体规范化、去重、IS-A 上下扩展和层级文件读写 | 层级 I/O 是尽力而为 |
-| `contradiction_detector.py` | 对同 scope、同匿名主体 source 做 Jaccard/极性预筛，返回绑定两侧 ID、revision、发生时间和 conflict type 的只读候选 | 未启用、主体不明、无候选时返回空；不搜索、不写 canonical |
-| `episode_clusterer.py` | 24h 时间窗 + topic Jaccard 生成两两 `same_episode` 证据，保留 source revision、overlap、confidence 和窗口起止 | 未启用、跨 scope/私密主体、30 天外不生成；不改 canonical metadata |
-| `memory_evolution_candidates.py` | 冲突优先地把本地候选转换为有 alias 与时间范围的 `EvolutionProposal` | 本地候选为空时由 Manager 回退 `MemoryConsolidator` |
 | `text_processor.py` | jieba/回退分词、停用词、BM25/FTS 预处理 | jieba 缺失或禁用时走内置分段 |
 | `human_like_formatter.py` | 按 atom 类型生成拟人片段并去重 | 无内容返回空片段 |
 | `chatroom_parser.py` | 从 AstrBot 群聊上下文包装中取最新消息 | 不匹配或异常时原样返回 prompt |
 | `features/profiles/infrastructure/profile_extractor.py` | LLM 提取用户标签/偏好，最多 5 个标签 | 无 client/调用失败返回空；另有关键词 fallback |
 | `features/knowledge/infrastructure/knowledge_extractor.py` | 有限 canonical evidence → `KnowledgeEntry` | 输入过短、无 client 或 JSON 无法恢复时 `None`；结构和长度边界由 proposal 管线再次校验 |
 | `features/notes/infrastructure/note_generator.py` | 重要 canonical evidence → note dict | 未达长度、无 client 或 JSON 无法恢复时 `None`；application 管线负责来源 fallback、配置上限和持久化 |
-| `memory_consolidator.py` | canonical evidence → 受约束的 relation/projection proposal | JSON/Schema/数量/字符预算失败抛出，由 manager 负责重试或拒绝 |
 | `message_utils.py` | 30KB 单消息截断；将一轮对话写成记忆 | 返回 `(success, error)`，不抛普通存储异常 |
 | `prompt_builder.py` | 模板与 persona system prompt | persona 不存在时使用基础 prompt |
 
@@ -140,17 +127,17 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 
 主管道：`memory_processor.py`、`llm_client.py`、`prompt_builder.py`、`conversation_formatter.py`、`json_parser.py`、`quality_validator.py`、`storage_builder.py`；`reflection_generation_observability.py` 只发射反思生成阶段的隐私安全标量。
 话题：`topic_splitter.py`、`topic_segmentation_pipeline.py`。
-派生与图：`memory_consolidator.py`、`memory_evolution_candidates.py`、`atom_classifier.py`、`graph_extractor.py`、`atom_graph_extractor.py`、`entity_resolver.py`、`contradiction_detector.py`、`episode_clusterer.py`、`human_like_formatter.py`。画像、知识与笔记提取唯一实现分别位于 `core/features/profiles/infrastructure/profile_extractor.py`、`core/features/knowledge/infrastructure/knowledge_extractor.py` 和 `core/features/notes/infrastructure/note_generator.py`。
+派生与图：`atom_classifier.py`、`graph_extractor.py`、`atom_graph_extractor.py`、`entity_resolver.py`、`human_like_formatter.py`。画像、知识与笔记提取唯一实现分别位于 `core/features/profiles/infrastructure/profile_extractor.py`、`core/features/knowledge/infrastructure/knowledge_extractor.py` 和 `core/features/notes/infrastructure/note_generator.py`。
 文本/兼容：`text_processor.py`、`chatroom_parser.py`、`message_utils.py`、`grounding_dates.py`、`__init__.py`。
 
 ## 测试定位与验证
 
-主管道和直接组件分别位于 `tests/test_memory_processor.py`、`test_memory_grounding.py`、`test_llm_client.py`、`test_json_parser.py`、`test_prompt_builder.py`、`test_conversation_formatter.py`、`test_atom_classifier.py`、`test_text_processor.py`、`test_message_utils.py`。Memory Evolution proposal 契约位于 `tests/test_memory_consolidator.py`，本地 episode/conflict 生产闭环位于 `tests/test_memory_evolution_candidate_pipeline.py`；话题策略在 `test_topic_splitter.py` 与 `test_integration_topic_segmentation.py`，A/B/Hybrid 生产装配在 `test_topic_production_wiring.py`。派生处理器有同名测试，包括 graph/entity/contradiction/episode/profile/knowledge/note/human-like/chatroom。
+主管道和直接组件分别位于 `tests/test_memory_processor.py`、`test_memory_grounding.py`、`test_llm_client.py`、`test_json_parser.py`、`test_prompt_builder.py`、`test_conversation_formatter.py`、`test_atom_classifier.py`、`test_text_processor.py`、`test_message_utils.py`。话题策略在 `test_topic_splitter.py` 与 `test_integration_topic_segmentation.py`，A/B/Hybrid 生产装配在 `test_topic_production_wiring.py`。派生处理器有同名测试，包括 graph/entity/profile/knowledge/note/human-like/chatroom；Evolution 测试由 feature application 契约与 Managers 生命周期测试覆盖。
 
 精确模块验证命令：
 
 ```bash
-python -m pytest tests/test_memory_processor.py tests/test_memory_consolidator.py tests/test_llm_client.py tests/test_json_parser.py tests/test_prompt_builder.py tests/test_conversation_formatter.py tests/test_atom_classifier.py tests/test_text_processor.py tests/test_message_utils.py tests/test_topic_splitter.py tests/test_integration_topic_segmentation.py tests/test_graph_extractor.py tests/test_entity_resolver.py tests/test_contradiction_detector.py tests/test_episode_clusterer.py tests/test_profile_extractor.py tests/test_knowledge_extractor.py tests/test_note_generator.py tests/test_human_like_formatter.py tests/test_chatroom_parser.py -q
+python -m pytest tests/test_memory_processor.py tests/test_llm_client.py tests/test_json_parser.py tests/test_prompt_builder.py tests/test_conversation_formatter.py tests/test_atom_classifier.py tests/test_text_processor.py tests/test_message_utils.py tests/test_topic_splitter.py tests/test_integration_topic_segmentation.py tests/test_graph_extractor.py tests/test_entity_resolver.py tests/test_profile_extractor.py tests/test_knowledge_extractor.py tests/test_note_generator.py tests/test_human_like_formatter.py tests/test_chatroom_parser.py -q
 python -m pytest tests/test_adapter_capabilities.py tests/test_llm_client.py -q
 ```
 

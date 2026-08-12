@@ -248,7 +248,7 @@ def tokenize_cjk_words(text: str) -> list[str]:
     将中文字符逐字切分，英文单词保持完整。
     无外部 NLP 依赖。
 
-    用于: :class:`~core.processors.contradiction_detector.ContradictionDetector`
+    用于: :class:`~core.features.evolution.application.contradiction_detector.ContradictionDetector`
     的基于 Jaccard 的矛盾检测。
 
     Args:

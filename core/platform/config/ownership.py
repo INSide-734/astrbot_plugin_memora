@@ -129,7 +129,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "memory_evolution": _ownership(
         "memory_evolution",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.memory_evolution_manager",
+        "core.features.evolution.application.memory_evolution_manager",
     ),
     "reranker": _ownership(
         "reranker",
@@ -169,7 +169,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "episode_clustering": _ownership(
         "episode_clustering",
         ConfigOwnershipKind.EXPERIMENTAL,
-        "core.processors.episode_clusterer",
+        "core.features.evolution.application.episode_clusterer",
     ),
     "agent_tools": _ownership(
         "agent_tools", ConfigOwnershipKind.RUNTIME, "main.MemoraPlugin"

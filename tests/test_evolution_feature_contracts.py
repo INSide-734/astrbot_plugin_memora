@@ -4,8 +4,24 @@ import subprocess
 import sys
 
 import core.features.evolution as evolution_feature
+import core.features.evolution.application as evolution_application
 from core.base.config_validator import (
     MemoryEvolutionConfig as LegacyMemoryEvolutionConfig,
+)
+from core.features.evolution.application import (
+    contradiction_detector as feature_contradiction_detector,
+)
+from core.features.evolution.application import (
+    episode_clusterer as feature_episode_clusterer,
+)
+from core.features.evolution.application import (
+    memory_consolidator as feature_consolidator,
+)
+from core.features.evolution.application import (
+    memory_evolution_candidates as feature_candidates,
+)
+from core.features.evolution.application import (
+    memory_evolution_gate as feature_gate,
 )
 from core.features.evolution.application import (
     memory_evolution_manager as feature_manager,
@@ -69,7 +85,43 @@ def test_evolution_package_lazily_exports_each_feature_layer() -> None:
         evolution_feature.MemoryEvolutionManager
         is feature_manager.MemoryEvolutionManager
     )
+    assert evolution_feature.MemoryEvolutionGate is feature_gate.MemoryEvolutionGate
+    assert (
+        evolution_feature.MemoryEvolutionCandidateGenerator
+        is feature_candidates.MemoryEvolutionCandidateGenerator
+    )
+    assert (
+        evolution_feature.MemoryConsolidator is feature_consolidator.MemoryConsolidator
+    )
     assert evolution_feature.MemoryEvolutionStore is feature_store.MemoryEvolutionStore
+
+
+def test_evolution_foundation_services_use_feature_application_owner() -> None:
+    """门控、候选生成与 proposal 服务必须由 evolution application 唯一持有。"""
+
+    assert evolution_application.MemoryEvolutionGate is feature_gate.MemoryEvolutionGate
+    assert evolution_application.MemoryEvolutionCandidateGenerator is (
+        feature_candidates.MemoryEvolutionCandidateGenerator
+    )
+    assert (
+        evolution_application.MemoryConsolidator
+        is feature_consolidator.MemoryConsolidator
+    )
+    assert feature_gate.MemoryEvolutionGate.__module__ == (
+        "core.features.evolution.application.memory_evolution_gate"
+    )
+    assert feature_candidates.MemoryEvolutionCandidateGenerator.__module__ == (
+        "core.features.evolution.application.memory_evolution_candidates"
+    )
+    assert feature_consolidator.MemoryConsolidator.__module__ == (
+        "core.features.evolution.application.memory_consolidator"
+    )
+    assert feature_episode_clusterer.EpisodeClusterer.__module__ == (
+        "core.features.evolution.application.episode_clusterer"
+    )
+    assert feature_contradiction_detector.ContradictionDetector.__module__ == (
+        "core.features.evolution.application.contradiction_detector"
+    )
 
 
 def test_evolution_config_old_path_reuses_feature_owner() -> None:

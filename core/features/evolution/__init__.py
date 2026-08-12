@@ -9,6 +9,9 @@ if TYPE_CHECKING:
     from .application import (
         EvolutionLeaseLost,
         EvolutionProposalRejected,
+        MemoryConsolidator,
+        MemoryEvolutionCandidateGenerator,
+        MemoryEvolutionGate,
         MemoryEvolutionManager,
     )
     from .domain import (
@@ -60,6 +63,9 @@ __all__ = [
     "JobState",
     "MemoryProjectionProposal",
     "MemoryEvolutionJob",
+    "MemoryConsolidator",
+    "MemoryEvolutionCandidateGenerator",
+    "MemoryEvolutionGate",
     "MemoryEvolutionManager",
     "MemoryEvolutionStore",
     "MemoryRelationProposal",
@@ -78,6 +84,9 @@ _APPLICATION_EXPORTS = frozenset(
     {
         "EvolutionLeaseLost",
         "EvolutionProposalRejected",
+        "MemoryConsolidator",
+        "MemoryEvolutionCandidateGenerator",
+        "MemoryEvolutionGate",
         "MemoryEvolutionManager",
     }
 )

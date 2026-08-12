@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from datetime import timezone
 from typing import Any
 
-from ..features.evolution.domain import EvolutionSignal, GateDecision
+from ..domain import EvolutionSignal, GateDecision
 
 
 class MemoryEvolutionGate:
@@ -17,6 +17,12 @@ class MemoryEvolutionGate:
     _VALID_MODES = frozenset({"disabled", "shadow", "readonly", "active"})
 
     def __init__(self, config: Mapping[str, Any] | None = None) -> None:
+        """读取演化门控配置并归一化模式、阈值与去抖参数。
+
+        参数：
+            config: Memory Evolution 配置映射；缺失或非法值使用安全默认值。
+        """
+
         config = config or {}
         self.enabled = bool(config.get("enabled", False))
         raw_mode = str(config.get("mode", "disabled"))
@@ -90,6 +96,8 @@ class MemoryEvolutionGate:
 
 
 def _signal_is_eligible(signal: EvolutionSignal) -> bool:
+    """检查信号是否包含稳定来源、作用域、时间与主题或实体证据。"""
+
     return bool(
         signal.revision_token.strip()
         and signal.scope_key.strip()
@@ -99,6 +107,8 @@ def _signal_is_eligible(signal: EvolutionSignal) -> bool:
 
 
 def _bounded_float(value: Any, *, default: float) -> float:
+    """把配置值转为零到一之间的浮点数，非法值回退默认值。"""
+
     try:
         parsed = float(value)
     except (TypeError, ValueError):
@@ -107,6 +117,8 @@ def _bounded_float(value: Any, *, default: float) -> float:
 
 
 def _bounded_int(value: Any, *, default: int) -> int:
+    """把配置值转为整数，非法值回退默认值。"""
+
     try:
         return int(value)
     except (TypeError, ValueError):

@@ -335,7 +335,7 @@ async def test_cleanup_orphaned_derived_preserves_projection_with_other_sources(
 
 @pytest.mark.asyncio
 async def test_rebuild_from_canonical_invalidates_old_and_requeues_sources(tmp_path):
-    from core.managers.memory_evolution_gate import MemoryEvolutionGate
+    from core.features.evolution.application import MemoryEvolutionGate
     from core.managers.memory_evolution_manager import MemoryEvolutionManager
 
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
@@ -373,7 +373,7 @@ async def test_rebuild_from_canonical_invalidates_old_and_requeues_sources(tmp_p
 async def test_rebuild_failure_returns_degraded_result_without_losing_canonical(
     tmp_path,
 ):
-    from core.managers.memory_evolution_gate import MemoryEvolutionGate
+    from core.features.evolution.application import MemoryEvolutionGate
     from core.managers.memory_evolution_manager import MemoryEvolutionManager
 
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))

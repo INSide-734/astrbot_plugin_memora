@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core.processors.episode_clusterer import EpisodeClusterer
+from core.features.evolution.application.episode_clusterer import EpisodeClusterer
 from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc

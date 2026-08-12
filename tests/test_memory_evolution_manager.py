@@ -6,6 +6,7 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
+from core.features.evolution.application import MemoryEvolutionGate
 from core.features.evolution.domain import (
     EvolutionProposal,
     JobState,
@@ -15,7 +16,6 @@ from core.features.evolution.domain import (
     RelationType,
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
-from core.managers.memory_evolution_gate import MemoryEvolutionGate
 from core.managers.memory_evolution_manager import (
     EvolutionLeaseLost,
     EvolutionProposalRejected,

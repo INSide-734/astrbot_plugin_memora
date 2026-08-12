@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from itertools import combinations
 from typing import Sequence
 
-from ..shared.contracts import MemorySourceRef
+from ....shared.contracts import MemorySourceRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +134,7 @@ def _same_subject(first: MemorySourceRef, second: MemorySourceRef) -> bool:
 def _tokenize(text: str) -> list[str]:
     """委托共享中英文分词器，避免处理器内维护第二套规则。"""
 
-    from ..utils.text_utils import tokenize_cjk_words
+    from ....utils.text_utils import tokenize_cjk_words
 
     return tokenize_cjk_words(text)
 
