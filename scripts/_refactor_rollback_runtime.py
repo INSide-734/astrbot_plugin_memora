@@ -11,7 +11,7 @@ import zipfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -150,7 +150,7 @@ class _SnapshotBackup:
     async def create_backup(self, kind: str = "manual") -> dict[str, object]:
         """创建严格位于隔离 data/backups 下的迁移快照。"""
 
-        from core.managers.backup_snapshot import snapshot_sqlite
+        from core.features.backup.infrastructure import snapshot_sqlite
 
         if kind != "pre_migration":
             raise ValueError("unexpected_backup_kind")
@@ -203,7 +203,7 @@ async def _run_migration_case(
     baseline = _legacy_snapshot(database)
     connection = await aiosqlite.connect(database)
     failing = _FailAfterFirstAlter(connection)
-    manager = SchemaManager(failing)
+    manager = SchemaManager(cast(aiosqlite.Connection, failing))
     backup: Any = (
         _MissingBackup(root) if restore_fails else _SnapshotBackup(database, root)
     )

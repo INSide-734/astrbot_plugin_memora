@@ -10,7 +10,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -22,13 +22,13 @@ from .core.command_handler import CommandHandler
 from .core.event_handler import EventHandler
 from .core.feature_delegation import FeatureDelegation
 from .core.features.backup.application import BackupManager
+from .core.features.backup.domain import BackupOperationError
 from .core.features.observability.application import PerfTracker
 from .core.features.observability.application import runtime as observability
 from .core.features.updates.application import RuntimeUpdateInstaller, UpdateManager
 from .core.handlers.recall_observability import RecallTimingContext
 from .core.i18n_backend import init as i18n_init
 from .core.i18n_backend import t
-from .core.managers.backup_models import BackupOperationError
 from .core.platform.composition.plugin_initializer import PluginInitializer
 from .core.platform.composition.reload_lifecycle import (
     run_scheduled_plugin_reload,
@@ -770,10 +770,13 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         return snapshot
 
     def _writes_blocked_by_pending_restore(self) -> bool:
+        """返回恢复事务是否阻断写入；状态读取失败时保守阻断。"""
+
         try:
             get_state = getattr(self._backup_manager, "get_maintenance_state", None)
             if callable(get_state):
-                return bool(get_state().get("blocked", False))
+                state = cast(dict[str, object], get_state())
+                return bool(state.get("blocked", False))
             return bool(self._backup_manager.has_pending_restores())
         except Exception:
             logger.error("检查备份恢复维护状态失败", exc_info=True)

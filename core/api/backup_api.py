@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Any, cast
 
 from astrbot.api import logger
 
 from ..features.backup.application import BackupManager
-from ..managers.backup_models import BackupOperationError
+from ..features.backup.domain import BackupOperationError
 from .response_utils import error_response, ok_response
 
 _BACKUP_ERROR_CODES = {
@@ -29,12 +29,16 @@ _BACKUP_ERROR_CODES = {
 
 
 def _safe_backup_list(backups: object) -> list[dict[str, object]]:
+    """把未知备份列表收窄为可公开处理的字典列表。"""
+
     if isinstance(backups, list):
         return [item for item in backups if isinstance(item, dict)]
     if backups is None or isinstance(backups, (str, bytes, bytearray, Mapping)):
         return []
     try:
-        return [item for item in backups if isinstance(item, dict)]
+        return [
+            item for item in cast(Iterable[object], backups) if isinstance(item, dict)
+        ]
     except TypeError:
         return []
 
@@ -58,12 +62,27 @@ def _safe_operation_error(exc: Exception, fallback: str) -> dict[str, Any]:
 class BackupApiMixin:
     """备份与恢复接口混入。"""
 
+    plugin: Any
+
+    if TYPE_CHECKING:
+
+        async def _ensure_plugin_ready(
+            self,
+        ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+            """声明由组合页面 API 提供的就绪检查。"""
+
+            ...
+
     def _backup_manager(self):
         manager = getattr(self.plugin, "_backup_manager", None)
         return manager if manager is not None else None
 
     @staticmethod
-    def _json_object_payload_or_error(payload: object):
+    def _json_object_payload_or_error(
+        payload: object,
+    ) -> tuple[dict[Any, Any] | None, dict[str, Any] | None]:
+        """校验 JSON 对象，并返回可直接使用的载荷和可选错误。"""
+
         if isinstance(payload, dict):
             return payload, None
         return None, error_response("请求体必须为 JSON 对象", code="invalid_request")
@@ -179,6 +198,8 @@ class BackupApiMixin:
             return _safe_operation_error(exc, "backup_list_failed")
 
     async def restore_backup(self):
+        """校验并暂存指定备份的恢复事务。"""
+
         from quart import request
 
         payload, error = BackupApiMixin._json_object_payload_or_error(
@@ -186,6 +207,7 @@ class BackupApiMixin:
         )
         if error:
             return error
+        assert payload is not None
         unknown = set(payload) - {"name", "apply_mode"}
         if unknown:
             return error_response("请求字段无效", code="invalid_request")
@@ -211,7 +233,9 @@ class BackupApiMixin:
             operation_id = str(result.get("operation_id", "")).strip()
             if not operation_id:
                 # 兼容旧管理器的摘要返回；新事务必须包含 operation_id。
-                def _legacy_count(value: object) -> int:
+                def _legacy_count(value: Any) -> int:
+                    """把旧管理器计数字段规范化为非负整数。"""
+
                     if isinstance(value, bool):
                         return 0
                     try:
@@ -220,6 +244,8 @@ class BackupApiMixin:
                         return 0
 
                 def _legacy_files(value: object) -> list[str]:
+                    """把旧管理器文件字段规范化为字符串列表。"""
+
                     if isinstance(value, (list, tuple)):
                         return [str(item) for item in value if isinstance(item, str)]
                     return []
@@ -278,6 +304,8 @@ class BackupApiMixin:
             return _safe_operation_error(exc, "restore_plan_invalid")
 
     async def cancel_restore(self):
+        """取消尚未应用的备份恢复事务。"""
+
         from quart import request
 
         payload, error = BackupApiMixin._json_object_payload_or_error(
@@ -285,6 +313,7 @@ class BackupApiMixin:
         )
         if error:
             return error
+        assert payload is not None
         operation_id = str(payload.get("operation_id", "")).strip()
         if not operation_id:
             return error_response("缺少恢复事务 ID", code="invalid_request")
@@ -302,6 +331,8 @@ class BackupApiMixin:
             return _safe_operation_error(exc, "restore_cancel_not_allowed")
 
     async def delete_backup(self):
+        """删除一个通过名称校验且未被占用的备份。"""
+
         from quart import request
 
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
@@ -312,6 +343,7 @@ class BackupApiMixin:
         )
         if error:
             return error
+        assert payload is not None
         name = str(payload.get("name", "")).strip()
         if not name:
             return error_response("缺少备份名称", code="invalid_request")
@@ -330,6 +362,8 @@ class BackupApiMixin:
             return _safe_operation_error(exc, "backup_in_use")
 
     async def batch_delete_backups(self):
+        """批量删除一至一百个经过名称校验的备份。"""
+
         from quart import request
 
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
@@ -340,6 +374,7 @@ class BackupApiMixin:
         )
         if error:
             return error
+        assert payload is not None
         names = payload.get("names", [])
         if not isinstance(names, list) or not names or len(names) > 100:
             return error_response(

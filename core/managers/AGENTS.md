@@ -161,7 +161,7 @@ sequenceDiagram
 | canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |
 | 连续性 | `continuity_tracker.py`、`memory_engine_lifecycle.py` | 使用 `data_dir` 同步恢复/保存，按配置 TTL 和单 session 上限保留话题；关闭时不创建或读写 |
 | 文件状态 | `features/learning/infrastructure/auto_learning_state.py` | JSON 状态属于运行数据，不是配置；加载失败通常降级为空状态；状态写入失败必须显式返回/抛出，不能把生产发布报告为成功 |
-| 备份 | `backup_manager.py`、`backup_models.py`、`backup_snapshot.py` | SQLite 使用 Online Backup API；manifest 保存角色、大小、SHA-256 和 quick check；`pre_migration` 供启动迁移失败恢复，新恢复使用 `.restore/<operation_id>/restore_plan.json`、`payload/`、`previous/` 事务目录 |
+| 备份 | `features/backup/{domain,application,infrastructure}/` | SQLite 使用 Online Backup API；manifest 保存角色、大小、SHA-256 和 quick check；`pre_migration` 供启动迁移失败恢复，新恢复使用 `.restore/<operation_id>/restore_plan.json`、`payload/`、`previous/` 事务目录；旧 `managers/backup_*` 路径已删除 |
 | 插件更新 | `update_manager.py`、`update_installer.py` | `update_manager.py` 检查 GitHub Release，按镜像到官方顺序下载 runtime 与校验清单，并只在 SHA-256 校验通过后写入暂存区；`update_installer.py` 严格校验 ZIP、在 AstrBot 插件目录同卷切换 runtime，安排单插件重载，失败时恢复旧目录并记录安全状态 |
 | 导入导出 | `memory_exporter.py` | JSONL/Markdown 包含正文与 metadata；导入按内容 SHA-256 短哈希去重后重新走 `add_memory` |
 

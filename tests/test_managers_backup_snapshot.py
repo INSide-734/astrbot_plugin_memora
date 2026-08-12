@@ -6,8 +6,8 @@ import json
 import sqlite3
 from pathlib import Path
 
-from core.managers.backup_models import BackupType, FileRole, RestoreStatus
-from core.managers.backup_snapshot import atomic_write_json, snapshot_sqlite
+from core.features.backup.domain import BackupType, FileRole, RestoreStatus
+from core.features.backup.infrastructure import atomic_write_json, snapshot_sqlite
 
 
 def _make_database(path: Path) -> None:

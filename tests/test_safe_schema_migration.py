@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
 import pytest
 
 from core.features.backup.application import BackupManager
-from core.managers.backup_snapshot import snapshot_sqlite
+from core.features.backup.infrastructure import snapshot_sqlite
 from core.managers.memory_engine import MemoryEngine
 from core.managers.schema_manager import CURRENT_DB_VERSION, SchemaManager
 from core.managers.schema_migration import (
@@ -284,7 +284,7 @@ async def test_mid_migration_failure_restores_canonical_and_version(
     connection = await aiosqlite.connect(db_path)
     failing_connection = _FailingConnection(connection)
     coordinator = SchemaMigrationCoordinator(
-        SchemaManager(failing_connection),
+        SchemaManager(cast(aiosqlite.Connection, failing_connection)),
         db_path=db_path,
         data_dir=tmp_path,
         auto_migrate=True,
@@ -315,7 +315,7 @@ async def test_restore_failure_enters_persistent_blocked_state(tmp_path: Path) -
     _create_legacy_database(db_path)
     connection = await aiosqlite.connect(db_path)
     coordinator = SchemaMigrationCoordinator(
-        SchemaManager(_FailingConnection(connection)),
+        SchemaManager(cast(aiosqlite.Connection, _FailingConnection(connection))),
         db_path=db_path,
         data_dir=tmp_path,
         auto_migrate=True,
@@ -435,16 +435,14 @@ async def test_completed_migration_is_idempotent_on_retry(tmp_path: Path) -> Non
         backup_manager=_RecordingBackupManager(events),
     )
     result = await second.run()
-    version_rows = int(
-        (
-            await (
-                await second_connection.execute(
-                    "SELECT COUNT(*) FROM db_version WHERE version = ?",
-                    (CURRENT_DB_VERSION,),
-                )
-            ).fetchone()
-        )[0]
-    )
+    version_row = await (
+        await second_connection.execute(
+            "SELECT COUNT(*) FROM db_version WHERE version = ?",
+            (CURRENT_DB_VERSION,),
+        )
+    ).fetchone()
+    assert version_row is not None
+    version_rows = int(version_row[0])
     await second_connection.close()
 
     assert result.stage == "current"
