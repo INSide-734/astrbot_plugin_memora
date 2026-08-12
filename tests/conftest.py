@@ -192,10 +192,9 @@ def _install_astrbot_mocks() -> None:
     _vec_db.FaissVecDB = _fb  # type: ignore[attr-defined]
     sys.modules["astrbot.core.db.vec_db.faiss_impl.vec_db"] = _vec_db
 
-    # astrbot.core.message.components —（被 message_content_extractor 使用）
+    # astrbot.api.message_components（被 message_content_extractor 使用）
     # 使用不同的 MagicMock 子类以确保 isinstance 检查正常工作
-    sys.modules["astrbot.core.message"] = _mkpkg("astrbot.core.message")
-    _msg_comp = _mkmod("astrbot.core.message.components")
+    _msg_comp = _mkmod("astrbot.api.message_components")
     _msg_comp.Image = type("Image", (MagicMock,), {})  # type: ignore[attr-defined]
     _msg_comp.At = type("At", (MagicMock,), {})  # type: ignore[attr-defined]
     _msg_comp.AtAll = type("AtAll", (_msg_comp.At,), {})  # type: ignore[attr-defined]
@@ -206,7 +205,7 @@ def _install_astrbot_mocks() -> None:
     _msg_comp.File = type("File", (MagicMock,), {})  # type: ignore[attr-defined]
     _msg_comp.Face = type("Face", (MagicMock,), {})  # type: ignore[attr-defined]
     _msg_comp.Forward = type("Forward", (MagicMock,), {})  # type: ignore[attr-defined]
-    sys.modules["astrbot.core.message.components"] = _msg_comp
+    sys.modules["astrbot.api.message_components"] = _msg_comp
 
     # 保留内部运行上下文替身，供架构门禁构造违规导入样本。
     _run_ctx = _mkmod("astrbot.core.agent.run_context")

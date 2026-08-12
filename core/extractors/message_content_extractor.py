@@ -22,7 +22,7 @@ class MessageContentExtractor:
         req: ProviderRequest | None = None,
     ) -> str:
         """提取消息内容，按组件原始顺序拼接。"""
-        from astrbot.core.message.components import (
+        from astrbot.api.message_components import (
             At,
             AtAll,
             Face,

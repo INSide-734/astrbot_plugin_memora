@@ -2,7 +2,8 @@
 
 # AstrBot 消息内容提取
 
-**最后更新：** 2026-07-17  
+**最后更新：** 2026-08-13
+
 **入口/公开导出：** `MessageContentExtractor`
 
 ## 职责边界
@@ -32,6 +33,7 @@ flowchart LR
 - `extract_message_content(event, req=None) -> str`：异步接口；迭代 `event.get_messages()`，返回以单空格连接并最终 `strip()` 的文本。
 - `get_event_message_str(event) -> str`：读取 `event.get_message_str()`；兼容同步或 coroutine 返回。没有方法时读 `event.message_str`；非字符串返回空串。
 - `_safe_unknown_component_text(component) -> str`：只按 `text`、`content`、`message`、`name`、`url` 顺序读取第一个非空字符串；截断到 300 字符，URL 包装为 `[链接: ...]`。不得回退到 `repr(component)` 或序列化整个对象。
+- 组件类型只从 AstrBot 4.27.2 的公共模块 `astrbot.api.message_components` 导入；插件生产代码和测试不得依赖 `astrbot.core.message.components`。
 
 | 组件 | 输出 |
 |---|---|
