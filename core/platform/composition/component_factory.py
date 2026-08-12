@@ -12,10 +12,12 @@ from ...base.cost_control import build_cost_control_from_config
 from ...features.backup.application import BackupManager
 from ...features.decay.application import DecayScheduler
 from ...features.evolution.application import (
+    DerivedRelationExpander,
     MemoryConsolidator,
     MemoryEvolutionCandidateGenerator,
     MemoryEvolutionGate,
     MemoryEvolutionManager,
+    ProjectionReader,
     SemanticCompressor,
 )
 from ...features.evolution.infrastructure import MemoryEvolutionStore
@@ -41,9 +43,7 @@ from ...injection.recorder import InjectionDecisionRecorder
 from ...managers.conversation_manager import ConversationManager
 from ...managers.memory_engine import MemoryEngine
 from ...processors.memory_processor import MemoryProcessor
-from ...retrieval.derived_relation_expander import DerivedRelationExpander
 from ...retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
-from ...retrieval.projection_reader import ProjectionReader
 from ...review.memory_quality_gate import MemoryQualityGate
 from ...review.quarantine_store import MemoryQuarantineStore
 from ...shared.cost_control import CostControlConfig

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
+from ..features.evolution.application import ProjectionBudget, ProjectionScope
 from ..features.evolution.domain import ExpansionBudget, ScopeContext
 from ..models.recall_strategy import RecallStrategy
 from ..shared.adapter_capabilities import (
@@ -31,7 +32,6 @@ from .evidence_scorer import RetrievalEvidenceScorer
 from .graph_retriever import GraphResult, GraphRetriever
 from .hybrid_retriever import HybridRetriever
 from .multi_query_fusion import fuse_query_results, split_candidate_budget
-from .projection_reader import ProjectionBudget, ProjectionScope
 from .provider_privacy_prefilter import (
     ProviderPrivacyContext,
     ProviderPrivacyPrefilter,

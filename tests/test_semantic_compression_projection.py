@@ -15,6 +15,9 @@ from core.features.decay.application import DecayScheduler
 from core.features.evolution.application import (
     EvolutionProposalRejected,
     MemoryEvolutionManager,
+    ProjectionBudget,
+    ProjectionReader,
+    ProjectionScope,
     SemanticCompressor,
 )
 from core.features.evolution.domain import (
@@ -27,11 +30,6 @@ from core.features.evolution.domain import (
     ProjectionView,
 )
 from core.platform.composition import DerivedRebuildCoordinator
-from core.retrieval.projection_reader import (
-    ProjectionBudget,
-    ProjectionReader,
-    ProjectionScope,
-)
 from core.retrieval.rrf_fusion import HybridResult
 from core.shared.contracts import MemorySourceRef
 

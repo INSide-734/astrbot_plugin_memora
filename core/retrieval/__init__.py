@@ -4,7 +4,6 @@
 """
 
 from .bm25_retriever import BM25Retriever
-from .derived_relation_expander import DerivedRelationExpander
 from .dual_route_retriever import DualRouteRetriever
 from .graph_keyword_retriever import GraphKeywordRetriever
 from .graph_retriever import GraphRetriever
@@ -26,5 +25,4 @@ __all__ = [
     "GraphVectorRetriever",
     "GraphRetriever",
     "DualRouteRetriever",
-    "DerivedRelationExpander",
 ]

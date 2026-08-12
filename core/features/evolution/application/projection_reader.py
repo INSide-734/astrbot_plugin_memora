@@ -7,25 +7,27 @@ import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
-from ..features.evolution.domain import (
+from ....shared.adapter_capabilities import (
+    AdapterCapability,
+    AdapterCapabilityContract,
+    AdapterKind,
+)
+from ....shared.contracts import MemorySourceRef
+from ....shared.temporal import normalize_datetime, visible_at
+from ..domain import (
     DerivedState,
     ProjectionBundle,
     ProjectionSourceView,
     ProjectionType,
     ProjectionView,
 )
-from ..shared.adapter_capabilities import (
-    AdapterCapability,
-    AdapterCapabilityContract,
-    AdapterKind,
-)
-from ..shared.contracts import MemorySourceRef
-from ..shared.temporal import normalize_datetime, visible_at
-from .rrf_fusion import HybridResult
+
+if TYPE_CHECKING:
+    from ....retrieval.rrf_fusion import HybridResult
 
 _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}
 _PROJECTION_TYPES = frozenset(item.value for item in ProjectionType)
@@ -51,6 +53,12 @@ class ProjectionBudget:
     max_summary_chars: int = 600
 
     def __post_init__(self) -> None:
+        """拒绝任一维度为负数的 Projection 预算。
+
+        异常：
+            ValueError: 字符或数量预算中存在负数。
+        """
+
         if (
             min(
                 self.max_chars,
@@ -60,7 +68,7 @@ class ProjectionBudget:
             )
             < 0
         ):
-            raise ValueError("projection budget values must be non-negative")
+            raise ValueError("Projection 预算不能为负数")
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +120,19 @@ class ProjectionReader:
         scope: ProjectionScope,
         budget: ProjectionBudget,
     ) -> list[HybridResult]:
-        """在不改变 canonical 候选数量和分数的前提下附加 projection。"""
+        """在不改变 canonical 候选数量和分数的前提下附加 Projection。
+
+        参数：
+            candidates: 原始 canonical 检索候选。
+            scope: 当前请求允许的 scope、隐私与参考时间。
+            budget: Projection 注解的数量和字符预算。
+
+        返回：
+            仅 metadata 可能附有模型安全 Projection 的候选副本。
+
+        异常：
+            asyncio.CancelledError: 调用方取消读取时继续传播。
+        """
 
         return (
             await self.attach_with_stats(candidates, scope=scope, budget=budget)
@@ -125,7 +145,19 @@ class ProjectionReader:
         scope: ProjectionScope,
         budget: ProjectionBudget,
     ) -> ProjectionReadStats:
-        """附着 projection，并返回不含敏感标识的读取统计。"""
+        """附着 Projection，并返回不含敏感标识的读取统计。
+
+        参数：
+            candidates: 原始 canonical 检索候选。
+            scope: 当前请求允许的 scope、隐私与参考时间。
+            budget: Projection 注解的数量和字符预算。
+
+        返回：
+            候选副本、冲突状态和附着数量组成的安全统计。
+
+        异常：
+            asyncio.CancelledError: 调用方取消 Store 读取时继续传播。
+        """
 
         baseline = [_copy_candidate(item) for item in candidates]
         if (
@@ -197,6 +229,20 @@ class ProjectionReader:
         budget: ProjectionBudget,
         decisions: list[str],
     ) -> tuple[list[HybridResult], int]:
+        """按来源证据与预算把合法 Projection 附着到候选副本。
+
+        参数：
+            candidates: 已复制的 canonical 检索候选。
+            bundles: Store 返回的 Projection 与来源映射集合。
+            sources_by_id: 按 canonical ID 索引的当前来源快照。
+            scope: 当前请求允许的 scope、隐私与参考时间。
+            budget: Projection 注解的数量和字符预算。
+            decisions: 用于收集安全冲突判定标量的列表。
+
+        返回：
+            附着后的候选列表与实际附着的 Projection 数量。
+        """
+
         candidates_by_id = {item.doc_id: item for item in candidates}
         accepted: dict[int, list[dict[str, Any]]] = {}
         seen_projection_ids: set[str] = set()
@@ -322,6 +368,17 @@ class ProjectionReader:
 
 
 def _copy_candidate(candidate: HybridResult) -> HybridResult:
+    """复制候选及其可变 metadata，避免污染 canonical 检索结果。
+
+    参数：
+        candidate: 待复制的检索候选。
+
+    返回：
+        内容与分数相同、可变字段独立的候选副本。
+    """
+
+    from ....retrieval.rrf_fusion import HybridResult
+
     return HybridResult(
         doc_id=candidate.doc_id,
         final_score=candidate.final_score,
@@ -339,6 +396,16 @@ def _copy_candidate(candidate: HybridResult) -> HybridResult:
 
 
 def _valid_projection_bundle(projection: Any, mappings: tuple[Any, ...]) -> bool:
+    """校验 Projection 及其来源映射的结构完整性。
+
+    参数：
+        projection: 待校验的 Projection 视图。
+        mappings: Projection 声明的来源映射。
+
+    返回：
+        类型、置信度、来源集合和角色均合法时返回 ``True``。
+    """
+
     if not isinstance(projection, ProjectionView):
         return False
     confidence = float(projection.confidence)
@@ -370,6 +437,18 @@ def _source_is_current(
     scope: ProjectionScope,
     now: datetime,
 ) -> bool:
+    """校验来源 revision、访问边界和事实时间是否仍匹配映射。
+
+    参数：
+        source: 当前 canonical 来源快照。
+        mapping: Projection 锚定的来源映射。
+        scope: 当前请求允许的 scope 与隐私级别。
+        now: 当前请求的统一参考时间。
+
+    返回：
+        来源存在且所有证据仍有效时返回 ``True``。
+    """
+
     occurred_at = mapping.occurred_at or (source.occurred_at if source else None)
     return bool(
         source is not None
@@ -391,6 +470,17 @@ def _valid_at(
     valid_to: datetime | None,
     now: datetime,
 ) -> bool:
+    """判断参考时间是否落在闭区间有效窗口内。
+
+    参数：
+        valid_from: 可选的有效期起点。
+        valid_to: 可选的有效期终点。
+        now: 待判断的参考时间。
+
+    返回：
+        参考时间未早于起点且未晚于终点时返回 ``True``。
+    """
+
     current = _as_utc(now)
     return (valid_from is None or current >= _as_utc(valid_from)) and (
         valid_to is None or current <= _as_utc(valid_to)
@@ -401,7 +491,15 @@ def _resolve_conflict_state(
     mappings: tuple[ProjectionSourceView, ...],
     sources_by_id: dict[int, MemorySourceRef],
 ) -> str:
-    """按 source 事实时间区分可排序冲突和时间未决冲突。"""
+    """按 source 事实时间区分可排序冲突和时间未决冲突。
+
+    参数：
+        mappings: 当前且合法的 Projection 来源映射。
+        sources_by_id: 按 canonical ID 索引的来源快照。
+
+    返回：
+        ``unresolved`` 或明确较新的冲突侧安全枚举值。
+    """
 
     times: dict[str, datetime] = {}
     for mapping in mappings:
@@ -427,6 +525,16 @@ def _resolve_conflict_state(
 
 
 def _privacy_allowed(item_level: str, request_level: str) -> bool:
+    """判断 Projection 或来源的隐私级别是否未越过请求边界。
+
+    参数：
+        item_level: 对象声明的隐私级别。
+        request_level: 当前请求允许的最高隐私级别。
+
+    返回：
+        两个级别都合法且对象不越权时返回 ``True``。
+    """
+
     item_value = _PRIVACY_ORDER.get(item_level)
     request_value = _PRIVACY_ORDER.get(request_level)
     return (
@@ -437,10 +545,28 @@ def _privacy_allowed(item_level: str, request_level: str) -> bool:
 
 
 def _projection_type_value(value: Any) -> str:
+    """把 Projection 类型规范化为稳定字符串。
+
+    参数：
+        value: Projection 类型枚举或待显示值。
+
+    返回：
+        枚举值或对象的字符串形式。
+    """
+
     return value.value if isinstance(value, ProjectionType) else str(value)
 
 
 def _safe_confidence(value: Any) -> float:
+    """把任意置信度输入收敛到有限的 ``[0, 1]`` 区间。
+
+    参数：
+        value: 待解析的置信度值。
+
+    返回：
+        合法且有限的置信度；无法解析时返回 ``0.0``。
+    """
+
     try:
         parsed = float(value)
     except (TypeError, ValueError):
@@ -449,6 +575,15 @@ def _safe_confidence(value: Any) -> float:
 
 
 def _as_utc(value: datetime) -> datetime:
+    """把时间规范化为 UTC，无法规范化时使用当前 UTC 时间。
+
+    参数：
+        value: 待规范化的时间。
+
+    返回：
+        带 UTC 时区的时间。
+    """
+
     normalized = normalize_datetime(value)
     if normalized is None:
         return datetime.now(timezone.utc)

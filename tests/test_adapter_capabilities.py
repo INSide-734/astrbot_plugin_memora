@@ -427,10 +427,12 @@ async def test_vector_mutations_unsupported_do_not_touch_backend() -> None:
 def test_current_adapter_snapshots_state_real_filter_and_score_semantics() -> None:
     """当前 BM25/Vector/Derived/Store 必须公开实际而非理想化的快照。"""
 
+    from core.features.evolution.application import (
+        DerivedRelationExpander,
+        ProjectionReader,
+    )
     from core.features.evolution.infrastructure import MemoryEvolutionStore
     from core.retrieval.bm25_retriever import BM25Retriever
-    from core.retrieval.derived_relation_expander import DerivedRelationExpander
-    from core.retrieval.projection_reader import ProjectionReader
     from core.retrieval.vector_retriever import VectorRetriever
     from core.shared.adapter_capabilities import (
         AdapterCapability,

@@ -12,6 +12,9 @@ from core.features.evolution.application import (
     contradiction_detector as feature_contradiction_detector,
 )
 from core.features.evolution.application import (
+    derived_relation_expander as feature_relation_reader,
+)
+from core.features.evolution.application import (
     episode_clusterer as feature_episode_clusterer,
 )
 from core.features.evolution.application import (
@@ -28,6 +31,9 @@ from core.features.evolution.application import (
 )
 from core.features.evolution.application import (
     memory_evolution_projection as feature_projection,
+)
+from core.features.evolution.application import (
+    projection_reader as feature_projection_reader,
 )
 from core.features.evolution.application import (
     semantic_compressor as feature_compressor,
@@ -70,6 +76,63 @@ def test_evolution_domain_owner_first_import_stays_lightweight() -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "core.features.evolution.domain.models"
+
+
+def test_retrieval_first_import_resolves_evolution_readers_without_legacy_paths() -> (
+    None
+):
+    """先导入 retrieval 时应解析 feature reader，且旧模块不可再导入。"""
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib.util; "
+            "import core.retrieval as retrieval; "
+            "from core.features.evolution.application import "
+            "DerivedRelationExpander, ProjectionReader; "
+            "assert not hasattr(retrieval, 'DerivedRelationExpander'); "
+            "assert importlib.util.find_spec("
+            "'core.retrieval.derived_relation_expander') is None; "
+            "assert importlib.util.find_spec("
+            "'core.retrieval.projection_reader') is None; "
+            "print(DerivedRelationExpander.__module__, ProjectionReader.__module__)",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == (
+        "core.features.evolution.application.derived_relation_expander "
+        "core.features.evolution.application.projection_reader"
+    )
+
+
+def test_evolution_readers_first_import_resolves_retrieval_without_cycle() -> None:
+    """先导入 feature reader 时应能随后加载完整 retrieval 包。"""
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from core.features.evolution.application import "
+            "DerivedRelationExpander, ProjectionReader; "
+            "import core.retrieval as retrieval; "
+            "from core.retrieval.rrf_fusion import HybridResult; "
+            "assert retrieval.HybridResult is HybridResult; "
+            "print(DerivedRelationExpander.__name__, ProjectionReader.__name__)",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == (
+        "DerivedRelationExpander ProjectionReader"
+    )
 
 
 def test_evolution_package_lazily_exports_each_feature_layer() -> None:
@@ -126,6 +189,21 @@ def test_evolution_foundation_services_use_feature_application_owner() -> None:
     )
     assert feature_compressor.SemanticCompressor.__module__ == (
         "core.features.evolution.application.semantic_compressor"
+    )
+    assert evolution_application.DerivedRelationExpander is (
+        feature_relation_reader.DerivedRelationExpander
+    )
+    assert evolution_application.ProjectionReader is (
+        feature_projection_reader.ProjectionReader
+    )
+    assert evolution_application.ProjectionBudget is (
+        feature_projection_reader.ProjectionBudget
+    )
+    assert evolution_application.ProjectionReadStats is (
+        feature_projection_reader.ProjectionReadStats
+    )
+    assert evolution_application.ProjectionScope is (
+        feature_projection_reader.ProjectionScope
     )
 
 

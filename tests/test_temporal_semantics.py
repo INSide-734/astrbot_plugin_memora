@@ -7,6 +7,12 @@ from datetime import datetime, timezone
 import aiosqlite
 import pytest
 
+from core.features.evolution.application import (
+    DerivedRelationExpander,
+    ProjectionBudget,
+    ProjectionReader,
+    ProjectionScope,
+)
 from core.features.evolution.domain import (
     DerivedApplyPlan,
     DerivedState,
@@ -20,12 +26,6 @@ from core.features.evolution.domain import (
     ScopeContext,
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
-from core.retrieval.derived_relation_expander import DerivedRelationExpander
-from core.retrieval.projection_reader import (
-    ProjectionBudget,
-    ProjectionReader,
-    ProjectionScope,
-)
 from core.retrieval.query_rewriter import QueryIntent, resolve_reference_time
 from core.retrieval.rrf_fusion import HybridResult
 from core.shared.contracts import MemorySourceRef

@@ -7,11 +7,11 @@
 
 ## 职责与边界
 
-`core/retrieval/` 负责从文档、FAISS、图、原子和知识库生成候选，执行 RRF、时间/重要性加权、MMR/可插拔重排、个性化与隐私过滤，并可生成有界、脱敏的召回追踪。持久化 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，统一生命周期和缓存增强属于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)。
+`core/retrieval/` 负责从文档、FAISS、图、原子和知识库生成候选，执行 RRF、时间/重要性加权、MMR/可插拔重排、个性化与隐私过滤，并可生成有界、脱敏的召回追踪。持久化 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，统一生命周期和缓存增强属于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)；派生关系扩展与 Projection 读取服务由 `core/features/evolution/application/` 唯一持有，本模块只消费其公开读取契约。
 
 ## Memory Evolution 召回顺序
 
-`DualRouteRetriever` 的在线顺序固定为：direct/graph candidate merge → `DerivedRelationExpander` → `ProjectionReader` attachment → reranker → privacy filter。只有 `enabled=true` 且 mode 为 `readonly`/`active` 时才调用 relation/projection reader；`disabled` 与 `shadow` 必须保持 baseline，不能因派生表存在而读取。
+`DualRouteRetriever` 的在线顺序固定为：direct/graph candidate merge → Evolution application 的 `DerivedRelationExpander` → `ProjectionReader` attachment → reranker → privacy filter。只有 `enabled=true` 且 mode 为 `readonly`/`active` 时才调用 relation/projection reader；`disabled` 与 `shadow` 必须保持 baseline，不能因派生表存在而读取。两个 reader 不在 `core.retrieval` 保留兼容实现或包级导出。
 
 - relation expansion 只增加有 scope/隐私证据的 canonical candidate，并受 per-seed/global expansion budget 限制。
 - ProjectionReader 只把通过 active、类型开关、validity、scope、privacy、source revision、role 和统一 `reference_time` 校验的 projection metadata 附着到已有 primary canonical candidate；supporting/conflict source 只用于证据校验，不能单独生成 candidate。普通非冲突 Projection 可在 supporting mapping 已由 Store 移除且 primary 仍有效时保留；`semantic_summary` 合成自全部来源，任一 mapping/revision 失效都必须整条失效。检测到 stale/越权 source 或缺少 conflict side 时整体不附着。
@@ -176,7 +176,7 @@ python -m pytest -q tests/test_emotion_scorer.py tests/test_seasonal_recall.py
 
 ## 依赖方向与改动守则
 
-- 允许：`retrieval → models/processors/storage/utils/base`；`managers → retrieval`。
+- 允许：`retrieval → models/processors/storage/utils/base`，以及 `DualRouteRetriever → features/evolution` 的只读契约；`managers → retrieval`。
 - 禁止 `retrieval` 直接调用 handler/page API 或启动 scheduler。
 - 新检索路必须定义：ID 空间、scope 过滤、失败降级、分数归一化、删除/更新同步和敏感数据边界。
 - 新增 trace 字段必须先进入显式低基数允许列表；绝不直接持久化原始 metadata、任意文本、业务 ID 或列表。

@@ -8,17 +8,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from core.features.evolution.application import (
+    ProjectionBudget,
+    ProjectionReader,
+    ProjectionScope,
+)
 from core.features.evolution.domain import (
     DerivedState,
     ProjectionBundle,
     ProjectionSourceView,
     ProjectionType,
     ProjectionView,
-)
-from core.retrieval.projection_reader import (
-    ProjectionBudget,
-    ProjectionReader,
-    ProjectionScope,
 )
 from core.retrieval.rrf_fusion import HybridResult
 from core.shared.contracts import MemorySourceRef
