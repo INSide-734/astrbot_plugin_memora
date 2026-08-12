@@ -7,13 +7,13 @@
 
 ## 职责与边界
 
-`core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存会话消息和注入决策遥测，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。原子与图存储已归属 memory feature，用户画像、知识与笔记存储分别归属 profiles、knowledge 和 notes feature。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
+`core/storage/` 是本地持久化层：以 `aiosqlite`/SQLite WAL 保存注入决策遥测与层级实体，并维护 FTS5 派生索引及与 FAISS 向量 ID 的关联。会话、消息与消息查询存储已归属 conversation feature，原子与图存储已归属 memory feature，用户画像、知识与笔记存储分别归属 profiles、knowledge 和 notes feature。业务编排位于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)，召回算法位于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)。
 
-canonical Schema、Atom、幂等映射、来源校验、写日志、graph store 及共享连接实现已迁至 `core/features/memory/`；对应 `core/storage/` 路径仅保留单实现兼容导出，表名、数据目录和连接生命周期不变。
+canonical Schema、Atom、幂等映射、来源校验、写日志、graph store 及共享连接实现已迁至 `core/features/memory/`；会话、消息与消息查询 Store 已迁至 `core/features/conversation/`。对应 `core/storage/` 路径仅保留单实现兼容导出，表名、数据目录和连接生命周期不变。
 
 `core/features/learning/infrastructure/feedback_signal_store.py` 是显式隔离路径的同步 SQLite Store，也是反馈持久化的唯一入口；`core/storage/` 不再转发它。该 Store 保存最小反馈事件和可重建聚合，使用 dedupe 唯一约束与事务，不得默认连接 `memora.db`，也不得把事件 key/domain/query/正文写入安全摘要。生产可信适配器写入前必须把决策、作用域和人格转换为稳定不可逆 token；Manager 在写入/重建时物理清理超期事件，并只允许受控适配器按同一匿名决策撤销后重建聚合。
 
-`core/features/memory/infrastructure/sql_contract.py` 集中保存跨 retrieval、managers、validators 与 social 复用的固定表名和静态 FTS SQL；`core/storage/sql_contract.py` 仅保留兼容导出。这些常量不接受运行时输入，调用方仍必须对值参数绑定，并在支持可替换标识符的入口保留白名单校验。
+`core/features/memory/infrastructure/sql_contract.py` 集中保存跨 retrieval、managers、validators 与 social 复用的固定表名和静态 FTS SQL；这些常量不接受运行时输入，调用方仍必须对值参数绑定，并在支持可替换标识符的入口保留白名单校验。
 
 SQLite 不支持把表标识符作为绑定参数。`RelationStore` 因此只用 `SOCIAL_RELATIONS_TABLE` 校验固定表契约，实际执行语句始终包含静态 `social_relations` 标识符，不把运行时标识符插入 SQL；群组 ID、用户 ID、关系类型和排序选择继续通过值参数或固定 allowlist 处理。
 

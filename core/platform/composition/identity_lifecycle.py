@@ -6,7 +6,7 @@ import asyncio
 
 from astrbot.api import logger
 
-from ...identity.runtime import ProtocolIdentityRuntime
+from ...features.identity.application.runtime import ProtocolIdentityRuntime
 
 
 async def close_identity_runtime_after_failure(

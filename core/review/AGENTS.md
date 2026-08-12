@@ -2,11 +2,11 @@
 
 # 记忆人工审查队列模块
 
-**最后更新：** 2026-08-01
+**最后更新：** 2026-08-13
 
 ## 职责与边界
 
-`core/review/` 提供两条明确分离的人工审查边界：既有 `ReviewStore` 分诊已经存在的 canonical memory；`MemoryQuarantineStore` 与 `MemoryQualityGate` 处理 canonical 写入前的低质量或来源未验证候选。Memory Evolution 的高影响 relation 复核由 `core/features/evolution/infrastructure/memory_evolution_review.py` 和专用 Page API 持有，属于第三条独立队列。三者不得共用 memory/candidate/relation ID、状态机或持久化表，也不得让 quarantine 或 derived candidate ID 冒充 canonical `doc_id`。
+`core/features/quality/` 提供两条明确分离的人工审查边界：既有 `ReviewStore` 分诊已经存在的 canonical memory；`MemoryQuarantineStore` 与 `MemoryQualityGate` 处理 canonical 写入前的低质量或来源未验证候选。`core/review/` 仅保留单实现 re-export 兼容边界。Memory Evolution 的高影响 relation 复核由 `core/features/evolution/infrastructure/memory_evolution_review.py` 和专用 Page API 持有，属于第三条独立队列。三者不得共用 memory/candidate/relation ID、状态机或持久化表，也不得让 quarantine 或 derived candidate ID 冒充 canonical `doc_id`。
 
 ## 架构与数据流
 
@@ -65,7 +65,7 @@ flowchart LR
 ## 依赖方向
 
 - 上游：`core/api/review_api.py` 从实际记忆/质量数据刷新 canonical 队列；反思链和手动总结在写入前调用 `MemoryQualityGate`，`core/api/quarantine_api.py` 执行隔离候选处置。
-- 本模块：`review_detector.py -> models.py`；`review_store.py -> models.py`。
+- 本模块：`application/review_detector.py -> domain/models.py`；`infrastructure/review_store.py -> domain/models.py`（均位于 `core/features/quality/` 内）。
 - 下游：仅 `aiosqlite` 与标准库；包可在没有 AstrBot mock 的环境导入。
 - 相关上下文：[存储模块](../storage/AGENTS.md)、[监控模块](../monitoring/AGENTS.md)、[API 模块](../api/AGENTS.md)。
 

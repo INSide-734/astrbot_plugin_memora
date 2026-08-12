@@ -2,13 +2,13 @@
 
 # 协议稳定身份模块
 
-**最后更新：** 2026-07-23
-**源码范围：** `core/identity/{runtime.py,conversation_sync.py,memory.py}`、`core/features/identity/`
+**最后更新：** 2026-08-13
+**源码范围：** `core/features/identity/`（模型、Store、解析器、服务、运行时、会话同步与记忆增强）；`core/identity/` 仅保留单实现 re-export 兼容边界
 **上游装配：** `core/platform/composition/component_factory.py`、`core/event_handler.py`
 
 ## 职责与边界
 
-`core/features/identity/` 拥有协议身份模型、服务、Store 与解析器；`core/identity/` 仅保留尚未纵切的会话同步、记忆增强和运行时编排。两者共同把平台事件解析为稳定、不可变的用户身份，并尽力维护当前显示名称、作用域别名、历史会话名称和召回时的只读身份说明。它们不负责修改 canonical memory、检索排序、平台事件模型或管理员画像。
+`core/features/identity/` 拥有协议身份模型、服务、Store、解析器，以及会话同步、记忆增强和运行时编排；`core/identity/` 仅保留三个运行时协作层的单实现 re-export，供尚未切换到 feature 路径的历史调用方与契约测试使用。两者共同把平台事件解析为稳定、不可变的用户身份，并尽力维护当前显示名称、作用域别名、历史会话名称和召回时的只读身份说明。它们不负责修改 canonical memory、检索排序、平台事件模型或管理员画像。
 
 当前内置 OneBot 11 与 QQ 官方机器人适配器；其他协议通过 `IdentityProtocolAdapter` 接口与固定注册表扩展，不在事件处理器或记忆处理器中增加协议分支。
 
@@ -23,11 +23,11 @@
 | `../features/identity/infrastructure/protocols/resolver.py` | 唯一选择、冲突隔离与 unsupported 降级 |
 | `../features/identity/application/service.py` | 当前昵称/群名片合并和旧名称别名计划 |
 | `../features/identity/infrastructure/store.py` | 三张身份目录表及查询实现 |
-| `conversation_sync.py` | 按可信作用域同步 user 消息显示名称并失效受影响缓存 |
-| `runtime.py` | 解析、尽力持久化、同步、只读 Enricher 与 Store 关闭边界 |
-| `memory.py` | 稳定记忆参与者 metadata、固定 Prompt 约束和历史别名只读增强 |
+| `../features/identity/application/conversation_sync.py` | 按可信作用域同步 user 消息显示名称并失效受影响缓存 |
+| `../features/identity/application/runtime.py` | 解析、尽力持久化、同步、只读 Enricher 与 Store 关闭边界 |
+| `../features/identity/application/enricher.py` | 稳定记忆参与者 metadata、固定 Prompt 约束和历史别名只读增强 |
 
-持久化实现只维护 `identity_users`、`identity_scope_members`、`identity_aliases` 三张独立表；已迁移的旧模型、服务、Store 与协议解析器路径不再提供兼容导出，所有调用方必须使用 feature owner。
+持久化实现只维护 `identity_users`、`identity_scope_members`、`identity_aliases` 三张独立表；已迁移的旧模型、服务、Store 与协议解析器路径不再提供兼容导出，所有调用方必须使用 feature owner。`core/identity/{runtime.py,memory.py,conversation_sync.py}` 只保留单实现 re-export，禁止复制实现，P5 阶段统一清理。
 
 ## 核心契约
 
@@ -62,7 +62,7 @@
 
 身份 Store 初始化普通失败时关闭部分连接并返回 resolver-only Runtime；取消继续传播。关闭由 Runtime 幂等释放 Store，不启动独立 worker，也不在关闭期同步名称。
 
-依赖方向为 `event_handler/composition` → `core/identity` 运行时适配层 → `core/features/identity`。feature owner 不得反向导入旧适配层；两者都不得导入 Page API、命令、handler 或 `main.py`，`memory.py` 对 Store 只使用类型边界与构造注入。
+依赖方向为 `event_handler/composition` → `core/features/identity`（运行时、会话同步与记忆增强已迁入 feature 的 application 层）。feature owner 不得反向导入旧适配层；`core/identity/` 的 re-export 只能指向 feature，两者都不得导入 Page API、命令、handler 或 `main.py`，enricher 对 Store 只使用类型边界与构造注入。
 
 ## 验证入口
 

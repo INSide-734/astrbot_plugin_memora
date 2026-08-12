@@ -53,7 +53,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "session_manager": _ownership(
         "session_manager",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.conversation_manager",
+        "core.features.conversation.application.conversation_manager",
     ),
     "recall_engine": _ownership(
         "recall_engine", ConfigOwnershipKind.RUNTIME, "core.handlers.recall_handler"
@@ -61,7 +61,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "importance_decay": _ownership(
         "importance_decay",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.decay_operations",
+        "core.features.decay.application.operations",
     ),
     "fusion_strategy": _ownership(
         "fusion_strategy",
@@ -106,7 +106,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "backup_settings": _ownership(
         "backup_settings",
         ConfigOwnershipKind.RUNTIME,
-        "core.schedulers.decay_scheduler",
+        "core.features.decay.application.scheduler",
     ),
     "write_reliability": _ownership(
         "write_reliability",

@@ -12,20 +12,24 @@ from astrbot.api.star import Context
 
 from ...base.feature_config import is_jargon_discovery_enabled
 from ...features.backfill.application import BackfillScheduler
+from ...features.conversation.application.conversation_manager import (
+    ConversationManager,
+)
 from ...features.decay.application import DecayScheduler
+from ...features.identity.application.runtime import ProtocolIdentityRuntime
 from ...features.memory.infrastructure.validators import IndexValidator
 from ...features.observability.application import MemoryQualityScorer
 from ...features.observability.infrastructure.debug_reporter import (
     report_debug_event,
     report_debug_exception,
 )
-from ...identity.runtime import ProtocolIdentityRuntime
+from ...features.quality.application.memory_quality_gate import MemoryQualityGate
+from ...features.quality.infrastructure.quarantine_store import (
+    MemoryQuarantineStore,
+)
 from ...injection.recorder import InjectionDecisionRecorder
-from ...managers.conversation_manager import ConversationManager
 from ...managers.memory_engine import MemoryEngine
 from ...processors.memory_processor import MemoryProcessor
-from ...review.memory_quality_gate import MemoryQualityGate
-from ...review.quarantine_store import MemoryQuarantineStore
 from ...shared.contracts import PromptProtectionPort
 from ...shared.errors import InitializationError
 from ...storage.injection_decision_store import InjectionDecisionStore

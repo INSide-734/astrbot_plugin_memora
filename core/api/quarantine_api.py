@@ -9,7 +9,9 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..review.memory_quality_gate import QuarantineApprovalPendingError
+from ..features.quality.application.memory_quality_gate import (
+    QuarantineApprovalPendingError,
+)
 from .response_utils import error_response
 
 _VALID_STATUSES = {"pending", "approving", "approved", "rejected", "blocked"}

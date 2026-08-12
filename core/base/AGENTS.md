@@ -70,7 +70,6 @@ flowchart LR
 | `../platform/config/runtime_effects.py` | `RuntimeConfigEffect`、`classify_config_effects()` | 非空保存保守要求重启；时序/因果图边变更还要求重建图派生数据 |
 | `feature_config.py` | `AgentToolsConfig`、`JargonConfig`、`DashboardConfig`、`is_jargon_discovery_enabled()` | 轻量功能开关与 Dashboard 构建配置；黑话发现缺少有效配置时遵循调用方的兼容边界，正常插件运行时默认关闭 |
 | `../platform/config/manager.py` | `ConfigManager`、`ConfigApplyResult`、配置事务异常 | revision 是规范化 JSON 的 SHA-256；结果中的 `changed_paths` 排序且不可变；旧 base 与 core 根配置管理入口已删除 |
-| `config_defaults.py` | 默认值维护说明 | 新键必须同步 Pydantic 模型、根级 `_conf_schema.json` 与访问处默认值 |
 | `../shared/constants.py` | `MEMORY_INJECTION_HEADER/FOOTER`、`FAKE_TOOL_CALL_NAME/ID_PREFIX` | 边界和伪调用标识同时被格式化器、清理器与测试依赖，不可单边改名 |
 | `../shared/errors.py` | `MemoraException` 及 16 个语义子类 | `message` 与稳定 `error_code` 是上层错误映射契约；`core` 根门面保留 8 个常用异常的恒等导出 |
 | `../shared/entity_editing.py` | `compute_entity_revision()`、编辑异常族 | revision 使用排序、紧凑、禁 NaN 的 JSON；该异常族独立于 `MemoraException` |

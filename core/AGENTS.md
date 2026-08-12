@@ -134,7 +134,7 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 - [`cleaners/AGENTS.md`](cleaners/AGENTS.md)
 - [`commands/AGENTS.md`](commands/AGENTS.md)
 - [`dedup/AGENTS.md`](dedup/AGENTS.md)
-- [`diagnostics/AGENTS.md`](diagnostics/AGENTS.md)
+- [`diagnostics/AGENTS.md`](diagnostics/AGENTS.md)（已退役目录导航）
 - [`evaluation/AGENTS.md`](evaluation/AGENTS.md)
 - [`expression/AGENTS.md`](expression/AGENTS.md)
 - [`extractors/AGENTS.md`](extractors/AGENTS.md)
@@ -145,7 +145,7 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 - [`jargon/AGENTS.md`](jargon/AGENTS.md)
 - [`managers/AGENTS.md`](managers/AGENTS.md)
 - [`models/AGENTS.md`](models/AGENTS.md)
-- [`monitoring/AGENTS.md`](monitoring/AGENTS.md)
+- [`monitoring/AGENTS.md`](monitoring/AGENTS.md)（已退役目录导航）
 - [`processors/AGENTS.md`](processors/AGENTS.md)
 - [`retrieval/AGENTS.md`](retrieval/AGENTS.md)
 - [`review/AGENTS.md`](review/AGENTS.md)

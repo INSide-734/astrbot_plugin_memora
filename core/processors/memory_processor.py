@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
+from ..features.identity.application.enricher import build_memory_identity_context
 from ..features.memory.domain.memory_atom import MemoryAtom
-from ..identity.memory import build_memory_identity_context
 from ..models.conversation_models import Message
 from ..security.guardrails import (
     MemoryExtractionResult,

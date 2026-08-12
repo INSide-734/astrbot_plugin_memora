@@ -37,7 +37,7 @@ erDiagram
 
 ## 模型清单与不变量
 
-### `conversation_models.py`
+### `conversation_models.py`（已迁至 `core/features/conversation/domain/models.py`）
 
 - `Message`：必填 `id/session_id/role/content/sender_id`。`content_to_text()` 规范化 AstrBot 风格的字符串、标量、嵌套列表/字典消息段；仅媒体内容回退为 `[图片消息]`。`to_dict()` 总是输出文本内容。
 - `Message.format_for_llm()`：私聊保留原角色和文本；群聊根据 `metadata["is_bot_message"]` 或 `role == "assistant"` 生成带发送者 ID 和本地时间的前缀。

@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import ProviderRequest
 
-    from ..identity.memory import MemoryIdentityEnricher
+    from ..features.identity.application.enricher import MemoryIdentityEnricher
     from ..injection.recorder import InjectionDecisionRecorder
     from ..shared.contracts import PromptProtectionPort
     from ..utils.injection_adapter import InjectionAdapter

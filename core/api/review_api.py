@@ -14,8 +14,8 @@ from quart import request
 
 from ..features.learning.application import record_explicit_correction
 from ..features.learning.domain.models import FeedbackOutcome
-from ..review import ReviewAction, ReviewDetector, ReviewStore
-from ..review.models import ReviewStatus
+from ..features.quality import ReviewAction, ReviewDetector, ReviewStore
+from ..features.quality.domain.models import ReviewStatus
 from ..storage.base import apply_perf_pragmas
 
 _ACTION_STATUS = {
