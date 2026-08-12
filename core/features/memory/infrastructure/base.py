@@ -10,30 +10,11 @@ from typing import Any
 
 import aiosqlite
 
+from ....shared.sql import apply_perf_pragmas
+
 # ---------------------------------------------------------------------------
-# 共享 SQLite 性能 PRAGMA —— 单一事实来源
-# ---------------------------------------------------------------------------
-
-_PERF_PRAGMAS: tuple[str, ...] = (
-    "PRAGMA foreign_keys = ON",
-    "PRAGMA journal_mode = WAL",
-    "PRAGMA synchronous = NORMAL",
-    "PRAGMA busy_timeout = 30000",
-    "PRAGMA cache_size = -65536",  # 64 MB page cache
-    "PRAGMA temp_store = MEMORY",
-    "PRAGMA mmap_size = 268435456",  # 256 MB memory-mapped I/O
-)
-
-
-async def apply_perf_pragmas(conn: aiosqlite.Connection) -> None:
-    """将共享性能 PRAGMA 设置应用到 `conn`。
-
-    每条 PRAGMA 均为固定语句，不接受调用方提供的标识符或值。
-    """
-    for statement in _PERF_PRAGMAS:
-        await conn.execute(statement)
-
-
+# 共享 SQLite 性能 PRAGMA 的单一事实来源已下沉到 ``core.shared.sql``；
+# 本模块保留 ``apply_perf_pragmas`` 的 re-export 以兼容历史调用方。
 # ---------------------------------------------------------------------------
 
 
