@@ -6,10 +6,10 @@ import json
 from dataclasses import field
 from typing import Any
 
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
+
+from .function_tool import AgentFunctionTool
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -71,12 +71,12 @@ def _format_relation(rel: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Tool: 查询用户关系
+# 查询用户关系工具
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class RelationLookupTool(FunctionTool[AstrAgentContext]):
+class RelationLookupTool(AgentFunctionTool):
     """查询用户社交关系。Agent 可主动调用以了解用户间的关系类型、亲密度和交互频率。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -115,19 +115,29 @@ class RelationLookupTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         user_id: str = "",
         group_id: str = "",
-    ) -> ToolExecResult:
+    ) -> str:
+        """查询当前群组内指定用户的社交关系。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            user_id: 可选用户 ID。
+            group_id: 可选群组 ID。
+
+        Returns:
+            包含社交关系或稳定错误码的 JSON 文本。
+        """
+
         user_id = (user_id or "").strip()
         group_id = (group_id or "").strip()
 
         # 自动从事件上下文解析
         if not user_id:
             try:
-                event = context.context.event
                 if hasattr(event, "get_sender_id"):
                     user_id = str(event.get_sender_id() or "")
                 if not user_id:
@@ -137,7 +147,7 @@ class RelationLookupTool(FunctionTool[AstrAgentContext]):
 
         if not group_id:
             try:
-                group_id = str(getattr(context.context.event, "unified_msg_origin", ""))
+                group_id = str(getattr(event, "unified_msg_origin", ""))
             except Exception:
                 pass
 
@@ -208,12 +218,12 @@ class RelationLookupTool(FunctionTool[AstrAgentContext]):
 
 
 # ---------------------------------------------------------------------------
-# Tool: 群组关系图谱
+# 群组关系图谱工具
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class RelationGraphTool(FunctionTool[AstrAgentContext]):
+class RelationGraphTool(AgentFunctionTool):
     """列出群组内所有社交关系，按强度排序。Agent 可主动调用以了解群组整体社交动态。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -244,17 +254,27 @@ class RelationGraphTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         group_id: str = "",
-    ) -> ToolExecResult:
+    ) -> str:
+        """列出当前群组的社交关系图谱。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            group_id: 可选群组 ID。
+
+        Returns:
+            包含按强度排序关系或稳定错误码的 JSON 文本。
+        """
+
         group_id = (group_id or "").strip()
 
-        # 自动从事件上下文解析 group_id
+        # 缺少显式群组标识时从当前事件解析。
         if not group_id:
             try:
-                group_id = str(getattr(context.context.event, "unified_msg_origin", ""))
+                group_id = str(getattr(event, "unified_msg_origin", ""))
             except Exception:
                 pass
 

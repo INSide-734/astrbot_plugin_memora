@@ -13,13 +13,14 @@ import aiosqlite
 import pytest
 from astrbot.api.platform import MessageType
 
-from core.base.config_manager import ConfigApplyResult, ConfigManager
 from core.base.config_validator import get_default_config, validate_config
 from core.managers.decay_operations import DecayOperationsMixin
 from core.managers.memory_engine import MemoryEngine
 from core.managers.retrieval_optimizer import RetrievalOptimizer
 from core.platform.composition.component_factory import ComponentFactory
 from core.platform.config import (
+    ConfigApplyResult,
+    ConfigManager,
     ConfigOwnershipKind,
     resolve_config_ownership,
 )
@@ -28,6 +29,7 @@ from core.processors.memory_processor import MemoryProcessor
 from core.retrieval.rrf_fusion import FusedResult, HybridResult
 from core.retrieval.score_weighting import ScoreWeighting
 from core.tools.memory_search_tool import MemorySearchTool
+from tests.tool_contract_support import call_text_handler
 
 
 def _build_engine_config(values: dict[str, object]) -> dict[str, object]:
@@ -555,14 +557,14 @@ async def test_type_aware_decay_uses_only_the_public_dotted_key() -> None:
     assert enabled["EPISODIC"] < enabled["FACTUAL"]
 
 
-def _tool_context() -> MagicMock:
-    """构造 MemorySearchTool 所需的最小工具上下文。"""
+def _tool_event() -> MagicMock:
+    """构造 MemorySearchTool 所需的最小消息事件。"""
 
     event = MagicMock(unified_msg_origin="session-1")
     event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
     event.get_sender_id.return_value = "user-1"
     event.get_extra.return_value = SimpleNamespace(trust_status="unsupported")
-    return MagicMock(context=SimpleNamespace(event=event))
+    return event
 
 
 @pytest.mark.asyncio
@@ -585,7 +587,11 @@ async def test_memory_search_formatter_mode_can_return_structured_only() -> None
         ),
         memory_engine=engine,
     )
-    disabled_result = await disabled_tool.call(_tool_context(), query="拿铁")
+    disabled_result = await call_text_handler(
+        disabled_tool,
+        _tool_event(),
+        query="拿铁",
+    )
     assert isinstance(disabled_result, str)
     disabled_data = json.loads(disabled_result)
     assert disabled_data["results"]
@@ -598,7 +604,11 @@ async def test_memory_search_formatter_mode_can_return_structured_only() -> None
         ),
         memory_engine=engine,
     )
-    rule_result = await rule_tool.call(_tool_context(), query="拿铁")
+    rule_result = await call_text_handler(
+        rule_tool,
+        _tool_event(),
+        query="拿铁",
+    )
     assert isinstance(rule_result, str)
     rule_data = json.loads(rule_result)
     assert rule_data["formatted_recall"]

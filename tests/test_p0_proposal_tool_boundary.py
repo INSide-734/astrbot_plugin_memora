@@ -63,7 +63,7 @@ async def test_memorize_call_rejects_update_delete_arguments() -> None:
     )
 
     with pytest.raises(TypeError):
-        await cast(Any, tool.call)(
+        await cast(Any, tool.handler)(
             MagicMock(),
             memory="尝试覆盖已有记忆",
             memory_id=17,

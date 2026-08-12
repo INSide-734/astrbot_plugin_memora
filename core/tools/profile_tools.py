@@ -8,10 +8,10 @@ import json
 from dataclasses import field
 from typing import Any
 
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
+
+from .function_tool import AgentFunctionTool
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -20,7 +20,7 @@ def _json_result(data: dict[str, Any]) -> str:
 
 
 @dataclass
-class ProfileLookupTool(FunctionTool[AstrAgentContext]):
+class ProfileLookupTool(AgentFunctionTool):
     """查询用户画像。Agent 可主动调用以了解当前用户的标签、偏好和交互统计。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -54,14 +54,22 @@ class ProfileLookupTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         user_id: str = "",
-    ) -> ToolExecResult:
-        """按可信事件身份查询画像，并对跨用户目标执行显式授权。"""
+    ) -> str:
+        """按可信事件身份查询画像，并对跨用户目标执行显式授权。
 
-        event, trusted_user_id = self._trusted_event_identity(context)
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            user_id: 可选目标用户 ID；跨用户读取必须显式授权。
+
+        Returns:
+            包含画像数据、未命中状态或稳定错误码的 JSON 文本。
+        """
+
+        trusted_event, trusted_user_id = self._trusted_event_identity(event)
         if not trusted_user_id:
             return _json_result(
                 {
@@ -72,7 +80,7 @@ class ProfileLookupTool(FunctionTool[AstrAgentContext]):
         requested_user_id = (user_id or "").strip()
         user_id = requested_user_id or trusted_user_id
         if user_id != trusted_user_id and not await self._is_authorized_target(
-            event,
+            trusted_event,
             trusted_user_id,
             user_id,
         ):
@@ -121,7 +129,7 @@ class ProfileLookupTool(FunctionTool[AstrAgentContext]):
                 }
             )
 
-        # 每个分类只取 top 5 高置信度标签
+        # 每个分类只取置信度最高的五个标签。
         for cat in tags_by_category:
             tags_by_category[cat].sort(key=lambda t: t["confidence"], reverse=True)
             tags_by_category[cat] = tags_by_category[cat][:5]
@@ -150,12 +158,11 @@ class ProfileLookupTool(FunctionTool[AstrAgentContext]):
 
     @staticmethod
     def _trusted_event_identity(
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
     ) -> tuple[Any | None, str]:
         """从当前 AstrBot 事件取得发送者身份，不使用会话 ID 回退。"""
 
         try:
-            event = context.context.event
             getter = getattr(event, "get_sender_id", None)
             if not callable(getter):
                 return event, ""

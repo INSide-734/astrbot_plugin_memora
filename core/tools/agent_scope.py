@@ -5,9 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from astrbot.api.event import AstrMessageEvent
 from astrbot.api.platform import MessageType
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.astr_agent_context import AstrAgentContext
 
 _RESOLVED_IDENTITY_EVENT_EXTRA = "memora.resolved_identity"
 
@@ -22,13 +21,12 @@ class AgentReadScope:
 
 
 def resolve_agent_read_scope(
-    context: ContextWrapper[AstrAgentContext],
+    event: AstrMessageEvent,
     *,
     require_user_id: bool = True,
 ) -> AgentReadScope | None:
     """从当前事件提取会话、发送者和聊天类型；按调用方要求校验用户标识。"""
 
-    event = getattr(getattr(context, "context", None), "event", None)
     session_id = _normalized_text(getattr(event, "unified_msg_origin", None))
     user_id = _event_user_id(event)
     chat_type = _event_chat_type(event)

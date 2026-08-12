@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.tools.profile_tools import ProfileLookupTool
+from tests.tool_contract_support import call_text_handler
 
 # ---------------------------------------------------------------------------
 # 测试辅助
@@ -35,6 +36,8 @@ def _make_mock_profile(
     display_name: str = "TestUser",
     tags: list[MagicMock] | None = None,
 ) -> MagicMock:
+    """构造包含标签、偏好和统计数据的最小画像替身。"""
+
     profile = MagicMock()
     profile.user_id = user_id
     profile.display_name = display_name
@@ -60,19 +63,14 @@ def _make_mock_profile(
 
 
 def _make_mock_context(user_id_from_event: str | None = "event-user-99") -> MagicMock:
-    """构造兼容 ``ContextWrapper`` 的当前事件替身。"""
+    """构造公开工具 handler 所需的当前事件替身。"""
     event = MagicMock()
     if user_id_from_event:
         event.get_sender_id.return_value = user_id_from_event
     else:
         del event.get_sender_id  # 模拟事件不提供可信发送者方法
 
-    inner_ctx = MagicMock()
-    inner_ctx.event = event
-
-    wrapper = MagicMock()
-    wrapper.context = inner_ctx
-    return wrapper
+    return event
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +100,11 @@ class TestProfileLookupTool:
         mock_mgr.get_tag_weights = AsyncMock(return_value={"Python": 0.9, "AI": 0.7})
 
         tool = ProfileLookupTool(profile_manager=mock_mgr)
-        result = await tool.call(_make_mock_context("user-42"), user_id="user-42")
+        result = await call_text_handler(
+            tool,
+            _make_mock_context("user-42"),
+            user_id="user-42",
+        )
 
         data = json.loads(result)
         assert data["user_id"] == "user-42"
@@ -128,7 +130,11 @@ class TestProfileLookupTool:
         mock_mgr.get_tag_weights = AsyncMock(return_value={})
 
         tool = ProfileLookupTool(profile_manager=mock_mgr)
-        result = await tool.call(_make_mock_context("event-user-99"), user_id="")
+        result = await call_text_handler(
+            tool,
+            _make_mock_context("event-user-99"),
+            user_id="",
+        )
 
         data = json.loads(result)
         assert data["user_id"] == "event-user-99"
@@ -141,9 +147,9 @@ class TestProfileLookupTool:
         tool = ProfileLookupTool(profile_manager=MagicMock())
         # 事件没有发送者方法，同时调用方没有目标参数。
         ctx = _make_mock_context(user_id_from_event=None)
-        ctx.context.event.unified_msg_origin = ""
+        ctx.unified_msg_origin = ""
 
-        result = await tool.call(ctx, user_id="")
+        result = await call_text_handler(tool, ctx, user_id="")
 
         data = json.loads(result)
         assert data["found"] is False
@@ -153,7 +159,11 @@ class TestProfileLookupTool:
     async def test_lookup_manager_not_available(self):
         """画像管理器不可用时返回稳定错误。"""
         tool = ProfileLookupTool(profile_manager=None)
-        result = await tool.call(_make_mock_context("user-1"), user_id="user-1")
+        result = await call_text_handler(
+            tool,
+            _make_mock_context("user-1"),
+            user_id="user-1",
+        )
 
         data = json.loads(result)
         assert data["found"] is False
@@ -166,8 +176,10 @@ class TestProfileLookupTool:
         mock_mgr.get_profile = AsyncMock(return_value=None)
 
         tool = ProfileLookupTool(profile_manager=mock_mgr)
-        result = await tool.call(
-            _make_mock_context("nonexistent"), user_id="nonexistent"
+        result = await call_text_handler(
+            tool,
+            _make_mock_context("nonexistent"),
+            user_id="nonexistent",
         )
 
         data = json.loads(result)
@@ -181,7 +193,11 @@ class TestProfileLookupTool:
         mock_mgr.get_profile = AsyncMock(side_effect=RuntimeError("DB down"))
 
         tool = ProfileLookupTool(profile_manager=mock_mgr)
-        result = await tool.call(_make_mock_context("user-1"), user_id="user-1")
+        result = await call_text_handler(
+            tool,
+            _make_mock_context("user-1"),
+            user_id="user-1",
+        )
 
         data = json.loads(result)
         assert data["found"] is False
@@ -200,7 +216,7 @@ class TestProfileLookupTool:
         mock_mgr.get_tag_weights = AsyncMock(return_value={})
 
         tool = ProfileLookupTool(profile_manager=mock_mgr)
-        result = await tool.call(_make_mock_context("u1"), user_id="u1")
+        result = await call_text_handler(tool, _make_mock_context("u1"), user_id="u1")
 
         data = json.loads(result)
         interest_tags = data["tags_by_category"]["interest"]
@@ -220,7 +236,7 @@ class TestProfileLookupTool:
         )
 
         tool = ProfileLookupTool(profile_manager=mock_mgr)
-        result = await tool.call(_make_mock_context("u1"), user_id="u1")
+        result = await call_text_handler(tool, _make_mock_context("u1"), user_id="u1")
 
         data = json.loads(result)
         assert data["found"] is True

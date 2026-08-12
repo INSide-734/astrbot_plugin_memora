@@ -6,16 +6,15 @@ import re
 from dataclasses import field
 from typing import Any
 
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
 from .agent_scope import resolve_agent_read_scope
+from .function_tool import AgentFunctionTool
 
 
 @dataclass
-class NoteSearchTool(FunctionTool[AstrAgentContext]):
+class NoteSearchTool(AgentFunctionTool):
     """搜索笔记。Agent 可主动调用以查找已记录的笔记内容。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -41,19 +40,28 @@ class NoteSearchTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         query: str,
         limit: int = 10,
-    ) -> ToolExecResult:
-        """在当前事件作用域中搜索可见笔记。"""
+    ) -> str:
+        """在当前事件作用域中搜索可见笔记。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            query: 笔记检索关键词。
+            limit: 最大返回条目数。
+
+        Returns:
+            人类可读的匹配结果或稳定错误文本。
+        """
 
         mgr = self.note_manager
         if mgr is None:
             return "Error: note_manager not available"
 
-        read_scope = resolve_agent_read_scope(context)
+        read_scope = resolve_agent_read_scope(event)
         if read_scope is None:
             return "Error: note scope is unavailable"
 
@@ -72,7 +80,7 @@ class NoteSearchTool(FunctionTool[AstrAgentContext]):
 
 
 @dataclass
-class NoteReadTool(FunctionTool[AstrAgentContext]):
+class NoteReadTool(AgentFunctionTool):
     """读取笔记完整内容。Agent 可主动调用以获取笔记详情。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -91,18 +99,26 @@ class NoteReadTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         note_id: int = 0,
-    ) -> ToolExecResult:
-        """在当前事件作用域中读取单条可见笔记。"""
+    ) -> str:
+        """在当前事件作用域中读取单条可见笔记。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            note_id: 待读取的笔记 ID。
+
+        Returns:
+            笔记正文或稳定错误文本。
+        """
 
         mgr = self.note_manager
         if mgr is None:
             return "Error: note_manager not available"
 
-        read_scope = resolve_agent_read_scope(context)
+        read_scope = resolve_agent_read_scope(event)
         if read_scope is None:
             return "Error: note scope is unavailable"
 
@@ -120,7 +136,7 @@ class NoteReadTool(FunctionTool[AstrAgentContext]):
 
 
 @dataclass
-class NoteWriteTool(FunctionTool[AstrAgentContext]):
+class NoteWriteTool(AgentFunctionTool):
     """创建或更新笔记。Agent 可主动调用以记录或修改笔记内容。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -152,15 +168,26 @@ class NoteWriteTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         title: str,
         content: str,
         note_id: int | None = None,
         tags: list[str] | None = None,
-    ) -> ToolExecResult:
-        """在当前事件作用域中创建或更新人工笔记。"""
+    ) -> str:
+        """在当前事件作用域中创建或更新人工笔记。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            title: 笔记标题。
+            content: Markdown 笔记正文。
+            note_id: 更新已有笔记时提供的 ID。
+            tags: 可选标签列表。
+
+        Returns:
+            创建、更新或校验失败的稳定文本结果。
+        """
 
         mgr = self.note_manager
         if mgr is None:
@@ -170,7 +197,7 @@ class NoteWriteTool(FunctionTool[AstrAgentContext]):
         if validation_error:
             return f"Error: {validation_error}"
 
-        read_scope = resolve_agent_read_scope(context)
+        read_scope = resolve_agent_read_scope(event)
         if read_scope is None:
             return "Error: note scope is unavailable"
 
@@ -203,6 +230,17 @@ class NoteWriteTool(FunctionTool[AstrAgentContext]):
         content: str,
         tags: list[str] | None,
     ) -> str | None:
+        """校验笔记标题、正文和标签的公开工具输入限制。
+
+        Args:
+            title: 待校验的笔记标题。
+            content: 待校验的笔记正文。
+            tags: 可选标签列表。
+
+        Returns:
+            校验成功时返回 ``None``，否则返回稳定错误文本。
+        """
+
         if not isinstance(title, str) or not title.strip():
             return "title is required"
         if len(title.strip()) > 120:

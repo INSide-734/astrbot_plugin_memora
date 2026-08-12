@@ -10,15 +10,14 @@ import json
 from dataclasses import field
 from typing import Any
 
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
 from ..affection.affection_manager import AffectionManager
 from ..affection.models import AffectionLevel
+from .function_tool import AgentFunctionTool
 
-# ---- Display names for affection levels ------------------------------------------------
+# ---- 好感度等级显示名称 ---------------------------------------------------------------
 
 _LEVEL_DISPLAY: dict[AffectionLevel, str] = {
     AffectionLevel.HOSTILE: "敌对",
@@ -37,25 +36,29 @@ def _json_result(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
-# ---- Helper: context resolution --------------------------------------------------------
+# ---- 事件身份解析辅助 -----------------------------------------------------------------
 
 
 def _resolve_ids(
-    context: ContextWrapper[AstrAgentContext],
+    event: AstrMessageEvent,
     user_id: str,
     group_id: str,
 ) -> tuple[str, str]:
-    """当 user_id 和 group_id 为空时从事件上下文中自动解析。
+    """当用户或群组标识为空时从当前事件中自动解析。
 
-    返回:
-        (已解析的 user_id, 已解析的 group_id) 元组。
+    Args:
+        event: AstrBot 注入的当前消息事件。
+        user_id: 可选用户 ID。
+        group_id: 可选群组 ID。
+
+    Returns:
+        已解析的用户 ID 与群组 ID。
     """
     user_id = (user_id or "").strip()
     group_id = (group_id or "").strip()
 
     if not user_id or not group_id:
         try:
-            event = context.context.event
             if not user_id and hasattr(event, "get_sender_id"):
                 user_id = str(event.get_sender_id() or "")
             if not group_id and hasattr(event, "unified_msg_origin"):
@@ -66,11 +69,11 @@ def _resolve_ids(
     return user_id, group_id
 
 
-# ---- AffectionCheckTool ----------------------------------------------------------------
+# ---- 好感度查询工具 --------------------------------------------------------------------
 
 
 @dataclass
-class AffectionCheckTool(FunctionTool[AstrAgentContext]):
+class AffectionCheckTool(AgentFunctionTool):
     """查询用户与 Bot 之间的好感度。Agent 可主动调用以了解用户关系级别。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -108,13 +111,24 @@ class AffectionCheckTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         user_id: str = "",
         group_id: str = "",
-    ) -> ToolExecResult:
-        user_id, group_id = _resolve_ids(context, user_id, group_id)
+    ) -> str:
+        """查询当前作用域内用户与 Bot 的好感度。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            user_id: 可选用户 ID。
+            group_id: 可选群组 ID。
+
+        Returns:
+            包含好感度、情绪或稳定错误码的 JSON 文本。
+        """
+
+        user_id, group_id = _resolve_ids(event, user_id, group_id)
 
         mgr: AffectionManager | None = self.affection_manager
         if mgr is None:
@@ -183,11 +197,11 @@ class AffectionCheckTool(FunctionTool[AstrAgentContext]):
         )
 
 
-# ---- BotMoodTool -----------------------------------------------------------------------
+# ---- Bot 情绪查询工具 ------------------------------------------------------------------
 
 
 @dataclass
-class BotMoodTool(FunctionTool[AstrAgentContext]):
+class BotMoodTool(AgentFunctionTool):
     """查询 Bot 当前情绪状态。Agent 可主动调用以了解 Bot 的心情。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -217,12 +231,22 @@ class BotMoodTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         group_id: str = "",
-    ) -> ToolExecResult:
-        _, group_id = _resolve_ids(context, "", group_id)
+    ) -> str:
+        """查询当前作用域内 Bot 的群组情绪状态。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            group_id: 可选群组 ID。
+
+        Returns:
+            包含情绪状态或稳定错误码的 JSON 文本。
+        """
+
+        _, group_id = _resolve_ids(event, "", group_id)
 
         mgr: AffectionManager | None = self.affection_manager
         if mgr is None:

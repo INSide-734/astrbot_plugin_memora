@@ -8,7 +8,7 @@
 
 ## 职责边界
 
-本目录把已有 manager/engine 能力封装为 AstrBot `FunctionTool[AstrAgentContext]`。工具定义负责稳定的 `name`、英文 `description`、JSON Schema `parameters`、会话上下文解析和面向模型的结果；真正的检索、写入与领域规则仍在 engine/manager。工具不是 Page API，也不承担插件级权限认证。
+本目录把已有 manager/engine 能力封装为 AstrBot 公开 `FunctionTool(handler=...)`。工具定义负责稳定的 `name`、英文 `description`、JSON Schema `parameters`、会话上下文解析和面向模型的结果；真正的检索、写入与领域规则仍在 engine/manager。工具不是 Page API，也不承担插件级权限认证。
 
 ```mermaid
 flowchart TD
@@ -17,10 +17,10 @@ flowchart TD
     FD[FeatureDelegation] --> REG
     REG --> ADD[context.add_llm_tools]
     ADD --> TS[ToolSet]
-    TS --> CALL[FunctionTool.call]
-    CALL --> CTX[ContextWrapper / event]
-    CALL --> DOMAIN[MemoryEngine / Managers / Services]
-    DOMAIN --> OUT[ToolExecResult 文本或 JSON]
+    TS --> HANDLER[FunctionTool.handler]
+    HANDLER --> EVENT[AstrMessageEvent]
+    HANDLER --> DOMAIN[MemoryEngine / Managers / Services]
+    DOMAIN --> OUT[文本或 JSON]
 ```
 
 ## 公共工具清单
@@ -39,7 +39,7 @@ flowchart TD
 | `recall_expressions` | `ExpressionRecallTool` | `ExpressionPatternLearner` | JSON |
 | `lookup_relations` / `list_group_relations` | `RelationLookupTool` / `RelationGraphTool` | `RelationManager` | JSON |
 
-类采用 `pydantic.dataclasses.dataclass`，依赖为可注入字段；`call()` 必须是异步方法并接收 `ContextWrapper[AstrAgentContext]`。
+类采用 `pydantic.dataclasses.dataclass`，继承 `AgentFunctionTool`，并由共享基类把异步 `_run(event, ...)` 绑定到公开 `FunctionTool.handler`；生产代码不得导入 `astrbot.core.agent` 或 `AstrAgentContext`。
 
 ## 注册与启用规则
 
@@ -85,7 +85,7 @@ flowchart TD
 
 ## 依赖方向
 
-`main.py` → 本目录 → `base`、`processors` 与各领域 manager/service。工具不得导入 `main.py`、Page API 或命令。工具的注册开关属于根插件装配，不在各工具内部重复读取（记忆搜索过滤配置除外）。
+`main.py` → 本目录 → `platform/config`、`processors` 与各领域 manager/service。工具不得导入 `main.py`、Page API 或命令。工具的注册开关属于根插件装配，不在各工具内部重复读取（记忆搜索过滤配置除外）。
 
 ## 测试定位与精确验证
 

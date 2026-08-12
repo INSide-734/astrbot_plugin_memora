@@ -6,12 +6,11 @@ import json
 from dataclasses import field
 from typing import Any
 
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
 from ..jargon.jargon_query import JargonQueryService
+from .function_tool import AgentFunctionTool
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -19,20 +18,19 @@ def _json_result(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
-def _resolve_group_id(context: ContextWrapper[AstrAgentContext], group_id: str) -> str:
-    """通过 context 自动解析 group_id。"""
+def _resolve_group_id(event: AstrMessageEvent, group_id: str) -> str:
+    """优先使用显式群组标识，否则从当前事件解析会话标识。"""
     gid = (group_id or "").strip()
     if gid:
         return gid
     try:
-        event = context.context.event
         return str(getattr(event, "unified_msg_origin", ""))
     except Exception:
         return ""
 
 
 @dataclass
-class JargonExplainTool(FunctionTool[AstrAgentContext]):
+class JargonExplainTool(AgentFunctionTool):
     """解释群组黑话/俚语。Agent 可主动调用以理解群内的特殊缩写和暗语。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -63,16 +61,27 @@ class JargonExplainTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         term: str,
         group_id: str = "",
-    ) -> ToolExecResult:
+    ) -> str:
+        """解释当前群组内的指定黑话词条。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            term: 待解释的黑话词条。
+            group_id: 可选群组 ID。
+
+        Returns:
+            包含解释结果或稳定错误码的 JSON 文本。
+        """
+
         import asyncio
 
         term = (term or "").strip()
-        group_id = _resolve_group_id(context, group_id)
+        group_id = _resolve_group_id(event, group_id)
 
         if not term:
             return _json_result(
@@ -120,7 +129,7 @@ class JargonExplainTool(FunctionTool[AstrAgentContext]):
 
 
 @dataclass
-class JargonListTool(FunctionTool[AstrAgentContext]):
+class JargonListTool(AgentFunctionTool):
     """列出群组所有已确认黑话。Agent 可主动调用以了解群组的特殊词汇表。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -146,14 +155,24 @@ class JargonListTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         group_id: str = "",
-    ) -> ToolExecResult:
+    ) -> str:
+        """列出当前群组内已确认的黑话词条。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            group_id: 可选群组 ID。
+
+        Returns:
+            包含词条列表或稳定错误码的 JSON 文本。
+        """
+
         import asyncio
 
-        group_id = _resolve_group_id(context, group_id)
+        group_id = _resolve_group_id(event, group_id)
 
         if not group_id:
             return _json_result(

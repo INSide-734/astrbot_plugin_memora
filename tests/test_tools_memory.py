@@ -1,4 +1,4 @@
-"""测试 core/tools/memory_search_tool.py and memory_memorize_tool.py."""
+"""测试长期记忆搜索与主动写入工具。"""
 
 from __future__ import annotations
 
@@ -11,26 +11,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from astrbot.api.platform import MessageType
 
-from core.base.config_manager import ConfigManager
 from core.features.identity.infrastructure.protocols import ProtocolIdentityResolver
+from core.platform.config import ConfigManager
 from core.tools.memory_memorize_tool import MemoryMemorizeTool
 from core.tools.memory_search_tool import MemorySearchTool
+from tests.tool_contract_support import call_text_handler
 
 # ---------------------------------------------------------------------------
-# Helpers
+# 测试辅助
 # ---------------------------------------------------------------------------
 
 
-async def _call_text(tool: Any, *args: Any, **kwargs: Any) -> str:
-    """调用具体 Agent 工具，并断言其当前文本返回契约。"""
+async def _call_text(tool: Any, event: Any, **kwargs: Any) -> str:
+    """通过公开 handler 调用 Agent 工具，并断言文本返回契约。"""
 
-    result = await tool.call(*args, **kwargs)
-    assert isinstance(result, str)
-    return result
+    return await call_text_handler(tool, event, **kwargs)
 
 
-def _make_mock_ctx_with_event(session_id: str = "s-001") -> MagicMock:
-    """构建 a ContextWrapper-compatible mock with a nested event."""
+def _make_mock_event(session_id: str = "s-001") -> MagicMock:
+    """构造公开工具 handler 所需的最小消息事件。"""
+
     event = MagicMock()
     event.unified_msg_origin = session_id
     event.get_message_type.return_value = MessageType.GROUP_MESSAGE
@@ -38,16 +38,11 @@ def _make_mock_ctx_with_event(session_id: str = "s-001") -> MagicMock:
     event.session_id = session_id
     event.get_extra.return_value = SimpleNamespace(trust_status="unsupported")
 
-    inner_ctx = MagicMock()
-    inner_ctx.event = event
-
-    wrapper = MagicMock()
-    wrapper.context = inner_ctx
-    return wrapper
+    return event
 
 
-def _make_qq_official_ctx() -> tuple[MagicMock, str]:
-    """构造包含完整证据的 QQ Official C2C Agent 上下文。"""
+def _make_qq_official_event() -> tuple[MagicMock, str]:
+    """构造包含完整身份解析证据的 QQ 官方私聊事件。"""
 
     platform_id = "official-bot-1"
     openid = "OPENID-1"
@@ -67,10 +62,8 @@ def _make_qq_official_ctx() -> tuple[MagicMock, str]:
     event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
     event.get_sender_id.return_value = openid
     event.get_extra.return_value = ProtocolIdentityResolver.default().resolve(event)
-    wrapper = MagicMock()
-    wrapper.context.event = event
     instance_key = hashlib.sha256(platform_id.encode("ascii")).hexdigest()[:24]
-    return wrapper, f"qq-official:{instance_key}:{openid}"
+    return event, f"qq-official:{instance_key}:{openid}"
 
 
 def _make_test_config_manager(
@@ -79,7 +72,7 @@ def _make_test_config_manager(
     use_persona_filtering: bool = True,
     use_session_filtering: bool = True,
 ) -> ConfigManager:
-    """构建 a ConfigManager instance with test-appropriate recall settings."""
+    """构造包含测试所需召回配置的 ConfigManager。"""
     data = {
         "recall_engine": {
             "top_k": top_k,
@@ -99,6 +92,8 @@ def _make_mock_memory_item(
     final_score: float = 0.85,
     metadata: dict | None = None,
 ) -> MagicMock:
+    """构造搜索结果序列化断言所需的最小记忆替身。"""
+
     mem = MagicMock()
     mem.doc_id = doc_id
     mem.content = content
@@ -118,7 +113,7 @@ def _make_mock_memory_item(
 
 
 # ---------------------------------------------------------------------------
-# MemorySearchTool
+# 长期记忆搜索工具
 # ---------------------------------------------------------------------------
 
 
@@ -126,7 +121,7 @@ class TestMemorySearchTool:
     """测试 MemorySearchTool 定义与执行。"""
 
     def test_tool_definition_has_correct_name_and_params(self):
-        """工具 should expose name, description, and parameters schema requiring query."""
+        """工具应公开稳定名称、描述和必需查询参数。"""
         tool = MemorySearchTool()
 
         assert tool.name == "recall_long_term_memory"
@@ -139,7 +134,7 @@ class TestMemorySearchTool:
 
     @pytest.mark.asyncio
     async def test_search_happy_path_returns_memories(self):
-        """当 memory_engine.search_memories() returns results, tool should serialize them."""
+        """引擎返回候选时工具应稳定序列化结果。"""
         mock_engine = MagicMock()
         mock_engine.search_memories = AsyncMock(
             return_value=[
@@ -148,7 +143,7 @@ class TestMemorySearchTool:
             ]
         )
 
-        ctx = _make_mock_ctx_with_event()
+        event = _make_mock_event()
         mock_plugin_ctx = MagicMock()
         mock_plugin_ctx.get_using_provider.return_value = None
 
@@ -166,7 +161,7 @@ class TestMemorySearchTool:
                 config_manager=cm,
                 memory_engine=mock_engine,
             )
-            result = await _call_text(tool, ctx, query="test query", k=3)
+            result = await _call_text(tool, event, query="test query", k=3)
 
         data = json.loads(result)
         assert data["query"] == "test query"
@@ -192,9 +187,7 @@ class TestMemorySearchTool:
             memory_engine=mock_engine,
         )
 
-        await _call_text(
-            tool, _make_mock_ctx_with_event("group:42"), query="private fact"
-        )
+        await _call_text(tool, _make_mock_event("group:42"), query="private fact")
 
         kwargs = mock_engine.search_memories.call_args.kwargs
         assert kwargs["chat_type"] == "group"
@@ -202,7 +195,7 @@ class TestMemorySearchTool:
 
     @pytest.mark.asyncio
     async def test_qq_official_recall_passes_canonical_user_id_to_engine(self):
-        """Agent recall 到引擎边界必须携带实例命名空间 canonical ID。"""
+        """Agent 召回到引擎边界必须携带实例命名空间 canonical ID。"""
 
         mock_engine = MagicMock()
         mock_engine.search_memories = AsyncMock(return_value=[])
@@ -211,9 +204,9 @@ class TestMemorySearchTool:
             config_manager=_make_test_config_manager(),
             memory_engine=mock_engine,
         )
-        context, canonical_user_id = _make_qq_official_ctx()
+        event, canonical_user_id = _make_qq_official_event()
 
-        await _call_text(tool, context, query="private fact")
+        await _call_text(tool, event, query="private fact")
 
         kwargs = mock_engine.search_memories.call_args.kwargs
         assert kwargs["chat_type"] == "private"
@@ -225,15 +218,15 @@ class TestMemorySearchTool:
 
         mock_engine = MagicMock()
         mock_engine.search_memories = AsyncMock(return_value=[])
-        context = _make_mock_ctx_with_event("group:42")
-        context.context.event.get_sender_id.return_value = None
+        event = _make_mock_event("group:42")
+        event.get_sender_id.return_value = None
         tool = MemorySearchTool(
             context=MagicMock(),
             config_manager=_make_test_config_manager(),
             memory_engine=mock_engine,
         )
 
-        result = await _call_text(tool, context, query="private fact")
+        result = await _call_text(tool, event, query="private fact")
 
         assert json.loads(result)["error"] == "event_scope_unavailable"
         mock_engine.search_memories.assert_not_awaited()
@@ -244,29 +237,29 @@ class TestMemorySearchTool:
 
         mock_engine = MagicMock()
         mock_engine.search_memories = AsyncMock(return_value=[])
-        context = _make_mock_ctx_with_event("private:user-42")
-        context.context.event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
-        context.context.event.get_sender_id.return_value = None
+        event = _make_mock_event("private:user-42")
+        event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+        event.get_sender_id.return_value = None
         tool = MemorySearchTool(
             context=MagicMock(),
             config_manager=_make_test_config_manager(),
             memory_engine=mock_engine,
         )
 
-        result = await _call_text(tool, context, query="private fact")
+        result = await _call_text(tool, event, query="private fact")
 
         assert json.loads(result)["error"] == "event_scope_unavailable"
         mock_engine.search_memories.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_search_empty_query_returns_error(self):
-        """工具 should return an error when query is empty or whitespace."""
+        """查询为空或仅含空白时应返回稳定错误。"""
         tool = MemorySearchTool(
             context=MagicMock(),
             config_manager=_make_test_config_manager(),
             memory_engine=MagicMock(),
         )
-        result = await _call_text(tool, _make_mock_ctx_with_event(), query="   ")
+        result = await _call_text(tool, _make_mock_event(), query="   ")
 
         data = json.loads(result)
         assert data["count"] == 0
@@ -274,24 +267,24 @@ class TestMemorySearchTool:
 
     @pytest.mark.asyncio
     async def test_search_not_initialized(self):
-        """当 any dependency is None, tool should return error."""
+        """任一必要依赖缺失时应返回未初始化错误。"""
         tool = MemorySearchTool(
             context=None,
             config_manager=None,
             memory_engine=None,
         )
-        result = await _call_text(tool, _make_mock_ctx_with_event(), query="test")
+        result = await _call_text(tool, _make_mock_event(), query="test")
 
         data = json.loads(result)
         assert data["error"] == "memory search tool is not initialized"
 
     @pytest.mark.asyncio
     async def test_search_no_results(self):
-        """当 search returns empty list, tool should report count=0."""
+        """搜索没有候选时应返回空结果和零计数。"""
         mock_engine = MagicMock()
         mock_engine.search_memories = AsyncMock(return_value=[])
 
-        ctx = _make_mock_ctx_with_event()
+        event = _make_mock_event()
         cm = _make_test_config_manager(
             use_persona_filtering=False, use_session_filtering=False
         )
@@ -306,7 +299,7 @@ class TestMemorySearchTool:
                 config_manager=cm,
                 memory_engine=mock_engine,
             )
-            result = await _call_text(tool, ctx, query="nothing")
+            result = await _call_text(tool, event, query="nothing")
 
         data = json.loads(result)
         assert data["count"] == 0
@@ -314,11 +307,11 @@ class TestMemorySearchTool:
 
     @pytest.mark.asyncio
     async def test_search_respects_k_clamping(self):
-        """工具 should clamp k between 1 and max_k."""
+        """返回数量应钳制在 1 与配置上限之间。"""
         mock_engine = MagicMock()
         mock_engine.search_memories = AsyncMock(return_value=[])
 
-        ctx = _make_mock_ctx_with_event()
+        event = _make_mock_event()
         cm = _make_test_config_manager(
             top_k=5, max_k=10, use_persona_filtering=False, use_session_filtering=False
         )
@@ -334,25 +327,25 @@ class TestMemorySearchTool:
                 memory_engine=mock_engine,
             )
 
-            # k=0 should be clamped to 1
-            await _call_text(tool, ctx, query="q", k=0)
+            # 下界外的值应钳制为 1。
+            await _call_text(tool, event, query="q", k=0)
             first_call_k = mock_engine.search_memories.call_args_list[0].kwargs["k"]
             assert first_call_k == 1
 
             mock_engine.search_memories.reset_mock()
 
-            # k=100 should be clamped to max_k=10
-            await _call_text(tool, ctx, query="q", k=100)
+            # 上界外的值应钳制为配置的 10。
+            await _call_text(tool, event, query="q", k=100)
             second_call_k = mock_engine.search_memories.call_args_list[0].kwargs["k"]
             assert second_call_k == 10
 
     @pytest.mark.asyncio
     async def test_search_catches_exceptions(self):
-        """当 search_memories raises an exception, tool should catch and return error."""
+        """搜索普通异常应隔离为稳定错误。"""
         mock_engine = MagicMock()
         mock_engine.search_memories = AsyncMock(side_effect=RuntimeError("crash"))
 
-        ctx = _make_mock_ctx_with_event()
+        event = _make_mock_event()
         cm = _make_test_config_manager(
             use_persona_filtering=False, use_session_filtering=False
         )
@@ -367,14 +360,14 @@ class TestMemorySearchTool:
                 config_manager=cm,
                 memory_engine=mock_engine,
             )
-            result = await _call_text(tool, ctx, query="test")
+            result = await _call_text(tool, event, query="test")
 
         data = json.loads(result)
         assert data["error"] == "internal_error"
 
 
 # ---------------------------------------------------------------------------
-# MemoryMemorizeTool
+# 长期记忆主动写入工具
 # ---------------------------------------------------------------------------
 
 
@@ -382,7 +375,7 @@ class TestMemoryMemorizeTool:
     """测试 MemoryMemorizeTool 定义与执行。"""
 
     def test_tool_definition_has_correct_name_and_params(self):
-        """工具 should expose name, description, and parameters schema requiring memory."""
+        """工具应公开稳定名称、描述和必需记忆参数。"""
         tool = MemoryMemorizeTool()
 
         assert tool.name == "memorize_long_term_memory"
@@ -398,7 +391,7 @@ class TestMemoryMemorizeTool:
 
     @pytest.mark.asyncio
     async def test_memorize_happy_path(self):
-        """当 all dependencies are available, tool should write memory and return success."""
+        """依赖就绪时应写入长期记忆并返回成功结果。"""
         mock_processor = MagicMock()
         mock_processor.build_memory_from_structured_data.return_value = {
             "content": "Test memory content",
@@ -414,12 +407,6 @@ class TestMemoryMemorizeTool:
         event.unified_msg_origin = "session-xyz"
         event.get_message_type.return_value = MagicMock(value="GROUP_MESSAGE")
 
-        inner_ctx = MagicMock()
-        inner_ctx.event = event
-
-        wrapper = MagicMock()
-        wrapper.context = inner_ctx
-
         mock_plugin_ctx = MagicMock()
 
         with patch(
@@ -434,7 +421,7 @@ class TestMemoryMemorizeTool:
             )
             result = await _call_text(
                 tool,
-                wrapper,
+                event,
                 memory="User prefers dark mode.",
                 topics=["ui", "preference"],
                 sentiment="positive",
@@ -450,7 +437,7 @@ class TestMemoryMemorizeTool:
         assert data["session_id"] == "session-xyz"
         assert data["persona_id"] == "persona-abc"
 
-        # Verify engine was called
+        # 写入必须经过唯一的 canonical 引擎入口。
         mock_engine.add_memory.assert_called_once()
         call_kwargs = mock_engine.add_memory.call_args.kwargs
         assert call_kwargs["session_id"] == "session-xyz"
@@ -463,13 +450,13 @@ class TestMemoryMemorizeTool:
 
     @pytest.mark.asyncio
     async def test_memorize_empty_memory(self):
-        """当 memory string is empty or whitespace, tool should return error."""
+        """记忆为空或仅含空白时应返回稳定错误。"""
         tool = MemoryMemorizeTool(
             context=MagicMock(),
             memory_engine=MagicMock(),
             memory_processor=MagicMock(),
         )
-        result = await _call_text(tool, _make_mock_ctx_with_event(), memory="   ")
+        result = await _call_text(tool, _make_mock_event(), memory="   ")
 
         data = json.loads(result)
         assert data["memorized"] is False
@@ -477,13 +464,13 @@ class TestMemoryMemorizeTool:
 
     @pytest.mark.asyncio
     async def test_memorize_not_initialized(self):
-        """当 any dependency is None, tool should return error."""
+        """任一必要依赖缺失时应返回未初始化错误。"""
         tool = MemoryMemorizeTool(
             context=None,
             memory_engine=None,
             memory_processor=None,
         )
-        result = await _call_text(tool, _make_mock_ctx_with_event(), memory="test")
+        result = await _call_text(tool, _make_mock_event(), memory="test")
 
         data = json.loads(result)
         assert data["memorized"] is False
@@ -491,7 +478,7 @@ class TestMemoryMemorizeTool:
 
     @pytest.mark.asyncio
     async def test_memorize_invalid_sentiment_normalized(self):
-        """工具 should normalize invalid sentiment values to 'neutral'."""
+        """非法情感值应归一为 neutral。"""
         mock_processor = MagicMock()
         mock_processor.build_memory_from_structured_data.return_value = {
             "content": "x",
@@ -506,12 +493,6 @@ class TestMemoryMemorizeTool:
         event.unified_msg_origin = "s"
         event.get_message_type.return_value = MagicMock(value="PRIVATE_MESSAGE")
 
-        inner_ctx = MagicMock()
-        inner_ctx.event = event
-
-        wrapper = MagicMock()
-        wrapper.context = inner_ctx
-
         with patch(
             "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
         ) as mock_gpi:
@@ -522,17 +503,17 @@ class TestMemoryMemorizeTool:
                 memory_engine=mock_engine,
                 memory_processor=mock_processor,
             )
-            result = await _call_text(tool, wrapper, memory="test", sentiment="angry")
+            result = await _call_text(tool, event, memory="test", sentiment="angry")
 
         data = json.loads(result)
         assert data["memorized"] is True
-        # sentiment "angry" should have been normalized to "neutral" in structured_data
+        # 处理器接收到的结构化情感必须已经归一。
         call_kwargs = mock_processor.build_memory_from_structured_data.call_args.kwargs
         assert call_kwargs["structured_data"]["sentiment"] == "neutral"
 
     @pytest.mark.asyncio
     async def test_memorize_catches_exceptions(self):
-        """当 add_memory raises, tool should catch and return error."""
+        """canonical 写入普通异常应隔离为稳定错误。"""
         mock_processor = MagicMock()
         mock_processor.build_memory_from_structured_data.return_value = {
             "content": "x",
@@ -547,12 +528,6 @@ class TestMemoryMemorizeTool:
         event.unified_msg_origin = "s"
         event.get_message_type.return_value = MagicMock(value="PRIVATE_MESSAGE")
 
-        inner_ctx = MagicMock()
-        inner_ctx.event = event
-
-        wrapper = MagicMock()
-        wrapper.context = inner_ctx
-
         with patch(
             "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
         ) as mock_gpi:
@@ -563,7 +538,7 @@ class TestMemoryMemorizeTool:
                 memory_engine=mock_engine,
                 memory_processor=mock_processor,
             )
-            result = await _call_text(tool, wrapper, memory="test")
+            result = await _call_text(tool, event, memory="test")
 
         data = json.loads(result)
         assert data["memorized"] is False
@@ -571,7 +546,7 @@ class TestMemoryMemorizeTool:
 
     @pytest.mark.asyncio
     async def test_memorize_passes_reason_in_metadata(self):
-        """当 reason is provided, it should be stored in metadata."""
+        """非空保存原因应进入写入 metadata。"""
         mock_processor = MagicMock()
         mock_processor.build_memory_from_structured_data.return_value = {
             "content": "x",
@@ -586,12 +561,6 @@ class TestMemoryMemorizeTool:
         event.unified_msg_origin = "s"
         event.get_message_type.return_value = MagicMock(value="PRIVATE_MESSAGE")
 
-        inner_ctx = MagicMock()
-        inner_ctx.event = event
-
-        wrapper = MagicMock()
-        wrapper.context = inner_ctx
-
         with patch(
             "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
         ) as mock_gpi:
@@ -602,14 +571,14 @@ class TestMemoryMemorizeTool:
                 memory_engine=mock_engine,
                 memory_processor=mock_processor,
             )
-            await _call_text(tool, wrapper, memory="test", reason="user said so")
+            await _call_text(tool, event, memory="test", reason="user said so")
 
         metadata = mock_engine.add_memory.call_args.kwargs["metadata"]
         assert metadata["memorize_reason"] == "user said so"
 
     @pytest.mark.asyncio
     async def test_memorize_blank_reason_not_stored(self):
-        """当 reason is blank/whitespace, it should not appear in metadata."""
+        """空白保存原因不得进入写入 metadata。"""
         mock_processor = MagicMock()
         mock_processor.build_memory_from_structured_data.return_value = {
             "content": "x",
@@ -624,12 +593,6 @@ class TestMemoryMemorizeTool:
         event.unified_msg_origin = "s"
         event.get_message_type.return_value = MagicMock(value="PRIVATE_MESSAGE")
 
-        inner_ctx = MagicMock()
-        inner_ctx.event = event
-
-        wrapper = MagicMock()
-        wrapper.context = inner_ctx
-
         with patch(
             "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
         ) as mock_gpi:
@@ -640,19 +603,19 @@ class TestMemoryMemorizeTool:
                 memory_engine=mock_engine,
                 memory_processor=mock_processor,
             )
-            await _call_text(tool, wrapper, memory="test", reason="   ")
+            await _call_text(tool, event, memory="test", reason="   ")
 
         metadata = mock_engine.add_memory.call_args.kwargs["metadata"]
         assert "memorize_reason" not in metadata
 
 
 # ---------------------------------------------------------------------------
-# _normalize_list helper (imported from memory_memorize_tool)
+# 列表归一化辅助
 # ---------------------------------------------------------------------------
 
 
 def test_normalize_list_trims_and_limits():
-    """_normalize_list should strip whitespace, filter empty strings, limit to 5."""
+    """列表归一化应去除空白项并限制为五项。"""
     from core.tools.memory_memorize_tool import _normalize_list
 
     assert _normalize_list([" a ", " b ", " c "]) == ["a", "b", "c"]

@@ -6,13 +6,12 @@ import json
 from dataclasses import field
 from typing import Any
 
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
 from ..expression.models import ExpressionPattern
 from ..expression.pattern_learner import ExpressionPatternLearner
+from .function_tool import AgentFunctionTool
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -20,20 +19,19 @@ def _json_result(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
-def _resolve_group_id(context: ContextWrapper[AstrAgentContext], group_id: str) -> str:
-    """通过 context 自动解析 group_id。"""
+def _resolve_group_id(event: AstrMessageEvent, group_id: str) -> str:
+    """优先使用显式群组标识，否则从当前事件解析会话标识。"""
     gid = (group_id or "").strip()
     if gid:
         return gid
     try:
-        event = context.context.event
         return str(getattr(event, "unified_msg_origin", ""))
     except Exception:
         return ""
 
 
 @dataclass
-class ExpressionRecallTool(FunctionTool[AstrAgentContext]):
+class ExpressionRecallTool(AgentFunctionTool):
     """回忆已学习的表达模式，用于判断 Bot 在特定情境下应如何回复。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -71,17 +69,29 @@ class ExpressionRecallTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         situation: str = "",
         group_id: str = "",
         limit: int = 5,
-    ) -> ToolExecResult:
+    ) -> str:
+        """按当前群组和情境回忆已学习的表达模式。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            situation: 可选情境关键词。
+            group_id: 可选群组 ID。
+            limit: 最大返回模式数。
+
+        Returns:
+            包含表达模式或稳定错误码的 JSON 文本。
+        """
+
         import asyncio
 
         situation = (situation or "").strip()
-        group_id = _resolve_group_id(context, group_id)
+        group_id = _resolve_group_id(event, group_id)
 
         if not group_id:
             return _json_result(
@@ -119,7 +129,7 @@ class ExpressionRecallTool(FunctionTool[AstrAgentContext]):
                 }
             )
 
-        # Filter by situation keyword if provided
+        # 显式情境关键词只过滤当前已取得的候选，不扩大查询作用域。
         if situation:
             patterns = [p for p in patterns if situation.lower() in p.situation.lower()]
             patterns = patterns[: max(limit, 1)]
@@ -135,7 +145,7 @@ class ExpressionRecallTool(FunctionTool[AstrAgentContext]):
                 }
             )
 
-        # Build formatted prompt string
+        # 复用现有模型可见格式，保持迁移前的输出契约。
         prompt_lines = ["[学习到的表达习惯]"]
         for p in patterns:
             prompt_lines.append(

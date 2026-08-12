@@ -6,13 +6,12 @@ from dataclasses import field
 from typing import Any
 
 from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent
 from astrbot.api.platform import MessageType
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
 from pydantic.dataclasses import dataclass
 
 from ..utils import get_persona_id
+from .function_tool import AgentFunctionTool
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -21,6 +20,16 @@ def _json_result(data: dict[str, Any]) -> str:
 
 
 def _normalize_list(value: Any, limit: int = 5) -> list[str]:
+    """把单值或列表规整为去空白、有限长的字符串列表。
+
+    Args:
+        value: 待规整的单值、列表或空值。
+        limit: 最多保留的非空字符串数量。
+
+    Returns:
+        保留原顺序的非空字符串列表。
+    """
+
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()][:limit]
     if isinstance(value, str) and value.strip():
@@ -29,7 +38,7 @@ def _normalize_list(value: Any, limit: int = 5) -> list[str]:
 
 
 @dataclass
-class MemoryMemorizeTool(FunctionTool[AstrAgentContext]):
+class MemoryMemorizeTool(AgentFunctionTool):
     """长期记忆主动写入工具。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -84,17 +93,30 @@ class MemoryMemorizeTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         memory: str,
         topics: list[str] | None = None,
         key_facts: list[str] | None = None,
         sentiment: str = "neutral",
         importance: float = 0.7,
         reason: str = "",
-    ) -> ToolExecResult:
-        """执行长期记忆写入。"""
+    ) -> str:
+        """在当前事件作用域内写入用户明确要求保存的长期记忆。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            memory: 待保存的简洁事实文本。
+            topics: 可选主题标签。
+            key_facts: 可选支撑事实。
+            sentiment: 记忆情感分类。
+            importance: 记忆重要度。
+            reason: 可选保存原因。
+
+        Returns:
+            包含写入结果、canonical ID 或稳定错误码的 JSON 文本。
+        """
         cleaned_memory = (memory or "").strip()
         if not cleaned_memory:
             return _json_result({"memorized": False, "error": "memory is empty"})
@@ -116,7 +138,6 @@ class MemoryMemorizeTool(FunctionTool[AstrAgentContext]):
             )
 
         try:
-            event = context.context.event
             session_id = event.unified_msg_origin
             persona_id = await get_persona_id(self.context, event)
             is_group_chat = event.get_message_type() == MessageType.GROUP_MESSAGE

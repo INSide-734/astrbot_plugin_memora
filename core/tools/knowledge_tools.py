@@ -6,12 +6,11 @@ import json
 from dataclasses import field
 from typing import Any
 
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
 from .agent_scope import resolve_agent_read_scope
+from .function_tool import AgentFunctionTool
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -20,7 +19,7 @@ def _json_result(data: dict[str, Any]) -> str:
 
 
 @dataclass
-class KnowledgeSearchTool(FunctionTool[AstrAgentContext]):
+class KnowledgeSearchTool(AgentFunctionTool):
     """搜索结构化知识库。Agent 可主动调用以获取事实、概念、规则等结构化知识。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -57,14 +56,24 @@ class KnowledgeSearchTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         query: str,
         limit: int = 10,
         category: str = "",
-    ) -> ToolExecResult:
-        """在当前事件作用域中搜索可见的结构化知识。"""
+    ) -> str:
+        """在当前事件作用域中搜索可见的结构化知识。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            query: 知识检索关键词或问题。
+            limit: 最大返回条目数。
+            category: 可选知识分类过滤器。
+
+        Returns:
+            包含匹配条目或稳定错误码的 JSON 文本。
+        """
 
         mgr = self.knowledge_manager
         if mgr is None:
@@ -76,7 +85,7 @@ class KnowledgeSearchTool(FunctionTool[AstrAgentContext]):
                     "error": "knowledge_manager not available",
                 }
             )
-        read_scope = resolve_agent_read_scope(context)
+        read_scope = resolve_agent_read_scope(event)
         if read_scope is None:
             return _json_result(
                 {"query": query, "count": 0, "results": [], "error": "scope_denied"}
@@ -117,7 +126,7 @@ class KnowledgeSearchTool(FunctionTool[AstrAgentContext]):
 
 
 @dataclass
-class KnowledgeReadTool(FunctionTool[AstrAgentContext]):
+class KnowledgeReadTool(AgentFunctionTool):
     """读取特定知识条目的完整内容。Agent 可在搜索后获取条目详情。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -143,12 +152,20 @@ class KnowledgeReadTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         entry_id: int = 0,
-    ) -> ToolExecResult:
-        """在当前事件作用域中读取单条可见知识。"""
+    ) -> str:
+        """在当前事件作用域中读取单条可见知识。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            entry_id: 待读取的知识条目 ID。
+
+        Returns:
+            包含知识详情、未命中状态或稳定错误码的 JSON 文本。
+        """
 
         mgr = self.knowledge_manager
         if mgr is None:
@@ -159,7 +176,7 @@ class KnowledgeReadTool(FunctionTool[AstrAgentContext]):
                     "error": "knowledge_manager not available",
                 }
             )
-        read_scope = resolve_agent_read_scope(context)
+        read_scope = resolve_agent_read_scope(event)
         if read_scope is None:
             return _json_result(
                 {"entry_id": entry_id, "found": False, "error": "scope_denied"}

@@ -6,15 +6,14 @@ from dataclasses import field
 from typing import Any
 
 from astrbot.api import logger
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
-from ..base.config_manager import ConfigManager
+from ..platform.config.manager import ConfigManager
 from ..processors.human_like_formatter import HumanLikeMemoryFormatter
 from ..utils import get_persona_id
 from .agent_scope import resolve_agent_read_scope
+from .function_tool import AgentFunctionTool
 
 
 def _json_result(data: dict[str, Any]) -> str:
@@ -23,7 +22,7 @@ def _json_result(data: dict[str, Any]) -> str:
 
 
 @dataclass
-class MemorySearchTool(FunctionTool[AstrAgentContext]):
+class MemorySearchTool(AgentFunctionTool):
     """长期记忆主动回忆工具。"""
 
     __pydantic_config__ = {"arbitrary_types_allowed": True}
@@ -66,21 +65,33 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
     )
 
     def __post_init__(self) -> None:
-        """创建规则格式化器；是否使用由每次调用的正式配置决定。"""
+        """绑定公开工具处理器并创建规则格式化器。"""
 
+        super().__post_init__()
         self.formatter = HumanLikeMemoryFormatter(
             max_fragments=5, max_fragment_length=80
         )
 
-    async def call(
+    async def _run(
         self,
-        context: ContextWrapper[AstrAgentContext],
+        event: AstrMessageEvent,
         query: str,
         k: int = 5,
         emotion_context: list[str] | None = None,
         format_output: bool = True,
-    ) -> ToolExecResult:
-        """执行长期记忆回忆。"""
+    ) -> str:
+        """在当前事件作用域内检索长期记忆并返回稳定 JSON 文本。
+
+        Args:
+            event: AstrBot 注入的当前消息事件。
+            query: 待检索的自然语言查询。
+            k: 期望返回的最大候选数。
+            emotion_context: 可选情绪上下文标签。
+            format_output: 是否附加规则格式化片段。
+
+        Returns:
+            包含检索结果、过滤状态或稳定错误码的 JSON 文本。
+        """
         cleaned_query = (query or "").strip()
         if not cleaned_query:
             return _json_result(
@@ -109,8 +120,7 @@ class MemorySearchTool(FunctionTool[AstrAgentContext]):
             )
 
         try:
-            event = context.context.event
-            read_scope = resolve_agent_read_scope(context)
+            read_scope = resolve_agent_read_scope(event)
             if read_scope is None:
                 return _json_result(
                     {
