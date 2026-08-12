@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from ...conversation.infrastructure.conversation_store import ConversationStore
+from ..contracts import ConversationNameSyncStore
 from ..domain.models import IdentityTrust, ResolvedIdentity
 from .service import ProtocolIdentityService
 
@@ -15,7 +15,7 @@ class ConversationIdentitySynchronizer:
 
     def __init__(
         self,
-        conversation_store: ConversationStore,
+        conversation_store: ConversationNameSyncStore,
         identity_service: ProtocolIdentityService,
         invalidate_cache: Callable[[str], Awaitable[None]],
     ) -> None:

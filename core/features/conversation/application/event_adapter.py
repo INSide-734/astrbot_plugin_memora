@@ -5,7 +5,7 @@ from typing import Any, cast
 
 from astrbot.api.platform import MessageType
 
-from ...identity.domain.models import IdentityTrust, ResolvedIdentity
+from ...identity.contracts import IdentityTrust, ResolvedIdentity
 from ..domain.models import Message
 from .sender_resolver import _resolve_sender_name
 

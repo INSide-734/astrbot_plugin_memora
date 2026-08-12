@@ -16,7 +16,7 @@ class TestCreateConversationManager:
     """Factory function tests."""
 
     @patch(
-        "core.features.conversation.application.conversation_manager.ConversationStore"
+        "core.features.conversation.infrastructure.conversation_manager_factory.ConversationStore"
     )
     def test_creates_with_defaults(self, mock_store_cls: MagicMock) -> None:
         mock_store = MagicMock()
@@ -27,7 +27,7 @@ class TestCreateConversationManager:
         assert mgr.session_ttl == 3600
 
     @patch(
-        "core.features.conversation.application.conversation_manager.ConversationStore"
+        "core.features.conversation.infrastructure.conversation_manager_factory.ConversationStore"
     )
     def test_creates_with_config(self, mock_store_cls: MagicMock) -> None:
         mock_store = MagicMock()
@@ -43,7 +43,7 @@ class TestCreateConversationManager:
         assert mgr.session_ttl == 1800
 
     @patch(
-        "core.features.conversation.application.conversation_manager.ConversationStore"
+        "core.features.conversation.infrastructure.conversation_manager_factory.ConversationStore"
     )
     def test_creates_with_none_config(self, mock_store_cls: MagicMock) -> None:
         mock_store = MagicMock()

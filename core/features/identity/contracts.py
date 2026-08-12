@@ -13,6 +13,8 @@ from ...shared.contracts import IDENTITY_SCHEMA_VERSION
 from .domain.models import (
     IdentityMerger,
     IdentityObservation,
+    IdentityTrust,
+    ResolvedIdentity,
     StoredIdentity,
 )
 
@@ -80,4 +82,37 @@ class IdentityDirectoryPort(Protocol):
         ...
 
 
-__all__ = ["IDENTITY_SCHEMA_VERSION", "IdentityDirectoryPort"]
+class ConversationNameSyncStore(Protocol):
+    """身份名称同步所需的会话显示名称窄端口。"""
+
+    async def find_user_sender_names(
+        self,
+        *,
+        sender_id: str,
+        session_id: str | None = None,
+        private_platform: str | None = None,
+    ) -> set[str]:
+        """按发送者与作用域读取历史显示名称。"""
+
+        ...
+
+    async def update_user_sender_name(
+        self,
+        *,
+        sender_id: str,
+        sender_name: str,
+        session_id: str | None = None,
+        private_platform: str | None = None,
+    ) -> set[str]:
+        """更新发送者显示名称并返回受影响会话集合。"""
+
+        ...
+
+
+__all__ = [
+    "ConversationNameSyncStore",
+    "IDENTITY_SCHEMA_VERSION",
+    "IdentityDirectoryPort",
+    "IdentityTrust",
+    "ResolvedIdentity",
+]
