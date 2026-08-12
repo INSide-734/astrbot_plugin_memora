@@ -13,7 +13,7 @@
 知识领域服务与 proposal 管线唯一归属 `core/features/knowledge/application/`；`core/managers/` 只保留 `MemoryEngine` 的知识写后钩子，不再转发知识应用类型。
 笔记领域服务与 proposal 管线唯一归属 `core/features/notes/application/`；`core/managers/` 只保留 `MemoryEngine` 的笔记写后钩子，不再转发笔记应用类型。
 自主学习与反馈聚合唯一归属 `core/features/learning/`：application 管理可信反馈聚合、shadow 候选和单一 CAS 发布，domain 保存候选与反馈模型，infrastructure 保存隔离事件、状态和配置适配；`core/managers/` 只在 `MemoryEngine` 生命周期中装配和持有这些组件，不再转发 Learning 类型。自主学习不得直接修改生产检索权重或调用 `update_memory()`。
-Memory Evolution 的 Gate、候选生成、LLM proposal、worker 与 Projection 应用唯一归属 `core/features/evolution/application/`，Store 唯一归属 `core/features/evolution/infrastructure/`；`core/managers/` 只保留 MemoryEngine 写后钩子、语义压缩协作对象，以及尚待后续清理的 Manager/Projection 恒等导出。
+Memory Evolution 的 Gate、候选生成、LLM proposal、worker 与 Projection 应用唯一归属 `core/features/evolution/application/`，Store 唯一归属 `core/features/evolution/infrastructure/`；`core/managers/` 只保留 MemoryEngine 写后钩子与尚待迁移的语义压缩协作对象，不再转发 Evolution 应用类型。
 
 本层负责“何时、按什么顺序、失败后如何补偿”；底层表 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，候选召回和排序属于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)，定时触发属于 [`core/schedulers/AGENTS.md`](../schedulers/AGENTS.md)。Memory Evolution 的关系/Projection 事务与 revision 校验由 feature application 编排，具体 SQLite 表访问属于 feature infrastructure。
 

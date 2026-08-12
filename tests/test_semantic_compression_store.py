@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock
 import aiosqlite
 import pytest
 
+from core.features.evolution.application import MemoryEvolutionManager
 from core.features.evolution.domain import ProjectionType
 from core.features.evolution.infrastructure import MemoryEvolutionStore
-from core.managers.memory_evolution_manager import MemoryEvolutionManager
 from core.managers.semantic_compressor import SemanticCompressor
 
 UTC = timezone.utc

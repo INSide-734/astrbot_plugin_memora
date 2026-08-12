@@ -6,7 +6,12 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
-from core.features.evolution.application import MemoryEvolutionGate
+from core.features.evolution.application import (
+    EvolutionLeaseLost,
+    EvolutionProposalRejected,
+    MemoryEvolutionGate,
+    MemoryEvolutionManager,
+)
 from core.features.evolution.domain import (
     EvolutionProposal,
     JobState,
@@ -16,11 +21,6 @@ from core.features.evolution.domain import (
     RelationType,
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
-from core.managers.memory_evolution_manager import (
-    EvolutionLeaseLost,
-    EvolutionProposalRejected,
-    MemoryEvolutionManager,
-)
 from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
@@ -455,7 +455,7 @@ async def test_retryable_provider_failure_enters_retry_wait(manager, monkeypatch
     manager.max_attempts = 2
     manager.retry_base_delay_seconds = 2
     monkeypatch.setattr(
-        "core.managers.memory_evolution_manager.random.uniform",
+        "core.features.evolution.application.memory_evolution_manager.random.uniform",
         lambda _start, _end: 0.0,
     )
     await seed_documents(manager.store, source(17))

@@ -1,4 +1,4 @@
-"""evolution feature 的分层所有权与剩余兼容入口契约。"""
+"""evolution feature 的分层所有权与必要包级入口契约。"""
 
 import subprocess
 import sys
@@ -43,14 +43,7 @@ from core.features.evolution.infrastructure import (
 from core.features.evolution.infrastructure import (
     memory_evolution_store as feature_store,
 )
-from core.managers import memory_evolution_manager as legacy_manager
-from core.managers import memory_evolution_projection as legacy_projection
 from core.shared.contracts import MemorySourceRef
-
-_APPLICATION_MODULE_PAIRS = (
-    (legacy_manager, feature_manager),
-    (legacy_projection, feature_projection),
-)
 
 
 def test_evolution_domain_owner_first_import_stays_lightweight() -> None:
@@ -97,7 +90,7 @@ def test_evolution_package_lazily_exports_each_feature_layer() -> None:
 
 
 def test_evolution_foundation_services_use_feature_application_owner() -> None:
-    """门控、候选生成与 proposal 服务必须由 evolution application 唯一持有。"""
+    """门控、候选、proposal 与 worker 必须由 application 唯一持有。"""
 
     assert evolution_application.MemoryEvolutionGate is feature_gate.MemoryEvolutionGate
     assert evolution_application.MemoryEvolutionCandidateGenerator is (
@@ -121,6 +114,12 @@ def test_evolution_foundation_services_use_feature_application_owner() -> None:
     )
     assert feature_contradiction_detector.ContradictionDetector.__module__ == (
         "core.features.evolution.application.contradiction_detector"
+    )
+    assert feature_manager.MemoryEvolutionManager.__module__ == (
+        "core.features.evolution.application.memory_evolution_manager"
+    )
+    assert feature_projection.MemoryEvolutionProjectionProposalMixin.__module__ == (
+        "core.features.evolution.application.memory_evolution_projection"
     )
 
 
@@ -154,12 +153,3 @@ def test_evolution_store_assembles_feature_owned_mixins() -> None:
         feature_derived.MemoryEvolutionDerivedMixin
         in feature_store.MemoryEvolutionStore.__mro__
     )
-
-
-def test_legacy_evolution_application_reuses_feature_implementations() -> None:
-    """旧 Manager 路径只能导出 evolution application 的唯一实现。"""
-
-    for legacy_module, feature_module in _APPLICATION_MODULE_PAIRS:
-        assert legacy_module.__all__ == feature_module.__all__
-        for name in feature_module.__all__:
-            assert getattr(legacy_module, name) is getattr(feature_module, name)

@@ -12,6 +12,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.features.decay.application import DecayScheduler
+from core.features.evolution.application import (
+    EvolutionProposalRejected,
+    MemoryEvolutionManager,
+)
 from core.features.evolution.domain import (
     DerivedState,
     EvolutionProposal,
@@ -20,10 +24,6 @@ from core.features.evolution.domain import (
     ProjectionSourceView,
     ProjectionType,
     ProjectionView,
-)
-from core.managers.memory_evolution_manager import (
-    EvolutionProposalRejected,
-    MemoryEvolutionManager,
 )
 from core.managers.semantic_compressor import SemanticCompressor
 from core.platform.composition import DerivedRebuildCoordinator

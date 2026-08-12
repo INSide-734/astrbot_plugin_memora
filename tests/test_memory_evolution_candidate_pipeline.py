@@ -13,6 +13,7 @@ import pytest_asyncio
 from core.features.evolution.application import (
     MemoryEvolutionCandidateGenerator,
     MemoryEvolutionGate,
+    MemoryEvolutionManager,
 )
 from core.features.evolution.domain import (
     DerivedState,
@@ -22,7 +23,6 @@ from core.features.evolution.domain import (
     RelationType,
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
-from core.managers.memory_evolution_manager import MemoryEvolutionManager
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)

@@ -335,8 +335,10 @@ async def test_cleanup_orphaned_derived_preserves_projection_with_other_sources(
 
 @pytest.mark.asyncio
 async def test_rebuild_from_canonical_invalidates_old_and_requeues_sources(tmp_path):
-    from core.features.evolution.application import MemoryEvolutionGate
-    from core.managers.memory_evolution_manager import MemoryEvolutionManager
+    from core.features.evolution.application import (
+        MemoryEvolutionGate,
+        MemoryEvolutionManager,
+    )
 
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
@@ -373,8 +375,10 @@ async def test_rebuild_from_canonical_invalidates_old_and_requeues_sources(tmp_p
 async def test_rebuild_failure_returns_degraded_result_without_losing_canonical(
     tmp_path,
 ):
-    from core.features.evolution.application import MemoryEvolutionGate
-    from core.managers.memory_evolution_manager import MemoryEvolutionManager
+    from core.features.evolution.application import (
+        MemoryEvolutionGate,
+        MemoryEvolutionManager,
+    )
 
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
@@ -405,7 +409,7 @@ async def test_rebuild_failure_returns_degraded_result_without_losing_canonical(
 
 @pytest.mark.asyncio
 async def test_rebuild_propagates_cancellation():
-    from core.managers.memory_evolution_manager import MemoryEvolutionManager
+    from core.features.evolution.application import MemoryEvolutionManager
 
     store = MagicMock()
     store.invalidate_all_derived = AsyncMock(side_effect=asyncio.CancelledError())
