@@ -145,7 +145,7 @@ User Message → EventHandler → MessageContentExtractor → ConversationManage
 | Module | Files | Responsibility |
 |--------|-------|----------------|
 | `core/base/` | 5 | Configuration, constants, exception definitions |
-| `core/initializer/` | 6 | Plugin initialization orchestration, Provider loading, DB setup |
+| `core/platform/composition/` | 12 | Plugin initialization, Provider loading, DB setup, and runtime lifecycle |
 | `core/managers/` | 40+ | Core business logic: memory engine, conversation, decay, backup |
 | `core/processors/` | 20 | LLM-driven memory extraction, classification, formatting |
 | `core/retrieval/` | 22 | Multi-path retrieval: BM25, vector, hybrid, graph, reranking |
@@ -362,7 +362,7 @@ astrbot_plugin_memora/
 │
 ├── core/                      # Core source code
 │   ├── base/                  # Config, constants, exceptions
-│   ├── initializer/           # Plugin initialization orchestration
+│   ├── platform/composition/  # Plugin initialization and runtime lifecycle
 │   ├── managers/              # Core business logic (40+ files)
 │   ├── processors/            # LLM memory extraction (20 files)
 │   ├── retrieval/             # Multi-path retrieval (22 files)

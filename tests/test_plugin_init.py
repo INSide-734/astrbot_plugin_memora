@@ -241,7 +241,7 @@ def _parse_version_safe(v: str) -> tuple:
 
 
 # ============================================================================
-# core/plugin_initializer.py
+# core/platform/composition/plugin_initializer.py
 # ============================================================================
 
 
@@ -249,7 +249,7 @@ class TestPluginInitializerConstruction:
     """测试 PluginInitializer.__init__ 与属性默认值。"""
 
     def test_initial_state_not_initialized(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -261,7 +261,7 @@ class TestPluginInitializerConstruction:
         assert init.error_message is None
 
     def test_all_components_initially_none(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -282,7 +282,7 @@ class TestPluginInitializerConstruction:
         assert init.backfill_scheduler is None
 
     def test_sub_modules_created_on_init(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -296,7 +296,7 @@ class TestPluginInitializerConstruction:
         assert init._component_factory is not None
 
     def test_ensure_initialized_returns_false_when_not_initialized(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -309,7 +309,7 @@ class TestPluginInitializerConstruction:
         assert result is False
 
     def test_ensure_initialized_returns_false_when_failed(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -324,7 +324,7 @@ class TestPluginInitializerConstruction:
 
     def test_stop_scheduler_with_none_scheduler(self) -> None:
         """衰减调度器为空时，stop_scheduler 应直接返回。"""
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -337,7 +337,7 @@ class TestPluginInitializerConstruction:
         asyncio.run(init.stop_scheduler())
 
     def test_stop_scheduler_with_active_scheduler(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -353,7 +353,7 @@ class TestPluginInitializerConstruction:
         assert init.decay_scheduler is None
 
     def test_stop_background_tasks(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -370,7 +370,7 @@ class TestPluginInitializerConstruction:
     @pytest.mark.asyncio
     async def test_initialize_reports_provider_wait_start_and_duration(self) -> None:
         """Provider 等待应输出开始、结果、尝试次数和耗时。"""
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), ".")
         initializer._provider_waiter.wait_non_blocking = AsyncMock(
@@ -1358,7 +1358,7 @@ class TestInjectionDecisionLifecycle:
     async def test_plugin_initializer_retains_and_closes_injection_components_once(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         assert initializer.injection_decision_store is None
@@ -1389,7 +1389,7 @@ class TestInjectionDecisionLifecycle:
     async def test_plugin_initializer_preserves_cancelled_recorder_for_retry(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         close_started = asyncio.Event()
@@ -1424,7 +1424,7 @@ class TestInjectionDecisionLifecycle:
     async def test_plugin_initializer_preserves_first_close_error_and_failed_refs(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         recorder = MagicMock()
@@ -1451,7 +1451,7 @@ class TestInjectionDecisionLifecycle:
     async def test_plugin_initializer_clears_only_successfully_closed_reference(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         recorder = MagicMock()
@@ -1469,7 +1469,7 @@ class TestInjectionDecisionLifecycle:
 
     @pytest.mark.asyncio
     async def test_run_full_init_retains_injection_components(self, tmp_path) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         initializer._faiss_checker.load_vec_db_class = MagicMock(
@@ -1530,7 +1530,7 @@ class TestInjectionDecisionLifecycle:
     async def test_run_full_init_closes_owned_injection_components_on_error(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
         from core.shared.errors import InitializationError
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
@@ -1579,7 +1579,7 @@ class TestInjectionDecisionLifecycle:
     async def test_run_full_init_preserves_real_cancellation_during_cleanup(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         initializer._faiss_checker.load_vec_db_class = MagicMock(
@@ -1791,7 +1791,7 @@ class TestMemoryEvolutionLifecycle:
 
     @pytest.mark.asyncio
     async def test_close_stops_manager_before_store(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), ".")
         close_order: list[str] = []
@@ -1809,7 +1809,7 @@ class TestMemoryEvolutionLifecycle:
         assert close_order == ["manager", "store"]
 
     def test_readiness_contains_only_evolution_component_booleans(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), ".")
         snapshot = initializer.get_readiness_snapshot()

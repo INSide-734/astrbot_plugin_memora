@@ -1,9 +1,5 @@
-from .component_factory import ComponentFactory
-from .faiss_checker import FaissChecker
-from .provider_waiter import ProviderWaiter
+"""FAISS 宿主兼容探针。"""
 
-__all__ = [
-    "ComponentFactory",
-    "FaissChecker",
-    "ProviderWaiter",
-]
+from .faiss_checker import FaissChecker
+
+__all__ = ["FaissChecker"]

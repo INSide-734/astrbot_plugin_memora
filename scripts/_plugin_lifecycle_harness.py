@@ -9,13 +9,14 @@ import json
 import os
 import tempfile
 import types
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 REPORT_SCHEMA = "memora-plugin-lifecycle-report-v1"
 PLUGIN_DIR_NAME = "astrbot_plugin_memora"
 PLUGIN_MODULE = f"data.plugins.{PLUGIN_DIR_NAME}.main"
+COMPOSITION_ROOT = ".core.platform.composition"
 
 
 class WorkerError(RuntimeError):
@@ -275,8 +276,7 @@ def namespace_contract_passed(result: Mapping[str, Any], cycles: int) -> bool:
 
 async def _provider_scenarios(package: str) -> list[dict[str, Any]]:
     """对真实 ProviderWaiter 执行延迟、耗尽和取消场景。"""
-
-    module = importlib.import_module(f"{package}.core.initializer.provider_waiter")
+    module = importlib.import_module(f"{package}{COMPOSITION_ROOT}.provider_waiter")
     waiter_type = module.ProviderWaiter
     original_sleep, original_time = module.asyncio.sleep, module.time.time
     results: list[dict[str, Any]] = []
@@ -381,8 +381,7 @@ async def _provider_scenarios(package: str) -> list[dict[str, Any]]:
 
 async def _initializer_scenarios(package: str, data_dir: Path) -> list[dict[str, Any]]:
     """验证真实初始化器的幂等、并发和失败回滚边界。"""
-
-    module = importlib.import_module(f"{package}.core.plugin_initializer")
+    module = importlib.import_module(f"{package}{COMPOSITION_ROOT}.plugin_initializer")
     initializer_type = module.PluginInitializer
 
     class Config:
@@ -476,7 +475,7 @@ async def _initializer_scenarios(package: str, data_dir: Path) -> list[dict[str,
         }
     )
 
-    factory = importlib.import_module(f"{package}.core.initializer.component_factory")
+    factory = importlib.import_module(f"{package}{COMPOSITION_ROOT}.component_factory")
     order: list[str] = []
 
     class Resource:
@@ -583,14 +582,14 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     tools_module.llm_tools.func_list.clear()
 
     context = _HarnessContext(star_module.star_registry)
-    manager_module.sp = _MemoryPreferences()
+    setattr(manager_module, "sp", _MemoryPreferences())
 
     async def no_sync() -> None:
         """禁止命令配置同步访问持久化状态。"""
 
         return None
 
-    manager_module.sync_command_configs = no_sync
+    setattr(manager_module, "sync_command_configs", no_sync)
     manager = manager_module.PluginManager(context, {})
     manager.plugin_store_path = str(args.plugin_root.parent)
     manager.plugin_config_path = str(args.plugin_root.parent / ".config")
@@ -628,7 +627,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             def tracked_task(self: Any, coro: Any) -> asyncio.Task[Any]:
                 """保留启动任务引用，避免 done callback 隐藏异常。"""
 
-                task = original_create(self, coro)
+                task = cast(asyncio.Task[Any], original_create(self, coro))
                 self.__dict__.setdefault("_harness_startup_tasks", []).append(task)
                 return task
 
@@ -660,7 +659,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             await _wait_startup(instance)
             terminate = getattr(instance, "terminate", None)
             if callable(terminate):
-                await terminate()
+                await cast(Callable[[], Awaitable[Any]], terminate)()
         routes = _route_counts(context, instances)
         failure = {
             "expected_failure_observed": not loaded,
@@ -716,12 +715,14 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     terminate = getattr(metadata.star_cls, "terminate", None)
     terminate_errors: list[str] = []
     if callable(terminate):
-        values = await asyncio.gather(terminate(), terminate(), return_exceptions=True)
+        terminate_async = cast(Callable[[], Awaitable[Any]], terminate)
+        calls = terminate_async(), terminate_async()
+        values = await asyncio.gather(*calls, return_exceptions=True)
         terminate_errors.extend(
             type(item).__name__ for item in values if isinstance(item, BaseException)
         )
         try:
-            await terminate()
+            await terminate_async()
         except BaseException as exc:
             terminate_errors.append(type(exc).__name__)
     await manager._unbind_plugin(metadata.name, metadata.module_path)

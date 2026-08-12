@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from core.plugin_initializer import PluginInitializer
+from core.platform.composition.plugin_initializer import PluginInitializer
 from core.shared.contracts import PromptProtectionPort
 
 

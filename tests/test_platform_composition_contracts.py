@@ -1,13 +1,18 @@
 """平台 composition 组件的新 owner 与 Provider 契约。"""
 
+import importlib.util
 from unittest.mock import MagicMock
 
 from astrbot.api.provider import Provider
 
+from core import initializer as initializer_package
+from core.initializer.faiss_checker import FaissChecker
 from core.platform import composition as composition_package
 from core.platform.composition import (
+    ComponentFactory,
     DatabaseSetup,
     DerivedRebuildCoordinator,
+    PluginInitializer,
     ProviderLoader,
     ProviderWaiter,
     close_identity_runtime_after_failure,
@@ -43,20 +48,43 @@ def test_composition_package_exports_owned_components() -> None:
     """composition 包应从新 owner 导出基础装配组件。"""
 
     assert composition_package.__all__ == [
+        "ComponentFactory",
         "DatabaseSetup",
         "DerivedRebuildCoordinator",
+        "PluginInitializer",
         "ProviderLoader",
         "ProviderWaiter",
         "close_identity_runtime_after_failure",
     ]
+    assert composition_package.ComponentFactory is ComponentFactory
     assert composition_package.DatabaseSetup is DatabaseSetup
     assert composition_package.DerivedRebuildCoordinator is DerivedRebuildCoordinator
+    assert composition_package.PluginInitializer is PluginInitializer
     assert composition_package.ProviderLoader is ProviderLoader
     assert composition_package.ProviderWaiter is ProviderWaiter
     assert (
         composition_package.close_identity_runtime_after_failure
         is close_identity_runtime_after_failure
     )
+
+
+def test_initializer_package_only_exports_faiss_checker() -> None:
+    """initializer 遗留包应只保留尚未迁移的 FAISS 探针。"""
+
+    assert initializer_package.__all__ == ["FaissChecker"]
+    assert initializer_package.FaissChecker is FaissChecker
+
+
+def test_migrated_composition_compatibility_modules_are_removed() -> None:
+    """已迁移的三个 Composition 旧模块不得重新出现。"""
+
+    legacy_modules = (
+        "core.plugin_initializer",
+        "core.initializer.component_factory",
+        "core.initializer.provider_waiter",
+    )
+
+    assert all(importlib.util.find_spec(name) is None for name in legacy_modules)
 
 
 def test_composition_uses_public_provider_contract() -> None:

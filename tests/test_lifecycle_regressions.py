@@ -16,7 +16,7 @@ from core.platform.composition.shutdown_lifecycle import stop_runtime_producers
 async def test_initializer_coalesces_concurrent_full_initialization(tmp_path) -> None:
     """并发 initialize 调用必须共享同一次组件构建。"""
 
-    from core.plugin_initializer import PluginInitializer
+    from core.platform.composition.plugin_initializer import PluginInitializer
 
     class ReadyWaiter:
         """返回受控 Provider，不等待真实时钟。"""
@@ -75,7 +75,7 @@ async def test_provider_exhaustion_commits_terminal_failure(
     """Provider 重试耗尽必须提交失败态并拒绝晚到回调。"""
 
     from core.platform.composition import provider_waiter as waiter_module
-    from core.plugin_initializer import PluginInitializer
+    from core.platform.composition.plugin_initializer import PluginInitializer
 
     class MissingLoader:
         """始终返回缺失的 Provider。"""
@@ -143,7 +143,7 @@ async def test_provider_retry_terminate_cancels_without_false_failure(
     """terminate 取消后台等待时不得伪造预算耗尽失败。"""
 
     from core.platform.composition import provider_waiter as waiter_module
-    from core.plugin_initializer import PluginInitializer
+    from core.platform.composition.plugin_initializer import PluginInitializer
 
     class MissingLoader:
         """保持 Provider 缺失直到关停。"""

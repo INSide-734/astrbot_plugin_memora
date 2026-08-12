@@ -10,7 +10,7 @@ import pytest
 
 from core.api.quality_api import QualityApiMixin
 from core.managers.memory_engine import MemoryEngine
-from core.plugin_initializer import PluginInitializer
+from core.platform.composition.plugin_initializer import PluginInitializer
 
 
 class _QualityApiStub(QualityApiMixin):
@@ -73,7 +73,7 @@ async def test_runtime_write_and_quality_api_share_one_scorer(
     result = await api.get_quality_stats()
 
     assert api._get_quality_scorer() is initializer.quality_scorer
-    assert engine._quality_scorer is initializer.quality_scorer
+    assert getattr(engine, "_quality_scorer", None) is initializer.quality_scorer
     assert result["status"] == "ok"
     assert result["data"]["total_scored"] == 1
     assert result["data"]["avg_overall"] > 0

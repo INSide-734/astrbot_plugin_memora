@@ -11,9 +11,9 @@ import pytest
 
 from core.base.config_validator import validate_config
 from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
-from core.initializer.component_factory import ComponentFactory
 from core.managers.atom_lifecycle_manager import AtomLifecycleManager
 from core.managers.memory_engine import MemoryEngine
+from core.platform.composition.component_factory import ComponentFactory
 from core.processors.memory_processor import MemoryProcessor
 from core.storage.atom_store import AtomStore
 
