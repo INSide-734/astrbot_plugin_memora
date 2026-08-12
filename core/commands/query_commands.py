@@ -4,7 +4,7 @@
 """
 
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -28,12 +28,33 @@ class _QueryMemoryEngine(Protocol):
 
         ...
 
-    async def search_memories(self, **kwargs: Any) -> list[Any]:
+    async def search_memories(
+        self,
+        query: str,
+        k: int = 5,
+        session_id: str | None = None,
+        *,
+        chat_type: str = "private",
+        user_id: str | None = None,
+    ) -> Sequence[Any]:
         """按已校验作用域检索记忆。"""
 
         ...
 
-    async def delete_memory(self, doc_id: int) -> bool:
+    def add_memory(
+        self,
+        content: str,
+        session_id: str | None = None,
+        persona_id: str | None = None,
+        importance: float = 0.5,
+        metadata: dict[str, Any] | None = None,
+        atoms: list[Any] | None = None,
+    ) -> Awaitable[int]:
+        """写入命令生成的 canonical 记忆。"""
+
+        ...
+
+    async def delete_memory(self, memory_id: int) -> bool:
         """删除指定 canonical 记忆。"""
 
         ...
@@ -44,8 +65,7 @@ class QueryCommandMixin:
 
     memory_engine: _QueryMemoryEngine | None
 
-    @staticmethod
-    def _maintenance_write_guard_message() -> str | None:
+    def _maintenance_write_guard_message(self) -> str | None:
         """独立 Mixin 默认无维护写保护。"""
         return None
 
@@ -77,7 +97,7 @@ class QueryCommandMixin:
         return t("error.component_not_ready", component=component, command=command)
 
     @staticmethod
-    def _event_chat_type(event: AstrMessageEvent) -> str | None:
+    def _query_event_chat_type(event: AstrMessageEvent) -> str | None:
         """根据明确的平台事件类型返回群聊或私聊，未知类型拒绝检索。"""
 
         try:
@@ -211,7 +231,7 @@ class QueryCommandMixin:
 
         try:
             session_id = event.unified_msg_origin
-            chat_type = self._event_chat_type(event)
+            chat_type = self._query_event_chat_type(event)
             if chat_type is None or not session_id:
                 yield event.plain_result(t("search.no_results", query=query))
                 return

@@ -135,7 +135,7 @@ class DiagnosticCommandMixin:
             "query": normalized_query,
             "k": safe_k,
             "session_id": session_id,
-            "chat_type": self._event_chat_type(event, session_id),
+            "chat_type": self._trace_event_chat_type(event, session_id),
         }
 
         try:
@@ -385,7 +385,9 @@ class DiagnosticCommandMixin:
         return formatted_results
 
     @staticmethod
-    def _event_chat_type(event: AstrMessageEvent, session_id: str) -> str:
+    def _trace_event_chat_type(event: AstrMessageEvent, session_id: str) -> str:
+        """解析追踪请求的聊天类型，并保留旧会话标识兜底。"""
+
         try:
             if event.get_message_type() == MessageType.GROUP_MESSAGE:
                 return "group"

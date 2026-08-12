@@ -9,7 +9,6 @@ from collections.abc import AsyncGenerator
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
-from .base.config_manager import ConfigManager
 from .commands.diagnostic_commands import DiagnosticCommandMixin, DiagnosticProvider
 from .commands.maintenance_commands import MaintenanceCommandMixin
 from .commands.query_commands import QueryCommandMixin
@@ -21,6 +20,7 @@ from .features.reflection.application.candidate_writer import (
 from .i18n_backend import t, t_list
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
+from .platform.config.manager import ConfigManager
 from .shared.contracts import IdentityConversationPort
 
 
@@ -50,7 +50,7 @@ class CommandHandler(
         update_manager=None,
         update_installer=None,
         identity_runtime: IdentityConversationPort | None = None,
-    ):
+    ) -> None:
         """
         初始化命令处理器
 

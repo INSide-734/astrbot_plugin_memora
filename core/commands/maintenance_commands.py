@@ -6,6 +6,7 @@
 import json
 import re
 from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
@@ -17,8 +18,30 @@ from ..shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 class MaintenanceCommandMixin:
     """维护类命令的 Mixin 基类"""
 
-    @staticmethod
-    def _maintenance_write_guard_message() -> str | None:
+    context: Any
+    memory_engine: Any | None
+    conversation_manager: Any | None
+    index_validator: Any | None
+
+    if TYPE_CHECKING:
+
+        @staticmethod
+        def _component_not_ready_message(component: str, command: str) -> str:
+            """声明组合宿主提供的组件未就绪消息格式化接口。"""
+
+            ...
+
+        @staticmethod
+        def _format_error_message(
+            action: str,
+            error: Exception,
+            suggestions: list[str] | None = None,
+        ) -> str:
+            """声明组合宿主提供的命令错误消息格式化接口。"""
+
+            ...
+
+    def _maintenance_write_guard_message(self) -> str | None:
         """独立 Mixin 默认无维护写保护。"""
         return None
 
