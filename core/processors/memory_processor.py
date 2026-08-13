@@ -15,7 +15,7 @@ from astrbot.api import logger
 from ..features.identity.application.enricher import build_memory_identity_context
 from ..features.memory.domain.memory_atom import MemoryAtom
 from ..models.conversation_models import Message
-from ..security.guardrails import (
+from ..platform.security.guardrails import (
     MemoryExtractionResult,
     validate_and_clean_json,
     validate_llm_response,

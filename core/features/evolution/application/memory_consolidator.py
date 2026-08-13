@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ....security.guardrails import validate_and_clean_json
+from ....platform.security.guardrails import validate_and_clean_json
 from ....shared.contracts import MemorySourceRef
 from ..domain import (
     EvolutionProposal,

@@ -150,7 +150,7 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 - [`retrieval/AGENTS.md`](retrieval/AGENTS.md)
 - [`review/AGENTS.md`](review/AGENTS.md)
 - [`schedulers/AGENTS.md`](schedulers/AGENTS.md)
-- [`security/AGENTS.md`](security/AGENTS.md)
+- [`platform/security/AGENTS.md`](platform/security/AGENTS.md)
 - [`features/cognition/social/AGENTS.md`](features/cognition/social/AGENTS.md)
 - [`storage/AGENTS.md`](storage/AGENTS.md)
 - [`tools/AGENTS.md`](tools/AGENTS.md)

@@ -1,13 +1,10 @@
-"""Memora 安全模块 — Prompt 防护与 LLM 输出护栏。
+"""Memora 安全模块旧路径兼容导出。
 
-提供两层安全防线：
-1. **PromptProtectionService** — 3层 Prompt 防护 (标签包裹 → 关键词清洗 → 算法验证)
-2. **Guardrails** — Pydantic 强类型 LLM 输出验证与 JSON 清洗管道
+真实实现已迁至 ``core.platform.security``；本模块只保留单实现 re-export，供
+尚未切换到 platform 路径的历史调用方与契约测试使用。
 """
 
-from __future__ import annotations
-
-from .guardrails import (
+from ..platform.security.guardrails import (
     GraphExtractionResult,
     MemoryAtomSchema,
     MemoryExtractionResult,
@@ -15,7 +12,7 @@ from .guardrails import (
     validate_and_clean_json,
     validate_llm_response,
 )
-from .prompt_sanitizer import (
+from ..platform.security.prompt_sanitizer import (
     DoubleCheckValidator,
     MetaInstructionWrapper,
     PromptProtectionService,
@@ -23,12 +20,10 @@ from .prompt_sanitizer import (
 )
 
 __all__ = [
-    # Prompt sanitizer
     "PromptProtectionService",
     "MetaInstructionWrapper",
     "ResponseSanitizer",
     "DoubleCheckValidator",
-    # Guardrails
     "MemoryExtractionResult",
     "MemoryAtomSchema",
     "GraphExtractionResult",

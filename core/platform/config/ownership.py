@@ -187,7 +187,9 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
         ConfigOwnershipKind.RUNTIME,
         "core.features.updates.application.manager",
     ),
-    "security": _ownership("security", ConfigOwnershipKind.RUNTIME, "core.security"),
+    "security": _ownership(
+        "security", ConfigOwnershipKind.RUNTIME, "core.platform.security"
+    ),
     "persona_decay": _ownership(
         "persona_decay",
         ConfigOwnershipKind.EXPERIMENTAL,

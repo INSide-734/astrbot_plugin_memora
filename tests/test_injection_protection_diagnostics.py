@@ -19,7 +19,7 @@ from core.injection.models import (
     RoutingMode,
 )
 from core.injection.presets import get_preset
-from core.security import prompt_sanitizer as prompt_sanitizer_module
+from core.platform.security import prompt_sanitizer as prompt_sanitizer_module
 from core.utils.injection_adapter import InjectionAdapter
 
 

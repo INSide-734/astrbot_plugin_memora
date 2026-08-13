@@ -6,7 +6,7 @@ import threading
 from collections.abc import Mapping
 from typing import Any
 
-from ...security import PromptProtectionService
+from .prompt_sanitizer import PromptProtectionService
 
 
 class PromptProtectionAdapter:
