@@ -72,8 +72,9 @@ def _bind_to_plugin_entrypoint(handler: _HandlerT) -> _HandlerT:
     返回:
         已标记为插件入口模块所有的原处理函数。
     """
-    package_root, separator, _ = __package__.rpartition(".")
-    handler.__module__ = f"{package_root}.main" if separator else "main"
+    root = (__package__ or "").split(".", 1)[0]
+    package_root = "" if root == "core" else root
+    handler.__module__ = f"{package_root}.main" if package_root else "main"
     return handler
 
 

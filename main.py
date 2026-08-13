@@ -17,8 +17,6 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 
-from .core.command_endpoints import CommandEndpointsMixin
-from .core.command_handler import CommandHandler
 from .core.event_handler import EventHandler
 from .core.features.backup.application import BackupManager
 from .core.features.backup.domain import BackupOperationError
@@ -43,6 +41,8 @@ from .core.platform.resources import (
 from .core.platform.resources.i18n_backend import init as i18n_init
 from .core.platform.resources.i18n_backend import t
 from .core.platform.resources.version import PLUGIN_VERSION
+from .core.platform.transport.commands.command_endpoints import CommandEndpointsMixin
+from .core.platform.transport.commands.command_handler import CommandHandler
 from .core.platform.transport.tools import MemoryMemorizeTool, MemorySearchTool
 from .core.platform.version_check import (  # noqa: F401
     _CURRENT_ASTRBOT_VERSION,

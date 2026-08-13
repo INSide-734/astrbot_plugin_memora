@@ -58,7 +58,7 @@ def test_event_handler_without_identity_port_returns_unsupported_identity() -> N
 def test_command_handler_retains_explicit_identity_port() -> None:
     """命令适配器必须保存组合根显式注入的身份端口。"""
 
-    from core.command_handler import CommandHandler
+    from core.platform.transport.commands.command_handler import CommandHandler
     from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     runtime = ProtocolIdentityRuntime()

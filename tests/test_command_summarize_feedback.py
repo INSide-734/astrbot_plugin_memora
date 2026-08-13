@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from core.command_handler import CommandHandler
+from core.platform.transport.commands.command_handler import CommandHandler
 from core.features.quality.application.memory_quality_gate import MemoryGateResult
 from core.platform.resources import i18n_backend
 

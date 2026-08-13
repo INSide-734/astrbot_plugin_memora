@@ -9,22 +9,24 @@ from collections.abc import AsyncGenerator
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
-from .features.conversation.application.conversation_manager import ConversationManager
-from .features.memory.application.memory_engine import MemoryEngine
-from .features.memory.infrastructure.validators import IndexValidator
-from .features.reflection.application.candidate_writer import (
+from ....features.conversation.application.conversation_manager import (
+    ConversationManager,
+)
+from ....features.memory.application.memory_engine import MemoryEngine
+from ....features.memory.infrastructure.validators import IndexValidator
+from ....features.reflection.application.candidate_writer import (
     build_reflection_idempotency_key,
 )
-from .platform.config.manager import ConfigManager
-from .platform.resources.i18n_backend import t, t_list
-from .platform.transport.commands.diagnostic_commands import (
+from ....shared.contracts import IdentityConversationPort
+from ...config.manager import ConfigManager
+from ...resources.i18n_backend import t, t_list
+from .diagnostic_commands import (
     DiagnosticCommandMixin,
     DiagnosticProvider,
 )
-from .platform.transport.commands.maintenance_commands import MaintenanceCommandMixin
-from .platform.transport.commands.query_commands import QueryCommandMixin
-from .platform.transport.commands.update_commands import UpdateCommandMixin
-from .shared.contracts import IdentityConversationPort
+from .maintenance_commands import MaintenanceCommandMixin
+from .query_commands import QueryCommandMixin
+from .update_commands import UpdateCommandMixin
 
 
 class CommandHandler(
@@ -202,7 +204,7 @@ class CommandHandler(
                 return
 
             # 获取 persona_id
-            from .platform.context_helpers import get_persona_id
+            from ...context_helpers import get_persona_id
 
             persona_id = await get_persona_id(self.context, event)
 
