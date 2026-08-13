@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 
 if TYPE_CHECKING:
-    from ...base.config_validator import MemoraConfig
+    from .config_validator import MemoraConfig
 
 __all__ = [
     "get_default_config",
@@ -20,7 +20,7 @@ __all__ = [
 def _config_model_type() -> type[MemoraConfig]:
     """延迟取得根配置模型，避免新 owner 优先导入时形成循环依赖。"""
 
-    from ...base.config_validator import MemoraConfig
+    from .config_validator import MemoraConfig
 
     return MemoraConfig
 

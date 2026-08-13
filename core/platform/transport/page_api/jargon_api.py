@@ -10,7 +10,6 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ....base.feature_config import is_jargon_discovery_enabled
 from ....features.cognition.jargon.jargon_store import JARGON_MEANING_SORT_COLUMNS
 from ....features.cognition.jargon.statistical_filter import (
     JARGON_CANDIDATE_SORT_FIELDS,
@@ -22,6 +21,7 @@ from ....shared.entity_editing import (
     EntityValidationError,
 )
 from ....shared.list_sorting import parse_sort_query
+from ...config.feature_config import is_jargon_discovery_enabled
 from .editing_utils import (
     conflict_error,
     entity_ok,

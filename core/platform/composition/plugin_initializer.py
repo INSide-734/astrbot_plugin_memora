@@ -10,7 +10,6 @@ from astrbot.api import logger
 from astrbot.api.provider import Provider
 from astrbot.api.star import Context
 
-from ...base.feature_config import is_jargon_discovery_enabled
 from ...features.backfill.application import BackfillScheduler
 from ...features.conversation.application.conversation_manager import (
     ConversationManager,
@@ -35,6 +34,7 @@ from ...features.quality.infrastructure.quarantine_store import (
 from ...features.recall.processors.memory_processor import MemoryProcessor
 from ...shared.contracts import PromptProtectionPort
 from ...shared.errors import InitializationError
+from ..config.feature_config import is_jargon_discovery_enabled
 from ..config.manager import ConfigManager
 from ..security import build_prompt_protection_port
 from ..transport.realtime_hub import RealtimeHub
