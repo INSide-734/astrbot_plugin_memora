@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.utils.diversity_manager import (
+from core.features.cognition.expression.diversity_manager import (
     EXPRESSION_VARIATIONS,
     LANGUAGE_STYLES,
     RESPONSE_PATTERNS,

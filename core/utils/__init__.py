@@ -10,6 +10,20 @@ from astrbot.api import logger, sp
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 
+from ..features.cognition.expression.diversity_manager import (
+    EXPRESSION_VARIATIONS,
+    LANGUAGE_STYLES,
+    RESPONSE_PATTERNS,
+    TEMPERATURE_RANGES,
+    HomogeneityReport,
+    ResponseDiversityManager,
+    VariationComposition,
+)
+from ..features.cognition.expression.style_analyzer import (
+    StyleAnalyzer,
+    StyleEvolution,
+    StyleProfile,
+)
 from ..features.injection.application.memory_formatter import (
     format_memories_for_fake_tool_call,
     format_memories_for_fake_tool_call_deepseek_v4,
@@ -38,16 +52,6 @@ from ..shared.json_utils import (
     remove_thinking_content,
     safe_parse_llm_json,
 )
-from .diversity_manager import (
-    EXPRESSION_VARIATIONS,
-    LANGUAGE_STYLES,
-    RESPONSE_PATTERNS,
-    TEMPERATURE_RANGES,
-    HomogeneityReport,
-    ResponseDiversityManager,
-    VariationComposition,
-)
-from .style_analyzer import StyleAnalyzer, StyleEvolution, StyleProfile
 from .task_scheduler import TaskScheduler, get_task_scheduler
 
 

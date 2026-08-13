@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.utils.style_analyzer import (
+from core.features.cognition.expression.style_analyzer import (
     _7_DIMENSIONS,
     StyleAnalyzer,
     StyleEvolution,
