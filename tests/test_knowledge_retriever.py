@@ -153,7 +153,7 @@ class TestKnowledgeRetriever:
 
     def test_tokenize_function(self) -> None:
         """_tokenize 应切分文本并过滤停用词。"""
-        from core.retrieval.knowledge_retriever import _tokenize
+        from core.features.retrieval.knowledge_retriever import _tokenize
 
         tokens = _tokenize("This is a test query")
         assert "test" in tokens
@@ -163,14 +163,14 @@ class TestKnowledgeRetriever:
 
     def test_keyword_score_empty_terms(self) -> None:
         """查询词为空时 _keyword_score 应返回零。"""
-        from core.retrieval.knowledge_retriever import _keyword_score
+        from core.features.retrieval.knowledge_retriever import _keyword_score
 
         score = _keyword_score(set(), "title", "content")
         assert score == 0.0
 
     def test_keyword_score_with_terms(self) -> None:
         """_keyword_score 应计算基于词频的分数。"""
-        from core.retrieval.knowledge_retriever import _keyword_score
+        from core.features.retrieval.knowledge_retriever import _keyword_score
 
         score = _keyword_score({"test"}, "test title", "test content here")
         assert 0 < score <= 1.0
@@ -207,7 +207,7 @@ class TestKnowledgeRetriever:
 
     def test_keyword_score_title_weighted_3x(self) -> None:
         """标题命中的关键词权重应是正文命中的三倍。"""
-        from core.retrieval.knowledge_retriever import _keyword_score
+        from core.features.retrieval.knowledge_retriever import _keyword_score
 
         # 仅标题命中。
         score_title = _keyword_score({"python"}, "python programming", "")
@@ -218,7 +218,7 @@ class TestKnowledgeRetriever:
 
     def test_tokenize_with_chinese_text(self) -> None:
         """_tokenize 应按中日韩标点切分中文文本。"""
-        from core.retrieval.knowledge_retriever import _tokenize
+        from core.features.retrieval.knowledge_retriever import _tokenize
 
         # 使用中文标点分隔各词。
         tokens = _tokenize("测试，查询；内容！问题？")

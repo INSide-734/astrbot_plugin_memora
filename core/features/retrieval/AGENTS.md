@@ -1,4 +1,4 @@
-[根级 AGENTS.md](../../AGENTS.md) > **core/retrieval**
+[根级 AGENTS.md](../../../../../../AGENTS.md) / core / features / retrieval
 
 # Retrieval 模块上下文
 
@@ -7,7 +7,7 @@
 
 ## 职责与边界
 
-`core/retrieval/` 负责从文档、FAISS、图、原子和知识库生成候选，执行 RRF、时间/重要性加权、MMR/可插拔重排、个性化与隐私过滤，并可生成有界、脱敏的召回追踪。持久化 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，统一生命周期和缓存增强属于 [`core/managers/AGENTS.md`](../managers/AGENTS.md)；派生关系扩展与 Projection 读取服务由 `core/features/evolution/application/` 唯一持有，本模块只消费其公开读取契约。
+`core/retrieval/` 负责从文档、FAISS、图、原子和知识库生成候选，执行 RRF、时间/重要性加权、MMR/可插拔重排、个性化与隐私过滤，并可生成有界、脱敏的召回追踪。持久化 CRUD 属于 [`core/storage/AGENTS.md`](../../../storage/AGENTS.md)，统一生命周期和缓存增强属于 [`core/managers/AGENTS.md`](../../../managers/AGENTS.md)；派生关系扩展与 Projection 读取服务由 `core/features/evolution/application/` 唯一持有，本模块只消费其公开读取契约。
 
 ## Memory Evolution 召回顺序
 
