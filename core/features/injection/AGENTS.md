@@ -1,4 +1,4 @@
-[根级 AGENTS.md](../../AGENTS.md) / core / injection
+[根级 AGENTS.md](../../../../AGENTS.md) / core / features / injection
 
 # 自适应记忆注入
 
@@ -81,7 +81,7 @@ Gemini 的伪工具方式降级为 `user_message_before`；未知或不支持工
 
 `InjectionDecisionRecorder.record()` 是非阻塞、无 I/O 的请求路径：默认容量 10000，满时丢最旧并计数；单 worker 默认 50 条或 250ms 批写。失败批次恢复到 retained 列表并指数重试（5 秒封顶），同时继续保持总待处理量有界。清理按保留天数/最大行数执行，另有每日清理和每持久化 1000 行、每小时至多一次的轻量清理。`close(timeout)` 尽量冲刷，超时取消 worker。
 
-Page API 只能返回 allowlist 后的脱敏字段；详见 [API 模块 AGENTS.md](../api/AGENTS.md)。
+Page API 只能返回 allowlist 后的脱敏字段；详见 [API 模块 AGENTS.md](../../../api/AGENTS.md)。
 
 ## 依赖方向
 
@@ -100,9 +100,9 @@ python -m pytest tests/test_handlers.py -q
 
 ## 相关上下文
 
-- [根级 AGENTS.md](../../AGENTS.md)
-- [初始化模块 AGENTS.md](../initializer/AGENTS.md)
-- [API 模块 AGENTS.md](../api/AGENTS.md)
-- [工具模块 AGENTS.md](../tools/AGENTS.md)
-- [处理器模块 AGENTS.md](../handlers/AGENTS.md)
-- [安全模块 AGENTS.md](../security/AGENTS.md)
+- [根级 AGENTS.md](../../../../AGENTS.md)
+- [初始化模块 AGENTS.md](../../../initializer/AGENTS.md)
+- [API 模块 AGENTS.md](../../../api/AGENTS.md)
+- [工具模块 AGENTS.md](../../../tools/AGENTS.md)
+- [处理器模块 AGENTS.md](../../../handlers/AGENTS.md)
+- [安全模块 AGENTS.md](../../../platform/security/AGENTS.md)

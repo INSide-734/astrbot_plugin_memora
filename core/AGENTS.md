@@ -140,7 +140,7 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 - [`extractors/AGENTS.md`](extractors/AGENTS.md)
 - [`handlers/AGENTS.md`](handlers/AGENTS.md)
 - [`identity/AGENTS.md`](identity/AGENTS.md)
-- [`injection/AGENTS.md`](injection/AGENTS.md)
+- [`features/injection/AGENTS.md`](features/injection/AGENTS.md)
 - [`initializer/AGENTS.md`](initializer/AGENTS.md)（已退役目录导航）
 - [`features/cognition/jargon/AGENTS.md`](features/cognition/jargon/AGENTS.md)
 - [`managers/AGENTS.md`](managers/AGENTS.md)

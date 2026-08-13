@@ -1,40 +1,4 @@
-"""记忆注入策略的稳定公共接口。"""
+"""记忆注入策略旧路径兼容导出。"""
 
-from .executor import InjectionExecutionContext, InjectionExecutor, candidate_utility
-from .models import (
-    ContentLevel,
-    DeliveryMode,
-    InjectionDecision,
-    InjectionDecisionRecord,
-    InjectionExecutionResult,
-    InjectionOutcome,
-    InjectionStrategyPreset,
-    PresetName,
-    RequestSignals,
-    RoutingMode,
-)
-from .presets import PRESETS, get_preset, resolve_preset
-from .recorder import InjectionDecisionRecorder
-from .router import InjectionRoutingConfig, InjectionStrategyRouter
-
-__all__ = [
-    "ContentLevel",
-    "DeliveryMode",
-    "InjectionDecision",
-    "InjectionDecisionRecord",
-    "InjectionExecutionResult",
-    "InjectionDecisionRecorder",
-    "InjectionOutcome",
-    "InjectionExecutionContext",
-    "InjectionExecutor",
-    "InjectionRoutingConfig",
-    "InjectionStrategyRouter",
-    "InjectionStrategyPreset",
-    "PRESETS",
-    "PresetName",
-    "RequestSignals",
-    "RoutingMode",
-    "get_preset",
-    "resolve_preset",
-    "candidate_utility",
-]
+from ..features.injection import *  # noqa: F401,F403
+from ..features.injection import __all__ as __all__

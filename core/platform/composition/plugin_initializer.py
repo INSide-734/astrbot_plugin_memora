@@ -17,6 +17,10 @@ from ...features.conversation.application.conversation_manager import (
 )
 from ...features.decay.application import DecayScheduler
 from ...features.identity.application.runtime import ProtocolIdentityRuntime
+from ...features.injection.infrastructure.injection_decision_store import (
+    InjectionDecisionStore,
+)
+from ...features.injection.infrastructure.recorder import InjectionDecisionRecorder
 from ...features.memory.infrastructure.validators import IndexValidator
 from ...features.observability.application import MemoryQualityScorer
 from ...features.observability.infrastructure.debug_reporter import (
@@ -27,12 +31,10 @@ from ...features.quality.application.memory_quality_gate import MemoryQualityGat
 from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
 )
-from ...injection.recorder import InjectionDecisionRecorder
 from ...managers.memory_engine import MemoryEngine
 from ...processors.memory_processor import MemoryProcessor
 from ...shared.contracts import PromptProtectionPort
 from ...shared.errors import InitializationError
-from ...storage.injection_decision_store import InjectionDecisionStore
 from ..config.manager import ConfigManager
 from ..security import build_prompt_protection_port
 from ..transport.realtime_hub import RealtimeHub

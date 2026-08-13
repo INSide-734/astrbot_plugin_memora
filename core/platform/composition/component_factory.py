@@ -35,6 +35,10 @@ from ...features.identity.application.runtime import ProtocolIdentityRuntime
 from ...features.identity.application.service import ProtocolIdentityService
 from ...features.identity.infrastructure.protocols import ProtocolIdentityResolver
 from ...features.identity.infrastructure.store import ProtocolIdentityStore
+from ...features.injection.infrastructure.injection_decision_store import (
+    InjectionDecisionStore,
+)
+from ...features.injection.infrastructure.recorder import InjectionDecisionRecorder
 from ...features.knowledge.application import KnowledgeProposalPipeline
 from ...features.knowledge.infrastructure import KnowledgeExtractor
 from ...features.learning.domain.auto_learning_actions import aggregation_revision_for
@@ -51,13 +55,11 @@ from ...features.quality.application.memory_quality_gate import MemoryQualityGat
 from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
 )
-from ...injection.recorder import InjectionDecisionRecorder
 from ...managers.memory_engine import MemoryEngine
 from ...processors.memory_processor import MemoryProcessor
 from ...retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
 from ...shared.cost_control import CostControlConfig
 from ...shared.errors import ProviderNotReadyError
-from ...storage.injection_decision_store import InjectionDecisionStore
 from ..provider.adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..transport.realtime_hub import RealtimeHub
 from .derived_rebuild_coordinator import DerivedRebuildCoordinator

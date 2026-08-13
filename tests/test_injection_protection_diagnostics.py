@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from astrbot.api import logger as astrbot_logger
 
-from core.injection import executor as executor_module
+from core.features.injection.application import executor as executor_module
 from core.injection.executor import InjectionExecutionContext, InjectionExecutor
 from core.injection.models import (
     DeliveryMode,

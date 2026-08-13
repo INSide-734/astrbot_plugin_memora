@@ -463,7 +463,7 @@ async def test_cleaner_round_trips_real_executor_output(monkeypatch, delivery) -
         def mark_as_temp(self):
             return self
 
-    monkeypatch.setattr("core.injection.executor.TextPart", Part)
+    monkeypatch.setattr("core.features.injection.application.executor.TextPart", Part)
     provider = MagicMock()
     provider.provider_config = {"type": "openai_chat_completion"}
     provider.get_model.return_value = "gpt-4.1"

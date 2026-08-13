@@ -319,7 +319,7 @@ async def test_format_failure_leaves_request_unchanged(monkeypatch) -> None:
         deepcopy(req.extra_user_content_parts),
     )
     monkeypatch.setattr(
-        "core.injection.executor.format_memories_for_injection",
+        "core.features.injection.application.executor.format_memories_for_injection",
         lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("boom")),
     )
     result = await build_executor_case(req)
@@ -331,7 +331,7 @@ async def test_format_failure_leaves_request_unchanged(monkeypatch) -> None:
 async def test_format_failure_reports_global_budgets(monkeypatch) -> None:
     req = _request()
     monkeypatch.setattr(
-        "core.injection.executor.format_memories_for_injection",
+        "core.features.injection.application.executor.format_memories_for_injection",
         lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("boom")),
     )
     result = await InjectionExecutor(InjectionAdapter()).execute(
@@ -366,7 +366,7 @@ async def test_executor_builds_complete_payload_before_first_mutation(
         return "BUILT_BEFORE_MUTATION", InjectionStats(chars=21, memory_count=1)
 
     monkeypatch.setattr(
-        "core.injection.executor.format_memories_for_injection",
+        "core.features.injection.application.executor.format_memories_for_injection",
         format_while_request_is_pristine,
     )
     result = await InjectionExecutor(InjectionAdapter()).execute(
@@ -439,7 +439,10 @@ async def test_cancelled_error_propagates_without_mutation(monkeypatch) -> None:
     def cancel(*args, **kwargs):
         raise asyncio.CancelledError
 
-    monkeypatch.setattr("core.injection.executor.format_memories_for_injection", cancel)
+    monkeypatch.setattr(
+        "core.features.injection.application.executor.format_memories_for_injection",
+        cancel,
+    )
     with pytest.raises(asyncio.CancelledError):
         await InjectionExecutor(InjectionAdapter()).execute(
             req,
@@ -597,7 +600,8 @@ async def test_formatter_receives_full_ordinary_budget_before_cognitive_allocati
         return "ORDINARY_FROM_SPY", InjectionStats(chars=17, memory_count=1)
 
     monkeypatch.setattr(
-        "core.injection.executor.format_memories_for_injection", spy_formatter
+        "core.features.injection.application.executor.format_memories_for_injection",
+        spy_formatter,
     )
     result = await InjectionExecutor(InjectionAdapter()).execute(
         _request(),
@@ -790,7 +794,7 @@ async def test_fake_tool_deliveries_consume_verified_payload_not_raw_memories(
     req = _request()
     provider = _tool_capable_provider()
     monkeypatch.setattr(
-        "core.injection.executor.format_memories_for_injection",
+        "core.features.injection.application.executor.format_memories_for_injection",
         lambda *args, **kwargs: (
             "VERIFIED_PROTECTED_INPUT",
             InjectionStats(chars=24, memory_count=1),
@@ -852,7 +856,8 @@ async def test_slow_formatter_is_reported_as_format_time(monkeypatch) -> None:
         return "TIMED_PAYLOAD", InjectionStats(chars=13, memory_count=1)
 
     monkeypatch.setattr(
-        "core.injection.executor.format_memories_for_injection", slow_formatter
+        "core.features.injection.application.executor.format_memories_for_injection",
+        slow_formatter,
     )
     result = await InjectionExecutor(InjectionAdapter()).execute(
         _request(),
@@ -937,7 +942,7 @@ async def test_reserved_boundaries_are_escaped_inside_untrusted_layers(
         def mark_as_temp(self):
             return self
 
-    monkeypatch.setattr("core.injection.executor.TextPart", Part)
+    monkeypatch.setattr("core.features.injection.application.executor.TextPart", Part)
     marker_text = (
         "<memora-untrusted-memory>"
         "</memora-untrusted-memory>"
